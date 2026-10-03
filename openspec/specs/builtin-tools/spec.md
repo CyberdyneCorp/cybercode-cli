@@ -6,7 +6,7 @@ Defines the built-in tools Cyber Code exposes to models: parameters, limits, per
 ## Requirements
 
 ### Requirement: Built-in tool set
-(P0) The system SHALL register these built-in tools in every Location: `read`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `list`, `bash`, `webfetch`, `websearch`, `todo`, `question`, `skill`, `notebook_edit`, `history_search` (compaction), and the hidden `invalid`. It SHALL add `powershell` on Windows, `lsp` when code intelligence is enabled (P1), `monitor` (P1), and `advisor` when `model_roles.advisor` is configured (P2). The registry SHALL offer `apply_patch` instead of `edit`/`write` to models whose catalog entry sets `capabilities.prefers_apply_patch: true`, and `edit`/`write` to all other models.
+(P0) The system SHALL register these built-in tools in every Location: `read`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `list`, `bash`, `webfetch`, `websearch`, `todo`, `question`, `skill`, `notebook_edit`, `history_search` (compaction), `plan_enter`, `plan_exit` (permissions-modes), the per-prompt `structured_output` tool (session-runtime), `tool_search` when deferral is active (tool-registry), and the hidden `invalid`. It SHALL add `powershell` on Windows, `lsp` when code intelligence is enabled (P1) and `advisor` when `model_roles.advisor` is configured (P2). `monitor` and the other background tools are specified by `background-tasks` and listed in the capability-owned catalog. The registry SHALL offer `apply_patch` instead of `edit`/`write` to models whose catalog entry sets `capabilities.prefers_apply_patch: true`, and `edit`/`write` to all other models.
 
 #### Scenario: GPT-family model gets apply_patch
 - **WHEN** the Turn model's catalog entry has `prefers_apply_patch: true`
@@ -18,18 +18,19 @@ Defines the built-in tools Cyber Code exposes to models: parameters, limits, per
 - `workflow` (workflows)
 - `schedule_wakeup`, `cron_create`, `cron_list`, `cron_delete` (loops-scheduling)
 - `monitor`, `task_stop`, `pty_start`, `pty_write`, `pty_read`, `notify`, `send_file` (background-tasks)
+- `enter_worktree`, `exit_worktree` (worktrees)
 - `team_spawn`, `team_merge`, `task_create`, `task_update`, `task_list`, `task_get` (agent-teams)
 - `list_sessions`, `send_message`, `watch_session` (cross-session-messaging)
 - `channel_reply` (channels)
 - `memory` (memory)
-- `wait_for_mcp`, `tool_search`, `mcp_list_resources`, `mcp_list_resource_templates`, `mcp_read_resource` (mcp and tool-registry)
+- `wait_for_mcp`, `mcp_list_resources`, `mcp_list_resource_templates`, `mcp_read_resource` (mcp)
 - `publish_artifact` (session-sharing)
 - `advisor` (provider-catalog)
 
-All of these SHALL use the shared tool-registry contract: schema validation, output budget, permission assertion with the tool name as the action unless the owning spec states otherwise, and hiding when fully denied.
+This list and the built-in set above are the single registry of model-facing tool names; a capability SHALL NOT introduce a tool absent from them. All of these SHALL use the shared tool-registry contract: schema validation, output budget, permission assertion with the tool name as the action unless the owning spec states otherwise, and hiding when fully denied.
 
 #### Scenario: Phase-gated tool hidden
-- **WHEN** the agent-teams capability is disabled (`experimental.teams` unset)
+- **WHEN** the agent-teams capability is disabled (feature `teams` off)
 - **THEN** `team_spawn`, `team_merge` and the `task_*` tools are not advertised to the model, and a call to them settles as `Unknown tool: team_spawn`
 
 #### Scenario: Cross-capability tool obeys permissions
@@ -126,11 +127,15 @@ All of these SHALL use the shared tool-registry contract: schema validation, out
 - **THEN** the call fails with `Only http and https URLs are supported`
 
 ### Requirement: websearch tool
-(P0) `websearch` SHALL accept `{ query, max_results? (default 8, max 20), allowed_domains?, blocked_domains? }` and check the `websearch` permission on the query. It SHALL use the model provider's native search when the Turn model's catalog entry declares `capabilities.native_web_search`, and otherwise the configured backend `tools.websearch.backend` (`exa`, `brave`, `searxng`, `parallel`), with credentials from `provider-credentials`. Requests SHALL time out after 25 s and responses SHALL be limited to 256 KiB. Results SHALL be returned as `title`, `url`, `snippet`. Without any backend, the tool SHALL be hidden.
+(P0) `websearch` SHALL accept `{ query, max_results? (default 8, max 20), allowed_domains?, blocked_domains? }` and check the `websearch` permission on the query. It SHALL use the model provider's native search when the Turn model's catalog entry declares `capabilities.native_web_search`, and otherwise the configured backend `tools.websearch.backend` (`exa`, `brave`, `searxng`, `parallel`, `firecrawl`, `tavily`, `tinyfish`, or `random`, which rotates among backends with stored credentials and skips a backend for 10 minutes after it returns 429), with credentials from `provider-credentials`. `tools.websearch.enabled: false` SHALL hide the tool. Requests SHALL time out after 25 s and responses SHALL be limited to 256 KiB. Results SHALL be returned as `title`, `url`, `snippet`. Without any backend, the tool SHALL be hidden.
 
 #### Scenario: Native search preferred
 - **WHEN** the Turn model declares `native_web_search`
 - **THEN** the search is executed by the provider and no third-party backend is contacted
+
+#### Scenario: Rotation after rate limit
+- **WHEN** `backend` is `random`, `exa` returns 429 and `brave` has credentials
+- **THEN** the query is retried on `brave` and `exa` is skipped for the next 10 minutes
 
 ### Requirement: todo tool
 (P0) `todo` SHALL manage the Session task list with operations `create { subject, description?, blocked_by?: id[] }`, `update { id, status?: pending|in_progress|completed|deleted, ... }`, `list` and `get { id }`. It SHALL check the `todo` permission and return the full list after each mutation. At most one task SHALL be `in_progress` per agent. Task lists SHALL persist with the Session and be visible to agent-team members per `agent-teams`.
@@ -147,11 +152,11 @@ All of these SHALL use the shared tool-registry contract: schema validation, out
 - **THEN** that text is returned as the answer for that question
 
 ### Requirement: skill tool
-(P0) `skill` SHALL accept `{ name, args? }`, check the `skill` permission on the name, and return the skill body wrapped in `<skill name="...">`, with its base directory and up to 10 sampled sibling file paths. An unknown name SHALL fail with `Skill "<name>" not found. Available: <names>`.
+(P0) `skill` SHALL accept `{ name, arguments? }`, check the `skill` permission on the name, and return the skill body wrapped in `<skill name="..." base="...">` with a listing of up to 20 sibling files (relative paths), as specified by `skills-commands`. An unknown name SHALL fail with `Skill "<name>" not found. Available: <names>`.
 
 #### Scenario: Load a skill
 - **WHEN** the model calls `skill` with `name: "release-notes"`
-- **THEN** the body of that skill's `SKILL.md` and its base directory are returned
+- **THEN** the body of that skill's `SKILL.md`, its base directory and up to 20 sibling paths are returned
 
 ### Requirement: notebook_edit tool
 (P1) `notebook_edit` SHALL accept `{ path, cell_id?, cell_index?, new_source, cell_type?, mode: replace|insert|delete }` for `.ipynb` files. It SHALL check the `edit` permission, preserve notebook metadata and outputs of untouched cells, and clear the outputs of edited code cells.
@@ -161,11 +166,11 @@ All of these SHALL use the shared tool-registry contract: schema validation, out
 - **THEN** a new markdown cell becomes the first cell and the other cells are unchanged
 
 ### Requirement: monitor tool
-(P1) `monitor` SHALL accept `{ command | websocket_url, pattern?, max_lines? (default 200), until? }` and start a background watcher whose matching output lines are admitted into the Session as Mid-Conversation System Messages at Safe Boundaries. It SHALL return the `job_` ID and check the `bash` (or `network`) permission.
+(P1) The `monitor` tool's parameters, delivery and limits are specified by `background-tasks` (Monitor tool). It SHALL check the `bash` permission for command and file sources and the `network` permission for URL sources, and SHALL return the `job_` ID.
 
 #### Scenario: React to a log line
-- **WHEN** the model monitors `tail -f app.log` with pattern `ERROR`
-- **THEN** each new `ERROR` line is delivered to the model at the next Safe Boundary
+- **WHEN** the model monitors `tail -F app.log` with filter `ERROR`
+- **THEN** each new `ERROR` line is admitted into the Session as a queued message, at most 30 per minute
 
 ### Requirement: advisor tool
 (P2) When `model_roles.advisor` is set, `advisor` SHALL accept `{ question, context_files?: string[] }` and send the question plus a compacted transcript summary and the listed files to the advisor model. It SHALL return the advisor's answer, record the advisor's token cost on the Session, and check the `advisor` permission.

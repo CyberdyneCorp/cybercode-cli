@@ -66,11 +66,11 @@ The session runtime records Sessions and their durable input inbox, then runs ad
 - **THEN** the prompt waits in the inbox and no Turn starts
 
 ### Requirement: Per-Session serialization
-(P0) The system SHALL run at most one Drain per Session across all processes on a machine, using an in-process coordinator plus an advisory lock in `<state>/locks/<session_id>.lock`, while different Sessions run concurrently. A second process attempting to drain a locked Session SHALL admit its input and wake the owner through the server instead of draining.
+(P0) The system SHALL run at most one Drain per Session. Drains SHALL run only in the registered server that holds the writer ownership lock (`storage-events`), coordinated in-process, while different Sessions run concurrently. Any other process (TUI, `cyber exec`, SDK) that wants a Session drained SHALL admit its input through the server API and wake the owner; it SHALL NOT run a Drain of its own against the shared database. An `--embedded` process owns a private database and drains only its own Sessions.
 
 #### Scenario: TUI and exec on the same Session
-- **WHEN** `cyber exec -s ses_1 "..."` runs while the TUI drains `ses_1`
-- **THEN** the exec prompt is admitted and executed by the TUI's Drain, and exec streams the result from the event stream
+- **WHEN** `cyber exec -s ses_1 "..."` runs while the TUI is attached to `ses_1`
+- **THEN** the exec prompt is admitted and executed by the server's Drain, and exec streams the result from the event stream
 
 ### Requirement: Interrupt
 (P0) The system SHALL interrupt a Session by stopping its Drain, clearing coalesced wakes, settling undispatched calls as interrupted and dispatched mutations with no known outcome as `outcome_unknown`, failing an active assistant step with `Provider turn interrupted`, and keeping all inbox rows. Interrupting an idle Session SHALL be a no-op. Background tasks owned by the Session SHALL keep running unless the caller passes `stop_background: true`.
@@ -183,3 +183,10 @@ The session runtime records Sessions and their durable input inbox, then runs ad
 #### Scenario: Quick question while working
 - **WHEN** the user runs `/btw what does this regex match?` during a Drain
 - **THEN** the answer is shown in a side panel and the main Drain's history is unchanged
+
+### Requirement: Attachment normalization
+(P0) Prompt attachments (TUI paste or drop, `@path` mentions, `--file`, remote uploads) SHALL obey the `attachments` config: `max_bytes` (default 20 MiB per file, larger files rejected with `AttachmentTooLargeError`), `image.max_dimension` (default 2000 px; larger images are downscaled preserving aspect ratio), `image.max_bytes` (default 5 MiB; images above it are re-encoded as JPEG quality 85) and `pdf.max_pages` (default 100; longer PDFs are attached with a page-range prompt). Normalized attachments SHALL be stored as managed artifacts referenced from the message part, and the original SHALL be kept when `attachments.keep_original` is true (default false). Models without the required input modality SHALL receive the placeholder defined by `tool-registry`.
+
+#### Scenario: Large screenshot downscaled
+- **WHEN** the user pastes a 4000×3000 PNG of 9 MiB
+- **THEN** the stored attachment is at most 2000 px on its longest side and under 5 MiB, and the model receives the downscaled image

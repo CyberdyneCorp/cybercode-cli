@@ -63,11 +63,15 @@ Skills are reusable instruction packages (`SKILL.md` plus supporting files) that
 - **THEN** no external-directory prompt is shown
 
 ### Requirement: Skills as user commands
-(P0) Each skill with `user-invocable` not false SHALL be invocable as `/<name> [args]`, which admits the skill body followed by `ARGUMENTS: <args>` as the user prompt. A skill with `disable-model-invocation: true` SHALL be omitted from `<available_skills>` and loadable only by the user.
+(P0) Each skill with `user-invocable` not false SHALL be invocable as `/<name> [args]`. The skill body SHALL be treated as a command template: `$ARGUMENTS` and `$1..$N` SHALL be substituted exactly as for custom commands, and when the body has no placeholders and arguments are non-empty, the arguments SHALL be appended after a blank line as `ARGUMENTS: <args>`. A skill with `disable-model-invocation: true` SHALL be omitted from `<available_skills>` and loadable only by the user.
 
 #### Scenario: User runs a skill
-- **WHEN** the user types `/release minor`
-- **THEN** the release skill body is submitted with arguments `minor`
+- **WHEN** the user types `/release minor` and the skill body contains `Cut a $1 release`
+- **THEN** the prompt submitted is the body with `Cut a minor release`
+
+#### Scenario: User runs a skill without placeholders
+- **WHEN** the user types `/release minor` and the body has no placeholders
+- **THEN** the body is submitted followed by a blank line and `ARGUMENTS: minor`
 
 ### Requirement: Custom command definitions
 (P0) The system SHALL load commands from `commands` config entries (`{ template, description?, agent?, model?, variant?, subtask?, argument_hint? }`) and from Markdown files matching `{command,commands}/**/*.md` in `~/.config/cyber`, every `.cyber/` directory, and the compat folders `.claude/commands`. Frontmatter SHALL supply fields and the body SHALL become the template. A command's name SHALL be its path relative to the commands folder without extension, using `/` for nesting.
@@ -126,7 +130,7 @@ Skills are reusable instruction packages (`SKILL.md` plus supporting files) that
 - **THEN** an `AGENTS.md` is generated through the normal permission flow
 
 ### Requirement: Bundled skills
-(P1) The system SHALL bundle skills `batch` (split a large change into 5-30 worktree-isolated subagents), `simplify` (review changed code for reuse and simplification), `security-review` (review pending changes for vulnerabilities) and `customize-cyber` (how to edit Cyber Code config, agents, skills, hooks and MCP). Each SHALL be replaceable by a discovered skill of the same name.
+(P1) The system SHALL bundle skills `review` (single-agent code review of a diff producing the structured findings defined by `vcs-integration`), `batch` (split a large change into 5-30 worktree-isolated subagents), `simplify` (review changed code for reuse and simplification), `security-review` (review pending changes for vulnerabilities) and `customize-cyber` (how to edit Cyber Code config, agents, skills, hooks and MCP). Each SHALL be replaceable by a discovered skill of the same name.
 
 #### Scenario: Override bundled skill
 - **WHEN** a project defines `.cyber/skills/simplify/SKILL.md`
@@ -145,3 +149,14 @@ Skills are reusable instruction packages (`SKILL.md` plus supporting files) that
 #### Scenario: Diagnose missing skill
 - **WHEN** the user runs `cyber skills list`
 - **THEN** skipped skills appear with their parse or duplicate diagnostics
+
+### Requirement: Path-triggered and forked skills
+(P1) `SKILL.md` frontmatter MAY declare `paths` (globs relative to the project root), `context` (`inline`, default, or `fork`) and `disallowed-tools`. When a file matching `paths` is first read, edited or patched in a Context Epoch, the skill's name and description SHALL be appended to the tool output in a `<system-reminder>` block suggesting `skill` be called. A skill with `context: fork` run as a user command or by the model SHALL execute in a forked background subagent (`agents-subagents` → Forked subagents) and return only its summary. `disallowed-tools` patterns SHALL be denied while the skill is active, taking precedence over `allowed-tools`.
+
+#### Scenario: Skill suggested by path
+- **WHEN** skill `migrations` declares `paths: ["db/migrations/**"]` and the model edits `db/migrations/0042.sql`
+- **THEN** the edit result ends with a reminder naming the `migrations` skill, once for the epoch
+
+#### Scenario: Forked skill
+- **WHEN** the user runs `/deep-audit` and that skill has `context: fork`
+- **THEN** a forked background subagent runs the skill and the parent receives its summary as a queued handback

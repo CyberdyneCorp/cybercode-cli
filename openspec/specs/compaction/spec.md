@@ -97,10 +97,10 @@ Compaction keeps long Sessions within a model's context window by replacing olde
 - **THEN** the completed event records tokens before and after so clients can show the savings
 
 ### Requirement: Compaction hooks
-(P1) The system SHALL run `PreCompact` hooks before the summary request (allowing them to add instructions or block an automatic compaction) and `PostCompact` hooks after completion, as defined by the hooks capability.
+(P1) The system SHALL run `PreCompact` hooks before the summary request and `PostCompact` hooks after completion, as defined by the hooks capability. A `PreCompact` decision's `additional_context` SHALL be appended to the summary instructions, and a `deny` SHALL block an automatic compaction (a manual `/compact` reports the reason and stops).
 
 #### Scenario: Hook adds context
-- **WHEN** a `PreCompact` hook returns `additional_instructions: "keep the TODO list"`
+- **WHEN** a `PreCompact` hook returns `additional_context: "keep the TODO list"`
 - **THEN** the summary request includes that text
 
 ### Requirement: Tool output pruning
@@ -130,3 +130,10 @@ Compaction keeps long Sessions within a model's context window by replacing olde
 #### Scenario: Recover an old decision
 - **WHEN** the agent searches for a decision omitted from the current summary
 - **THEN** it receives the original excerpt and source ID from its own Session
+
+### Requirement: Native provider compaction
+(P1) `compaction.type` SHALL accept `summary` (default behavior of this spec), `native` and `auto` (default). With `auto` or `native`, when the Turn model's adapter advertises `capabilities.native_compaction` (for example OpenAI Responses server-side context compaction with an encrypted checkpoint), compaction SHALL call the provider's compaction instead of generating a summary, store the opaque checkpoint on the compaction record, and still start a new Context Epoch and record `session.compaction.completed.1` with `type: "native"`. The durable task-state record SHALL be maintained regardless of type. A later Turn on a model without native compaction SHALL fall back to summary compaction of the stored history. `native` on a model without the capability SHALL fail the compaction with `NativeCompactionUnavailable`.
+
+#### Scenario: Responses API compaction
+- **WHEN** a Session on an OpenAI Responses model with native compaction crosses the threshold with `compaction.type: auto`
+- **THEN** the provider compacts the context, no summary model call is made, and the completed event records `type: "native"` and the token savings

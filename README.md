@@ -5,9 +5,10 @@
 This folder is the **OpenSpec** for the product: `openspec/specs/<capability>/spec.md` is the source of truth. Delivery order is in [`ROADMAP.md`](ROADMAP.md). Architecture decisions are in [`docs/decisions`](docs/decisions/0001-storage-architecture.md). This repository specifies a target product; runtime implementation is pending.
 
 ```bash
-cd new_spec
 openspec list --specs
 openspec validate --specs --strict
+python3 scripts/spec_lint.py      # cross-spec registries: commands, routes, prefixes, phases
+python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
 ```
 
 ---
@@ -24,7 +25,7 @@ openspec validate --specs --strict
 ## Architecture
 
 ```
- clients:  TUI · cyber exec · IDE (ACP / VS Code) · Web · Mobile · SDK (TS/Rust) · GitHub App
+ clients:  TUI · cyber exec · Web (local, Relay, desktop) · IDE (ACP / VS Code) · Mobile · SDK (TS/Rust/Py) · GitHub App
               │  HTTP + SSE + WebSocket (OpenAPI)          ▲ remote clients via Relay (E2E encrypted)
  ┌────────────▼──────────────────────────────────────────────────────────────────────────────┐
  │ cyber server (Rust, one per user; `cyber service`)                                         │
@@ -70,16 +71,17 @@ Storage rationale and alternatives: [Storage architecture](docs/decisions/0001-s
 | **Drain** | The process-local loop that runs Turns for a Session until nothing is eligible. Only one Drain runs per Session. |
 | **Safe Boundary** | The point between Turns where input, context updates, messages and goal checks are applied. |
 | **Context Epoch** | A stable, cacheable system-prompt baseline. Changes arrive as Mid-Conversation System Messages until the next compaction. |
-| **Agent** | A named profile (system prompt, model, mode, tools, permissions, step limit). **Subagent**: an Agent run in a child Session spawned by a tool. |
+| **Agent** | A named profile (system prompt, model, mode, tools, permissions, step limit). Built-ins: `build` (primary), `explore` and `general` (subagents). **Subagent**: an Agent run in a child Session spawned by a tool. |
 | **Workflow** | A JS/TS script, run by the Workflow runtime, that orchestrates many subagents. **Workflow Run**: one execution of it, resumable. |
 | **Goal** | A completion condition attached to a Session and checked by an evaluator after each Turn. A Session has one active Goal plus an ordered goal queue. |
 | **Loop** | A prompt re-run on a fixed interval or self-paced inside a Session. |
 | **Routine** | A saved prompt + repos + triggers (schedule / API / GitHub / webhook) executed on a Runner. |
 | **Runner** | A machine that executes Sessions for a remote client: the user's own machine, a self-hosted runner, or Cyber Cloud. |
 | **Relay** | The rendezvous service (Cyber Cloud or self-hosted) that connects remote Devices to a local server. It carries end-to-end encrypted traffic only. |
+| **Peer** | Another `cyber` server the user controls, reached directly over its API (LAN, VPN, SSH tunnel) without the Relay or an account. |
 | **Device** | A client installation (phone, browser, other machine) paired to a Cyber Account. |
 | **Channel** | An inbound event source (webhook, chat bridge, CI, MCP channel server) that admits messages into a running Session. |
-| **Mode** | A permission mode: `default`, `accept-edits`, `plan`, `auto`, `dont-ask`, `bypass`. |
+| **Mode** | A permission mode: `default`, `accept-edits`, `plan`, `auto`, `dont-ask`, `bypass`. Planning is a Mode, not an agent. |
 | **Cyber Account** | An identity from CyberdyneAuth. It carries `sub`, `orgs`, `entitlements` and `roles`. |
 
 ## Capability map
@@ -93,7 +95,7 @@ Storage rationale and alternatives: [Storage architecture](docs/decisions/0001-s
 | Autonomy & orchestration | `workflows`, `goals`, `loops-scheduling`, `background-tasks`, `agent-teams` |
 | Connectivity | `server-api`, `client-sdk`, `cross-session-messaging`, `remote-control`, `runners-cloud`, `routines`, `channels` |
 | Extensibility | `hooks`, `plugins-marketplace`, `mcp`, `skills-commands` |
-| Surfaces | `tui`, `exec-mode`, `editor-integration`, `vcs-integration`, `session-sharing` |
+| Surfaces | `tui`, `web-client`, `exec-mode`, `editor-integration`, `vcs-integration`, `session-sharing` |
 | Operations | `harness-evaluation`, `browser-verification`, `observability-costs`, `org-policy`, `compat-import` |
 
 ## Product focus

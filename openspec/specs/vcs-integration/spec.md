@@ -13,18 +13,18 @@ VCS integration connects Cyber Code to git and code-hosting platforms. It provid
 - **THEN** `GET /api/v1/vcs/diff` lists `src/new.rs` with status `added`
 
 ### Requirement: Local review command
-(P1) The system SHALL provide `/review [target]` and `cyber review [target]`. The target is uncommitted changes (default), `<base>..<head>`, a commit SHA, or `pr <number>`. The review SHALL run the bundled `review` workflow (see `workflows`), which checks correctness, security, tests and maintainability in parallel and verifies each finding. Results SHALL be reported as structured findings with `file`, `line`, `severity` (`critical`, `high`, `medium`, `low`), `summary` and `failure_scenario`.
+(P1) The system SHALL provide `/review [target]` and `cyber review [target]`. The target is uncommitted changes (default), `<base>..<head>`, a commit SHA, or `pr <number>`. In P1 the review SHALL run the bundled `review` skill (`skills-commands`) in a read-only `reviewer` subagent. From P2 it SHALL instead run the bundled `review` workflow (`workflows`), which checks correctness, security, tests and maintainability in parallel and verifies each finding before reporting it. In both cases results SHALL be reported as structured findings with `file`, `line`, `severity` (`critical`, `high`, `medium`, `low`), `summary` and `failure_scenario`.
 
 #### Scenario: Review uncommitted changes
 - **WHEN** the user runs `/review` with 4 modified files
-- **THEN** the review workflow runs over those 4 files and the TUI shows the verified findings, most severe first
+- **THEN** the review runs over those 4 files and the TUI shows the findings, most severe first
 
 #### Scenario: Unverified findings dropped
-- **WHEN** a reviewer agent reports a finding that the verification agent rejects
+- **WHEN** (P2) the review workflow's verification agent rejects a reviewer finding
 - **THEN** the finding is excluded from the final list and counted in `dropped`
 
 ### Requirement: Commit and PR text generation
-(P1) The system SHALL provide `cyber commit-msg` and a `/commit` command that generate a conventional commit message from the staged diff using the small model. It SHALL provide `/pr-description` to draft a PR title and body from `base..HEAD`. A co-author trailer SHALL be appended only when `git.co_author` is configured (default: none, so commits are attributed to the user alone).
+(P1) The system SHALL provide `cyber git commit-msg` and a `/commit` command that generate a conventional commit message from the staged diff using the small model. It SHALL provide `/pr-description` to draft a PR title and body from `base..HEAD`. A co-author trailer SHALL be appended only when `git.co_author` is configured (default: none, so commits are attributed to the user alone).
 
 #### Scenario: No co-author by default
 - **WHEN** the agent commits with default config

@@ -51,11 +51,15 @@ Org-policy files SHALL NOT be writable by the user. A policy file owned by the c
 - **THEN** `cyber models` does not list preview models, and selecting one fails
 
 ### Requirement: Permission mode ceiling
-(P3) Policy SHALL support `modes.max`, ordered from least to most permissive: `plan` < `default` < `accept-edits` < `dont-ask` < `auto` < `bypass`. Also `modes.disable` (a list) and `modes.default`. A requested mode above the ceiling SHALL be clamped to the ceiling. `bypass` SHALL be disabled by default in any policy unless explicitly allowed.
+(P3) Policy SHALL support `modes.max`, ordered by how much can execute without a human decision, least to most: `plan` < `default` < `dont-ask` < `accept-edits` < `auto` < `bypass` (`dont-ask` runs only rule-allowed actions; `accept-edits` additionally runs edits). Also `modes.disable` (a list) and `modes.default`. A requested mode above the ceiling SHALL be clamped to the ceiling. `bypass` SHALL be disabled by default in any policy unless explicitly allowed.
 
 #### Scenario: Auto mode disabled
 - **WHEN** policy sets `modes.disable = ["auto"]`
 - **THEN** the mode picker omits `auto`, and `--mode auto` falls back to `default` with a warning
+
+#### Scenario: CI mode under an accept-edits ceiling
+- **WHEN** policy sets `modes.max = "accept-edits"` and CI runs `cyber exec` in its default `dont-ask` Mode
+- **THEN** the run proceeds in `dont-ask`, because it is below the ceiling
 
 ### Requirement: Permission rules enforced by policy
 (P3) Policy SHALL support `permissions.deny` and `permissions.ask` rule arrays with the same rule syntax as user permissions. These rules SHALL be evaluated after all user, project, agent and session rules, so a policy `deny` is final and a policy `ask` cannot be downgraded to `allow` by saved approvals.
@@ -98,11 +102,15 @@ Disabled features SHALL be hidden from the TUI and fail with `FeatureDisabledByP
 - **THEN** `/share` creates links visible only to members of the active org, and `--public` fails
 
 ### Requirement: Spend limits
-(P3) Policy SHALL support `spend.limit_usd` per `day`, `week` or `month`, per user and per project. Spend SHALL be computed from recorded usage costs across all local Sessions, Workflow Runs and Loops. At 80% of a limit the user SHALL see a warning. At 100%, new Turns SHALL be refused with `SpendLimitReachedError`, except for models with zero configured cost.
+(P3) Policy SHALL support `spend.limit_usd` per `day`, `week` or `month`, per user and per project. Spend SHALL be computed from recorded usage costs across all local Sessions, Workflow Runs and Loops. Usage recorded with `cost: null` (unpriced) SHALL count as zero toward spend and SHALL be reported separately as unpriced tokens; `spend.block_unpriced: true` SHALL refuse Turns on unpriced models while any spend limit is configured, with `UnpricedModelBlockedError`. At 80% of a limit the user SHALL see a warning. At 100%, new Turns SHALL be refused with `SpendLimitReachedError`, except for models with an explicitly configured zero cost.
 
 #### Scenario: Daily limit reached
 - **WHEN** policy sets `spend.limit_usd.day = 20` and today's recorded cost reaches $20.00
 - **THEN** the next Turn fails with `SpendLimitReachedError` and the Drain stops; local zero-cost models remain usable
+
+#### Scenario: Unpriced model under a hard policy
+- **WHEN** policy sets `spend.block_unpriced = true` and the user selects a local model with `cost: null`
+- **THEN** the Turn is refused with `UnpricedModelBlockedError` and a hint to configure a price for the model
 
 ### Requirement: Telemetry policy
 (P3) Policy SHALL be able to force telemetry `off`, or force `on` with an OpenTelemetry endpoint and headers, and to require prompt content redaction. A user setting SHALL NOT enable content capture when policy requires redaction.
@@ -124,3 +132,10 @@ Disabled features SHALL be hidden from the TUI and fail with `FeatureDisabledByP
 #### Scenario: MCP server blocked mid-session
 - **WHEN** an org admin adds `mcp.deny = ["notion"]` while a session uses the `notion` server
 - **THEN** the server is stopped within 10 seconds, and its tools are absent from the next Turn
+
+### Requirement: Feature and effort ceilings
+(P3) Policy SHALL support `features.lock` (a map of feature name → value that users cannot change, reported by `cyber features list` with source `policy`) and `models.max_variant` (the highest reasoning variant members may select, ordered `minimal < low < medium < high < xhigh < max`; a higher request is clamped with a notice). Policy SHALL also support `plugins.deny_capabilities` (a list of plugin capabilities such as `provider.intercept` that may not be granted).
+
+#### Scenario: Locked feature
+- **WHEN** policy sets `features.lock = { "teams": false }` and a user sets `features.teams: true`
+- **THEN** teams stay disabled and `cyber features list` shows `teams off (policy: org acme)`

@@ -34,17 +34,29 @@ Decides, for every tool action, whether it runs automatically (`allow`), needs a
 - **THEN** fetching `https://wiki.internal.example.com` is denied with reason `org policy`
 
 ### Requirement: Default rules
-(P0) Without configuration the system SHALL apply: `* ask`; `read`, `glob`, `grep` and `list` allow within the Location; `edit`, `bash` and external mutations ask; `external_directory ask` except the tool-output, temp, skill and worktree directories; `read` and `edit` `ask` for `*.env` and `*.env.*` but `allow` for `*.env.example`; `question`, `plan_enter`, `plan_exit` deny except for the `build` and `plan` agents; `doom_loop ask`; `message.send ask` for cross-machine targets; `workflow.run ask`; `remote.attach ask`.
+(P0) Without configuration the system SHALL apply: `* ask`; `read`, `glob`, `grep` and `list` allow within the Location; `edit`, `bash` and external mutations ask; `external_directory ask` except the tool-output, jobs, temp, skill and worktree directories; `read` and `edit` `ask` for `*.env` and `*.env.*` but `allow` for `*.env.example`; `question`, `plan_enter` and `plan_exit` allow for primary agents (`mode` `primary` or `all`) and deny for subagent-only and hidden agents; `doom_loop ask`; `message.send ask` for cross-machine targets; `workflow.run ask`; `remote.attach ask`.
 
 #### Scenario: Reading .env asks
 - **WHEN** the model reads `.env.local` with default rules
 - **THEN** a permission request is raised
 
+#### Scenario: Subagent cannot ask questions
+- **WHEN** an `explore` subagent calls `question`
+- **THEN** the call is denied and the subagent is told to return its best answer instead
+
 ### Requirement: Protected paths
-(P0) The system SHALL treat `.git/`, `.cyber/`, `cyber.json(c)`, shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, `~/.config/fish/config.fish`), `~/.ssh/`, `~/.gnupg/`, `~/.aws/credentials` and `~/.config/cyber/` as protected for mutation. Mutating a protected path SHALL require `ask` in every Mode, including `bypass` and `auto`, unless an explicit config rule names the exact path with `allow`.
+(P0) The system SHALL treat these as protected for mutation: `.git/` (the repository metadata directory, not the working tree); the configuration documents `cyber.json`, `cyber.jsonc`, `.cyber/cyber.jsonc`, `.cyber/cyber.local.jsonc`, `.cyber/hooks.jsonc`, `.cyber/mcp.json`, `.cyber/plugins.json`, `.cyber/plugins.local.json`, `.cyber/plugins.lock` and `.cyber/plugins/`; shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, `~/.config/fish/config.fish`); `~/.ssh/`, `~/.gnupg/`, `~/.aws/credentials` and `~/.config/cyber/`. The `.cyber/` content directories `plans/`, `workflows/`, `agents/`, `skills/`, `commands/`, `teams/`, `output-styles/` and files `.cyber/import-report-*.md` SHALL NOT be protected; they follow ordinary `edit` rules so the system can write plans, saved workflows, generated agents and recorded skills. Mutating a protected path SHALL require `ask` in every Mode, including `bypass` and `auto`, unless an explicit config rule names the exact path with `allow`. The `sandbox` capability SHALL enforce the same partition for OS-level writes.
 
 #### Scenario: Bypass still asks for .ssh
 - **WHEN** a Session in `bypass` mode attempts to write `~/.ssh/config`
+- **THEN** a permission request is raised
+
+#### Scenario: Plan file is ordinary content
+- **WHEN** a `plan`-mode Session writes `.cyber/plans/auth-refactor.md`
+- **THEN** no protected-path prompt is raised and the write succeeds under plan-mode rules
+
+#### Scenario: Hook definition stays protected
+- **WHEN** an `accept-edits` Session edits `.cyber/hooks.jsonc`
 - **THEN** a permission request is raised
 
 ### Requirement: Critical-path removal guard
@@ -69,7 +81,7 @@ Decides, for every tool action, whether it runs automatically (`allow`), needs a
 - **THEN** `npm test -- --watch` runs without prompting in any Session of that checkout
 
 ### Requirement: Permission modes
-(P0) The system SHALL support Modes `default` and `plan` in P0, adding `accept-edits`, `auto`, `dont-ask` and `bypass` in P1, selectable per Session (`--mode`, `mode` config, agent `mode`, `POST /api/v1/sessions/:id/mode`) and cycled with Shift+Tab in the TUI through `default → accept-edits → plan → auto` (`bypass` and `dont-ask` only via flag or config); P0 cycles `default → plan` only. A Mode change SHALL apply at the next Turn and publish `session.mode.switched.1`, as specified by session-runtime. The UI SHALL show a requested change as pending until effective; interrupt SHALL be offered when immediate cancellation is needed.
+(P0) The system SHALL support Modes `default` and `plan` in P0, adding `accept-edits`, `auto`, `dont-ask` and `bypass` in P1, selectable per Session (`--mode`, `mode` config, agent `permission_mode`, `/mode <name>`, `POST /api/v1/sessions/:id/mode`). The TUI SHALL cycle Modes with Shift+Tab through `default → accept-edits → plan → auto → default` on P1 builds (`default → plan → default` on P0 builds); `bypass` and `dont-ask` SHALL be reachable only through `/mode`, flags or config. A Mode change SHALL apply at the next Turn and publish `session.mode.switched.1`, as specified by session-runtime. The UI SHALL show a requested change as pending until effective; interrupt SHALL be offered when immediate cancellation is needed.
 
 #### Scenario: Cycling modes
 - **WHEN** the user presses Shift+Tab twice from `default` on a P1 build
@@ -83,11 +95,19 @@ Decides, for every tool action, whether it runs automatically (`allow`), needs a
 - **THEN** no prompt is shown
 
 ### Requirement: plan mode
-(P0) In `plan`, the system SHALL allow only tools annotated `read_only`, plus writing the plan file `<location>/.cyber/plans/<session-slug>.md`, and SHALL deny every other mutating action. Exiting plan mode SHALL go through `plan_exit`, which presents the plan for approval. Approval SHALL switch the Session to the Mode chosen by the user (`default`, `accept-edits` or `auto`).
+(P0) In `plan`, the system SHALL allow only tools annotated `read_only`, plus writing the plan file `<location>/.cyber/plans/<session-slug>.md`, and SHALL deny every other mutating action with `Plan mode is read-only. Present the plan with plan_exit.` The system SHALL provide the tools `plan_enter {}` (switch the Session to `plan` at the next Turn) and `plan_exit { summary }` (present the plan file for approval). `plan_exit` SHALL route a question to the user with the choices `Approve and build (default)`, `Approve with accept-edits`, `Approve with auto` (only when `auto` is available) and `Request changes`. An approval SHALL switch the Mode to the chosen one at the next Turn; `Request changes` SHALL return the user's feedback as the tool result and keep `plan`. In non-interactive Sessions both tools SHALL be denied. Planning is a Mode, not an agent: there is no built-in `plan` agent.
 
 #### Scenario: Write blocked in plan mode
 - **WHEN** a `plan` Session calls `edit` on `src/lib.rs`
 - **THEN** the call is denied with `Plan mode is read-only. Present the plan with plan_exit.`
+
+#### Scenario: Plan approved with accept-edits
+- **WHEN** the model calls `plan_exit` and the user chooses `Approve with accept-edits`
+- **THEN** the Session's Mode becomes `accept-edits` at the next Turn and `session.mode.switched.1` is published
+
+#### Scenario: Changes requested
+- **WHEN** the user chooses `Request changes` and types `split the migration into two steps`
+- **THEN** the tool returns that feedback to the model and the Session stays in `plan`
 
 ### Requirement: auto mode classifier
 (P1) In `auto`, every request that would be `ask` SHALL be reviewed by a classifier using `model_roles.evaluator`, else `small_model`. The classifier SHALL receive the tool call, the last 20 messages, the Location and the user's stated boundaries. It SHALL return `allow` or `block` with a reason. The system SHALL block irreversible or out-of-scope actions (force pushes, deploys, deletes outside the Location, credential access, data exfiltration to non-allowlisted hosts). After 3 consecutive blocks in one Drain, or when the classifier is unavailable, the system SHALL fall back to `ask`, or to `deny` when no user is attached. Each decision SHALL be recorded as `permission.auto_decided.1` with the reason.
@@ -135,9 +155,38 @@ Decides, for every tool action, whether it runs automatically (`allow`), needs a
 - **WHEN** a routine running in `default` mode needs approval
 - **THEN** the request is denied, logged, and the run continues
 
-### Requirement: Subagent permission inheritance
-(P2) A subagent Session SHALL inherit the parent's `deny` rules, `external_directory` rules, org policy and Mode ceiling (a child SHALL NOT run in a more permissive Mode than its parent unless the workflow or agent definition sets it explicitly and the parent Mode is `auto` or `bypass`). Prompts from subagents SHALL be surfaced in the parent's client labeled with the subagent name.
+### Requirement: Session ruleset API
+(P0) The Session ruleset layer SHALL be settable by clients: `PUT /api/v1/sessions/:id/permissions/rules` with `{ rules: [{ action, resource, effect }] }` SHALL replace the Session's rules, `GET` SHALL return them with the effective merged ruleset, and the SDK SHALL expose `session.permissions.set(rules)` and `.get()`. `cyber exec --allow <action[:resource]>` and `--deny <action[:resource]>` SHALL populate this layer for the new Session. Session rules SHALL be recorded as a durable `session.permissions.updated.1` event and apply at the next Safe Boundary. They SHALL NOT widen explicit user/global denies, plan-mode restrictions, protected paths, workspace trust, sandbox boundaries or org policy, which remain ceilings.
 
-#### Scenario: Child cannot escalate mode
-- **WHEN** a `default`-mode Session spawns a subagent whose definition says `mode: bypass`
-- **THEN** the subagent runs in `default`
+#### Scenario: Script narrows a session
+- **WHEN** an SDK client calls `session.permissions.set([{ action: "bash", resource: "*", effect: "deny" }])` on a running Session
+- **THEN** from the next Safe Boundary every `bash` call is denied and the event is recorded
+
+#### Scenario: Session rule cannot beat an org deny
+- **WHEN** a Session rule allows `webfetch` for `*` and org policy denies `webfetch` for `*.internal.example.com`
+- **THEN** fetching an internal host is still denied with reason `org policy`
+
+### Requirement: Auto-mode configuration and override
+(P1) `permissions.auto_mode` SHALL accept `rules.always_block` and `rules.always_allow` (ordered `{ action, resource }` patterns applied before the classifier), `policy` (text appended to the classifier prompt describing the user's boundaries), `classify_read_only` (default false: read-only tools skip the classifier) and `fallback` (`ask` default, or `deny`). `/approve` SHALL re-issue the most recent call blocked by the classifier once, after the user confirms it in a permission prompt showing the classifier's reason; `cyber permissions auto show|reset` SHALL print or clear learned per-checkout statistics. Org policy MAY set the same keys as ceilings (`always_block` unions, `always_allow` intersects).
+
+#### Scenario: Always block a deploy command
+- **WHEN** `permissions.auto_mode.rules.always_block` contains `{ action: "bash", resource: "kubectl apply *" }`
+- **THEN** that command is blocked in `auto` without consulting the classifier
+
+#### Scenario: Override one block
+- **WHEN** the classifier blocked `git push origin feature/x` and the user runs `/approve`
+- **THEN** the user sees the command and the classifier's reason, and on confirmation the push runs once
+
+### Requirement: Rule dry run
+(P1) `cyber permissions test [--agent <a>] [--mode <m>] (--tool <name> --resource <r> | -- <shell command>)` SHALL evaluate the effective ruleset exactly as a Session would (including bash command splitting, protected paths, saved approvals, Session Mode and org policy) and print the resulting effect, the matching rule and its source layer for each evaluated resource, without creating a Session or running anything. `GET /api/v1/permissions/test` SHALL expose the same evaluation.
+
+#### Scenario: Explain why a command would prompt
+- **WHEN** the user runs `cyber permissions test -- "npm test && git push"`
+- **THEN** the output lists `npm test → allow (saved approval, project)` and `git push → ask (default rules)`
+
+### Requirement: Additional working directories
+(P0) `--add-dir <path>` (repeatable), `/add-dir <path>` and `POST /api/v1/sessions/:id/directories` SHALL add a directory to the Session: it SHALL be allowed for `external_directory` reads and edits under ordinary tool rules, added to the sandbox writable roots, and its instruction files loaded as a Context Source. Additions SHALL be recorded as durable `session.directory.added.1` events, fire the `DirectoryAdded` hook, and apply at the next Safe Boundary. Protected paths inside an added directory stay protected.
+
+#### Scenario: Shared library next to the repo
+- **WHEN** the user runs `cyber --add-dir ../shared-lib`
+- **THEN** reads and edits under `../shared-lib` need no external-directory prompt and its `AGENTS.md` is in the context

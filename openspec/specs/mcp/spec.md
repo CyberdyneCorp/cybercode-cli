@@ -66,7 +66,7 @@ Cyber Code is a Model Context Protocol client, so tools, resources and prompts f
 - **THEN** it runs without prompting
 
 ### Requirement: Tool search and deferred loading
-(P1) When the combined schema size of MCP tools exceeds `mcp.tool_search_threshold` (default 10% of the model context window, estimated at 4 characters per token), the system SHALL defer MCP tool definitions. In that case it SHALL expose only their names in the system context plus a `tool_search` tool that returns matching full definitions and loads them into the following Turns.
+(P1) When the materialized tool definitions exceed `tool_output.deferred_threshold_tokens` (defined by `tool-registry`), the system SHALL defer MCP tool definitions. In that case it SHALL expose only their names and one-line descriptions plus the `tool_search` tool that returns matching full definitions and loads them into the following Turns.
 
 #### Scenario: Many tools deferred
 - **WHEN** 300 MCP tools exceed the threshold
@@ -152,3 +152,17 @@ Cyber Code is a Model Context Protocol client, so tools, resources and prompts f
 #### Scenario: Another agent drives Cyber Code
 - **WHEN** an external MCP client calls `cyber_prompt` with `{ directory: "/repo", prompt: "fix the failing test" }`
 - **THEN** a session is created or reused in `/repo`, the prompt runs, and the final assistant text is returned as tool content
+
+### Requirement: Server options
+(P1) A server entry MAY set `required: true` (the Session's first Turn SHALL wait up to the connect `timeout` for it and fail with `McpRequiredError` naming the server if it is not connected), `headers_command` (a shell command, run outside the sandbox and outside project trust until approved, whose JSON stdout supplies `headers`, refreshed every `headers_refresh_seconds`, default 3600, and redacted from logs) and `output_token_limit` (per-server cap on model-visible tool output, default the global `tool_output` budget). `cyber mcp get <name>` SHALL display the resolved options with header values redacted.
+
+#### Scenario: Required server missing
+- **WHEN** server `db` has `required: true` and fails to connect within 30 seconds
+- **THEN** the first Turn fails with `McpRequiredError: db` and the prompt stays retryable in the inbox
+
+### Requirement: WebSocket transport
+(P2) A remote entry whose `url` uses `ws://` or `wss://` SHALL connect over the MCP WebSocket transport, with the same OAuth, status, timeout and reconnection rules as Streamable HTTP. `ws://` to a non-loopback host SHALL be refused unless `insecure: true` is set.
+
+#### Scenario: WebSocket server
+- **WHEN** config defines `{ type: "remote", url: "wss://mcp.example.com/ws" }`
+- **THEN** the server connects over WebSocket and its tools are registered as `mcp__<name>__<tool>`

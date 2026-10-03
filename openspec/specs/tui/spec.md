@@ -6,19 +6,22 @@ The terminal UI is the primary interactive client of Cyber Code: a Rust (ratatui
 ## Requirements
 
 ### Requirement: Launch and server transport
-(P0) The system SHALL start the TUI with `cyber [project]`, resolving `project` relative to the current directory (default: the current directory). By default it SHALL embed the server in-process through an in-memory transport. It SHALL connect to the registered background server when `cyber service` is running, and to a remote server with `cyber attach <url>`. Every transport SHALL use only the public `/api/v1` routes and SSE/WebSocket event streams.
+(P0) The system SHALL start the TUI with `cyber [project]`, resolving `project` relative to the current directory (default: the current directory). By default it SHALL connect to the registered background server, starting it as `cyber service start` does when none is registered. `--embedded` SHALL run a private in-process server with no listener on a private database, for tests and single-process offline use, and SHALL never open the shared database for writing. `cyber attach <url>` SHALL connect to a remote server. Every transport SHALL use only the public `/api/v1` routes and SSE/WebSocket event streams.
 
 #### Scenario: Default in-process launch
+- **WHEN** a user runs `cyber --embedded --ephemeral` in `/repo`
+- **THEN** the TUI starts an in-process server for Location `/repo` without opening a TCP listener and writes nothing to the shared database
+
+#### Scenario: First launch starts the service
 - **WHEN** a user runs `cyber` in `/repo` with no background service registered
-- **THEN** the TUI starts an in-process server for Location `/repo` without opening a TCP listener
-- **AND** the TUI renders the home screen within 500 ms of the server reporting ready
+- **THEN** the TUI starts the background server, connects to it for Location `/repo`, and renders the home screen within 500 ms of the server reporting ready
 
 #### Scenario: Attach to the background service
-- **WHEN** `cyber service status` reports `running http://127.0.0.1:4711` and the user runs `cyber`
-- **THEN** the TUI connects to that server with the stored service credentials instead of starting an in-process server
+- **WHEN** `cyber service status` reports `running http://127.0.0.1:4747` and the user runs `cyber`
+- **THEN** the TUI connects to that server with the stored service credentials instead of starting a new one
 
 #### Scenario: Attach to a remote server
-- **WHEN** a user runs `cyber attach https://box.example:4711 --dir /srv/repo`
+- **WHEN** a user runs `cyber attach https://box.example:4747 --cwd /srv/repo`
 - **THEN** the TUI authenticates with the configured credentials and opens Location `/srv/repo` on the remote server
 
 ### Requirement: Launch flags
@@ -95,7 +98,7 @@ A file mention SHALL accept a line range suffix `#L10` or `#L10-40`, and only th
 
 #### Scenario: Agent mention invokes a subagent
 - **WHEN** the user submits `@explore find all callers of parse_token`
-- **THEN** the message is routed to the `explore` subagent as described in `agents-subagents`, without a `task` permission prompt
+- **THEN** the message is routed to the `explore` subagent as described in `agents-subagents`, without an `agent` permission prompt
 
 ### Requirement: Shell, slash and memory input modes
 (P0) The system SHALL treat input starting with `!` as a user shell command. It SHALL run in the Location with the configured shell, and its output SHALL be recorded in the Session as user-provided context. Input starting with `/` SHALL open slash-command autocomplete over built-in TUI commands, custom commands, skills and MCP prompts (fuzzy, maximum 12 results). (P1) Input starting with `#` SHALL offer to save the remaining text as a memory entry in project or user scope, as defined in `memory`.
@@ -180,14 +183,14 @@ Esc SHALL dismiss the request, which halts the Drain as defined in `session-runt
 - **THEN** the TUI shows two tabs plus a Review tab and sends both answers together on confirm
 
 ### Requirement: Permission mode indicator and cycling
-(P1) The system SHALL always show the Session's permission mode in the footer. Shift+Tab SHALL cycle `default → accept-edits → plan → auto → default`. `auto` SHALL be included only when an auto classifier model is configured. `bypass` SHALL be selectable only from `/mode bypass`, and only when it is not disabled by org policy, with an explicit confirmation. Mode changes SHALL be recorded as durable Session events.
+(P1) The system SHALL always show the Session's permission mode in the footer. Shift+Tab SHALL cycle `default → accept-edits → plan → auto → default` as defined by `permissions-modes`. `bypass` and `dont-ask` SHALL be selectable only from `/mode <name>`, flags or config, and `bypass` only when it is not disabled by org policy, with an explicit confirmation. Mode changes SHALL be recorded as durable Session events.
 
 #### Scenario: Cycle into plan mode
 - **WHEN** the Session is in `accept-edits` and the user presses Shift+Tab
 - **THEN** the mode becomes `plan`, the footer shows `⏸ plan` and the next Turn uses plan-mode rules
 
 #### Scenario: Bypass blocked by policy
-- **WHEN** org policy sets `permissions.disable_bypass: true` and the user runs `/mode bypass`
+- **WHEN** org policy lists `bypass` in `modes.disable` and the user runs `/mode bypass`
 - **THEN** the TUI shows `bypass mode is disabled by your organization` and the mode is unchanged
 
 ### Requirement: Model, variant and agent selection
@@ -198,8 +201,8 @@ Esc SHALL dismiss the request, which halts the Drain as defined in `session-runt
 - **THEN** the picker shows it dimmed with `not connected`, and selecting it opens the connect dialog instead of switching
 
 #### Scenario: Agent cycling
-- **WHEN** the user presses Tab in the composer with agents `build` and `plan` available
-- **THEN** the active agent switches from `build` to `plan` and the footer shows the agent's color and name
+- **WHEN** the user presses Tab in the composer with primary agents `build` and `docs` available
+- **THEN** the active agent switches from `build` to `docs` and the footer shows the agent's color and name
 
 ### Requirement: Session picker and actions
 (P0) The system SHALL provide a Session picker (`/resume`, Ctrl+X L). It SHALL list root Sessions of the Location newest first, with fuzzy search over name and title and a preview of the last message. Child and forked Sessions SHALL show as an expandable tree. From the picker or the command palette the user SHALL be able to rename, fork (from the latest message or a chosen one), archive, delete (with confirmation), and export a Session.
@@ -346,14 +349,14 @@ The system SHALL copy selections with OSC 52 when the native clipboard is unavai
 - **THEN** the toast appears and the Drain continues uninterrupted
 
 ### Requirement: Remote control indicator and pairing
-(P3) The system SHALL show a `⇄ remote` footer indicator, with the count of connected Devices, while the Session is exposed through the Relay. `/remote-control` SHALL toggle exposure. When pairing a new Device it SHALL render a QR code and a short pairing code in the terminal, as defined in `remote-control`. Messages sent from a remote Device SHALL appear in the transcript labelled with the Device name.
+(P3) The system SHALL show a `⇄ remote` footer indicator, with the count of connected Devices, while the Session is exposed through the Relay. `/remote` SHALL toggle exposure, as defined in `remote-control`. When pairing a new Device it SHALL render a QR code and a short pairing code in the terminal. Messages sent from a remote Device SHALL appear in the transcript labelled with the Device name.
 
 #### Scenario: Pair a phone
-- **WHEN** the user runs `/remote-control` while signed in to a Cyber Account
+- **WHEN** the user runs `/remote` while signed in to a Cyber Account and then `cyber remote pair`
 - **THEN** the TUI shows a QR code and `Pairing code: 7K4-Q9M`, and after the phone pairs the footer shows `⇄ remote (1)`
 
 #### Scenario: Not signed in
-- **WHEN** the user runs `/remote-control` without a Cyber Account
+- **WHEN** the user runs `/remote` without a Cyber Account
 - **THEN** the TUI offers `Sign in with cyber login to use remote control` and changes nothing
 
 ### Requirement: Mod panes and voice input
@@ -362,3 +365,14 @@ The system SHALL copy selections with OSC 52 when the native clipboard is unavai
 #### Scenario: Dictation inserts text
 - **WHEN** the user holds `<leader>v`, says `run the migration tests` and releases
 - **THEN** the composer contains `run the migration tests` and nothing is sent until Enter
+
+### Requirement: Reasoning display and effort command
+(P1) `tui.reasoning` SHALL accept `collapsed` (default), `hidden` and `expanded`, and Ctrl+T SHALL still toggle per Session. `/effort <minimal|low|medium|high|xhigh|max>` SHALL switch the Session model's reasoning variant (equivalent to `/model <current>#<level>`), listing only variants the model supports and respecting the org ceiling `models.max_variant` (`org-policy`). The footer `variant` field SHALL reflect the change at the next Turn.
+
+#### Scenario: Raise effort for a hard problem
+- **WHEN** the user runs `/effort xhigh` on a model that supports it
+- **THEN** the next Turn uses the `xhigh` variant and the footer shows it
+
+#### Scenario: Effort capped by policy
+- **WHEN** org policy sets `models.max_variant: "high"` and the user runs `/effort max`
+- **THEN** the TUI shows `effort "max" exceeds org ceiling "high"` and keeps the current variant

@@ -121,7 +121,7 @@ A Workflow is a JavaScript/TypeScript script that orchestrates many subagents: f
 - **THEN** 16 run at a time and the rest wait
 
 ### Requirement: Run budgets
-(P2) A run SHALL accept budgets `max_agents` (default 200), `max_tokens`, `max_cost_usd` and `max_wall_minutes` (default 240) from `meta`, invocation options or `workflows.default_budget`. When a budget would be exceeded, new `agent()` calls SHALL reject with `BudgetExceeded` naming the budget, in-flight agents SHALL finish, and `ctx.budget` SHALL expose `{ spent_tokens, spent_cost_usd, agents_started, remaining }` to the script at any time. Cost and token dispatch SHALL obey the soft/reserved enforcement and uncertain usage rules in observability-costs, including checks before each child provider Turn. A halted budgeted run SHALL enter `budget_exceeded`.
+(P2) A run SHALL accept the Budget object defined by `observability-costs` (`max_turns`, `max_tokens`, `max_cost_usd`, `max_wall_seconds` default 14400, `enforcement`) plus the workflow-specific `max_agents` (default 200), from `meta`, invocation options or `budgets.run`. When a budget would be exceeded, new `agent()` calls SHALL reject with `BudgetExceeded` naming the budget, in-flight agents SHALL finish, and `ctx.budget` SHALL expose `{ spent_tokens, spent_cost_usd, agents_started, remaining }` to the script at any time. Cost and token dispatch SHALL obey the soft/reserved enforcement and uncertain usage rules in observability-costs, including checks before each child provider Turn. A halted budgeted run SHALL enter `budget_exceeded`.
 
 #### Scenario: Cost budget reached
 - **WHEN** a run with `max_cost_usd: 5` has spent $5.02
@@ -191,10 +191,10 @@ A Workflow is a JavaScript/TypeScript script that orchestrates many subagents: f
 - **THEN** its child Session transcript opens with live updates
 
 ### Requirement: Workflow CLI
-(P2) The CLI SHALL provide `cyber workflows list` (saved and bundled), `run <name|file> [--args JSON] [--budget-cost N] [--runner <id>] [--wait]`, `runs` (recent runs), `show <run_id>`, `pause <run_id>`, `resume <run_id>` and `stop <run_id>`. `run --wait` SHALL stream progress and exit 0 on `completed`, 1 on `failed`, 4 on `BudgetExceeded`, and 130 when interrupted.
+(P2) The CLI SHALL provide `cyber workflows list` (saved and bundled), `run <name|file> [--args JSON] [--max-cost N] [--max-turns N] [--max-tokens N] [--timeout D] [--max-agents N] [--runner <id>] [--wait]`, `runs` (recent runs), `show <run_id>`, `pause <run_id>`, `resume <run_id>`, `stop <run_id>` and `logs <run_id>`. `run --wait` SHALL stream progress and exit 0 on `completed`, 1 on `failed`, 4 on `BudgetExceeded`, and 130 when interrupted.
 
 #### Scenario: CI usage
-- **WHEN** CI runs `cyber workflows run audit --wait --budget-cost 10`
+- **WHEN** CI runs `cyber workflows run audit --wait --max-cost 10`
 - **THEN** the command blocks until the run ends and exits with the mapped code
 
 ### Requirement: Remote execution on runners
@@ -217,3 +217,17 @@ A Workflow is a JavaScript/TypeScript script that orchestrates many subagents: f
 #### Scenario: Files change while run is stopped
 - **WHEN** a workflow resumes after its earlier glob result would now differ
 - **THEN** replay uses the recorded glob result for that revision and resumes existing child Sessions
+
+### Requirement: Remote agents
+(P3) `agent()` SHALL accept `runner` (a pool name, an `rnr_` Runner ID, or a configured peer name). The child Session SHALL be created on that Runner or peer through the Orchestrator or peer API, with the repository materialized as for `cyber --cloud` and `isolation` defaulting to `worktree` there. Results SHALL be persisted as `workflow.agent.settled.1` exactly as for local agents, counted against the run's Budget, shown in the run monitor with the Runner name, and resumable after a restart of either side. A `runner` that is unavailable SHALL reject the call with `RunnerUnavailable` naming it.
+
+#### Scenario: Fan out across machines
+- **WHEN** a script launches 20 agents with `runner: "gpu-pool"` and 4 with `runner: "desk"`
+- **THEN** the pool executes 20 child Sessions and the peer `desk` executes 4, and the monitor shows each agent's Runner
+
+### Requirement: Automatic orchestration
+(P2) `workflows.auto` SHALL accept `off`, `suggest` (default) and `on`. When not `off`, the system prompt SHALL instruct the model to draft a Workflow (inline script through the `workflow` tool) for tasks it judges substantive: several independent parts, more than `workflows.auto_threshold_files` (default 10) files, or a review or research task with several angles. In `suggest`, the draft, agent count and cost estimate SHALL be shown and require approval through the `workflow.run` permission; in `on` the run starts under that permission's rules. `workflows.size_guideline` (default 10 agents) SHALL be given to the model, and a draft above it SHALL carry a warning in the approval prompt. `/orchestrate <task>` SHALL force a draft for one task.
+
+#### Scenario: Large migration suggested as a workflow
+- **WHEN** `workflows.auto` is `suggest` and the user asks to migrate 300 files to a new API
+- **THEN** the model proposes a `migrate` workflow with its agent count and estimated cost, and nothing runs until the user approves

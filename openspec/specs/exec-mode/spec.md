@@ -17,11 +17,15 @@
 - **THEN** the command prints `exec requires a prompt, --command, --goal or --workflow` and exits with code 2
 
 ### Requirement: Execution backend and working directory
-(P0) The system SHALL run against an in-process server by default, the registered background server when `--service` is given, or a remote server with `--attach <url>`. Remote authentication SHALL use `--password` or `CYBER_SERVER_PASSWORD`, or the Cyber Account token for Relay URLs. `--cd <dir>` SHALL set the Location before execution and fail with exit code 2 when the directory does not exist locally, unless `--attach` is set, in which case the path is sent to the server as-is.
+(P0) The system SHALL run against the registered background server by default, starting it as `cyber service start` does. `--embedded` SHALL run a private in-process server on a private database (in-memory when combined with `--ephemeral`) that never opens the shared database for writing. `--attach <url>` SHALL target a remote server. Remote authentication SHALL use `--password` or `CYBER_SERVER_PASSWORD`, or the Cyber Account token for Relay URLs. The global `--cwd <dir>` SHALL set the Location before execution and fail with exit code 2 when the directory does not exist locally, unless `--attach` is set, in which case the path is sent to the server as-is.
 
 #### Scenario: Attach to a remote runner
-- **WHEN** CI runs `cyber exec --attach https://runner.internal:4711 --cd /work/repo "run lint"`
+- **WHEN** CI runs `cyber exec --attach https://runner.internal:4747 --cwd /work/repo "run lint"`
 - **THEN** the Session is created on the remote server in `/work/repo` and events stream back to the CI log
+
+#### Scenario: Default uses the background server
+- **WHEN** a user runs `cyber exec "hi"` while the TUI has a Session running on the registered server
+- **THEN** the prompt is admitted through that server and no second writer process is started
 
 ### Requirement: Session selection
 (P0) The system SHALL create a new Session by default. `--continue` SHALL reuse the most recent root Session of the Location. `--session <id|name>` SHALL reuse that Session or fail with `Session not found` and exit code 1. `--fork` SHALL fork the selected Session first and SHALL require `--continue` or `--session`. `--name <name>` SHALL name the new Session.
@@ -31,11 +35,11 @@
 - **THEN** the prompt is admitted to the existing `nightly-triage` Session with its prior history
 
 ### Requirement: Ephemeral runs
-(P0) The system SHALL accept `--ephemeral`, which runs the Session in an in-memory store. Nothing SHALL be written to the database, snapshots or share service, and no resume hint SHALL be printed. `--ephemeral` combined with `--continue`, `--session` or `--fork` SHALL fail with exit code 2.
+(P0) The system SHALL accept `--ephemeral`, which implies `--embedded` and runs the Session in an in-memory store. Nothing SHALL be written to the shared database, snapshots or share service, and no resume hint SHALL be printed. `--ephemeral` combined with `--continue`, `--session` or `--fork` SHALL fail with exit code 2.
 
 #### Scenario: Nothing persisted
 - **WHEN** `cyber exec --ephemeral "summarize README"` completes
-- **THEN** `cyber session list` shows no new Session
+- **THEN** `cyber sessions list` shows no new Session
 
 ### Requirement: Model, agent and mode selection
 (P0) The system SHALL accept `--model provider/model[#variant]`, `--agent <name>` and `--mode <mode>`. The default mode for exec Sessions SHALL be `dont-ask`: actions allowed by rules run, and anything that would prompt is denied and logged. `--auto` SHALL select `auto` mode. `--yolo` SHALL select `bypass` and print a warning to stderr, and it SHALL be refused when org policy disables bypass. An unknown agent or a subagent-only agent SHALL fail with exit code 2.
@@ -70,7 +74,7 @@
 - **THEN** the `review` command template is expanded with `$ARGUMENTS` = `main..HEAD` and executed
 
 ### Requirement: Output formats
-(P0) The system SHALL support `--output-format text|json|stream-json` (default `text`):
+(P0) The system SHALL honor the global `--format text|json|stream-json` (default `text` for `exec`):
 - **text**: final assistant text on stdout; tool progress lines on stderr only when `--verbose` is set.
 - **json**: one JSON object on stdout at the end, with `result`, `session_id`, `usage`, `cost_usd`, `duration_ms`, `num_turns`, `denials` and `exit_code`.
 - **stream-json**: one JSON object per line as events occur.
@@ -78,7 +82,7 @@
 `--quiet` SHALL suppress all non-result output on stderr.
 
 #### Scenario: JSON result for scripting
-- **WHEN** a user runs `cyber exec --output-format json "count TODOs"`
+- **WHEN** a user runs `cyber exec --format json "count TODOs"`
 - **THEN** stdout contains exactly one JSON object whose `result` holds the final text and whose `exit_code` is 0
 
 ### Requirement: Stream JSON event schema
@@ -111,12 +115,12 @@ The schema SHALL be versioned by `schema_version` in the `init` event (starting 
 - **THEN** stdout is that JSON object and the exit code is 0
 
 ### Requirement: Run limits
-(P0) The system SHALL accept these limits:
+(P0) The system SHALL accept the Budget flags defined in `observability-costs`:
 - `--max-turns <n>`: on reaching the limit, the final Turn is sent without tools.
-- `--max-cost <usd>`: checked after each Turn.
+- `--max-tokens <n>` and `--max-cost <usd>`: checked after each Turn.
 - `--timeout <duration>`, for example `30m`.
 
-Exceeding `--max-cost` or `--timeout` SHALL interrupt the Drain, emit a `result` with `stop_reason` `budget_exceeded` or `timeout`, and exit with code 4.
+Exceeding `--max-tokens`, `--max-cost` or `--timeout` SHALL interrupt the Drain, emit a `result` with `stop_reason` `budget_exceeded` or `timeout`, and exit with code 4.
 
 #### Scenario: Cost cap reached
 - **WHEN** a run with `--max-cost 0.50` reaches $0.53 after a Turn
@@ -164,7 +168,7 @@ SIGINT SHALL interrupt the Drain gracefully, flush the `result` event, and then 
 (P1) The system SHALL run headless in CI without a TTY, config files or account. It SHALL read provider credentials from environment variables and never open a browser. Output SHALL contain no ANSI color codes unless `--color always` is set. The resume hint SHALL be printed to stderr as `session: <id>` only when the Session is persisted.
 
 #### Scenario: GitHub Actions step
-- **WHEN** a workflow step runs `cyber exec --output-format stream-json --max-turns 30 "fix lint errors"` with `OPENAI_API_KEY` set
+- **WHEN** a workflow step runs `cyber exec --format stream-json --max-turns 30 "fix lint errors"` with `OPENAI_API_KEY` set
 - **THEN** the run completes without prompts, logs JSONL to stdout, and the job fails only when the exit code is non-zero
 
 #### Scenario: GitLab CI job
@@ -177,3 +181,14 @@ SIGINT SHALL interrupt the Drain gracefully, flush the `result` event, and then 
 #### Scenario: Share disabled
 - **WHEN** a user runs `cyber exec --share "explain"` with `share: "disabled"`
 - **THEN** stderr shows `sharing is disabled` and the run continues normally
+
+### Requirement: Streaming input and partial output
+(P1) `--input-format stream-json` SHALL read JSON lines from stdin for the life of the process: `{ "type": "user", "text" | "parts", "delivery"? }` admits a prompt, `{ "type": "interrupt" }` interrupts the Drain, `{ "type": "permission_reply", "request_id", "reply", "message"? }` and `{ "type": "question_reply", "request_id", "answers" }` answer pending requests (which are emitted as `permission_request` and `question` events instead of being auto-denied), and `{ "type": "end" }` or EOF ends the run after the current Drain goes idle. Each prompt SHALL produce its own `result` event and the process SHALL exit only on `end`/EOF. `--include-partial-messages` SHALL add `text_delta` and `reasoning_delta` events; `--include-hook-events` SHALL add `hook_event` lines (hook id, event, outcome, decision); `--output-last-message <file>` SHALL write the final assistant text of the last Turn to that file. All added types SHALL be declared in the `init` event's `schema_version` 2.
+
+#### Scenario: SDK-style multi-turn driver
+- **WHEN** a program starts `cyber exec --input-format stream-json --format stream-json` and writes two `user` lines followed by `end`
+- **THEN** stdout carries two `result` events in order and the process exits 0 after the second Drain goes idle
+
+#### Scenario: Permission answered over stdin
+- **WHEN** the model needs approval for `bash` and the driver writes a `permission_reply` with `reply: "once"`
+- **THEN** the command runs and no `permission_denied` event is emitted

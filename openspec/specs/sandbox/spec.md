@@ -13,11 +13,19 @@ Confines the processes Cyber Code launches for the model (shell commands, option
 - **THEN** the write fails with `Operation not permitted` and the result says the sandbox blocked it
 
 ### Requirement: Writable roots
-(P0) Under `workspace-write`, the writable roots SHALL be: the Location directory, its git worktree root, the session worktree when present, a private per-Session temporary directory (also used as TMPDIR), and the entries in `sandbox.writable_roots` (with `~` expanded). `.git/hooks`, `.cyber/` and the protected paths of `permissions-modes` SHALL remain read-only even inside the roots.
+(P0) Under `workspace-write`, the writable roots SHALL be: the Location directory, its git worktree root, the session worktree when present, a private per-Session temporary directory (also used as TMPDIR), the managed tool-output and jobs directories, and the entries in `sandbox.writable_roots` (with `~` expanded). Inside the roots, `.git/` (except the working tree), `.git/hooks`, and the protected configuration documents listed by `permissions-modes` (`cyber.json(c)`, `.cyber/cyber.jsonc`, `.cyber/cyber.local.jsonc`, `.cyber/hooks.jsonc`, `.cyber/mcp.json`, `.cyber/plugins*.json`, `.cyber/plugins.lock`, `.cyber/plugins/`) SHALL remain read-only. The `.cyber/` content directories (`plans/`, `workflows/`, `agents/`, `skills/`, `commands/`, `teams/`, `output-styles/`) SHALL be writable.
 
 #### Scenario: Git hooks stay read-only
 - **WHEN** a sandboxed command writes `.git/hooks/pre-commit` inside the Location
 - **THEN** the write is denied
+
+#### Scenario: Plan directory writable
+- **WHEN** a sandboxed `plan`-mode write targets `.cyber/plans/auth.md`
+- **THEN** the OS sandbox permits the write and the permission engine evaluates it under plan-mode rules
+
+#### Scenario: Hook config read-only
+- **WHEN** a sandboxed command writes `.cyber/hooks.jsonc`
+- **THEN** the write is denied by the sandbox
 
 ### Requirement: macOS enforcement
 (P0) On macOS the system SHALL launch sandboxed processes under a generated Seatbelt profile (`sandbox-exec` semantics via the private API or the `sandbox-exec` binary) that encodes the policy's read, write and network rules. Child processes SHALL inherit the profile.
@@ -102,3 +110,17 @@ Confines the processes Cyber Code launches for the model (shell commands, option
 #### Scenario: Denial recorded
 - **WHEN** a sandboxed command is blocked from writing `/etc/hosts`
 - **THEN** a `sandbox.denied.1` event with operation `write` and target `/etc/hosts` is stored
+
+### Requirement: Named sandbox profiles
+(P1) `sandbox.profiles.<name>` SHALL define `{ extends?, policy?, writable_roots?, readable_paths?, deny_read?, network?: { mode, allowed_domains?, denied_domains? }, env? }`, where `extends` names another profile and lists merge (deny lists union). The built-in profiles `read-only`, `workspace` and `full` SHALL correspond to the three policies. `--sandbox <policy|profile>`, `sandbox.profile`, agent `sandbox` and org policy `sandbox.min_profile` SHALL select a profile. `deny_read` globs SHALL be enforced by the OS sandbox and SHALL also hide matching paths from `read`, `glob` and `grep` results. `cyber sandbox explain --profile <name>` SHALL print the resolved profile.
+
+#### Scenario: Profile hides secrets
+- **WHEN** profile `ci` extends `workspace` with `deny_read: ["**/*.pem", "~/.aws/**"]` and a sandboxed command runs `cat key.pem`
+- **THEN** the read is denied by the sandbox and `glob` does not list `key.pem`
+
+### Requirement: Environment policy
+(P1) `sandbox.env` SHALL accept `mode` (`inherit`, default: the server's environment filtered by the credential-masking rules; or `none`: only `PATH`, `HOME`, `TMPDIR`, `LANG`, `TERM` and `set` values), `set` (a map of variables added to every sandboxed process), `allow` and `deny` (glob patterns applied after masking) and `login_shell` (default false; when true, `bash -l` is used so profile scripts run). The resolved environment SHALL be shown by `cyber sandbox explain`.
+
+#### Scenario: Clean environment for CI
+- **WHEN** `sandbox.env.mode` is `none` and `set` is `{ "CI": "1" }`
+- **THEN** a sandboxed `env` prints only the five base variables plus `CI=1` and the `CYBER_*` markers

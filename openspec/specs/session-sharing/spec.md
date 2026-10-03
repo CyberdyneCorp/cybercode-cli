@@ -55,7 +55,7 @@ Redaction counts SHALL be shown to the user on the first share of a Session.
 - **THEN** the uploaded part contains `[redacted:secret]` and the local Session is unchanged
 
 ### Requirement: Manual share and confirmation
-(P3) The system SHALL share a Session on `/share` (TUI), `cyber session share <id>`, exec `--share`, or `POST /api/v1/sessions/:id/share` with optional `visibility`. Before the first share in a project, the TUI SHALL confirm with the visibility and redaction summary. The confirmation SHALL be remembered per project. The share URL SHALL be stored on the Session and copied to the clipboard.
+(P3) The system SHALL share a Session on `/share` (TUI), `cyber sessions share <id>`, exec `--share`, or `POST /api/v1/sessions/:id/share` with optional `visibility`. Before the first share in a project, the TUI SHALL confirm with the visibility and redaction summary. The confirmation SHALL be remembered per project. The share URL SHALL be stored on the Session and copied to the clipboard.
 
 #### Scenario: Copy existing link
 - **WHEN** the Session is already shared and the user runs `/share`
@@ -69,7 +69,7 @@ Redaction counts SHALL be shown to the user on the first share of a Session.
 - **THEN** a single sync request carries the final state of the changed parts
 
 ### Requirement: Unshare and deletion
-(P3) The system SHALL unshare on `/unshare`, `cyber session unshare <id>`, or `DELETE /api/v1/sessions/:id/share`. It SHALL delete the remote copy, clear the Session's share field, and remove the local share record. Deleting a shared Session SHALL delete its remote share. A remote deletion failure SHALL be retried and surfaced as a warning toast.
+(P3) The system SHALL unshare on `/unshare`, `cyber sessions unshare <id>`, or `DELETE /api/v1/sessions/:id/share`. It SHALL delete the remote copy, clear the Session's share field, and remove the local share record. Deleting a shared Session SHALL delete its remote share. A remote deletion failure SHALL be retried and surfaced as a warning toast.
 
 #### Scenario: Delete removes remote copy
 - **WHEN** the user deletes a shared Session
@@ -88,20 +88,6 @@ Redaction counts SHALL be shown to the user on the first share of a Session.
 #### Scenario: Policy disables sharing
 - **WHEN** the active org policy sets `share: "disabled"` and a user's project config sets `share: "auto"`
 - **THEN** no Session is shared and `/share` is not offered
-
-### Requirement: Export with sanitization
-(P1) The system SHALL provide `cyber export [session]`, which writes the Session and its messages and parts as JSON to stdout, and `--sanitize`, which replaces transcript text, paths, URLs, tool outputs and metadata with `[redacted:<kind>:<id>]` markers. `--format markdown` SHALL produce a readable transcript.
-
-#### Scenario: Sanitized bug report
-- **WHEN** a user runs `cyber export --sanitize ses_123 > report.json`
-- **THEN** the file keeps the message and tool-call structure, but no original text, paths or outputs
-
-### Requirement: Import
-(P1) The system SHALL provide `cyber import <file|share-url>`. It SHALL accept an export file or a share URL, fetch share data with the account token when the share is not public, re-home the Session to the current Location, insert messages without overwriting existing rows, and print `Imported session: <id>`. An invalid URL SHALL fail with `Invalid share URL`.
-
-#### Scenario: Import an org share
-- **WHEN** a teammate in the same org runs `cyber import https://share.cyber.dev/s/abc`
-- **THEN** the Session is imported into their current project and can be resumed
 
 ### Requirement: Share artifacts
 (P4) The system SHALL let the agent or the user publish a generated HTML or Markdown file as a share artifact, using `/publish <file>` or the `publish_artifact` tool, which requires the `share.publish` permission. Artifacts SHALL use the same visibility levels, redaction and account requirement as Session shares. Republishing from the same Session SHALL update the artifact in place at the same URL, and the service SHALL keep the last 20 versions.

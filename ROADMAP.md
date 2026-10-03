@@ -7,7 +7,7 @@ Every requirement in `openspec/specs/**/spec.md` starts with a phase tag `(P0)`�
 grep -rn "^### Requirement" -A1 openspec/specs | grep -B1 "(P2)"
 ```
 
-Delivery rule: each phase ships as one or more OpenSpec **changes** (`openspec/changes/<name>/`) that implement existing requirements. A change that alters behavior updates the spec in the same PR, and `openspec validate --all --strict` gates CI.
+Delivery rule: each phase ships as one or more OpenSpec **changes** (`openspec/changes/<name>/`) that implement existing requirements. A change that alters behavior updates the spec in the same PR, and `openspec validate --all --strict` plus `python3 scripts/spec_lint.py` gate CI.
 
 ---
 
@@ -48,7 +48,7 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 
 ## P1: Table stakes
 
-**Capabilities:** `browser-verification`, `provider-catalog` (additional native providers), `sandbox` (Windows, escalation and advanced policies), `permissions-modes` (`accept-edits`, `auto` classifier, `dont-ask`, `bypass`, protected/critical paths, saved approvals), `agents-subagents` (`agent` tool with `output_schema`, background, fork, worktree isolation), `worktrees`, `background-tasks`, `hooks`, `plugins-marketplace` (plugin host only), `mcp` (OAuth, tool search, resources, prompts, `cyber mcp serve`), `skills-commands` (full, compat locations), `memory`, `code-intelligence`, `snapshots-checkpoints` (rewind UI: code / conversation / both), `cross-session-messaging` (same machine), `observability-costs` (cost, budgets, OTel), `editor-integration` (ACP + VS Code), `compat-import`.
+**Capabilities:** `browser-verification`, `web-client` (local web UI), `provider-catalog` (additional native providers, fallback chain), `sandbox` (Windows, escalation and advanced policies), `permissions-modes` (`accept-edits`, `auto` classifier, `dont-ask`, `bypass`, protected/critical paths, saved approvals), `agents-subagents` (`agent` tool with `output_schema`, background, fork, worktree isolation), `worktrees`, `background-tasks`, `hooks`, `plugins-marketplace` (plugin host only), `mcp` (OAuth, tool search, resources, prompts, `cyber mcp serve`), `skills-commands` (full, compat locations), `memory`, `code-intelligence`, `snapshots-checkpoints` (rewind UI: code / conversation / both), `cross-session-messaging` (same machine), `observability-costs` (cost, budgets, OTel), `editor-integration` (ACP + VS Code), `compat-import`, `configuration` (features registry, `-c` overrides, references), `permissions-modes` (session ruleset API, auto-mode rules, rule dry run), `sandbox` (profiles, env policy), `exec-mode` (streaming input).
 
 **Milestones**
 1. **M1.1 Sandbox + modes:** extend the P0 Seatbelt / Landlock+seccomp baseline with Windows restricted token; network allowlist proxy; mode cycling; the auto-mode classifier backed by `model_roles.evaluator`.
@@ -64,7 +64,7 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 
 ## P2: Autonomy & orchestration (flagship)
 
-**Capabilities:** `workflows`, `goals`, `loops-scheduling`, `agent-teams` (behind `experimental.teams`), `tui` (agent view, workflow monitor, goal panel), `background-tasks` (`notify`, `send_file`), `skills-commands` (bundled `batch`, `review`, `audit`), `exec-mode` (`--goal`, `--workflow`).
+**Capabilities:** `workflows` (including automatic orchestration), `goals`, `loops-scheduling`, `agent-teams` (behind feature `teams`), `cross-session-messaging` (direct peers), `tui` (agent view, workflow monitor, goal panel), `background-tasks` (`notify`, `send_file`), `skills-commands` (bundled `batch`, `review`, `audit`), `exec-mode` (`--goal`, `--workflow`).
 
 **Milestones**
 1. **M2.1 Workflow runtime:** QuickJS sandbox, `agent()/parallel()/pipeline()/phase()`, determinism guards, event-sourced resume, budgets, model tiers (`fast` / `smart` / `verify`).
@@ -80,7 +80,7 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 
 ## P3: Connectivity
 
-**Capabilities:** `cyber-account`, `remote-control`, `cross-session-messaging` (cross-machine), `runners-cloud`, `routines`, `channels`, `session-sharing`, `org-policy`, `vcs-integration` (GitHub App/Action, auto-fix PRs), `server-api` (Bearer account tokens, remote rate limits).
+**Capabilities:** `cyber-account` (including automation tokens), `remote-control`, `web-client` (Relay bundle), `cross-session-messaging` (cross-machine), `runners-cloud` (including `cyber apply`, best-of-N attempts), `workflows` and `agents-subagents` (remote agents), `agent-teams` (distributed teammates), `routines`, `channels`, `session-sharing`, `org-policy`, `vcs-integration` (GitHub App/Action, auto-fix PRs), `server-api` (Bearer account tokens, remote rate limits), `client-sdk` (Python).
 
 **Milestones**
 1. **M3.1 Cyber Account:** `cyber login` via CyberdyneAuth (OIDC code + PKCE, loopback redirect), keyring storage, refresh serialized across processes, `whoami`, entitlements and org claims.
@@ -97,7 +97,7 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 
 ## P4: Ecosystem
 
-**Capabilities and extras:** `plugins-marketplace` (marketplaces, dependencies, evals, signing, mods UI panes), `client-sdk` (Python), `editor-integration` (JetBrains plugin, deep links), `session-sharing` (comments, artifact pages), `tui` (voice dictation, mods panes), mobile apps (iOS/Android) on the remote-control API, `observability-costs` (org analytics dashboards), workflow sharing in the marketplace.
+**Capabilities and extras:** `plugins-marketplace` (marketplaces, dependencies, evals, signing, mods UI panes), `web-client` (desktop application), `editor-integration` (JetBrains plugin, deep links), `session-sharing` (comments, artifact pages), `tui` (voice dictation, mods panes), `agent-teams` (tmux/iTerm panes), mobile apps (iOS/Android) on the remote-control API, `observability-costs` (org analytics dashboards), workflow sharing in the marketplace.
 
 ---
 
@@ -111,10 +111,11 @@ These items need changes or configuration in [CyberdyneCorp/CyberdyneAuth](https
 |---|---|---|---|
 | A1 | Register public OAuth client `cyber-cli` (grant types `authorization_code`, `refresh_token`; loopback redirect `http://127.0.0.1/callback`, any port) | P3 M3.1 | config only (supported today) |
 | A2 | Add scopes `cyber:relay`, `cyber:runner`, `cyber:share`, `cyber:messaging` to the scope catalog | P3 M3.1 | small change |
-| A3 | Register entitlement product `cyber-code` (plans `pro`, `team`) and Stripe mapping | P3 hosted services | config + billing |
+| A3 | Register entitlement product `cyber-code` (plans `free`, `pro`, `team`) and Stripe mapping | P3 hosted services | config + billing |
 | A4 | Confidential clients for hosted services (relay, share, orchestrator) with `access_token_audience`; client-credentials service tokens for introspection | P3 M3.2–M3.6 | config only |
 | A5 | **RFC 8628 device authorization grant** for SSH/headless logins | P3 nice-to-have; `--no-browser` paste flow is the fallback | **upstream feature request** |
 | A6 | Optional token-exchange (RFC 8693) so runners get per-session down-scoped tokens | P3 M3.4 | upstream feature request |
+| A7 | Long-lived automation tokens (`cyber tokens create`): non-rotating access tokens with selectable scopes and a 90-day maximum lifetime, revocable, excluded from step-up actions | P3 M3.1 | **upstream feature request** |
 
 Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer` at their own CyberdyneAuth deployment.
 
@@ -133,7 +134,7 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 | Workflow token blow-up | Mandatory per-run budgets, prefix-warming of fan-outs, model tiers |
 | Relay trust | E2E encryption, self-hostable relay, device revocation, step-up auth (`auth_time` ≤ 15 min) for destructive remote approvals |
 | Refresh-token rotation races (replay defense revokes the chain) | A cross-process lock around refresh plus a single token broker in the `cyber` service |
-| Scope creep | Phase gates; experimental flags (`experimental.teams`) for anything not yet specified as stable |
+| Scope creep | Phase gates; the features registry (`features.*`, e.g. `teams`) for anything not yet specified as stable |
 
 ## Open questions
 
@@ -147,57 +148,58 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 
 ## Requirement inventory
 
-The table counts requirements in `openspec/specs` by phase tag (46 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
+The table counts requirements in `openspec/specs` by phase tag (47 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
 
 | Capability | P0 | P1 | P2 | P3 | P4 | Total |
 |---|--:|--:|--:|--:|--:|--:|
-| `agent-teams` |  |  | 15 |  |  | 15 |
-| `agents-subagents` | 8 | 14 |  |  |  | 22 |
+| `agent-teams` |  |  | 15 | 1 | 1 | 17 |
+| `agents-subagents` | 8 | 14 |  | 1 |  | 23 |
 | `background-tasks` |  | 15 |  |  |  | 15 |
 | `browser-verification` |  | 2 |  |  |  | 2 |
 | `builtin-tools` | 16 | 4 | 1 |  |  | 21 |
 | `channels` |  |  |  | 16 |  | 16 |
 | `cli-commands` | 18 |  |  | 2 |  | 20 |
-| `client-sdk` | 14 |  | 2 | 1 |  | 17 |
+| `client-sdk` | 14 | 1 | 2 | 1 |  | 18 |
 | `code-intelligence` |  | 12 |  |  | 1 | 13 |
-| `compaction` | 15 | 2 | 1 |  |  | 18 |
+| `compaction` | 15 | 3 | 1 |  |  | 19 |
 | `compat-import` | 1 | 10 | 1 |  |  | 12 |
-| `configuration` | 16 | 1 |  |  |  | 17 |
-| `cross-session-messaging` |  | 18 |  | 1 |  | 19 |
-| `cyber-account` |  |  |  | 16 |  | 16 |
+| `configuration` | 18 | 2 |  |  |  | 20 |
+| `cross-session-messaging` |  | 18 | 1 | 1 |  | 20 |
+| `cyber-account` |  |  |  | 17 |  | 17 |
 | `editor-integration` |  | 13 |  | 1 | 1 | 15 |
-| `exec-mode` | 11 | 3 | 2 | 1 |  | 17 |
+| `exec-mode` | 11 | 4 | 2 | 1 |  | 18 |
 | `goals` |  |  | 21 |  |  | 21 |
 | `harness-evaluation` | 4 |  |  |  |  | 4 |
-| `hooks` |  | 19 | 1 |  |  | 20 |
+| `hooks` |  | 20 | 2 |  |  | 22 |
 | `installation-upgrade` | 12 | 1 |  |  |  | 13 |
 | `loops-scheduling` |  |  | 14 | 1 |  | 15 |
-| `mcp` | 14 | 5 | 1 |  |  | 20 |
+| `mcp` | 14 | 6 | 2 |  |  | 22 |
 | `memory` |  | 13 |  | 1 |  | 14 |
 | `observability-costs` | 8 | 10 |  | 1 |  | 19 |
-| `org-policy` |  |  |  | 14 |  | 14 |
-| `permissions-modes` | 13 | 5 | 1 |  |  | 19 |
-| `plugins-marketplace` |  | 14 | 1 |  | 6 | 21 |
-| `provider-catalog` | 17 | 3 | 2 |  |  | 22 |
-| `provider-credentials` | 12 | 2 |  | 2 |  | 16 |
+| `org-policy` |  |  |  | 15 |  | 15 |
+| `permissions-modes` | 15 | 7 |  |  |  | 22 |
+| `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
+| `provider-catalog` | 17 | 4 | 2 |  |  | 23 |
+| `provider-credentials` | 12 | 3 |  | 2 |  | 17 |
 | `remote-control` |  |  |  | 17 | 1 | 18 |
 | `routines` |  |  |  | 16 |  | 16 |
-| `runners-cloud` |  |  |  | 20 |  | 20 |
-| `sandbox` | 7 | 6 |  | 1 |  | 14 |
-| `server-api` | 21 |  |  | 2 |  | 23 |
-| `session-runtime` | 22 | 3 |  |  |  | 25 |
-| `session-sharing` |  | 2 |  | 10 | 2 | 14 |
-| `skills-commands` | 14 | 4 | 1 |  |  | 19 |
+| `runners-cloud` |  |  |  | 22 |  | 22 |
+| `sandbox` | 7 | 8 |  | 1 |  | 16 |
+| `server-api` | 22 |  |  | 2 |  | 24 |
+| `session-runtime` | 23 | 3 |  |  |  | 26 |
+| `session-sharing` |  |  |  | 10 | 2 | 12 |
+| `skills-commands` | 14 | 5 | 1 |  |  | 20 |
 | `snapshots-checkpoints` | 12 | 3 | 1 |  |  | 16 |
-| `storage-events` | 17 | 1 |  | 2 |  | 20 |
-| `system-context` | 12 | 4 | 1 |  |  | 17 |
+| `storage-events` | 17 | 2 |  | 2 |  | 21 |
+| `system-context` | 12 | 5 | 1 |  |  | 18 |
 | `tool-registry` | 15 | 3 |  |  |  | 18 |
-| `tui` | 19 | 6 | 3 | 1 | 1 | 30 |
+| `tui` | 19 | 7 | 3 | 1 | 1 | 31 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
-| `workflows` |  |  | 25 | 1 | 1 | 27 |
+| `web-client` |  | 1 |  | 1 | 1 | 3 |
+| `workflows` |  |  | 26 | 2 | 1 | 29 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 9 | 4 |  |  | 13 |
-| **Total** | **324** | **210** | **98** | **137** | **13** | **782** |
+| **Total** | **330** | **225** | **102** | **145** | **15** | **817** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.
@@ -215,4 +217,13 @@ These were fixed after the parallel authoring pass. Keep them consistent in futu
 - **Step-up authentication**: `auth_time` must be ≤ 15 min (`prompt=login`, `max_age=900`) for device pairing, runner registration, org routines and remote approval of destructive actions.
 - **Model-facing tools** owned by other capabilities are indexed in `builtin-tools` → "Capability-owned tool catalog".
 - **Hook events** include worktree, job, goal, schedule and teammate events (`hooks` spec).
-- **Config top-level keys** include `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `profiles` and `default_profile` (`configuration` spec).
+- **Config top-level keys** include `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `budgets`, `profiles` and `default_profile` (`configuration` spec).
+- **Process model**: service-first. The TUI, `cyber exec` and SDKs talk to the one registered server; `--embedded` runs a private server on a private database and never touches the shared writer lock.
+- **Planning is a Mode** (`plan`), entered and left with the `plan_enter`/`plan_exit` tools; there is no `plan` agent. Built-in agents are `build`, `explore`, `general` plus hidden system agents.
+- **Protected `.cyber/` paths** are the configuration documents (`cyber.jsonc`, `hooks.jsonc`, `mcp.json`, plugin manifests and lockfile). Content directories (`plans/`, `workflows/`, `agents/`, `skills/`, `commands/`, `teams/`, `output-styles/`) are writable.
+- **Registries**: the command tree (`cli-commands`), route groups (`server-api`) and model-facing tool names (`builtin-tools`) are authoritative; `scripts/spec_lint.py` fails on undeclared entries.
+- **One Budget object** `{ max_turns, max_tokens, max_cost_usd, max_wall_seconds, enforcement }` and flags `--max-turns/--max-tokens/--max-cost/--timeout` everywhere (`observability-costs`); defaults under `budgets.<scope>`.
+- **Flags**: `--format` is the only output-format flag and `--cwd` the only working-directory flag. Session commands live under `cyber sessions ...`; `cyber import` imports other tools' setups only.
+- **Held items** of any origin are released or dropped through `POST /api/v1/sessions/{id}/inbox/{message_id}/release|drop`.
+- **Org mode ladder** `plan < default < dont-ask < accept-edits < auto < bypass`; unpriced usage counts as zero toward spend unless `spend.block_unpriced`.
+- **ID prefixes**: `ses_` Session, `per_` permission request, `msgx_` cross-session message, `job_` background job, `agt_` workflow agent call, `run_` Workflow Run, `rrn_` Routine run, `rtn_` Routine, `gol_` Goal, `lop_` Loop, `cron_` scheduled task, `team_`/`task_` teams, `dev_` Device, `rnr_` Runner, `chn_` Channel.

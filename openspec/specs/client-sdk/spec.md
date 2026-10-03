@@ -6,7 +6,7 @@ The client SDKs let applications, CI scripts and other agents drive Cyber Code p
 ## Requirements
 
 ### Requirement: Packages
-(P0) The project SHALL publish `@cyber-code/sdk` (TypeScript, ESM, Node ≥ 20, Bun and Deno) and the `cyber-sdk` Rust crate. In P4 it SHALL also publish the Python package `cyber-code` (Python ≥ 3.10, sync and asyncio clients). All SDKs SHALL be versioned with the server minor version they were generated from.
+(P0) The project SHALL publish `@cyber-code/sdk` (TypeScript, ESM, Node ≥ 20, Bun and Deno) and the `cyber-sdk` Rust crate. In P3 it SHALL also publish the Python package `cyber-code` (Python ≥ 3.10, sync and asyncio clients). All SDKs SHALL be versioned with the server minor version they were generated from.
 
 #### Scenario: Version alignment
 - **WHEN** `@cyber-code/sdk@1.4.0` connects to a server reporting version `1.6.2`
@@ -34,11 +34,11 @@ The client SDKs let applications, CI scripts and other agents drive Cyber Code p
 - **THEN** the SDK obtains a new token from `tokenProvider` and reconnects with `after=<last seq>`
 
 ### Requirement: Embedded mode
-(P0) `Cyber.start({ mode: "attach" | "spawn" | "embedded" })` SHALL either attach to a running service, spawn `cyber service start` and attach, or (TypeScript via the `cyber` binary's `--stdio` server, Rust via in-process construction) run a private server whose lifetime is tied to the returned handle. `handle.close()` and an `AbortSignal` SHALL stop a spawned or embedded server.
+(P0) `Cyber.start({ mode: "attach" | "spawn" | "embedded" })` SHALL either attach to a running service, spawn `cyber service start` and attach, or run a private server whose lifetime is tied to the returned handle: TypeScript through `cyber serve --stdio` (`server-api` Stdio transport), Rust through in-process construction. An embedded server SHALL use a private database (`db` option, default in-memory) and SHALL never write to the user's shared database. `handle.close()` and an `AbortSignal` SHALL stop a spawned or embedded server.
 
 #### Scenario: Private server for tests
 - **WHEN** a test calls `Cyber.start({ mode: "embedded" })` and later `handle.close()`
-- **THEN** a private server serves the test and is stopped, with no change to the user's registered service
+- **THEN** a private server serves the test and is stopped, with no change to the user's registered service or database
 
 ### Requirement: Results and errors
 (P0) Methods SHALL resolve with parsed bodies, unwrapping `{ data }` envelopes, and SHALL reject with typed errors that carry the server `_tag` (`SessionNotFoundError`, `EntitlementRequiredError`, …). Transport failures SHALL reject with `CyberClientError` whose `reason` is `Transport`, `UnexpectedStatus`, `MalformedResponse` or `Timeout`. Generated guards (`isSessionBusyError`, …) SHALL discriminate on `_tag`.
@@ -62,7 +62,7 @@ The client SDKs let applications, CI scripts and other agents drive Cyber Code p
 - **THEN** the server replays the original response and only one Session exists
 
 ### Requirement: Prompt helper
-(P0) `session.prompt(parts, { delivery?, agent?, model?, mode?, wait? })` SHALL admit a prompt. With `wait: true` it SHALL resolve when the Session next becomes idle, with the final assistant message, the usage totals and the reason the Drain stopped.
+(P0) `session.prompt(parts, { delivery?, agent?, model?, mode?, system_prompt?, append_system_prompt?, tools?: { allow?, deny? }, wait? })` SHALL admit a prompt. `system_prompt` and `append_system_prompt` SHALL apply to the Session as the matching CLI flags do; `tools` SHALL narrow the Session's tool set through the Session ruleset. With `wait: true` it SHALL resolve when the Session next becomes idle, with the final assistant message, the usage totals and the reason the Drain stopped.
 
 #### Scenario: Scripted one-shot
 - **WHEN** a script calls `await s.prompt("fix the failing test", { wait: true })`
@@ -127,3 +127,10 @@ The client SDKs let applications, CI scripts and other agents drive Cyber Code p
 #### Scenario: Broken example
 - **WHEN** an API change breaks an example's types
 - **THEN** CI fails on the example type-check
+
+### Requirement: Hook callbacks
+(P1) `client.hooks.on(event, handler, { matcher?, timeout? })` SHALL register an in-process hook handler for the client's Sessions. The server SHALL forward matching events over the client's JSON-RPC channel as `hook/execute`, treat the returned object as a hook decision (same schema as `hooks`), merge it with configured hooks in declared order (client handlers last), and drop the registration when the client disconnects. Handlers SHALL be recorded as `hook.executed.1` events with scope `client`.
+
+#### Scenario: Approve edits programmatically
+- **WHEN** an application registers a `PreToolUse` handler that returns `{ decision: "allow" }` for edits under `docs/**`
+- **THEN** those edits skip the prompt and the execution is recorded with scope `client`

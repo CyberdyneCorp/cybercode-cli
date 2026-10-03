@@ -152,8 +152,23 @@ Cross-session messaging lets one Cyber Code session send short text messages to 
 - **THEN** `send_message` and `list_sessions` are not advertised and a user config cannot re-enable them
 
 ### Requirement: Messaging API
-(P1) The server SHALL expose `GET /api/v1/messaging/sessions`, `POST /api/v1/messaging/send`, `GET /api/v1/sessions/:sessionID/messaging` (history), `POST /api/v1/sessions/:sessionID/messaging/:messageID/release` and `.../drop`, and `POST /api/v1/messaging/watch`, so clients and SDKs can message Sessions without going through a model.
+(P1) The server SHALL expose `GET /api/v1/messaging/sessions`, `POST /api/v1/messaging/send`, `GET /api/v1/sessions/:sessionID/messaging` (history) and `POST /api/v1/messaging/watch`, so clients and SDKs can message Sessions without going through a model. Held messages SHALL be released or dropped through the Session inbox routes defined by `server-api` (`POST /api/v1/sessions/:sessionID/inbox/:messageID/release|drop`); messaging SHALL NOT define separate release routes.
 
 #### Scenario: Human message from the SDK
 - **WHEN** a script posts to `/api/v1/messaging/send` targeting a running Session
 - **THEN** the message is delivered under the same inbound controls, with origin `client`
+
+#### Scenario: Release a held message
+- **WHEN** a client posts to `/api/v1/sessions/ses_1/inbox/msgx_7/release`
+- **THEN** the held cross-session message is promoted at the next Safe Boundary and `messaging.message.released.1` is emitted to the sender
+
+### Requirement: Direct peer transport
+(P2) The system SHALL read `peers` from config: a list of `{ name, url, auth: { type: "password", password } | { type: "mtls", cert, key } , directory_map? }` naming other `cyber` servers the user controls (another machine on the LAN, a VPN host, an SSH-forwarded port). `cyber peers list|add|rm|test <name>` SHALL manage them, and `cyber peers discover` SHALL list `_cyber._tcp` servers found by mDNS for one-step adding. `list_sessions` SHALL include peer Sessions with `kind: "peer"` and address `<name>@<peer>`; `send_message`, `watch_session` and `cyber attach <session>@<peer>` SHALL work over the peer's public API without a Cyber Account or Relay. Peer senders SHALL be treated as off-machine: inbound default `hold`, `message.send ask`, and `remote.attach ask`. A peer URL that is not loopback SHALL require `https` unless `insecure: true` is set explicitly.
+
+#### Scenario: Two laptops on one network
+- **WHEN** laptop A lists `{ name: "desk", url: "https://desk.local:4747", auth: { type: "password", password: "{env:DESK_PASSWORD}" } }` in `peers` and a Session on `desk` is running
+- **THEN** `list_sessions` on A shows it with `kind: "peer"`, and `send_message({ to: "migration@desk", text })` is held on `desk` until its user releases it
+
+#### Scenario: Peer offline
+- **WHEN** a configured peer does not answer within 5 seconds
+- **THEN** its Sessions are listed with `state: "offline"` and `canReceive: false`, and a send fails locally with `PeerUnreachableError`

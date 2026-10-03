@@ -12,11 +12,15 @@ Defines where Cyber Code keeps state and how that state is made durable. One SQL
 - state `$XDG_STATE_HOME/cyber`
 - cache `$XDG_CACHE_HOME/cyber`
 
-Derived directories SHALL be `<data>/log`, `<data>/tool-output`, `<data>/snapshot`, `<data>/memory`, `<data>/worktrees`, `<cache>/bin`, `<cache>/models`, `<cache>/plugins` and `<os tmpdir>/cyber`, and SHALL be created at startup. On macOS and Windows the same XDG defaults under the home directory SHALL be used unless the XDG variables are set. `CYBER_HOME` SHALL relocate all of them under one root.
+Derived directories SHALL be `<data>/log`, `<data>/tool-output`, `<data>/jobs`, `<data>/snapshot`, `<data>/memory`, `<data>/worktrees`, `<cache>/bin`, `<cache>/models`, `<cache>/plugins` and `<os tmpdir>/cyber`, and SHALL be created at startup. On macOS and Windows the same XDG defaults under the home directory SHALL be used unless the XDG variables are set. `CYBER_HOME` SHALL relocate all of them under one root; an explicitly set `XDG_*` variable, `CYBER_CONFIG_DIR` or `CYBER_DB` SHALL take precedence over `CYBER_HOME` for the directory or file it names.
 
 #### Scenario: CYBER_HOME relocation
 - **WHEN** `CYBER_HOME=/opt/cyber-home` is set
 - **THEN** data, config, state and cache live under `/opt/cyber-home/{data,config,state,cache}`
+
+#### Scenario: Specific variable wins over CYBER_HOME
+- **WHEN** `CYBER_HOME=/opt/cyber-home` and `CYBER_CONFIG_DIR=/etc/cyber-user` are both set
+- **THEN** config is read from `/etc/cyber-user` and the other directories live under `/opt/cyber-home`
 
 ### Requirement: Database location and connection
 (P0) The database SHALL be `<data>/cyber.db`, or `<data>/cyber-<channel>.db` for non-stable channels, unless `CYBER_DB` is set (`:memory:`, an absolute path, or a name relative to data). On open the system SHALL set `journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`, `cache_size=-64000` and `foreign_keys=ON`, and run a passive WAL checkpoint before migrations.
@@ -119,23 +123,27 @@ The worktree root SHALL be the project directory. Directories outside git SHALL 
 
 ### Requirement: Retention and garbage collection
 (P1) A background GC SHALL run 2 minutes after server start and then every 6 hours. It SHALL delete:
-- unpinned tool-output files older than 7 days
+- unpinned managed tool-output files older than 7 days (the only cleanup of `<data>/tool-output`)
 - archived Sessions older than `storage.retention.archived_days` (default 90)
-- finished background jobs older than 7 days
+- finished background jobs and their output files older than 7 days
 - finished workflow run agent transcripts older than 30 days, keeping run summaries
 
-It SHALL also run `git gc --prune=7.days` on snapshot repositories. Setting a retention value to `0` SHALL disable that rule.
+Once every 24 hours it SHALL also run `git gc --prune=7.days` on snapshot repositories and prune file-copy snapshot objects, as specified by `snapshots-checkpoints`. Setting a retention value to `0` SHALL disable that rule.
 
 #### Scenario: Tool output cleanup
 - **WHEN** a file in `<data>/tool-output` is 8 days old during a GC pass
 - **THEN** it is deleted
 
 ### Requirement: Concurrent process safety
-(P0) Multiple `cyber` processes SHALL safely read through WAL and `busy_timeout`; application writes SHALL obey Local writer ownership and backpressure. Only the process holding the server registration lock (`<state>/server.lock`, an advisory exclusive lock) SHALL run Drains. Other processes SHALL route execution requests to the registered server.
+(P0) Multiple `cyber` processes SHALL safely read the shared database through WAL and `busy_timeout`. Only the registered server, which holds the advisory exclusive lock `<state>/server.lock`, SHALL run Drains and application writes against the shared database. Other processes SHALL route execution requests and mutations to the registered server over its API. An `--embedded` process SHALL use a private database and SHALL NOT open the shared database for writing.
 
 #### Scenario: Second server refused
 - **WHEN** a server is running and the user starts `cyber serve --register` in another terminal
 - **THEN** the second process fails with `another cyber server is registered at <url>` and exits 1
+
+#### Scenario: Embedded process stays private
+- **WHEN** `cyber exec --embedded` runs while a server is registered
+- **THEN** it opens only its private database and the registered server's lock and database are untouched
 
 ### Requirement: Backup
 (P0) `cyber db backup <file>` SHALL produce a consistent copy using the SQLite online backup API while the server runs, and `cyber db restore <file>` SHALL refuse to run while a server is registered.
@@ -152,7 +160,7 @@ It SHALL also run `git gc --prune=7.days` on snapshot repositories. Setting a re
 - **THEN** the server fails to start with `DatabaseKeyMissingError` and a hint to restore the key or run `cyber db decrypt --from-backup`
 
 ### Requirement: Local writer ownership and backpressure
-(P0) The registered server SHALL own application writes through one bounded writer queue (default 1024 transactions), with separate read connections. Embedded mode SHALL acquire the same server ownership lock before writing. CLI mutations SHALL route through that owner; stopped-server maintenance SHALL acquire the lock. Transactions SHALL contain no provider calls, tool execution, user waits or network I/O. Queue admission SHALL time out after 5 seconds with retryable `StorageBusyError` (HTTP 503), without acknowledging an uncommitted prompt. Readers SHALL release transactions between replay pages. Queue depth, commit latency, busy errors and WAL size SHALL be observable.
+(P0) The registered server SHALL own application writes through one bounded writer queue (default 1024 transactions), with separate read connections. CLI mutations SHALL route through that owner; stopped-server maintenance (`cyber db vacuum|restore`) SHALL acquire the lock. Embedded processes SHALL apply the same queue and durability settings to their private database. Transactions SHALL contain no provider calls, tool execution, user waits or network I/O. Queue admission SHALL time out after 5 seconds with retryable `StorageBusyError` (HTTP 503), without acknowledging an uncommitted prompt. Readers SHALL release transactions between replay pages. Queue depth, commit latency, busy errors and WAL size SHALL be observable.
 
 #### Scenario: Writer saturation
 - **WHEN** the writer queue is full for 5 seconds
@@ -178,3 +186,10 @@ It SHALL also run `git gc --prune=7.days` on snapshot repositories. Setting a re
 #### Scenario: Two hosted schedulers claim work
 - **WHEN** two service instances attempt to claim the same Routine firing
 - **THEN** one transaction obtains ownership and only that owner dispatches the run
+
+### Requirement: Transcript persistence switch
+(P1) `storage.persist_sessions: false` (or `CYBER_EPHEMERAL=1`) SHALL make every Session of that process ephemeral: the server opens an in-memory database, reports `durability: ephemeral` in `GET /api/v1/health` and the session header, writes no transcripts, snapshots or usage records to disk, and disables resume, cross-session messaging to other processes, remote control, loops and routines with `EphemeralModeError`. Config, credentials and memory files remain on disk. The switch SHALL be documented as trading every durability guarantee of this spec for privacy.
+
+#### Scenario: Private session
+- **WHEN** a user starts `cyber` with `CYBER_EPHEMERAL=1`
+- **THEN** the header shows `durability: ephemeral`, `cyber sessions list` in another terminal shows nothing new, and `/remote` fails with `EphemeralModeError`
