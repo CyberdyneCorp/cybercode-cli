@@ -1,0 +1,29 @@
+schema: spec-driven
+
+context: |
+  OpenSpec root for Cyber Code (CLI `cyber`): an open-source (Apache-2.0), model-agnostic coding-agent
+  harness. It combines the shared core of OpenCode v1/v2, Codex-style ergonomics, and Claude Code's
+  orchestration features (workflows, goals, loops, remote control, cross-session messaging, cloud runners).
+  Greenfield: these specs describe the TARGET product, not shipped behavior. Each requirement carries a
+  roadmap phase tag (P0..P4) defined in ROADMAP.md; read ../README.md for the architecture and glossary first.
+  Stack: Rust core (tokio) shipped as one static binary `cyber`; TypeScript SDK (@cyber-code/sdk) and
+  plugin kit (@cyber-code/plugin). Plugins run out-of-process over JSON-RPC 2.0 (stdio); workflow scripts
+  run in an embedded QuickJS sandbox. Server-first: every client (TUI, exec, IDE, web, mobile) talks to the
+  local `cyber` server over HTTP + SSE/WebSocket described by OpenAPI.
+  Storage: SQLite WAL with synchronous=FULL and a bounded single-writer queue locally; PostgreSQL for
+  multi-instance hosted control-plane state. See docs/decisions/0001-storage-architecture.md.
+  P0 includes workspace trust and harness evaluation; external tool outcomes can be unknown after a crash.
+  Identity: CyberdyneAuth (https://github.com/CyberdyneCorp/CyberdyneAuth) via OIDC authorization-code + PKCE.
+  Local single-machine use MUST never require an account; hosted features (relay, cross-machine messaging,
+  hosted runners, sharing, org policy) require it.
+  Names: binary `cyber`, project dir `.cyber/`, config `cyber.json`/`cyber.jsonc`, global `~/.config/cyber`,
+  data `~/.local/share/cyber`, state `~/.local/state/cyber`, cache `~/.cache/cyber`, env prefix `CYBER_`.
+  Config keys, CLI flags, HTTP routes, event types, the plugin JSON-RPC protocol and SDK are public contracts.
+  Use the README glossary terms verbatim (Session, Location, Turn, Drain, Admitted Prompt, Context Epoch,
+  Workflow Run, Goal, Loop, Routine, Runner, Relay, Device, Channel, Mode).
+
+rules:
+  specs:
+    - Every requirement uses SHALL/MUST and has at least one "#### Scenario:" with WHEN/THEN bullets
+    - Tag each requirement's first sentence with its roadmap phase, e.g. "(P1)"
+    - Give concrete defaults (numbers, paths, names) instead of vague wording
