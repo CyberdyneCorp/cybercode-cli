@@ -1,0 +1,6 @@
+{
+  "name": "patch-apply",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

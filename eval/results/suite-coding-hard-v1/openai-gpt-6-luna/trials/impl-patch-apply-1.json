@@ -1,0 +1,22 @@
+{
+  "task": "impl-patch-apply",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 12,
+  "tool_calls": 15,
+  "cost_usd": 0.00921119,
+  "unpriced": false,
+  "tokens": {
+    "input": 11257,
+    "output": 4615,
+    "cache_read": 88599,
+    "cache_write": 0
+  },
+  "latency_seconds": 141.318103417,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: table: new start 0 with an omitted count\nFAIL",
+  "session_id": "ses_01M44AXE3RB2N2XMBTF01RYK4B"
+}

@@ -76,6 +76,18 @@ impl Bus {
     }
 
     pub fn publish(&self, event: LiveEvent) {
+        if let LiveEvent::Error {
+            session_id,
+            kind,
+            message,
+        } = &event
+        {
+            cyber_core::log::error(
+                "runtime",
+                message,
+                serde_json::json!({ "session_id": session_id, "kind": kind }),
+            );
+        }
         // No subscribers is fine.
         let _ = self.sender.send(event);
     }

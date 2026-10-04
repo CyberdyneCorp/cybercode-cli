@@ -1,0 +1,717 @@
+{
+  "schema_version": 1,
+  "id": "suite-coding-hard-v1",
+  "description": "Hard coding suite: 20 debugging, spec-implementation, performance, concurrency, refactor, mutation-testing, shell and long-horizon tasks in Python, Node and bash, built so that strong models fail a meaningful fraction; each graded by a hidden grader on final workspace state.",
+  "kind": "suite",
+  "harness": {
+    "min_version": "0.1.0",
+    "tools": "tools.v1"
+  },
+  "tasks": [
+    {
+      "id": "debug-billing-proration",
+      "prompt": "Support ticket for the subscription billing package in billing/ (Python 3.10+, stdlib only). The \"Billing rules\" section of README.md is the authoritative contract. Customers and finance report: (1) JPY invoices show fractional yen (a total of \"1078.00\" instead of \"1078\") and Bahraini dinar (BHD) amounts are rounded to 2 decimals instead of 3; (2) customers who signed up on 2024-01-31 got a March invoice for 2024-03-29..2024-04-29 instead of 2024-03-31..2024-04-30, and an annual plan started on 2024-02-29 renews on 2028-02-28 instead of 2028-02-29; (3) plan-change (proration) invoices are a few cents off from finance's spreadsheet, sometimes too high and sometimes too low; (4) California and New York tax is sometimes one cent lower than the rate applied to the taxed amount, and the tax row of rendered invoices shows a long string of digits instead of \"7.25%\"; (5) a customer in Germany (19%, invoice mode) on Pro (49.99 USD) with coupon SAVE15 was charged 9.50 tax, but 19% of the discounted 42.49 is 8.07. These symptoms come from several independent root causes in different modules; find each one and fix it where it lives so that every rule in README.md holds for all currencies (USD, EUR, GBP, CHF, JPY, KRW, BHD, KWD), plan intervals (1, 3 and 12 months), coupons and tax modes, not just the reported examples. Keep the public API and signatures: billing.money (normalize_currency, minor_units, round_money, format_amount), billing.catalog.Catalog (from_dict, load), billing.periods (add_months, period_bounds, period_index), billing.schedule (upcoming_periods, next_renewal), billing.service.BillingService (subscribe, period_invoice, change_plan), billing.render.render_invoice and billing.export.invoice_to_dict. Do not modify README.md, billing/catalog.json or tests/test_billing.py, and do not special-case particular plans, dates or currencies. Run the visible tests with  (one currently fails); hidden tests will check exact invoice lines, subtotals, discounts, taxes and totals of about 160 period and plan-change invoices (including custom catalogs passed to Catalog.from_dict), the money helpers, period bounds, rendering and export against the README contract.",
+      "tags": [
+        "debugging",
+        "hard",
+        "python",
+        "multi-file",
+        "decimal",
+        "dates"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/debug-billing-proration",
+        "tree_sha256": "sha256:84e58a45468651eb86efda858632c401a7baa8093024ef73f00e96530b4150ed",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/debug-billing-proration",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "debug-event-replay",
+      "prompt": "Support escalation for the event-sourced wallet service in `ledger/` (Python 3.10+, stdlib only): (1) \"after last night's deploy restart, several customers' balances differ from what they were before the restart, and one host refused to start at all\"; (2) \"a payment provider retried a top-up webhook two days later and the customer was credited twice\"; (3) \"the monthly statement disagrees with the balance, and some lines show up in the wrong month or in the wrong order\". These symptoms have several independent root causes in different layers of the package; find and fix all of them so the package follows README.md, which is the authoritative contract: `WalletService(data_dir, clock=..., use_snapshot=True)` with open_wallet/deposit/withdraw/handle_webhook/balance/wallets/last_seq/statement/take_snapshot/rebuild_projections, exact Decimal amounts with no upper limit that must survive snapshots exactly, events always applied in sequence-number order (never by `recorded_at`, whose UTC offsets differ between hosts), webhook idempotency keys applied at most once across restarts, snapshots and processes, statements by UTC calendar month with lines in sequence order, and the invariant that live state, a replay from scratch and a replay from the latest snapshot plus the tail always agree, also after any number of `rebuild_projections()` calls. Keep the public API and the on-disk files (`events.jsonl`, `snapshot.json`) working as documented. The visible tests in tests/ only cover one of the problems; run them with `python3 -m unittest discover -s tests` and keep them passing (do not remove or weaken them). Hidden tests will check the README contract with targeted cases and randomized sequences of commands, webhook retries, snapshots, restarts and rebuilds.",
+      "tags": [
+        "debugging",
+        "hard",
+        "python",
+        "multi-file",
+        "idempotency",
+        "event-sourcing",
+        "decimal"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/debug-event-replay",
+        "tree_sha256": "sha256:94d6d8a236ccbcbd556c0bbb2a9e7792ef9f862b2f4a71a1a88632606178086c",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/debug-event-replay",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-unicode-table",
+      "prompt": "Our CLI reports print broken tables as soon as cells contain non-ASCII text: columns drift with Chinese, Korean and fullwidth text, accented names typed with combining characters are cut in the wrong place, truncated cells come out narrower than their column, tab-indented cells do not line up, wrapped cells break at hyphens, and shrunk tables narrow the wrong column. Fix the `termtable` package (Python 3.10+, stdlib only; termtable/width.py, text.py, layout.py and table.py) so that it follows the Contract section of README.md, which is authoritative: `normalize(text)` (NFC first, then tabs expanded to the next multiple of 4 columns measured in display width), `char_width(ch)` (0 for U+200B, U+200D, U+FEFF and general categories Mn, Me and Cf, checked first; 2 for East Asian Width W or F; otherwise 1), `display_width(text)`, `graphemes(text)` (a character plus the zero-width characters after it; text is only ever cut between graphemes), `truncate(text, width)` (ends with `…`, inserts a space when a wide character would overflow by one column, so the result is exactly `width` wide), `align(text, width, how=\"left\")` (center puts the extra space on the right), `wrap(text, width)` (breaks only at spaces; words wider than the width are hard-broken at grapheme boundaries), `allocate(natural, max_width)` (narrows the widest column one column at a time, the rightmost on ties, never below 2) and `render_table(rows, headers=None, *, max_width=None, align=None, overflow=\"truncate\")`, including every ValueError the contract lists. Keep these names and signatures exported from `termtable`, do not change README.md, and keep the visible tests in test_termtable.py passing (run them with `python3 -m unittest`). Hidden tests check every rule of the contract with CJK, fullwidth, combining-mark, zero-width and tab inputs, and compare random inputs against the contract.",
+      "tags": [
+        "bugfix",
+        "hard",
+        "python",
+        "unicode",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-unicode-table",
+        "tree_sha256": "sha256:1df1aec2b61814a2bc076b9e63b0cb532a1b240218611c0b83f0688d3723eef8",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/fix-unicode-table",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "feat-incremental-indexer",
+      "prompt": "Add incremental indexing to the tinyindex full-text indexer in this repository (Python 3.10+, standard library only; README.md describes the package, what is indexed, the ignore rules, tokenization and the canonical on-disk index format). docs/INCREMENTAL.md is the authoritative contract; read it in full. In summary: `build_index(root, index_path, config=None, incremental=False)` in indexer/build.py must return an `IndexStats` (exported from `indexer`) with int attributes `files_parsed`, `files_reused`, `files_removed` and bool `full_rebuild`. With `incremental=True` it reuses the index currently at `index_path`: a file whose `st_size` and `st_mtime_ns` both equal the recorded values is kept without being read; a file whose stat changed but whose sha256 is unchanged keeps its terms and positions (not re-tokenized) with its recorded size and mtime_ns updated; any other file (new path or changed content) is parsed; previous paths no longer in the walk are removed; a rename counts as one removal plus one parsed file. A full build (stats: parsed = all documents, reused 0, removed 0, full_rebuild True) is done instead when the previous index is missing or not loadable by `load_index`, or its stemming flag, stopwords or effective ignore rules (config.ignore plus the current `.indexignore` lines, as an ordered list) differ from the current ones. Whatever happens, the bytes written to `index_path` must be identical to what a full build of the same tree and config would write (documents sorted by path with ids equal to their position, no empty postings, recomputed stats), so query results are identical too. Also add an `--incremental` flag to `python3 -m indexer build` and make it print exactly `indexed <documents> files into <PATH> (parsed <P>, reused <R>, removed <X>)`. Do not change the index format, FORMAT_VERSION or docs/INCREMENTAL.md. Keep the visible tests passing (run them with `python3 -m unittest`) and add tests for incremental builds. Hidden tests will compare every build against a full build on randomized sequences of file creations, modifications, touches, deletions, renames and config changes, with mtimes set explicitly via os.utime, and check the exact IndexStats counts.",
+      "tags": [
+        "feature",
+        "hard",
+        "python",
+        "caching",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/feat-incremental-indexer",
+        "tree_sha256": "sha256:197fe036bb8f5c7989762ac03d6c1cba445a7f8bd9d984a6311b4090d9eced8c",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/feat-incremental-indexer",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "impl-expr-evaluator",
+      "prompt": "Implement the `calc` expression language (Python 3.10+, standard library only) specified in SPEC.md, which is the authoritative and complete contract. The public API is `calc.evaluate(source: str, env: dict | None = None)`, which returns an int, decimal.Decimal, str, bool or None, and `calc.CalcError`, which every error must be raised as, with `.message` (exact text from SPEC.md) and `.column` (1-based character offset of the reported token or operator). The package has a finished calc/errors.py, an unfinished and buggy tokenizer in calc/lexer.py and stubs in calc/parser.py and calc/evaluator.py; restructure the package however you like. Pay particular attention to: the number literal rules (underscores, leading zeros) and string escapes; the precedence table, including right-associative `**` that binds tighter than a unary minus on its left and accepts one on its right (`-2 ** 2` is -4, `2 ** -1` is Decimal(\"0.5\")); `/` always producing a Decimal, `//` and `%` with floor semantics also for decimals, and decimal results computed in a local context of 28 digits with ROUND_HALF_EVEN (decimal results are compared by str(), so exponents matter); comparison chaining with each operand evaluated once and short-circuiting; `and`/`or` returning operand values; `x if c else y`; `let name = value in body` scoping; the builtins min, max, len, abs, round (half-even), str and int with their exact arity and type error messages; and the exact error messages and columns, including the rule that the whole source is tokenized before parsing and parsed before evaluation. Do not modify SPEC.md. Keep the visible tests in test_calc.py passing (run them with `python3 -m unittest`); hidden tests will check several hundred cases of the contract, each either a value or an exact error message and column.",
+      "tags": [
+        "spec",
+        "hard",
+        "python",
+        "interpreter",
+        "parsing"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/impl-expr-evaluator",
+        "tree_sha256": "sha256:6c14f606db538128d5bbf71c9db6ac0243c85be00ae63f40761d54d8afd9cb88",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/impl-expr-evaluator",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "perf-sessionize",
+      "prompt": "The clickstream report in the `analytics` package (Python 3.10+, standard library only; README.md is the contract) produces correct output but is far too slow on real traffic: it effectively never finishes on a day of events. Make it fast without changing any observable behavior: `sessionize(events, gap_seconds)`, `session_stats(sessions)`, `summarize(sessions, top_k)`, `render(summary)`, `build_report(events, gap_seconds, top_k)`, `parse_events(lines)` and the `python3 -m analytics` CLI must keep returning exactly the same values, report text, output and errors as the current code for every input, including unsorted input, equal timestamps (which keep their input order), exact duplicate events, user ids that contain `#`, a gap exactly equal to gap_seconds, ties in every ranking, the lower median, the nearest-rank percentile and the two-decimal half-up rounding. Hidden tests compare your package against a frozen copy of the current implementation on hundreds of randomized small inputs, and time `build_report(events, 1800, 10)` on two workloads: (a) 300,000 events from 50,000 users over 2,000 distinct pages, in random order with timestamps spread over 30 days, which must take at most 10 seconds, and (b) 300,000 events from 10 users over 5,000 distinct pages, in random order with each user's events mostly 0-20 seconds apart, which must take at most 2 seconds (a straightforward efficient implementation needs well under a fifth of these limits). Keep the public names, signatures and dataclasses. Keep the visible tests in test_analytics.py passing (run them with `python3 -m unittest`).",
+      "tags": [
+        "performance",
+        "hard",
+        "python",
+        "analytics"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/perf-sessionize",
+        "tree_sha256": "sha256:f1edc86547c485145ab657db49a52aec67acfc8b86066f8f8cf5efb4782c8de9",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/perf-sessionize",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "refactor-exporter-registry",
+      "prompt": "Refactor the `reportx` package (Python 3.10+, standard library only; see README.md) so that output formats are plugins. Today the knowledge about the seven formats (csv, tsv, json, ndjson, markdown, html, xml) is spread over if/elif chains and lists in reportx/formats.py, files.py, http.py, render.py and cli.py. Move it into a new package `reportx/exporters/` with exactly this API. `reportx/exporters/base.py` defines `class Exporter` with the class attributes `name` (canonical lowercase name), `extension` (with the dot), `content_type`, `aliases` (tuple of lowercase alternative names, default `()`), `disposition` (the Content-Disposition type, default \"attachment\"; \"inline\" for html) and `header_row` (default True; False for json, ndjson and xml, whose output ignores the header flag, which is what makes the CLI print its --no-header warning), and the method `render(self, dataset, header: bool) -> str` returning the complete document; a class decorator `register(cls)` that registers an instance of cls under its name and every alias, raises ValueError if any of those names is already registered, and returns cls; `get_exporter(name)`, which strips and lowercases name, resolves aliases and returns the registered instance, or raises `ValueError(f\"unknown format {name!r} (choose from {', '.join(available_formats())})\")`; and `available_formats()`, the sorted list of canonical names. `reportx/exporters/__init__.py` must discover and import every module of the package except `base` and modules whose name starts with `_` at import time (for example with pkgutil; do not list them by hand) and re-export those four names. Each built-in format gets its own module in reportx/exporters/ defining a registered Exporter subclass. Everything else in reportx (normalize_format, extension, content_type, output_filename, guess_format, response_headers, render, export_all, parse_format_list and the CLI, including --list-formats in available_formats() order) must go through the registry, so that adding a format takes nothing but one new module; guess_format returns the first format in available_formats() order whose extension, or \".\" + its name or one of its aliases, equals the lowercased file suffix. Requirements: (1) behavior stays byte-for-byte identical for every input: return values and exception messages of all library functions, and the CLI's stdout, stderr, exit status and written files; hidden tests compare against a frozen copy of the current package on randomized datasets (Unicode, quotes, CR/LF, tabs, pipes, backslashes, empty strings, nulls, numbers, booleans, empty tables) in every format, alias and letter case, with and without header. (2) Outside reportx/exporters/, no Python file under reportx/ may contain a string literal (any str constant in its AST, including docstrings and f-string parts) exactly equal to a built-in format's name, alias, extension or content type (for example \"csv\", \"md\", \".html\" or \"application/json\"); inside reportx/exporters/ such a literal may appear only in the module that defines that format's exporter. (3) Hidden tests drop a new module into the package (reportx/exporters/yaml_lines.py, which does `from reportx.exporters.base import Exporter, register` and defines a `@register` class with name \"yaml\", alias \"yml\", extension \".yaml\" and its own content type, disposition and header_row) and check that it works in every library function above and every CLI path, including --list-formats, --output guessing, --output-dir, the --no-header warning and the unknown-format error. Keep the visible tests in test_reportx.py passing (run them with `python3 -m unittest`).",
+      "tags": [
+        "refactor",
+        "hard",
+        "python",
+        "multi-file",
+        "plugins"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/refactor-exporter-registry",
+        "tree_sha256": "sha256:bd954f4911cf5cc9874636e34f1d4c4cd5a158ba7d417917505004cf09574ac7",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/refactor-exporter-registry",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "tests-cron-mutation",
+      "prompt": "cronexpr.py (Python 3.10+, standard library only) contains a correct implementation of `matches(expr, dt)` and `next_fire(expr, after)` for five-field cron expressions, specified in README.md, but there are no tests. Write a thorough unittest suite in a new file test_cronexpr.py that pins down every clause of the README contract: the five fields and their ranges, `*`, lists, inclusive ranges, all three step forms (`*/S`, `A-B/S`, `N/S`), month and weekday names (case-insensitive, allowed in ranges, only in their own field), day of week 0 and 7 both being Sunday, the day-of-month/day-of-week rule (OR only when both are restricted, where `*/2` counts as restricted; AND otherwise) in both matches and next_fire, seconds being ignored by matches, next_fire truncating `after` to the minute and returning a strictly later time with zero seconds, rollovers across hours, days, months and years, the 8-year search range with Gregorian leap years, the macros (exact spelling), rejection of timezone-aware datetimes, and every kind of invalid expression raising ValueError. Your tests will be judged by mutation testing: they must pass against the given implementation and must fail against each of many implementations that each violate exactly one clause of the README. Do not modify cronexpr.py, and test behavior through the public functions only (do not read or hash the implementation's source). Run the suite with `python3 -m unittest`.",
+      "tags": [
+        "tests",
+        "hard",
+        "python",
+        "mutation",
+        "dates"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/tests-cron-mutation",
+        "tree_sha256": "sha256:a039e1fb3d775e117e35a6a8a1a89132bb89c172c9914833feba2c06cd5b1d8d",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/tests-cron-mutation",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-cursor-pagination",
+      "prompt": "This Node 22 catalog API (ES modules, no dependencies; src/store.js, sort.js, filters.js, repository.js, query.js, cursor.js, validation.js, handler.js) implements keyset pagination for `createApi(store).listItems({ sort, limit, cursor, category, minPrice, maxPrice })`, which returns `{ items, nextCursor, prevCursor }` or throws `ApiError` with a `code`. Users report that paging repeats or drops items: items with equal prices go missing, items updated within the same second repeat, descending sorts put items without a value first, prev links return the wrong page, a cursor reused with a different price filter is silently accepted, and pages go stale after the catalog changes. There are several independent bugs in different modules; find and fix all of them so the library meets the contract in README.md, which is authoritative: the ordering (UTF-16 code-unit order for names and ids, chronological to the millisecond for `updatedAt`, numeric for `price`, `id` as the tie-breaker in the sort direction, and null values last in BOTH directions, where only null counts as no value), the exact page definitions for no cursor / `nextCursor` / `prevCursor` evaluated against the store at the time of each request, the exact rule for when each cursor is null, cursor binding to the sort and every filter (`CURSOR_MISMATCH`), `INVALID_CURSOR`, and the parameter validation order and messages (`limit` 1 to 100 inclusive, default 20). Keep the public API (`ItemStore`, `createApi`, `listItems`, `ApiError`) unchanged. Run the tests with `node --test` and keep them passing; do not modify or remove the existing tests in test/. Hidden tests will check the full README contract, including seeded forward and backward walks for every sort and page size over data with many ties and nulls, and inserts and deletes between page requests.",
+      "tags": [
+        "bugfix",
+        "hard",
+        "node",
+        "pagination",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-cursor-pagination",
+        "tree_sha256": "sha256:e16be76a4d767fc22afd846448a614f369478dfa7706ba13f8b39d3517923f52",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/fix-cursor-pagination",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "impl-patch-apply",
+      "prompt": "Implement `applyPatch(files, patchText, options = {})` in src/applyPatch.js (Node 22, ES modules, no dependencies; currently a stub) so that it follows SPEC.md exactly. SPEC.md is the authoritative contract and every rule in it is tested: `files` is a plain object path -> content that is updated in place only on success (all-or-nothing across every file section and hunk); the result is `{ ok: true, report: [{ path, action, offsets }] }` or `{ ok: false, error }`; the unified diff format (multi-file patches, `a/`/`b/` prefixes, `/dev/null` for create/delete, hunk headers with omitted counts, `\\ No newline at end of file` on either side, CRLF kept as line content, ignored commentary lines); exact-context matching with no fuzz and the offset search order (`center`, `center-1`, `center+1`, ... up to `options.maxOffset`, default 100, where `center` carries over the previous hunk's offset), hunks never overlapping or going backwards; `options.reverse`; and the exact error messages (`line N: ...` parse errors, `hunk K of PATH failed`, `PATH does not exist`, `PATH already exists`, `PATH is not empty after deletion`, `no file headers found`). Read the whole spec before coding; edge cases matter. Run the visible tests with `node --test` and keep them passing; add your own tests as you go. Do not modify SPEC.md or the visible tests. Hidden tests will check the full contract with well over a hundred table-driven and randomized cases (patches generated by a diff tool must reproduce the target exactly, and reversed must restore the source).",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "diff",
+        "parsing"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/impl-patch-apply",
+        "tree_sha256": "sha256:0d9cd60116087cd1fe3674e85fc957660386a8566799cefcf447d69a986b090b",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/impl-patch-apply",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "impl-dep-resolver",
+      "prompt": "Implement the dependency resolver of this Node 22 project (ES modules, no dependencies) so that `node src/cli.js resolve <registry.json> <root.json>` follows SPEC.md, the authoritative contract. Today `src/semver.js` only understands exact versions and simple comparators and `src/resolver.js` greedily takes the highest matching version of each package and gives up on conflicts. Required: `satisfies(version, range)` exported from src/semver.js implementing the full range grammar and meaning of SPEC.md sections 1-2 (exact, `=`, `>`, `>=`, `<`, `<=`, caret including the 0.x rules, tilde, partial and x-ranges with `x`/`X`/`*`, space = AND, `||` = OR) with its exact `invalid version \"<version>\"` / `invalid range \"<range>\"` errors; validation of root.json and registry.json in the order, with the exact messages and exit codes of section 5 (2 for usage and input errors, 1 for `error: no resolution satisfies the root dependencies`); a resolver that outputs the single optimal valid resolution of section 4 (one version per package, exactly the packages reachable from the root, and the greatest resolution when comparing package names in UTF-16 code-unit order where any version beats absent; read the worked example, a greedy or classic highest-version-first backtracking resolver is not enough); and the byte-exact lockfile of section 6. Performance: the hidden tests include a 67-package registry (up to 10 versions per package, some packages reachable only through releases the optimum does not choose, and 20 packages that nothing depends on) which must resolve in under 2 seconds for the whole CLI process, so the search has to prune instead of enumerating. You may restructure src/ freely but keep the CLI command and the `satisfies` export, and do not modify SPEC.md. Run the tests with `node --test` and keep them passing; hidden tests check satisfies() against a large range table, the CLI's errors and output byte for byte, and random registries against a brute-force optimum.",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "semver",
+        "backtracking"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/impl-dep-resolver",
+        "tree_sha256": "sha256:8a3b6728029cc8fa12894c3e733348a92ad8e4c465f22a2a7ee207aad49e7d55",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/impl-dep-resolver",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "impl-template-engine",
+      "prompt": "Implement the template engine specified in SPEC.md in this Node 22 project (ES modules, no dependencies): `render(template, view, partials = {})` exported from src/render.js returns the rendered string. SPEC.md is the authoritative contract and every rule in it is tested: tag syntax and whitespace inside tags, triple mustache only with the default delimiters, the context stack with own-property lookup and dotted names (first segment through the stack, further segments only inside that value), string conversion and exactly five HTML escapes, truthiness (0, NaN and {} are truthy; '', [], null, undefined, false and functions are falsy), sections, inverted sections, multi-line comments, standalone-line removal (spaces/tabs only, \\n and \\r\\n endings, end of template), partials with indentation of standalone partial tags, set-delimiter tags scoped per template, and the exact `Error` messages with 1-based line numbers (`Unclosed tag at line N`, `Empty tag at line N`, `Invalid delimiters at line N`, `Unexpected closing tag \"NAME\" at line N`, `Closing tag \"NAME\" at line N does not match \"OPEN\" opened at line M`, `Unclosed section \"OPEN\" at line M`). Lambdas are not supported. Do not modify SPEC.md or the existing tests; run them with `node --test`. Hidden tests will check every rule of the spec with a large table of templates.",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "templating",
+        "parsing"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/impl-template-engine",
+        "tree_sha256": "sha256:0918f50e8b52f40e840c06e9f8e17f633eb23a2e6fc20b868d7b888affdae629",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/impl-template-engine",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "perf-leaderboard",
+      "prompt": "The arena game backend's leaderboard (Node 22, ES modules, no dependencies) is correct but far too slow: `Leaderboard` in src/leaderboard.js re-sorts every player on each query and scans linearly. Rewrite its internals so that a board of 100,000 players handles 200,000 mixed operations in under 4 seconds, including the 100,000 initial inserts; README.md (section Performance) describes the hidden benchmark workloads, which are shaped like bench/workload.js (run `node bench/bench.js`) and also include heavily tied scores and players inserted with strictly increasing scores. Each operation should be O(log n) expected or amortized, with `topK(k)` and `around(player, n)` costing O(log n + entries returned). Behavior must stay exactly as specified in README.md and as the current implementation does it: `update(player, score)` sets (not adds) an integer score that may go down and returns the previous score or null, `remove`, `has`, `score`, `size`, `clear`, `rank(player)` = 1 + the number of players with a strictly greater score (null if absent), `topK(k)`, `around(player, n)`, `entries()` returning fresh `{ player, score, rank }` objects in ranking order (score descending, then player name ascending by UTF-16 code units), `countInRange(lo, hi)` inclusive, `percentile(p)` with the nearest-rank definition in the README, and the exact argument errors listed there. Keep the exported names and signatures; src/service.js and src/cli.js must keep working unchanged in behavior. Hidden tests compare your Leaderboard, service and CLI against the original implementation on many randomized operation sequences (ties, decreasing scores, unusual names, argument errors) and time the benchmark workloads. Run the tests with `node --test` and keep them passing.",
+      "tags": [
+        "performance",
+        "hard",
+        "node",
+        "data-structures"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/perf-leaderboard",
+        "tree_sha256": "sha256:8bdb98ff6b91e93ef098bd08dd2efb16afac074e3ddcd5f747c568a8323dad24",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/perf-leaderboard",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "refactor-callbacks-async",
+      "prompt": "Convert this callback-style Node 22 package (ES modules, no dependencies; README.md documents every module) to async/await Promises without changing its behavior. Mapping: every function exported from src/index.js that takes a trailing completion callback, and every method of the FileStore returned by openStore, changes from `f(args..., cb)` to `async f(args...)` returning a Promise that resolves with the value the callback received and rejects with the very same Error object (argument errors become rejections, never synchronous throws); user-supplied functions become async too: the mapLimit iterator is `iterator(item, index)`, the retry task is `task(attempt)` and the pipeline transform is `transform(record)`, each returning a Promise. Synchronous APIs stay as they are (parseLines, serializeLines, backoffDelay, storeError, `store.closed`, and the scheduler interface `scheduler.setTimeout(fn, ms)`), and src/index.js must keep exporting the same names. Behavior must be identical to the current code, including the order and virtual time of every side effect: which store operations start and complete when (the latency and fault hooks), every scheduler call and its delay, retry attempt counts, delays and the `attempts` property, mapLimit's in-order starts, concurrency limit and first-error semantics (reject immediately, start nothing new, ignore the outcomes of calls still in flight), records transformed one at a time, the pipeline closing the store exactly once and its error precedence, and in-flight work continuing after a failure. Wait only through the injected scheduler (add no setImmediate/setTimeout or other deferral) and leave no promise rejection unhandled. Rules: no function in src/ may have a parameter named cb, callback, done or next; src/ must not use promisify or callbackify; `new Promise` may appear only in src/scheduler.js. Update test/pipeline.test.js to the new API keeping its test titles, keep it passing with `node --test`, and update README.md. Hidden tests run your code and the original side by side under a fake scheduler that fires one timer at a time and lets all promise work settle before the next, over hundreds of randomized scenarios with injected faults, and require identical side-effect logs, results, errors and final file contents.",
+      "tags": [
+        "refactor",
+        "hard",
+        "node",
+        "async",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/refactor-callbacks-async",
+        "tree_sha256": "sha256:d029f346a847bf592eaa86e00e723ef8f1858c6a23c14f3ab8a2bcd64753b3cd",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/refactor-callbacks-async",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "tests-lru-mutation",
+      "prompt": "src/lruCache.js (Node 22, ES modules, no dependencies) correctly implements the `LRUCache` class specified in README.md, but it has no tests. Write a thorough test suite under test/ (one or more *.test.js files using node:test and node:assert) that pins down every clause of the README contract: constructor and `set` argument validation (error types and messages), recency (only a `get` hit and `set` make an entry most recently used; `peek`, `has`, `keys`, `delete` and `prune` never do), eviction of least recently used entries until both `maxEntries` and `maxSize` hold (a cache filled exactly to maxSize is allowed, the new entry is never evicted), `sizeOf(value, key)` and its result check, oversized values (`set` returns false and the key's previous entry is gone; size equal to maxSize is accepted), replacing an existing key (new value, size, ttl and recency), TTL with an injected `now()` clock (expired when `now() >= set time + ttl`, ttl 0 never expires, a per-entry `{ ttl }` overriding the default including an explicit 0, reads never extending expiry), lazy removal of expired entries by get/peek/has/delete/set and by `prune()` (least recently used first) while they still count in size, totalSize and eviction until removed, `keys()` order and its exclusion of expired entries without removing them, `stats()` hits/misses/evictions semantics, and `onEvict(key, value, reason)`: exactly which of the reasons 'evict', 'expire', 'delete' and 'set' fires in each situation (including replacement with an identical value and set over an expired entry), that it runs after the entry is removed, and that `clear()` never calls it. Your tests will be judged by mutation testing: they must pass against the given implementation and must fail against each of many implementations that each violate one clause of the contract. Do not modify src/lruCache.js, and test behavior through the exported class only (do not read or hash the source). Run the suite with `node --test`.",
+      "tags": [
+        "tests",
+        "hard",
+        "node",
+        "mutation",
+        "caching"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/tests-lru-mutation",
+        "tree_sha256": "sha256:74fc52507e07d0c6afb9c341b57630beb623ea2fc599b797d5579831249a820b",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/tests-lru-mutation",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-job-queue",
+      "prompt": "The job queue library in this Node 22 project (ES modules, no dependencies; `JobQueue`, `CancelSource`, `CancelledError` exported from src/index.js) misbehaves in production: the queue sometimes stalls for good after a job throws, `drain()` resolves while work is still pending, jobs of the same priority do not always run in the order they were added, cancelled jobs sometimes run anyway, and after `pause()`/`resume()` more jobs run at once than `concurrency` allows. Find and fix the root causes so the library follows the contract in README.md, which is authoritative: highest priority first and FIFO among equal priorities (including jobs re-entering the queue after a backoff), never more than `concurrency` attempts running and no free slot while a job waits (unless paused), a synchronous throw from a task treated exactly like a rejection, retry delays `min(maxDelay, baseDelay * 2 ** (n - 1))` via the injected `timers`, cancellation of queued, backing-off (timer cleared, never attempted again) and running jobs with a `CancelledError`, `pause()`/`resume()`, `drain()` resolving only when nothing is queued, running or waiting for a retry, `queue.stats`, and the events `start`, `retry`, `success`, `failure`, `cancel` with their arguments and order. Keep the public API and the event names. The visible test in test/queue.test.js shows one of the problems; keep all visible tests passing (`node --test`) and add regression tests for each bug you fix. Hidden tests use a deterministic fake clock with targeted tests for every clause of the README and hundreds of randomized scenarios (priorities, retries, synchronous throws, cancellations, pause/resume, drain) that check the contract's invariants at every step.",
+      "tags": [
+        "concurrency",
+        "hard",
+        "node",
+        "async",
+        "bugfix"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-job-queue",
+        "tree_sha256": "sha256:4acc732facc6a4f8fdb0541e8d6eb9115ad3390d1a298db13d7d957914331d36",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/fix-job-queue",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-shell-log-report",
+      "prompt": "The ops script latency_report.sh (bash, with helpers in lib/common.sh, lib/parse.awk and lib/summarize.awk) summarizes API access logs per endpoint, but on-call reports that it breaks on log paths with spaces, gets percentiles wrong, does not group UUID paths consistently, mishandles compressed archives and prints errors to stdout. Fix it so `bash latency_report.sh [-n TOP] [--since TS] [--status CLASS] [--] LOG...` follows the contract in README.md exactly; README.md is authoritative and every rule in it will be checked by hidden tests: the five-field line format and what counts as malformed (reported to stderr as `latency_report.sh: skipped N malformed lines`, exit 0), blank lines, path normalization (query string and fragment stripped, repeated slashes collapsed, trailing slash removed except for `/`, all-digit segments to `:id`, 8-4-4-4-12 hex segments in any case to `:uuid`), endpoints of the form `METHOD path`, the tab-separated report with its exact header, the half-up one-decimal `error%` formula, nearest-rank p50/p95/p99 (`k = ceil(p*n/100)`) over numerically sorted latencies, max, ordering by count descending then endpoint in LC_ALL=C byte order regardless of the caller's locale, TOP (default 10), `--since` (inclusive string comparison of ISO-8601 UTC timestamps) and `--status` (1xx-5xx) filters, plain and `.gz` logs mixed in any order, file names with spaces, glob characters or a leading dash, options recognized only before the first LOG or `--`, the exact usage-error messages (two stderr lines, exit 2) and file errors (`cannot read PATH` / `cannot decompress PATH`, exit 1, nothing on stdout), and the script working when its own path contains spaces. Use bash and standard POSIX tools only (no gawk extensions, no GNU-only flags); it must behave the same with macOS bash 3.2 and BSD tools as on GNU/Linux, and handle a 50,000-line log in well under 10 seconds. Do not modify README.md. The visible tests are in test_latency_report.py; run them with `python3 -m unittest` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "hard",
+        "bash",
+        "awk",
+        "text-processing"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-shell-log-report",
+        "tree_sha256": "sha256:50b8314adf8cd979fe129519176c0e3ddb0c50daeaf22e9300b869095f85eed7",
+        "environment": {
+          "lock": [
+            "bash>=3.2",
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/fix-shell-log-report",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-shell-kv-store",
+      "prompt": "kv.sh is a small file-backed key-value store in bash, and users report that values lose their trailing newlines, keys with spaces or `/` break the store, `list` shows garbage, `export --json` produces invalid JSON and concurrent `incr` calls lose updates. Fix kv.sh so that `bash kv.sh [-d DIR] (set KEY VALUE | get KEY | del KEY | list [PREFIX] | export [--json] | import FILE | incr KEY [N])` follows the contract in README.md exactly; README.md is authoritative and hidden tests will check every rule in it by calling the script with raw bytes (no shell in between): store location (-d, then $KV_DIR, then ./.kv); the exact file-name encoding ENC(KEY) (lowercase letters, digits, `_`, `-` and a non-leading `.` kept, every other byte as `%XX` uppercase hex) with each value stored byte-exact in DIR/ENC(KEY) and replaced atomically; keys with any bytes except newline (spaces, `/`, `*`, `..`, leading `-`, backslashes, UTF-8) and values with any bytes except NUL (trailing newlines, `-n`, `-e`, `%s`, backslashes, control characters) round-tripping exactly, with `get` adding nothing; `list` with a literal byte prefix in LC_ALL=C order regardless of the caller's locale; the escaped `export` line format and `import` (all-or-nothing, line-numbered errors, `-` for stdin); `export --json` with the exact escaping rules; `incr` with decimal 18-digit integers (leading zeros are not octal), canonical results and overflow errors; the mkdir-based lock with a pid file, race-free stale-lock removal, KV_LOCK_TIMEOUT and release on every exit path (20 concurrent incr must never lose an update); and the exact error messages, check order and exit codes 1/2/3 in the README table, with errors on stderr only. Use bash and standard POSIX tools only; it must behave the same with macOS bash 3.2 and BSD tools as on GNU/Linux. Do not modify README.md. The visible tests are in test_kv.py; run them with `python3 -m unittest` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "hard",
+        "bash",
+        "quoting",
+        "cli"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-shell-kv-store",
+        "tree_sha256": "sha256:85b9c0ac49b7748101c338f4a12b50bd1ca8449d5bddb58e875494d4232d5ade",
+        "environment": {
+          "lock": [
+            "bash>=3.2",
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 60,
+        "max_cost_usd": 2.0,
+        "max_wall_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "grading": {
+        "grader_dir": "eval/graders/fix-shell-kv-store",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "build-ledger-cli",
+      "prompt": "Build the plain-text double-entry accounting CLI specified in SPEC.md from this near-empty repository, in Python 3.10+ with the standard library only. SPEC.md is the authoritative contract and every detail of it is tested: the package `ledger/` run as `python3 -m ledger -f FILE [--strict] COMMAND [ARGS]`; the journal format (entries and indented lines, transaction headers with status and payee, postings split at two spaces or a tab, the NUMBER and COMMODITY grammar with comma thousands separators, `@`/`@@` costs, inline and transaction comments, `include` relative to the including file with display names and cycle detection, `account` and `P` directives, `--strict`); balancing with exact decimal.Decimal arithmetic, inference of the one missing amount and the exact residual message; per-commodity display precision with ROUND_HALF_UP and thousands separators; errors printed as `error: FILE:LINE: MESSAGE` in reading order (only the first one, except `check` which lists all and a count), exit codes 0/1/2 and option validation; and the commands balance (tree and flat modes, --depth, --empty, account patterns, --begin inclusive/--end exclusive, --value with market prices), register (fixed column widths, truncation, --running with multi-commodity continuation lines), print (canonical form), accounts, payees, prices, stats and check, whose output must match SPEC.md character for character (section 4 is a worked example). Work incrementally: parsing and balancing first, then one command at a time, adding unittest tests in tests/ after each step and running `python3 -m unittest discover -s tests` before moving on. When done, the suite must have at least 20 tests, all passing, and README.md must have a `## Usage` section with a `python3 -m ledger -f FILE <command> ...` example of every command. Do not modify SPEC.md. Hidden tests run the CLI as a subprocess on more than 150 fixed journals and on randomized journals, comparing exit code, stdout and stderr exactly.",
+      "tags": [
+        "greenfield",
+        "hard",
+        "python",
+        "long",
+        "cli",
+        "decimal"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/build-ledger-cli",
+        "tree_sha256": "sha256:653a9f658c0ae882d3f0318f27761a0fb621b12692ccd9e1fd738af04c51f744",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 150,
+        "max_cost_usd": 5.0,
+        "max_wall_seconds": 3600
+      },
+      "timeout_seconds": 3600,
+      "grading": {
+        "grader_dir": "eval/graders/build-ledger-cli",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "build-minimake",
+      "prompt": "Build minimake, the make-like build tool specified in SPEC.md, from this near-empty repository, in JavaScript for Node 22 with no npm packages (only node: built-ins). SPEC.md is the authoritative contract and every sentence of it is tested: the entry point `node minimake.js [-f FILE] [-C DIR] [-n] [-k] [-B] [NAME=VALUE ...] [targets ...]` (combined flags like -nB and attached values like -fFILE); makefile parsing (backslash continuations that differ between makefile and recipe lines, # comments, tab-indented recipes and when a recipe context ends, ifeq/ifneq/ifdef/ifndef/else/endif); the four assignment flavors =, :=, ?=, += (keeping flavor), command-line overrides, immediate vs deferred expansion, $(NAME)/${NAME}/$X/$$, computed names, substitution references and the exact list of built-in functions with their argument-splitting and whitespace rules; pattern rules (stem matching with the directory-part rule, shortest stem wins, qualifying prerequisites, no chaining, merging with explicit prerequisites); the rebuild rules (missing target, prerequisite strictly newer by mtime or updated during this run, phony, -B; order-only prerequisites never trigger), automatic variables $@ $< $^ $+ $? $* $(@D) $(@F) $(<D) $(<F), recipe echoing and the @ - + prefixes, -n and -k semantics, circular dependency dropping, and every message (`minimake: Nothing to be done for 'G'.`, `minimake: 'G' is up to date.`, `minimake: *** [T] Error N`, `minimake: *** No rule to make target 'X', needed by 'D'.  Stop.`, parse errors with FILE:LINE, and the rest listed in SPEC.md section 8) with exit status 0 or 2. stdout and stderr are compared exactly, so Node must print no warnings and minimake's own output must stay in order with the output of the commands it runs. Work incrementally: parser, then variables and expansion, then functions, then the build engine and options, adding tests as you go, and run them with `node --test` from the repository root. When done, test/ must hold at least 20 passing tests covering parsing, variables and functions, pattern rules, rebuild decisions, the options and the error messages, and README.md must have a `## Usage` section with `node minimake.js` examples of -f, -C, -n, -k, -B and a NAME=VALUE override. Do not modify SPEC.md. Hidden tests (over 100) will run `node minimake.js` as a subprocess in temporary directories with explicit file modification times and check stdout, stderr, exit status and the resulting files against the spec.",
+      "tags": [
+        "greenfield",
+        "hard",
+        "node",
+        "long",
+        "cli",
+        "build-system"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/build-minimake",
+        "tree_sha256": "sha256:6a7bc27e55ef6a44a2da1c96532421b345a3fc91606068ca67e91624ddbade6a",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 150,
+        "max_cost_usd": 5.0,
+        "max_wall_seconds": 3600
+      },
+      "timeout_seconds": 3600,
+      "grading": {
+        "grader_dir": "eval/graders/build-minimake",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    }
+  ]
+}

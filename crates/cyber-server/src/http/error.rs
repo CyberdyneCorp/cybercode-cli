@@ -68,7 +68,11 @@ impl ApiError {
     /// An unexpected failure: the detail is logged under a reference, never returned.
     pub fn unknown(detail: impl std::fmt::Display) -> Self {
         let reference = cyber_core::ids::new_id("err");
-        eprintln!("cyber server error {reference}: {detail}");
+        cyber_core::log::error(
+            "http",
+            &detail.to_string(),
+            serde_json::json!({ "ref": reference }),
+        );
         let mut e = Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "UnknownError",

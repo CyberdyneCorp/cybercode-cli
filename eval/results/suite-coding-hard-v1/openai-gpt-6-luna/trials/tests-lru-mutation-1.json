@@ -1,0 +1,22 @@
+{
+  "task": "tests-lru-mutation",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 11,
+  "tool_calls": 12,
+  "cost_usd": 0.00637827,
+  "unpriced": false,
+  "tokens": {
+    "input": 14132,
+    "output": 5157,
+    "cache_read": 92257,
+    "cache_write": 0
+  },
+  "latency_seconds": 78.287252167,
+  "grader_exit": 1,
+  "grader_tail": "FAIL mutant survived: m29_prune_keeps_size (Mutant: prune() does not subtract pruned sizes from totalSize)\nFAIL",
+  "session_id": "ses_01M44BFFVG8YFVT0PMH9EDBYPF"
+}

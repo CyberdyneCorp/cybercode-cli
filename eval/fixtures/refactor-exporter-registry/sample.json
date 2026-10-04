@@ -1,0 +1,10 @@
+{
+  "title": "Q3 sales | by region",
+  "columns": ["region", "units", "revenue", "note"],
+  "rows": [
+    ["North", 120, 1520.5, "best \"quarter\""],
+    ["South, coastal", 80, 990.25, null],
+    ["West", 0, 0.0, "line one\nline two"],
+    ["<East>", 7, 70.0, ""]
+  ]
+}

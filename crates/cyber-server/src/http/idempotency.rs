@@ -131,7 +131,11 @@ async fn remember(store: &Arc<Store>, key: &str, hash: String, response: Respons
         content_type,
     };
     if let Err(e) = insert(store, key, stored).await {
-        eprintln!("cyber server: could not store idempotency key: {e}");
+        cyber_core::log::warn(
+            "http",
+            "could not store an idempotency key",
+            serde_json::json!({ "error": e }),
+        );
     }
     Response::from_parts(parts, Body::from(bytes))
 }

@@ -627,6 +627,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "chrono",
  "cyber-core",
  "cyber-llm",
  "cyber-sandbox",
@@ -639,6 +640,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -655,6 +657,7 @@ dependencies = [
  "cyber-client",
  "cyber-core",
  "cyber-llm",
+ "cyber-sandbox",
  "cyber-server",
  "cyber-store",
  "cyber-tui",
@@ -689,6 +692,7 @@ dependencies = [
 name = "cyber-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "serde_yaml_ng",

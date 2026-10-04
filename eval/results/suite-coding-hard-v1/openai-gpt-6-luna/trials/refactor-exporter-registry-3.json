@@ -1,0 +1,22 @@
+{
+  "task": "refactor-exporter-registry",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 12,
+  "tool_calls": 26,
+  "cost_usd": 0.00930182,
+  "unpriced": false,
+  "tokens": {
+    "input": 20572,
+    "output": 6559,
+    "cache_read": 151762,
+    "cache_write": 0
+  },
+  "latency_seconds": 104.347313417,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44AQ2644Y1K8Z3E2V96GVD5"
+}

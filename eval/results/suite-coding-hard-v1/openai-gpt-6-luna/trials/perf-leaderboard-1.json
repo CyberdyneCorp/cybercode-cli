@@ -1,0 +1,22 @@
+{
+  "task": "perf-leaderboard",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 24,
+  "tool_calls": 35,
+  "cost_usd": 0.01797997,
+  "unpriced": false,
+  "tokens": {
+    "input": 31537,
+    "output": 13212,
+    "cache_read": 431527,
+    "cache_write": 0
+  },
+  "latency_seconds": 185.896283209,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44B953CYZ4ZXSNQCBF6CQPR"
+}

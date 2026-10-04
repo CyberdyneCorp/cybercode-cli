@@ -23,3 +23,17 @@ Notes:
 - Costs come from the catalog prices at run time; no result was unpriced.
 - Changed models establish a separately labeled baseline (`harness-evaluation` → Live quality
   release baseline).
+
+## suite-coding-hard-v1 calibration (harness ddd3b4f, 2026-10-04)
+
+Harder tasks so strong models do not saturate: multi-cause debugging from symptoms, strict
+specs with hundreds of hidden cases, performance limits, differential refactors, mutation
+testing and two long greenfield builds.
+
+| Model | Passed | 95% CI | Total cost | Median cost per success | Median latency | Infra failures |
+|---|---|---|---|---|---|---|
+| `openai/gpt-6-luna` | 40/60 (67%) | 54–77% | $0.69 | $0.0094 | 146 s | 0 |
+
+Failures were spread across mutation testing, spec details, shell quoting, concurrency and
+both long builds, which ended early and failed differential tests. Anthropic has not run this
+suite yet.

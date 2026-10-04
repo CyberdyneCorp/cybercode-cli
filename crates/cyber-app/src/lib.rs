@@ -2,8 +2,10 @@
 //! runtime and HTTP router, plus the server lifecycle (`server-api` → One server per user,
 //! Background service management, Listener defaults, Local password authentication).
 
+pub mod backup;
 mod host;
 mod registration;
+pub mod retention;
 mod server;
 mod services;
 
@@ -54,6 +56,8 @@ pub struct App {
     pub host: Arc<BuiltinHost>,
     pub state: AppState,
     pub paths: Paths,
+    /// Resolved config of a Location.
+    pub config: Arc<ConfigFn>,
 }
 
 pub fn version() -> &'static str {
@@ -144,6 +148,7 @@ impl App {
             snapshots,
         });
         host.attach(runtime.clone());
+        let config_for_app = Arc::clone(&config);
         let services = services::AppServices::new(
             resolver,
             Arc::clone(&host),
@@ -183,6 +188,7 @@ impl App {
             host,
             state,
             paths: opts.paths,
+            config: Arc::clone(&config_for_app),
         })
     }
 

@@ -9,6 +9,7 @@ publish.workspace = true
 build = "build.rs"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng = "0.10"

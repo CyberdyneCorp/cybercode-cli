@@ -22,6 +22,26 @@ refactors, test writing, cross-module debugging, a shell task and one `long` gre
 in Python 3.10+, Node 22 and bash with no third-party packages and no network. Each task names
 its own `fixture`, `tags`, budget and grader; the suite has no model, which is chosen at run time.
 
+`suite-coding-hard-v1.json` exists because v1 saturated: `openai/gpt-6-luna` passed 60/60, so v1
+cannot detect regressions in strong models. Its 20 tasks (all tagged `hard`) are built so that a
+strong frontier model fails a meaningful fraction, aiming for roughly a 50–80% pass rate. The
+difficulty comes from investigation and precision, never from ambiguity: every graded behavior is
+stated in the prompt, the fixture README or an in-repo spec. The suite contains:
+
+- symptom-only bug reports over multi-module codebases with several independent root causes
+  (`debug-*`, `fix-*`);
+- strict specs graded by hundreds of hidden cases (`impl-*`);
+- performance limits on large hidden inputs, with at least 5x headroom over the reference
+  solution (`perf-*`);
+- refactors checked by randomized differential testing against a frozen copy of the original
+  (`refactor-*`);
+- test writing graded by 28 and 37 mutants (`tests-*`);
+- concurrency and async ordering (`fix-job-queue`);
+- two bash tasks;
+- two `long` greenfield builds from a SPEC.md (`build-ledger-cli`, `build-minimake`).
+
+Normal tasks have a budget of 60 turns, $2 and 1800 s; long tasks get 150 turns, $5 and 3600 s.
+
 Grader contract: `python3 {grader_dir}/grade.py {workspace}` prints `FAIL <reason>` lines and a
 final `PASS` or `FAIL`, and exits 0 only on `PASS`. Graders copy the workspace to a temporary
 directory and never modify it, run code in subprocesses with timeouts, require the visible tests

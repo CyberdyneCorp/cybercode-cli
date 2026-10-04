@@ -1,0 +1,22 @@
+{
+  "task": "tests-cron-mutation",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 8,
+  "tool_calls": 8,
+  "cost_usd": 0.00584829,
+  "unpriced": false,
+  "tokens": {
+    "input": 10875,
+    "output": 5243,
+    "cache_read": 50929,
+    "cache_write": 0
+  },
+  "latency_seconds": 71.251032166,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44AQ34VF2NJ5RGHPFYPBV5G"
+}

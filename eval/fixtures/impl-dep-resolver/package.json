@@ -1,0 +1,7 @@
+{
+  "name": "pinpack",
+  "private": true,
+  "type": "module",
+  "bin": { "pinpack": "src/cli.js" },
+  "scripts": { "test": "node --test" }
+}

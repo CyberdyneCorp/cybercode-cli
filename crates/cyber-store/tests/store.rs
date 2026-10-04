@@ -353,3 +353,41 @@ fn readonly_query_refuses_writes() {
 fn rusqlite_connection(path: &Path) -> rusqlite::Connection {
     rusqlite::Connection::open(path).unwrap()
 }
+
+/// `storage-events` → Backup: an online backup taken while events are being written opens
+/// cleanly, passes integrity_check and holds a gapless prefix of the history.
+#[test]
+fn online_backup_is_consistent_while_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(open(dir.path(), registry()));
+    let writer = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || {
+            for i in 0..400 {
+                store
+                    .append("ses_A", Expected::Any, vec![event(i)])
+                    .unwrap();
+            }
+        })
+    };
+    std::thread::sleep(Duration::from_millis(20));
+    let copy = dir.path().join("backup.db");
+    cyber_store::backup::backup(&dir.path().join("cyber.db"), &copy).unwrap();
+    writer.join().unwrap();
+    assert_eq!(cyber_store::backup::integrity_check(&copy).unwrap(), "ok");
+    let restored = Store::open(StoreOptions::new(
+        DatabaseLocation::File(copy.clone()),
+        registry(),
+    ))
+    .unwrap();
+    let page = restored.read_events("ses_A", -1, 500).unwrap();
+    let seqs: Vec<i64> = page.events.iter().map(|e| e.seq).collect();
+    assert!(
+        seqs.iter().enumerate().all(|(i, s)| *s == i as i64),
+        "gapless prefix"
+    );
+    assert!(
+        cyber_store::backup::backup(&dir.path().join("cyber.db"), &copy).is_err(),
+        "never overwrites"
+    );
+}

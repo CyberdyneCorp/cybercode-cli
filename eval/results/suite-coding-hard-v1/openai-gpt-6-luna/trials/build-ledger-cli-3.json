@@ -1,0 +1,22 @@
+{
+  "task": "build-ledger-cli",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 28,
+  "tool_calls": 29,
+  "cost_usd": 0.021253830000000005,
+  "unpriced": false,
+  "tokens": {
+    "input": 27722,
+    "output": 12818,
+    "cache_read": 499213,
+    "cache_write": 0
+  },
+  "latency_seconds": 313.423038792,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44C6623RNMRGXCNVSD3CP7Q"
+}

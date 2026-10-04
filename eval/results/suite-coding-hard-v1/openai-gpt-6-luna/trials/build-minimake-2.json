@@ -1,0 +1,22 @@
+{
+  "task": "build-minimake",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 35,
+  "tool_calls": 37,
+  "cost_usd": 0.03014573999999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 40850,
+    "output": 17243,
+    "cache_read": 910474,
+    "cache_write": 0
+  },
+  "latency_seconds": 345.811955542,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_failure_stops_everything (hidden_test_minimake.RecipeTest.test_failure_stops_everything)\nFAIL hidden tests: FAIL: test_patterns_keep_their_order_and_spelling (hidden_test_minimake.WildcardTest.test_patterns_keep_their_order_and_spelling)\nFAIL",
+  "session_id": "ses_01M44C90MZFVF2J8QRPCR537TM"
+}

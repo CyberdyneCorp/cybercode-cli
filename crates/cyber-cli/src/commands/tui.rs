@@ -23,11 +23,14 @@ pub fn run(
         model: global.model.clone(),
         mode: global.mode.clone(),
         format: global.format,
+        log_level: global.log_level.clone(),
+        print_logs: global.print_logs,
     };
     if let Some(p) = project {
         global.cwd = Some(global.cwd.clone().unwrap_or_default().join(p));
     }
     let ctx = Context::new(&global)?;
+    super::start_logging(&ctx, &global)?;
     let prompt = prompt(launch)?;
     if !std::io::stdout().is_terminal() {
         return Err(

@@ -58,6 +58,14 @@ pub struct GlobalArgs {
     #[arg(long, global = true, value_name = "MODE")]
     pub mode: Option<String>,
 
+    /// Minimum log level: error, warn, info (default), debug or trace. Also CYBER_LOG_LEVEL.
+    #[arg(long, global = true, value_name = "LEVEL")]
+    pub log_level: Option<String>,
+
+    /// Mirror log lines to stderr.
+    #[arg(long, global = true)]
+    pub print_logs: bool,
+
     /// Output format. The only output-format flag.
     #[arg(long, global = true, value_enum)]
     pub format: Option<Format>,
@@ -126,6 +134,8 @@ pub enum Command {
     },
     /// Send one request to the server API.
     Api(ApiArgs),
+    /// Check configuration, credentials, catalog, database, sandbox, tools and server.
+    Doctor,
     /// Run evaluation manifests and write reports.
     Eval {
         #[command(subcommand)]

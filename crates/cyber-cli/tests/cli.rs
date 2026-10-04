@@ -245,3 +245,43 @@ fn invalid_launch_combinations_fail_before_the_ui() {
     assert_eq!(o.status.code(), Some(2));
     assert!(stderr(&o).contains("--fork needs"), "{}", stderr(&o));
 }
+
+#[test]
+fn doctor_reports_every_check_as_json() {
+    let o = Env::new().cyber(&["doctor", "--format", "json"]);
+    let v: Value = serde_json::from_str(&String::from_utf8_lossy(&o.stdout)).unwrap();
+    let names: Vec<&str> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["check"].as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "config",
+            "catalog",
+            "credentials",
+            "database",
+            "sandbox",
+            "git",
+            "rg",
+            "server"
+        ]
+    );
+    let failed = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["status"] == "fail");
+    assert_eq!(o.status.code(), Some(if failed { 1 } else { 0 }));
+}
+
+#[test]
+fn db_backup_without_a_database_is_a_usage_error() {
+    let env = Env::new();
+    assert!(
+        env.cyber(&["db", "backup", "x.db"]).status.code() == Some(2),
+        "no database yet is a usage error"
+    );
+}

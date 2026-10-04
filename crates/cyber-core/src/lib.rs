@@ -5,6 +5,7 @@ pub mod config;
 pub mod env;
 pub mod eval;
 pub mod ids;
+pub mod log;
 pub mod paths;
 pub mod project;
 pub mod skills;

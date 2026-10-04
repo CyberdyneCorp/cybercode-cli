@@ -1,0 +1,22 @@
+{
+  "task": "debug-event-replay",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 25,
+  "tool_calls": 39,
+  "cost_usd": 0.011963880000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 21002,
+    "output": 5294,
+    "cache_read": 352268,
+    "cache_write": 0
+  },
+  "latency_seconds": 160.106211875,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44A6PKBDJNFRZ9PG3HK2535"
+}

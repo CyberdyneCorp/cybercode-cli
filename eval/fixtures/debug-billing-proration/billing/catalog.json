@@ -1,0 +1,34 @@
+{
+  "plans": {
+    "starter-usd": {"name": "Starter", "price": "19.99", "currency": "USD", "interval_months": 1},
+    "pro-usd": {"name": "Pro", "price": "49.99", "currency": "USD", "interval_months": 1},
+    "team-usd": {"name": "Team", "price": "129.00", "currency": "USD", "interval_months": 1},
+    "pro-annual-usd": {"name": "Pro Annual", "price": "499.00", "currency": "USD", "interval_months": 12},
+    "team-annual-usd": {"name": "Team Annual", "price": "1290.00", "currency": "USD", "interval_months": 12},
+    "starter-eur": {"name": "Starter", "price": "17.50", "currency": "EUR", "interval_months": 1},
+    "pro-eur": {"name": "Pro", "price": "44.90", "currency": "EUR", "interval_months": 1},
+    "starter-jpy": {"name": "Starter", "price": "980", "currency": "JPY", "interval_months": 1},
+    "pro-jpy": {"name": "Pro", "price": "4980", "currency": "JPY", "interval_months": 1},
+    "starter-bhd": {"name": "Starter", "price": "7.525", "currency": "BHD", "interval_months": 1},
+    "pro-bhd": {"name": "Pro", "price": "18.750", "currency": "BHD", "interval_months": 1},
+    "pro-quarterly-gbp": {"name": "Pro Quarterly", "price": "119.00", "currency": "GBP", "interval_months": 3},
+    "team-quarterly-gbp": {"name": "Team Quarterly", "price": "299.00", "currency": "GBP", "interval_months": 3}
+  },
+  "coupons": {
+    "WELCOME10": {"percent_off": 10},
+    "SAVE15": {"percent_off": 15},
+    "HALFOFF": {"percent_off": 50},
+    "LAUNCH12_5": {"percent_off": 12.5},
+    "FIVEBUCKS": {"amount_off": "5.00", "currency": "USD"},
+    "YEN500": {"amount_off": "500", "currency": "JPY"}
+  },
+  "jurisdictions": {
+    "NONE": {"rate": 0, "mode": "invoice"},
+    "US-CA": {"rate": 0.0725, "mode": "invoice"},
+    "US-NY": {"rate": 0.08875, "mode": "invoice"},
+    "DE": {"rate": 0.19, "mode": "invoice"},
+    "GB": {"rate": 0.2, "mode": "line"},
+    "JP": {"rate": 0.1, "mode": "line"},
+    "BH": {"rate": 0.1, "mode": "line"}
+  }
+}

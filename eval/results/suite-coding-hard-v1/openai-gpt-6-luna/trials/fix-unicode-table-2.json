@@ -1,0 +1,22 @@
+{
+  "task": "fix-unicode-table",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 14,
+  "tool_calls": 23,
+  "cost_usd": 0.00797924,
+  "unpriced": false,
+  "tokens": {
+    "input": 14473,
+    "output": 3829,
+    "cache_read": 116044,
+    "cache_write": 0
+  },
+  "latency_seconds": 123.780429041,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_tables (hidden_test_termtable.DifferentialTest.test_tables)\nFAIL",
+  "session_id": "ses_01M44A8H613KQHPCS3EC3J0VBX"
+}

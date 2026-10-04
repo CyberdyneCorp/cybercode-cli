@@ -3,6 +3,7 @@
 pub mod api;
 pub mod db;
 pub mod debug;
+pub mod doctor;
 pub mod eval;
 pub mod exec;
 pub mod models;
@@ -34,6 +35,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         return Err(tree::external(args));
     }
     let ctx = Context::new(&cli.global)?;
+    start_logging(&ctx, &cli.global)?;
     match command {
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),
@@ -43,6 +45,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
         Command::Exec(args) => exec::run(args, &ctx, &cli.global),
+        Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
         Command::External(_) => unreachable!("handled above"),
     }
@@ -60,5 +63,28 @@ fn version(global: &GlobalArgs) -> Result<(), CliError> {
         }));
     }
     println!("{info}");
+    Ok(())
+}
+
+/// `<data>/log`, at `--log-level`, else `CYBER_LOG_LEVEL`, else `info`.
+pub(crate) fn start_logging(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    let requested = global
+        .log_level
+        .clone()
+        .or_else(|| std::env::var("CYBER_LOG_LEVEL").ok());
+    let level = match requested {
+        Some(name) => cyber_core::log::Level::parse(&name).ok_or_else(|| {
+            CliError::usage(format!(
+                "unknown log level {name:?}; use error, warn, info, debug or trace"
+            ))
+        })?,
+        None => cyber_core::log::Level::Info,
+    };
+    cyber_core::log::init(&ctx.paths.data.join("log"), level, global.print_logs);
+    cyber_core::log::debug(
+        "cli",
+        "start",
+        json!({ "args": std::env::args().skip(1).collect::<Vec<_>>() }),
+    );
     Ok(())
 }

@@ -1,0 +1,6 @@
+{
+  "name": "tiny-mustache",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

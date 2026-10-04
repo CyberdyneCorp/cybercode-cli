@@ -73,6 +73,12 @@ pub async fn run_server_until(
     let _lock = cyber_store::OwnershipLock::acquire(&app.paths.server_lock())
         .map_err(|e| format!("another cyber server is already running for this user ({e})"))?;
     let router = app.router();
+    let retention = crate::retention::Retention::from_config(
+        &(app.config)(&app.state.options.default_directory)
+            .map(|(v, _)| v)
+            .unwrap_or_default(),
+    );
+    let sweeper = crate::retention::spawn(app.runtime.clone(), app.paths.data.clone(), retention);
     let tcp = if opts.no_tcp {
         None
     } else {
@@ -93,6 +99,11 @@ pub async fn run_server_until(
         socket: Some(socket.display().to_string()),
         pid: std::process::id(),
     };
+    cyber_core::log::info(
+        "server",
+        "listening",
+        serde_json::json!({ "url": url, "socket": socket.display().to_string(), "pid": std::process::id() }),
+    );
     on_ready(
         url.as_deref()
             .unwrap_or(&format!("unix:{}", socket.display())),
@@ -118,7 +129,13 @@ pub async fn run_server_until(
     if let Some(task) = unix_task {
         let _ = task.await;
     }
+    sweeper.abort();
     let _ = std::fs::remove_file(&socket);
+    cyber_core::log::info(
+        "server",
+        "stopped",
+        serde_json::json!({ "pid": std::process::id() }),
+    );
     if opts.register {
         remove_registration(&app.paths, &registration.id);
     }

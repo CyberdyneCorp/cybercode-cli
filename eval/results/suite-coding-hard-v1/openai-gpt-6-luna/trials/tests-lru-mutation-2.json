@@ -1,0 +1,22 @@
+{
+  "task": "tests-lru-mutation",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 7,
+  "tool_calls": 8,
+  "cost_usd": 0.00535153,
+  "unpriced": false,
+  "tokens": {
+    "input": 15354,
+    "output": 4983,
+    "cache_read": 46763,
+    "cache_write": 0
+  },
+  "latency_seconds": 54.831141917,
+  "grader_exit": 1,
+  "grader_tail": "FAIL mutant survived: m14_evicts_when_size_reaches_max (Mutant: evicts while totalSize >= maxSize (a full cache is not allowed))\nFAIL",
+  "session_id": "ses_01M44BJ24BXM3K0V23QJTQA660"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "arena-leaderboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "bench": "node bench/bench.js"
+  }
+}

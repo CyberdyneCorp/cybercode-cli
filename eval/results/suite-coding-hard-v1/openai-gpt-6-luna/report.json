@@ -1,0 +1,1680 @@
+{
+  "schema_version": 1,
+  "report": "cyber-eval",
+  "harness": {
+    "version": "0.1.0",
+    "git_sha": "ddd3b4f",
+    "target": "aarch64-apple-darwin"
+  },
+  "manifest": {
+    "id": "suite-coding-hard-v1",
+    "path": "eval/manifests/suite-coding-hard-v1.json",
+    "sha256": "sha256:d301df3feb57e8faf2853710e895e15822bd15a13e5cbd1351ed1cfd6fb5483f",
+    "kind": "suite"
+  },
+  "model": {
+    "ref": "openai/gpt-6-luna",
+    "provider": "openai",
+    "name": "GPT-6 Luna",
+    "context_limit": 1050000
+  },
+  "deterministic": false,
+  "started_at": "2026-10-04T20:36:58Z",
+  "finished_at": "2026-10-04T21:20:18Z",
+  "trials_per_task": 3,
+  "options": {
+    "mode": "bypass",
+    "sandbox": "workspace-write",
+    "interactive": false
+  },
+  "summary": {
+    "tasks": 20,
+    "trials": 60,
+    "passed": 40,
+    "success_rate": 0.6667,
+    "success_ci95": [
+      0.5406,
+      0.7727
+    ],
+    "infrastructure_failures": 0,
+    "human_interventions": 0,
+    "cost_usd": 0.694106,
+    "cost_per_success_usd": 0.017353,
+    "median_cost_per_successful_task_usd": 0.009391,
+    "median_latency_seconds": 145.5,
+    "unpriced": false,
+    "tokens": {
+      "input": 1146097,
+      "output": 388724,
+      "cache_read": 13824972,
+      "cache_write": 0
+    }
+  },
+  "tasks": [
+    {
+      "id": "debug-billing-proration",
+      "tags": [
+        "debugging",
+        "hard",
+        "python",
+        "multi-file",
+        "decimal",
+        "dates"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.018381,
+      "median_turns": 12.0
+    },
+    {
+      "id": "debug-event-replay",
+      "tags": [
+        "debugging",
+        "hard",
+        "python",
+        "multi-file",
+        "idempotency",
+        "event-sourcing",
+        "decimal"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.032419,
+      "median_turns": 25.0
+    },
+    {
+      "id": "fix-unicode-table",
+      "tags": [
+        "bugfix",
+        "hard",
+        "python",
+        "unicode",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.02682,
+      "median_turns": 14.0
+    },
+    {
+      "id": "feat-incremental-indexer",
+      "tags": [
+        "feature",
+        "hard",
+        "python",
+        "caching",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.024598,
+      "median_turns": 17.0
+    },
+    {
+      "id": "impl-expr-evaluator",
+      "tags": [
+        "spec",
+        "hard",
+        "python",
+        "interpreter",
+        "parsing"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.043297,
+      "median_turns": 21.0
+    },
+    {
+      "id": "perf-sessionize",
+      "tags": [
+        "performance",
+        "hard",
+        "python",
+        "analytics"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.016663,
+      "median_turns": 18.0
+    },
+    {
+      "id": "refactor-exporter-registry",
+      "tags": [
+        "refactor",
+        "hard",
+        "python",
+        "multi-file",
+        "plugins"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.036796,
+      "median_turns": 20.0
+    },
+    {
+      "id": "tests-cron-mutation",
+      "tags": [
+        "tests",
+        "hard",
+        "python",
+        "mutation",
+        "dates"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.019667,
+      "median_turns": 11.0
+    },
+    {
+      "id": "fix-cursor-pagination",
+      "tags": [
+        "bugfix",
+        "hard",
+        "node",
+        "pagination",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 2,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.022232,
+      "median_turns": 13.0
+    },
+    {
+      "id": "impl-patch-apply",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "diff",
+        "parsing"
+      ],
+      "trials": 3,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.031227,
+      "median_turns": 13.0
+    },
+    {
+      "id": "impl-dep-resolver",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "semver",
+        "backtracking"
+      ],
+      "trials": 3,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.047406,
+      "median_turns": 24.0
+    },
+    {
+      "id": "impl-template-engine",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "templating",
+        "parsing"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.028232,
+      "median_turns": 14.0
+    },
+    {
+      "id": "perf-leaderboard",
+      "tags": [
+        "performance",
+        "hard",
+        "node",
+        "data-structures"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.038299,
+      "median_turns": 17.0
+    },
+    {
+      "id": "refactor-callbacks-async",
+      "tags": [
+        "refactor",
+        "hard",
+        "node",
+        "async",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.054108,
+      "median_turns": 24.0
+    },
+    {
+      "id": "tests-lru-mutation",
+      "tags": [
+        "tests",
+        "hard",
+        "node",
+        "mutation",
+        "caching"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.019189,
+      "median_turns": 11.0
+    },
+    {
+      "id": "fix-job-queue",
+      "tags": [
+        "concurrency",
+        "hard",
+        "node",
+        "async",
+        "bugfix"
+      ],
+      "trials": 3,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.025021,
+      "median_turns": 14.0
+    },
+    {
+      "id": "fix-shell-log-report",
+      "tags": [
+        "bugfix",
+        "hard",
+        "bash",
+        "awk",
+        "text-processing"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.043384,
+      "median_turns": 29.0
+    },
+    {
+      "id": "fix-shell-kv-store",
+      "tags": [
+        "bugfix",
+        "hard",
+        "bash",
+        "quoting",
+        "cli"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.039734,
+      "median_turns": 18.0
+    },
+    {
+      "id": "build-ledger-cli",
+      "tags": [
+        "greenfield",
+        "hard",
+        "python",
+        "long",
+        "cli",
+        "decimal"
+      ],
+      "trials": 3,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.049914,
+      "median_turns": 21.0
+    },
+    {
+      "id": "build-minimake",
+      "tags": [
+        "greenfield",
+        "hard",
+        "node",
+        "long",
+        "cli",
+        "build-system"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.07672,
+      "median_turns": 35.0
+    }
+  ],
+  "trials": [
+    {
+      "task": "build-ledger-cli",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 17,
+      "tool_calls": 18,
+      "cost_usd": 0.01475508,
+      "unpriced": false,
+      "tokens": {
+        "input": 21789,
+        "output": 10439,
+        "cache_read": 284918,
+        "cache_write": 0
+      },
+      "latency_seconds": 208.132608709,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_journal_05 (hidden_test_ledger.RandomDifferential.test_random_journal_05)\nFAIL hidden tests: FAIL: test_random_journal_07 (hidden_test_ledger.RandomDifferential.test_random_journal_07)\nFAIL hidden tests: FAIL: test_random_journal_08 (hidden_test_ledger.RandomDifferential.test_random_journal_08)\nFAIL hidden tests: FAIL: test_random_journal_09 (hidden_test_ledger.RandomDifferential.test_random_journal_09)\nFAIL hidden tests: FAIL: test_random_journal_10 (hidden_test_ledger.RandomDifferential.test_random_journal_10)\nFAIL hidden tests: FAIL: test_random_journal_11 (hidden_test_ledger.RandomDifferential.test_random_journal_11)\nFAIL hidden tests: FAIL: test_random_journal_13 (hidden_test_ledger.RandomDifferential.test_random_journal_13)\nFAIL hidden tests: FAIL: test_random_journal_14 (hidden_test_ledger.RandomDifferential.test_random_journal_14)\nFAIL hidden tests: FAIL: test_random_journal_16 (hidden_test_ledger.RandomDifferential.test_random_journal_16)\nFAIL hidden tests: FAIL: test_random_journal_17 (hidden_test_ledger.RandomDifferential.test_random_journal_17)\nFAIL hidden tests: FAIL: test_random_journal_18 (hidden_test_ledger.RandomDifferential.test_random_journal_18)\nFAIL hidden tests: FAIL: test_random_journal_19 (hidden_test_ledger.RandomDifferential.test_random_journal_19)\nFAIL hidden tests: FAIL: test_random_journal_21 (hidden_test_ledger.RandomDifferential.test_random_journal_21)\nFAIL hidden tests: FAIL: test_random_journal_23 (hidden_test_ledger.RandomDifferential.test_random_journal_23)\nFAIL",
+      "session_id": "ses_01M44C2M0CXT2H4TZYKDJPKKHA"
+    },
+    {
+      "task": "build-ledger-cli",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 21,
+      "tool_calls": 21,
+      "cost_usd": 0.013904610000000003,
+      "unpriced": false,
+      "tokens": {
+        "input": 23625,
+        "output": 11514,
+        "cache_read": 352061,
+        "cache_write": 0
+      },
+      "latency_seconds": 173.586281583,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_journal_05 (hidden_test_ledger.RandomDifferential.test_random_journal_05)\nFAIL hidden tests: FAIL: test_random_journal_07 (hidden_test_ledger.RandomDifferential.test_random_journal_07)\nFAIL hidden tests: FAIL: test_random_journal_08 (hidden_test_ledger.RandomDifferential.test_random_journal_08)\nFAIL hidden tests: FAIL: test_random_journal_09 (hidden_test_ledger.RandomDifferential.test_random_journal_09)\nFAIL hidden tests: FAIL: test_random_journal_10 (hidden_test_ledger.RandomDifferential.test_random_journal_10)\nFAIL hidden tests: FAIL: test_random_journal_11 (hidden_test_ledger.RandomDifferential.test_random_journal_11)\nFAIL hidden tests: FAIL: test_random_journal_13 (hidden_test_ledger.RandomDifferential.test_random_journal_13)\nFAIL hidden tests: FAIL: test_random_journal_14 (hidden_test_ledger.RandomDifferential.test_random_journal_14)\nFAIL hidden tests: FAIL: test_random_journal_16 (hidden_test_ledger.RandomDifferential.test_random_journal_16)\nFAIL hidden tests: FAIL: test_random_journal_17 (hidden_test_ledger.RandomDifferential.test_random_journal_17)\nFAIL hidden tests: FAIL: test_random_journal_18 (hidden_test_ledger.RandomDifferential.test_random_journal_18)\nFAIL hidden tests: FAIL: test_random_journal_19 (hidden_test_ledger.RandomDifferential.test_random_journal_19)\nFAIL hidden tests: FAIL: test_random_journal_21 (hidden_test_ledger.RandomDifferential.test_random_journal_21)\nFAIL hidden tests: FAIL: test_random_journal_23 (hidden_test_ledger.RandomDifferential.test_random_journal_23)\nFAIL",
+      "session_id": "ses_01M44C2PYB8893EHMWW3B11KFA"
+    },
+    {
+      "task": "build-ledger-cli",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 28,
+      "tool_calls": 29,
+      "cost_usd": 0.021253830000000005,
+      "unpriced": false,
+      "tokens": {
+        "input": 27722,
+        "output": 12818,
+        "cache_read": 499213,
+        "cache_write": 0
+      },
+      "latency_seconds": 313.423038792,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44C6623RNMRGXCNVSD3CP7Q"
+    },
+    {
+      "task": "build-minimake",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 35,
+      "tool_calls": 35,
+      "cost_usd": 0.023855589999999996,
+      "unpriced": false,
+      "tokens": {
+        "input": 34920,
+        "output": 15351,
+        "cache_read": 782809,
+        "cache_write": 0
+      },
+      "latency_seconds": 257.301353583,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_makefile_line_continuation (hidden_test_minimake.ParsingTest.test_makefile_line_continuation)\nFAIL hidden tests: FAIL: test_prefix_combinations (hidden_test_minimake.RecipeTest.test_prefix_combinations)\nFAIL hidden tests: FAIL: test_patterns_keep_their_order_and_spelling (hidden_test_minimake.WildcardTest.test_patterns_keep_their_order_and_spelling)\nFAIL",
+      "session_id": "ses_01M44C8PZCPN72V8J1SDM96QNY"
+    },
+    {
+      "task": "build-minimake",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 35,
+      "tool_calls": 37,
+      "cost_usd": 0.03014573999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 40850,
+        "output": 17243,
+        "cache_read": 910474,
+        "cache_write": 0
+      },
+      "latency_seconds": 345.811955542,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_failure_stops_everything (hidden_test_minimake.RecipeTest.test_failure_stops_everything)\nFAIL hidden tests: FAIL: test_patterns_keep_their_order_and_spelling (hidden_test_minimake.WildcardTest.test_patterns_keep_their_order_and_spelling)\nFAIL",
+      "session_id": "ses_01M44C90MZFVF2J8QRPCR537TM"
+    },
+    {
+      "task": "build-minimake",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 28,
+      "tool_calls": 28,
+      "cost_usd": 0.022719119999999995,
+      "unpriced": false,
+      "tokens": {
+        "input": 31928,
+        "output": 16391,
+        "cache_read": 540532,
+        "cache_write": 0
+      },
+      "latency_seconds": 303.263753584,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_overrides_every_assignment_operator (hidden_test_minimake.CommandLineVariableTest.test_overrides_every_assignment_operator)\nFAIL hidden tests: FAIL: test_unterminated_reference (hidden_test_minimake.ExpansionTest.test_unterminated_reference)\nFAIL hidden tests: FAIL: test_call (hidden_test_minimake.FunctionTest.test_call)\nFAIL hidden tests: FAIL: test_info_and_error (hidden_test_minimake.FunctionTest.test_info_and_error)\nFAIL hidden tests: FAIL: test_failure_stops_everything (hidden_test_minimake.RecipeTest.test_failure_stops_everything)\nFAIL hidden tests: FAIL: test_prefix_combinations (hidden_test_minimake.RecipeTest.test_prefix_combinations)\nFAIL hidden tests: FAIL: test_conditional_assignment (hidden_test_minimake.VariableTest.test_conditional_assignment)\nFAIL hidden tests: FAIL: test_recursive_self_reference_is_an_error (hidden_test_minimake.VariableTest.test_recursive_self_reference_is_an_error)\nFAIL hidden tests: FAIL: test_patterns_keep_their_order_and_spelling (hidden_test_minimake.WildcardTest.test_patterns_keep_their_order_and_spelling)\nFAIL",
+      "session_id": "ses_01M44C9P0GF63G0NNEMHR3PH7D"
+    },
+    {
+      "task": "debug-billing-proration",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 10,
+      "tool_calls": 24,
+      "cost_usd": 0.005358,
+      "unpriced": false,
+      "tokens": {
+        "input": 16907,
+        "output": 3042,
+        "cache_read": 104880,
+        "cache_write": 0
+      },
+      "latency_seconds": 57.836865834,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44A4N2XBAHTT03MY744M5T6"
+    },
+    {
+      "task": "debug-billing-proration",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 28,
+      "cost_usd": 0.007336270000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 18310,
+        "output": 2946,
+        "cache_read": 157777,
+        "cache_write": 0
+      },
+      "latency_seconds": 97.216268958,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44A4N4CM5W2N7SPG2JQD5FK"
+    },
+    {
+      "task": "debug-billing-proration",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 12,
+      "tool_calls": 26,
+      "cost_usd": 0.005686869999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 16849,
+        "output": 2548,
+        "cache_read": 136997,
+        "cache_write": 0
+      },
+      "latency_seconds": 66.650263875,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44A4N5TKTTK9PQM52R1DHTE"
+    },
+    {
+      "task": "debug-event-replay",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 16,
+      "tool_calls": 28,
+      "cost_usd": 0.009091620000000002,
+      "unpriced": false,
+      "tokens": {
+        "input": 19829,
+        "output": 4500,
+        "cache_read": 193772,
+        "cache_write": 0
+      },
+      "latency_seconds": 125.462733042,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44A4N7CYVS7VJWG38231DM0"
+    },
+    {
+      "task": "debug-event-replay",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 25,
+      "tool_calls": 38,
+      "cost_usd": 0.01136387,
+      "unpriced": false,
+      "tokens": {
+        "input": 19196,
+        "output": 4454,
+        "cache_read": 315477,
+        "cache_write": 0
+      },
+      "latency_seconds": 161.171192542,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44A6DZG33J4BZTM1Q1JWB0W"
+    },
+    {
+      "task": "debug-event-replay",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 25,
+      "tool_calls": 39,
+      "cost_usd": 0.011963880000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 21002,
+        "output": 5294,
+        "cache_read": 352268,
+        "cache_write": 0
+      },
+      "latency_seconds": 160.106211875,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44A6PKBDJNFRZ9PG3HK2535"
+    },
+    {
+      "task": "feat-incremental-indexer",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 12,
+      "tool_calls": 23,
+      "cost_usd": 0.00713517,
+      "unpriced": false,
+      "tokens": {
+        "input": 18016,
+        "output": 4794,
+        "cache_read": 136607,
+        "cache_write": 0
+      },
+      "latency_seconds": 73.965757292,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ABM9Z3YWT8G5PFQHGK7FF"
+    },
+    {
+      "task": "feat-incremental-indexer",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 17,
+      "tool_calls": 31,
+      "cost_usd": 0.007982910000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 17310,
+        "output": 3594,
+        "cache_read": 202091,
+        "cache_write": 0
+      },
+      "latency_seconds": 118.283563833,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ACAKE4QN3GR1THK42PM7B"
+    },
+    {
+      "task": "feat-incremental-indexer",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 17,
+      "tool_calls": 30,
+      "cost_usd": 0.00948034,
+      "unpriced": false,
+      "tokens": {
+        "input": 18083,
+        "output": 3911,
+        "cache_read": 207654,
+        "cache_write": 0
+      },
+      "latency_seconds": 130.234020792,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ADYSX384HNG7T9KT11126"
+    },
+    {
+      "task": "fix-cursor-pagination",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 19,
+      "tool_calls": 30,
+      "cost_usd": 0.00884362,
+      "unpriced": false,
+      "tokens": {
+        "input": 15959,
+        "output": 4790,
+        "cache_read": 212872,
+        "cache_write": 0
+      },
+      "latency_seconds": 121.629228625,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ATHJFDF6KDQKSB17NN91F"
+    },
+    {
+      "task": "fix-cursor-pagination",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 13,
+      "tool_calls": 24,
+      "cost_usd": 0.006165629999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 15400,
+        "output": 3518,
+        "cache_read": 124113,
+        "cache_write": 0
+      },
+      "latency_seconds": 79.407929167,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AWD3Y859ZB0A3DP528S0Y"
+    },
+    {
+      "task": "fix-cursor-pagination",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 11,
+      "tool_calls": 25,
+      "cost_usd": 0.0072229600000000005,
+      "unpriced": false,
+      "tokens": {
+        "input": 18292,
+        "output": 4699,
+        "cache_read": 108426,
+        "cache_write": 0
+      },
+      "latency_seconds": 98.226779125,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: cursors are bound to sort and every filter\nFAIL",
+      "session_id": "ses_01M44AWHM6GMVP5JPPZPPPNRR0"
+    },
+    {
+      "task": "fix-job-queue",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 12,
+      "tool_calls": 19,
+      "cost_usd": 0.006133060000000002,
+      "unpriced": false,
+      "tokens": {
+        "input": 12785,
+        "output": 3018,
+        "cache_read": 95156,
+        "cache_write": 0
+      },
+      "latency_seconds": 92.85325725,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BM74SEEGZRHG8DPKWESYX"
+    },
+    {
+      "task": "fix-job-queue",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 17,
+      "tool_calls": 26,
+      "cost_usd": 0.00958633,
+      "unpriced": false,
+      "tokens": {
+        "input": 15068,
+        "output": 3450,
+        "cache_read": 169453,
+        "cache_write": 0
+      },
+      "latency_seconds": 148.862769,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: job objects, ids and event payloads (Expected values to be strictly deep-equal:)\nFAIL hidden tests: the job promise settles after the final event's listeners ran (Expected values to be strictly deep-equal:)\nFAIL hidden tests: randomized scenarios keep every invariant (seed 35, t=192: drain() resolved while jobs were queued, running or retrying)\nFAIL",
+      "session_id": "ses_01M44BPEYHSM4DQRZS3BX4BA6S"
+    },
+    {
+      "task": "fix-job-queue",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 22,
+      "cost_usd": 0.00930209,
+      "unpriced": false,
+      "tokens": {
+        "input": 14555,
+        "output": 3204,
+        "cache_read": 124009,
+        "cache_write": 0
+      },
+      "latency_seconds": 165.719670667,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: job objects, ids and event payloads (Expected values to be strictly deep-equal:)\nFAIL hidden tests: the job promise settles after the final event's listeners ran (Expected values to be strictly deep-equal:)\nFAIL hidden tests: randomized scenarios keep every invariant (seed 45, t=62: drain() resolved while jobs were queued, running or retrying)\nFAIL",
+      "session_id": "ses_01M44BQ3EV6RMBZS8QA1JA4XZY"
+    },
+    {
+      "task": "fix-shell-kv-store",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 25,
+      "tool_calls": 26,
+      "cost_usd": 0.01361773,
+      "unpriced": false,
+      "tokens": {
+        "input": 31275,
+        "output": 6220,
+        "cache_read": 289823,
+        "cache_write": 0
+      },
+      "latency_seconds": 180.76301575,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_examples_from_readme (hidden_test_kv.EncodingTest.test_examples_from_readme)\nFAIL hidden tests: FAIL: test_nasty_keys (hidden_test_kv.EncodingTest.test_nasty_keys)\nFAIL hidden tests: FAIL: test_json_escapes (hidden_test_kv.ExportTest.test_json_escapes)\nFAIL hidden tests: FAIL: test_json_export (hidden_test_kv.ExportTest.test_json_export)\nFAIL hidden tests: FAIL: test_round_trip_through_import (hidden_test_kv.ExportTest.test_round_trip_through_import)\nFAIL hidden tests: FAIL: test_text_export (hidden_test_kv.ExportTest.test_text_export)\nFAIL hidden tests: FAIL: test_prefixes_are_literal (hidden_test_kv.ListTest.test_prefixes_are_literal) (prefix=b'\\xc3')\nFAIL hidden tests: FAIL: test_sorted_by_bytes (hidden_test_kv.ListTest.test_sorted_by_bytes)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=19, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=22, args=[b'list'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences)\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='-store')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='--')\nFAIL",
+      "session_id": "ses_01M44BW5X5PZ2TXTRQ8MHG641P"
+    },
+    {
+      "task": "fix-shell-kv-store",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 18,
+      "tool_calls": 21,
+      "cost_usd": 0.0141423,
+      "unpriced": false,
+      "tokens": {
+        "input": 28893,
+        "output": 6617,
+        "cache_read": 225900,
+        "cache_write": 0
+      },
+      "latency_seconds": 233.593444125,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='-store')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='--')\nFAIL",
+      "session_id": "ses_01M44BXJ7Y2PXV53H3WS7765ZQ"
+    },
+    {
+      "task": "fix-shell-kv-store",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 18,
+      "cost_usd": 0.011973600000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 15646,
+        "output": 6317,
+        "cache_read": 138950,
+        "cache_write": 0
+      },
+      "latency_seconds": 201.683965542,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_nasty_keys (hidden_test_kv.EncodingTest.test_nasty_keys)\nFAIL hidden tests: FAIL: test_json_escapes (hidden_test_kv.ExportTest.test_json_escapes)\nFAIL hidden tests: FAIL: test_json_export (hidden_test_kv.ExportTest.test_json_export)\nFAIL hidden tests: FAIL: test_round_trip_through_import (hidden_test_kv.ExportTest.test_round_trip_through_import)\nFAIL hidden tests: FAIL: test_text_export (hidden_test_kv.ExportTest.test_text_export)\nFAIL hidden tests: FAIL: test_prefixes_are_literal (hidden_test_kv.ListTest.test_prefixes_are_literal) (prefix=b'\\xc3')\nFAIL hidden tests: FAIL: test_sorted_by_bytes (hidden_test_kv.ListTest.test_sorted_by_bytes)\nFAIL hidden tests: FAIL: test_concurrent_writers_on_distinct_keys (hidden_test_kv.LockTest.test_concurrent_writers_on_distinct_keys)\nFAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['set', 'a', '2'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=19, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=22, args=[b'list'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences)\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='-store')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='--')\nFAIL",
+      "session_id": "ses_01M44C22CPPY7W6CJHQ0TP0GZ1"
+    },
+    {
+      "task": "fix-shell-log-report",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 22,
+      "tool_calls": 28,
+      "cost_usd": 0.010474670000000002,
+      "unpriced": false,
+      "tokens": {
+        "input": 14892,
+        "output": 4493,
+        "cache_read": 210697,
+        "cache_write": 0
+      },
+      "latency_seconds": 192.074412791,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BQFPP7R82BXTCE2VFCAKP"
+    },
+    {
+      "task": "fix-shell-log-report",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 29,
+      "tool_calls": 37,
+      "cost_usd": 0.018189789999999997,
+      "unpriced": false,
+      "tokens": {
+        "input": 31499,
+        "output": 7630,
+        "cache_read": 313789,
+        "cache_write": 0
+      },
+      "latency_seconds": 268.223936458,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BT70FNDTX34YXC2524E4R"
+    },
+    {
+      "task": "fix-shell-log-report",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 32,
+      "tool_calls": 39,
+      "cost_usd": 0.014719109999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 31793,
+        "output": 6137,
+        "cache_read": 313831,
+        "cache_write": 0
+      },
+      "latency_seconds": 223.605778833,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BV0XJWRCWSQZC3YC2CPCT"
+    },
+    {
+      "task": "fix-unicode-table",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 19,
+      "tool_calls": 29,
+      "cost_usd": 0.011029610000000002,
+      "unpriced": false,
+      "tokens": {
+        "input": 15133,
+        "output": 4415,
+        "cache_read": 192781,
+        "cache_write": 0
+      },
+      "latency_seconds": 209.46445575,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_tables (hidden_test_termtable.DifferentialTest.test_tables)\nFAIL",
+      "session_id": "ses_01M44A7MEF3J1104JQDHTT1SMX"
+    },
+    {
+      "task": "fix-unicode-table",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 23,
+      "cost_usd": 0.00797924,
+      "unpriced": false,
+      "tokens": {
+        "input": 14473,
+        "output": 3829,
+        "cache_read": 116044,
+        "cache_write": 0
+      },
+      "latency_seconds": 123.780429041,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_tables (hidden_test_termtable.DifferentialTest.test_tables)\nFAIL",
+      "session_id": "ses_01M44A8H613KQHPCS3EC3J0VBX"
+    },
+    {
+      "task": "fix-unicode-table",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 23,
+      "cost_usd": 0.0078108000000000006,
+      "unpriced": false,
+      "tokens": {
+        "input": 14129,
+        "output": 4251,
+        "cache_read": 123840,
+        "cache_write": 0
+      },
+      "latency_seconds": 109.944717458,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ABCVMJX5WCXVT5G3YJNJY"
+    },
+    {
+      "task": "impl-dep-resolver",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 34,
+      "tool_calls": 41,
+      "cost_usd": 0.020581360000000003,
+      "unpriced": false,
+      "tokens": {
+        "input": 20211,
+        "output": 8154,
+        "cache_read": 453826,
+        "cache_write": 0
+      },
+      "latency_seconds": 304.259665542,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: cli: random registry \\#78 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#81 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#91 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#92 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#399 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#426 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#488 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#605 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#638 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#756 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#862 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#867 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#879 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#882 matches the brute-force optimum\nFAIL",
+      "session_id": "ses_01M44AZJ8QPGEH0Y41DDVJ3VTV"
+    },
+    {
+      "task": "impl-dep-resolver",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 24,
+      "tool_calls": 37,
+      "cost_usd": 0.01916795,
+      "unpriced": false,
+      "tokens": {
+        "input": 19068,
+        "output": 9137,
+        "cache_read": 290365,
+        "cache_write": 0
+      },
+      "latency_seconds": 290.531870583,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44B1RMKGG27540N4T8J9G5K"
+    },
+    {
+      "task": "impl-dep-resolver",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 11,
+      "tool_calls": 19,
+      "cost_usd": 0.00765665,
+      "unpriced": false,
+      "tokens": {
+        "input": 11801,
+        "output": 3870,
+        "cache_read": 82705,
+        "cache_write": 0
+      },
+      "latency_seconds": 115.476056541,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: cli: random registry \\#548 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#551 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#605 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#621 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#638 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#684 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#756 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#808 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#821 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#862 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#867 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#879 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#882 matches the brute-force optimum\nFAIL hidden tests: cli: resolves the 67-package registry within 2 seconds\nFAIL",
+      "session_id": "ses_01M44B3GAC7HQFYDGVM1BV2F6P"
+    },
+    {
+      "task": "impl-expr-evaluator",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 24,
+      "tool_calls": 31,
+      "cost_usd": 0.01565917,
+      "unpriced": false,
+      "tokens": {
+        "input": 18761,
+        "output": 8459,
+        "cache_read": 322957,
+        "cache_write": 0
+      },
+      "latency_seconds": 257.365897708,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AE1H2ZXNDD7JXNCHHPH0X"
+    },
+    {
+      "task": "impl-expr-evaluator",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 21,
+      "tool_calls": 28,
+      "cost_usd": 0.017328350000000003,
+      "unpriced": false,
+      "tokens": {
+        "input": 19819,
+        "output": 9729,
+        "cache_read": 292695,
+        "cache_write": 0
+      },
+      "latency_seconds": 264.635969375,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AERRWSK9QBJX7154P2ZA3"
+    },
+    {
+      "task": "impl-expr-evaluator",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 15,
+      "tool_calls": 21,
+      "cost_usd": 0.01030899,
+      "unpriced": false,
+      "tokens": {
+        "input": 15594,
+        "output": 6633,
+        "cache_read": 154909,
+        "cache_write": 0
+      },
+      "latency_seconds": 146.502765916,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AG09SNTHFGC5BX7M92TY9"
+    },
+    {
+      "task": "impl-patch-apply",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 12,
+      "tool_calls": 15,
+      "cost_usd": 0.00921119,
+      "unpriced": false,
+      "tokens": {
+        "input": 11257,
+        "output": 4615,
+        "cache_read": 88599,
+        "cache_write": 0
+      },
+      "latency_seconds": 141.318103417,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: table: new start 0 with an omitted count\nFAIL",
+      "session_id": "ses_01M44AXE3RB2N2XMBTF01RYK4B"
+    },
+    {
+      "task": "impl-patch-apply",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 13,
+      "tool_calls": 18,
+      "cost_usd": 0.011258750000000003,
+      "unpriced": false,
+      "tokens": {
+        "input": 14554,
+        "output": 5252,
+        "cache_read": 121035,
+        "cache_write": 0
+      },
+      "latency_seconds": 170.722412834,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AY92481X4KJJ6YBQ4P3YN"
+    },
+    {
+      "task": "impl-patch-apply",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 15,
+      "tool_calls": 17,
+      "cost_usd": 0.010756679999999998,
+      "unpriced": false,
+      "tokens": {
+        "input": 11437,
+        "output": 4406,
+        "cache_read": 118598,
+        "cache_write": 0
+      },
+      "latency_seconds": 170.476907042,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: table: new start 0 with an omitted count\nFAIL",
+      "session_id": "ses_01M44AYVB0K93PFC8R5XMW29RV"
+    },
+    {
+      "task": "impl-template-engine",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 9,
+      "tool_calls": 12,
+      "cost_usd": 0.006239409999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 10321,
+        "output": 4169,
+        "cache_read": 56481,
+        "cache_write": 0
+      },
+      "latency_seconds": 95.496915083,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44B42AFZ1474A9P0JQT4XX7"
+    },
+    {
+      "task": "impl-template-engine",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 20,
+      "cost_usd": 0.01276644,
+      "unpriced": false,
+      "tokens": {
+        "input": 15969,
+        "output": 7710,
+        "cache_read": 124204,
+        "cache_write": 0
+      },
+      "latency_seconds": 263.119285542,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44B704256HVEHYSBY079H9B"
+    },
+    {
+      "task": "impl-template-engine",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 18,
+      "cost_usd": 0.00922644,
+      "unpriced": false,
+      "tokens": {
+        "input": 13728,
+        "output": 4980,
+        "cache_read": 108464,
+        "cache_write": 0
+      },
+      "latency_seconds": 134.850651042,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44B7AC3Y6NYYDF0EG10VY0X"
+    },
+    {
+      "task": "perf-leaderboard",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 24,
+      "tool_calls": 35,
+      "cost_usd": 0.01797997,
+      "unpriced": false,
+      "tokens": {
+        "input": 31537,
+        "output": 13212,
+        "cache_read": 431527,
+        "cache_write": 0
+      },
+      "latency_seconds": 185.896283209,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44B953CYZ4ZXSNQCBF6CQPR"
+    },
+    {
+      "task": "perf-leaderboard",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 17,
+      "tool_calls": 26,
+      "cost_usd": 0.011283439999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 15496,
+        "output": 6935,
+        "cache_read": 179634,
+        "cache_write": 0
+      },
+      "latency_seconds": 144.483709042,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BAY02S4EYFM7J1AZ90JEW"
+    },
+    {
+      "task": "perf-leaderboard",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 13,
+      "tool_calls": 24,
+      "cost_usd": 0.009035570000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 18454,
+        "output": 5684,
+        "cache_read": 122717,
+        "cache_write": 0
+      },
+      "latency_seconds": 114.314222958,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BBEJVYMD5Z1R9QJQHZTBW"
+    },
+    {
+      "task": "perf-sessionize",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 16,
+      "tool_calls": 26,
+      "cost_usd": 0.004982900000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 11989,
+        "output": 3115,
+        "cache_read": 141700,
+        "cache_write": 0
+      },
+      "latency_seconds": 63.237888125,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AJ0629MB85DD7KXR75R16"
+    },
+    {
+      "task": "perf-sessionize",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 19,
+      "tool_calls": 29,
+      "cost_usd": 0.005945610000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 13444,
+        "output": 2996,
+        "cache_read": 178171,
+        "cache_write": 0
+      },
+      "latency_seconds": 83.083561667,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AM7B2Q0KBPCJ5AE51KXNB"
+    },
+    {
+      "task": "perf-sessionize",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 18,
+      "tool_calls": 27,
+      "cost_usd": 0.00573458,
+      "unpriced": false,
+      "tokens": {
+        "input": 14475,
+        "output": 2805,
+        "cache_read": 171208,
+        "cache_write": 0
+      },
+      "latency_seconds": 75.194243292,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AMFMA8AAHWBH7PYTNR6Z9"
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 21,
+      "tool_calls": 35,
+      "cost_usd": 0.013308700000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 21071,
+        "output": 7594,
+        "cache_read": 279510,
+        "cache_write": 0
+      },
+      "latency_seconds": 169.488667833,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BF0C3ERADE56VT3112KVT"
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 24,
+      "tool_calls": 38,
+      "cost_usd": 0.02451608,
+      "unpriced": false,
+      "tokens": {
+        "input": 30751,
+        "output": 10570,
+        "cache_read": 468848,
+        "cache_write": 0
+      },
+      "latency_seconds": 364.687006041,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BF1KN2ZJF76MVMGH9MH05"
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 24,
+      "tool_calls": 34,
+      "cost_usd": 0.01628322,
+      "unpriced": false,
+      "tokens": {
+        "input": 20243,
+        "output": 7983,
+        "cache_read": 314692,
+        "cache_write": 0
+      },
+      "latency_seconds": 273.366202542,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44BF3G6W3XH9W92WF05385T"
+    },
+    {
+      "task": "refactor-exporter-registry",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 20,
+      "tool_calls": 34,
+      "cost_usd": 0.011622519999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 21558,
+        "output": 8346,
+        "cache_read": 279622,
+        "cache_write": 0
+      },
+      "latency_seconds": 137.974935667,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ANX4NZZ3SA14F7DXC4CKW"
+    },
+    {
+      "task": "refactor-exporter-registry",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 24,
+      "tool_calls": 43,
+      "cost_usd": 0.01587173,
+      "unpriced": false,
+      "tokens": {
+        "input": 27288,
+        "output": 11078,
+        "cache_read": 421843,
+        "cache_write": 0
+      },
+      "latency_seconds": 176.872007667,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44APVET455Q81Q7W48MNCBV"
+    },
+    {
+      "task": "refactor-exporter-registry",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 12,
+      "tool_calls": 26,
+      "cost_usd": 0.00930182,
+      "unpriced": false,
+      "tokens": {
+        "input": 20572,
+        "output": 6559,
+        "cache_read": 151762,
+        "cache_write": 0
+      },
+      "latency_seconds": 104.347313417,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AQ2644Y1K8Z3E2V96GVD5"
+    },
+    {
+      "task": "tests-cron-mutation",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 8,
+      "tool_calls": 8,
+      "cost_usd": 0.00584829,
+      "unpriced": false,
+      "tokens": {
+        "input": 10875,
+        "output": 5243,
+        "cache_read": 50929,
+        "cache_write": 0
+      },
+      "latency_seconds": 71.251032166,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44AQ34VF2NJ5RGHPFYPBV5G"
+    },
+    {
+      "task": "tests-cron-mutation",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 12,
+      "tool_calls": 13,
+      "cost_usd": 0.00654985,
+      "unpriced": false,
+      "tokens": {
+        "input": 11570,
+        "output": 5491,
+        "cache_read": 102235,
+        "cache_write": 0
+      },
+      "latency_seconds": 99.21392,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ASAFR2XNV4CZ5EHWJSAXK"
+    },
+    {
+      "task": "tests-cron-mutation",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 11,
+      "tool_calls": 13,
+      "cost_usd": 0.007268750000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 11930,
+        "output": 6243,
+        "cache_read": 87225,
+        "cache_write": 0
+      },
+      "latency_seconds": 97.252866917,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44ATDC4A210NP4SCPM3Z6D3"
+    },
+    {
+      "task": "tests-lru-mutation",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 11,
+      "tool_calls": 12,
+      "cost_usd": 0.00637827,
+      "unpriced": false,
+      "tokens": {
+        "input": 14132,
+        "output": 5157,
+        "cache_read": 92257,
+        "cache_write": 0
+      },
+      "latency_seconds": 78.287252167,
+      "grader_exit": 1,
+      "grader_tail": "FAIL mutant survived: m29_prune_keeps_size (Mutant: prune() does not subtract pruned sizes from totalSize)\nFAIL",
+      "session_id": "ses_01M44BFFVG8YFVT0PMH9EDBYPF"
+    },
+    {
+      "task": "tests-lru-mutation",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 7,
+      "tool_calls": 8,
+      "cost_usd": 0.00535153,
+      "unpriced": false,
+      "tokens": {
+        "input": 15354,
+        "output": 4983,
+        "cache_read": 46763,
+        "cache_write": 0
+      },
+      "latency_seconds": 54.831141917,
+      "grader_exit": 1,
+      "grader_tail": "FAIL mutant survived: m14_evicts_when_size_reaches_max (Mutant: evicts while totalSize >= maxSize (a full cache is not allowed))\nFAIL",
+      "session_id": "ses_01M44BJ24BXM3K0V23QJTQA660"
+    },
+    {
+      "task": "tests-lru-mutation",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 14,
+      "tool_calls": 16,
+      "cost_usd": 0.00745877,
+      "unpriced": false,
+      "tokens": {
+        "input": 16710,
+        "output": 6189,
+        "cache_read": 152277,
+        "cache_write": 0
+      },
+      "latency_seconds": 77.0438695,
+      "grader_exit": 1,
+      "grader_tail": "FAIL mutant survived: m14_evicts_when_size_reaches_max (Mutant: evicts while totalSize >= maxSize (a full cache is not allowed))\nFAIL mutant survived: m29_prune_keeps_size (Mutant: prune() does not subtract pruned sizes from totalSize)\nFAIL",
+      "session_id": "ses_01M44BKXYHXZZHSYRFVXE46821"
+    }
+  ]
+}

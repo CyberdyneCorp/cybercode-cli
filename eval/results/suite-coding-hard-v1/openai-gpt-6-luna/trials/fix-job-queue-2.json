@@ -1,0 +1,22 @@
+{
+  "task": "fix-job-queue",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 17,
+  "tool_calls": 26,
+  "cost_usd": 0.00958633,
+  "unpriced": false,
+  "tokens": {
+    "input": 15068,
+    "output": 3450,
+    "cache_read": 169453,
+    "cache_write": 0
+  },
+  "latency_seconds": 148.862769,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: job objects, ids and event payloads (Expected values to be strictly deep-equal:)\nFAIL hidden tests: the job promise settles after the final event's listeners ran (Expected values to be strictly deep-equal:)\nFAIL hidden tests: randomized scenarios keep every invariant (seed 35, t=192: drain() resolved while jobs were queued, running or retrying)\nFAIL",
+  "session_id": "ses_01M44BPEYHSM4DQRZS3BX4BA6S"
+}

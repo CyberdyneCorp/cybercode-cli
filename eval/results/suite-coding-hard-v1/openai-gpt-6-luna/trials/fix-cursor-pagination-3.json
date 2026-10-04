@@ -1,0 +1,22 @@
+{
+  "task": "fix-cursor-pagination",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 11,
+  "tool_calls": 25,
+  "cost_usd": 0.0072229600000000005,
+  "unpriced": false,
+  "tokens": {
+    "input": 18292,
+    "output": 4699,
+    "cache_read": 108426,
+    "cache_write": 0
+  },
+  "latency_seconds": 98.226779125,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: cursors are bound to sort and every filter\nFAIL",
+  "session_id": "ses_01M44AWHM6GMVP5JPPZPPPNRR0"
+}

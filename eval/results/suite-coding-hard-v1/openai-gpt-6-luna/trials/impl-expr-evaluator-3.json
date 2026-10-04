@@ -1,0 +1,22 @@
+{
+  "task": "impl-expr-evaluator",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 15,
+  "tool_calls": 21,
+  "cost_usd": 0.01030899,
+  "unpriced": false,
+  "tokens": {
+    "input": 15594,
+    "output": 6633,
+    "cache_read": 154909,
+    "cache_write": 0
+  },
+  "latency_seconds": 146.502765916,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44AG09SNTHFGC5BX7M92TY9"
+}

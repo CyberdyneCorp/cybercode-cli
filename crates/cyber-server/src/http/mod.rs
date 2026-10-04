@@ -108,6 +108,31 @@ pub struct AppState {
     pub options: Arc<HttpOptions>,
 }
 
+/// Log each request with a request ID, also returned as `x-request-id`.
+async fn request_log(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let id = cyber_core::ids::new_id("req");
+    let (method, path) = (req.method().clone(), req.uri().path().to_string());
+    let started = std::time::Instant::now();
+    let mut response = next.run(req).await;
+    let level = if path.ends_with("/health") {
+        cyber_core::log::Level::Debug
+    } else {
+        cyber_core::log::Level::Info
+    };
+    let fields = serde_json::json!({
+        "request_id": id, "method": method.as_str(), "path": path,
+        "status": response.status().as_u16(), "ms": started.elapsed().as_millis() as u64,
+    });
+    cyber_core::log::log(level, "http", "request", fields);
+    if let Ok(value) = axum::http::HeaderValue::from_str(&id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+    response
+}
+
 /// The full `/api/v1` router.
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
@@ -122,7 +147,8 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             guard::layer,
-        ));
+        ))
+        .layer(axum::middleware::from_fn(request_log));
     Router::new()
         .nest("/api/v1", api)
         .layer(

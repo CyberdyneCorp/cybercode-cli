@@ -32,6 +32,8 @@ cargo run -p cyber-cli -- exec "fix the failing test"            # one non-inter
 cargo run -p cyber-cli -- exec --format stream-json --ephemeral "explain this repo"
 cargo run -p cyber-cli -- service status   # the background server; also start|stop|restart|password
 cargo run -p cyber-cli -- api v1.session.list                    # any API operation
+cargo run -p cyber-cli -- doctor           # config, keys, catalog, database, sandbox, tools, server
+cargo run -p cyber-cli -- db backup ~/cyber-backup --artifacts   # online backup bundle with a manifest
 cargo run -p cyber-cli -- debug info       # build, paths, database, config layers, trust
 cargo run -p cyber-cli -- trust inspect    # repository-controlled definitions awaiting approval
 cargo run -p cyber-cli -- models openai    # catalog: available models first

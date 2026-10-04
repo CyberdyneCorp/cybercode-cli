@@ -1,0 +1,6 @@
+{
+  "name": "demo-app",
+  "dependencies": {
+    "left-pad": "^1.0.0"
+  }
+}

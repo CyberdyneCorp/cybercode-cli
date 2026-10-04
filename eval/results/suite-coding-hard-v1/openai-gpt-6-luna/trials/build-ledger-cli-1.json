@@ -1,0 +1,22 @@
+{
+  "task": "build-ledger-cli",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 17,
+  "tool_calls": 18,
+  "cost_usd": 0.01475508,
+  "unpriced": false,
+  "tokens": {
+    "input": 21789,
+    "output": 10439,
+    "cache_read": 284918,
+    "cache_write": 0
+  },
+  "latency_seconds": 208.132608709,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_random_journal_05 (hidden_test_ledger.RandomDifferential.test_random_journal_05)\nFAIL hidden tests: FAIL: test_random_journal_07 (hidden_test_ledger.RandomDifferential.test_random_journal_07)\nFAIL hidden tests: FAIL: test_random_journal_08 (hidden_test_ledger.RandomDifferential.test_random_journal_08)\nFAIL hidden tests: FAIL: test_random_journal_09 (hidden_test_ledger.RandomDifferential.test_random_journal_09)\nFAIL hidden tests: FAIL: test_random_journal_10 (hidden_test_ledger.RandomDifferential.test_random_journal_10)\nFAIL hidden tests: FAIL: test_random_journal_11 (hidden_test_ledger.RandomDifferential.test_random_journal_11)\nFAIL hidden tests: FAIL: test_random_journal_13 (hidden_test_ledger.RandomDifferential.test_random_journal_13)\nFAIL hidden tests: FAIL: test_random_journal_14 (hidden_test_ledger.RandomDifferential.test_random_journal_14)\nFAIL hidden tests: FAIL: test_random_journal_16 (hidden_test_ledger.RandomDifferential.test_random_journal_16)\nFAIL hidden tests: FAIL: test_random_journal_17 (hidden_test_ledger.RandomDifferential.test_random_journal_17)\nFAIL hidden tests: FAIL: test_random_journal_18 (hidden_test_ledger.RandomDifferential.test_random_journal_18)\nFAIL hidden tests: FAIL: test_random_journal_19 (hidden_test_ledger.RandomDifferential.test_random_journal_19)\nFAIL hidden tests: FAIL: test_random_journal_21 (hidden_test_ledger.RandomDifferential.test_random_journal_21)\nFAIL hidden tests: FAIL: test_random_journal_23 (hidden_test_ledger.RandomDifferential.test_random_journal_23)\nFAIL",
+  "session_id": "ses_01M44C2M0CXT2H4TZYKDJPKKHA"
+}

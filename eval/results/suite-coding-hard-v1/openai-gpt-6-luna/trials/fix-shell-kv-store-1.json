@@ -1,0 +1,22 @@
+{
+  "task": "fix-shell-kv-store",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 25,
+  "tool_calls": 26,
+  "cost_usd": 0.01361773,
+  "unpriced": false,
+  "tokens": {
+    "input": 31275,
+    "output": 6220,
+    "cache_read": 289823,
+    "cache_write": 0
+  },
+  "latency_seconds": 180.76301575,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_examples_from_readme (hidden_test_kv.EncodingTest.test_examples_from_readme)\nFAIL hidden tests: FAIL: test_nasty_keys (hidden_test_kv.EncodingTest.test_nasty_keys)\nFAIL hidden tests: FAIL: test_json_escapes (hidden_test_kv.ExportTest.test_json_escapes)\nFAIL hidden tests: FAIL: test_json_export (hidden_test_kv.ExportTest.test_json_export)\nFAIL hidden tests: FAIL: test_round_trip_through_import (hidden_test_kv.ExportTest.test_round_trip_through_import)\nFAIL hidden tests: FAIL: test_text_export (hidden_test_kv.ExportTest.test_text_export)\nFAIL hidden tests: FAIL: test_prefixes_are_literal (hidden_test_kv.ListTest.test_prefixes_are_literal) (prefix=b'\\xc3')\nFAIL hidden tests: FAIL: test_sorted_by_bytes (hidden_test_kv.ListTest.test_sorted_by_bytes)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=19, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=22, args=[b'list'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences)\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='-store')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='--')\nFAIL",
+  "session_id": "ses_01M44BW5X5PZ2TXTRQ8MHG641P"
+}

@@ -1023,6 +1023,11 @@ fn settlement(call_id: &str, def: &ToolDef, outcome: ToolOutcome) -> cyber_store
         ),
         ToolOutcome::Crashed(detail) => {
             let reference = cyber_core::ids::new_id("err");
+            cyber_core::log::error(
+                "tools",
+                "tool crashed",
+                serde_json::json!({ "call_id": call_id, "ref": reference, "detail": detail }),
+            );
             let status = if read_only {
                 CallStatus::Error
             } else {

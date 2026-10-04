@@ -1,0 +1,22 @@
+{
+  "task": "impl-template-engine",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 14,
+  "tool_calls": 18,
+  "cost_usd": 0.00922644,
+  "unpriced": false,
+  "tokens": {
+    "input": 13728,
+    "output": 4980,
+    "cache_read": 108464,
+    "cache_write": 0
+  },
+  "latency_seconds": 134.850651042,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44B7AC3Y6NYYDF0EG10VY0X"
+}

@@ -5,6 +5,7 @@
 //! numbers, and registered projectors run inside the same transaction, so a projection
 //! never diverges from its events. An acknowledgement is returned only after commit.
 
+pub mod backup;
 mod error;
 mod events;
 mod fs_check;
