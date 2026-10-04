@@ -73,7 +73,7 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
     let mut body = json!({
         "model": request.model,
         "max_tokens": max_tokens,
-        "messages": messages(&request.messages),
+                "messages": with_history_breakpoints(messages(&request.messages), &cache),
         "stream": true,
     });
     let map = body.as_object_mut().expect("object literal");
@@ -127,6 +127,28 @@ fn with_breakpoint(mut blocks: Vec<Value>, cache: &Option<Value>) -> Value {
         last["cache_control"] = control.clone();
     }
     Value::Array(blocks)
+}
+
+/// Mark the end of the conversation (and of the message before it) as cache breakpoints,
+/// so each Turn reads the history the previous Turn wrote. With the system and tool
+/// breakpoints that is Anthropic's limit of four. Thinking blocks cannot carry one.
+fn with_history_breakpoints(mut messages: Vec<Value>, cache: &Option<Value>) -> Vec<Value> {
+    let Some(control) = cache else {
+        return messages;
+    };
+    let n = messages.len();
+    for message in messages.iter_mut().skip(n.saturating_sub(2)) {
+        let cacheable = message["content"].as_array_mut().and_then(|blocks| {
+            blocks
+                .iter_mut()
+                .rev()
+                .find(|b| !matches!(b["type"].as_str(), Some("thinking" | "redacted_thinking")))
+        });
+        if let Some(block) = cacheable {
+            block["cache_control"] = control.clone();
+        }
+    }
+    messages
 }
 
 /// Convert history, merging consecutive messages of the same role.

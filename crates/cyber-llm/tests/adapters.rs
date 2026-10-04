@@ -305,6 +305,17 @@ async fn anthropic_streams_thinking_tools_and_cache_usage() {
         sent["tools"][0]["cache_control"],
         json!({"type": "ephemeral"})
     );
+    // Regression: only system and tools were cached, so long histories never hit the cache.
+    let last = sent["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(
+        last["content"].as_array().unwrap().last().unwrap()["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+    let breakpoints = sent.to_string().matches("cache_control").count();
+    assert!(
+        breakpoints <= 4,
+        "Anthropic allows at most four breakpoints: {breakpoints}"
+    );
     assert_eq!(
         sent["thinking"],
         json!({"type": "enabled", "budget_tokens": 4096})
@@ -315,10 +326,9 @@ async fn anthropic_streams_thinking_tools_and_cache_usage() {
     );
     assert!(sent["max_tokens"].as_u64().unwrap() > 4096);
     assert_eq!(sent["messages"][1]["content"][0]["type"], "tool_use");
-    assert_eq!(
-        sent["messages"][2]["content"][0],
-        json!({"type": "tool_result", "tool_use_id": "call_0", "content": "12:00", "is_error": false})
-    );
+    let mut result = sent["messages"][2]["content"][0].clone();
+    result.as_object_mut().unwrap().remove("cache_control");
+    assert_eq!(result, json!({"type": "tool_result", "tool_use_id": "call_0", "content": "12:00", "is_error": false}));
     let headers = &server.received_requests().await.unwrap()[0].headers;
     assert_eq!(headers.get("x-api-key").unwrap(), "sk-secret-key");
     assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");

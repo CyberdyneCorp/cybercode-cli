@@ -177,17 +177,9 @@ impl Out {
                 run.output_tokens += data["usage"]["output"].as_u64().unwrap_or(0);
                 run.cost += data["cost"].as_f64().unwrap_or(0.0);
             }
-            "session.step.failed" => {
-                let message = format!(
-                    "{}: {}",
-                    data["kind"].as_str().unwrap_or("error"),
-                    data["message"].as_str().unwrap_or_default()
-                );
-                if data["kind"] != "interrupted" {
-                    self.error(&message);
-                    run.error = Some(message);
-                }
-            }
+            // A failed step also publishes `session.error`, which reports it once; an
+            // overflow that compaction recovers from is not an error of the run.
+            "session.step.failed" => {}
             _ => {}
         }
     }
@@ -267,4 +259,32 @@ fn summary(input: &Value) -> String {
         }
     }
     String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Wrapper {
+        #[command(flatten)]
+        args: ExecArgs,
+    }
+
+    /// Regression: a provider error was printed twice, from the failed step and the
+    /// session error event.
+    #[test]
+    fn a_failed_step_is_not_reported_separately_from_the_session_error() {
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut out = Out::new(Format::Json, &args, &json!({ "id": "ses_1" }));
+        let mut run = Run::new(&args, Instant::now());
+        out.durable(
+            &mut run,
+            "session.step.failed.1",
+            &json!({ "kind": "invalid_request", "message": "no credit" }),
+        );
+        assert!(run.error.is_none());
+        assert_eq!(run.exit_code(false), 0);
+    }
 }
