@@ -328,7 +328,10 @@ async fn anthropic_streams_thinking_tools_and_cache_usage() {
     assert_eq!(sent["messages"][1]["content"][0]["type"], "tool_use");
     let mut result = sent["messages"][2]["content"][0].clone();
     result.as_object_mut().unwrap().remove("cache_control");
-    assert_eq!(result, json!({"type": "tool_result", "tool_use_id": "call_0", "content": "12:00", "is_error": false}));
+    assert_eq!(
+        result,
+        json!({"type": "tool_result", "tool_use_id": "call_0", "content": "12:00", "is_error": false})
+    );
     let headers = &server.received_requests().await.unwrap()[0].headers;
     assert_eq!(headers.get("x-api-key").unwrap(), "sk-secret-key");
     assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
