@@ -1,0 +1,857 @@
+//! TUI state and the pure part of its behavior: keys and server events become state
+//! changes plus [`Action`]s that the runner performs through the API.
+
+use std::collections::BTreeMap;
+use std::time::Instant;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde_json::{Value, json};
+
+use crate::composer::Composer;
+use crate::fuzzy;
+use crate::model::{Choice, Item, Queued, Request, Session};
+use crate::theme::{self, Theme};
+
+/// Modes Shift+Tab cycles through; the others are set with `/mode`.
+const CYCLE_MODES: [&str; 3] = ["default", "accept-edits", "plan"];
+pub const MODES: [&str; 6] = [
+    "default",
+    "accept-edits",
+    "plan",
+    "auto",
+    "dont-ask",
+    "bypass",
+];
+const LEADER_TIMEOUT_MS: u128 = 2000;
+
+/// Work for the runner.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    Refresh,
+    Prompt {
+        text: String,
+        delivery: &'static str,
+    },
+    Shell(String),
+    Command {
+        name: String,
+        arguments: String,
+    },
+    Interrupt,
+    Reply {
+        request: String,
+        body: Value,
+    },
+    Answer {
+        request: String,
+        body: Value,
+    },
+    LoadSessions,
+    Open(String),
+    NewSession,
+    LoadModels,
+    SwitchModel(String),
+    SwitchMode(String),
+    Fork,
+    Compact(Option<String>),
+    FindFiles(String),
+    RemoveQueued(String),
+    SaveTheme(&'static str),
+    Rename {
+        id: String,
+        title: String,
+    },
+    Archive(String),
+    Delete(String),
+    ForkSession(String),
+    Editor(String),
+    Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PickerKind {
+    Sessions,
+    Models,
+    Themes,
+    Modes,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Picker {
+    pub kind: PickerKind,
+    pub title: String,
+    pub query: String,
+    pub items: Vec<Choice>,
+    pub filtered: Vec<usize>,
+    pub selected: usize,
+    /// A Session action awaiting input or confirmation.
+    pub pending: Option<SessionOp>,
+}
+
+/// Session picker operations that need a second step.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionOp {
+    Rename { id: String, title: String },
+    Delete { id: String },
+}
+
+impl Picker {
+    pub fn new(kind: PickerKind, title: &str, items: Vec<Choice>) -> Self {
+        let mut p = Self {
+            kind,
+            title: title.into(),
+            query: String::new(),
+            filtered: Vec::new(),
+            items,
+            selected: 0,
+            pending: None,
+        };
+        p.filter();
+        p
+    }
+
+    fn filter(&mut self) {
+        self.filtered = fuzzy::rank(&self.query, &self.items, |c| {
+            format!("{} {}", c.label, c.detail)
+        });
+        self.selected = 0;
+    }
+
+    pub fn current(&self) -> Option<&Choice> {
+        self.filtered.get(self.selected).map(|&i| &self.items[i])
+    }
+}
+
+/// Steps of the permission prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PermStep {
+    Choose(usize),
+    ConfirmAlways,
+    Feedback(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuestionForm {
+    pub tab: usize,
+    pub cursor: usize,
+    pub chosen: Vec<Vec<usize>>,
+    /// Custom answers being typed, per question.
+    pub custom: Vec<Option<String>>,
+    pub typing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Overlay {
+    None,
+    Picker(Picker),
+    Permission(PermStep),
+    Question(QuestionForm),
+    Help,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Completion {
+    pub trigger: char,
+    pub start: usize,
+    pub items: Vec<Choice>,
+    pub selected: usize,
+}
+
+pub struct App {
+    pub session: Session,
+    pub items: Vec<Item>,
+    /// Text streaming in for assistant messages not yet durable.
+    pub streaming: BTreeMap<String, String>,
+    pub queued: Vec<Queued>,
+    pub requests: Vec<Request>,
+    pub composer: Composer,
+    pub overlay: Overlay,
+    pub completion: Option<Completion>,
+    pub commands: Vec<Choice>,
+    pub files: Vec<String>,
+    pub show_reasoning: bool,
+    pub expand_tools: bool,
+    pub timestamps: bool,
+    /// Lines scrolled up from the bottom.
+    pub scroll: u16,
+    pub toast: Option<(String, Instant)>,
+    pub theme: Theme,
+    leader: Option<Instant>,
+    pub quit: bool,
+    pub focused: bool,
+}
+
+impl App {
+    pub fn new(session: Session, history: Vec<String>, theme_name: &str) -> Self {
+        Self {
+            session,
+            items: Vec::new(),
+            streaming: BTreeMap::new(),
+            queued: Vec::new(),
+            requests: Vec::new(),
+            composer: Composer::new(history),
+            overlay: Overlay::None,
+            completion: None,
+            commands: Vec::new(),
+            files: Vec::new(),
+            show_reasoning: false,
+            expand_tools: false,
+            timestamps: false,
+            scroll: 0,
+            toast: None,
+            theme: theme::by_name(theme_name),
+            leader: None,
+            quit: false,
+            focused: true,
+        }
+    }
+
+    pub fn toast(&mut self, text: impl Into<String>) {
+        self.toast = Some((text.into(), Instant::now()));
+    }
+
+    /// The pending request shown now: the oldest one of this Session.
+    pub fn active_request(&self) -> Option<&Request> {
+        self.requests
+            .iter()
+            .find(|r| r.session() == self.session.id)
+    }
+
+    /// Show the prompt for a newly pending request.
+    pub fn sync_overlay(&mut self) {
+        let blocking = matches!(self.overlay, Overlay::Permission(_) | Overlay::Question(_));
+        match (self.active_request(), blocking) {
+            (Some(Request::Permission { .. }), false) => {
+                self.overlay = Overlay::Permission(PermStep::Choose(0))
+            }
+            (Some(Request::Question { questions, .. }), false) => {
+                let n = questions.len();
+                self.overlay = Overlay::Question(QuestionForm {
+                    tab: 0,
+                    cursor: 0,
+                    chosen: vec![Vec::new(); n],
+                    custom: vec![None; n],
+                    typing: false,
+                });
+            }
+            (None, true) => self.overlay = Overlay::None,
+            _ => {}
+        }
+    }
+
+    pub fn on_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('c')
+            && self.composer.is_empty()
+            && matches!(self.overlay, Overlay::None)
+        {
+            return vec![Action::Quit];
+        }
+        match &self.overlay {
+            Overlay::None => self.composer_key(key),
+            Overlay::Picker(_) => self.picker_key(key),
+            Overlay::Permission(_) => self.permission_key(key),
+            Overlay::Question(_) => self.question_key(key),
+            Overlay::Help => {
+                self.overlay = Overlay::None;
+                Vec::new()
+            }
+        }
+    }
+
+    pub fn on_paste(&mut self, text: &str) {
+        if let Overlay::None = self.overlay {
+            self.composer.insert_str(text);
+        }
+    }
+
+    fn leader_key(&mut self, key: KeyEvent) -> Option<Vec<Action>> {
+        let started = self.leader.take()?;
+        if started.elapsed().as_millis() > LEADER_TIMEOUT_MS {
+            return None;
+        }
+        Some(match key.code {
+            KeyCode::Char('m') => vec![Action::LoadModels],
+            KeyCode::Char('l') => vec![Action::LoadSessions],
+            KeyCode::Char('n') => vec![Action::NewSession],
+            KeyCode::Char('t') => {
+                self.open_themes();
+                Vec::new()
+            }
+            KeyCode::Char('f') => vec![Action::Fork],
+            KeyCode::Char('h') | KeyCode::Char('?') => {
+                self.overlay = Overlay::Help;
+                Vec::new()
+            }
+            _ => Vec::new(),
+        })
+    }
+
+    fn composer_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        if let Some(actions) = self.leader_key(key) {
+            return actions;
+        }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if self.completion.is_some()
+            && let Some(actions) = self.completion_key(key)
+        {
+            return actions;
+        }
+        let actions = match key.code {
+            KeyCode::Char('x') if ctrl => {
+                self.leader = Some(Instant::now());
+                Vec::new()
+            }
+            KeyCode::Enter
+                if key.modifiers.contains(KeyModifiers::SHIFT) || alt && !self.session.running =>
+            {
+                self.composer.newline();
+                Vec::new()
+            }
+            KeyCode::Enter if alt => self.submit("queue"),
+            KeyCode::Enter => self.submit("steer"),
+            KeyCode::Tab if self.session.running && !self.composer.is_empty() => {
+                self.submit("queue")
+            }
+            KeyCode::BackTab => self.cycle_mode(),
+            KeyCode::Up if alt && !self.queued.is_empty() => self.take_back(),
+            KeyCode::Esc if self.session.running => vec![Action::Interrupt],
+            _ => self.edit_key(key, ctrl),
+        };
+        self.update_completion(actions)
+    }
+
+    fn edit_key(&mut self, key: KeyEvent, ctrl: bool) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char('j') if ctrl => self.composer.newline(),
+            KeyCode::Char('t') if ctrl => self.show_reasoning = !self.show_reasoning,
+            KeyCode::Char('o') if ctrl => self.expand_tools = !self.expand_tools,
+            KeyCode::Char('g') if ctrl => return vec![Action::Editor(self.composer.text())],
+            KeyCode::Char('w') if ctrl => self.composer.delete_word(),
+            KeyCode::Char('u') if ctrl => self.composer.clear(),
+            KeyCode::Char('c') if ctrl => self.composer.clear(),
+            KeyCode::Char('d') if ctrl && self.composer.is_empty() => return vec![Action::Quit],
+            KeyCode::Char(c) if !ctrl => self.composer.insert(c),
+            KeyCode::Backspace => self.composer.backspace(),
+            KeyCode::Delete => self.composer.delete(),
+            KeyCode::Left => self.composer.left(),
+            KeyCode::Right => self.composer.right(),
+            KeyCode::Home => self.composer.home(),
+            KeyCode::End => self.composer.end(),
+            KeyCode::Up => self.composer.up(),
+            KeyCode::Down => self.composer.down(),
+            KeyCode::PageUp => self.scroll = self.scroll.saturating_add(10),
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(10),
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    /// Pull the newest queued message back into the composer for editing.
+    fn take_back(&mut self) -> Vec<Action> {
+        let Some(last) = self.queued.pop() else {
+            return Vec::new();
+        };
+        self.composer.set_text(&last.text);
+        vec![Action::RemoveQueued(last.message_id)]
+    }
+
+    fn cycle_mode(&mut self) -> Vec<Action> {
+        let i = CYCLE_MODES
+            .iter()
+            .position(|m| *m == self.session.mode)
+            .map_or(0, |i| (i + 1) % CYCLE_MODES.len());
+        vec![Action::SwitchMode(CYCLE_MODES[i].into())]
+    }
+
+    /// Keep the autocomplete menu in step with the word at the cursor.
+    fn update_completion(&mut self, mut actions: Vec<Action>) -> Vec<Action> {
+        let Some((trigger, start, word)) = self.composer.trigger() else {
+            self.completion = None;
+            return actions;
+        };
+        let items: Vec<Choice> = if trigger == '/' {
+            let ranked = fuzzy::rank(&word, &self.commands, |c| c.label.clone());
+            ranked
+                .into_iter()
+                .take(12)
+                .map(|i| self.commands[i].clone())
+                .collect()
+        } else {
+            actions.push(Action::FindFiles(word.clone()));
+            let ranked = fuzzy::rank(&word, &self.files, |f| f.clone());
+            ranked
+                .into_iter()
+                .take(20)
+                .map(|i| Choice {
+                    key: self.files[i].clone(),
+                    label: self.files[i].clone(),
+                    detail: String::new(),
+                })
+                .collect()
+        };
+        let selected = self
+            .completion
+            .as_ref()
+            .filter(|c| c.trigger == trigger)
+            .map_or(0, |c| c.selected.min(items.len().saturating_sub(1)));
+        self.completion = Some(Completion {
+            trigger,
+            start,
+            items,
+            selected,
+        });
+        actions
+    }
+
+    fn completion_key(&mut self, key: KeyEvent) -> Option<Vec<Action>> {
+        let completion = self.completion.as_mut()?;
+        match key.code {
+            KeyCode::Up => completion.selected = completion.selected.saturating_sub(1),
+            KeyCode::Down => {
+                completion.selected =
+                    (completion.selected + 1).min(completion.items.len().saturating_sub(1))
+            }
+            KeyCode::Esc => self.completion = None,
+            KeyCode::Tab | KeyCode::Enter if !completion.items.is_empty() => {
+                let choice = completion.items[completion.selected].clone();
+                let (trigger, start) = (completion.trigger, completion.start);
+                self.completion = None;
+                let text = format!("{trigger}{} ", choice.key);
+                self.composer.complete(start, &text);
+                return Some(Vec::new());
+            }
+            _ => return None,
+        }
+        Some(Vec::new())
+    }
+
+    fn submit(&mut self, delivery: &'static str) -> Vec<Action> {
+        if self.composer.is_empty() {
+            return Vec::new();
+        }
+        let text = self.composer.take();
+        self.completion = None;
+        self.scroll = 0;
+        if let Some(command) = text.strip_prefix('!') {
+            return vec![Action::Shell(command.trim().to_string())];
+        }
+        if let Some(rest) = text.strip_prefix('/') {
+            return self.slash(rest.trim());
+        }
+        let delivery = if self.session.running {
+            delivery
+        } else {
+            "steer"
+        };
+        vec![Action::Prompt { text, delivery }]
+    }
+
+    /// Built-in slash commands; anything else runs as a skill or custom command.
+    fn slash(&mut self, line: &str) -> Vec<Action> {
+        let (name, args) = line
+            .split_once(' ')
+            .map_or((line, ""), |(n, a)| (n, a.trim()));
+        match name {
+            "model" | "models" => vec![Action::LoadModels],
+            "resume" | "sessions" => vec![Action::LoadSessions],
+            "new" | "clear" => vec![Action::NewSession],
+            "fork" => vec![Action::Fork],
+            "compact" => vec![Action::Compact(
+                (!args.is_empty()).then(|| args.to_string()),
+            )],
+            "mode" if MODES.contains(&args) => vec![Action::SwitchMode(args.into())],
+            "mode" => {
+                let items = MODES
+                    .iter()
+                    .map(|m| Choice {
+                        key: (*m).into(),
+                        label: (*m).into(),
+                        detail: String::new(),
+                    })
+                    .collect();
+                self.overlay = Overlay::Picker(Picker::new(PickerKind::Modes, "Mode", items));
+                Vec::new()
+            }
+            "theme" => {
+                self.open_themes();
+                Vec::new()
+            }
+            "timestamps" => {
+                self.timestamps = !self.timestamps;
+                Vec::new()
+            }
+            "help" => {
+                self.overlay = Overlay::Help;
+                Vec::new()
+            }
+            "exit" | "quit" => vec![Action::Quit],
+            _ => vec![Action::Command {
+                name: name.into(),
+                arguments: args.into(),
+            }],
+        }
+    }
+
+    fn open_themes(&mut self) {
+        let items = theme::THEMES
+            .iter()
+            .map(|t| Choice {
+                key: t.name.into(),
+                label: t.name.into(),
+                detail: String::new(),
+            })
+            .collect();
+        self.overlay = Overlay::Picker(Picker::new(PickerKind::Themes, "Theme", items));
+    }
+
+    pub fn open_picker(&mut self, kind: PickerKind, title: &str, items: Vec<Choice>) {
+        self.overlay = Overlay::Picker(Picker::new(kind, title, items));
+    }
+
+    fn picker_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let Overlay::Picker(picker) = &mut self.overlay else {
+            return Vec::new();
+        };
+        if picker.pending.is_some() {
+            return session_op_key(picker, key);
+        }
+        if picker.kind == PickerKind::Sessions && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return self.session_action(key);
+        }
+        match key.code {
+            KeyCode::Esc => self.overlay = Overlay::None,
+            KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Down => {
+                picker.selected = (picker.selected + 1).min(picker.filtered.len().saturating_sub(1))
+            }
+            KeyCode::Backspace => {
+                picker.query.pop();
+                picker.filter();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                picker.query.push(c);
+                picker.filter();
+            }
+            KeyCode::Enter => return self.pick(),
+            _ => {}
+        }
+        if let Overlay::Picker(p) = &self.overlay
+            && p.kind == PickerKind::Themes
+            && let Some(choice) = p.current()
+        {
+            // Live preview.
+            self.theme = theme::by_name(&choice.key);
+        }
+        Vec::new()
+    }
+
+    /// Ctrl+R rename, Ctrl+D delete, Ctrl+A archive, Ctrl+F fork in the Session picker.
+    fn session_action(&mut self, key: KeyEvent) -> Vec<Action> {
+        let Overlay::Picker(picker) = &mut self.overlay else {
+            return Vec::new();
+        };
+        let Some(choice) = picker.current().cloned() else {
+            return Vec::new();
+        };
+        match key.code {
+            KeyCode::Char('r') => {
+                picker.pending = Some(SessionOp::Rename {
+                    id: choice.key,
+                    title: choice.label,
+                })
+            }
+            KeyCode::Char('d') => picker.pending = Some(SessionOp::Delete { id: choice.key }),
+            KeyCode::Char('a') => return vec![Action::Archive(choice.key)],
+            KeyCode::Char('f') => {
+                self.overlay = Overlay::None;
+                return vec![Action::ForkSession(choice.key)];
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn pick(&mut self) -> Vec<Action> {
+        let Overlay::Picker(picker) = std::mem::replace(&mut self.overlay, Overlay::None) else {
+            return Vec::new();
+        };
+        let Some(choice) = picker.current().cloned() else {
+            return Vec::new();
+        };
+        match picker.kind {
+            PickerKind::Sessions => vec![Action::Open(choice.key)],
+            PickerKind::Models => vec![Action::SwitchModel(choice.key)],
+            PickerKind::Modes => vec![Action::SwitchMode(choice.key)],
+            PickerKind::Themes => {
+                self.theme = theme::by_name(&choice.key);
+                vec![Action::SaveTheme(self.theme.name)]
+            }
+        }
+    }
+
+    fn permission_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let Some(Request::Permission { id, .. }) = self.active_request().cloned() else {
+            self.overlay = Overlay::None;
+            return Vec::new();
+        };
+        let Overlay::Permission(step) = &mut self.overlay else {
+            return Vec::new();
+        };
+        let reply = |body: Value| {
+            vec![Action::Reply {
+                request: id.clone(),
+                body,
+            }]
+        };
+        match step {
+            PermStep::Choose(i) => match key.code {
+                KeyCode::Up => *i = i.saturating_sub(1),
+                KeyCode::Down => *i = (*i + 1).min(2),
+                KeyCode::Char('y') => return self.answered(reply(json!({ "reply": "once" }))),
+                KeyCode::Char('a') => *step = PermStep::ConfirmAlways,
+                KeyCode::Char('n') => *step = PermStep::Feedback(String::new()),
+                KeyCode::Esc => return self.answered(reply(json!({ "reply": "reject" }))),
+                KeyCode::Enter => match *i {
+                    0 => return self.answered(reply(json!({ "reply": "once" }))),
+                    1 => *step = PermStep::ConfirmAlways,
+                    _ => *step = PermStep::Feedback(String::new()),
+                },
+                _ => {}
+            },
+            PermStep::ConfirmAlways => match key.code {
+                KeyCode::Enter | KeyCode::Char('y') => {
+                    return self.answered(reply(json!({ "reply": "always" })));
+                }
+                KeyCode::Esc | KeyCode::Char('n') => *step = PermStep::Choose(1),
+                _ => {}
+            },
+            PermStep::Feedback(text) => match key.code {
+                KeyCode::Enter => {
+                    let message = (!text.trim().is_empty()).then(|| text.trim().to_string());
+                    return self.answered(reply(json!({ "reply": "reject", "message": message })));
+                }
+                KeyCode::Esc => *step = PermStep::Choose(2),
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) => text.push(c),
+                _ => {}
+            },
+        }
+        Vec::new()
+    }
+
+    /// Drop the answered request locally so the next one shows at once.
+    fn answered(&mut self, actions: Vec<Action>) -> Vec<Action> {
+        if let Some(id) = self.active_request().map(|r| r.id().to_string()) {
+            self.requests.retain(|r| r.id() != id);
+        }
+        self.overlay = Overlay::None;
+        self.sync_overlay();
+        actions
+    }
+
+    fn question_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let Some(Request::Question { id, questions, .. }) = self.active_request().cloned() else {
+            self.overlay = Overlay::None;
+            return Vec::new();
+        };
+        if key.code == KeyCode::Esc {
+            return self.answered(vec![Action::Answer {
+                request: id,
+                body: json!({}),
+            }]);
+        }
+        let Overlay::Question(form) = &mut self.overlay else {
+            return Vec::new();
+        };
+        let review = questions.len() > 1 && form.tab == questions.len();
+        if review {
+            return match key.code {
+                KeyCode::Enter => {
+                    let answers = answers(&questions, form);
+                    self.answered(vec![Action::Answer {
+                        request: id,
+                        body: json!({ "answers": answers }),
+                    }])
+                }
+                KeyCode::Left | KeyCode::BackTab => {
+                    form.tab -= 1;
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            };
+        }
+        if question_input(form, &questions, key) {
+            let answers = answers(&questions, form);
+            return self.answered(vec![Action::Answer {
+                request: id,
+                body: json!({ "answers": answers }),
+            }]);
+        }
+        Vec::new()
+    }
+
+    /// Apply a server event; returns actions such as a refresh.
+    pub fn on_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
+        match kind {
+            "session.text.delta" => {
+                let id = data["message_id"].as_str().unwrap_or_default().to_string();
+                self.streaming
+                    .entry(id)
+                    .or_default()
+                    .push_str(data["text"].as_str().unwrap_or_default());
+                Vec::new()
+            }
+            "session.idle" => {
+                self.session.running = false;
+                if !self.focused {
+                    notify("cyber: the session is idle");
+                }
+                vec![Action::Refresh]
+            }
+            "session.error" => {
+                self.toast(format!(
+                    "error: {}",
+                    data["message"].as_str().unwrap_or_default()
+                ));
+                vec![Action::Refresh]
+            }
+            k if k.starts_with("session.step.started")
+                || k.starts_with("session.prompt.promoted") =>
+            {
+                self.session.running = true;
+                vec![Action::Refresh]
+            }
+            k if is_durable(k) => vec![Action::Refresh],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Rename input or delete confirmation inside the Session picker.
+fn session_op_key(picker: &mut Picker, key: KeyEvent) -> Vec<Action> {
+    let Some(op) = picker.pending.as_mut() else {
+        return Vec::new();
+    };
+    match (op, key.code) {
+        (_, KeyCode::Esc) => picker.pending = None,
+        (SessionOp::Rename { title, .. }, KeyCode::Char(c)) => title.push(c),
+        (SessionOp::Rename { title, .. }, KeyCode::Backspace) => {
+            title.pop();
+        }
+        (SessionOp::Rename { id, title }, KeyCode::Enter) if !title.trim().is_empty() => {
+            let action = Action::Rename {
+                id: id.clone(),
+                title: title.trim().to_string(),
+            };
+            picker.pending = None;
+            return vec![action];
+        }
+        (SessionOp::Delete { id }, KeyCode::Char('y')) => {
+            let action = Action::Delete(id.clone());
+            picker.pending = None;
+            return vec![action];
+        }
+        (SessionOp::Delete { .. }, _) => picker.pending = None,
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// Durable event types end with a version number (`session.step.ended.1`).
+fn is_durable(kind: &str) -> bool {
+    kind.rsplit_once('.')
+        .is_some_and(|(_, v)| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Handle a key in a question tab; true when the form is complete.
+fn question_input(
+    form: &mut QuestionForm,
+    questions: &[crate::model::QuestionSpec],
+    key: KeyEvent,
+) -> bool {
+    let q = &questions[form.tab];
+    let custom_row = q.options.len();
+    if form.typing {
+        let text = form.custom[form.tab].get_or_insert_with(String::new);
+        match key.code {
+            KeyCode::Char(c) => text.push(c),
+            KeyCode::Backspace => {
+                text.pop();
+            }
+            KeyCode::Enter => {
+                form.typing = false;
+                return advance(form, questions.len());
+            }
+            _ => {}
+        }
+        return false;
+    }
+    let rows = custom_row + usize::from(q.custom);
+    match key.code {
+        KeyCode::Up => form.cursor = form.cursor.saturating_sub(1),
+        KeyCode::Down => form.cursor = (form.cursor + 1).min(rows.saturating_sub(1)),
+        KeyCode::Tab | KeyCode::Right if questions.len() > 1 => {
+            form.tab = (form.tab + 1).min(questions.len());
+            form.cursor = 0;
+        }
+        KeyCode::Char(' ') if q.multi && form.cursor < custom_row => {
+            toggle(&mut form.chosen[form.tab], form.cursor)
+        }
+        KeyCode::Enter if form.cursor == custom_row && q.custom => form.typing = true,
+        KeyCode::Enter if q.multi => return advance(form, questions.len()),
+        KeyCode::Enter => {
+            form.chosen[form.tab] = vec![form.cursor];
+            return advance(form, questions.len());
+        }
+        _ => {}
+    }
+    false
+}
+
+fn toggle(list: &mut Vec<usize>, i: usize) {
+    match list.iter().position(|x| *x == i) {
+        Some(p) => {
+            list.remove(p);
+        }
+        None => list.push(i),
+    }
+}
+
+/// Move to the next tab; a single question submits at once.
+fn advance(form: &mut QuestionForm, total: usize) -> bool {
+    if total == 1 {
+        return true;
+    }
+    form.tab += 1;
+    form.cursor = 0;
+    false
+}
+
+fn answers(questions: &[crate::model::QuestionSpec], form: &QuestionForm) -> Vec<Vec<String>> {
+    questions
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            let mut picked: Vec<String> = form.chosen[i]
+                .iter()
+                .filter_map(|&o| q.options.get(o).map(|(l, _)| l.clone()))
+                .collect();
+            if let Some(text) = form.custom[i].as_ref().filter(|t| !t.trim().is_empty()) {
+                picked.push(text.trim().to_string());
+            }
+            picked
+        })
+        .collect()
+}
+
+/// Terminal bell plus an OSC 9 desktop notification.
+fn notify(text: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x07\x1b]9;{text}\x07");
+    let _ = out.flush();
+}

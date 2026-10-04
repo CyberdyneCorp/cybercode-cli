@@ -37,12 +37,24 @@ impl CliError {
             .with_hint(format!("planned for milestone {milestone}; see ROADMAP.md"))
     }
 
+    /// Exit with `code` without printing anything (the command already reported).
+    pub fn silent(code: u8) -> Self {
+        Self {
+            code,
+            message: String::new(),
+            hint: None,
+        }
+    }
+
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
         self
     }
 
     pub fn print(&self, format: Option<Format>) {
+        if self.message.is_empty() {
+            return;
+        }
         if format == Some(Format::Json) {
             let body = json!({ "error": { "code": self.code, "message": self.message, "hint": self.hint } });
             eprintln!("{body}");

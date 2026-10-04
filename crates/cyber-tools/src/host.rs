@@ -90,6 +90,65 @@ impl BuiltinHost {
         rules
     }
 
+    /// Skills a user can invoke as `/name` from a Location: `(name, description, argument hint)`.
+    pub fn skill_commands(&self, location: &Path) -> Vec<(String, String, Option<String>)> {
+        self.skills(location)
+            .skills
+            .into_values()
+            .filter(|s| s.user_invocable)
+            .map(|s| (s.name, s.description, s.argument_hint))
+            .collect()
+    }
+
+    /// A user-invocable skill's body with arguments substituted (`skills-commands` → Skills as
+    /// user commands).
+    pub fn expand_skill(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
+        let skill = self
+            .skills(location)
+            .skills
+            .remove(name)
+            .filter(|s| s.user_invocable)?;
+        Some(skills::expand(&skill.body, arguments))
+    }
+
+    /// Files and directories under a Location whose relative path contains every
+    /// whitespace-separated word of `query` (case-insensitive), honoring ignore files.
+    pub fn find_files(&self, location: &Path, query: &str, limit: usize) -> Vec<String> {
+        let words: Vec<String> = query
+            .to_lowercase()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        let walker = ignore::WalkBuilder::new(location)
+            .hidden(false)
+            .filter_entry(|e| e.file_name() != ".git")
+            .build();
+        let mut hits: Vec<String> = walker
+            .flatten()
+            .filter_map(|e| {
+                let rel = e
+                    .path()
+                    .strip_prefix(location)
+                    .ok()?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let lower = rel.to_lowercase();
+                (!rel.is_empty() && words.iter().all(|w| lower.contains(w.as_str()))).then(|| {
+                    if e.file_type().is_some_and(|t| t.is_dir()) {
+                        format!("{rel}/")
+                    } else {
+                        rel
+                    }
+                })
+            })
+            .take(limit * 4)
+            .collect();
+        // Shorter paths first: closer matches for a mention.
+        hits.sort_by_key(|h| (h.len(), h.clone()));
+        hits.truncate(limit);
+        hits
+    }
+
     pub(crate) fn network_approvals(&self, session: &str) -> Arc<Mutex<HashSet<String>>> {
         let mut map = self.network.lock().unwrap_or_else(PoisonError::into_inner);
         Arc::clone(map.entry(session.to_string()).or_default())
@@ -146,11 +205,22 @@ impl BuiltinHost {
             .unwrap_or(Value::Null)
     }
 
+    /// Config rules followed by the Session ruleset, which is evaluated last.
+    fn session_rules(&self, location: &Path, session: &Value) -> Vec<permissions::Rule> {
+        let mut rules = self.rules(location);
+        let mut extra = permissions::parse_rules(session, &BTreeMap::new());
+        for rule in &mut extra {
+            rule.source = "session".into();
+        }
+        rules.extend(extra);
+        rules
+    }
+
     pub(crate) fn policy(&self, inv: &Invocation) -> Policy {
         let location = PathBuf::from(&inv.directory);
         let root = cyber_core::config::project_root(&location);
         Policy {
-            rules: self.rules(&location),
+            rules: self.session_rules(&location, &inv.rules),
             saved: saved::rules(&self.opts.store, &root).unwrap_or_default(),
             mode: Mode::parse(&inv.mode),
             plan_file: location
@@ -252,7 +322,7 @@ fn shortened(listed: &[&skills::Skill], budget: usize) -> Vec<String> {
 
 impl ToolHost for BuiltinHost {
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
-        let rules = self.rules(Path::new(&turn.directory));
+        let rules = self.session_rules(Path::new(&turn.directory), &turn.rules);
         let mode = Mode::parse(&turn.mode);
         self.tools
             .iter()
@@ -304,6 +374,45 @@ impl ToolHost for BuiltinHost {
                 Err(ToolError::Failed(message)) => ToolOutcome::Failed(message),
                 Err(ToolError::Aborted) => ToolOutcome::Aborted,
             }
+        })
+    }
+
+    fn shell(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        let inv = Invocation {
+            session_id: session_id.into(),
+            directory: directory.into(),
+            agent: "user".into(),
+            mode: "bypass".into(),
+            message_id: String::new(),
+            call_id: cyber_core::ids::new_id("call"),
+            name: "bash".into(),
+            input: serde_json::json!({ "command": command }),
+            attempt: 1,
+            operation_key: String::new(),
+            asker: cyber_server::runtime::Asker::detached(),
+            rules: Value::Null,
+        };
+        let command = command.to_string();
+        Box::pin(async move {
+            let ctx = Ctx {
+                host: self,
+                policy: self.policy(&inv),
+                location: PathBuf::from(&inv.directory),
+                inv: &inv,
+                cancel: CancellationToken::new(),
+            };
+            let output = tools::bash::run_user(&ctx, &command)
+                .await
+                .map_err(|e| match e {
+                    ToolError::Failed(message) => message,
+                    ToolError::Aborted => "aborted".into(),
+                })?;
+            self.budget(&ctx.location).apply(output, true)
         })
     }
 }

@@ -15,7 +15,14 @@ path = "src/main.rs"
 cyber-core.workspace = true
 cyber-store.workspace = true
 cyber-llm = { path = "../cyber-llm" }
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "signal", "time", "macros", "io-std", "io-util"] }
+cyber-app = { path = "../cyber-app" }
+cyber-client = { path = "../cyber-client" }
+cyber-tui = { path = "../cyber-tui" }
+cyber-server = { path = "../cyber-server" }
+base64 = "0.22"
+futures = "0.3"
+ulid.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

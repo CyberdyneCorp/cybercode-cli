@@ -272,13 +272,7 @@ impl Inner {
         state: &SessionState,
     ) -> std::collections::BTreeMap<String, context::Observed> {
         let mut observed = context::observe(&self.context_inputs(&state.info.directory));
-        let turn = TurnContext {
-            session_id: state.info.id.clone(),
-            directory: state.info.directory.clone(),
-            agent: state.info.agent.clone(),
-            mode: state.info.mode.clone(),
-            prefers_apply_patch: false,
-        };
+        let turn = turn_context_for(state, false);
         for (key, value) in self.options.tools.context_sources(&turn) {
             observed.insert(key, context::Observed::Value(value));
         }
@@ -397,10 +391,11 @@ impl Inner {
         snapshot: Option<String>,
     ) -> Result<(cyber_llm::LlmRequest, Vec<ToolDef>, bool, String), RuntimeError> {
         let mut state = handle.state.lock().await;
-        let limited = self
-            .options
-            .max_steps
-            .is_some_and(|m| state.steps_since_input >= m);
+        let limit = match (self.options.max_steps, state.info.max_steps) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let limited = limit.is_some_and(|m| state.steps_since_input >= m);
         if limited {
             let payload = SystemAdded {
                 message_id: cyber_core::ids::new_id("msg"),
@@ -862,6 +857,7 @@ impl Inner {
             attempt,
             operation_key,
             asker: Asker::new(&inner, &turn.session_id, &call.id, message_id),
+            rules: turn.rules.clone(),
         })
     }
 
@@ -1084,11 +1080,16 @@ fn kind_name(kind: ErrorKind) -> &'static str {
 }
 
 pub(crate) fn turn_context(state: &SessionState, resolved: &ResolvedModel) -> TurnContext {
+    turn_context_for(state, resolved.prefers_apply_patch)
+}
+
+pub(crate) fn turn_context_for(state: &SessionState, prefers_apply_patch: bool) -> TurnContext {
     TurnContext {
         session_id: state.info.id.clone(),
         directory: state.info.directory.clone(),
         agent: state.info.agent.clone(),
         mode: state.info.mode.clone(),
-        prefers_apply_patch: resolved.prefers_apply_patch,
+        prefers_apply_patch,
+        rules: state.info.rules.clone(),
     }
 }

@@ -25,6 +25,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261005000000_permissions_todos",
         sql: include_str!("../migrations/20261005000000_permissions_todos.sql"),
     },
+    Migration {
+        id: "20261006000000_idempotency",
+        sql: include_str!("../migrations/20261006000000_idempotency.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

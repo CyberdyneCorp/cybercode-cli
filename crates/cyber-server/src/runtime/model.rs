@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::events::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Delivery {
     /// Promoted at the next Safe Boundary, even while the Drain continues.
@@ -21,7 +21,7 @@ pub enum Delivery {
     Hold,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum InputStatus {
     Pending,
@@ -30,7 +30,7 @@ pub enum InputStatus {
     Refused,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxRow {
     pub message_id: String,
     pub parts: Vec<Content>,
@@ -42,7 +42,7 @@ pub struct InboxRow {
     pub promoted_seq: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionInfo {
     pub id: String,
     pub title: String,
@@ -57,10 +57,16 @@ pub struct SessionInfo {
     /// The title is still the generated default.
     #[serde(default)]
     pub default_title: bool,
+    /// Session ruleset (`permissions-modes`), in the `permissions` config shape.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub rules: Value,
+    /// Step limit for this Session's Drains, on top of the runtime-wide limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<u32>,
 }
 
 /// One entry of model-visible history.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Entry {
     User {
@@ -86,7 +92,7 @@ impl Entry {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AssistantEntry {
     pub id: String,
     pub provider: String,
@@ -99,7 +105,7 @@ pub struct AssistantEntry {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrySafety {
     ReadOnly,
@@ -108,7 +114,7 @@ pub enum RetrySafety {
     Never,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CallStatus {
     /// Recorded from the stream, not yet dispatched.
@@ -129,7 +135,7 @@ impl CallStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CallState {
     pub call_id: String,
     pub message_id: String,
@@ -142,7 +148,7 @@ pub struct CallState {
     pub output: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Epoch {
     pub number: u32,
     pub baseline: String,
@@ -150,7 +156,7 @@ pub struct Epoch {
     pub provider: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Compacted {
     pub summary_id: String,
     pub summary: String,
@@ -160,14 +166,14 @@ pub struct Compacted {
 }
 
 /// A user statement with its source, kept outside generated prose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Sourced {
     pub message_id: String,
     pub text: String,
 }
 
 /// Durable task state (`compaction` → Durable task state), derived from promoted input.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TaskState {
     pub version: u32,
     pub objective: Option<Sourced>,
@@ -175,7 +181,7 @@ pub struct TaskState {
     pub instructions: Vec<Sourced>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Totals {
     pub usage: Usage,
     pub cost: f64,
@@ -185,7 +191,7 @@ pub struct Totals {
 }
 
 /// What a rewind restores (`snapshots-checkpoints` → Three-phase revert).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RevertTarget {
     Code,
@@ -209,7 +215,7 @@ impl RevertTarget {
 }
 
 /// A staged revert: the conversation boundary and the trees involved.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RevertState {
     /// The user message rewound to; it and everything after it go on commit.
     pub message_id: String,
@@ -223,7 +229,7 @@ pub struct RevertState {
 }
 
 /// Snapshots around one step.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StepSnapshot {
     pub step_id: String,
     /// The user message the step answers.
@@ -232,7 +238,7 @@ pub struct StepSnapshot {
     pub post: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
     pub info: SessionInfo,
     pub last_seq: i64,

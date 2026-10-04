@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
     Durable {

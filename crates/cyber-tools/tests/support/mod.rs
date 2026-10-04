@@ -105,6 +105,7 @@ impl Fixture {
             attempt: 1,
             operation_key: "op".into(),
             asker: Asker::detached(),
+            rules: Value::Null,
         }
     }
 
@@ -122,6 +123,7 @@ impl Fixture {
             agent: "build".into(),
             mode: mode.into(),
             prefers_apply_patch: prefers_patch,
+            rules: Value::Null,
         };
         self.host
             .definitions(&turn)

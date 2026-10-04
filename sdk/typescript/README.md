@@ -1,0 +1,140 @@
+# @cyber-code/sdk
+
+TypeScript client for the Cyber Code server API (`/api/v1`). ESM, Node ≥ 20, no runtime
+dependencies (uses the global `fetch`).
+
+```ts
+import { Cyber } from "@cyber-code/sdk";
+
+const client = Cyber.connect();                 // no I/O until the first call
+const { data: session } = await client.session.create({ title: "demo" });
+const result = await client.sessions.prompt(session.id, "fix the failing test", { wait: true });
+console.log(result.text, result.stopReason, result.usage);
+```
+
+## Connecting
+
+`Cyber.connect({ baseUrl?, auth?, fetch?, headers?, directory?, timeoutMs?, retry?, reconnect? })`
+
+- With no `baseUrl` the client reads `<state>/server.json` on the first request. `<state>` is
+  `$XDG_STATE_HOME/cyber`, else `$CYBER_HOME/state`, else `~/.local/state/cyber`.
+- `auth` defaults to the local password file (`<state>/password`, HTTP Basic as `cyber`).
+  Use `{ type: "password", password }` or `{ type: "account", token | tokenProvider }` (Bearer;
+  the provider is called before every request and stream reconnect).
+- `directory` is sent as `x-cyber-directory` on Location-scoped routes. `client.at(dir)` returns a
+  scoped client and leaves the parent unchanged.
+
+`Cyber.start({ mode, binary?, db?, directory?, signal? })` returns `{ client, registration?, close() }`:
+
+- `attach` uses the registered server; `close()` is a no-op.
+- `spawn` runs `cyber service start` first; `close()` stops the service only when this handle
+  started it.
+- `embedded` spawns a private `cyber serve --stdio` (in-memory database unless `db` is given,
+  which sets `CYBER_DB`; no auth) and talks JSON-RPC 2.0 over its stdin/stdout. The client has
+  the same surface as over HTTP (typed methods, `request()`, streams as subscriptions, prompt
+  wait, `onRequest`). `close()` or aborting `signal` closes stdin and kills the child if it has
+  not exited within 2 s. If the child exits, pending calls and streams fail with a permanent
+  `CyberClientError` (`Transport`) instead of reconnecting.
+
+```ts
+const server = await Cyber.start({ mode: "embedded", directory: "/path/to/repo" });
+const { data: session } = await server.client.session.create();
+await server.close();
+```
+
+## Methods and results
+
+Every operation in `sdk/openapi.json` is a method grouped by its OpenAPI tag:
+`client.session.list(query?)`, `client.session.prompt(sessionID, body)`,
+`client.message.list(sessionID, query?)`, `client.permission.reply(sessionID, requestID, body)`, …
+Path parameters come first, then the body (or the query for GET routes), then
+`{ idempotencyKey?, signal?, headers? }`. `client.request("v1.session.get", { path: { sessionID } })`
+calls any operation by ID.
+
+What a method resolves with:
+
+| Response body                        | Resolves with                              |
+| ------------------------------------ | ------------------------------------------ |
+| `{ data }`                           | `data` (unwrapped)                         |
+| `{ location, data }` (Location-scoped) | the whole envelope, so `location` stays available |
+| `{ data: [...], cursor }` (pages)    | the whole page, so `cursor` stays available |
+| `204` / `202` with no body           | `undefined`                                |
+
+So `client.session.get(id)` gives a `Session`, while `client.session.create()` gives
+`{ location, data: Session }` and `client.session.list()` gives `{ location, data: { data, cursor } }`.
+
+## Errors
+
+Tagged server errors reject with `CyberApiError` (`tag`, `status`, `body`). Generated guards
+narrow them: `isSessionBusyError(err)`, `isSessionNotFoundError(err)`, … Requests that never got a
+usable answer reject with `CyberClientError` whose `reason` is `Transport`, `UnexpectedStatus`,
+`MalformedResponse` or `Timeout`.
+
+Every non-GET call sends an `Idempotency-Key` (UUIDv7 unless you pass `idempotencyKey`). Over
+HTTP it is retried up to 3 times on transport failures and timeouts with the same key, so the
+server replays the first result instead of repeating the write. JSON-RPC errors map the same way:
+`error.data` is the tagged body and the HTTP status comes from the code (`-32000 - status`).
+
+## Events
+
+```ts
+for await (const event of client.sessions.events(sessionID, { after: lastSeq })) {
+  lastSeq = event.durable?.seq ?? lastSeq;
+}
+for await (const event of client.events.subscribe()) { /* live events of the Location */ }
+```
+
+Streams reconnect with exponential backoff (500 ms → 15 s). Session streams resume from the last
+`durable.seq` they yielded, so no durable event is lost or repeated. `break` (or aborting
+`signal`) closes the connection.
+
+## Permissions and questions
+
+```ts
+const stop = client.permissions.onRequest((req) => (req.action === "read" ? "once" : "reject"));
+const stopQuestions = client.questions.onRequest((req) => req.questions.map((q) => [q.options[0]!.label]));
+```
+
+Handlers return `"once" | "always" | "reject"` (or `{ reply, message }`) for permissions, and
+answer labels per question (or `undefined` to dismiss) for questions. On every (re)connect the
+SDK first fetches the pending requests and handles those of the client's Location it has not
+handled yet, so requests asked during a disconnect are not missed; each request is handled once.
+
+## Application tools
+
+```ts
+const unregister = await client.tools.register({
+  name: "lookup_ticket",                      // ^[A-Za-z][A-Za-z0-9_-]{0,63}$, not a built-in name
+  description: "Look up a ticket by ID",
+  input: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+  execute: async ({ id }, { sessionID, callID }) => `ticket ${id}`,   // a throw is the tool's failure
+});
+await unregister();
+```
+
+The tool runs in your process: the server sends `tool.execute` over a JSON-RPC channel and
+the result (a string, or any JSON value) goes back to the model. Over HTTP the channel is a
+WebSocket to `/api/v1/ws` (global `WebSocket`, Node ≥ 22, or pass `webSocket` to
+`Cyber.connect`) that opens on the first registration, re-registers every tool after a
+reconnect (500 ms → 15 s backoff), and closes after the last tool is unregistered. In embedded
+mode the stdio channel is reused. Registrations disappear when the channel disconnects.
+
+## Browser-safe types
+
+`@cyber-code/sdk/schema` exports the generated types, the operation table and the error guards
+with no Node built-ins.
+
+## Development
+
+```sh
+npm run generate    # python3 ../../scripts/generate_sdk.py (regenerates src/generated)
+npm run typecheck   # src, tests and examples
+npm test
+npm run build       # dist/
+```
+
+`src/generated/` is generated from `sdk/openapi.json`; do not edit it by hand.
+`python3 scripts/generate_sdk.py --check` exits 1 when it is out of date. WebSocket operations
+(`x-websocket: true`, e.g. `GET /api/v1/ws`) get no typed method. Examples live in
+`examples/` (drive a session, stream events with resume, approve permissions, register an app
+tool).

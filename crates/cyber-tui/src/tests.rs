@@ -1,0 +1,364 @@
+//! Behavior of the state machine and what the screen shows, on an in-memory terminal.
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use serde_json::json;
+
+use crate::app::{Action, App, Overlay, PermStep};
+use crate::model::{Item, QuestionSpec, Queued, Request, Session, Tool};
+
+fn session(running: bool) -> Session {
+    Session {
+        id: "ses_1".into(),
+        title: "Fix tests".into(),
+        directory: "/repo".into(),
+        model: "openai/m".into(),
+        agent: "build".into(),
+        mode: "default".into(),
+        running,
+        ..Session::default()
+    }
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn with(code: KeyCode, m: KeyModifiers) -> KeyEvent {
+    KeyEvent::new(code, m)
+}
+
+fn typed(app: &mut App, text: &str) -> Vec<Action> {
+    text.chars()
+        .flat_map(|c| app.on_key(key(KeyCode::Char(c))))
+        .collect()
+}
+
+fn screen(app: &App) -> String {
+    let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    t.draw(|f| crate::view::draw(f, app)).unwrap();
+    let buf = t.backend().buffer().clone();
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn enter_steers_while_running_and_tab_queues() {
+    let mut idle = App::new(session(false), Vec::new(), "cyber");
+    typed(&mut idle, "hello");
+    assert_eq!(
+        idle.on_key(key(KeyCode::Enter)),
+        vec![Action::Prompt {
+            text: "hello".into(),
+            delivery: "steer"
+        }]
+    );
+    let mut busy = App::new(session(true), Vec::new(), "cyber");
+    typed(&mut busy, "also this");
+    assert_eq!(
+        busy.on_key(key(KeyCode::Tab)),
+        vec![Action::Prompt {
+            text: "also this".into(),
+            delivery: "queue"
+        }]
+    );
+    assert_eq!(busy.on_key(key(KeyCode::Esc)), vec![Action::Interrupt]);
+}
+
+#[test]
+fn shift_enter_inserts_a_newline_and_shell_and_slash_inputs_route() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    typed(&mut app, "a");
+    app.on_key(with(KeyCode::Enter, KeyModifiers::SHIFT));
+    typed(&mut app, "b");
+    assert_eq!(app.composer.text(), "a\nb");
+    app.composer.clear();
+    typed(&mut app, "!cargo test");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::Shell("cargo test".into())]
+    );
+    typed(&mut app, "/release-notes v1.2");
+    app.completion = None;
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::Command {
+            name: "release-notes".into(),
+            arguments: "v1.2".into()
+        }]
+    );
+    typed(&mut app, "/mode plan");
+    app.completion = None;
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::SwitchMode("plan".into())]
+    );
+}
+
+#[test]
+fn at_mentions_ask_for_files_and_complete() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let actions = typed(&mut app, "see @ma");
+    assert!(actions.contains(&Action::FindFiles("ma".into())));
+    app.files = vec!["src/main.rs".into(), "README.md".into()];
+    typed(&mut app, "i");
+    let c = app.completion.as_ref().unwrap();
+    assert_eq!(c.items[0].label, "src/main.rs");
+    app.on_key(key(KeyCode::Tab));
+    assert_eq!(app.composer.text(), "see @src/main.rs ");
+}
+
+fn permission() -> Request {
+    Request::Permission {
+        id: "per_1".into(),
+        session_id: "ses_1".into(),
+        action: "bash".into(),
+        resources: vec!["rm -rf build".into()],
+        patterns: vec!["rm *".into()],
+        metadata: json!({}),
+    }
+}
+
+#[test]
+fn permission_prompt_confirms_always_and_collects_feedback() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    app.requests = vec![permission()];
+    app.sync_overlay();
+    assert_eq!(app.overlay, Overlay::Permission(PermStep::Choose(0)));
+    assert!(screen(&app).contains("Permission: bash"));
+    app.on_key(key(KeyCode::Char('a')));
+    assert!(
+        screen(&app).contains("bash rm *"),
+        "patterns are listed before saving"
+    );
+    let actions = app.on_key(key(KeyCode::Enter));
+    assert_eq!(
+        actions,
+        vec![Action::Reply {
+            request: "per_1".into(),
+            body: json!({ "reply": "always" })
+        }]
+    );
+    assert_eq!(app.overlay, Overlay::None);
+
+    app.requests = vec![permission()];
+    app.sync_overlay();
+    app.on_key(key(KeyCode::Char('n')));
+    typed(&mut app, "use make clean");
+    let actions = app.on_key(key(KeyCode::Enter));
+    assert_eq!(
+        actions,
+        vec![Action::Reply {
+            request: "per_1".into(),
+            body: json!({ "reply": "reject", "message": "use make clean" })
+        }]
+    );
+}
+
+#[test]
+fn questions_submit_on_selection_or_dismiss_with_esc() {
+    let q = QuestionSpec {
+        question: "Database?".into(),
+        header: "DB".into(),
+        options: vec![
+            ("postgres".into(), String::new()),
+            ("sqlite".into(), String::new()),
+        ],
+        multi: false,
+        custom: true,
+    };
+    let req = Request::Question {
+        id: "que_1".into(),
+        session_id: "ses_1".into(),
+        questions: vec![q],
+    };
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    app.requests = vec![req.clone()];
+    app.sync_overlay();
+    assert!(screen(&app).contains("Type your own answer"));
+    app.on_key(key(KeyCode::Down));
+    let actions = app.on_key(key(KeyCode::Enter));
+    assert_eq!(
+        actions,
+        vec![Action::Answer {
+            request: "que_1".into(),
+            body: json!({ "answers": [["sqlite"]] })
+        }]
+    );
+    app.requests = vec![req];
+    app.sync_overlay();
+    assert_eq!(
+        app.on_key(key(KeyCode::Esc)),
+        vec![Action::Answer {
+            request: "que_1".into(),
+            body: json!({})
+        }]
+    );
+}
+
+#[test]
+fn messages_render_text_tools_and_collapsed_output() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let output = (1..=40)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.items = vec![
+        Item::User {
+            id: "m1".into(),
+            text: "run the tests".into(),
+        },
+        Item::Assistant {
+            id: "m2".into(),
+            text: "All **good**: `cargo test` passed.".into(),
+            reasoning: "think".into(),
+            tools: vec![Tool {
+                call_id: "c1".into(),
+                name: "bash".into(),
+                input: json!({"command": "cargo test"}),
+                status: "ok".into(),
+                output,
+            }],
+            error: None,
+        },
+    ];
+    let s = screen(&app);
+    assert!(s.contains("› run the tests"), "{s}");
+    assert!(s.contains("⏺ bash cargo test  completed"), "{s}");
+    assert!(s.contains("30 lines hidden"), "{s}");
+    assert!(s.contains("line 40") && !s.contains("line 30\n"), "{s}");
+    assert!(s.contains("thinking (Ctrl+T to show)"));
+    assert!(s.contains("All good: cargo test passed."));
+    app.on_key(with(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert!(!screen(&app).contains("lines hidden"));
+}
+
+#[test]
+fn streaming_text_shows_until_the_message_is_durable() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    app.on_event(
+        "session.text.delta",
+        &json!({ "session_id": "ses_1", "message_id": "m9", "text": "Hel" }),
+    );
+    app.on_event(
+        "session.text.delta",
+        &json!({ "session_id": "ses_1", "message_id": "m9", "text": "lo" }),
+    );
+    assert!(screen(&app).contains("Hello"));
+    assert_eq!(
+        app.on_event("session.step.ended.1", &json!({})),
+        vec![Action::Refresh]
+    );
+    assert_eq!(
+        app.on_event("session.idle", &json!({})),
+        vec![Action::Refresh]
+    );
+    assert!(!app.session.running);
+}
+
+#[test]
+fn queued_messages_are_listed_and_can_be_taken_back() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    app.queued = vec![Queued {
+        message_id: "m5".into(),
+        text: "then update docs".into(),
+        delivery: "queue".into(),
+    }];
+    assert!(screen(&app).contains("then update docs"));
+    let actions = app.on_key(with(KeyCode::Up, KeyModifiers::ALT));
+    assert_eq!(actions, vec![Action::RemoveQueued("m5".into())]);
+    assert_eq!(app.composer.text(), "then update docs");
+}
+
+#[test]
+fn pickers_filter_and_choose() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let items = ["openai/gpt-6-luna", "anthropic/claude-x"]
+        .iter()
+        .map(|m| crate::model::Choice {
+            key: (*m).into(),
+            label: (*m).into(),
+            detail: String::new(),
+        })
+        .collect();
+    app.open_picker(crate::app::PickerKind::Models, "Models", items);
+    typed(&mut app, "claude");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::SwitchModel("anthropic/claude-x".into())]
+    );
+    app.on_key(with(KeyCode::Char('x'), KeyModifiers::CONTROL));
+    app.on_key(key(KeyCode::Char('t')));
+    typed(&mut app, "nord");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::SaveTheme("nord")]
+    );
+    assert_eq!(app.theme.name, "nord");
+}
+
+#[test]
+fn shift_tab_cycles_modes_and_ctrl_c_quits_when_empty() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    assert_eq!(
+        app.on_key(key(KeyCode::BackTab)),
+        vec![Action::SwitchMode("accept-edits".into())]
+    );
+    typed(&mut app, "x");
+    assert!(
+        app.on_key(with(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            .is_empty()
+    );
+    assert_eq!(
+        app.on_key(with(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        vec![Action::Quit]
+    );
+}
+
+#[test]
+fn the_session_picker_renames_archives_and_confirms_deletes() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let items = vec![crate::model::Choice {
+        key: "ses_2".into(),
+        label: "Old".into(),
+        detail: String::new(),
+    }];
+    app.open_picker(crate::app::PickerKind::Sessions, "Sessions", items);
+    assert!(screen(&app).contains("^R rename"));
+    app.on_key(with(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    for _ in 0..3 {
+        app.on_key(key(KeyCode::Backspace));
+    }
+    typed(&mut app, "New name");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::Rename {
+            id: "ses_2".into(),
+            title: "New name".into()
+        }]
+    );
+    assert_eq!(
+        app.on_key(with(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+        vec![Action::Archive("ses_2".into())]
+    );
+    app.on_key(with(KeyCode::Char('d'), KeyModifiers::CONTROL));
+    assert!(screen(&app).contains("y to confirm"));
+    assert!(
+        app.on_key(key(KeyCode::Char('n'))).is_empty(),
+        "anything but y cancels"
+    );
+    app.on_key(with(KeyCode::Char('d'), KeyModifiers::CONTROL));
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('y'))),
+        vec![Action::Delete("ses_2".into())]
+    );
+}

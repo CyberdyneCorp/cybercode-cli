@@ -60,6 +60,11 @@ impl Tool for Bash {
     }
 }
 
+/// A user shell command (`!`): sandboxed, but never asks for permission.
+pub(crate) async fn run_user(ctx: &Ctx<'_>, command: &str) -> Result<String, ToolError> {
+    execute(ctx, command, &ctx.location, DEFAULT_TIMEOUT_MS).await
+}
+
 async fn authorize(
     ctx: &Ctx<'_>,
     command: &str,

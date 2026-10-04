@@ -537,3 +537,53 @@ async fn approving_a_domain_lets_sandboxed_commands_reach_it() {
     flow.settle(&id).await;
     assert_eq!(flow.output(&id, "c1").await, "hello");
 }
+
+#[tokio::test]
+async fn session_rules_deny_tools_and_hide_fully_denied_ones() {
+    let q = json!({"questions": [{"question": "Which?", "header": "Pick", "options": [{"label": "a"}, {"label": "b"}]}]});
+    let flow = Flow::new(vec![call("c1", "question", q), text("ok")], true);
+    let req = CreateSession {
+        directory: flow.f.repo.display().to_string(),
+        model: "test/main".into(),
+        rules: Some(json!({"question": "deny", "plan_enter": "deny"})),
+        ..Default::default()
+    };
+    let id = flow.runtime.create_session(req).await.unwrap().id;
+    flow.prompt(&id, "ask me").await;
+    flow.settle(&id).await;
+    // The model called a tool it was not offered; the call is refused without asking.
+    assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+    let offered: Vec<String> = flow.main.requests()[0]
+        .tools
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    assert!(
+        !offered.contains(&"question".to_string()) && !offered.contains(&"plan_enter".to_string()),
+        "{offered:?}"
+    );
+    assert!(offered.contains(&"read".to_string()));
+}
+
+#[tokio::test]
+async fn shell_commands_are_recorded_for_the_next_turn_without_a_turn() {
+    let flow = Flow::new(vec![text("I see the output")], true);
+    let id = flow.session("default").await;
+    let output = flow
+        .runtime
+        .shell(&id, "echo from-the-shell")
+        .await
+        .unwrap();
+    assert_eq!(output, "from-the-shell");
+    assert!(
+        flow.main.requests().is_empty(),
+        "no Turn runs for a shell command"
+    );
+    flow.prompt(&id, "what did it print?").await;
+    flow.settle(&id).await;
+    let sent = serde_json::to_string(&flow.main.requests()[0].messages).unwrap();
+    assert!(
+        sent.contains("!echo from-the-shell") && sent.contains("from-the-shell"),
+        "{sent}"
+    );
+}

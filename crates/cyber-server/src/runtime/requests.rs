@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use super::events::*;
 use super::{Inner, RuntimeError};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PermissionAsk {
     pub action: String,
     pub resources: Vec<String>,
@@ -25,7 +25,7 @@ pub struct PermissionAsk {
     pub metadata: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "reply", rename_all = "snake_case")]
 pub enum PermissionReply {
     Once,
@@ -38,14 +38,14 @@ pub enum PermissionReply {
     Unattended,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuestionOption {
     pub label: String,
     #[serde(default)]
     pub description: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Question {
     pub question: String,
     pub header: String,
@@ -60,7 +60,7 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "reply", rename_all = "snake_case")]
 pub enum QuestionReply {
     /// One list of selected labels (or custom text) per question.
@@ -73,7 +73,7 @@ pub enum QuestionReply {
 }
 
 /// A request waiting for a client, as listed to clients.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PendingRequest {
     pub id: String,
     pub session_id: String,
@@ -83,7 +83,7 @@ pub struct PendingRequest {
     pub kind: PendingKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PendingKind {
     Permission(PermissionAsk),

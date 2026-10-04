@@ -12,7 +12,12 @@ use std::process::ExitCode;
 use clap::Parser;
 
 fn main() -> ExitCode {
-    let cli = match cli::Cli::try_parse() {
+    // `cyber -p ...` is `cyber exec ...`.
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|a| a == "-p" || a == "--print") {
+        args[1] = "exec".into();
+    }
+    let cli = match cli::Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(e) => {
             let code = e.exit_code();

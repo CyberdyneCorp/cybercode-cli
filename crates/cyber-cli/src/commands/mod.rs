@@ -1,9 +1,13 @@
 //! Command dispatch.
 
+pub mod api;
 pub mod db;
 pub mod debug;
+pub mod exec;
 pub mod models;
+pub mod serve;
 pub mod trust;
+pub mod tui;
 
 use serde_json::json;
 
@@ -17,10 +21,15 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         return version(&cli.global);
     }
     let Some(command) = cli.command else {
-        return Err(CliError::unavailable("the interactive TUI", "M0.5")
-            .with_hint("inspect this build with \"cyber debug info\""));
+        return tui::run(&cli.launch, &cli.global, None);
     };
     if let Command::External(args) = &command {
+        // `cyber [project]`: a directory argument opens the TUI there.
+        if let [project] = args.as_slice()
+            && std::path::Path::new(project).is_dir()
+        {
+            return tui::run(&cli.launch, &cli.global, Some(project));
+        }
         return Err(tree::external(args));
     }
     let ctx = Context::new(&cli.global)?;
@@ -29,6 +38,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Models(args) => models::run(args, &ctx, &cli.global),
         Command::Db { cmd } => db::run(cmd, &ctx, &cli.global),
         Command::Trust { cmd } => trust::run(cmd, &ctx, &cli.global),
+        Command::Serve(args) => serve::serve(args, &ctx),
+        Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
+        Command::Api(args) => api::run(args, &ctx),
+        Command::Exec(args) => exec::run(args, &ctx, &cli.global),
         Command::External(_) => unreachable!("handled above"),
     }
 }

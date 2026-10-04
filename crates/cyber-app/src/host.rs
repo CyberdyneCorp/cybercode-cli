@@ -1,0 +1,49 @@
+//! The runtime's tool host: built-in tools plus tools registered by connected clients.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use cyber_server::http::remote_tools::RemoteTools;
+use cyber_server::runtime::{
+    CallState, Invocation, Reconciliation, ToolDef, ToolHost, ToolOutcome, TurnContext,
+};
+use cyber_tools::BuiltinHost;
+use futures::future::BoxFuture;
+use tokio_util::sync::CancellationToken;
+
+pub struct AppHost {
+    pub builtin: Arc<BuiltinHost>,
+    pub remote: Arc<RemoteTools>,
+}
+
+impl ToolHost for AppHost {
+    fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
+        let mut defs = self.builtin.definitions(turn);
+        defs.extend(self.remote.definitions());
+        defs
+    }
+
+    fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
+        if self.remote.has(&call.name) {
+            return Box::pin(self.remote.execute(call, cancel));
+        }
+        self.builtin.execute(call, cancel)
+    }
+
+    fn reconcile(&self, directory: &str, call: &CallState) -> BoxFuture<'_, Reconciliation> {
+        self.builtin.reconcile(directory, call)
+    }
+
+    fn shell(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        self.builtin.shell(directory, session_id, command)
+    }
+
+    fn context_sources(&self, turn: &TurnContext) -> BTreeMap<String, String> {
+        self.builtin.context_sources(turn)
+    }
+}

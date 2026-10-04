@@ -229,8 +229,19 @@ fn trust_inspect_approve_and_revoke() {
 }
 
 #[test]
-fn bare_cyber_reports_tui_unavailable() {
+fn bare_cyber_without_a_terminal_points_to_exec() {
     let o = Env::new().cyber(&[]);
     assert_eq!(o.status.code(), Some(2));
-    assert!(stderr(&o).contains("the interactive TUI is not available in this build yet"));
+    assert!(
+        stderr(&o).contains("the TUI needs a terminal"),
+        "{}",
+        stderr(&o)
+    );
+}
+
+#[test]
+fn invalid_launch_combinations_fail_before_the_ui() {
+    let o = Env::new().cyber(&["--fork"]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(stderr(&o).contains("--fork needs"), "{}", stderr(&o));
 }

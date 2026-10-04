@@ -1,0 +1,125 @@
+//! Catalog and Location lookups for the HTTP API.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use cyber_llm::catalog::{Availability, default_model, recent_models};
+use cyber_server::http::remote_tools::RemoteTools;
+use cyber_server::http::{AgentInfo, CommandInfo, ModelInfo, Services};
+use cyber_server::runtime::{CatalogResolver, ToolDef, ToolHost, TurnContext};
+use cyber_tools::{BuiltinHost, ConfigFn};
+use futures::future::BoxFuture;
+
+pub struct AppServices {
+    resolver: Arc<CatalogResolver>,
+    host: Arc<BuiltinHost>,
+    remote: Arc<RemoteTools>,
+    config: Arc<ConfigFn>,
+    recent_file: PathBuf,
+}
+
+impl AppServices {
+    pub fn new(
+        resolver: Arc<CatalogResolver>,
+        host: Arc<BuiltinHost>,
+        remote: Arc<RemoteTools>,
+        config: Arc<ConfigFn>,
+        recent_file: PathBuf,
+    ) -> Self {
+        Self {
+            resolver,
+            host,
+            remote,
+            config,
+            recent_file,
+        }
+    }
+}
+
+/// Built-in slash commands handled by clients or the server.
+const BUILTIN_COMMANDS: &[(&str, &str)] = &[
+    ("compact", "Summarize older history to free context"),
+    ("model", "Switch the model"),
+    ("mode", "Switch the permission mode"),
+    ("resume", "Open another Session"),
+    ("new", "Start a new Session"),
+    ("rewind", "Rewind code and conversation to a message"),
+    ("help", "Show commands and keys"),
+    ("exit", "Quit"),
+];
+
+impl Services for AppServices {
+    fn models(&self, _location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>> {
+        Box::pin(async move {
+            let rows = self
+                .resolver
+                .catalog()
+                .list(None)
+                .map_err(|e| e.to_string())?;
+            Ok(rows
+                .into_iter()
+                .map(|row| ModelInfo {
+                    provider: row.model.provider_id.clone(),
+                    name: row.model.name.clone(),
+                    available: matches!(row.availability, Availability::Available),
+                    context_limit: row.model.limits.context,
+                    reasoning: row.model.capabilities.reasoning,
+                    id: row.model_ref,
+                })
+                .collect())
+        })
+    }
+
+    fn default_model(&self, location: &Path) -> Option<String> {
+        let config = (self.config)(location).map(|(v, _)| v).unwrap_or_default();
+        let recent = recent_models(&self.recent_file);
+        default_model(self.resolver.catalog(), &config, &recent)
+            .ok()
+            .map(|(r, _)| r.to_string())
+    }
+
+    fn agents(&self, _location: &Path) -> Vec<AgentInfo> {
+        vec![AgentInfo {
+            name: "build".into(),
+            description: "The default agent, with full tool access".into(),
+            mode: "primary".into(),
+        }]
+    }
+
+    /// The tools a Turn would offer: built-ins plus client-registered tools.
+    fn tools(&self, turn: &TurnContext) -> Vec<ToolDef> {
+        let mut defs = self.host.definitions(turn);
+        defs.extend(self.remote.definitions());
+        defs
+    }
+
+    fn commands(&self, location: &Path) -> Vec<CommandInfo> {
+        let builtin = BUILTIN_COMMANDS
+            .iter()
+            .map(|(name, description)| CommandInfo {
+                name: (*name).into(),
+                description: (*description).into(),
+                source: "builtin".into(),
+                argument_hint: None,
+            });
+        let skills =
+            self.host
+                .skill_commands(location)
+                .into_iter()
+                .map(|(name, description, hint)| CommandInfo {
+                    name,
+                    description,
+                    source: "skill".into(),
+                    argument_hint: hint,
+                });
+        builtin.chain(skills).collect()
+    }
+
+    fn find_files(&self, location: &Path, query: &str, limit: usize) -> Vec<String> {
+        self.host.find_files(location, query, limit)
+    }
+
+    fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
+        self.host.expand_skill(location, name, arguments)
+    }
+}

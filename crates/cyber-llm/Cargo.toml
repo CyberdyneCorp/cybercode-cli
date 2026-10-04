@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+schemars = "1"
 cyber-core.workspace = true
 bytes = "1"
 flate2 = "1"

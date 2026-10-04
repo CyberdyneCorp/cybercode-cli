@@ -1,0 +1,23 @@
+[package]
+name = "cyber-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+cyber-llm = { path = "../cyber-llm" }
+cyber-server = { path = "../cyber-server" }
+axum = "0.8"
+futures = "0.3"
+http-body-util = "0.1"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+ulid.workspace = true
+
+[lints]
+workspace = true

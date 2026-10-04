@@ -1,6 +1,6 @@
 //! Built-in tool implementations (`builtin-tools`).
 
-mod bash;
+pub(crate) mod bash;
 mod fs;
 pub(crate) mod patch;
 mod search;

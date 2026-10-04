@@ -236,6 +236,7 @@ async fn skills_listing_excludes_denied_and_user_only_skills() {
         agent: "build".into(),
         mode: "default".into(),
         prefers_apply_patch: false,
+        rules: serde_json::Value::Null,
     };
     let sources = cyber_server::runtime::ToolHost::context_sources(&*f.host, &turn);
     assert_eq!(

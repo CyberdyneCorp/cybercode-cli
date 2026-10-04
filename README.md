@@ -2,7 +2,7 @@
 
 > A dependable, model-independent coding agent you can interrupt, inspect and resume. It brings the best of **OpenCode** (open server, any provider, durable runtime), **Codex** (fast Rust binary, strong sandbox, ergonomic CLI) and **Claude Code** (workflows, goals, loops, remote control, cross-session messaging, cloud runners) into one tool.
 
-The **OpenSpec** for the product is the source of truth: `openspec/specs/<capability>/spec.md`. Delivery order is in [`ROADMAP.md`](ROADMAP.md). Architecture decisions are in [`docs/decisions`](docs/decisions/0001-storage-architecture.md). Implementation is under way. Milestones M0.1 (workspace, paths, event store, trust-gated config, evaluation fixtures), M0.2 (model catalog, provider adapters, streaming turns with tool calls) M0.3 (durable session runtime: inbox, Drains, interrupt, crash recovery, compaction, Context Epochs) and M0.4 (built-in tools, permission engine, macOS/Linux sandbox, snapshots and revert) are built; the server API, TUI and `cyber exec` arrive in M0.5.
+The **OpenSpec** for the product is the source of truth: `openspec/specs/<capability>/spec.md`. Delivery order is in [`ROADMAP.md`](ROADMAP.md). Architecture decisions are in [`docs/decisions`](docs/decisions/0001-storage-architecture.md). Implementation is under way. Milestones M0.1 (workspace, paths, event store, trust-gated config, evaluation fixtures), M0.2 (model catalog, provider adapters, streaming turns with tool calls) M0.3 (durable session runtime: inbox, Drains, interrupt, crash recovery, compaction, Context Epochs) M0.4 (built-in tools, permission engine, macOS/Linux sandbox, snapshots and revert) and M0.5 (HTTP/WebSocket/stdio API, background service, `cyber exec`, the TUI and the TypeScript SDK) are built, which completes the P0 milestones.
 
 ## Building
 
@@ -13,6 +13,11 @@ cargo build                 # target/debug/cyber
 cargo test --workspace      # unit, integration, crash-recovery and CLI tests
 cargo clippy --workspace --all-targets -- -D warnings
 
+cargo run -p cyber-cli --                   # the TUI in the current directory (starts the background server)
+cargo run -p cyber-cli -- exec "fix the failing test"            # one non-interactive run
+cargo run -p cyber-cli -- exec --format stream-json --ephemeral "explain this repo"
+cargo run -p cyber-cli -- service status   # the background server; also start|stop|restart|password
+cargo run -p cyber-cli -- api v1.session.list                    # any API operation
 cargo run -p cyber-cli -- debug info       # build, paths, database, config layers, trust
 cargo run -p cyber-cli -- trust inspect    # repository-controlled definitions awaiting approval
 cargo run -p cyber-cli -- models openai    # catalog: available models first
@@ -36,11 +41,15 @@ On Linux the sandbox needs bubblewrap (`apt install bubblewrap`); without it com
 | `cyber-store` | SQLite WAL/FULL, migrations, event store, writer queue, ownership lock |
 | `cyber-cli` | The `cyber` binary |
 | `cyber-llm` | Provider-neutral LLM layer: adapters, retry, catalog, credentials, cost |
-| `cyber-server` | Durable session runtime (inbox, Drains, recovery, compaction, Context Epochs, permission broker, revert); HTTP surface in M0.5 |
+| `cyber-server` | Durable session runtime and the `/api/v1` HTTP, SSE, WebSocket and stdio JSON-RPC API |
 | `cyber-tools` | Built-in tools, permission engine, bash analysis, skills, web tools, tool host |
 | `cyber-sandbox` | OS sandbox: Seatbelt (macOS), bubblewrap (Linux), credential masking, network allowlist proxy |
 | `cyber-snapshot` | Shadow-git working-tree snapshots and conflict-aware restore |
-| `cyber-tui` | Placeholder for M0.5 |
+| `cyber-tui` | Terminal UI: composer, streaming rendering, permission and question prompts, pickers, themes |
+| `cyber-app` | Server assembly and lifecycle: store, catalog, tools, sandbox, snapshots, listeners, registration |
+| `cyber-client` | Rust client for the API (HTTP and in-process), used by `cyber exec` and the TUI |
+
+The TypeScript SDK `@cyber-code/sdk` lives in [`sdk/typescript`](sdk/typescript/README.md). It is generated from [`sdk/openapi.json`](sdk/openapi.json) by `scripts/generate_sdk.py`; regenerate the document with `UPDATE_OPENAPI=1 cargo test -p cyber-server --test http openapi_document_is_current`.
 
 Evaluation fixtures and their manifests live in [`eval/`](eval/README.md).
 

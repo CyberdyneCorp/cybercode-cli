@@ -226,6 +226,48 @@ fn revert_event(
 }
 
 impl Runtime {
+    /// Run a user shell command (`session-runtime` → User shell commands) and record the
+    /// command and its output as a user message the model sees next Turn, without a Turn.
+    pub async fn shell(&self, session_id: &str, command: &str) -> Result<String, RuntimeError> {
+        self.inner.ensure_idle(session_id)?;
+        let handle = self.inner.handle(session_id).await?;
+        self.inner.commit_staged_revert(&handle).await?;
+        let directory = handle.state.lock().await.info.directory.clone();
+        let output = self
+            .inner
+            .tools
+            .shell(&directory, session_id, command)
+            .await
+            .map_err(RuntimeError::Invalid)?;
+        let message_id = cyber_core::ids::new_id("msg");
+        let parts = vec![
+            cyber_llm::Content::Text {
+                text: format!("!{command}"),
+            },
+            cyber_llm::Content::Text {
+                text: format!(
+                    "<shell-output command=\"{}\">\n{output}\n</shell-output>",
+                    command.replace('"', "'")
+                ),
+            },
+        ];
+        let admitted = Admitted {
+            message_id: message_id.clone(),
+            digest: format!("shell:{message_id}"),
+            parts,
+            delivery: super::model::Delivery::Queue,
+            source: "shell".into(),
+        };
+        let promoted = Promoted { message_id };
+        self.inner
+            .commit(
+                &handle,
+                vec![event(ADMITTED, &admitted), event(PROMOTED, &promoted)],
+            )
+            .await?;
+        Ok(output)
+    }
+
     /// File diffs recorded for a user message (`snapshots-checkpoints` → Per-turn diff summary).
     pub async fn diff(
         &self,

@@ -104,6 +104,9 @@ pub struct CreateSession {
     pub mode: Option<String>,
     pub parent_id: Option<String>,
     pub title: Option<String>,
+    /// Session ruleset in the `permissions` config shape.
+    pub rules: Option<serde_json::Value>,
+    pub max_steps: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +133,7 @@ impl Admission {
 }
 
 /// The receipt returned for an admission and for an exact retry of it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Receipt {
     pub session_id: String,
     pub message_id: String,
@@ -161,7 +164,7 @@ pub struct ListFilter {
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SessionRow {
     pub id: String,
     pub title: String,
@@ -174,7 +177,7 @@ pub struct SessionRow {
     pub cost: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SessionPage {
     pub sessions: Vec<SessionRow>,
     pub next: Option<String>,
@@ -287,6 +290,8 @@ impl Runtime {
             mode: req.mode.unwrap_or_else(|| "default".into()),
             created_ms: chrono::Utc::now().timestamp_millis(),
             archived: false,
+            rules: req.rules.unwrap_or_default(),
+            max_steps: req.max_steps,
         };
         self.inner.create(info, Vec::new(), Vec::new(), None).await
     }

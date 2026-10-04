@@ -29,6 +29,23 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  sdk:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generated sources match sdk/openapi.json
+        run: python3 ../../scripts/generate_sdk.py --check
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
   specs:
     name: OpenSpec
     runs-on: ubuntu-latest

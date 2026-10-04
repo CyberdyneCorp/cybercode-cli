@@ -89,6 +89,8 @@ pub struct TurnContext {
     pub agent: String,
     pub mode: String,
     pub prefers_apply_patch: bool,
+    /// The Session ruleset.
+    pub rules: Value,
 }
 
 /// The invocation context (`tool-registry` → Invocation context).
@@ -107,6 +109,8 @@ pub struct Invocation {
     pub operation_key: String,
     /// Ask the user for permission or answers.
     pub asker: super::requests::Asker,
+    /// The Session ruleset.
+    pub rules: Value,
 }
 
 /// How a tool run ended.
@@ -135,6 +139,16 @@ pub trait ToolHost: Send + Sync {
     /// Run a call. Implementations stop within 2 s once `cancel` fires.
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome>;
 
+    /// Run a user shell command (`!`) in a Location under the sandbox, without prompts.
+    fn shell(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+        _command: &str,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        Box::pin(async { Err("shell commands are not supported by this host".to_string()) })
+    }
+
     /// Extra Context Sources this host contributes for a Session, such as `core/skills`.
     fn context_sources(&self, _turn: &TurnContext) -> std::collections::BTreeMap<String, String> {
         std::collections::BTreeMap::new()
@@ -161,7 +175,7 @@ impl ToolHost for NoTools {
 }
 
 /// A recorded working tree (`snapshots-checkpoints`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Snapshot {
     pub tree: String,
     /// Untracked files left out for size, relative to the worktree.
@@ -170,7 +184,7 @@ pub struct Snapshot {
 }
 
 /// One file of a diff between two snapshots.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FileDiff {
     pub file: String,
     /// `added`, `deleted` or `modified`.
