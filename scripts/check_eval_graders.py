@@ -98,7 +98,10 @@ def load_tasks() -> list[Task]:
 
 def git(workspace: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-c", "user.name=eval", "-c", "user.email=eval@localhost", *args],
+        # No background maintenance: it writes into .git after the commit returns, which
+        # would look like the grader modifying the workspace.
+        ["git", "-c", "user.name=eval", "-c", "user.email=eval@localhost",
+         "-c", "maintenance.auto=false", "-c", "gc.auto=0", *args],
         cwd=workspace, check=True, capture_output=True,
     )
 

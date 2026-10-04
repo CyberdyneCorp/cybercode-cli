@@ -138,6 +138,11 @@ fn prepare(env: &TrialEnv, task: &Task, trial: u32) -> Result<PathBuf, String> {
             "user.email=eval@cyber",
             "-c",
             "user.name=eval",
+            // No background maintenance writing into .git after the commit returns.
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
             "commit",
             "-qm",
             "fixture",
