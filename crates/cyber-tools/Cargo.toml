@@ -1,0 +1,43 @@
+[package]
+name = "cyber-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+cyber-core.workspace = true
+cyber-store.workspace = true
+cyber-server = { path = "../cyber-server" }
+cyber-llm = { path = "../cyber-llm" }
+cyber-sandbox = { path = "../cyber-sandbox" }
+futures = "0.3"
+globset = "0.4"
+strsim.workspace = true
+ignore = "0.4"
+libc.workspace = true
+regex = "1"
+reqwest = { version = "0.13", features = ["json", "stream", "query"] }
+htmd = "0.5"
+html2text = "0.17"
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+similar = "3"
+thiserror.workspace = true
+ulid.workspace = true
+tokio = { version = "1", features = ["rt", "process", "io-util", "time", "sync", "fs", "macros"] }
+tokio-util = "0.7"
+tree-sitter = "0.27"
+tree-sitter-bash = "0.25"
+
+[dev-dependencies]
+cyber-snapshot = { path = "../cyber-snapshot" }
+tempfile.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "sync", "fs", "macros", "net"] }
+
+[lints]
+workspace = true

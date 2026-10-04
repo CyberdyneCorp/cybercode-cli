@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/cyber-core",
+    "crates/cyber-store",
+    "crates/cyber-llm",
+    "crates/cyber-server",
+    "crates/cyber-tui",
+    "crates/cyber-tools",
+    "crates/cyber-snapshot",
+    "crates/cyber-sandbox",
+    "crates/cyber-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/CyberdyneCorp/cybercode-cli"
+rust-version = "1.89"
+publish = false
+
+[workspace.dependencies]
+cyber-core = { path = "crates/cyber-core" }
+cyber-store = { path = "crates/cyber-store" }
+clap = { version = "4", features = ["derive"] }
+crossbeam-channel = "0.5"
+libc = "0.2"
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+strsim = "0.11"
+tempfile = "3"
+thiserror = "2"
+ulid = "1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+cognitive_complexity = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

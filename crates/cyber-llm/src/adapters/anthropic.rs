@@ -1,0 +1,297 @@
+//! Anthropic Messages API.
+
+use futures::future::BoxFuture;
+use serde_json::{Map, Value, json};
+
+use super::{Adapter, Decoder, Endpoint, EventStream, ToolCalls, decode_sse, parse_json};
+use crate::error::{LlmError, classify_stream_error};
+use crate::json::{deep_merge, str_at, strip_credentials, u64_at};
+use crate::sse::SseEvent;
+use crate::types::{Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, Usage};
+
+const API_VERSION: &str = "2023-06-01";
+const DEFAULT_MAX_TOKENS: u32 = 8192;
+
+pub struct AnthropicAdapter {
+    endpoint: Endpoint,
+}
+
+impl AnthropicAdapter {
+    pub fn new(endpoint: Endpoint) -> Self {
+        Self { endpoint }
+    }
+}
+
+impl Adapter for AnthropicAdapter {
+    fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
+        Box::pin(async move {
+            let body = build_body(&request);
+            let mut auth = vec![("anthropic-version".to_string(), API_VERSION.to_string())];
+            auth.extend(
+                self.endpoint
+                    .api_key
+                    .iter()
+                    .map(|k| ("x-api-key".to_string(), k.clone())),
+            );
+            let resp = self
+                .endpoint
+                .post_stream("messages", &body, auth, &request.headers)
+                .await?;
+            Ok(decode_sse(
+                resp,
+                AnthropicDecoder::default(),
+                &self.endpoint,
+            ))
+        })
+    }
+}
+
+/// Thinking budget for an effort level when the request names effort, not tokens.
+fn effort_budget(effort: &str) -> Option<u32> {
+    match effort {
+        "minimal" => Some(1024),
+        "low" => Some(4096),
+        "medium" => Some(16_384),
+        "high" => Some(32_768),
+        "xhigh" => Some(49_152),
+        "max" => Some(63_999),
+        _ => None,
+    }
+}
+
+pub(crate) fn build_body(request: &LlmRequest) -> Value {
+    let cache = request.cache.then(|| json!({ "type": "ephemeral" }));
+    let budget = match &request.reasoning {
+        Some(Reasoning::BudgetTokens(n)) => Some(*n),
+        Some(Reasoning::Effort(e)) => effort_budget(e),
+        _ => None,
+    };
+    let mut max_tokens = request.max_output_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+    if let Some(b) = budget {
+        max_tokens = max_tokens.max(b + 1024);
+    }
+    let mut body = json!({
+        "model": request.model,
+        "max_tokens": max_tokens,
+        "messages": messages(&request.messages),
+        "stream": true,
+    });
+    let map = body.as_object_mut().expect("object literal");
+    if !request.system.is_empty() {
+        map.insert(
+            "system".into(),
+            with_breakpoint(
+                request
+                    .system
+                    .iter()
+                    .map(|t| json!({ "type": "text", "text": t }))
+                    .collect(),
+                &cache,
+            ),
+        );
+    }
+    if !request.tools.is_empty() {
+        let tools = request
+            .tools
+            .iter()
+            .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.input_schema }))
+            .collect();
+        map.insert("tools".into(), with_breakpoint(tools, &cache));
+    }
+    optional_fields(request, budget, map);
+    deep_merge(&mut body, &request.body);
+    strip_credentials(&mut body);
+    body
+}
+
+fn optional_fields(request: &LlmRequest, budget: Option<u32>, map: &mut Map<String, Value>) {
+    match budget {
+        // Temperature cannot be combined with extended thinking.
+        Some(b) => {
+            map.insert(
+                "thinking".into(),
+                json!({ "type": "enabled", "budget_tokens": b }),
+            );
+        }
+        None => {
+            if let Some(t) = request.temperature {
+                map.insert("temperature".into(), json!(t));
+            }
+        }
+    }
+}
+
+/// Mark the last block as a cache breakpoint.
+fn with_breakpoint(mut blocks: Vec<Value>, cache: &Option<Value>) -> Value {
+    if let (Some(last), Some(control)) = (blocks.last_mut(), cache) {
+        last["cache_control"] = control.clone();
+    }
+    Value::Array(blocks)
+}
+
+/// Convert history, merging consecutive messages of the same role.
+fn messages(history: &[Message]) -> Vec<Value> {
+    let mut out: Vec<(Role, Vec<Value>)> = Vec::new();
+    for message in history {
+        let blocks = blocks(message);
+        if blocks.is_empty() {
+            continue;
+        }
+        match out.last_mut() {
+            Some((role, existing)) if *role == message.role => existing.extend(blocks),
+            _ => out.push((message.role, blocks)),
+        }
+    }
+    out.into_iter()
+        .map(|(role, content)| {
+            let role = if role == Role::User {
+                "user"
+            } else {
+                "assistant"
+            };
+            json!({ "role": role, "content": content })
+        })
+        .collect()
+}
+
+fn blocks(message: &Message) -> Vec<Value> {
+    let mut first = Vec::new();
+    let mut rest = Vec::new();
+    for content in &message.content {
+        match content {
+            // Tool results and signed thinking must lead their message.
+            Content::ToolResult { call_id, output, is_error } => {
+                first.push(json!({ "type": "tool_result", "tool_use_id": call_id, "content": output, "is_error": is_error }));
+            }
+            Content::Reasoning { text, signature: Some(sig) } => {
+                first.push(json!({ "type": "thinking", "thinking": text, "signature": sig }));
+            }
+            Content::Text { text } if !text.is_empty() => rest.push(json!({ "type": "text", "text": text })),
+            Content::Image { media_type, data } => rest.push(
+                json!({ "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }),
+            ),
+            Content::ToolCall { id, name, input } => rest.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input })),
+            Content::Text { .. } | Content::Reasoning { signature: None, .. } => {}
+        }
+    }
+    first.extend(rest);
+    first
+}
+
+#[derive(Default)]
+struct AnthropicDecoder {
+    tools: ToolCalls,
+    usage: Usage,
+    stop_reason: Option<String>,
+    done: bool,
+}
+
+impl Decoder for AnthropicDecoder {
+    fn on_event(&mut self, event: SseEvent, out: &mut Vec<Result<LlmEvent, LlmError>>) {
+        if self.done {
+            return;
+        }
+        let data = match parse_json(&event) {
+            Ok(data) => data,
+            Err(e) => return out.push(Err(e)),
+        };
+        let kind = event
+            .event
+            .as_deref()
+            .unwrap_or_else(|| str_at(&data, "/type"))
+            .to_string();
+        self.dispatch(&kind, &data, out);
+    }
+
+    fn on_end(&mut self, out: &mut Vec<Result<LlmEvent, LlmError>>) {
+        if !self.done {
+            out.push(Err(LlmError::transport("stream ended before message_stop")));
+        }
+    }
+}
+
+impl AnthropicDecoder {
+    fn dispatch(&mut self, kind: &str, data: &Value, out: &mut Vec<Result<LlmEvent, LlmError>>) {
+        match kind {
+            "message_start" => self.start_usage(&data["message"]["usage"]),
+            "content_block_start" if str_at(data, "/content_block/type") == "tool_use" => {
+                let key = data["index"].to_string();
+                self.tools.start(
+                    &key,
+                    str_at(data, "/content_block/id"),
+                    str_at(data, "/content_block/name"),
+                );
+            }
+            "content_block_delta" => self.delta(data, out),
+            "content_block_stop" => {
+                if let Some(call) = self.tools.finish(&data["index"].to_string(), None) {
+                    out.push(Ok(LlmEvent::ToolCallDone(call)));
+                }
+            }
+            "message_delta" => {
+                if let Some(reason) = data.pointer("/delta/stop_reason").and_then(Value::as_str) {
+                    self.stop_reason = Some(reason.into());
+                }
+                if let Some(n) = data.pointer("/usage/output_tokens").and_then(Value::as_u64) {
+                    self.usage.output = n;
+                }
+            }
+            "message_stop" => self.complete(out),
+            "error" => {
+                self.done = true;
+                let message = str_at(data, "/error/message");
+                out.push(Err(LlmError::new(
+                    classify_stream_error(str_at(data, "/error/type"), message),
+                    message,
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    fn start_usage(&mut self, u: &Value) {
+        self.usage = Usage {
+            input: u64_at(u, "/input_tokens"),
+            output: u64_at(u, "/output_tokens"),
+            reasoning: 0,
+            cache_read: u64_at(u, "/cache_read_input_tokens"),
+            cache_write: u64_at(u, "/cache_creation_input_tokens"),
+        };
+    }
+
+    fn delta(&mut self, data: &Value, out: &mut Vec<Result<LlmEvent, LlmError>>) {
+        let delta = &data["delta"];
+        let event = match str_at(delta, "/type") {
+            "text_delta" => Some(LlmEvent::TextDelta {
+                text: str_at(delta, "/text").into(),
+            }),
+            "thinking_delta" => Some(LlmEvent::ReasoningDelta {
+                text: str_at(delta, "/thinking").into(),
+            }),
+            "signature_delta" => Some(LlmEvent::ReasoningSignature {
+                signature: str_at(delta, "/signature").into(),
+            }),
+            "input_json_delta" => self
+                .tools
+                .append(&data["index"].to_string(), str_at(delta, "/partial_json")),
+            _ => None,
+        };
+        out.extend(event.map(Ok));
+    }
+
+    fn complete(&mut self, out: &mut Vec<Result<LlmEvent, LlmError>>) {
+        self.done = true;
+        for call in self.tools.finish_all() {
+            out.push(Ok(LlmEvent::ToolCallDone(call)));
+        }
+        out.push(Ok(LlmEvent::Usage(self.usage)));
+        let reason = match self.stop_reason.as_deref() {
+            Some("tool_use") => FinishReason::ToolCalls,
+            Some("max_tokens") => FinishReason::Length,
+            Some("refusal") => FinishReason::ContentFilter,
+            Some("end_turn" | "stop_sequence") | None => FinishReason::Stop,
+            Some(other) => FinishReason::Other(other.into()),
+        };
+        out.push(Ok(LlmEvent::Finish { reason }));
+    }
+}

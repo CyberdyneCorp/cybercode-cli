@@ -2,7 +2,47 @@
 
 > A dependable, model-independent coding agent you can interrupt, inspect and resume. It brings the best of **OpenCode** (open server, any provider, durable runtime), **Codex** (fast Rust binary, strong sandbox, ergonomic CLI) and **Claude Code** (workflows, goals, loops, remote control, cross-session messaging, cloud runners) into one tool.
 
-This folder is the **OpenSpec** for the product: `openspec/specs/<capability>/spec.md` is the source of truth. Delivery order is in [`ROADMAP.md`](ROADMAP.md). Architecture decisions are in [`docs/decisions`](docs/decisions/0001-storage-architecture.md). This repository specifies a target product; runtime implementation is pending.
+The **OpenSpec** for the product is the source of truth: `openspec/specs/<capability>/spec.md`. Delivery order is in [`ROADMAP.md`](ROADMAP.md). Architecture decisions are in [`docs/decisions`](docs/decisions/0001-storage-architecture.md). Implementation is under way. Milestones M0.1 (workspace, paths, event store, trust-gated config, evaluation fixtures), M0.2 (model catalog, provider adapters, streaming turns with tool calls) M0.3 (durable session runtime: inbox, Drains, interrupt, crash recovery, compaction, Context Epochs) and M0.4 (built-in tools, permission engine, macOS/Linux sandbox, snapshots and revert) are built; the server API, TUI and `cyber exec` arrive in M0.5.
+
+## Building
+
+Requires Rust 1.89 or newer (edition 2024). SQLite is bundled.
+
+```bash
+cargo build                 # target/debug/cyber
+cargo test --workspace      # unit, integration, crash-recovery and CLI tests
+cargo clippy --workspace --all-targets -- -D warnings
+
+cargo run -p cyber-cli -- debug info       # build, paths, database, config layers, trust
+cargo run -p cyber-cli -- trust inspect    # repository-controlled definitions awaiting approval
+cargo run -p cyber-cli -- models openai    # catalog: available models first
+
+# one real turn with a tool call (uses OPENAI_API_KEY)
+cargo run -p cyber-llm --example turn -- openai/gpt-6-luna "What time is it in UTC?"
+CYBER_LIVE_TESTS=1 cargo test -p cyber-llm --test live   # live provider checks
+
+# a durable session with a tool loop, title and cost (uses OPENAI_API_KEY)
+cargo run -p cyber-server --example session -- openai/gpt-6-luna
+
+# a coding task with the built-in tools, the OS sandbox and snapshots (uses OPENAI_API_KEY)
+cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix the failing test" accept-edits
+```
+
+On Linux the sandbox needs bubblewrap (`apt install bubblewrap`); without it commands fail closed unless you pass `--sandbox full-access`.
+
+| Crate | Role |
+|---|---|
+| `cyber-core` | Build info, XDG paths, IDs, config layering and trust gating, evaluation manifests |
+| `cyber-store` | SQLite WAL/FULL, migrations, event store, writer queue, ownership lock |
+| `cyber-cli` | The `cyber` binary |
+| `cyber-llm` | Provider-neutral LLM layer: adapters, retry, catalog, credentials, cost |
+| `cyber-server` | Durable session runtime (inbox, Drains, recovery, compaction, Context Epochs, permission broker, revert); HTTP surface in M0.5 |
+| `cyber-tools` | Built-in tools, permission engine, bash analysis, skills, web tools, tool host |
+| `cyber-sandbox` | OS sandbox: Seatbelt (macOS), bubblewrap (Linux), credential masking, network allowlist proxy |
+| `cyber-snapshot` | Shadow-git working-tree snapshots and conflict-aware restore |
+| `cyber-tui` | Placeholder for M0.5 |
+
+Evaluation fixtures and their manifests live in [`eval/`](eval/README.md).
 
 ```bash
 openspec list --specs

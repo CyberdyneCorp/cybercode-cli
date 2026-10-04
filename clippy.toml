@@ -1,0 +1,2 @@
+# Backend target from the project conventions: keep per-function cognitive complexity <= 15.
+cognitive-complexity-threshold = 15

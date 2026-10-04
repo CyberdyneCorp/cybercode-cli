@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "id": "recovery-storage",
+  "description": "Deterministic storage, runtime, trust and contention fault cases for the local core release gate.",
+  "kind": "recovery",
+  "harness": {
+    "min_version": "0.1.0",
+    "tools": "tools.v1"
+  },
+  "cases": [
+    {
+      "id": "process-kill-during-append",
+      "requirement": "storage-events/Durability boundary and storage failure",
+      "fault": "process_kill",
+      "test": "cyber-store::crash_recovery::process_kill_preserves_acknowledged_events"
+    },
+    {
+      "id": "disk-full-stops-mutations",
+      "requirement": "storage-events/Durability boundary and storage failure",
+      "fault": "disk_full",
+      "test": "cyber-store::store::disk_full_stops_mutations_without_acknowledging"
+    },
+    {
+      "id": "writer-queue-saturation",
+      "requirement": "storage-events/Local writer ownership and backpressure",
+      "fault": "writer_contention",
+      "test": "cyber-store::writer::full_queue_times_out_with_busy"
+    },
+    {
+      "id": "concurrent-append-gapless",
+      "requirement": "storage-events/Durable event store",
+      "fault": "writer_contention",
+      "test": "cyber-store::store::concurrent_appenders_get_gapless_sequences"
+    },
+    {
+      "id": "replay-without-gaps",
+      "requirement": "storage-events/Event replay and subscription",
+      "fault": "replay_gap",
+      "test": "cyber-store::store::tail_replays_then_follows_without_gaps"
+    },
+    {
+      "id": "untrusted-project-config",
+      "requirement": "workspace-trust/Trust before interpretation",
+      "fault": "untrusted_config",
+      "test": "cyber-core::config::untrusted_project_cannot_start_integrations_or_read_host_secrets"
+    },
+    {
+      "id": "changed-definition-revokes-trust",
+      "requirement": "workspace-trust/Changed definitions and revocation",
+      "fault": "untrusted_config",
+      "test": "cyber-core::config::approved_digest_activates_and_a_changed_definition_revokes"
+    },
+    {
+      "id": "tool-dispatch-before-settlement",
+      "requirement": "tool-registry/Tool recovery contract",
+      "fault": "task_abort",
+      "test": "cyber-server::runtime::crash_after_dispatch_is_reconciled_on_restart"
+    },
+    {
+      "id": "interrupted-mutation-pauses-mutations",
+      "requirement": "tool-registry/Tool recovery contract",
+      "fault": "task_abort",
+      "test": "cyber-server::runtime::interrupt_during_a_mutation_records_an_unknown_outcome_and_pauses_mutations"
+    },
+    {
+      "id": "admission-before-execution",
+      "requirement": "session-runtime/Durable prompt admission",
+      "fault": "task_abort",
+      "test": "cyber-server::runtime::admitted_prompt_survives_restart_and_runs_on_wake"
+    },
+    {
+      "id": "repeated-compaction-keeps-constraint",
+      "requirement": "compaction/Durable task state",
+      "fault": "repeated_compaction",
+      "test": "cyber-server::context_compaction::repeated_compaction_never_drops_a_user_constraint"
+    }
+  ]
+}

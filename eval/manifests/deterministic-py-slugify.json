@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "deterministic-py-slugify",
+  "description": "Fix a slug function so separators collapse and edges are trimmed; graded by hidden assertions on final workspace state.",
+  "kind": "deterministic",
+  "harness": { "min_version": "0.1.0", "tools": "tools.v1" },
+  "fixture": {
+    "path": "eval/fixtures/py-slugify",
+    "tree_sha256": "sha256:92d2e388f03419635c874957e1641a6fcb436ff99216b4fbdab6264b0b91a21e",
+    "environment": { "lock": ["python3>=3.10"], "setup": [] }
+  },
+  "tasks": [
+    {
+      "id": "fix-slugify",
+      "prompt": "slugify(\"Hello,  World!\") returns \"hello--world-\" but should return \"hello-world\". Fix slugify.py so runs of separators collapse into one hyphen and leading or trailing hyphens are removed. Keep the visible tests passing.",
+      "budget": { "max_turns": 20, "max_cost_usd": 0.5, "max_wall_seconds": 600 },
+      "timeout_seconds": 600,
+      "grading": {
+        "grader_dir": "eval/graders/py-slugify",
+        "command": ["python3", "{grader_dir}/grade.py", "{workspace}"]
+      }
+    }
+  ]
+}

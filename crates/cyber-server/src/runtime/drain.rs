@@ -1,0 +1,1094 @@
+//! The Drain: Safe Boundaries, Turns, tool dispatch and recovery
+//! (`session-runtime` → Drain loop, Turn assembly, Interrupt; `tool-registry` → Tool recovery contract).
+
+use std::sync::{Arc, PoisonError};
+use std::time::Duration;
+
+use cyber_llm::catalog::compute_cost;
+use cyber_llm::{
+    ErrorKind, EventStream, FinishReason, LlmError, LlmEvent, ToolCall, Usage, open_with_retry,
+};
+use futures::future::join_all;
+use futures::{FutureExt, StreamExt};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
+
+use super::bus::LiveEvent;
+use super::events::*;
+use super::host::{Invocation, Reconciliation, ResolvedModel, ToolDef, ToolOutcome, TurnContext};
+use super::model::SessionState;
+use super::model::{CallState, CallStatus, Delivery, RetrySafety};
+use super::requests::{Asker, PermissionAsk, PermissionReply};
+use super::view::{self, INTERRUPTED, UNKNOWN};
+use super::{CompactionTrigger, Handle, Inner, RuntimeError, context};
+
+const STEP_LIMIT_TEXT: &str = "Tools are disabled because this agent reached its maximum number of steps. \
+Reply with a text summary of the work completed and the work that remains.";
+const CONTINUE_TEXT: &str = "The conversation was compacted automatically. Continue the current task from where \
+you left off; do not ask the user to repeat anything.";
+const MAX_PARALLEL: usize = 8;
+
+pub(crate) enum TurnEnd {
+    Tools,
+    Done,
+    Overflow,
+    Stopped,
+}
+
+pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: CancellationToken) {
+    let mut forced = forced;
+    loop {
+        // A defect must not leave the Session registered as running forever.
+        let outcome = std::panic::AssertUnwindSafe(pass(&inner, &id, forced, &cancel))
+            .catch_unwind()
+            .await;
+        let failure = match outcome {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some((error_kind(&e).to_string(), e.to_string())),
+            Err(_) => Some((
+                "internal".to_string(),
+                "the Drain stopped on an internal error; see the log".to_string(),
+            )),
+        };
+        if let Some((kind, message)) = failure {
+            inner.bus.publish(LiveEvent::Error {
+                session_id: id.clone(),
+                kind,
+                message,
+            });
+        }
+        if !inner.finish_pass(&id, &cancel) {
+            break;
+        }
+        forced = false;
+    }
+}
+
+fn error_kind(e: &RuntimeError) -> &'static str {
+    match e {
+        RuntimeError::ContextBlocked(_) => "context_initialization_blocked",
+        RuntimeError::Model(_) => "model",
+        RuntimeError::Compaction(_) => "compaction_failed",
+        RuntimeError::Store(_) => "storage",
+        _ => "runtime",
+    }
+}
+
+/// One Drain pass: run Turns while anything is eligible.
+async fn pass(
+    inner: &Arc<Inner>,
+    id: &str,
+    forced: bool,
+    cancel: &CancellationToken,
+) -> Result<(), RuntimeError> {
+    let handle = inner.handle(id).await?;
+    inner.recover(&handle).await?;
+    let mut continue_tools = false;
+    let mut first = forced;
+    let mut overflow_retried = false;
+    loop {
+        if cancel.is_cancelled() || !eligible(&handle, continue_tools, first).await {
+            return Ok(());
+        }
+        let resolved = boundary(inner, &handle, continue_tools).await?;
+        let promoted = resolved.1;
+        if !(continue_tools || promoted || first) {
+            return Ok(());
+        }
+        first = false;
+        let resolved = resolved.0;
+        if inner.needs_compaction(&handle, &resolved).await? {
+            inner
+                .compact_and_continue(&handle, CompactionTrigger::Auto, &resolved)
+                .await?;
+        }
+        match inner.run_turn(&handle, &resolved, cancel).await? {
+            TurnEnd::Tools => continue_tools = true,
+            TurnEnd::Done => continue_tools = false,
+            TurnEnd::Overflow if inner.options.compaction.auto && !overflow_retried => {
+                overflow_retried = true;
+                inner
+                    .compact_and_continue(&handle, CompactionTrigger::Overflow, &resolved)
+                    .await?;
+                continue_tools = true;
+            }
+            TurnEnd::Overflow => {
+                return Err(RuntimeError::Model(
+                    "ContextOverflow: the request exceeds the model's context window".into(),
+                ));
+            }
+            TurnEnd::Stopped => return Ok(()),
+        }
+    }
+}
+
+async fn eligible(handle: &Handle, continue_tools: bool, first: bool) -> bool {
+    let compaction = handle
+        .pending_compaction
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .is_some();
+    let state = handle.state.lock().await;
+    continue_tools
+        || first
+        || compaction
+        || state.pending(Delivery::Steer).next().is_some()
+        || state.pending(Delivery::Queue).next().is_some()
+}
+
+/// The Safe Boundary: epoch, promoted input, context updates, then requested compaction.
+async fn boundary(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    continue_tools: bool,
+) -> Result<(ResolvedModel, bool), RuntimeError> {
+    let model = handle.state.lock().await.info.model.clone();
+    let resolved = inner.resolve(&model)?;
+    inner.ensure_epoch(handle, &resolved.provider).await?;
+    let promoted = promote(inner, handle, continue_tools).await?;
+    inner.reconcile_context(handle).await?;
+    let requested = handle
+        .pending_compaction
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some(instructions) = requested {
+        inner
+            .compact(handle, CompactionTrigger::Manual, instructions)
+            .await?;
+        inner.ensure_epoch(handle, &resolved.provider).await?;
+    }
+    Ok((resolved, promoted))
+}
+
+/// Promote every pending `steer` row; when the Session would otherwise go idle, the next `queue` row.
+async fn promote(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    continue_tools: bool,
+) -> Result<bool, RuntimeError> {
+    let mut state = handle.state.lock().await;
+    let mut ids: Vec<String> = state
+        .pending(Delivery::Steer)
+        .map(|r| r.message_id.clone())
+        .collect();
+    if ids.is_empty() && !continue_tools {
+        ids.extend(
+            state
+                .pending(Delivery::Queue)
+                .next()
+                .map(|r| r.message_id.clone()),
+        );
+    }
+    if ids.is_empty() {
+        return Ok(false);
+    }
+    let events = ids
+        .into_iter()
+        .map(|message_id| event(PROMOTED, &Promoted { message_id }))
+        .collect();
+    inner.commit_locked(&mut state, events)?;
+    let wants_title = state.info.default_title && state.info.parent_id.is_none();
+    drop(state);
+    if wants_title
+        && !handle
+            .title_requested
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        inner.spawn_title(Arc::clone(handle));
+    }
+    Ok(true)
+}
+
+struct Accum {
+    text: String,
+    reasoning: String,
+    signature: Option<String>,
+    calls: Vec<ToolCall>,
+    usage: Usage,
+    finish: Option<FinishReason>,
+}
+
+impl Inner {
+    pub(crate) async fn ensure_epoch(
+        &self,
+        handle: &Handle,
+        provider: &str,
+    ) -> Result<(), RuntimeError> {
+        {
+            let state = handle.state.lock().await;
+            if let Some(epoch) = &state.epoch
+                && !state.epoch_stale
+                && epoch.provider == provider
+            {
+                return Ok(());
+            }
+        }
+        self.start_epoch(handle, provider).await
+    }
+
+    /// Render a fresh baseline from all current sources and start a new Context Epoch.
+    pub(crate) async fn start_epoch(
+        &self,
+        handle: &Handle,
+        provider: &str,
+    ) -> Result<(), RuntimeError> {
+        let mut state = handle.state.lock().await;
+        let observed = self.observe(&state);
+        let snapshot = context::snapshot(&observed).map_err(RuntimeError::ContextBlocked)?;
+        let payload = EpochStarted {
+            epoch: state.epoch.as_ref().map_or(1, |e| e.number + 1),
+            baseline: context::render_baseline(&snapshot),
+            snapshot,
+            provider: provider.into(),
+        };
+        self.commit_locked(&mut state, vec![event(EPOCH_STARTED, &payload)])?;
+        Ok(())
+    }
+
+    /// Compare sources with the epoch snapshot; changes become one system message.
+    async fn reconcile_context(&self, handle: &Handle) -> Result<(), RuntimeError> {
+        let mut state = handle.state.lock().await;
+        let Some(epoch) = state.epoch.as_ref().filter(|_| !state.epoch_stale) else {
+            return Ok(());
+        };
+        let observed = self.observe(&state);
+        let (snapshot, text) = context::reconcile(&epoch.snapshot, &observed);
+        if let Some(text) = text {
+            let payload = ContextUpdated {
+                message_id: cyber_core::ids::new_id("msg"),
+                text,
+                snapshot,
+            };
+            self.commit_locked(&mut state, vec![event(CONTEXT_UPDATED, &payload)])?;
+        }
+        Ok(())
+    }
+
+    /// Built-in sources plus those the tool host contributes.
+    fn observe(
+        &self,
+        state: &SessionState,
+    ) -> std::collections::BTreeMap<String, context::Observed> {
+        let mut observed = context::observe(&self.context_inputs(&state.info.directory));
+        let turn = TurnContext {
+            session_id: state.info.id.clone(),
+            directory: state.info.directory.clone(),
+            agent: state.info.agent.clone(),
+            mode: state.info.mode.clone(),
+            prefers_apply_patch: false,
+        };
+        for (key, value) in self.options.tools.context_sources(&turn) {
+            observed.insert(key, context::Observed::Value(value));
+        }
+        observed
+    }
+
+    pub(crate) fn context_inputs(&self, directory: &str) -> context::ContextInputs {
+        context::ContextInputs {
+            directory: directory.into(),
+            global_config_dir: self.options.global_config_dir.clone(),
+            shell: self.options.shell.clone(),
+            claude_compat: self.options.claude_compat,
+            today: self.options.today.clone(),
+        }
+    }
+
+    async fn compact_and_continue(
+        &self,
+        handle: &Handle,
+        trigger: CompactionTrigger,
+        resolved: &ResolvedModel,
+    ) -> Result<(), RuntimeError> {
+        self.compact(handle, trigger, None).await?;
+        let payload = SystemAdded {
+            message_id: cyber_core::ids::new_id("msg"),
+            text: CONTINUE_TEXT.into(),
+            reason: "auto_continue".into(),
+        };
+        self.commit(handle, vec![event(SYSTEM_ADDED, &payload)])
+            .await?;
+        self.ensure_epoch(handle, &resolved.provider).await
+    }
+
+    /// One provider request plus settlement of its tool calls.
+    /// One Turn between a pre-Turn and a post-settlement snapshot.
+    async fn run_turn(
+        &self,
+        handle: &Handle,
+        resolved: &ResolvedModel,
+        cancel: &CancellationToken,
+    ) -> Result<TurnEnd, RuntimeError> {
+        let pre = self.take_snapshot(handle).await;
+        let result = self.turn(handle, resolved, cancel, pre.clone()).await;
+        self.after_turn(handle, pre).await;
+        result
+    }
+
+    async fn turn(
+        &self,
+        handle: &Handle,
+        resolved: &ResolvedModel,
+        cancel: &CancellationToken,
+        snapshot: Option<String>,
+    ) -> Result<TurnEnd, RuntimeError> {
+        let (request, defs, limited, message_id) =
+            self.prepare_turn(handle, resolved, snapshot).await?;
+        let session_id = request.cache_key.clone().unwrap_or_default();
+        let bus = self.bus.clone();
+        let opened = tokio::select! {
+            _ = cancel.cancelled() => None,
+            r = open_with_retry(resolved.adapter.as_ref(), &request, &self.options.retry, |attempt, delay, e| {
+                bus.publish(LiveEvent::Retry {
+                    session_id: session_id.clone(), attempt, delay_ms: delay.as_millis() as u64, error: e.to_string(),
+                });
+            }) => Some(r),
+        };
+        let stream = match opened {
+            None => {
+                return self
+                    .stop_step(
+                        handle,
+                        &message_id,
+                        Accum::empty(),
+                        "interrupted",
+                        "Provider turn interrupted",
+                    )
+                    .await;
+            }
+            Some(Err(e)) => return self.fail_step(handle, &message_id, e).await,
+            Some(Ok(stream)) => stream,
+        };
+        let acc = match self
+            .consume(handle, &message_id, &defs, stream, cancel)
+            .await?
+        {
+            Ok(acc) => acc,
+            Err(end) => return Ok(end),
+        };
+        self.end_step(handle, &message_id, &acc, resolved).await?;
+        if acc.calls.is_empty() {
+            return Ok(TurnEnd::Done);
+        }
+        let cancelled = self
+            .execute_tools(
+                handle,
+                resolved,
+                &message_id,
+                &acc.calls,
+                &defs,
+                limited,
+                cancel,
+            )
+            .await?;
+        Ok(match (cancelled, limited) {
+            (true, _) => TurnEnd::Stopped,
+            // The step-limit Turn is final: its tool calls were refused and the Drain ends.
+            (false, true) => TurnEnd::Done,
+            (false, false) => TurnEnd::Tools,
+        })
+    }
+
+    async fn prepare_turn(
+        &self,
+        handle: &Handle,
+        resolved: &ResolvedModel,
+        snapshot: Option<String>,
+    ) -> Result<(cyber_llm::LlmRequest, Vec<ToolDef>, bool, String), RuntimeError> {
+        let mut state = handle.state.lock().await;
+        let limited = self
+            .options
+            .max_steps
+            .is_some_and(|m| state.steps_since_input >= m);
+        if limited {
+            let payload = SystemAdded {
+                message_id: cyber_core::ids::new_id("msg"),
+                text: STEP_LIMIT_TEXT.into(),
+                reason: "step_limit".into(),
+            };
+            self.commit_locked(&mut state, vec![event(SYSTEM_ADDED, &payload)])?;
+        }
+        let defs = if limited {
+            Vec::new()
+        } else {
+            self.tools.definitions(&turn_context(&state, resolved))
+        };
+        let epoch = state
+            .epoch
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Corrupt("no context epoch".into()))?;
+        let mut request = resolved.template.clone();
+        request.system = vec![
+            context::base_prompt(&resolved.provider),
+            epoch.baseline.clone(),
+        ];
+        request.messages = view::messages(&state, &resolved.provider, &resolved.model);
+        request.tools = defs.iter().map(|d| d.spec.clone()).collect();
+        request.cache_key = Some(state.info.id.clone());
+        let message_id = cyber_core::ids::new_id("msg");
+        let payload = StepStarted {
+            message_id: message_id.clone(),
+            provider: resolved.provider.clone(),
+            model: resolved.model.clone(),
+            tools: !defs.is_empty(),
+            snapshot,
+        };
+        self.commit_locked(&mut state, vec![event(STEP_STARTED, &payload)])?;
+        Ok((request, defs, limited, message_id))
+    }
+
+    /// Drain the provider stream, recording each complete tool call as it arrives.
+    async fn consume(
+        &self,
+        handle: &Handle,
+        message_id: &str,
+        defs: &[ToolDef],
+        mut stream: EventStream,
+        cancel: &CancellationToken,
+    ) -> Result<Result<Accum, TurnEnd>, RuntimeError> {
+        let session_id = handle.state.lock().await.info.id.clone();
+        let mut acc = Accum::empty();
+        loop {
+            let next = tokio::select! {
+                _ = cancel.cancelled() => None,
+                item = stream.next() => Some(item),
+            };
+            match next {
+                None => {
+                    let end = self
+                        .stop_step(
+                            handle,
+                            message_id,
+                            acc,
+                            "interrupted",
+                            "Provider turn interrupted",
+                        )
+                        .await?;
+                    return Ok(Err(end));
+                }
+                Some(None) => return Ok(Ok(acc)),
+                Some(Some(Err(e))) => {
+                    // Output already exists, so the request is not replayed; the Turn is settled.
+                    self.bus.publish(LiveEvent::Error {
+                        session_id: session_id.clone(),
+                        kind: kind_name(e.kind).into(),
+                        message: e.message.clone(),
+                    });
+                    let end = self
+                        .stop_step(handle, message_id, acc, kind_name(e.kind), &e.message)
+                        .await?;
+                    return Ok(Err(end));
+                }
+                Some(Some(Ok(event))) => {
+                    self.on_stream_event(handle, &session_id, message_id, defs, &mut acc, event)
+                        .await?
+                }
+            }
+        }
+    }
+
+    async fn on_stream_event(
+        &self,
+        handle: &Handle,
+        session_id: &str,
+        message_id: &str,
+        defs: &[ToolDef],
+        acc: &mut Accum,
+        event_: LlmEvent,
+    ) -> Result<(), RuntimeError> {
+        let live = |text: String, reasoning: bool| {
+            let (session_id, message_id) = (session_id.to_string(), message_id.to_string());
+            if reasoning {
+                LiveEvent::ReasoningDelta {
+                    session_id,
+                    message_id,
+                    text,
+                }
+            } else {
+                LiveEvent::TextDelta {
+                    session_id,
+                    message_id,
+                    text,
+                }
+            }
+        };
+        match event_ {
+            LlmEvent::TextDelta { text } => {
+                acc.text.push_str(&text);
+                self.bus.publish(live(text, false));
+            }
+            LlmEvent::ReasoningDelta { text } => {
+                acc.reasoning.push_str(&text);
+                self.bus.publish(live(text, true));
+            }
+            LlmEvent::ReasoningSignature { signature } => acc.signature = Some(signature),
+            LlmEvent::ToolCallDelta { id, arguments, .. } => {
+                self.bus.publish(LiveEvent::ToolInputDelta {
+                    session_id: session_id.into(),
+                    call_id: id,
+                    arguments,
+                });
+            }
+            LlmEvent::ToolCallDone(call) => {
+                let retry_safety =
+                    find_def(defs, &call.name).map_or(RetrySafety::Never, |d| d.retry_safety);
+                let payload = ToolCalled {
+                    message_id: message_id.into(),
+                    call_id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                    input: call.input.clone(),
+                    retry_safety,
+                };
+                self.commit(handle, vec![event(TOOL_CALLED, &payload)])
+                    .await?;
+                acc.calls.push(call);
+            }
+            LlmEvent::Usage(usage) => acc.usage.add(&usage),
+            LlmEvent::Finish { reason } => acc.finish = Some(reason),
+        }
+        Ok(())
+    }
+
+    async fn end_step(
+        &self,
+        handle: &Handle,
+        message_id: &str,
+        acc: &Accum,
+        resolved: &ResolvedModel,
+    ) -> Result<(), RuntimeError> {
+        let mut events = content_events(message_id, acc);
+        let cost = compute_cost(resolved.cost.as_ref(), &acc.usage);
+        let finish = acc.finish.clone().unwrap_or(FinishReason::Stop);
+        events.push(event(
+            STEP_ENDED,
+            &StepEnded {
+                message_id: message_id.into(),
+                finish,
+                usage: acc.usage,
+                cost,
+            },
+        ));
+        let session_id = {
+            let mut state = handle.state.lock().await;
+            self.commit_locked(&mut state, events)?;
+            state.info.id.clone()
+        };
+        let context_tokens = acc.usage.context_tokens() + acc.usage.output + acc.usage.reasoning;
+        let limit = resolved.context_limit;
+        self.bus.publish(LiveEvent::Usage {
+            session_id,
+            usage: acc.usage,
+            context_tokens,
+            context_limit: limit,
+            utilization: if limit == 0 {
+                0.0
+            } else {
+                context_tokens as f64 / limit as f64
+            },
+        });
+        Ok(())
+    }
+
+    /// Record a provider failure before any output.
+    async fn fail_step(
+        &self,
+        handle: &Handle,
+        message_id: &str,
+        e: LlmError,
+    ) -> Result<TurnEnd, RuntimeError> {
+        let payload = StepFailed {
+            message_id: message_id.into(),
+            kind: kind_name(e.kind).into(),
+            message: e.message.clone(),
+        };
+        let session_id = {
+            let mut state = handle.state.lock().await;
+            self.commit_locked(&mut state, vec![event(STEP_FAILED, &payload)])?;
+            state.info.id.clone()
+        };
+        if e.kind == ErrorKind::ContextOverflow {
+            return Ok(TurnEnd::Overflow);
+        }
+        self.bus.publish(LiveEvent::Error {
+            session_id,
+            kind: kind_name(e.kind).into(),
+            message: e.to_string(),
+        });
+        Ok(TurnEnd::Stopped)
+    }
+
+    /// Keep partial output, fail the step, and settle calls that never ran as interrupted.
+    async fn stop_step(
+        &self,
+        handle: &Handle,
+        message_id: &str,
+        acc: Accum,
+        kind: &str,
+        message: &str,
+    ) -> Result<TurnEnd, RuntimeError> {
+        let mut state = handle.state.lock().await;
+        let mut events = content_events(message_id, &acc);
+        events.push(event(
+            STEP_FAILED,
+            &StepFailed {
+                message_id: message_id.into(),
+                kind: kind.into(),
+                message: message.into(),
+            },
+        ));
+        events.extend(
+            state
+                .calls
+                .values()
+                .filter(|c| c.message_id == message_id && c.status == CallStatus::Called)
+                .map(|c| {
+                    settled(
+                        &c.call_id,
+                        CallStatus::Interrupted,
+                        INTERRUPTED,
+                        Some("turn stopped before dispatch"),
+                    )
+                }),
+        );
+        self.commit_locked(&mut state, events)?;
+        Ok(TurnEnd::Stopped)
+    }
+
+    /// Dispatch the Turn's calls: concurrency-safe neighbours in parallel, the rest in order.
+    /// Returns whether the Session was interrupted or halted.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_tools(
+        &self,
+        handle: &Handle,
+        resolved: &ResolvedModel,
+        message_id: &str,
+        calls: &[ToolCall],
+        defs: &[ToolDef],
+        limited: bool,
+        cancel: &CancellationToken,
+    ) -> Result<bool, RuntimeError> {
+        let (turn, paused) = {
+            let state = handle.state.lock().await;
+            let paused: Vec<String> = state
+                .unresolved()
+                .iter()
+                .map(|c| c.call_id.clone())
+                .collect();
+            (turn_context(&state, resolved), paused)
+        };
+        let groups = groups(calls, defs);
+        for (index, group) in groups.iter().enumerate() {
+            if cancel.is_cancelled() || handle.halt.swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                // Nothing from here on was dispatched, so it is safe to report as interrupted.
+                let events = groups[index..]
+                    .iter()
+                    .flatten()
+                    .map(|c| {
+                        settled(
+                            &c.id,
+                            CallStatus::Interrupted,
+                            INTERRUPTED,
+                            Some("stopped before dispatch"),
+                        )
+                    })
+                    .collect();
+                self.commit(handle, events).await?;
+                return Ok(true);
+            }
+            let mut runs = Vec::new();
+            for call in group.iter().copied() {
+                let checked = self.precheck(call, defs, limited, &paused, &turn);
+                let checked = match checked {
+                    Ok(ok) => self
+                        .doom_check(handle, &turn, message_id, call)
+                        .await
+                        .map(|()| ok),
+                    Err(e) => Err(e),
+                };
+                match checked {
+                    Err((status, output)) => {
+                        self.commit(handle, vec![settled(&call.id, status, &output, None)])
+                            .await?;
+                    }
+                    Ok((def, input)) => {
+                        let invocation = self
+                            .dispatch(handle, &turn, message_id, call, &def, input)
+                            .await?;
+                        runs.push(self.run_tool(def, invocation, cancel.child_token()));
+                    }
+                }
+            }
+            let outcomes = join_all(runs).await;
+            let events = outcomes
+                .into_iter()
+                .map(|(call_id, def, outcome)| settlement(&call_id, &def, outcome))
+                .collect();
+            self.commit(handle, events).await?;
+        }
+        let halted = handle.halt.swap(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(cancel.is_cancelled() || halted)
+    }
+
+    /// Three identical calls in a row raise a `doom_loop` request
+    /// (`permissions-modes` → Doom-loop detection). Unattended Modes halt instead.
+    async fn doom_check(
+        &self,
+        handle: &Handle,
+        turn: &TurnContext,
+        message_id: &str,
+        call: &ToolCall,
+    ) -> Result<(), (CallStatus, String)> {
+        let repeated = {
+            let mut recent = handle
+                .recent_calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            recent.push(format!("{}\u{0}{}", call.name, call.arguments));
+            let n = recent.len();
+            n >= 3 && recent[n - 3..].iter().all(|f| *f == recent[n - 1])
+        };
+        if !repeated {
+            return Ok(());
+        }
+        let halt = || {
+            handle.halt.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err((
+                CallStatus::Error,
+                "Repeated identical tool calls detected".to_string(),
+            ))
+        };
+        if matches!(turn.mode.as_str(), "auto" | "dont-ask" | "bypass") {
+            return halt();
+        }
+        let asker = Asker::new(
+            &self.me.upgrade().expect("runtime alive"),
+            &turn.session_id,
+            &call.id,
+            message_id,
+        );
+        let ask = PermissionAsk {
+            action: "doom_loop".into(),
+            resources: vec![call.name.clone()],
+            always_patterns: vec![call.name.clone()],
+            metadata: serde_json::json!({ "arguments": call.arguments }),
+        };
+        match asker.permission(ask).await {
+            PermissionReply::Once | PermissionReply::Always => Ok(()),
+            PermissionReply::Reject { message: Some(m) } => {
+                Err((CallStatus::Error, format!("Rejected by user: {m}")))
+            }
+            PermissionReply::Reject { message: None } | PermissionReply::Unattended => halt(),
+        }
+    }
+
+    /// Settlement that needs no execution, or the definition and input to dispatch.
+    fn precheck(
+        &self,
+        call: &ToolCall,
+        defs: &[ToolDef],
+        limited: bool,
+        paused: &[String],
+        turn: &TurnContext,
+    ) -> Result<(ToolDef, Value), (CallStatus, String)> {
+        if limited {
+            return Err((
+                CallStatus::Error,
+                "Tools are disabled after the maximum agent steps".into(),
+            ));
+        }
+        let def = find_def(defs, &call.name)
+            .ok_or_else(|| (CallStatus::Error, format!("Unknown tool: {}", call.name)))?;
+        let input = call
+            .input
+            .clone()
+            .ok_or_else(|| (CallStatus::Error, invalid_arguments(&call.arguments)))?;
+        if def.retry_safety != RetrySafety::ReadOnly && !paused.is_empty() {
+            return Err((
+                CallStatus::Error,
+                format!(
+                    "Mutating tools are paused until the unknown outcome of {} is reconciled. Ask the user to resolve it.",
+                    paused.join(", ")
+                ),
+            ));
+        }
+        // The registration may have been removed or replaced since it was advertised.
+        let current = self.tools.definitions(turn);
+        if !current.iter().any(|d| d.spec.name == def.spec.name) {
+            return Err((CallStatus::Error, format!("Stale tool call: {}", call.name)));
+        }
+        Ok((def.clone(), input))
+    }
+
+    /// Persist the dispatch record before running anything.
+    async fn dispatch(
+        &self,
+        handle: &Handle,
+        turn: &TurnContext,
+        message_id: &str,
+        call: &ToolCall,
+        def: &ToolDef,
+        input: Value,
+    ) -> Result<Invocation, RuntimeError> {
+        let attempt = handle
+            .state
+            .lock()
+            .await
+            .calls
+            .get(&call.id)
+            .map_or(0, |c| c.attempt)
+            + 1;
+        let operation_key = format!("{}:{}", turn.session_id, call.id);
+        let payload = ToolDispatched {
+            call_id: call.id.clone(),
+            attempt,
+            input_digest: format!("sha256:{:x}", Sha256::digest(input.to_string())),
+            operation_key: operation_key.clone(),
+        };
+        self.commit(handle, vec![event(TOOL_DISPATCHED, &payload)])
+            .await?;
+        let inner = self.me.upgrade().expect("runtime alive");
+        Ok(Invocation {
+            session_id: turn.session_id.clone(),
+            directory: turn.directory.clone(),
+            agent: turn.agent.clone(),
+            mode: turn.mode.clone(),
+            message_id: message_id.into(),
+            call_id: call.id.clone(),
+            name: def.spec.name.clone(),
+            input,
+            attempt,
+            operation_key,
+            asker: Asker::new(&inner, &turn.session_id, &call.id, message_id),
+        })
+    }
+
+    /// Run one call; after cancellation the tool has 2 seconds to stop.
+    async fn run_tool(
+        &self,
+        def: ToolDef,
+        invocation: Invocation,
+        cancel: CancellationToken,
+    ) -> (String, ToolDef, ToolOutcome) {
+        let call_id = invocation.call_id.clone();
+        let run = self.tools.execute(invocation, cancel.clone());
+        tokio::pin!(run);
+        let outcome = tokio::select! {
+            out = &mut run => out,
+            _ = cancel.cancelled() => tokio::time::timeout(Duration::from_secs(2), &mut run).await.unwrap_or(ToolOutcome::Aborted),
+        };
+        (call_id, def, outcome)
+    }
+
+    /// Settle what a previous process left unfinished (`session-runtime` → Drain loop).
+    pub(crate) async fn recover(&self, handle: &Handle) -> Result<(), RuntimeError> {
+        let (open_step, unfinished, directory) = {
+            let state = handle.state.lock().await;
+            let unfinished: Vec<CallState> = state
+                .calls
+                .values()
+                .filter(|c| !c.status.is_settled())
+                .cloned()
+                .collect();
+            (
+                state.open_step.clone(),
+                unfinished,
+                state.info.directory.clone(),
+            )
+        };
+        let mut events = Vec::new();
+        if let Some(message_id) = open_step {
+            events.push(event(
+                STEP_FAILED,
+                &StepFailed {
+                    message_id,
+                    kind: "interrupted".into(),
+                    message: "Provider turn interrupted".into(),
+                },
+            ));
+        }
+        for call in unfinished {
+            events.push(self.recover_call(&directory, &call).await);
+        }
+        self.commit(handle, events).await?;
+        Ok(())
+    }
+
+    async fn recover_call(&self, directory: &str, call: &CallState) -> cyber_store::NewEvent {
+        if call.status == CallStatus::Called {
+            return settled(
+                &call.call_id,
+                CallStatus::Interrupted,
+                INTERRUPTED,
+                Some("recovered: never dispatched"),
+            );
+        }
+        if call.retry_safety == RetrySafety::ReadOnly {
+            return settled(
+                &call.call_id,
+                CallStatus::Interrupted,
+                INTERRUPTED,
+                Some("recovered: read-only call"),
+            );
+        }
+        match self.tools.reconcile(directory, call).await {
+            Reconciliation::Succeeded { evidence } => settled(
+                &call.call_id,
+                CallStatus::Ok,
+                &format!("[Recovered after a restart: the call completed] {evidence}"),
+                Some(&evidence),
+            ),
+            Reconciliation::NotApplied { evidence } => settled(
+                &call.call_id,
+                CallStatus::Interrupted,
+                INTERRUPTED,
+                Some(&evidence),
+            ),
+            Reconciliation::Unknown => settled(
+                &call.call_id,
+                CallStatus::OutcomeUnknown,
+                UNKNOWN,
+                Some("recovered: outcome unknown"),
+            ),
+        }
+    }
+}
+
+impl Accum {
+    fn empty() -> Self {
+        Self {
+            text: String::new(),
+            reasoning: String::new(),
+            signature: None,
+            calls: Vec::new(),
+            usage: Usage::default(),
+            finish: None,
+        }
+    }
+}
+
+fn content_events(message_id: &str, acc: &Accum) -> Vec<cyber_store::NewEvent> {
+    let mut events = Vec::new();
+    if !acc.reasoning.is_empty() {
+        let payload = ContentEnded {
+            message_id: message_id.into(),
+            text: acc.reasoning.clone(),
+            signature: acc.signature.clone(),
+        };
+        events.push(event(REASONING_ENDED, &payload));
+    }
+    if !acc.text.is_empty() {
+        events.push(event(
+            TEXT_ENDED,
+            &ContentEnded {
+                message_id: message_id.into(),
+                text: acc.text.clone(),
+                signature: None,
+            },
+        ));
+    }
+    events
+}
+
+fn settled(
+    call_id: &str,
+    status: CallStatus,
+    output: &str,
+    detail: Option<&str>,
+) -> cyber_store::NewEvent {
+    let payload = ToolSettled {
+        call_id: call_id.into(),
+        status,
+        output: output.into(),
+        detail: detail.map(str::to_string),
+    };
+    event(TOOL_SETTLED, &payload)
+}
+
+/// Map an outcome to a settlement. A dispatched mutation that did not finish has an unknown outcome.
+fn settlement(call_id: &str, def: &ToolDef, outcome: ToolOutcome) -> cyber_store::NewEvent {
+    let read_only = def.retry_safety == RetrySafety::ReadOnly;
+    match outcome {
+        ToolOutcome::Ok(output) => settled(call_id, CallStatus::Ok, &output, None),
+        ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),
+        ToolOutcome::Aborted if read_only => settled(
+            call_id,
+            CallStatus::Interrupted,
+            INTERRUPTED,
+            Some("aborted"),
+        ),
+        ToolOutcome::Aborted => settled(
+            call_id,
+            CallStatus::OutcomeUnknown,
+            UNKNOWN,
+            Some("aborted after dispatch"),
+        ),
+        ToolOutcome::Crashed(detail) => {
+            let reference = cyber_core::ids::new_id("err");
+            let status = if read_only {
+                CallStatus::Error
+            } else {
+                CallStatus::OutcomeUnknown
+            };
+            settled(
+                call_id,
+                status,
+                &format!("Tool crashed: {reference}"),
+                Some(&format!("{reference}: {detail}")),
+            )
+        }
+    }
+}
+
+/// Look a tool up by name, repairing a case mismatch.
+fn find_def<'a>(defs: &'a [ToolDef], name: &str) -> Option<&'a ToolDef> {
+    defs.iter()
+        .find(|d| d.spec.name == name)
+        .or_else(|| defs.iter().find(|d| d.spec.name == name.to_lowercase()))
+}
+
+fn groups<'a>(calls: &'a [ToolCall], defs: &[ToolDef]) -> Vec<Vec<&'a ToolCall>> {
+    let mut groups: Vec<Vec<&ToolCall>> = Vec::new();
+    let mut parallel_open = false;
+    for call in calls {
+        let safe = find_def(defs, &call.name).is_some_and(|d| d.concurrency_safe);
+        match groups.last_mut() {
+            Some(group) if safe && parallel_open && group.len() < MAX_PARALLEL => group.push(call),
+            _ => groups.push(vec![call]),
+        }
+        parallel_open = safe;
+    }
+    groups
+}
+
+fn invalid_arguments(arguments: &str) -> String {
+    let error = serde_json::from_str::<Value>(arguments)
+        .err()
+        .map_or_else(|| "not a JSON object".to_string(), |e| e.to_string());
+    format!("The arguments provided to the tool are invalid: {error}")
+}
+
+fn kind_name(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::Authentication => "authentication",
+        ErrorKind::RateLimit => "rate_limit",
+        ErrorKind::QuotaExceeded => "quota_exceeded",
+        ErrorKind::ContextOverflow => "context_overflow",
+        ErrorKind::ContentPolicy => "content_policy",
+        ErrorKind::InvalidRequest => "invalid_request",
+        ErrorKind::ProviderInternal => "provider_internal",
+        ErrorKind::Transport => "transport",
+    }
+}
+
+pub(crate) fn turn_context(state: &SessionState, resolved: &ResolvedModel) -> TurnContext {
+    TurnContext {
+        session_id: state.info.id.clone(),
+        directory: state.info.directory.clone(),
+        agent: state.info.agent.clone(),
+        mode: state.info.mode.clone(),
+        prefers_apply_patch: resolved.prefers_apply_patch,
+    }
+}
