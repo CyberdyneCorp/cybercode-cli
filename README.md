@@ -6,6 +6,20 @@ The **OpenSpec** for the product is the source of truth: `openspec/specs/<capabi
 
 ## Building
 
+Common tasks are in the [`justfile`](justfile) (install [`just`](https://github.com/casey/just)); run `just` to list them:
+
+```bash
+just build          # debug build: target/debug/cyber
+just ci             # everything CI checks: lint, tests, specs, SDK
+just test -p cyber-server        # one crate, or `just test <name filter>`
+just test-linux     # the test suite on Linux in Docker (bubblewrap sandbox)
+just tui            # the TUI here;  just exec "fix the failing test"
+just sandboxed exec --ephemeral "hello"   # run with a throwaway CYBER_HOME
+just sdk-generate   # regenerate sdk/openapi.json and the TypeScript SDK
+```
+
+The raw commands:
+
 Requires Rust 1.89 or newer (edition 2024). SQLite is bundled.
 
 ```bash
