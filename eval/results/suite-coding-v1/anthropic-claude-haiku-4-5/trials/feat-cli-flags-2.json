@@ -1,0 +1,22 @@
+{
+  "task": "feat-cli-flags",
+  "trial": 2,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 31,
+  "tool_calls": 30,
+  "cost_usd": 0.1379187,
+  "unpriced": false,
+  "tokens": {
+    "input": 11099,
+    "output": 8751,
+    "cache_read": 352647,
+    "cache_write": 38240
+  },
+  "latency_seconds": 85.81805475,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SH6X490PXE7QY1VQBSPGF"
+}

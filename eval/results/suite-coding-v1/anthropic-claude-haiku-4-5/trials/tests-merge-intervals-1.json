@@ -1,0 +1,22 @@
+{
+  "task": "tests-merge-intervals",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 17,
+  "tool_calls": 17,
+  "cost_usd": 0.11490774999999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 6867,
+    "output": 11511,
+    "cache_read": 221595,
+    "cache_write": 22661
+  },
+  "latency_seconds": 89.608882291,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SZZ7Y921VW12MJQG2D64R"
+}

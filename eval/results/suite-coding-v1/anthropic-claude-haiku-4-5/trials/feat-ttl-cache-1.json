@@ -1,0 +1,22 @@
+{
+  "task": "feat-ttl-cache",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 14,
+  "tool_calls": 13,
+  "cost_usd": 0.07184120000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 11109,
+    "output": 6185,
+    "cache_read": 88022,
+    "cache_write": 16804
+  },
+  "latency_seconds": 57.168972125,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SJZDHS69QBPMG498Z973X"
+}

@@ -1,0 +1,22 @@
+{
+  "task": "fix-csv-quoted-fields",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 21,
+  "tool_calls": 20,
+  "cost_usd": 0.07067815000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 11176,
+    "output": 5905,
+    "cache_read": 136659,
+    "cache_write": 13049
+  },
+  "latency_seconds": 55.515334292,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43S9JGX5TS2NM3M5Z8JWHXC"
+}

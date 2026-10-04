@@ -1,0 +1,22 @@
+{
+  "task": "fix-shell-top-ips",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 10,
+  "tool_calls": 12,
+  "cost_usd": 0.00307073,
+  "unpriced": false,
+  "tokens": {
+    "input": 4663,
+    "output": 1189,
+    "cache_read": 30143,
+    "cache_write": 0
+  },
+  "latency_seconds": 63.697224625,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SKJXAT0JVXP4SW3D541GS"
+}

@@ -1,0 +1,22 @@
+{
+  "task": "fix-money-rounding",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 22,
+  "tool_calls": 23,
+  "cost_usd": 0.11302075000000002,
+  "unpriced": false,
+  "tokens": {
+    "input": 7161,
+    "output": 11521,
+    "cache_read": 227085,
+    "cache_write": 20437
+  },
+  "latency_seconds": 92.642781708,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_empty_invoice (hidden_test_invoice.HiddenInvoiceTest.test_empty_invoice)\nFAIL",
+  "session_id": "ses_01M43SF1MNM9A92YC6R0PSQ47S"
+}

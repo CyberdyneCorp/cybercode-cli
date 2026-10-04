@@ -1,0 +1,22 @@
+{
+  "task": "refactor-rename-api",
+  "trial": 2,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 31,
+  "tool_calls": 30,
+  "cost_usd": 0.1438791,
+  "unpriced": false,
+  "tokens": {
+    "input": 3598,
+    "output": 11230,
+    "cache_read": 308536,
+    "cache_write": 42622
+  },
+  "latency_seconds": 115.888378042,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SXC3DCZXVQ6BCN0E8PC6A"
+}

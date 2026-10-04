@@ -1,0 +1,22 @@
+{
+  "task": "tests-semver-compare",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 26,
+  "tool_calls": 25,
+  "cost_usd": 0.21160755000000003,
+  "unpriced": false,
+  "tokens": {
+    "input": 7087,
+    "output": 22863,
+    "cache_read": 485668,
+    "cache_write": 33311
+  },
+  "latency_seconds": 190.623715,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43T1WQWN6ZR7QW8AD18KVQD"
+}

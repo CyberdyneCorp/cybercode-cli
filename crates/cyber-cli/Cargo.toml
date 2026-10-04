@@ -23,6 +23,7 @@ cyber-server = { path = "../cyber-server" }
 base64 = "0.22"
 futures = "0.3"
 ulid.workspace = true
+sha2.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

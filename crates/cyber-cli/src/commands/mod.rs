@@ -3,6 +3,7 @@
 pub mod api;
 pub mod db;
 pub mod debug;
+pub mod eval;
 pub mod exec;
 pub mod models;
 pub mod serve;
@@ -42,6 +43,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
         Command::Exec(args) => exec::run(args, &ctx, &cli.global),
+        Command::Eval { cmd } => eval::run(cmd, &ctx),
         Command::External(_) => unreachable!("handled above"),
     }
 }

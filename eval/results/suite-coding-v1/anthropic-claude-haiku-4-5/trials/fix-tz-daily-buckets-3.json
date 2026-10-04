@@ -1,0 +1,22 @@
+{
+  "task": "fix-tz-daily-buckets",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 12,
+  "tool_calls": 13,
+  "cost_usd": 0.06709865000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 7082,
+    "output": 6682,
+    "cache_read": 84704,
+    "cache_write": 14509
+  },
+  "latency_seconds": 55.310259625,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43S8ZPB2WH3Q8C86VDDWF0Z"
+}

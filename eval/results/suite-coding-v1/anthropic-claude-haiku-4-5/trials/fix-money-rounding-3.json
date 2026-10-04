@@ -1,0 +1,22 @@
+{
+  "task": "fix-money-rounding",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 12,
+  "tool_calls": 12,
+  "cost_usd": 0.050779849999999994,
+  "unpriced": false,
+  "tokens": {
+    "input": 3507,
+    "output": 5025,
+    "cache_read": 74291,
+    "cache_write": 11775
+  },
+  "latency_seconds": 43.883476084,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_split_amount (hidden_test_invoice.HiddenInvoiceTest.test_split_amount) (total='0.05', n=3)\nFAIL hidden tests: FAIL: test_split_amount (hidden_test_invoice.HiddenInvoiceTest.test_split_amount) (total='0.01', n=2)\nFAIL hidden tests: FAIL: test_split_amount (hidden_test_invoice.HiddenInvoiceTest.test_split_amount) (total='1000.01', n=6)\nFAIL",
+  "session_id": "ses_01M43SFVRQ8ADHC13N9EVRV990"
+}

@@ -69,6 +69,17 @@ test-linux *args:
         -v "$PWD":/src:ro -v cyber-target:/target -u root {{ linux_image }} \
         sh -c 'chown -R dev /target && su dev -c "export CARGO_TARGET_DIR=/target CARGO_HOME=/target/cargo-home CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=${LINUX_JOBS:-4} PATH=/usr/local/cargo/bin:\$PATH; cd /src && cargo test --locked $0 $*"' "$scope" "$@"
 
+# --- Evaluation -----------------------------------------------------------------
+
+# Check every suite grader: fails on the fixture, passes with the reference solution.
+eval-check:
+    python3 scripts/check_eval_graders.py
+
+# Run the coding suite against a model, e.g. `just eval openai/gpt-6-luna --trials 3`.
+[positional-arguments]
+eval model *args: build
+    {{ cyber }} eval run eval/manifests/suite-coding-v1.json -m "$1" --output "eval/results/$(date +%Y%m%d-%H%M%S)-${1//\//-}" "${@:2}"
+
 # --- Generated sources --------------------------------------------------------
 
 # Regenerate sdk/openapi.json from the server's types.

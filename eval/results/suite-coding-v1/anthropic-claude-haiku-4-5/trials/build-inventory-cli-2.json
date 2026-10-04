@@ -1,0 +1,22 @@
+{
+  "task": "build-inventory-cli",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 81,
+  "tool_calls": 80,
+  "cost_usd": 0.5354459,
+  "unpriced": false,
+  "tokens": {
+    "input": 7614,
+    "output": 33308,
+    "cache_read": 2395244,
+    "cache_write": 97414
+  },
+  "latency_seconds": 364.103955834,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_filters (hidden_test_inventory.ReadCommandsTest.test_filters)\nFAIL hidden tests: FAIL: test_table_widths_and_singular (hidden_test_inventory.ReadCommandsTest.test_table_widths_and_singular)\nFAIL",
+  "session_id": "ses_01M43TAH2KD7A6JQ0BPNR92QT0"
+}

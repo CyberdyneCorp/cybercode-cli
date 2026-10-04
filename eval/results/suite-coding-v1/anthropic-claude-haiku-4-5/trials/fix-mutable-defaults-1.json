@@ -1,0 +1,22 @@
+{
+  "task": "fix-mutable-defaults",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 11,
+  "tool_calls": 14,
+  "cost_usd": 0.056213200000000005,
+  "unpriced": false,
+  "tokens": {
+    "input": 7040,
+    "output": 5864,
+    "cache_read": 61857,
+    "cache_write": 10934
+  },
+  "latency_seconds": 45.722431291,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SBA2P1FWFPVTQCFTEY9BS"
+}

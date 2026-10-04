@@ -1,0 +1,22 @@
+{
+  "task": "feat-csv-export",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 22,
+  "tool_calls": 24,
+  "cost_usd": 0.0868442,
+  "unpriced": false,
+  "tokens": {
+    "input": 7353,
+    "output": 7219,
+    "cache_read": 230612,
+    "cache_write": 16268
+  },
+  "latency_seconds": 70.808014666,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SQK5J8A7C47ET48NZG6F1"
+}

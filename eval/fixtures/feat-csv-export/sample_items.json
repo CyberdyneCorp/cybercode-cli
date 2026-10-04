@@ -1,0 +1,5 @@
+[
+  {"sku": "MUG-01", "name": "Mug, large", "quantity": 12, "price": 7.5, "discontinued": false, "supplier": "Acme"},
+  {"sku": "TEA-02", "name": "Teapot \"Classic\"", "quantity": 0, "price": 24.0, "discontinued": true},
+  {"sku": "SPN-03", "name": "Spoon", "quantity": 140, "price": 1.25, "discontinued": false, "supplier": "Forks & Co"}
+]

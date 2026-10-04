@@ -1,0 +1,22 @@
+{
+  "task": "fix-money-rounding",
+  "trial": 2,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 29,
+  "tool_calls": 28,
+  "cost_usd": 0.12106700000000002,
+  "unpriced": false,
+  "tokens": {
+    "input": 10875,
+    "output": 11076,
+    "cache_read": 302170,
+    "cache_write": 19676
+  },
+  "latency_seconds": 114.835775958,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SFNJMEE7CW6JVV9FQRJJC"
+}

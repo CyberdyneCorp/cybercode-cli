@@ -1,0 +1,22 @@
+{
+  "task": "build-inventory-cli",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 21,
+  "tool_calls": 23,
+  "cost_usd": 0.011437329999999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 17430,
+    "output": 9939,
+    "cache_read": 231483,
+    "cache_write": 0
+  },
+  "latency_seconds": 137.053411959,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SNHH36PF4VSM068T1DDPG"
+}

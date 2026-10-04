@@ -1,0 +1,676 @@
+{
+  "schema_version": 1,
+  "id": "suite-coding-v1",
+  "description": "Published coding baseline: 20 bug-fix, feature, refactor, test-writing, debugging, shell and long-horizon tasks in Python, Node and bash, each graded by a hidden grader on final workspace state.",
+  "kind": "suite",
+  "harness": {
+    "min_version": "0.1.0",
+    "tools": "tools.v1"
+  },
+  "tasks": [
+    {
+      "id": "fix-slugify",
+      "prompt": "In this repository, slugify(\"Hello,  World!\") in slugify.py returns \"hello--world-\" but should return \"hello-world\". Fix slugify so that every run of non-alphanumeric characters becomes exactly one hyphen and leading or trailing hyphens are removed (an input with no alphanumeric characters yields \"\"). Letters and digits, including non-ASCII ones, are kept and lowercased. Keep the function name and signature, and keep the visible tests passing: run them with `python3 -m unittest`.",
+      "tags": [
+        "bugfix",
+        "python",
+        "edge-cases"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/py-slugify",
+        "tree_sha256": "sha256:92d2e388f03419635c874957e1641a6fcb436ff99216b4fbdab6264b0b91a21e",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/py-slugify",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-moving-average",
+      "prompt": "The smoothing helpers in the `stats/` package (Python 3.10+, stdlib only) are buggy: the dashboard always loses the most recent day, labels days wrongly, and silently shows nothing when the window is too large. Fix stats/window.py and stats/report.py so they follow the contract in README.md: `windows(values, size)` returns every contiguous window of `size` items as lists, in order (a sequence of length L has L - size + 1 windows) and raises ValueError when size < 1 or size > len(values); `moving_average(values, size)` returns the float mean of each window and raises ValueError in the same cases; `format_report(daily, size)` returns one `day <D>: <avg>` line per window where D is the 1-based day number of the last day in the window and avg has two decimals (format_report([1, 2, 3, 4], 2) == [\"day 2: 1.50\", \"day 3: 2.50\", \"day 4: 3.50\"]). Keep the function names and signatures. Run the tests with `python3 -m unittest` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "python",
+        "off-by-one",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-moving-average",
+        "tree_sha256": "sha256:0c8b67dea04eea8972e1ae3673890030bf4c2f7406eb79db0c29b14fe21bbe3d",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-moving-average",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-tz-daily-buckets",
+      "prompt": "events.py (Python 3.10+, stdlib only) counts dashboard events per local calendar day, but events near midnight land on the wrong day and timestamps with `Z` or non-UTC offsets are miscounted. Timestamps are ISO-8601 strings `YYYY-MM-DDTHH:MM:SS[.fff|.ffffff]` followed by `Z` or `+HH:MM`/`-HH:MM`. Fix events.py to follow the contract in README.md: `parse_timestamp(ts)` returns a timezone-aware datetime for the same instant and raises ValueError for a timestamp without an offset; `local_day(ts, utc_offset_minutes)` returns the calendar date of that instant in the fixed UTC offset given in minutes (e.g. -300 for UTC-05:00, 330 for UTC+05:30); `daily_counts(timestamps, utc_offset_minutes)` returns a dict mapping \"YYYY-MM-DD\" local days to counts with keys in ascending order, omitting days without events. The code must also run on Python 3.10, whose datetime.fromisoformat rejects the `Z` suffix. Do not use zoneinfo, the system clock or the machine's local timezone. Keep the function names and signatures. Run the tests with `python3 -m unittest` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "python",
+        "datetime"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-tz-daily-buckets",
+        "tree_sha256": "sha256:464f758bdd8e0dda9fda242aadd727fc0469c8ec8534be15e5df99b8a6fe9aba",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-tz-daily-buckets",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-csv-quoted-fields",
+      "prompt": "The expense report (Node 22, ES modules, no dependencies) computes wrong totals for bank exports that contain quoted notes such as \"Lunch, team\" and Windows line endings. Fix src/csv.js and src/report.js to follow the contract in README.md. `parseCsv(text)` returns an array of records (arrays of strings): fields are separated by `,`; records end with `\\n` or `\\r\\n` (both may appear in one file); a field may be wrapped in double quotes, and inside quotes commas, `\\n` and `\\r\\n` belong to the field and `\"\"` is one literal `\"` (the wrapping quotes are not part of the value); empty fields are empty strings (`a,,b` is [\"a\", \"\", \"b\"], `a,` is [\"a\", \"\"]); one final line ending does not create an extra record; empty input returns []; a quoted field that is never closed throws an Error. `totalsByCategory(text)` parses the CSV (the first record is a header containing at least `category` and `amount` columns, in any order) and returns an object mapping each category to the numeric sum of its amounts. Keep the exported names. Run the tests with `node --test` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "node",
+        "parsing",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-csv-quoted-fields",
+        "tree_sha256": "sha256:1c382dcfac96372120c06e3182218003e23693c27bf41205b7a240208db9f310",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-csv-quoted-fields",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-mutable-defaults",
+      "prompt": "Support reports that items added to one customer's cart show up in other customers' carts, and that tags and options leak between calls. Fix util.py and cart.py (Python 3.10+, stdlib only) to follow the contract in README.md: `util.add_tag(tag, tags=None)` returns a new list with the given tags (or none) followed by `tag` unless it is already present, and never modifies the list passed in; `util.with_defaults(options=None)` returns a new dict of `DEFAULT_OPTIONS` ({\"retries\": 3, \"timeout\": 10}) overridden by `options`, modifying neither; `cart.Cart(owner, items=None, tags=None, options=None)` keeps its own copies of the given items and tags and its options from `with_defaults(options)`, `add(sku)` appends an item, `tag(name)` adds a tag via `add_tag`, and carts never share state with each other or with the lists and dicts the caller passed in. Keep the names, the `items`/`tags`/`options` attributes and `total_items()`. Run the tests with `python3 -m unittest` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "python",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-mutable-defaults",
+        "tree_sha256": "sha256:c3acd47632404800c1288a24bbc6b683a4975c31da0c78ac73ae9fe57d06ec0e",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-mutable-defaults",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-async-batch",
+      "prompt": "In this Node 22 project (ES modules, no dependencies) `fetchAll` resolves before anything is fetched, failures crash the process with unhandled rejections, and `retry` gives up silently. Fix src/retry.js and src/fetchAll.js to follow the contract in README.md. `retry(fn, { attempts = 3, delayMs = 0 } = {})` calls `fn(attempt)` with a 1-based attempt number until the promise it returns resolves (a synchronous throw counts as a failure), at most `attempts` times, waiting `delayMs` ms between attempts; it resolves with the first successful value and, when every attempt fails, rejects with the error of the last attempt. `fetchAll(urls, fetcher, { concurrency = 4, attempts = 3 } = {})` calls `fetcher(url)` for every url through `retry` (with `attempts`) and resolves with the results in the order of `urls`; up to `concurrency` fetcher calls are in flight at once, a new one starts as soon as one settles, and never more than `concurrency` run at the same time; if a url still fails after all attempts, `fetchAll` rejects with that url's last error; no promise rejection may go unhandled; `fetchAll([], f)` resolves with []. Keep the exported names and signatures. Run the tests with `node --test` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "node",
+        "async",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-async-batch",
+        "tree_sha256": "sha256:f2497c9aeb7d0a07e211aec8a08c9d3392ed482022ce0fbcc44add2eaec1557e",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-async-batch",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-stable-sort",
+      "prompt": "The leaderboard in src/leaderboard.js (Node 22, ES modules, no dependencies) is buggy: tied players come out in random order, the list is sometimes not sorted at all, the caller's array gets reordered, and tied players get different ranks. Fix rankPlayers and withRanks so they follow the contract in README.md: rankPlayers returns a new array sorted by score (highest first) with equal scores kept in input order and without modifying the input; withRanks adds a 1-based `rank` to shallow copies of the players using competition ranking (scores 90, 80, 80, 70 get ranks 1, 2, 2, 4). Keep the exported names and signatures. Run the tests with `node --test` and keep them passing; add tests for the fixed behavior.",
+      "tags": [
+        "bugfix",
+        "node",
+        "sorting"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-stable-sort",
+        "tree_sha256": "sha256:ab487cf09b65dd2b0b60fb229cb28cb9eb76af51b8560cb0ff4936c1eac64538",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-stable-sort",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-money-rounding",
+      "prompt": "Customers report invoices that are one cent off and bill splits that do not add up. Fix invoice.py (Python 3.10+, stdlib only) to follow the money rules in README.md. Inputs are decimal strings (e.g. \"19.99\", \"0.125\", tax rate \"0.0825\") and int quantities; every returned amount is a string with exactly two decimals and no thousands separator (e.g. \"1234.57\"). All rounding is to whole cents, half up (0.005 becomes 0.01), with no banker's rounding and no binary-float artifacts. `line_total(unit_price, quantity)` is price times quantity, rounded. `invoice_total(lines, tax_rate)`, with lines a list of (unit_price, quantity), returns {\"subtotal\", \"tax\", \"total\"}: the subtotal is the sum of the rounded line totals, the tax is subtotal times rate, rounded, and the total is subtotal plus tax. `split_amount(total, n)` returns n >= 1 shares (otherwise ValueError) that add up to exactly total, differ by at most one cent, with the larger shares first: split_amount(\"100.00\", 3) == [\"33.34\", \"33.33\", \"33.33\"]. Keep the function names and signatures. Run the tests with `python3 -m unittest` and keep them passing.",
+      "tags": [
+        "bugfix",
+        "python",
+        "money"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-money-rounding",
+        "tree_sha256": "sha256:3b61043fe177031f7d1292d0e4b1b06b9640dfaa8fb5507da32579918a6e7273",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-money-rounding",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "feat-cli-flags",
+      "prompt": "Add three options to the argparse CLI in wordfreq.py (see README.md for the existing behavior, which must not otherwise change; output lines are `<count>\\t<word>` sorted by count descending, then word ascending). (1) `--top N`: print only the first N lines of that ordering; N defaults to 10, so without the option at most 10 lines are printed. (2) `--ignore-case`: lowercase the text before counting, so `The`, `the` and `THE` count as one word printed as `the`; without the flag counting stays case-sensitive. (3) `--min-length N`: ignore words with fewer than N characters (default 1); the filter applies before `--top`. For both `--top` and `--min-length`, N must be an integer >= 1; any other value (0, negative, non-integer) must be rejected by argparse as a usage error (exit status 2, message on stderr, nothing on stdout). The options can be combined. An unreadable file must still print `wordfreq: cannot read <path>: <reason>` to stderr and exit 1. Keep the visible tests passing (run them with `python3 -m unittest`) and add tests for the new options.",
+      "tags": [
+        "feature",
+        "python",
+        "cli"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/feat-cli-flags",
+        "tree_sha256": "sha256:cd570f5000d144ee90090e085ad11472ebd681f3e57708cf0124013c4d2aabc6",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/feat-cli-flags",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "feat-ttl-cache",
+      "prompt": "Add a class `TTLCache(maxsize, ttl, clock=time.monotonic)` to cache.py, next to the existing LRUCache (which must keep working unchanged). Contract: `maxsize` < 1 or `ttl` <= 0 raises ValueError; `ttl` is in seconds (int or float) and `clock` is a zero-argument callable returning the current time in seconds. `set(key, value)` stores the value with an expiry of clock() + ttl and marks it most recently used; setting an existing key replaces its value and resets its expiry. An entry is expired once clock() >= its expiry time. `get(key, default=None)` returns the value of a live entry and marks it most recently used (it does NOT extend the expiry); for a missing or expired key it returns `default`. Falsy values such as 0 or None are valid cached values. `key in cache` is True only for live entries and does not change recency. `len(cache)` counts only live entries. When a set would leave more than `maxsize` entries, expired entries are discarded first and then the least recently used live entries are evicted, so a live entry is never evicted while an expired one is kept. Keep the visible tests passing (run them with `python3 -m unittest`) and add tests for TTLCache using a fake clock.",
+      "tags": [
+        "feature",
+        "python",
+        "caching"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/feat-ttl-cache",
+        "tree_sha256": "sha256:59c630ed83239f411cf97fc599481debf90e80c5016c60c5a680db54c6210a78",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/feat-ttl-cache",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "feat-paginate",
+      "prompt": "Add pagination to this Node 22 project (ES modules, no dependencies). Create `src/paginate.js` with a named export `paginate(items, { page = 1, perPage = 20 } = {})`. It returns an object with exactly these properties: `items` (a new array holding the elements of that page; the input array is never modified), `page`, `perPage`, `total` (items.length), `totalPages` (Math.ceil(total / perPage), so 0 for an empty input), `hasNext` (page < totalPages) and `hasPrev` (page > 1). Validation: if `items` is not an array throw a TypeError; if `page` is not an integer >= 1 throw a RangeError; if `perPage` is not an integer from 1 to 100 inclusive throw a RangeError (numeric strings like \"2\" are not integers and must be rejected). A page past the last page is not an error: it returns `items: []` with the other properties computed as above. Keep the visible tests passing (run them with `node --test`) and add tests for paginate under test/.",
+      "tags": [
+        "feature",
+        "node",
+        "pagination"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/feat-paginate",
+        "tree_sha256": "sha256:687042ec884549db68d2f2a30c720bbb2d42d3d98e46ec63e6bdc65249bf2bc2",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/feat-paginate",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "feat-validator-rules",
+      "prompt": "validator.py implements `validate(schema, data) -> list[str]` for a small JSON-Schema-like dialect (README.md documents the existing rules, error format `<path>: <message>` and paths such as `$.lines[2].sku`). Add two rules without changing existing behavior. (1) `enum`: a list of allowed values (strings, numbers, booleans or null). If the value is not equal to any member, report `<path>: must be one of <members>` where <members> is `json.dumps(schema[\"enum\"])` with default separators, e.g. `$.status: must be one of [\"new\", \"paid\"]` or `$: must be one of [\"each\", null]`. Comparison is by value and JSON type (1 and 1.0 are equal; true does not match 1). (2) `items`: a subschema that every element of an array is validated against, with element paths `<path>[<index>]`; errors are reported element by element in index order; `items` is ignored for values that are not arrays. As with the other rules, when a value fails its `type` rule only the type error is reported for that value (no enum, items or other errors for it). Keep the visible tests passing (run them with `python3 -m unittest`) and add tests for both rules.",
+      "tags": [
+        "feature",
+        "python",
+        "validation"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/feat-validator-rules",
+        "tree_sha256": "sha256:edd14cd73065a78e3c3bcd8f0bb19beae4ff611d459ee1589d7cf72172ccc15c",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/feat-validator-rules",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "feat-csv-export",
+      "prompt": "Add CSV export to inventory.py (see README.md and sample_items.json). (1) Add `export_csv(records, out, columns=None) -> int` that writes Item records as CSV using the standard csv module and returns the number of data rows written. `records` is any iterable of Item (lists and generators). `out` is either a path (str or pathlib.Path; the file is created/overwritten as UTF-8) or an open text file object, which is written to and left open. `columns` is a list of Item field names selecting and ordering the columns; it defaults to all fields in declaration order: sku,name,quantity,price,discontinued,supplier. An unknown column name raises ValueError before anything is written (no file is created). Output: first a header row of the column names, then one row per record. Cell formatting: booleans as `yes`/`no`, None as an empty cell, floats with exactly two decimals (`f\"{value:.2f}\"`), everything else via str(). Use the csv module's default quoting (minimal quoting with double quotes, embedded quotes doubled) and `\\n` as the line terminator. For sample_items.json the first two lines are `sku,name,quantity,price,discontinued,supplier` and `MUG-01,\"Mug, large\",12,7.50,no,Acme`. (2) Add a `--csv PATH` option to the CLI: `python3 inventory.py items.json --csv out.csv` writes all items with the default columns to PATH instead of printing the table, prints exactly `wrote <N> rows to <PATH>` (PATH as given) and exits 0; without the option the table output is unchanged. Keep the visible tests passing (run them with `python3 -m unittest`) and add tests for the export.",
+      "tags": [
+        "feature",
+        "python",
+        "csv"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/feat-csv-export",
+        "tree_sha256": "sha256:47b97fc99babe4c02aa3bb903807254a6a99035e038da3be800eaee6c097aaa9",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/feat-csv-export",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "refactor-split-function",
+      "prompt": "Refactor orders.py: `process_orders(text)` is one long function that parses, validates, totals and renders the nightly order report (README.md lists the rules). Split it into module-level functions in orders.py named `parse_orders` (text -> rows), `validate_order` (checks one row and returns its error messages), `compute_totals` (accumulates per-customer totals) and `render_report` (formats the report text); add dataclasses or small helpers as you see fit and choose the exact signatures yourself. Requirements: (1) behavior must be preserved exactly: for every possible input, `process_orders(text)` must return a byte-for-byte identical string to the current implementation, including error messages, their order, rounding and edge cases such as duplicate rows, bad field counts, NaN/negative prices and unknown coupons; (2) `process_orders` stays the public entry point with the same signature and must use parse_orders, validate_order, compute_totals and render_report (directly or via other helpers in orders.py); (3) structural limits: excluding its docstring, the body of process_orders has at most 12 statements (counting nested statements), and no function or method in orders.py is longer than 40 lines (from its `def` line to its last line). Do not change the visible tests; keep them passing (run them with `python3 -m unittest`) and add unit tests for the new functions.",
+      "tags": [
+        "refactor",
+        "python"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/refactor-split-function",
+        "tree_sha256": "sha256:f57aaf7232eb5bfe404d14605190b70aaf276c316975f956e40701d92ce8268c",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/refactor-split-function",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "refactor-rename-api",
+      "prompt": "In the `accounts` package, rename the function `fetch_user_data(user_id)` (defined in accounts/users.py) to `get_user(user_id)` and update every use inside the package (users.py, billing.py, notifications.py, reports.py, including the aliased import in reports.py) to call `get_user`; after the change no module in accounts/ may import, call or reference `fetch_user_data` except its deprecated-alias definition in users.py and the re-export in accounts/__init__.py. `get_user` must be the real implementation (same behavior as before: returns a copy of the record, raises UnknownUser for unknown ids) and must not emit any warning. Export `get_user` from the package (`from accounts import get_user`). Keep `fetch_user_data` importable from both `accounts.users` and `accounts` as a deprecated alias: each call emits exactly one DeprecationWarning whose message mentions `get_user`, attributed to the caller's line (stacklevel=2), and then returns the same result (or raises the same exception) as get_user. Do not change behavior otherwise. Keep the visible tests passing (run them with `python3 -m unittest`) and add tests for get_user and the deprecated alias.",
+      "tags": [
+        "refactor",
+        "python",
+        "api"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/refactor-rename-api",
+        "tree_sha256": "sha256:e7f314361f7675740a4963828d478d6636a99fee486aa1e99a036d783ce49555",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/refactor-rename-api",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "tests-merge-intervals",
+      "prompt": "intervals.py contains a correct implementation of merge_intervals and total_covered, specified in README.md, but there are no tests. Write a thorough unittest suite in a new file test_intervals.py that pins down every clause of the README contract: overlapping and touching intervals merge, nested intervals, unsorted input, zero-length intervals, floats, any iterable as input, the result being a new list of tuples, the input never being modified, ValueError for start > end (in both functions), empty input, and total_covered counting overlaps once. Your tests will be judged by mutation testing: they must pass against the given implementation and must fail against implementations that each violate one clause of the contract. Do not modify intervals.py, and test behavior through the public functions only (do not read or hash the implementation's source). Run the suite with `python3 -m unittest`.",
+      "tags": [
+        "tests",
+        "python",
+        "mutation"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/tests-merge-intervals",
+        "tree_sha256": "sha256:b94b4fcf17157008101b9c79845aadd3d26735fd5faae349534115b30ab450f8",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/tests-merge-intervals",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "tests-semver-compare",
+      "prompt": "src/semver.js (Node 22, ES modules, no dependencies) correctly implements parse, compare and sortVersions as specified in README.md, but it has no tests. Write a thorough test suite under test/ (one or more *.test.js files using node:test and node:assert) that pins down every clause of the README contract: the shape and number types returned by parse, rejection of invalid versions with a TypeError whose message starts with \"Invalid version\" (leading zeros in core parts and numeric prerelease identifiers, a v prefix, whitespace, missing parts, empty identifiers, non-strings), numeric comparison of core parts, prerelease precedence rules (release above prerelease, numeric vs alphanumeric identifiers, numeric identifiers compared numerically, shorter list lower), build metadata being ignored, and sortVersions returning a new, stably sorted array without modifying its input. Your tests will be judged by mutation testing: they must pass against the given implementation and must fail against implementations that each violate one clause of the contract. Do not modify src/semver.js, and test behavior through the exported functions only (do not read or hash the source). Run the suite with `node --test`.",
+      "tags": [
+        "tests",
+        "node",
+        "mutation"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/tests-semver-compare",
+        "tree_sha256": "sha256:3dcecb2b9805051ffe58b7bc5483baa2479a419843956117a322089a241ac929",
+        "environment": {
+          "lock": [
+            "node>=22"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/tests-semver-compare",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "debug-cross-module",
+      "prompt": "CI is red in this small checkout service (Python 3.10+, stdlib only; see README.md for what each module in shop/ is responsible for): `test_bulk_discount_order` in test_checkout.py fails with a total a few cents too low. Find the root cause and fix it in the module where it lives, so that every module meets the responsibility described in README.md (for example, shop/money.py's `to_cents` must return exact integer cents for any decimal string or number with at most two decimals). Do not modify shop/checkout.py, shop/catalog.py or any test file, and do not special-case particular products or prices. Run the tests with `python3 -m unittest`; all of them must pass.",
+      "tags": [
+        "debugging",
+        "python",
+        "multi-file"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/debug-cross-module",
+        "tree_sha256": "sha256:baea153f32e305d31f7cb369e642bdea1c0041fd0b69a58a7dac57d5e652f1ac",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/debug-cross-module",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "fix-shell-top-ips",
+      "prompt": "The ops helper top_ips.sh shows only five clients, puts ties in reverse order, breaks on log paths containing spaces, and exits 1 with its error on stdout. Fix top_ips.sh so `bash top_ips.sh LOGFILE [N]` follows the contract in README.md, using bash and standard POSIX tools only (it must behave the same with the BSD tools on macOS and the GNU tools on Linux): it prints at most N lines (default 10) of the form `<count> <ip>` (single space, no leading spaces), counting log lines per client IP (the first whitespace-separated field; blank lines are ignored), sorted by count highest first with equal counts ordered by IP ascending as plain byte strings (the order of `LC_ALL=C sort`, so 10.0.0.2 comes before 9.9.9.9); an empty log prints nothing and exits 0; with no LOGFILE argument, a LOGFILE that does not exist or cannot be read, or an N that is not a positive integer (digits only, at least 1), it prints an error to stderr, nothing to stdout, and exits 2; paths containing spaces work. The visible tests are in test_top_ips.py; run them with `python3 -m unittest` and keep them passing.",
+      "tags": [
+        "shell",
+        "bash",
+        "bugfix"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/fix-shell-top-ips",
+        "tree_sha256": "sha256:959b1141b143c910a7da248ddea35d78fd09faa5d3dea660ba31354c7614831f",
+        "environment": {
+          "lock": [
+            "bash>=3.2",
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 30,
+        "max_cost_usd": 1.0,
+        "max_wall_seconds": 900
+      },
+      "timeout_seconds": 900,
+      "grading": {
+        "grader_dir": "eval/graders/fix-shell-top-ips",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "build-inventory-cli",
+      "prompt": "Build the inventory CLI specified in SPEC.md from this near-empty repository, in Python 3.10+ with the standard library only. SPEC.md is the authoritative contract: the package `inventory/` run as `python3 -m inventory [--db PATH] <command>`; the JSON store format, its location rules (--db, then INVENTORY_DB, then ./inventory.json) and atomic writes; the value rules and exact error messages (`error: invalid <field>: <value>`, `error: sku <SKU> not found`, `error: sku <SKU> already exists`, `error: nothing to update`, `error: insufficient stock for <SKU> (have <n>, need <m>)`, `error: cannot read store <path>`); exit codes 0/1/2/3; and the seven commands add, remove, update, stock, show, list (filters, sorting, table and JSON output) and report, whose output formats must match SPEC.md character for character. Use decimal.Decimal for money. Work incrementally: set up the package, the store and validation first, then implement one command at a time, and after each command add unittest tests for it in tests/ and run the whole suite with `python3 -m unittest discover -s tests` before moving on. When done, the suite must cover every command, validation errors and the store format (at least 15 tests, all passing), and README.md must have a `## Usage` section with a `python3 -m inventory <command> ...` example of every command. Do not modify SPEC.md. Hidden tests will run the CLI as a subprocess against the contract.",
+      "tags": [
+        "long",
+        "greenfield",
+        "python",
+        "cli"
+      ],
+      "fixture": {
+        "path": "eval/fixtures/build-inventory-cli",
+        "tree_sha256": "sha256:62f7b6bc0e847eb52ce4092e22be4f11f4ce760afa9cada711a7574ca46b0306",
+        "environment": {
+          "lock": [
+            "python3>=3.10"
+          ],
+          "setup": []
+        }
+      },
+      "budget": {
+        "max_turns": 80,
+        "max_cost_usd": 3.0,
+        "max_wall_seconds": 2400
+      },
+      "timeout_seconds": 2400,
+      "grading": {
+        "grader_dir": "eval/graders/build-inventory-cli",
+        "command": [
+          "python3",
+          "{grader_dir}/grade.py",
+          "{workspace}"
+        ]
+      }
+    }
+  ]
+}

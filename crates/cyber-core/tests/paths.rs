@@ -95,3 +95,22 @@ fn ensure_creates_derived_directories() {
         assert!(p.cache.join(sub).is_dir(), "{sub}");
     }
 }
+
+/// Regression: the embedded git SHA went stale because the build script did not watch HEAD.
+#[test]
+fn build_info_reports_the_current_commit() {
+    if std::env::var_os("CYBER_GIT_SHA").is_some() {
+        return;
+    }
+    let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .output()
+    else {
+        return;
+    };
+    if !out.status.success() {
+        return;
+    }
+    let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(cyber_core::version::build_info().git_sha, head);
+}

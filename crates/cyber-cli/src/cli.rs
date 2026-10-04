@@ -126,6 +126,11 @@ pub enum Command {
     },
     /// Send one request to the server API.
     Api(ApiArgs),
+    /// Run evaluation manifests and write reports.
+    Eval {
+        #[command(subcommand)]
+        cmd: crate::commands::eval::EvalCmd,
+    },
     #[command(external_subcommand)]
     External(Vec<String>),
 }

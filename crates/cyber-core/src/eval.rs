@@ -39,6 +39,9 @@ pub enum ManifestKind {
     Live,
     /// Fault-injection scenarios linked to requirements.
     Recovery,
+    /// Live coding tasks, each with its own fixture, run against a model chosen at run
+    /// time; reports record the resolved model and timestamp.
+    Suite,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -87,6 +90,12 @@ pub struct Environment {
 pub struct Task {
     pub id: String,
     pub prompt: String,
+    /// The task's own fixture (required in suites, where there is no manifest fixture).
+    #[serde(default)]
+    pub fixture: Option<Fixture>,
+    /// Short labels for reporting, e.g. `bugfix`, `feature`, `long`.
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub budget: Budget,
     pub timeout_seconds: u64,
     pub grading: Grading,
@@ -167,6 +176,7 @@ pub fn validate(manifest: &Manifest, repo_root: &Path) -> Vec<String> {
     }
     match manifest.kind {
         ManifestKind::Recovery => validate_recovery(manifest, repo_root, &mut issues),
+        ManifestKind::Suite => validate_suite(manifest, repo_root, &mut issues),
         kind => validate_coding(manifest, kind, repo_root, &mut issues),
     }
     issues
@@ -194,6 +204,33 @@ fn validate_coding(manifest: &Manifest, kind: ManifestKind, root: &Path, issues:
     for task in &manifest.tasks {
         validate_task(task, fixture, root, issues);
     }
+}
+
+fn validate_suite(manifest: &Manifest, root: &Path, issues: &mut Vec<String>) {
+    if manifest.model.is_some() || manifest.fixture.is_some() || !manifest.cases.is_empty() {
+        issues.push("suites name no model or shared fixture; each task has its own fixture".into());
+    }
+    if manifest.tasks.is_empty() {
+        issues.push("suites need at least one task".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    for task in &manifest.tasks {
+        if !ids.insert(task.id.as_str()) {
+            issues.push(format!("task {}: duplicate id", task.id));
+        }
+        match &task.fixture {
+            Some(fixture) => {
+                validate_fixture(fixture, root, issues);
+                validate_task(task, fixture, root, issues);
+            }
+            None => issues.push(format!("task {}: suite tasks need a fixture", task.id)),
+        }
+    }
+}
+
+/// The fixture a task runs in: its own, else the manifest's.
+pub fn task_fixture<'a>(manifest: &'a Manifest, task: &'a Task) -> Option<&'a Fixture> {
+    task.fixture.as_ref().or(manifest.fixture.as_ref())
 }
 
 fn validate_fixture(fixture: &Fixture, root: &Path, issues: &mut Vec<String>) {

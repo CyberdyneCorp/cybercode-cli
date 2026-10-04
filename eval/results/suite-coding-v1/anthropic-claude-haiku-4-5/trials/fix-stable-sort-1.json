@@ -1,0 +1,22 @@
+{
+  "task": "fix-stable-sort",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 14,
+  "tool_calls": 13,
+  "cost_usd": 0.05834105,
+  "unpriced": false,
+  "tokens": {
+    "input": 10687,
+    "output": 5018,
+    "cache_read": 70103,
+    "cache_write": 12443
+  },
+  "latency_seconds": 58.325541875,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SD87F6BRD6J36ZQW7R089"
+}

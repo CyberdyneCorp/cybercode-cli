@@ -1,0 +1,22 @@
+{
+  "task": "refactor-split-function",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 10,
+  "tool_calls": 13,
+  "cost_usd": 0.004454809999999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 7449,
+    "output": 3358,
+    "cache_read": 45441,
+    "cache_write": 0
+  },
+  "latency_seconds": 69.492921125,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SENKTHX1EK0TA2R1JWCCA"
+}

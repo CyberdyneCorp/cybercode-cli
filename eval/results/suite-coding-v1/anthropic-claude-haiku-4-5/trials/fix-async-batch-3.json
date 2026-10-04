@@ -1,0 +1,22 @@
+{
+  "task": "fix-async-batch",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 14,
+  "tool_calls": 19,
+  "cost_usd": 0.07292325000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 7133,
+    "output": 7295,
+    "cache_read": 106340,
+    "cache_write": 14945
+  },
+  "latency_seconds": 78.444577792,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SD7KHVAP9ZCJQSMXCSSXT"
+}

@@ -1,0 +1,22 @@
+{
+  "task": "feat-validator-rules",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 21,
+  "tool_calls": 20,
+  "cost_usd": 0.09390915000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 10793,
+    "output": 8272,
+    "cache_read": 188999,
+    "cache_write": 18285
+  },
+  "latency_seconds": 89.053310375,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M43SP8RJGCC5PD2CZ9SB3997"
+}

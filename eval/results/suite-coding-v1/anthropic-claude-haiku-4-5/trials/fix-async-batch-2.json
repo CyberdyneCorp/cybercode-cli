@@ -1,0 +1,22 @@
+{
+  "task": "fix-async-batch",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 11,
+  "tool_calls": 14,
+  "cost_usd": 0.039952699999999994,
+  "unpriced": false,
+  "tokens": {
+    "input": 7121,
+    "output": 3178,
+    "cache_read": 50667,
+    "cache_write": 9500
+  },
+  "latency_seconds": 35.912563083,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: a url that keeps failing rejects fetchAll with its last error\nFAIL hidden tests: empty input resolves to an empty array\nFAIL hidden tests: no unhandled rejections\nFAIL",
+  "session_id": "ses_01M43SCQ05GKMFTBVZ2C7YSKHQ"
+}
