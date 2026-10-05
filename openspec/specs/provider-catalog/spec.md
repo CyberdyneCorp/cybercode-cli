@@ -92,6 +92,11 @@ The provider catalog is the Location-scoped registry of LLM providers and models
 - **WHEN** the user runs `/model anthropic/claude-sonnet#high`
 - **THEN** subsequent Turns send the adapter's high-effort reasoning parameters
 
+#### Scenario: Effort-only Anthropic models
+- **WHEN** a Turn uses a variant that resolves to an effort level on the Anthropic adapter (catalog `reasoning_options` of type `effort` only, such as Claude Sonnet 5.5)
+- **THEN** the request carries `thinking: {"type": "adaptive"}` and `output_config.effort`, never `budget_tokens`
+- **AND** variants that resolve to a token budget still send `thinking: {"type": "enabled", "budget_tokens": N}`
+
 ### Requirement: Request option layering
 (P0) The system SHALL build each request by merging, in order, adapter defaults, provider `request`, model `request`, variant `request`, agent `request`, and per-call overrides, deep-merging bodies per provider namespace and merging headers. `apiKey` SHALL never be sent in a request body.
 

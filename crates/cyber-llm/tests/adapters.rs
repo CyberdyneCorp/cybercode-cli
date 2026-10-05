@@ -337,6 +337,38 @@ async fn anthropic_streams_thinking_tools_and_cache_usage() {
     assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
 }
 
+/// Regression: effort-only models (Sonnet 5.5) reject `thinking.type: enabled`; an effort
+/// level must be sent as adaptive thinking with `output_config.effort`.
+#[tokio::test]
+async fn anthropic_effort_uses_adaptive_thinking() {
+    let server = MockServer::start().await;
+    let body = sse(&[
+        (
+            "message_start",
+            json!({"message": {"usage": {"input_tokens": 1, "output_tokens": 1}}}),
+        ),
+        (
+            "message_delta",
+            json!({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}}),
+        ),
+        ("message_stop", json!({})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ok_stream(body))
+        .mount(&server)
+        .await;
+
+    let mut req = request();
+    req.reasoning = Some(Reasoning::Effort("medium".into()));
+    req.temperature = Some(0.3);
+    let (_, sent) = run(ApiKind::Anthropic, &server, "/v1", req).await;
+    assert_eq!(sent["thinking"], json!({"type": "adaptive"}));
+    assert_eq!(sent["output_config"], json!({"effort": "medium"}));
+    assert!(sent.get("temperature").is_none());
+    assert!(sent["max_tokens"].as_u64().unwrap() > 16_384);
+}
+
 #[tokio::test]
 async fn http_errors_are_classified_and_redacted() {
     let server = MockServer::start().await;

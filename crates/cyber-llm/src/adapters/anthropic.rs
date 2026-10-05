@@ -46,29 +46,42 @@ impl Adapter for AnthropicAdapter {
     }
 }
 
-/// Thinking budget for an effort level when the request names effort, not tokens.
-fn effort_budget(effort: &str) -> Option<u32> {
+/// Output headroom for thinking at an effort level; adaptive thinking counts against
+/// `max_tokens`.
+fn effort_headroom(effort: &str) -> u32 {
     match effort {
-        "minimal" => Some(1024),
-        "low" => Some(4096),
-        "medium" => Some(16_384),
-        "high" => Some(32_768),
-        "xhigh" => Some(49_152),
-        "max" => Some(63_999),
-        _ => None,
+        "minimal" | "low" => 4096,
+        "medium" => 16_384,
+        "high" => 32_768,
+        "xhigh" => 49_152,
+        _ => 63_999,
     }
+}
+
+/// The `thinking` object and the output headroom it needs.
+///
+/// Models whose catalog entry offers only effort levels reject `budget_tokens` and take
+/// adaptive thinking with `output_config.effort`; models that accept budgets resolve to
+/// [`Reasoning::BudgetTokens`] in the catalog.
+fn thinking(reasoning: Option<&Reasoning>) -> Option<(Value, u32)> {
+    match reasoning? {
+        Reasoning::BudgetTokens(b) => Some((json!({ "type": "enabled", "budget_tokens": b }), *b)),
+        Reasoning::Effort(e) => Some((json!({ "type": "adaptive" }), effort_headroom(e))),
+        Reasoning::Off => None,
+    }
+}
+
+/// Anthropic effort levels; `minimal` has no Anthropic equivalent.
+fn anthropic_effort(effort: &str) -> &str {
+    if effort == "minimal" { "low" } else { effort }
 }
 
 pub(crate) fn build_body(request: &LlmRequest) -> Value {
     let cache = request.cache.then(|| json!({ "type": "ephemeral" }));
-    let budget = match &request.reasoning {
-        Some(Reasoning::BudgetTokens(n)) => Some(*n),
-        Some(Reasoning::Effort(e)) => effort_budget(e),
-        _ => None,
-    };
+    let thinking = thinking(request.reasoning.as_ref());
     let mut max_tokens = request.max_output_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
-    if let Some(b) = budget {
-        max_tokens = max_tokens.max(b + 1024);
+    if let Some((_, headroom)) = &thinking {
+        max_tokens = max_tokens.max(headroom + 1024);
     }
     let mut body = json!({
         "model": request.model,
@@ -98,20 +111,23 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
             .collect();
         map.insert("tools".into(), with_breakpoint(tools, &cache));
     }
-    optional_fields(request, budget, map);
+    optional_fields(request, thinking.map(|(t, _)| t), map);
     deep_merge(&mut body, &request.body);
     strip_credentials(&mut body);
     body
 }
 
-fn optional_fields(request: &LlmRequest, budget: Option<u32>, map: &mut Map<String, Value>) {
-    match budget {
+fn optional_fields(request: &LlmRequest, thinking: Option<Value>, map: &mut Map<String, Value>) {
+    if let Some(Reasoning::Effort(e)) = &request.reasoning {
+        map.insert(
+            "output_config".into(),
+            json!({ "effort": anthropic_effort(e) }),
+        );
+    }
+    match thinking {
         // Temperature cannot be combined with extended thinking.
-        Some(b) => {
-            map.insert(
-                "thinking".into(),
-                json!({ "type": "enabled", "budget_tokens": b }),
-            );
+        Some(t) => {
+            map.insert("thinking".into(), t);
         }
         None => {
             if let Some(t) = request.temperature {
