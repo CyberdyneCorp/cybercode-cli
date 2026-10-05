@@ -1,0 +1,22 @@
+{
+  "task": "refactor-callbacks-async",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 68,
+  "cost_usd": 0.6258461499999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 11804,
+    "output": 36011,
+    "cache_read": 2660534,
+    "cache_write": 134347
+  },
+  "latency_seconds": 378.878012125,
+  "grader_exit": 1,
+  "grader_tail": "FAIL src/once.js still has a function parameter named 'cb'\nFAIL",
+  "session_id": "ses_01M44JKWRGGVVZXGQ6JV3M2HST"
+}

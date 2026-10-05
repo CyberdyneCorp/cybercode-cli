@@ -1,0 +1,22 @@
+{
+  "task": "impl-patch-apply",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.4439456999999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 7557,
+    "output": 31854,
+    "cache_read": 1613462,
+    "cache_write": 92618
+  },
+  "latency_seconds": 270.80829675,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: random: modify with repeated lines (seed 17)\nFAIL hidden tests: random: modify with repeated lines (seed 20)\nFAIL hidden tests: random: modify with repeated lines (seed 21)\nFAIL hidden tests: random: modify with repeated lines (seed 22)\nFAIL hidden tests: random: offsets after inserted lines (seed 101)\nFAIL hidden tests: random: offsets after inserted lines (seed 102)\nFAIL hidden tests: random: offsets after inserted lines (seed 104)\nFAIL hidden tests: random: offsets after inserted lines (seed 109)\nFAIL hidden tests: random: offsets after inserted lines (seed 110)\nFAIL hidden tests: random: offsets after inserted lines (seed 111)\nFAIL hidden tests: random: offsets after inserted lines (seed 112)\nFAIL hidden tests: random: offsets after inserted lines (seed 113)\nFAIL hidden tests: random: offsets after inserted lines (seed 114)\nFAIL hidden tests: ... and 14 more\nFAIL",
+  "session_id": "ses_01M44H2PBADK9ZQ3YZHKCF3ZZR"
+}

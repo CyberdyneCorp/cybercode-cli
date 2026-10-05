@@ -1,0 +1,22 @@
+{
+  "task": "refactor-callbacks-async",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 38,
+  "tool_calls": 46,
+  "cost_usd": 0.36855845,
+  "unpriced": false,
+  "tokens": {
+    "input": 11669,
+    "output": 27954,
+    "cache_read": 1444007,
+    "cache_write": 58175
+  },
+  "latency_seconds": 234.309379542,
+  "grader_exit": 1,
+  "grader_tail": "FAIL src/fileStore.js uses `new Promise` (only src/scheduler.js may)\nFAIL src/mapLimit.js uses `new Promise` (only src/scheduler.js may)\nFAIL src/once.js still has a function parameter named 'cb'\nFAIL src/retry.js uses `new Promise` (only src/scheduler.js may)\nFAIL",
+  "session_id": "ses_01M44JKQ5NRE619NWMNNCXKHQT"
+}

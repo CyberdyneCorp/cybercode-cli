@@ -1,0 +1,22 @@
+{
+  "task": "build-ledger-cli",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 132,
+  "tool_calls": 131,
+  "cost_usd": 1.3743427,
+  "unpriced": false,
+  "tokens": {
+    "input": 8140,
+    "output": 71710,
+    "cache_read": 8652877,
+    "cache_write": 113892
+  },
+  "latency_seconds": 761.50320675,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_random_journal_10 (hidden_test_ledger.RandomDifferential.test_random_journal_10)\nFAIL hidden tests: FAIL: test_random_journal_11 (hidden_test_ledger.RandomDifferential.test_random_journal_11)\nFAIL hidden tests: FAIL: test_random_journal_12 (hidden_test_ledger.RandomDifferential.test_random_journal_12)\nFAIL hidden tests: FAIL: test_random_journal_13 (hidden_test_ledger.RandomDifferential.test_random_journal_13)\nFAIL hidden tests: FAIL: test_random_journal_14 (hidden_test_ledger.RandomDifferential.test_random_journal_14)\nFAIL hidden tests: FAIL: test_random_journal_15 (hidden_test_ledger.RandomDifferential.test_random_journal_15)\nFAIL hidden tests: FAIL: test_random_journal_16 (hidden_test_ledger.RandomDifferential.test_random_journal_16)\nFAIL hidden tests: FAIL: test_random_journal_17 (hidden_test_ledger.RandomDifferential.test_random_journal_17)\nFAIL hidden tests: FAIL: test_random_journal_18 (hidden_test_ledger.RandomDifferential.test_random_journal_18)\nFAIL hidden tests: FAIL: test_random_journal_19 (hidden_test_ledger.RandomDifferential.test_random_journal_19)\nFAIL hidden tests: FAIL: test_random_journal_20 (hidden_test_ledger.RandomDifferential.test_random_journal_20)\nFAIL hidden tests: FAIL: test_random_journal_21 (hidden_test_ledger.RandomDifferential.test_random_journal_21)\nFAIL hidden tests: FAIL: test_random_journal_22 (hidden_test_ledger.RandomDifferential.test_random_journal_22)\nFAIL hidden tests: FAIL: test_random_journal_23 (hidden_test_ledger.RandomDifferential.test_random_journal_23)\nFAIL",
+  "session_id": "ses_01M44KTVMVF41VJF7JJ6MBJSAZ"
+}

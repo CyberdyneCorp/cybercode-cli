@@ -1,0 +1,22 @@
+{
+  "task": "fix-shell-log-report",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 55,
+  "tool_calls": 54,
+  "cost_usd": 0.2737481,
+  "unpriced": false,
+  "tokens": {
+    "input": 7812,
+    "output": 22292,
+    "cache_read": 1106336,
+    "cache_write": 35074
+  },
+  "latency_seconds": 203.253625125,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=9)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=10)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=11)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=12)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=13)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=15)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=19)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=20)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=21)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=22)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=23)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=24)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=27)\nFAIL hidden tests: FAIL: test_usage_errors (hidden_test_latency_report.UsageTest.test_usage_errors) (args=['-n', '000', 'a.log'])\nFAIL",
+  "session_id": "ses_01M44K8RFTVRN154Z4PGWXPDTW"
+}

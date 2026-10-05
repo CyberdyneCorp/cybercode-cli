@@ -1,0 +1,22 @@
+{
+  "task": "impl-patch-apply",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 6,
+  "tool_calls": 8,
+  "cost_usd": 0.16966489999999998,
+  "unpriced": false,
+  "tokens": {
+    "input": 14,
+    "output": 11786,
+    "cache_read": 55672,
+    "cache_write": 16257
+  },
+  "latency_seconds": 73.319138667,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44KHHC5Z1R0ZW0JKVNC8QHQ"
+}

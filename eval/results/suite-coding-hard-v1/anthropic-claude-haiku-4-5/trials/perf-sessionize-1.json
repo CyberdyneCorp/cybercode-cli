@@ -1,0 +1,22 @@
+{
+  "task": "perf-sessionize",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 55,
+  "tool_calls": 60,
+  "cost_usd": 0.30351120000000004,
+  "unpriced": false,
+  "tokens": {
+    "input": 7517,
+    "output": 22250,
+    "cache_read": 1332492,
+    "cache_write": 41196
+  },
+  "latency_seconds": 251.450463625,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44G5V67H8QRENM3ZW2CVZYW"
+}

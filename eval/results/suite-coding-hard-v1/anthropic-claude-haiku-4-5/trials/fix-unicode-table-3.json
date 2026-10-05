@@ -1,0 +1,22 @@
+{
+  "task": "fix-unicode-table",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 65,
+  "cost_usd": 0.51607205,
+  "unpriced": false,
+  "tokens": {
+    "input": 7742,
+    "output": 33085,
+    "cache_read": 1935513,
+    "cache_write": 119483
+  },
+  "latency_seconds": 293.544643583,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44FS0Q440VTCXM5MZ41DSG6"
+}

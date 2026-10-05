@@ -1,0 +1,22 @@
+{
+  "task": "impl-dep-resolver",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.53848225,
+  "unpriced": false,
+  "tokens": {
+    "input": 7828,
+    "output": 42752,
+    "cache_read": 1790105,
+    "cache_write": 110307
+  },
+  "latency_seconds": 441.093166208,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: cli: random registry \\#429 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#462 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#506 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#523 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#548 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#551 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#605 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#621 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#756 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#808 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#821 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#862 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#882 matches the brute-force optimum\nFAIL hidden tests: cli: resolves the 67-package registry within 2 seconds\nFAIL",
+  "session_id": "ses_01M44HFX2N50H7WFH05C94JYPM"
+}

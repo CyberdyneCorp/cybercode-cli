@@ -1,0 +1,22 @@
+{
+  "task": "tests-lru-mutation",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 62,
+  "cost_usd": 0.58838035,
+  "unpriced": false,
+  "tokens": {
+    "input": 3975,
+    "output": 38027,
+    "cache_read": 2402816,
+    "cache_write": 123191
+  },
+  "latency_seconds": 304.80014375,
+  "grader_exit": 1,
+  "grader_tail": "FAIL mutant survived: m02_get_extends_ttl (Mutant: get extends the entry's expiry)\nFAIL mutant survived: m29_prune_keeps_size (Mutant: prune() does not subtract pruned sizes from totalSize)\nFAIL",
+  "session_id": "ses_01M44JZFX9EXHB4QN1PP5SY203"
+}

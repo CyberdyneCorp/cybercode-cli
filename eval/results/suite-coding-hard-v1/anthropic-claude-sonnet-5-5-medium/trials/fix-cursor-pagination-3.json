@@ -1,0 +1,22 @@
+{
+  "task": "fix-cursor-pagination",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 5,
+  "tool_calls": 5,
+  "cost_usd": 0.0935681,
+  "unpriced": false,
+  "tokens": {
+    "input": 12,
+    "output": 4858,
+    "cache_read": 41033,
+    "cache_write": 14703
+  },
+  "latency_seconds": 35.989729542,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44KHBW13R238DCRCYQK3B5P"
+}

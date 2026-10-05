@@ -1,0 +1,22 @@
+{
+  "task": "build-minimake",
+  "trial": 2,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 17,
+  "tool_calls": 20,
+  "cost_usd": 1.2724847,
+  "unpriced": false,
+  "tokens": {
+    "input": 36,
+    "output": 97003,
+    "cache_read": 682401,
+    "cache_write": 66361
+  },
+  "latency_seconds": 659.619944208,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44NRG9WY5BTFKWEQ7CT2RZK"
+}

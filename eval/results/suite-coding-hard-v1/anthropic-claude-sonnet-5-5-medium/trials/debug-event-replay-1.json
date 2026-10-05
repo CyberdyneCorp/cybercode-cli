@@ -1,0 +1,22 @@
+{
+  "task": "debug-event-replay",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 6,
+  "tool_calls": 6,
+  "cost_usd": 0.10972540000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 14,
+    "output": 5124,
+    "cache_read": 65937,
+    "cache_write": 18108
+  },
+  "latency_seconds": 41.443389583,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=27)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=28)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=29)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=32)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=33)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=34)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=35)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=36)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=37)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=38)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=39)\nFAIL hidden tests: FAIL: test_replay_tool_modes_agree (hidden_test_ledger.ReplayToolTest.test_replay_tool_modes_agree)\nFAIL hidden tests: FAIL: test_first_event_after_snapshot_survives_restart (hidden_test_ledger.SnapshotTest.test_first_event_after_snapshot_survives_restart)\nFAIL hidden tests: FAIL: test_repeated_snapshots_and_restarts (hidden_test_ledger.SnapshotTest.test_repeated_snapshots_and_restarts)\nFAIL",
+  "session_id": "ses_01M44JSDX4H2SDSQQYV8EJRESK"
+}

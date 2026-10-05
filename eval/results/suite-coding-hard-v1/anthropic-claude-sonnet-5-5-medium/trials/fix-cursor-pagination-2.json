@@ -1,0 +1,22 @@
+{
+  "task": "fix-cursor-pagination",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 6,
+  "tool_calls": 6,
+  "cost_usd": 0.10129320000000003,
+  "unpriced": false,
+  "tokens": {
+    "input": 14,
+    "output": 5198,
+    "cache_read": 56101,
+    "cache_write": 15226
+  },
+  "latency_seconds": 37.050714041,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: ordering follows README: code units, nulls last both ways, id tie-break\nFAIL hidden tests: filters: category exact, inclusive price range, null prices excluded\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 1, 12 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 2, 20 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 3, 25 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 4, 7 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 5, 30 items)\nFAIL hidden tests: filtered walks, every sort and page size (seed 21, {\"category\":\"home\"})\nFAIL hidden tests: filtered walks, every sort and page size (seed 22, {\"minPrice\":0,\"maxPrice\":2})\nFAIL hidden tests: filtered walks, every sort and page size (seed 23, {\"category\":\"office\",\"minPrice\":0.1})\nFAIL hidden tests: prevCursor from any page returns exactly the previous forward page\nFAIL hidden tests: limit may change during a walk\nFAIL hidden tests: inserts and deletes between forward pages (randomized)\nFAIL hidden tests: inserts and deletes between backward pages (randomized)\nFAIL",
+  "session_id": "ses_01M44KH4K4KW9RT57RKV0MKS5P"
+}

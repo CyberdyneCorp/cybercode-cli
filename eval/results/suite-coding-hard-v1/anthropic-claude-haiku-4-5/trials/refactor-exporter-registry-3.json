@@ -1,0 +1,22 @@
+{
+  "task": "refactor-exporter-registry",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.34227385,
+  "unpriced": false,
+  "tokens": {
+    "input": 4378,
+    "output": 20102,
+    "cache_read": 1407196,
+    "cache_write": 77333
+  },
+  "latency_seconds": 191.278485042,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=10, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=10, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=11, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=11, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: ... and 1681 more failing cases\nFAIL hidden_test_structure: ERROR: test_api_names (hidden_test_structure.RegistryApiTest.test_api_names)\nFAIL hidden_test_structure: FAIL: test_available_formats (hidden_test_structure.RegistryApiTest.test_available_formats)\nFAIL hidden_test_structure: FAIL: test_builtin_exporters (hidden_test_structure.RegistryApiTest.test_builtin_exporters) (fmt='ndjson')\nFAIL hidden_test_structure: FAIL: test_builtin_exporters (hidden_test_structure.RegistryApiTest.test_builtin_exporters) (fmt='markdown')\nFAIL hidden_test_structure: FAIL: test_builtin_exporters (hidden_test_structure.RegistryApiTest.test_builtin_exporters) (fmt='html')\nFAIL hidden_test_structure: FAIL: test_unknown_format_message (hidden_test_structure.RegistryApiTest.test_unknown_format_message)\nFAIL hidden_test_plugin: ERROR: hidden_test_plugin (unittest.loader._FailedTest.hidden_test_plugin)\nFAIL",
+  "session_id": "ses_01M44GKRW5E66WPNRW778A7DWD"
+}

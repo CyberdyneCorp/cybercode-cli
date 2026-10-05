@@ -1,0 +1,22 @@
+{
+  "task": "tests-cron-mutation",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 41,
+  "tool_calls": 41,
+  "cost_usd": 0.4757889999999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 7352,
+    "output": 40292,
+    "cache_read": 1830195,
+    "cache_write": 67166
+  },
+  "latency_seconds": 375.220216334,
+  "grader_exit": 1,
+  "grader_tail": "FAIL mutant survived: m08_star_step_unrestricted (Mutant: a day field starting with * (like */2) counts as unrestricted)\nFAIL",
+  "session_id": "ses_01M44GQ5VQ2XGDWMAH6MG89DGF"
+}

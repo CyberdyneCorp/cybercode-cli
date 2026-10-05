@@ -1,0 +1,22 @@
+{
+  "task": "refactor-callbacks-async",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 15,
+  "tool_calls": 32,
+  "cost_usd": 0.4162951000000001,
+  "unpriced": false,
+  "tokens": {
+    "input": 32,
+    "output": 24951,
+    "cache_read": 369293,
+    "cache_write": 37145
+  },
+  "latency_seconds": 169.142533375,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44MG9RSFYA7509NK08RRA6S"
+}

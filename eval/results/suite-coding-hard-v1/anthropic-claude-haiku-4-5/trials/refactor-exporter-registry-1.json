@@ -1,0 +1,22 @@
+{
+  "task": "refactor-exporter-registry",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.38411344999999997,
+  "unpriced": false,
+  "tokens": {
+    "input": 4378,
+    "output": 22842,
+    "cache_read": 1573417,
+    "cache_write": 86547
+  },
+  "latency_seconds": 233.174062375,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden_test_structure: ERROR: test_api_names (hidden_test_structure.RegistryApiTest.test_api_names)\nFAIL hidden_test_plugin: ERROR: hidden_test_plugin (unittest.loader._FailedTest.hidden_test_plugin)\nFAIL",
+  "session_id": "ses_01M44GDVNJ0HNV9WSPVPEACZT4"
+}

@@ -1,0 +1,22 @@
+{
+  "task": "tests-lru-mutation",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 40,
+  "tool_calls": 39,
+  "cost_usd": 0.46673080000000006,
+  "unpriced": false,
+  "tokens": {
+    "input": 7649,
+    "output": 38032,
+    "cache_read": 1706918,
+    "cache_write": 78584
+  },
+  "latency_seconds": 360.6714865,
+  "grader_exit": 1,
+  "grader_tail": "FAIL mutant survived: m02_get_extends_ttl (Mutant: get extends the entry's expiry)\nFAIL mutant survived: m09_set_existing_keeps_expiry (Mutant: set on an existing key keeps the old expiry)\nFAIL mutant survived: m13_evicts_at_most_one (Mutant: set evicts at most one entry)\nFAIL",
+  "session_id": "ses_01M44JTX52G9HM4S9DYNE7P71Q"
+}

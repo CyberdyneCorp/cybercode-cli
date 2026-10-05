@@ -1,0 +1,22 @@
+{
+  "task": "debug-billing-proration",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.3660257,
+  "unpriced": false,
+  "tokens": {
+    "input": 4087,
+    "output": 22298,
+    "cache_read": 1404962,
+    "cache_write": 87962
+  },
+  "latency_seconds": 218.01331275,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='jpy')\nFAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='krw')\nFAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='bhd')\nFAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='kwd')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='XYZ')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='999')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='US')\nFAIL",
+  "session_id": "ses_01M44FCN6NZPXG1K4NRMB8S62J"
+}

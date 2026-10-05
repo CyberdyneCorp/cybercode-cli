@@ -1,0 +1,22 @@
+{
+  "task": "tests-lru-mutation",
+  "trial": 2,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 11,
+  "tool_calls": 13,
+  "cost_usd": 0.5404243999999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 24,
+    "output": 37310,
+    "cache_read": 294057,
+    "cache_write": 43386
+  },
+  "latency_seconds": 197.50886025,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44MNG3QN05103SNFAPJNM0M"
+}

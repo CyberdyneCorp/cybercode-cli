@@ -1,0 +1,22 @@
+{
+  "task": "debug-event-replay",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.49055170000000015,
+  "unpriced": false,
+  "tokens": {
+    "input": 3871,
+    "output": 34111,
+    "cache_read": 1736657,
+    "cache_write": 113968
+  },
+  "latency_seconds": 297.548734125,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=19)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=20)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=21)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=22)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=26)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=28)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=29)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=31)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=33)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=35)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=36)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=37)\nFAIL hidden tests: FAIL: test_month_is_utc_month (hidden_test_ledger.StatementTest.test_month_is_utc_month)\nFAIL hidden tests: FAIL: test_year_boundary_in_utc (hidden_test_ledger.StatementTest.test_year_boundary_in_utc)\nFAIL",
+  "session_id": "ses_01M44FKAH5EWZT4HJSVN0BN6VY"
+}

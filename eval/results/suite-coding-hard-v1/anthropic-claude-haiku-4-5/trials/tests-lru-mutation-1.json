@@ -1,0 +1,22 @@
+{
+  "task": "tests-lru-mutation",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 49,
+  "tool_calls": 50,
+  "cost_usd": 0.5618302,
+  "unpriced": false,
+  "tokens": {
+    "input": 7687,
+    "output": 37177,
+    "cache_read": 2677282,
+    "cache_write": 80424
+  },
+  "latency_seconds": 343.232340292,
+  "grader_exit": 1,
+  "grader_tail": "FAIL mutant survived: m13_evicts_at_most_one (Mutant: set evicts at most one entry)\nFAIL mutant survived: m29_prune_keeps_size (Mutant: prune() does not subtract pruned sizes from totalSize)\nFAIL",
+  "session_id": "ses_01M44JP91N1CX9FZQE9VNZX3FJ"
+}

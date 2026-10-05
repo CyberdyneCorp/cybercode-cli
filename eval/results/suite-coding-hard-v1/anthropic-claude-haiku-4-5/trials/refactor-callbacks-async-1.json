@@ -1,0 +1,22 @@
+{
+  "task": "refactor-callbacks-async",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 47,
+  "tool_calls": 56,
+  "cost_usd": 0.44766225,
+  "unpriced": false,
+  "tokens": {
+    "input": 7799,
+    "output": 31060,
+    "cache_read": 2038670,
+    "cache_write": 64557
+  },
+  "latency_seconds": 271.101964375,
+  "grader_exit": 1,
+  "grader_tail": "FAIL src/mapLimit.js uses `new Promise` (only src/scheduler.js may)\nFAIL src/once.js still has a function parameter named 'cb'\nFAIL src/scheduler.js still has a function parameter named 'callback'\nFAIL hidden tests: differential: mapLimit ordering, concurrency and first-error semantics (limit must be a positive integer)\nFAIL hidden tests: differential: runPipeline (runPipeline: seed 6: .outcome.error.message: got \"failure close-3\", expected \"failure exists-2\")\nFAIL",
+  "session_id": "ses_01M44JBK40XC6VR8E5WGRG368K"
+}

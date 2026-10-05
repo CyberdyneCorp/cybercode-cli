@@ -1,0 +1,22 @@
+{
+  "task": "fix-cursor-pagination",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 60,
+  "tool_calls": 77,
+  "cost_usd": 0.44736560000000003,
+  "unpriced": false,
+  "tokens": {
+    "input": 7661,
+    "output": 34298,
+    "cache_read": 1937521,
+    "cache_write": 59570
+  },
+  "latency_seconds": 590.430830375,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: inserts and deletes between forward pages (randomized)\nFAIL hidden tests: inserts and deletes between backward pages (randomized)\nFAIL hidden tests: an insert and a delete between pages are both visible on the next page\nFAIL hidden tests: prevCursor is null when nothing sorts before the page any more\nFAIL",
+  "session_id": "ses_01M44GX2P1BBFTJMA8RWGB9PYN"
+}

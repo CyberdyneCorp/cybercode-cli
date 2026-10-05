@@ -1,0 +1,22 @@
+{
+  "task": "fix-shell-kv-store",
+  "trial": 2,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 11,
+  "tool_calls": 14,
+  "cost_usd": 0.37855830000000007,
+  "unpriced": false,
+  "tokens": {
+    "input": 24,
+    "output": 24845,
+    "cache_read": 243264,
+    "cache_write": 32563
+  },
+  "latency_seconds": 186.446801458,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44N3S8FMCS00Q12J9BTM33E"
+}

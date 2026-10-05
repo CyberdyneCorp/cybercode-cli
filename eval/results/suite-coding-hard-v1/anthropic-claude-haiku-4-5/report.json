@@ -1,0 +1,1680 @@
+{
+  "schema_version": 1,
+  "report": "cyber-eval",
+  "harness": {
+    "version": "0.1.0",
+    "git_sha": "ddd3b4f",
+    "target": "aarch64-apple-darwin"
+  },
+  "manifest": {
+    "id": "suite-coding-hard-v1",
+    "path": "eval/manifests/suite-coding-hard-v1.json",
+    "sha256": "sha256:d301df3feb57e8faf2853710e895e15822bd15a13e5cbd1351ed1cfd6fb5483f",
+    "kind": "suite"
+  },
+  "model": {
+    "ref": "anthropic/claude-haiku-4-5",
+    "provider": "anthropic",
+    "name": "Claude Haiku 4.5 (latest)",
+    "context_limit": 200000
+  },
+  "deterministic": false,
+  "started_at": "2026-10-04T22:08:43Z",
+  "finished_at": "2026-10-04T23:53:30Z",
+  "trials_per_task": 3,
+  "options": {
+    "mode": "bypass",
+    "sandbox": "workspace-write",
+    "interactive": false
+  },
+  "summary": {
+    "tasks": 20,
+    "trials": 60,
+    "passed": 17,
+    "success_rate": 0.2833,
+    "success_ci95": [
+      0.1851,
+      0.4077
+    ],
+    "infrastructure_failures": 0,
+    "human_interventions": 0,
+    "cost_usd": 34.171772,
+    "cost_per_success_usd": 2.010104,
+    "median_cost_per_successful_task_usd": 0.444703,
+    "median_latency_seconds": 309.2,
+    "unpriced": false,
+    "tokens": {
+      "input": 451474,
+      "output": 2208883,
+      "cache_read": 153538000,
+      "cache_write": 5857666
+    }
+  },
+  "tasks": [
+    {
+      "id": "debug-billing-proration",
+      "tags": [
+        "debugging",
+        "hard",
+        "python",
+        "multi-file",
+        "decimal",
+        "dates"
+      ],
+      "trials": 3,
+      "passed": 1,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.140292,
+      "median_turns": 61.0
+    },
+    {
+      "id": "debug-event-replay",
+      "tags": [
+        "debugging",
+        "hard",
+        "python",
+        "multi-file",
+        "idempotency",
+        "event-sourcing",
+        "decimal"
+      ],
+      "trials": 3,
+      "passed": 2,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.35913,
+      "median_turns": 61.0
+    },
+    {
+      "id": "fix-unicode-table",
+      "tags": [
+        "bugfix",
+        "hard",
+        "python",
+        "unicode",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.448038,
+      "median_turns": 61.0
+    },
+    {
+      "id": "feat-incremental-indexer",
+      "tags": [
+        "feature",
+        "hard",
+        "python",
+        "caching",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.318677,
+      "median_turns": 61.0
+    },
+    {
+      "id": "impl-expr-evaluator",
+      "tags": [
+        "spec",
+        "hard",
+        "python",
+        "interpreter",
+        "parsing"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.50948,
+      "median_turns": 61.0
+    },
+    {
+      "id": "perf-sessionize",
+      "tags": [
+        "performance",
+        "hard",
+        "python",
+        "analytics"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.018,
+      "median_turns": 61.0
+    },
+    {
+      "id": "refactor-exporter-registry",
+      "tags": [
+        "refactor",
+        "hard",
+        "python",
+        "multi-file",
+        "plugins"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.086049,
+      "median_turns": 61.0
+    },
+    {
+      "id": "tests-cron-mutation",
+      "tags": [
+        "tests",
+        "hard",
+        "python",
+        "mutation",
+        "dates"
+      ],
+      "trials": 3,
+      "passed": 2,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.345527,
+      "median_turns": 42.0
+    },
+    {
+      "id": "fix-cursor-pagination",
+      "tags": [
+        "bugfix",
+        "hard",
+        "node",
+        "pagination",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.104056,
+      "median_turns": 60.0
+    },
+    {
+      "id": "impl-patch-apply",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "diff",
+        "parsing"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.746771,
+      "median_turns": 61.0
+    },
+    {
+      "id": "impl-dep-resolver",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "semver",
+        "backtracking"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.456198,
+      "median_turns": 61.0
+    },
+    {
+      "id": "impl-template-engine",
+      "tags": [
+        "spec",
+        "hard",
+        "node",
+        "templating",
+        "parsing"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 2.162836,
+      "median_turns": 61.0
+    },
+    {
+      "id": "perf-leaderboard",
+      "tags": [
+        "performance",
+        "hard",
+        "node",
+        "data-structures"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.764125,
+      "median_turns": 61.0
+    },
+    {
+      "id": "refactor-callbacks-async",
+      "tags": [
+        "refactor",
+        "hard",
+        "node",
+        "async",
+        "multi-file"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.442067,
+      "median_turns": 47.0
+    },
+    {
+      "id": "tests-lru-mutation",
+      "tags": [
+        "tests",
+        "hard",
+        "node",
+        "mutation",
+        "caching"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.616941,
+      "median_turns": 49.0
+    },
+    {
+      "id": "fix-job-queue",
+      "tags": [
+        "concurrency",
+        "hard",
+        "node",
+        "async",
+        "bugfix"
+      ],
+      "trials": 3,
+      "passed": 3,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.157769,
+      "median_turns": 48.0
+    },
+    {
+      "id": "fix-shell-log-report",
+      "tags": [
+        "bugfix",
+        "hard",
+        "bash",
+        "awk",
+        "text-processing"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.864669,
+      "median_turns": 61.0
+    },
+    {
+      "id": "fix-shell-kv-store",
+      "tags": [
+        "bugfix",
+        "hard",
+        "bash",
+        "quoting",
+        "cli"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 1.502446,
+      "median_turns": 61.0
+    },
+    {
+      "id": "build-ledger-cli",
+      "tags": [
+        "greenfield",
+        "hard",
+        "python",
+        "long",
+        "cli",
+        "decimal"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 4.403112,
+      "median_turns": 132.0
+    },
+    {
+      "id": "build-minimake",
+      "tags": [
+        "greenfield",
+        "hard",
+        "node",
+        "long",
+        "cli",
+        "build-system"
+      ],
+      "trials": 3,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 4.725589,
+      "median_turns": 127.0
+    }
+  ],
+  "trials": [
+    {
+      "task": "build-ledger-cli",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 146,
+      "tool_calls": 145,
+      "cost_usd": 1.5206136499999996,
+      "unpriced": false,
+      "tokens": {
+        "input": 8234,
+        "output": 79336,
+        "cache_read": 9695309,
+        "cache_write": 116935
+      },
+      "latency_seconds": 686.58386875,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_journal_10 (hidden_test_ledger.RandomDifferential.test_random_journal_10)\nFAIL hidden tests: FAIL: test_random_journal_11 (hidden_test_ledger.RandomDifferential.test_random_journal_11)\nFAIL hidden tests: FAIL: test_random_journal_12 (hidden_test_ledger.RandomDifferential.test_random_journal_12)\nFAIL hidden tests: FAIL: test_random_journal_13 (hidden_test_ledger.RandomDifferential.test_random_journal_13)\nFAIL hidden tests: FAIL: test_random_journal_14 (hidden_test_ledger.RandomDifferential.test_random_journal_14)\nFAIL hidden tests: FAIL: test_random_journal_15 (hidden_test_ledger.RandomDifferential.test_random_journal_15)\nFAIL hidden tests: FAIL: test_random_journal_16 (hidden_test_ledger.RandomDifferential.test_random_journal_16)\nFAIL hidden tests: FAIL: test_random_journal_17 (hidden_test_ledger.RandomDifferential.test_random_journal_17)\nFAIL hidden tests: FAIL: test_random_journal_18 (hidden_test_ledger.RandomDifferential.test_random_journal_18)\nFAIL hidden tests: FAIL: test_random_journal_19 (hidden_test_ledger.RandomDifferential.test_random_journal_19)\nFAIL hidden tests: FAIL: test_random_journal_20 (hidden_test_ledger.RandomDifferential.test_random_journal_20)\nFAIL hidden tests: FAIL: test_random_journal_21 (hidden_test_ledger.RandomDifferential.test_random_journal_21)\nFAIL hidden tests: FAIL: test_random_journal_22 (hidden_test_ledger.RandomDifferential.test_random_journal_22)\nFAIL hidden tests: FAIL: test_random_journal_23 (hidden_test_ledger.RandomDifferential.test_random_journal_23)\nFAIL",
+      "session_id": "ses_01M44KN7SKAQ2DQ8BFTZE5MGFY"
+    },
+    {
+      "task": "build-ledger-cli",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 129,
+      "tool_calls": 128,
+      "cost_usd": 1.5081553500000011,
+      "unpriced": false,
+      "tokens": {
+        "input": 8106,
+        "output": 80292,
+        "cache_read": 9502256,
+        "cache_write": 118691
+      },
+      "latency_seconds": 810.110919583,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_journal_10 (hidden_test_ledger.RandomDifferential.test_random_journal_10)\nFAIL hidden tests: FAIL: test_random_journal_11 (hidden_test_ledger.RandomDifferential.test_random_journal_11)\nFAIL hidden tests: FAIL: test_random_journal_12 (hidden_test_ledger.RandomDifferential.test_random_journal_12)\nFAIL hidden tests: FAIL: test_random_journal_13 (hidden_test_ledger.RandomDifferential.test_random_journal_13)\nFAIL hidden tests: FAIL: test_random_journal_14 (hidden_test_ledger.RandomDifferential.test_random_journal_14)\nFAIL hidden tests: FAIL: test_random_journal_15 (hidden_test_ledger.RandomDifferential.test_random_journal_15)\nFAIL hidden tests: FAIL: test_random_journal_16 (hidden_test_ledger.RandomDifferential.test_random_journal_16)\nFAIL hidden tests: FAIL: test_random_journal_17 (hidden_test_ledger.RandomDifferential.test_random_journal_17)\nFAIL hidden tests: FAIL: test_random_journal_18 (hidden_test_ledger.RandomDifferential.test_random_journal_18)\nFAIL hidden tests: FAIL: test_random_journal_19 (hidden_test_ledger.RandomDifferential.test_random_journal_19)\nFAIL hidden tests: FAIL: test_random_journal_20 (hidden_test_ledger.RandomDifferential.test_random_journal_20)\nFAIL hidden tests: FAIL: test_random_journal_21 (hidden_test_ledger.RandomDifferential.test_random_journal_21)\nFAIL hidden tests: FAIL: test_random_journal_22 (hidden_test_ledger.RandomDifferential.test_random_journal_22)\nFAIL hidden tests: FAIL: test_random_journal_23 (hidden_test_ledger.RandomDifferential.test_random_journal_23)\nFAIL",
+      "session_id": "ses_01M44KSJPAM6Y8DT8H517CD63T"
+    },
+    {
+      "task": "build-ledger-cli",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 132,
+      "tool_calls": 131,
+      "cost_usd": 1.3743427,
+      "unpriced": false,
+      "tokens": {
+        "input": 8140,
+        "output": 71710,
+        "cache_read": 8652877,
+        "cache_write": 113892
+      },
+      "latency_seconds": 761.50320675,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_journal_10 (hidden_test_ledger.RandomDifferential.test_random_journal_10)\nFAIL hidden tests: FAIL: test_random_journal_11 (hidden_test_ledger.RandomDifferential.test_random_journal_11)\nFAIL hidden tests: FAIL: test_random_journal_12 (hidden_test_ledger.RandomDifferential.test_random_journal_12)\nFAIL hidden tests: FAIL: test_random_journal_13 (hidden_test_ledger.RandomDifferential.test_random_journal_13)\nFAIL hidden tests: FAIL: test_random_journal_14 (hidden_test_ledger.RandomDifferential.test_random_journal_14)\nFAIL hidden tests: FAIL: test_random_journal_15 (hidden_test_ledger.RandomDifferential.test_random_journal_15)\nFAIL hidden tests: FAIL: test_random_journal_16 (hidden_test_ledger.RandomDifferential.test_random_journal_16)\nFAIL hidden tests: FAIL: test_random_journal_17 (hidden_test_ledger.RandomDifferential.test_random_journal_17)\nFAIL hidden tests: FAIL: test_random_journal_18 (hidden_test_ledger.RandomDifferential.test_random_journal_18)\nFAIL hidden tests: FAIL: test_random_journal_19 (hidden_test_ledger.RandomDifferential.test_random_journal_19)\nFAIL hidden tests: FAIL: test_random_journal_20 (hidden_test_ledger.RandomDifferential.test_random_journal_20)\nFAIL hidden tests: FAIL: test_random_journal_21 (hidden_test_ledger.RandomDifferential.test_random_journal_21)\nFAIL hidden tests: FAIL: test_random_journal_22 (hidden_test_ledger.RandomDifferential.test_random_journal_22)\nFAIL hidden tests: FAIL: test_random_journal_23 (hidden_test_ledger.RandomDifferential.test_random_journal_23)\nFAIL",
+      "session_id": "ses_01M44KTVMVF41VJF7JJ6MBJSAZ"
+    },
+    {
+      "task": "build-minimake",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 151,
+      "tool_calls": 150,
+      "cost_usd": 1.7677690499999996,
+      "unpriced": false,
+      "tokens": {
+        "input": 8531,
+        "output": 75991,
+        "cache_read": 10973518,
+        "cache_write": 225545
+      },
+      "latency_seconds": 867.040951583,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_existing_file_without_rule (hidden_test_minimake.RebuildTest.test_existing_file_without_rule)\nFAIL hidden tests: FAIL: test_newer_prerequisite (hidden_test_minimake.RebuildTest.test_newer_prerequisite)\nFAIL hidden tests: FAIL: test_self_dependency (hidden_test_minimake.RebuildTest.test_self_dependency)\nFAIL hidden tests: FAIL: test_dry_run (hidden_test_minimake.RecipeTest.test_dry_run)\nFAIL hidden tests: FAIL: test_dry_run_when_up_to_date (hidden_test_minimake.RecipeTest.test_dry_run_when_up_to_date)\nFAIL hidden tests: FAIL: test_each_line_runs_in_its_own_shell (hidden_test_minimake.RecipeTest.test_each_line_runs_in_its_own_shell)\nFAIL hidden tests: FAIL: test_empty_expanded_lines_are_skipped (hidden_test_minimake.RecipeTest.test_empty_expanded_lines_are_skipped)\nFAIL hidden tests: FAIL: test_append (hidden_test_minimake.VariableTest.test_append)\nFAIL hidden tests: FAIL: test_append_keeps_flavor (hidden_test_minimake.VariableTest.test_append_keeps_flavor)\nFAIL hidden tests: FAIL: test_recursive_self_reference_is_an_error (hidden_test_minimake.VariableTest.test_recursive_self_reference_is_an_error)\nFAIL hidden tests: FAIL: test_absolute_patterns (hidden_test_minimake.WildcardTest.test_absolute_patterns)\nFAIL hidden tests: FAIL: test_patterns_keep_their_order_and_spelling (hidden_test_minimake.WildcardTest.test_patterns_keep_their_order_and_spelling)\nFAIL hidden tests: FAIL: test_question_mark_and_sets (hidden_test_minimake.WildcardTest.test_question_mark_and_sets)\nFAIL hidden tests: FAIL: test_sorted_and_hidden (hidden_test_minimake.WildcardTest.test_sorted_and_hidden)\nFAIL",
+      "session_id": "ses_01M44KWRGGEX90VE7858WYXPGM"
+    },
+    {
+      "task": "build-minimake",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 127,
+      "tool_calls": 126,
+      "cost_usd": 1.39094885,
+      "unpriced": false,
+      "tokens": {
+        "input": 8395,
+        "output": 68341,
+        "cache_read": 9002851,
+        "cache_write": 112451
+      },
+      "latency_seconds": 746.822818209,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_target_without_recipe_and_missing_file_is_updated (hidden_test_minimake.RebuildTest.test_target_without_recipe_and_missing_file_is_updated)\nFAIL hidden tests: FAIL: test_empty_expanded_lines_are_skipped (hidden_test_minimake.RecipeTest.test_empty_expanded_lines_are_skipped)\nFAIL hidden tests: FAIL: test_failure_stops_everything (hidden_test_minimake.RecipeTest.test_failure_stops_everything)\nFAIL hidden tests: FAIL: test_append (hidden_test_minimake.VariableTest.test_append)\nFAIL hidden tests: FAIL: test_append_keeps_flavor (hidden_test_minimake.VariableTest.test_append_keeps_flavor)\nFAIL hidden tests: FAIL: test_conditional_assignment (hidden_test_minimake.VariableTest.test_conditional_assignment)\nFAIL hidden tests: FAIL: test_recursive_and_simple_flavors (hidden_test_minimake.VariableTest.test_recursive_and_simple_flavors)\nFAIL hidden tests: FAIL: test_recursive_self_reference_is_an_error (hidden_test_minimake.VariableTest.test_recursive_self_reference_is_an_error)\nFAIL hidden tests: FAIL: test_simple_self_reference_is_fine (hidden_test_minimake.VariableTest.test_simple_self_reference_is_fine)\nFAIL hidden tests: FAIL: test_absolute_patterns (hidden_test_minimake.WildcardTest.test_absolute_patterns)\nFAIL hidden tests: FAIL: test_literal_names_and_no_matches (hidden_test_minimake.WildcardTest.test_literal_names_and_no_matches)\nFAIL hidden tests: FAIL: test_patterns_keep_their_order_and_spelling (hidden_test_minimake.WildcardTest.test_patterns_keep_their_order_and_spelling)\nFAIL hidden tests: FAIL: test_question_mark_and_sets (hidden_test_minimake.WildcardTest.test_question_mark_and_sets)\nFAIL hidden tests: FAIL: test_sorted_and_hidden (hidden_test_minimake.WildcardTest.test_sorted_and_hidden)\nFAIL",
+      "session_id": "ses_01M44MAKJZ8CDX47G9G06NCZPJ"
+    },
+    {
+      "task": "build-minimake",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 127,
+      "tool_calls": 126,
+      "cost_usd": 1.5668706500000005,
+      "unpriced": false,
+      "tokens": {
+        "input": 8391,
+        "output": 82249,
+        "cache_read": 9918409,
+        "cache_write": 124315
+      },
+      "latency_seconds": 842.158966833,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_newer_prerequisite (hidden_test_minimake.RebuildTest.test_newer_prerequisite)\nFAIL hidden tests: FAIL: test_order_only_never_triggers_but_is_built (hidden_test_minimake.RebuildTest.test_order_only_never_triggers_but_is_built)\nFAIL hidden tests: FAIL: test_phony_targets (hidden_test_minimake.RebuildTest.test_phony_targets)\nFAIL hidden tests: FAIL: test_self_dependency (hidden_test_minimake.RebuildTest.test_self_dependency)\nFAIL hidden tests: FAIL: test_target_without_recipe (hidden_test_minimake.RebuildTest.test_target_without_recipe)\nFAIL hidden tests: FAIL: test_up_to_date_when_target_is_newer (hidden_test_minimake.RebuildTest.test_up_to_date_when_target_is_newer)\nFAIL hidden tests: FAIL: test_dry_run_runs_plus_lines (hidden_test_minimake.RecipeTest.test_dry_run_runs_plus_lines)\nFAIL hidden tests: FAIL: test_dry_run_when_up_to_date (hidden_test_minimake.RecipeTest.test_dry_run_when_up_to_date)\nFAIL hidden tests: FAIL: test_empty_expanded_lines_are_skipped (hidden_test_minimake.RecipeTest.test_empty_expanded_lines_are_skipped)\nFAIL hidden tests: FAIL: test_failure_stops_everything (hidden_test_minimake.RecipeTest.test_failure_stops_everything)\nFAIL hidden tests: FAIL: test_append_keeps_flavor (hidden_test_minimake.VariableTest.test_append_keeps_flavor)\nFAIL hidden tests: FAIL: test_absolute_patterns (hidden_test_minimake.WildcardTest.test_absolute_patterns)\nFAIL hidden tests: FAIL: test_patterns_keep_their_order_and_spelling (hidden_test_minimake.WildcardTest.test_patterns_keep_their_order_and_spelling)\nFAIL hidden tests: FAIL: test_sorted_and_hidden (hidden_test_minimake.WildcardTest.test_sorted_and_hidden)\nFAIL",
+      "session_id": "ses_01M44MJDQGQET554JQSTS3KEWK"
+    },
+    {
+      "task": "debug-billing-proration",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 68,
+      "cost_usd": 0.46130150000000003,
+      "unpriced": false,
+      "tokens": {
+        "input": 4097,
+        "output": 29497,
+        "cache_read": 1748320,
+        "cache_write": 107910
+      },
+      "latency_seconds": 255.669168041,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FCN4YFXBD087R9NPD6TW4"
+    },
+    {
+      "task": "debug-billing-proration",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.3660257,
+      "unpriced": false,
+      "tokens": {
+        "input": 4087,
+        "output": 22298,
+        "cache_read": 1404962,
+        "cache_write": 87962
+      },
+      "latency_seconds": 218.01331275,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='jpy')\nFAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='krw')\nFAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='bhd')\nFAIL hidden tests: FAIL: test_minor_units_for_every_accepted_code (hidden_test_billing.MoneyTest.test_minor_units_for_every_accepted_code) (code='kwd')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='XYZ')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='999')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='')\nFAIL hidden tests: FAIL: test_unknown_currency_raises (hidden_test_billing.MoneyTest.test_unknown_currency_raises) (code='US')\nFAIL",
+      "session_id": "ses_01M44FCN6NZPXG1K4NRMB8S62J"
+    },
+    {
+      "task": "debug-billing-proration",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.3129647,
+      "unpriced": false,
+      "tokens": {
+        "input": 4078,
+        "output": 15589,
+        "cache_read": 1384167,
+        "cache_write": 74020
+      },
+      "latency_seconds": 178.304191834,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:team-usd->starter-usd@2024-11-29 on 2024-12-29 WELCOME10 JP')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-eur->pro-eur@2024-01-29 on 2024-10-27 SAVE15 DE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-bhd->pro-bhd@2024-08-08 on 2025-06-08 WELCOME10 NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-bhd->pro-bhd@2023-02-27 on 2023-06-25 LAUNCH12_5 NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:team-usd->pro-usd@2023-11-30 on 2024-04-29 SAVE15 US-CA')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:team-annual-usd->pro-annual-usd@2024-05-31 on 2028-05-28 HALFOFF NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-jpy->pro-jpy@2025-03-05 on 2025-07-21 None JP')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-usd->team-usd@2024-01-11 on 2024-03-08 LAUNCH12_5 DE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-usd->pro-usd@2024-02-09 on 2025-01-09 SAVE15 NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-usd->team-usd@2023-03-30 on 2023-12-29 WELCOME10 BH')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-bhd->starter-bhd@2024-04-25 on 2025-02-25 HALFOFF US-NY')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-jpy->starter-jpy@2024-11-30 on 2025-05-27 SAVE15 DE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-annual-usd->team-annual-usd@2024-02-19 on 2026-02-19 None JP')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-usd->team-usd@2023-05-31 on 2023-09-29 WELCOME10 NONE')\nFAIL",
+      "session_id": "ses_01M44FCN88KH6BWSPK61K4EATA"
+    },
+    {
+      "task": "debug-event-replay",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.4724968000000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 11534,
+        "output": 32220,
+        "cache_read": 1664503,
+        "cache_write": 106730
+      },
+      "latency_seconds": 291.828189708,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FCN9T1Y88DYXN5Y4CCECK"
+    },
+    {
+      "task": "debug-event-replay",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.39608125,
+      "unpriced": false,
+      "tokens": {
+        "input": 11555,
+        "output": 25200,
+        "cache_read": 1454625,
+        "cache_write": 90451
+      },
+      "latency_seconds": 224.686106625,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FJ3T19NYCA2651Y26XRF9"
+    },
+    {
+      "task": "debug-event-replay",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.49055170000000015,
+      "unpriced": false,
+      "tokens": {
+        "input": 3871,
+        "output": 34111,
+        "cache_read": 1736657,
+        "cache_write": 113968
+      },
+      "latency_seconds": 297.548734125,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=19)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=20)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=21)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=22)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=26)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=28)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=29)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=31)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=33)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=35)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=36)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=37)\nFAIL hidden tests: FAIL: test_month_is_utc_month (hidden_test_ledger.StatementTest.test_month_is_utc_month)\nFAIL hidden tests: FAIL: test_year_boundary_in_utc (hidden_test_ledger.StatementTest.test_year_boundary_in_utc)\nFAIL",
+      "session_id": "ses_01M44FKAH5EWZT4HJSVN0BN6VY"
+    },
+    {
+      "task": "feat-incremental-indexer",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.49664910000000007,
+      "unpriced": false,
+      "tokens": {
+        "input": 7987,
+        "output": 32744,
+        "cache_read": 1802021,
+        "cache_write": 115792
+      },
+      "latency_seconds": 323.030778416,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FVWWKDZ7MDP4WB80MCG4Y"
+    },
+    {
+      "task": "feat-incremental-indexer",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.48508545,
+      "unpriced": false,
+      "tokens": {
+        "input": 7978,
+        "output": 29606,
+        "cache_read": 1839987,
+        "cache_write": 116063
+      },
+      "latency_seconds": 304.313149334,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FWE55ZPZDAMJ8DQ9WBZB4"
+    },
+    {
+      "task": "feat-incremental-indexer",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 50,
+      "tool_calls": 49,
+      "cost_usd": 0.33694219999999986,
+      "unpriced": false,
+      "tokens": {
+        "input": 3945,
+        "output": 26103,
+        "cache_read": 1339022,
+        "cache_write": 54864
+      },
+      "latency_seconds": 217.486007875,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FYGWKGH3BS6GACAPCPEHQ"
+    },
+    {
+      "task": "fix-cursor-pagination",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 50,
+      "tool_calls": 49,
+      "cost_usd": 0.28260050000000003,
+      "unpriced": false,
+      "tokens": {
+        "input": 3840,
+        "output": 23245,
+        "cache_read": 1104105,
+        "cache_write": 41700
+      },
+      "latency_seconds": 203.050223834,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: forward and backward walks, every sort and page size (seed 1, 12 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 2, 20 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 3, 25 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 4, 7 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 5, 30 items)\nFAIL hidden tests: filtered walks, every sort and page size (seed 21, {\"category\":\"home\"})\nFAIL hidden tests: filtered walks, every sort and page size (seed 22, {\"minPrice\":0,\"maxPrice\":2})\nFAIL hidden tests: filtered walks, every sort and page size (seed 23, {\"category\":\"office\",\"minPrice\":0.1})\nFAIL hidden tests: prevCursor from any page returns exactly the previous forward page\nFAIL hidden tests: limit may change during a walk\nFAIL hidden tests: inserts and deletes between forward pages (randomized)\nFAIL hidden tests: inserts and deletes between backward pages (randomized)\nFAIL hidden tests: an insert and a delete between pages are both visible on the next page\nFAIL hidden tests: prevCursor is null when nothing sorts before the page any more\nFAIL",
+      "session_id": "ses_01M44GSXB7AJZ1Q5NK00X54CQZ"
+    },
+    {
+      "task": "fix-cursor-pagination",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 60,
+      "tool_calls": 77,
+      "cost_usd": 0.44736560000000003,
+      "unpriced": false,
+      "tokens": {
+        "input": 7661,
+        "output": 34298,
+        "cache_read": 1937521,
+        "cache_write": 59570
+      },
+      "latency_seconds": 590.430830375,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: inserts and deletes between forward pages (randomized)\nFAIL hidden tests: inserts and deletes between backward pages (randomized)\nFAIL hidden tests: an insert and a delete between pages are both visible on the next page\nFAIL hidden tests: prevCursor is null when nothing sorts before the page any more\nFAIL",
+      "session_id": "ses_01M44GX2P1BBFTJMA8RWGB9PYN"
+    },
+    {
+      "task": "fix-cursor-pagination",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 68,
+      "cost_usd": 0.3740903,
+      "unpriced": false,
+      "tokens": {
+        "input": 7650,
+        "output": 22442,
+        "cache_read": 1514453,
+        "cache_write": 82228
+      },
+      "latency_seconds": 201.416651959,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: forward and backward walks, every sort and page size (seed 1, 12 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 2, 20 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 3, 25 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 4, 7 items)\nFAIL hidden tests: forward and backward walks, every sort and page size (seed 5, 30 items)\nFAIL hidden tests: filtered walks, every sort and page size (seed 21, {\"category\":\"home\"})\nFAIL hidden tests: filtered walks, every sort and page size (seed 22, {\"minPrice\":0,\"maxPrice\":2})\nFAIL hidden tests: filtered walks, every sort and page size (seed 23, {\"category\":\"office\",\"minPrice\":0.1})\nFAIL hidden tests: prevCursor from any page returns exactly the previous forward page\nFAIL hidden tests: limit may change during a walk\nFAIL hidden tests: inserts and deletes between forward pages (randomized)\nFAIL hidden tests: inserts and deletes between backward pages (randomized)\nFAIL hidden tests: an insert and a delete between pages are both visible on the next page\nFAIL",
+      "session_id": "ses_01M44H0447AK177QBG3AHJW2QC"
+    },
+    {
+      "task": "fix-job-queue",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 65,
+      "cost_usd": 0.4869917,
+      "unpriced": false,
+      "tokens": {
+        "input": 11483,
+        "output": 29126,
+        "cache_read": 1733337,
+        "cache_write": 125236
+      },
+      "latency_seconds": 254.152865083,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44K0YJJKQ1H0HD5F1BZ09YY"
+    },
+    {
+      "task": "fix-job-queue",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 42,
+      "tool_calls": 45,
+      "cost_usd": 0.35588125,
+      "unpriced": false,
+      "tokens": {
+        "input": 7485,
+        "output": 27005,
+        "cache_read": 1354725,
+        "cache_write": 62319
+      },
+      "latency_seconds": 281.547940833,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44K42WMB70RAASB4D5M8GFJ"
+    },
+    {
+      "task": "fix-job-queue",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 48,
+      "tool_calls": 47,
+      "cost_usd": 0.31489620000000007,
+      "unpriced": false,
+      "tokens": {
+        "input": 3807,
+        "output": 22516,
+        "cache_read": 1300417,
+        "cache_write": 54774
+      },
+      "latency_seconds": 203.450255792,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44K63N18AXADT03ZAMTZ0TD"
+    },
+    {
+      "task": "fix-shell-kv-store",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.46715609999999996,
+      "unpriced": false,
+      "tokens": {
+        "input": 7828,
+        "output": 32212,
+        "cache_read": 1803406,
+        "cache_write": 94342
+      },
+      "latency_seconds": 346.87120375,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_stale_lock_is_reclaimed (hidden_test_kv.LockTest.test_stale_lock_is_reclaimed)\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=0, step=13, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=5, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=12, args=[b'export', b'--json'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=13, args=[b'export', b'--json'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=19, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=27, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=29, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences)\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='-store')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='nested/deeper/dir')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='sp ace/*')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='--')\nFAIL hidden tests: FAIL: test_values_that_look_like_options (hidden_test_kv.ValuesTest.test_values_that_look_like_options)\nFAIL",
+      "session_id": "ses_01M44KCQF1J2G6MHB614SN1900"
+    },
+    {
+      "task": "fix-shell-kv-store",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.5986224,
+      "unpriced": false,
+      "tokens": {
+        "input": 7843,
+        "output": 41935,
+        "cache_read": 2352194,
+        "cache_write": 116708
+      },
+      "latency_seconds": 408.96012725,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['del', 'a'])\nFAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['incr', 'n'])\nFAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['import', '-'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=0, step=13, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=12, args=[b'export', b'--json'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=13, args=[b'export', b'--json'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=19, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=27, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=1, step=29, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=19, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=2, step=22, args=[b'list'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences)\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='-store')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='--')\nFAIL",
+      "session_id": "ses_01M44KF4RPM94T3C0CZENVZMJR"
+    },
+    {
+      "task": "fix-shell-kv-store",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 62,
+      "cost_usd": 0.43666704999999995,
+      "unpriced": false,
+      "tokens": {
+        "input": 7842,
+        "output": 28373,
+        "cache_read": 1754613,
+        "cache_write": 89199
+      },
+      "latency_seconds": 313.535704167,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_existing_values (hidden_test_kv.IncrTest.test_existing_values) (value=b'5\\n', step=b'1')\nFAIL hidden tests: FAIL: test_invalid_increments (hidden_test_kv.IncrTest.test_invalid_increments) (step=b'')\nFAIL hidden tests: FAIL: test_invalid_increments (hidden_test_kv.IncrTest.test_invalid_increments)\nFAIL hidden tests: FAIL: test_prefixes_are_literal (hidden_test_kv.ListTest.test_prefixes_are_literal) (prefix=b'\\xc3')\nFAIL hidden tests: FAIL: test_too_many_arguments (hidden_test_kv.ListTest.test_too_many_arguments)\nFAIL hidden tests: FAIL: test_concurrent_incr_with_stale_lock (hidden_test_kv.LockTest.test_concurrent_incr_with_stale_lock)\nFAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['set', 'a', '2'])\nFAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['del', 'a'])\nFAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['incr', 'n'])\nFAIL hidden tests: FAIL: test_live_lock_times_out (hidden_test_kv.LockTest.test_live_lock_times_out) (args=['import', '-'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences) (seed=0, step=13, args=[b'export'])\nFAIL hidden tests: FAIL: test_random_sequences (hidden_test_kv.RandomDifferentialTest.test_random_sequences)\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='-store')\nFAIL hidden tests: FAIL: test_odd_directories (hidden_test_kv.StoreLocationTest.test_odd_directories) (dir='--')\nFAIL",
+      "session_id": "ses_01M44KF93C695782PA78PKFK91"
+    },
+    {
+      "task": "fix-shell-log-report",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 55,
+      "tool_calls": 54,
+      "cost_usd": 0.2737481,
+      "unpriced": false,
+      "tokens": {
+        "input": 7812,
+        "output": 22292,
+        "cache_read": 1106336,
+        "cache_write": 35074
+      },
+      "latency_seconds": 203.253625125,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=9)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=10)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=11)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=12)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=13)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=15)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=19)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=20)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=21)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=22)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=23)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=24)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=27)\nFAIL hidden tests: FAIL: test_usage_errors (hidden_test_latency_report.UsageTest.test_usage_errors) (args=['-n', '000', 'a.log'])\nFAIL",
+      "session_id": "ses_01M44K8RFTVRN154Z4PGWXPDTW"
+    },
+    {
+      "task": "fix-shell-log-report",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.27498705,
+      "unpriced": false,
+      "tokens": {
+        "input": 7847,
+        "output": 16045,
+        "cache_read": 1147013,
+        "cache_write": 57771
+      },
+      "latency_seconds": 200.214644625,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=18)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=19)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=20)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=21)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=22)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=23)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=24)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=25)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=26)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=27)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=28)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=29)\nFAIL hidden tests: FAIL: test_ties_by_endpoint_bytes_in_any_locale (hidden_test_latency_report.SortingTest.test_ties_by_endpoint_bytes_in_any_locale)\nFAIL hidden tests: FAIL: test_usage_errors (hidden_test_latency_report.UsageTest.test_usage_errors) (args=['-n', '000', 'a.log'])\nFAIL",
+      "session_id": "ses_01M44K8ZSGX8QEBC9BWV0AV901"
+    },
+    {
+      "task": "fix-shell-log-report",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.3159341,
+      "unpriced": false,
+      "tokens": {
+        "input": 7836,
+        "output": 20580,
+        "cache_read": 1236931,
+        "cache_write": 65204
+      },
+      "latency_seconds": 283.870102708,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_fifty_thousand_lines (hidden_test_latency_report.PerformanceTest.test_fifty_thousand_lines)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=3)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=5)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=6)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=13)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=14)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=15)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=18)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=23)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=25)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=26)\nFAIL hidden tests: FAIL: test_random_logs (hidden_test_latency_report.RandomDifferentialTest.test_random_logs) (seed=27)\nFAIL hidden tests: FAIL: test_ties_by_endpoint_bytes_in_any_locale (hidden_test_latency_report.SortingTest.test_ties_by_endpoint_bytes_in_any_locale)\nFAIL hidden tests: FAIL: test_usage_errors (hidden_test_latency_report.UsageTest.test_usage_errors) (args=['-n', '000', 'a.log'])\nFAIL",
+      "session_id": "ses_01M44KCC5MKS85HV2PCYNZM0SS"
+    },
+    {
+      "task": "fix-unicode-table",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.44470305,
+      "unpriced": false,
+      "tokens": {
+        "input": 11587,
+        "output": 28558,
+        "cache_read": 1706848,
+        "cache_write": 95713
+      },
+      "latency_seconds": 242.674042833,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FMF9AGHPS25T8HRDV0JB9"
+    },
+    {
+      "task": "fix-unicode-table",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.48726325000000015,
+      "unpriced": false,
+      "tokens": {
+        "input": 3961,
+        "output": 33779,
+        "cache_read": 1853435,
+        "cache_write": 103251
+      },
+      "latency_seconds": 291.257690541,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FNKTDFCS3JAWVKG7R89N3"
+    },
+    {
+      "task": "fix-unicode-table",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 65,
+      "cost_usd": 0.51607205,
+      "unpriced": false,
+      "tokens": {
+        "input": 7742,
+        "output": 33085,
+        "cache_read": 1935513,
+        "cache_write": 119483
+      },
+      "latency_seconds": 293.544643583,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44FS0Q440VTCXM5MZ41DSG6"
+    },
+    {
+      "task": "impl-dep-resolver",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 66,
+      "cost_usd": 0.4394384,
+      "unpriced": false,
+      "tokens": {
+        "input": 7743,
+        "output": 30478,
+        "cache_read": 1654729,
+        "cache_write": 91066
+      },
+      "latency_seconds": 323.998490291,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: cli: random registry \\#70 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#71 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#86 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#96 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#110 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#137 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#156 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#162 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#229 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#416 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#505 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#879 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#882 matches the brute-force optimum\nFAIL hidden tests: cli: resolves the 67-package registry within 2 seconds\nFAIL",
+      "session_id": "ses_01M44HAZBNV680TM42VBN2ESZ7"
+    },
+    {
+      "task": "impl-dep-resolver",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.4782770999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 7726,
+        "output": 36859,
+        "cache_read": 1653336,
+        "cache_write": 96738
+      },
+      "latency_seconds": 314.193183917,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: cli: random registry \\#416 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#426 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#428 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#462 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#488 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#523 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#548 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#605 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#621 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#684 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#756 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#879 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#882 matches the brute-force optimum\nFAIL hidden tests: cli: resolves the 67-package registry within 2 seconds\nFAIL",
+      "session_id": "ses_01M44HF3TE5HCYPWEE531DY2SP"
+    },
+    {
+      "task": "impl-dep-resolver",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.53848225,
+      "unpriced": false,
+      "tokens": {
+        "input": 7828,
+        "output": 42752,
+        "cache_read": 1790105,
+        "cache_write": 110307
+      },
+      "latency_seconds": 441.093166208,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: cli: random registry \\#429 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#462 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#506 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#523 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#548 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#551 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#605 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#621 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#756 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#808 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#821 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#862 matches the brute-force optimum\nFAIL hidden tests: cli: random registry \\#882 matches the brute-force optimum\nFAIL hidden tests: cli: resolves the 67-package registry within 2 seconds\nFAIL",
+      "session_id": "ses_01M44HFX2N50H7WFH05C94JYPM"
+    },
+    {
+      "task": "impl-expr-evaluator",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.5262308,
+      "unpriced": false,
+      "tokens": {
+        "input": 7698,
+        "output": 35712,
+        "cache_read": 1991178,
+        "cache_write": 112684
+      },
+      "latency_seconds": 343.486470583,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_len_abs_str_int (hidden_test_calc.Builtins.test_len_abs_str_int) (source='int(true)', env=None)\nFAIL hidden tests: FAIL: test_min_max (hidden_test_calc.Builtins.test_min_max) (source='max(true, false)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(1.5, true)', env=None)\nFAIL hidden tests: FAIL: test_chaining (hidden_test_calc.Comparison.test_chaining) (source='1 == 1 == true', env=None)\nFAIL hidden tests: FAIL: test_equality (hidden_test_calc.Comparison.test_equality) (source='true == 1', env=None)\nFAIL hidden tests: FAIL: test_equality (hidden_test_calc.Comparison.test_equality) (source='0 == false', env=None)\nFAIL hidden tests: FAIL: test_ordering (hidden_test_calc.Comparison.test_ordering) (source='true < false', env=None)\nFAIL hidden tests: FAIL: test_ordering (hidden_test_calc.Comparison.test_ordering) (source='null >= 1', env=None)\nFAIL hidden tests: FAIL: test_ordering (hidden_test_calc.Comparison.test_ordering) (source='\"a\" > 1.5', env=None)\nFAIL hidden tests: FAIL: test_ordering (hidden_test_calc.Comparison.test_ordering) (source='1 <= null', env=None)\nFAIL hidden tests: FAIL: test_keywords_and_characters (hidden_test_calc.Literals.test_keywords_and_characters) (source='café', env=None)\nFAIL hidden tests: FAIL: test_string_errors (hidden_test_calc.Literals.test_string_errors) (source='\"ab\\\\\\ncd\"', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='   ', env=None)\nFAIL hidden tests: FAIL: test_env (hidden_test_calc.Variables.test_env) (source='flag + 1', env={'flag': True})\nFAIL",
+      "session_id": "ses_01M44G200BMCBXTEPG3BP76GA9"
+    },
+    {
+      "task": "impl-expr-evaluator",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.4778745999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 7680,
+        "output": 30409,
+        "cache_read": 1887546,
+        "cache_write": 103516
+      },
+      "latency_seconds": 244.13769475,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_equality (hidden_test_calc.Comparison.test_equality) (source='0 == false', env=None)\nFAIL hidden tests: FAIL: test_ordering (hidden_test_calc.Comparison.test_ordering) (source='true < false', env=None)\nFAIL hidden tests: FAIL: test_keywords_and_characters (hidden_test_calc.Literals.test_keywords_and_characters) (source='café', env=None)\nFAIL hidden tests: FAIL: test_string_errors (hidden_test_calc.Literals.test_string_errors) (source='\"ab\\\\\\ncd\"', env=None)\nFAIL hidden tests: FAIL: test_error_phases (hidden_test_calc.Syntax.test_error_phases) (source='1 / 0 +', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='   ', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='1 +', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='(1 + 2', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='let x = 1', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='1 if true', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='not', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='1 and', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='f(', env=None)\nFAIL hidden tests: FAIL: test_env (hidden_test_calc.Variables.test_env) (source='flag + 1', env={'flag': True})\nFAIL",
+      "session_id": "ses_01M44G57XF9YJ5GQXTZ4QVZC6W"
+    },
+    {
+      "task": "impl-expr-evaluator",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.5053741500000001,
+      "unpriced": false,
+      "tokens": {
+        "input": 7696,
+        "output": 31820,
+        "cache_read": 2011644,
+        "cache_write": 109931
+      },
+      "latency_seconds": 319.845692875,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(2.5)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(3.5)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(-2.5)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(-3.5)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(2.4999)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(0.5)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(1.5)', env=None)\nFAIL hidden tests: FAIL: test_round (hidden_test_calc.Builtins.test_round) (source='round(1.5, true)', env=None)\nFAIL hidden tests: FAIL: test_equality (hidden_test_calc.Comparison.test_equality) (source='1 == 1.0', env=None)\nFAIL hidden tests: FAIL: test_equality (hidden_test_calc.Comparison.test_equality) (source='1 != 1.00', env=None)\nFAIL hidden tests: FAIL: test_equality (hidden_test_calc.Comparison.test_equality) (source='-0.0 == 0', env=None)\nFAIL hidden tests: FAIL: test_ordering (hidden_test_calc.Comparison.test_ordering) (source='true < false', env=None)\nFAIL hidden tests: FAIL: test_syntax_errors (hidden_test_calc.Syntax.test_syntax_errors) (source='   ', env=None)\nFAIL hidden tests: FAIL: test_env (hidden_test_calc.Variables.test_env) (source='flag + 1', env={'flag': True})\nFAIL",
+      "session_id": "ses_01M44G5T4GN83TTVFX6878GKR7"
+    },
+    {
+      "task": "impl-patch-apply",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.64608815,
+      "unpriced": false,
+      "tokens": {
+        "input": 7561,
+        "output": 48180,
+        "cache_read": 2227009,
+        "cache_write": 139941
+      },
+      "latency_seconds": 464.109086458,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: table: the same file in two sections\nFAIL hidden tests: table: create then modify the same file\nFAIL hidden tests: table: delete then create the same file\nFAIL hidden tests: table: delete then modify the same file\nFAIL hidden tests: table: offsets are relative to each section's own content\nFAIL hidden tests: table: reverse across files is atomic\nFAIL hidden tests: random: modify with repeated lines (seed 1)\nFAIL hidden tests: random: modify with repeated lines (seed 2)\nFAIL hidden tests: random: modify with repeated lines (seed 4)\nFAIL hidden tests: random: modify with repeated lines (seed 5)\nFAIL hidden tests: random: modify with repeated lines (seed 8)\nFAIL hidden tests: random: modify with repeated lines (seed 10)\nFAIL hidden tests: random: modify with repeated lines (seed 12)\nFAIL hidden tests: ... and 34 more\nFAIL",
+      "session_id": "ses_01M44H1QBXZ6XQDNG1B4JHW80Y"
+    },
+    {
+      "task": "impl-patch-apply",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.4439456999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 7557,
+        "output": 31854,
+        "cache_read": 1613462,
+        "cache_write": 92618
+      },
+      "latency_seconds": 270.80829675,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: random: modify with repeated lines (seed 17)\nFAIL hidden tests: random: modify with repeated lines (seed 20)\nFAIL hidden tests: random: modify with repeated lines (seed 21)\nFAIL hidden tests: random: modify with repeated lines (seed 22)\nFAIL hidden tests: random: offsets after inserted lines (seed 101)\nFAIL hidden tests: random: offsets after inserted lines (seed 102)\nFAIL hidden tests: random: offsets after inserted lines (seed 104)\nFAIL hidden tests: random: offsets after inserted lines (seed 109)\nFAIL hidden tests: random: offsets after inserted lines (seed 110)\nFAIL hidden tests: random: offsets after inserted lines (seed 111)\nFAIL hidden tests: random: offsets after inserted lines (seed 112)\nFAIL hidden tests: random: offsets after inserted lines (seed 113)\nFAIL hidden tests: random: offsets after inserted lines (seed 114)\nFAIL hidden tests: ... and 14 more\nFAIL",
+      "session_id": "ses_01M44H2PBADK9ZQ3YZHKCF3ZZR"
+    },
+    {
+      "task": "impl-patch-apply",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.65673705,
+      "unpriced": false,
+      "tokens": {
+        "input": 7551,
+        "output": 51729,
+        "cache_read": 2250198,
+        "cache_write": 132417
+      },
+      "latency_seconds": 394.854197083,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: random: modify with repeated lines (seed 17)\nFAIL hidden tests: random: modify with repeated lines (seed 20)\nFAIL hidden tests: random: modify with repeated lines (seed 21)\nFAIL hidden tests: random: modify with repeated lines (seed 22)\nFAIL hidden tests: random: offsets after inserted lines (seed 101)\nFAIL hidden tests: random: offsets after inserted lines (seed 102)\nFAIL hidden tests: random: offsets after inserted lines (seed 104)\nFAIL hidden tests: random: offsets after inserted lines (seed 109)\nFAIL hidden tests: random: offsets after inserted lines (seed 110)\nFAIL hidden tests: random: offsets after inserted lines (seed 111)\nFAIL hidden tests: random: offsets after inserted lines (seed 112)\nFAIL hidden tests: random: offsets after inserted lines (seed 113)\nFAIL hidden tests: random: offsets after inserted lines (seed 114)\nFAIL hidden tests: ... and 14 more\nFAIL",
+      "session_id": "ses_01M44H69C4KYWVMEZE787SNGNE"
+    },
+    {
+      "task": "impl-template-engine",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.7107016500000002,
+      "unpriced": false,
+      "tokens": {
+        "input": 7414,
+        "output": 52021,
+        "cache_read": 2516189,
+        "cache_write": 153251
+      },
+      "latency_seconds": 422.806276333,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: empty close name\nFAIL hidden tests: invalid delimiters three parts\nFAIL hidden tests: unexpected closing tag\nFAIL hidden tests: unexpected closing after closed section\nFAIL hidden tests: mismatched closing tag\nFAIL hidden tests: mismatched dotted names\nFAIL hidden tests: unclosed section\nFAIL hidden tests: unclosed inner section reported\nFAIL hidden tests: unclosed section after closed one\nFAIL hidden tests: error inside false section still thrown\nFAIL hidden tests: first error wins unclosed tag before section\nFAIL hidden tests: line counting with crlf\nFAIL hidden tests: error in rendered partial\nFAIL hidden tests: error with custom delimiters\nFAIL",
+      "session_id": "ses_01M44HJBDMW3SX4VT5QRKYNWR2"
+    },
+    {
+      "task": "impl-template-engine",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.6735081999999998,
+      "unpriced": false,
+      "tokens": {
+        "input": 7406,
+        "output": 52953,
+        "cache_read": 2386722,
+        "cache_write": 130132
+      },
+      "latency_seconds": 527.668646041,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: section list outer lookup\nFAIL hidden tests: two tags on a line are not standalone\nFAIL hidden tests: two tags with whitespace not standalone\nFAIL hidden tests: variable and section on a line\nFAIL",
+      "session_id": "ses_01M44HNQGG8Q01KAQKT8M93RAF"
+    },
+    {
+      "task": "impl-template-engine",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 61,
+      "cost_usd": 0.7786260000000002,
+      "unpriced": false,
+      "tokens": {
+        "input": 7468,
+        "output": 60598,
+        "cache_read": 2709505,
+        "cache_write": 157774
+      },
+      "latency_seconds": 590.155244875,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: partial standalone without newline\nFAIL hidden tests: partial standalone tab indentation\nFAIL hidden tests: partial indentation on blank lines too\nFAIL hidden tests: partial indentation not on data\nFAIL hidden tests: partial nested indentation\nFAIL hidden tests: partial indentation with standalone sections inside\nFAIL hidden tests: partial with dotted lookup\nFAIL hidden tests: set delimiters persist after section\nFAIL hidden tests: set delimiters standalone\nFAIL hidden tests: set delimiters standalone indented crlf\nFAIL hidden tests: set delimiters standalone tags with new delimiters\nFAIL hidden tests: set delimiters partial standalone indentation\nFAIL hidden tests: empty ampersand\nFAIL hidden tests: large template renders quickly\nFAIL",
+      "session_id": "ses_01M44HSJ908M56RX8V6XA351P3"
+    },
+    {
+      "task": "perf-leaderboard",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 64,
+      "cost_usd": 0.5290894999999998,
+      "unpriced": false,
+      "tokens": {
+        "input": 7655,
+        "output": 35493,
+        "cache_read": 2004370,
+        "cache_write": 114826
+      },
+      "latency_seconds": 776.645834667,
+      "grader_exit": 1,
+      "grader_tail": "FAIL benchmark 'mixed': did not finish (benchmark process limit 30s)\nFAIL benchmark 'heavy ties': did not finish (benchmark process limit 30s)\nFAIL benchmark 'increasing scores': did not finish (benchmark process limit 30s)\nFAIL",
+      "session_id": "ses_01M44HXMCNCZRHH3H0QJ550FA4"
+    },
+    {
+      "task": "perf-leaderboard",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.4360399499999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 7636,
+        "output": 30277,
+        "cache_read": 1572477,
+        "cache_write": 95817
+      },
+      "latency_seconds": 639.590790584,
+      "grader_exit": 1,
+      "grader_tail": "FAIL visible tests: around, countInRange and percentile (Expected values to be strictly deep-equal:)\nFAIL hidden tests: differential: small boards with ties, decreases and code-unit name order (seed 1, op 32: around(\"p5\", 1))\nFAIL hidden tests: differential: larger boards with large k and n (seed 1, op 11: around(\"u419\", 3))\nFAIL hidden tests: differential: wide score range (seed 1, op 53: around(\"w102\", 0))\nFAIL hidden tests: service and CLI behave as before (CLI script seed 1)\nFAIL benchmark 'mixed': did not finish (benchmark process limit 30s)\nFAIL benchmark 'heavy ties': did not finish (benchmark process limit 30s)\nFAIL benchmark 'increasing scores': did not finish (benchmark process limit 30s)\nFAIL",
+      "session_id": "ses_01M44HZ8TFXW6FV8HHTZ2JCH3R"
+    },
+    {
+      "task": "perf-leaderboard",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 65,
+      "cost_usd": 0.7989959999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 7667,
+        "output": 64842,
+        "cache_read": 2676990,
+        "cache_write": 159536
+      },
+      "latency_seconds": 960.301331458,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: differential: small boards with ties, decreases and code-unit name order (seed 1, op 32: around(\"p5\", 1))\nFAIL hidden tests: differential: larger boards with large k and n (seed 1, op 11: around(\"u419\", 3))\nFAIL hidden tests: differential: wide score range (seed 7, op 261: around(\"w32\", 2))\nFAIL hidden tests: service and CLI behave as before (CLI script seed 1)\nFAIL benchmark 'mixed': did not finish (benchmark process limit 30s)\nFAIL benchmark 'heavy ties': did not finish (benchmark process limit 30s)\nFAIL benchmark 'increasing scores': did not finish (benchmark process limit 30s)\nFAIL",
+      "session_id": "ses_01M44J5VAPT44QJ4E25Z7GKWDB"
+    },
+    {
+      "task": "perf-sessionize",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 55,
+      "tool_calls": 60,
+      "cost_usd": 0.30351120000000004,
+      "unpriced": false,
+      "tokens": {
+        "input": 7517,
+        "output": 22250,
+        "cache_read": 1332492,
+        "cache_write": 41196
+      },
+      "latency_seconds": 251.450463625,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44G5V67H8QRENM3ZW2CVZYW"
+    },
+    {
+      "task": "perf-sessionize",
+      "trial": 2,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.3660616,
+      "unpriced": false,
+      "tokens": {
+        "input": 11416,
+        "output": 21016,
+        "cache_read": 1388906,
+        "cache_write": 88540
+      },
+      "latency_seconds": 360.235310041,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44GCFR8YRQ50Z7EC88Q0KD7"
+    },
+    {
+      "task": "perf-sessionize",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.34842699999999993,
+      "unpriced": false,
+      "tokens": {
+        "input": 11284,
+        "output": 21688,
+        "cache_read": 1303155,
+        "cache_write": 78710
+      },
+      "latency_seconds": 220.414783709,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44GCPMHF2SH4GB5199RJK07"
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 47,
+      "tool_calls": 56,
+      "cost_usd": 0.44766225,
+      "unpriced": false,
+      "tokens": {
+        "input": 7799,
+        "output": 31060,
+        "cache_read": 2038670,
+        "cache_write": 64557
+      },
+      "latency_seconds": 271.101964375,
+      "grader_exit": 1,
+      "grader_tail": "FAIL src/mapLimit.js uses `new Promise` (only src/scheduler.js may)\nFAIL src/once.js still has a function parameter named 'cb'\nFAIL src/scheduler.js still has a function parameter named 'callback'\nFAIL hidden tests: differential: mapLimit ordering, concurrency and first-error semantics (limit must be a positive integer)\nFAIL hidden tests: differential: runPipeline (runPipeline: seed 6: .outcome.error.message: got \"failure close-3\", expected \"failure exists-2\")\nFAIL",
+      "session_id": "ses_01M44JBK40XC6VR8E5WGRG368K"
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 38,
+      "tool_calls": 46,
+      "cost_usd": 0.36855845,
+      "unpriced": false,
+      "tokens": {
+        "input": 11669,
+        "output": 27954,
+        "cache_read": 1444007,
+        "cache_write": 58175
+      },
+      "latency_seconds": 234.309379542,
+      "grader_exit": 1,
+      "grader_tail": "FAIL src/fileStore.js uses `new Promise` (only src/scheduler.js may)\nFAIL src/mapLimit.js uses `new Promise` (only src/scheduler.js may)\nFAIL src/once.js still has a function parameter named 'cb'\nFAIL src/retry.js uses `new Promise` (only src/scheduler.js may)\nFAIL",
+      "session_id": "ses_01M44JKQ5NRE619NWMNNCXKHQT"
+    },
+    {
+      "task": "refactor-callbacks-async",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 68,
+      "cost_usd": 0.6258461499999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 11804,
+        "output": 36011,
+        "cache_read": 2660534,
+        "cache_write": 134347
+      },
+      "latency_seconds": 378.878012125,
+      "grader_exit": 1,
+      "grader_tail": "FAIL src/once.js still has a function parameter named 'cb'\nFAIL",
+      "session_id": "ses_01M44JKWRGGVVZXGQ6JV3M2HST"
+    },
+    {
+      "task": "refactor-exporter-registry",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.38411344999999997,
+      "unpriced": false,
+      "tokens": {
+        "input": 4378,
+        "output": 22842,
+        "cache_read": 1573417,
+        "cache_write": 86547
+      },
+      "latency_seconds": 233.174062375,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden_test_structure: ERROR: test_api_names (hidden_test_structure.RegistryApiTest.test_api_names)\nFAIL hidden_test_plugin: ERROR: hidden_test_plugin (unittest.loader._FailedTest.hidden_test_plugin)\nFAIL",
+      "session_id": "ses_01M44GDVNJ0HNV9WSPVPEACZT4"
+    },
+    {
+      "task": "refactor-exporter-registry",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.359662,
+      "unpriced": false,
+      "tokens": {
+        "input": 4376,
+        "output": 21142,
+        "cache_read": 1486410,
+        "cache_write": 80748
+      },
+      "latency_seconds": 238.808039083,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=11, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: ... and 1680 more failing cases\nFAIL hidden_test_structure: FAIL: test_available_formats (hidden_test_structure.RegistryApiTest.test_available_formats)\nFAIL hidden_test_structure: FAIL: test_unknown_format_message (hidden_test_structure.RegistryApiTest.test_unknown_format_message)\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='csv', aliases=())\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='other1', aliases=('md',))\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='other2', aliases=('yml',))\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='yml', aliases=())\nFAIL hidden_test_plugin: FAIL: test_list_formats (hidden_test_plugin.CliTest.test_list_formats)\nFAIL hidden_test_plugin: FAIL: test_unknown_format (hidden_test_plugin.CliTest.test_unknown_format)\nFAIL hidden_test_plugin: FAIL: test_registry (hidden_test_plugin.LibraryTest.test_registry)\nFAIL hidden_test_plugin: FAIL: test_unknown_format_lists_new_format (hidden_test_plugin.LibraryTest.test_unknown_format_lists_new_format)\nFAIL",
+      "session_id": "ses_01M44GFJT1XGAGYGV661W20G63"
+    },
+    {
+      "task": "refactor-exporter-registry",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 60,
+      "cost_usd": 0.34227385,
+      "unpriced": false,
+      "tokens": {
+        "input": 4378,
+        "output": 20102,
+        "cache_read": 1407196,
+        "cache_write": 77333
+      },
+      "latency_seconds": 191.278485042,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=10, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=10, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=11, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=11, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: ... and 1681 more failing cases\nFAIL hidden_test_structure: ERROR: test_api_names (hidden_test_structure.RegistryApiTest.test_api_names)\nFAIL hidden_test_structure: FAIL: test_available_formats (hidden_test_structure.RegistryApiTest.test_available_formats)\nFAIL hidden_test_structure: FAIL: test_builtin_exporters (hidden_test_structure.RegistryApiTest.test_builtin_exporters) (fmt='ndjson')\nFAIL hidden_test_structure: FAIL: test_builtin_exporters (hidden_test_structure.RegistryApiTest.test_builtin_exporters) (fmt='markdown')\nFAIL hidden_test_structure: FAIL: test_builtin_exporters (hidden_test_structure.RegistryApiTest.test_builtin_exporters) (fmt='html')\nFAIL hidden_test_structure: FAIL: test_unknown_format_message (hidden_test_structure.RegistryApiTest.test_unknown_format_message)\nFAIL hidden_test_plugin: ERROR: hidden_test_plugin (unittest.loader._FailedTest.hidden_test_plugin)\nFAIL",
+      "session_id": "ses_01M44GKRW5E66WPNRW778A7DWD"
+    },
+    {
+      "task": "tests-cron-mutation",
+      "trial": 1,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 42,
+      "tool_calls": 41,
+      "cost_usd": 0.37749165,
+      "unpriced": false,
+      "tokens": {
+        "input": 7367,
+        "output": 32749,
+        "cache_read": 1408059,
+        "cache_write": 52459
+      },
+      "latency_seconds": 254.110087542,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44GN8HSFH0NCWNS779S3A73"
+    },
+    {
+      "task": "tests-cron-mutation",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 41,
+      "tool_calls": 41,
+      "cost_usd": 0.4757889999999999,
+      "unpriced": false,
+      "tokens": {
+        "input": 7352,
+        "output": 40292,
+        "cache_read": 1830195,
+        "cache_write": 67166
+      },
+      "latency_seconds": 375.220216334,
+      "grader_exit": 1,
+      "grader_tail": "FAIL mutant survived: m08_star_step_unrestricted (Mutant: a day field starting with * (like */2) counts as unrestricted)\nFAIL",
+      "session_id": "ses_01M44GQ5VQ2XGDWMAH6MG89DGF"
+    },
+    {
+      "task": "tests-cron-mutation",
+      "trial": 3,
+      "passed": true,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 45,
+      "tool_calls": 44,
+      "cost_usd": 0.49224670000000004,
+      "unpriced": false,
+      "tokens": {
+        "input": 7384,
+        "output": 41786,
+        "cache_read": 1972152,
+        "cache_write": 62974
+      },
+      "latency_seconds": 322.576691875,
+      "grader_exit": 0,
+      "grader_tail": "PASS",
+      "session_id": "ses_01M44GQTD7BCVRVYCDQM1KR3R9"
+    },
+    {
+      "task": "tests-lru-mutation",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 49,
+      "tool_calls": 50,
+      "cost_usd": 0.5618302,
+      "unpriced": false,
+      "tokens": {
+        "input": 7687,
+        "output": 37177,
+        "cache_read": 2677282,
+        "cache_write": 80424
+      },
+      "latency_seconds": 343.232340292,
+      "grader_exit": 1,
+      "grader_tail": "FAIL mutant survived: m13_evicts_at_most_one (Mutant: set evicts at most one entry)\nFAIL mutant survived: m29_prune_keeps_size (Mutant: prune() does not subtract pruned sizes from totalSize)\nFAIL",
+      "session_id": "ses_01M44JP91N1CX9FZQE9VNZX3FJ"
+    },
+    {
+      "task": "tests-lru-mutation",
+      "trial": 2,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 40,
+      "tool_calls": 39,
+      "cost_usd": 0.46673080000000006,
+      "unpriced": false,
+      "tokens": {
+        "input": 7649,
+        "output": 38032,
+        "cache_read": 1706918,
+        "cache_write": 78584
+      },
+      "latency_seconds": 360.6714865,
+      "grader_exit": 1,
+      "grader_tail": "FAIL mutant survived: m02_get_extends_ttl (Mutant: get extends the entry's expiry)\nFAIL mutant survived: m09_set_existing_keeps_expiry (Mutant: set on an existing key keeps the old expiry)\nFAIL mutant survived: m13_evicts_at_most_one (Mutant: set evicts at most one entry)\nFAIL",
+      "session_id": "ses_01M44JTX52G9HM4S9DYNE7P71Q"
+    },
+    {
+      "task": "tests-lru-mutation",
+      "trial": 3,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "max_turns",
+      "error": null,
+      "turns": 61,
+      "tool_calls": 62,
+      "cost_usd": 0.58838035,
+      "unpriced": false,
+      "tokens": {
+        "input": 3975,
+        "output": 38027,
+        "cache_read": 2402816,
+        "cache_write": 123191
+      },
+      "latency_seconds": 304.80014375,
+      "grader_exit": 1,
+      "grader_tail": "FAIL mutant survived: m02_get_extends_ttl (Mutant: get extends the entry's expiry)\nFAIL mutant survived: m29_prune_keeps_size (Mutant: prune() does not subtract pruned sizes from totalSize)\nFAIL",
+      "session_id": "ses_01M44JZFX9EXHB4QN1PP5SY203"
+    }
+  ]
+}

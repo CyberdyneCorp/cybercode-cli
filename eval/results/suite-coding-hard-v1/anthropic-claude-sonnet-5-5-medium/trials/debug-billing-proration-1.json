@@ -1,0 +1,22 @@
+{
+  "task": "debug-billing-proration",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 6,
+  "tool_calls": 9,
+  "cost_usd": 0.1001667,
+  "unpriced": false,
+  "tokens": {
+    "input": 14,
+    "output": 3875,
+    "cache_read": 67731,
+    "cache_write": 19137
+  },
+  "latency_seconds": 33.951149375,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44JRJ2JDJF57F2JF9VQQM6N"
+}

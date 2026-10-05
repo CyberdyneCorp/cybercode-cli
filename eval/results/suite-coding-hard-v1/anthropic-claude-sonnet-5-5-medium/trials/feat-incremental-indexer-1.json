@@ -1,0 +1,22 @@
+{
+  "task": "feat-incremental-indexer",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 7,
+  "tool_calls": 22,
+  "cost_usd": 0.1574997,
+  "unpriced": false,
+  "tokens": {
+    "input": 16,
+    "output": 7751,
+    "cache_read": 93201,
+    "cache_write": 24527
+  },
+  "latency_seconds": 51.072849417,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44JWADMVJW979NWA1XC54GX"
+}

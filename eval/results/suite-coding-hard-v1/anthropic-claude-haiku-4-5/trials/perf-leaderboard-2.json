@@ -1,0 +1,22 @@
+{
+  "task": "perf-leaderboard",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.4360399499999999,
+  "unpriced": false,
+  "tokens": {
+    "input": 7636,
+    "output": 30277,
+    "cache_read": 1572477,
+    "cache_write": 95817
+  },
+  "latency_seconds": 639.590790584,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: around, countInRange and percentile (Expected values to be strictly deep-equal:)\nFAIL hidden tests: differential: small boards with ties, decreases and code-unit name order (seed 1, op 32: around(\"p5\", 1))\nFAIL hidden tests: differential: larger boards with large k and n (seed 1, op 11: around(\"u419\", 3))\nFAIL hidden tests: differential: wide score range (seed 1, op 53: around(\"w102\", 0))\nFAIL hidden tests: service and CLI behave as before (CLI script seed 1)\nFAIL benchmark 'mixed': did not finish (benchmark process limit 30s)\nFAIL benchmark 'heavy ties': did not finish (benchmark process limit 30s)\nFAIL benchmark 'increasing scores': did not finish (benchmark process limit 30s)\nFAIL",
+  "session_id": "ses_01M44HZ8TFXW6FV8HHTZ2JCH3R"
+}

@@ -1,0 +1,22 @@
+{
+  "task": "impl-patch-apply",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.64608815,
+  "unpriced": false,
+  "tokens": {
+    "input": 7561,
+    "output": 48180,
+    "cache_read": 2227009,
+    "cache_write": 139941
+  },
+  "latency_seconds": 464.109086458,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: table: the same file in two sections\nFAIL hidden tests: table: create then modify the same file\nFAIL hidden tests: table: delete then create the same file\nFAIL hidden tests: table: delete then modify the same file\nFAIL hidden tests: table: offsets are relative to each section's own content\nFAIL hidden tests: table: reverse across files is atomic\nFAIL hidden tests: random: modify with repeated lines (seed 1)\nFAIL hidden tests: random: modify with repeated lines (seed 2)\nFAIL hidden tests: random: modify with repeated lines (seed 4)\nFAIL hidden tests: random: modify with repeated lines (seed 5)\nFAIL hidden tests: random: modify with repeated lines (seed 8)\nFAIL hidden tests: random: modify with repeated lines (seed 10)\nFAIL hidden tests: random: modify with repeated lines (seed 12)\nFAIL hidden tests: ... and 34 more\nFAIL",
+  "session_id": "ses_01M44H1QBXZ6XQDNG1B4JHW80Y"
+}

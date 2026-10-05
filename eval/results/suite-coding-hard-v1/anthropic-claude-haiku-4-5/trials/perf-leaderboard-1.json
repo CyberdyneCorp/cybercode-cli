@@ -1,0 +1,22 @@
+{
+  "task": "perf-leaderboard",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 64,
+  "cost_usd": 0.5290894999999998,
+  "unpriced": false,
+  "tokens": {
+    "input": 7655,
+    "output": 35493,
+    "cache_read": 2004370,
+    "cache_write": 114826
+  },
+  "latency_seconds": 776.645834667,
+  "grader_exit": 1,
+  "grader_tail": "FAIL benchmark 'mixed': did not finish (benchmark process limit 30s)\nFAIL benchmark 'heavy ties': did not finish (benchmark process limit 30s)\nFAIL benchmark 'increasing scores': did not finish (benchmark process limit 30s)\nFAIL",
+  "session_id": "ses_01M44HXMCNCZRHH3H0QJ550FA4"
+}

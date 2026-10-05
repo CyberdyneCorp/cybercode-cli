@@ -1,0 +1,22 @@
+{
+  "task": "fix-shell-log-report",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 6,
+  "tool_calls": 15,
+  "cost_usd": 0.1691528,
+  "unpriced": false,
+  "tokens": {
+    "input": 14,
+    "output": 11272,
+    "cache_read": 60024,
+    "cache_write": 17760
+  },
+  "latency_seconds": 68.455318875,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44N1G68QCVWEZAZMEH9C6K3"
+}

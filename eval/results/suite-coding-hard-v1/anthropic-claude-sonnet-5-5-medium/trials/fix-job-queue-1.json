@@ -1,0 +1,22 @@
+{
+  "task": "fix-job-queue",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 7,
+  "tool_calls": 10,
+  "cost_usd": 0.1319799,
+  "unpriced": false,
+  "tokens": {
+    "input": 16,
+    "output": 7539,
+    "cache_read": 78477,
+    "cache_write": 16345
+  },
+  "latency_seconds": 57.536953292,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44MVQ8MW6JA03YCG6AVARZY"
+}

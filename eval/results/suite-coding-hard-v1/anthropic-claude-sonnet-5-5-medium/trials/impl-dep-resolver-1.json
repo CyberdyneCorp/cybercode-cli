@@ -1,0 +1,22 @@
+{
+  "task": "impl-dep-resolver",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 14,
+  "tool_calls": 26,
+  "cost_usd": 0.44331090000000006,
+  "unpriced": false,
+  "tokens": {
+    "input": 30,
+    "output": 29410,
+    "cache_read": 304942,
+    "cache_write": 35265
+  },
+  "latency_seconds": 191.331903167,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M44KKSE07ATHZA0XAMCTACV2"
+}

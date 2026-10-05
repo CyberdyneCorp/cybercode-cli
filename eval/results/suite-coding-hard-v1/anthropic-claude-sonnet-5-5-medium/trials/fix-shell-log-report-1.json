@@ -1,0 +1,22 @@
+{
+  "task": "fix-shell-log-report",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 8,
+  "tool_calls": 18,
+  "cost_usd": 0.18282250000000003,
+  "unpriced": false,
+  "tokens": {
+    "input": 18,
+    "output": 11807,
+    "cache_read": 98095,
+    "cache_write": 18039
+  },
+  "latency_seconds": 76.742392041,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_leading_dash_names (hidden_test_latency_report.FilesTest.test_leading_dash_names)\nFAIL hidden tests: FAIL: test_options_after_first_log_are_files (hidden_test_latency_report.FilesTest.test_options_after_first_log_are_files)\nFAIL",
+  "session_id": "ses_01M44MYYW7N8F17B0TE13WAQSC"
+}

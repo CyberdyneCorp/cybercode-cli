@@ -33,7 +33,18 @@ testing and two long greenfield builds.
 | Model | Passed | 95% CI | Total cost | Median cost per success | Median latency | Infra failures |
 |---|---|---|---|---|---|---|
 | `openai/gpt-6-luna` | 40/60 (67%) | 54–77% | $0.69 | $0.0094 | 146 s | 0 |
+| `anthropic/claude-haiku-4-5` | 17/60 (28%) | 19–41% | $34.17 | $0.4447 | 309 s | 0 |
+| `anthropic/claude-sonnet-5-5#medium` | 52/60 (87%) | 76–93% | $21.30 | $0.2303 | 116 s | 0 |
 
 Failures were spread across mutation testing, spec details, shell quoting, concurrency and
-both long builds, which ended early and failed differential tests. Anthropic has not run this
-suite yet.
+both long builds, which ended early and failed differential tests.
+
+Anthropic runs used harness 2e66709 plus the adaptive-thinking fix for effort-only Claude
+models (earlier builds sent `thinking.type: enabled`, which Sonnet 5.5 rejects).
+
+- Claude Sonnet 5.5 failed only `debug-event-replay`, `fix-cursor-pagination` and the two
+  shell tasks (2/3 each). Median 8.5 turns per trial, none hit the turn limit.
+- Claude Haiku 4.5 ran without thinking (its catalog entry takes budgets, and no variant was
+  chosen). 42 of 60 trials hit the 61-turn limit and 13 tasks failed in every trial; the
+  median trial used every turn.
+- Total cost per pass: luna $0.017, Sonnet 5.5 $0.41, Haiku 4.5 $2.01.

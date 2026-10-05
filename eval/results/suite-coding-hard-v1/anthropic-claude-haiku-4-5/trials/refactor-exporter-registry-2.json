@@ -1,0 +1,22 @@
+{
+  "task": "refactor-exporter-registry",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.359662,
+  "unpriced": false,
+  "tokens": {
+    "input": 4376,
+    "output": 21142,
+    "cache_read": 1486410,
+    "cache_write": 80748
+  },
+  "latency_seconds": 238.808039083,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=11, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=True)\nFAIL hidden_test_diff: FAIL: test_export_all (hidden_test_diff.LibraryDifferentialTest.test_export_all) (case=12, formats=['csv', 'pdf'], header=False)\nFAIL hidden_test_diff: ... and 1680 more failing cases\nFAIL hidden_test_structure: FAIL: test_available_formats (hidden_test_structure.RegistryApiTest.test_available_formats)\nFAIL hidden_test_structure: FAIL: test_unknown_format_message (hidden_test_structure.RegistryApiTest.test_unknown_format_message)\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='csv', aliases=())\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='other1', aliases=('md',))\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='other2', aliases=('yml',))\nFAIL hidden_test_plugin: ERROR: test_register (hidden_test_plugin.RegisterTest.test_register) (name='yml', aliases=())\nFAIL hidden_test_plugin: FAIL: test_list_formats (hidden_test_plugin.CliTest.test_list_formats)\nFAIL hidden_test_plugin: FAIL: test_unknown_format (hidden_test_plugin.CliTest.test_unknown_format)\nFAIL hidden_test_plugin: FAIL: test_registry (hidden_test_plugin.LibraryTest.test_registry)\nFAIL hidden_test_plugin: FAIL: test_unknown_format_lists_new_format (hidden_test_plugin.LibraryTest.test_unknown_format_lists_new_format)\nFAIL",
+  "session_id": "ses_01M44GFJT1XGAGYGV661W20G63"
+}

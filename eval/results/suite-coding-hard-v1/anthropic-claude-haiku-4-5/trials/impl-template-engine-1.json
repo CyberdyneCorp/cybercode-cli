@@ -1,0 +1,22 @@
+{
+  "task": "impl-template-engine",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 61,
+  "tool_calls": 60,
+  "cost_usd": 0.7107016500000002,
+  "unpriced": false,
+  "tokens": {
+    "input": 7414,
+    "output": 52021,
+    "cache_read": 2516189,
+    "cache_write": 153251
+  },
+  "latency_seconds": 422.806276333,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: empty close name\nFAIL hidden tests: invalid delimiters three parts\nFAIL hidden tests: unexpected closing tag\nFAIL hidden tests: unexpected closing after closed section\nFAIL hidden tests: mismatched closing tag\nFAIL hidden tests: mismatched dotted names\nFAIL hidden tests: unclosed section\nFAIL hidden tests: unclosed inner section reported\nFAIL hidden tests: unclosed section after closed one\nFAIL hidden tests: error inside false section still thrown\nFAIL hidden tests: first error wins unclosed tag before section\nFAIL hidden tests: line counting with crlf\nFAIL hidden tests: error in rendered partial\nFAIL hidden tests: error with custom delimiters\nFAIL",
+  "session_id": "ses_01M44HJBDMW3SX4VT5QRKYNWR2"
+}
