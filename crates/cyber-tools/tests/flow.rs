@@ -260,7 +260,7 @@ async fn plan_exit_approval_switches_the_mode() {
         flow.runtime.state(&id).await.unwrap().info.mode,
         "accept-edits"
     );
-    assert!(flow.output(&id, "c1").await.starts_with("Plan approved"));
+    support::golden(&flow.f, "plan_exit", &flow.output(&id, "c1").await);
 }
 
 #[tokio::test]
@@ -309,6 +309,11 @@ async fn plan_enter_switches_to_plan_mode() {
     flow.prompt(&id, "plan first").await;
     flow.settle(&id).await;
     assert_eq!(flow.runtime.state(&id).await.unwrap().info.mode, "plan");
+    support::golden(
+        &flow.f,
+        "plan_enter",
+        &flow.output(&id, "c1").await.replace(&id, "<session>"),
+    );
 }
 
 #[tokio::test]
@@ -585,5 +590,56 @@ async fn shell_commands_are_recorded_for_the_next_turn_without_a_turn() {
     assert!(
         sent.contains("!echo from-the-shell") && sent.contains("from-the-shell"),
         "{sent}"
+    );
+}
+
+#[tokio::test]
+async fn question_golden() {
+    let flow = Flow::new(
+        vec![
+            call(
+                "c1",
+                "question",
+                json!({"questions":[{"question":"Database?","header":"DB","options":[{"label":"sqlite"},{"label":"postgres"}]}]}),
+            ),
+            text("done"),
+        ],
+        true,
+    );
+    let id = flow.session("default").await;
+    flow.prompt(&id, "ask").await;
+    let request = flow.pending(&id).await;
+    flow.runtime
+        .answer_question(
+            &request.id,
+            QuestionReply::Answers {
+                answers: vec![vec!["sqlite".into()]],
+            },
+        )
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+    support::golden(&flow.f, "question", &flow.output(&id, "c1").await);
+}
+
+#[tokio::test]
+async fn history_search_golden() {
+    let flow = Flow::new(
+        vec![
+            text("noted"),
+            call("c1", "history_search", json!({"query":"purple"})),
+            text("found"),
+        ],
+        true,
+    );
+    let id = flow.session("default").await;
+    let message = flow.prompt(&id, "remember purple elephant").await;
+    flow.settle(&id).await;
+    flow.prompt(&id, "recall it").await;
+    flow.settle(&id).await;
+    support::golden(
+        &flow.f,
+        "history_search",
+        &flow.output(&id, "c1").await.replace(&message, "msg_fixed"),
     );
 }

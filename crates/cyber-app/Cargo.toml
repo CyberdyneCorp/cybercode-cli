@@ -30,7 +30,7 @@ ulid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "signal", "sync", "macros", "process", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "signal", "sync", "macros", "process", "fs", "test-util"] }
 
 [lints]
 workspace = true

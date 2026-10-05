@@ -1,6 +1,7 @@
 //! `server.json` registration and background service management
 //! (`server-api` → Background service management).
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -64,7 +65,7 @@ pub async fn health(url: &str, version: &str) -> bool {
 }
 
 /// Reuse a healthy registered server, or spawn `<exe> serve --register` detached and wait
-/// (every 50 ms, up to 100 times) for its registration.
+/// for its registration, checking promptly within a five-second deadline.
 pub async fn start_service(
     paths: &Paths,
     exe: &Path,
@@ -98,21 +99,40 @@ pub async fn start_service(
     }
     cmd.spawn()
         .map_err(|e| format!("cannot start the server: {e}"))?;
-    for _ in 0..100 {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        if let Some(reg) = read_registration(paths)
-            && health(&reg.url, version).await
-        {
-            return Ok(ServerClientInfo {
-                registration: reg,
-                password,
-            });
-        }
+    if let Some(registration) = poll_ready(|| async {
+        let registration = read_registration(paths)?;
+        health(&registration.url, version)
+            .await
+            .then_some(registration)
+    })
+    .await
+    {
+        return Ok(ServerClientInfo {
+            registration,
+            password,
+        });
     }
     Err(format!(
         "the server did not become healthy; see {}",
         log_dir.join("server.log").display()
     ))
+}
+
+async fn poll_ready<T, F, Fut>(mut check: F) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Option<T>>,
+{
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(ready) = check().await {
+                return ready;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .ok()
 }
 
 /// Ask the registered server to stop and wait for it to unregister.
@@ -136,4 +156,32 @@ pub async fn stop_service(paths: &Paths) -> Result<Option<Registration>, String>
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     Err(format!("server {} (pid {}) did not stop", reg.id, reg.pid))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::Instant;
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_observes_a_ready_service_without_a_fifty_ms_delay() {
+        let start = Instant::now();
+        let ready_at = start + Duration::from_millis(20);
+        let result =
+            poll_ready(|| async { (Instant::now() >= ready_at).then_some("healthy") }).await;
+        assert_eq!(result, Some("healthy"));
+        assert!(start.elapsed() < Duration::from_millis(50));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_deadline_includes_a_stalled_health_check() {
+        let start = Instant::now();
+        let result: Option<()> = poll_ready(|| async {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            Some(())
+        })
+        .await;
+        assert_eq!(result, None);
+        assert_eq!(start.elapsed(), Duration::from_secs(5));
+    }
 }

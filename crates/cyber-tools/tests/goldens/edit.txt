@@ -1,0 +1,8 @@
+Edited a.txt (1 replacement)
+--- a/a.txt
++++ b/a.txt
+@@ -1,2 +1,2 @@
+ alpha
+-beta
++BETA
+

@@ -1,0 +1,1 @@
+Plan mode applies from your next step. Explore read-only, write the plan to <repo>/.cyber/plans/<session>.md, then call plan_exit.

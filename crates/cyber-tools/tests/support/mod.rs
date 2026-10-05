@@ -189,3 +189,17 @@ where
     });
     format!("http://{addr}")
 }
+
+/// Normalize only the fixture's absolute checkout path; retain all output formatting.
+pub fn golden(f: &Fixture, name: &str, output: &str) {
+    let actual = output.replace(&f.repo.display().to_string(), "<repo>");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/goldens")
+        .join(format!("{name}.txt"));
+    let expected = std::fs::read_to_string(path).unwrap();
+    assert_eq!(
+        actual,
+        expected.strip_suffix('\n').unwrap_or(&expected),
+        "{name}"
+    );
+}

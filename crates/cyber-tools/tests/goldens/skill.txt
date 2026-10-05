@@ -1,0 +1,6 @@
+<skill name="notes" base="<repo>/.cyber/skills/notes">
+Summarize P0.
+
+Files in this skill:
+template.md
+</skill>

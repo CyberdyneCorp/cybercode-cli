@@ -1,0 +1,1 @@
+[seq 1] [user] msg_fixed: remember purple elephant

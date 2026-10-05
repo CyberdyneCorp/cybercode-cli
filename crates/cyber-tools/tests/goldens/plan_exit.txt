@@ -1,0 +1,1 @@
+Plan approved. The session leaves plan mode and continues in accept-edits mode from the next step.

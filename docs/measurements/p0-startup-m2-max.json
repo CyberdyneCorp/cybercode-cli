@@ -1,0 +1,71 @@
+{
+  "machine": "MacBook Pro Mac14,6; Apple M2 Max 12 cores; 32 GB RAM; macOS 27.0",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "binary": "target/release/cyber",
+  "runs": 20,
+  "terminal": "xterm-256color PTY 120x32",
+  "cache": "OS file cache retained; fresh app data and processes per sample",
+  "results": {
+    "embedded": {
+      "samples_ms": [
+        547.001833,
+        90.452083,
+        72.814459,
+        75.557166,
+        82.451292,
+        83.540209,
+        83.46375,
+        67.514458,
+        81.954458,
+        81.735,
+        67.827583,
+        68.481375,
+        81.085708,
+        72.005291,
+        81.345875,
+        85.737334,
+        70.189959,
+        75.95625,
+        71.749667,
+        82.251708
+      ],
+      "p50_ms": 81.085708,
+      "p95_ms": 90.452083,
+      "p99_ms": 547.001833,
+      "min_ms": 67.514458,
+      "max_ms": 547.001833
+    },
+    "service-cold": {
+      "samples_ms": [
+        97.955208,
+        93.234833,
+        94.114166,
+        96.646625,
+        91.852541,
+        95.694709,
+        94.550375,
+        102.21775,
+        86.840083,
+        95.179792,
+        87.214375,
+        87.564958,
+        85.277875,
+        86.082833,
+        88.660458,
+        86.456458,
+        121.120125,
+        87.667,
+        83.9555,
+        86.459167
+      ],
+      "p50_ms": 88.660458,
+      "p95_ms": 102.21775,
+      "p99_ms": 121.120125,
+      "min_ms": 83.9555,
+      "max_ms": 121.120125
+    }
+  },
+  "source_commit": "4cf19506 plus close-p0-exit-criteria readiness polling fix",
+  "registration_rs_sha256": "dc6b9905ca7b7f6b676cb4731f79b0641f9dd389aca04b2576610e16836c65dc",
+  "rustc": "1.98.0 (88d9e12ae 2026-08-18)"
+}

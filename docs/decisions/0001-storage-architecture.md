@@ -1,6 +1,6 @@
 # Storage architecture
 
-Status: accepted for the target specification, 2026-10-03. Implementation and workload measurements are pending.
+Status: accepted, 2026-10-03. Local persistence and backups are implemented. The initial FULL-durability workload measurements are published in [P0 exit evidence](../measurements/p0-exit-evidence.md).
 
 ## Decision
 

@@ -1,0 +1,88 @@
+{
+  "machine": "MacBook Pro Mac14,6; Apple M2 Max 12 cores; 32 GB RAM; macOS 27.0; local APFS SSD",
+  "rustc": "1.98.0 (88d9e12ae 2026-08-18)",
+  "source_commit": "4cf19506 with uncommitted measurement/test/CI changes",
+  "runs": [
+    {
+      "sessions": 1,
+      "seconds": 20,
+      "elapsed_seconds": 19.905607666999998,
+      "events_per_session_per_second": 10,
+      "durability": "WAL/FULL",
+      "admission": {
+        "samples": 20,
+        "p50_ms": 0.8628750000000001,
+        "p95_ms": 1.068625,
+        "p99_ms": 1.629292,
+        "max_ms": 1.629292
+      },
+      "append_commit": {
+        "samples": 180,
+        "p50_ms": 0.774584,
+        "p95_ms": 1.33875,
+        "p99_ms": 3.664375,
+        "max_ms": 10.083
+      },
+      "max_queue_depth_sampled_1ms": 1,
+      "replay_passes": 3052,
+      "wal_bytes": 4136512,
+      "database_bytes": 774144,
+      "backup_bytes": 1003520,
+      "backup_ms": 8.92475
+    },
+    {
+      "sessions": 8,
+      "seconds": 20,
+      "elapsed_seconds": 19.905735958,
+      "events_per_session_per_second": 10,
+      "durability": "WAL/FULL",
+      "admission": {
+        "samples": 160,
+        "p50_ms": 0.65925,
+        "p95_ms": 2.171333,
+        "p99_ms": 3.929875,
+        "max_ms": 4.071625
+      },
+      "append_commit": {
+        "samples": 1440,
+        "p50_ms": 0.5875830000000001,
+        "p95_ms": 2.0119589999999996,
+        "p99_ms": 3.1528329999999998,
+        "max_ms": 5.28875
+      },
+      "max_queue_depth_sampled_1ms": 7,
+      "replay_passes": 17696,
+      "wal_bytes": 4280712,
+      "database_bytes": 7184384,
+      "backup_bytes": 7282688,
+      "backup_ms": 26.078500000000002
+    },
+    {
+      "sessions": 32,
+      "seconds": 20,
+      "elapsed_seconds": 19.906500709,
+      "events_per_session_per_second": 10,
+      "durability": "WAL/FULL",
+      "admission": {
+        "samples": 640,
+        "p50_ms": 2.107917,
+        "p95_ms": 5.723459,
+        "p99_ms": 7.6683330000000005,
+        "max_ms": 8.126917
+      },
+      "append_commit": {
+        "samples": 5760,
+        "p50_ms": 1.3404580000000001,
+        "p95_ms": 4.33675,
+        "p99_ms": 7.464250000000001,
+        "max_ms": 20.159666
+      },
+      "max_queue_depth_sampled_1ms": 29,
+      "replay_passes": 41408,
+      "wal_bytes": 4412552,
+      "database_bytes": 28205056,
+      "backup_bytes": 28770304,
+      "backup_ms": 105.488709
+    }
+  ]
+}
