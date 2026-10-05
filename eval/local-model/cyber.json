@@ -1,0 +1,31 @@
+{
+  "model": "local/qwen3:8b",
+  "providers": {
+    "local": {
+      "api": {
+        "type": "openai-compatible",
+        "url": "http://127.0.0.1:11434/v1",
+        "settings": {
+          "auth": "none"
+        }
+      },
+      "models": {
+        "qwen3:8b": {
+          "id": "cyber-qwen3:8b-16k",
+          "name": "Qwen3 8B Q4_K_M (16k, non-thinking)",
+          "limits": {
+            "context": 16384,
+            "output": 4096
+          },
+          "request": {
+            "temperature": 0,
+            "body": {
+              "seed": 42,
+              "reasoning_effort": "none"
+            }
+          }
+        }
+      }
+    }
+  }
+}

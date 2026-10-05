@@ -47,7 +47,7 @@ python3 scripts/measure_startup.py --runs 20 \
 
 The probe launches the real binary on a 120×32 `xterm-256color` PTY. Timing starts before process creation and ends when the initial frame's status text and cursor-show command arrive. It responds to terminal capability queries, exits through Ctrl-D, and stops each new service afterward. Every sample uses new application directories and databases. `CYBER_OFFLINE=1` uses the bundled catalog, and a configured compatible model has no server; no inference is requested. This measures database creation/migration, catalog/config setup, session creation, transport and drawing, rather than a test-renderer draw in isolation. Offline mode excludes network catalog refresh delays.
 
-Results: [raw startup samples](p0-startup-m2-max.json). Embedded and default fresh-service launch are reported separately. The new readiness polling meets the 150 ms target for both launch paths.
+Results: [raw startup samples](p0-startup-m2-max.json). Embedded and default fresh-service launch are reported separately. The default fresh-service path meets the 150 ms target in every sample. Embedded p95 is below the target, but its first sample exceeded it.
 
 
 | Launch | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) |
@@ -55,7 +55,7 @@ Results: [raw startup samples](p0-startup-m2-max.json). Embedded and default fre
 | embedded | 81.09 | 90.45 | 547.00 | 547.00 |
 | service-cold | 88.66 | 102.22 | 121.12 | 121.12 |
 
-Both modes pass across all 20 samples on the reference machine. Before the fix, [cold-service startup](p0-startup-before-m2-max.json) had p95 168.52 ms and max 182.99 ms. A profile observed registration at 63–97 ms, followed by 58–71 ms until the first frame. Checking readiness immediately and every 10 ms replaces the 50 ms polling delay. Virtual-clock regression tests verify prompt readiness observation and enforce the five-second deadline even when a health request stalls.
+The default service path passes across all 20 samples on the reference machine. Embedded passes 19/20; the initial 547 ms sample is retained, and its cause is unresolved. This evidence establishes the target for the default launch path, not a guarantee for every supported launch mode. Before the fix, [cold-service startup](p0-startup-before-m2-max.json) had p95 168.52 ms and max 182.99 ms. A profile observed registration at 63–97 ms, followed by 58–71 ms until the first frame. Checking readiness immediately and every 10 ms replaces the 50 ms polling delay. Virtual-clock regression tests verify prompt readiness observation and enforce the five-second deadline even when a health request stalls.
 
 ## Platform matrix and CI
 
@@ -74,10 +74,10 @@ Labels were checked against [GitHub's runner documentation](https://docs.github.
 
 ## Remaining gate
 
-- Install a local server and run both published suites, including the 50-turn task, through the OpenAI-compatible adapter against a real local model. No model was installed or downloaded by this change.
+- Finish both published local suites, including the long task, through the OpenAI-compatible adapter. Ollama 0.32.1 was already installed; Qwen3 8B Q4_K_M was downloaded and live trials are running. Completed trials have failed graders, so local quality remains unproven.
 
 OpenAI and Anthropic live baselines, recovery/trust tests, full backup/verify/restore, retention and logs remain implemented. Landlock fallback, PTY routes and the deferred TUI features do not block this exit gate.
 
 ## Validation
 
-`cargo test --workspace`: 326 passed, no failures; the hardware workload probe is ignored by default and run separately. Workspace formatting and Clippy with warnings denied pass. `openspec validate --all --strict`: 55 passed. Spec lint has zero errors. The Python cognitive-complexity analyzer reports a maximum of 9 per function for the startup probe.
+`cargo test --workspace`: 326 passed, no failures; the hardware workload probe is ignored by default and run separately. Workspace formatting and Clippy with warnings denied pass. `openspec validate --all --strict`: 56 passed. Spec lint has zero errors. The Python cognitive-complexity analyzer reports a maximum of 9 per function for the startup probe.
