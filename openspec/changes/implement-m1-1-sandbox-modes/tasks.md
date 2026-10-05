@@ -1,0 +1,10 @@
+- [ ] Resolve P0 local baseline/long-task evidence and verify its complete platform CI matrix.
+- [ ] Audit Windows compilation, shell, process cancellation and service lifecycle boundaries.
+- [ ] Implement restricted-token AppContainer launch, scoped ACL grants and job-object cleanup.
+- [ ] Prove Windows filesystem and credential isolation with native runtime tests.
+- [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
+- [ ] Implement strict evaluator classification and durable decision events with usage accounting.
+- [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
+- [ ] Complete the four-mode cycle and pending/effective TUI state with tests.
+- [ ] Add Windows CI; run existing platform, recovery and trust regressions.
+- [ ] Update roadmap and capability specs with verified M1.1 behavior.

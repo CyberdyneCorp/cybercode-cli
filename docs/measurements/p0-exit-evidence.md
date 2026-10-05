@@ -70,12 +70,11 @@ Both modes pass across all 20 samples on the reference machine. Before the fix, 
 | x86_64-unknown-linux-musl | ubuntu-24.04 + musl-gcc |
 | aarch64-unknown-linux-musl | ubuntu-24.04-arm + musl-gcc |
 
-Labels were checked against [GitHub's runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Existing macOS/Linux workspace test jobs remain. The [latest pushed CI run](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37253569094) passed for `4cf19506`, before these changes. The expanded matrix still needs a push and six passing build results; configuration is not platform verification.
+Labels were checked against [GitHub's runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Existing macOS/Linux workspace test jobs remain. The [latest pushed CI run](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37253569094) passed for `4cf19506`, before these changes. The [expanded CI run for b99a74b](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37373602496) passed all ten jobs, including all six platform builds and smoke tests. Linux artifacts include `cyber-sandbox-exec` beside `cyber`.
 
 ## Remaining gate
 
 - Install a local server and run both published suites, including the 50-turn task, through the OpenAI-compatible adapter against a real local model. No model was installed or downloaded by this change.
-- Obtain passing CI results for the expanded six-target matrix.
 
 OpenAI and Anthropic live baselines, recovery/trust tests, full backup/verify/restore, retention and logs remain implemented. Landlock fallback, PTY routes and the deferred TUI features do not block this exit gate.
 
