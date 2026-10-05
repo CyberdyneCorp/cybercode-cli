@@ -22,6 +22,7 @@ pub struct TrialEnv {
 pub struct Tokens {
     pub input: u64,
     pub output: u64,
+    pub reasoning: u64,
     pub cache_read: u64,
     pub cache_write: u64,
 }
@@ -267,26 +268,26 @@ async fn stop(client: &Client, id: &str, r: &mut TrialResult, reason: &str) {
 }
 
 fn over_budget(r: &TrialResult, task: &Task) -> bool {
-    let tokens = r.tokens.input + r.tokens.output + r.tokens.cache_read + r.tokens.cache_write;
+    let tokens = r.tokens.input
+        + r.tokens.output
+        + r.tokens.reasoning
+        + r.tokens.cache_read
+        + r.tokens.cache_write;
     task.budget.max_cost_usd.is_some_and(|m| r.cost_usd > m)
         || task.budget.max_tokens.is_some_and(|m| tokens > m)
 }
 
-/// Fold one event into the result; true after a step ended (budget check point).
+/// Fold one event into the result; true after accounted model work (budget checkpoint).
 fn apply(r: &mut TrialResult, kind: &str, data: &Value) -> bool {
     let base = kind.rsplit_once('.').map_or(kind, |(b, _)| b);
     match base {
         "session.step.ended" => {
             r.turns += 1;
-            let u = &data["usage"];
-            r.tokens.input += u["input"].as_u64().unwrap_or(0);
-            r.tokens.output += u["output"].as_u64().unwrap_or(0);
-            r.tokens.cache_read += u["cache_read"].as_u64().unwrap_or(0);
-            r.tokens.cache_write += u["cache_write"].as_u64().unwrap_or(0);
-            match data["cost"].as_f64() {
-                Some(c) => r.cost_usd += c,
-                None => r.unpriced = true,
-            }
+            add_usage(r, data);
+            return true;
+        }
+        "session.compaction.completed" => {
+            add_usage(r, data);
             return true;
         }
         "session.tool.called" => r.tool_calls += 1,
@@ -304,6 +305,19 @@ fn apply(r: &mut TrialResult, kind: &str, data: &Value) -> bool {
         _ => {}
     }
     false
+}
+
+fn add_usage(r: &mut TrialResult, data: &Value) {
+    let u = &data["usage"];
+    r.tokens.input += u["input"].as_u64().unwrap_or(0);
+    r.tokens.output += u["output"].as_u64().unwrap_or(0);
+    r.tokens.reasoning += u["reasoning"].as_u64().unwrap_or(0);
+    r.tokens.cache_read += u["cache_read"].as_u64().unwrap_or(0);
+    r.tokens.cache_write += u["cache_write"].as_u64().unwrap_or(0);
+    match data["cost"].as_f64() {
+        Some(c) => r.cost_usd += c,
+        None => r.unpriced = true,
+    }
 }
 
 /// Run the hidden grader against the final workspace.
@@ -347,5 +361,89 @@ async fn grade(env: &TrialEnv, task: &Task, workspace: &Path, r: &mut TrialResul
         }
         Ok(Err(e)) => r.grader_tail = format!("grader did not start: {e}"),
         Err(_) => r.grader_tail = "grader timed out after 300 s".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task() -> Task {
+        serde_json::from_value(json!({
+            "id": "accounting", "prompt": "Fix the fixture", "timeout_seconds": 10,
+            "budget": {"max_tokens": 100},
+            "grading": {"grader_dir": "unused", "command": ["python3"]}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn compaction_exhausts_budget_without_counting_as_a_turn() {
+        let mut task = task();
+        let mut r = TrialResult::failed(&task, 1, String::new());
+        assert!(apply(
+            &mut r,
+            "session.step.ended.1",
+            &json!({
+                "usage": {"input": 10, "output": 2, "reasoning": 5, "cache_read": 3},
+                "cost": 0.125
+            })
+        ));
+        assert!(!over_budget(&r, &task));
+        assert!(apply(
+            &mut r,
+            "session.compaction.completed.1",
+            &json!({
+                "usage": {"input": 60, "output": 10, "reasoning": 5, "cache_read": 4, "cache_write": 2},
+                "cost": 0.25
+            })
+        ));
+        assert!(over_budget(&r, &task), "all token classes total 101");
+        assert_eq!(r.turns, 1);
+        assert_eq!(r.cost_usd, 0.375);
+        task.budget.max_tokens = None;
+        task.budget.max_cost_usd = Some(0.25);
+        assert!(
+            over_budget(&r, &task),
+            "compaction cost also exhausts the budget"
+        );
+    }
+
+    #[test]
+    fn reasoning_is_reported_and_counts_towards_token_budget() {
+        let mut task = task();
+        task.budget.max_tokens = Some(10);
+        let mut r = TrialResult::failed(&task, 1, String::new());
+        apply(
+            &mut r,
+            "session.step.ended.1",
+            &json!({
+                "usage": {"input": 4, "output": 3, "reasoning": 4}, "cost": 0.0
+            }),
+        );
+        assert_eq!(serde_json::to_value(&r.tokens).unwrap()["reasoning"], 4);
+        assert!(over_budget(&r, &task));
+    }
+
+    #[test]
+    fn unpriced_compaction_remains_unpriced_after_a_priced_step() {
+        let task = task();
+        let mut r = TrialResult::failed(&task, 1, String::new());
+        apply(
+            &mut r,
+            "session.compaction.completed.1",
+            &json!({
+                "usage": {"input": 10, "output": 5}, "cost": null
+            }),
+        );
+        apply(
+            &mut r,
+            "session.step.ended.1",
+            &json!({
+                "usage": {"input": 1, "output": 1}, "cost": 0.125
+            }),
+        );
+        assert!(r.unpriced);
+        assert_eq!(r.cost_usd, 0.125);
     }
 }

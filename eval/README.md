@@ -17,6 +17,14 @@ manifest. A changed fixture is a changed evaluation input and must be visible in
 
 ## Suites
 
+New evaluation reports include all five provider-neutral token classes, including a separate
+`tokens.reasoning` field. Main-step and successful-compaction usage and cost both count toward
+trial totals and budget interruption; compaction does not increment the main Turn count.
+Unpriced work keeps the reported dollar total a lower bound. Reports from before this accounting
+fix omit reasoning and successful-compaction totals; retain them as historical evidence and use
+the recorded harness revision when comparing measurements. Do not fill missing usage with
+inferred values.
+
 `suite-coding-v1.json` is the published coding baseline: 20 tasks (bug fixes, features,
 refactors, test writing, cross-module debugging, a shell task and one `long` greenfield build),
 in Python 3.10+, Node 22 and bash with no third-party packages and no network. Each task names

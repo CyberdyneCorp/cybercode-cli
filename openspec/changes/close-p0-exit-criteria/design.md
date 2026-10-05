@@ -9,3 +9,6 @@ Terminal capability negotiation and service launch affect first-frame latency. R
 
 ## Startup readiness
 The initial profile observes registration before the next 50 ms service poll. Check readiness immediately and every 10 ms, with a five-second deadline that includes health calls. Virtual-clock regression tests cover promptly observing readiness and a stalled health call. Re-measure both real launch paths after the release build.
+
+## Evaluation accounting
+The local investigation found that trial aggregation ignored successful compaction events and the provider-neutral usage field for reasoning. Fold these classes into reported tokens and budget checks; fold compaction cost without adding a main Turn. Keep unpriced status sticky. Add reasoning as an additive field in the existing report format; preserve historical reports and distinguish corrected measurements by their harness revision. Regression tests first run against the unchanged main-branch accounting logic. Queue the full local runs until the corrected release binary is available.

@@ -6,10 +6,11 @@ P0 milestones are implemented, but tool goldens, storage and startup measurement
 - Add repeatable FULL-durability storage and real-terminal startup probes.
 - Build all six supported platform targets in CI.
 - Publish measured evidence and reconcile the roadmap without marking pending local-model or CI evidence complete.
+- Include reasoning and successful compaction usage/cost in evaluation reports and budgets, with regression coverage.
 
 ## Capabilities
 ### Modified Capabilities
 - `harness-evaluation`: reproducible local-core exit evidence.
 
 ## Impact
-Tests, measurement scripts, CI and documentation; no P1 scope or local-model installation.
+Tests, measurement scripts, CI, evaluation accounting and documentation. The authorized local-model investigation installs candidates and retains their failed outcomes; P1 implementation remains outside this change.

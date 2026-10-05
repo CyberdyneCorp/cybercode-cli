@@ -2,7 +2,9 @@
 
 This candidate is under evaluation. The first slugify pilot passed the hidden grader after 12 Turns. Remaining duplicate smoke trials were stopped to reserve the serial engine for the long-task pilot and full suites; all completed outcomes are in `pilots/slugify/`, explicitly labeled incomplete. That is a task result, not passing full-suite or P0 evidence. Full suite reports require 20 tasks × 3 trials each, and the long-task result must also be reviewed.
 
-Model and alias digests, observed GPU/context settings, decoding and compaction settings are recorded in `metadata.json`. The request uses Cyber's OpenAI-compatible adapter against local Ollama 0.32.1; no hosted inference or native Ollama adapter is used. The release harness is `b99a74b`.
+Model and alias digests, observed GPU/context settings, decoding and compaction settings are recorded in `metadata.json`. The request uses Cyber's OpenAI-compatible adapter against local Ollama 0.32.1; no hosted inference or native Ollama adapter is used. The pilot release harness is `b99a74b`.
+
+The pilots use that historical harness, which omits successful-compaction usage/cost and the separate reasoning-token class from evaluation totals. Full suites are held until a corrected release harness is built; their own reports identify its revision. Pilot grading outcomes remain valid, but their token totals are not interchangeable with corrected measurements.
 
 The [Qwen3.5 model card](https://huggingface.co/Qwen/Qwen3.5-9B) lists non-thinking settings of temperature 0.7, top-p 0.8, top-k 20, min-p 0 and presence penalty 1.5. The Modelfile and request config use those settings with seed 42, a 32,768-token context and an 8,192-token output allowance. Compaction buffer and retained tail are each 8,192 tokens. Live runs remain nondeterministic; zero-dollar reported model cost is unpriced, not a measurement of electricity or hardware costs.
 
