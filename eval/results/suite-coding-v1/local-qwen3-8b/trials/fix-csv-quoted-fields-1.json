@@ -1,0 +1,22 @@
+{
+  "task": "fix-csv-quoted-fields",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 4,
+  "tool_calls": 3,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 14982,
+    "output": 1018,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 145.46138875,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: test/csv.test.js\nFAIL hidden tests: hidden.test.mjs\nFAIL",
+  "session_id": "ses_01M46Z4MH3S6BKCJFVTKJJ30CC"
+}

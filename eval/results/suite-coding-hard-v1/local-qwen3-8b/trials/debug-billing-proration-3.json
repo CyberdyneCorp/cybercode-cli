@@ -1,0 +1,22 @@
+{
+  "task": "debug-billing-proration",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 1,
+  "tool_calls": 0,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 2846,
+    "output": 437,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 41.080923834,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-eur->pro-eur@2024-01-29 on 2024-10-27 SAVE15 DE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-bhd->pro-bhd@2024-08-08 on 2025-06-08 WELCOME10 NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-bhd->pro-bhd@2023-02-27 on 2023-06-25 LAUNCH12_5 NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:team-usd->pro-usd@2023-11-30 on 2024-04-29 SAVE15 US-CA')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:team-quarterly-gbp->pro-quarterly-gbp@2023-09-27 on 2024-03-26 SAVE15 BH')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:team-annual-usd->pro-annual-usd@2024-05-31 on 2028-05-28 HALFOFF NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-jpy->pro-jpy@2025-03-05 on 2025-07-21 None JP')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-usd->team-usd@2024-01-11 on 2024-03-08 LAUNCH12_5 DE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-usd->pro-usd@2024-02-09 on 2025-01-09 SAVE15 NONE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:starter-usd->team-usd@2023-03-30 on 2023-12-29 WELCOME10 BH')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-bhd->starter-bhd@2024-04-25 on 2025-02-25 HALFOFF US-NY')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-jpy->starter-jpy@2024-11-30 on 2025-05-27 SAVE15 DE')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-annual-usd->team-annual-usd@2024-02-19 on 2026-02-19 None JP')\nFAIL hidden tests: FAIL: test_rendered_and_exported_change_invoices (hidden_test_billing.PlanChangeTest.test_rendered_and_exported_change_invoices) (case='D:pro-usd->team-usd@2023-05-31 on 2023-09-29 WELCOME10 NONE')\nFAIL",
+  "session_id": "ses_01M46YHF0K7395P48C3VB9DYSH"
+}

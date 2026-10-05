@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "report": "cyber-eval",
+  "harness": {
+    "version": "0.1.0",
+    "git_sha": "b99a74b",
+    "target": "aarch64-apple-darwin"
+  },
+  "manifest": {
+    "id": "suite-coding-v1",
+    "path": "eval/manifests/suite-coding-v1.json",
+    "sha256": "sha256:3744cb61b08b32a57f4b0141526964ae8a18364762e458eaa474447778f48e93",
+    "kind": "suite"
+  },
+  "model": {
+    "ref": "local/qwen3:8b",
+    "provider": "local",
+    "name": "Qwen3 8B Q4_K_M (16k, thinking)",
+    "context_limit": 16384
+  },
+  "deterministic": false,
+  "started_at": "2026-10-05T21:25:11Z",
+  "finished_at": "2026-10-05T21:29:05Z",
+  "trials_per_task": 1,
+  "options": {
+    "mode": "bypass",
+    "sandbox": "workspace-write",
+    "interactive": false
+  },
+  "summary": {
+    "tasks": 1,
+    "trials": 1,
+    "passed": 0,
+    "success_rate": 0.0,
+    "success_ci95": [
+      0.0,
+      0.7935
+    ],
+    "infrastructure_failures": 0,
+    "human_interventions": 0,
+    "cost_usd": 0.0,
+    "cost_per_success_usd": null,
+    "median_cost_per_successful_task_usd": null,
+    "median_latency_seconds": 233.6,
+    "unpriced": true,
+    "tokens": {
+      "input": 2307,
+      "output": 4096,
+      "cache_read": 0,
+      "cache_write": 0
+    }
+  },
+  "tasks": [
+    {
+      "id": "fix-slugify",
+      "tags": [
+        "bugfix",
+        "python",
+        "edge-cases"
+      ],
+      "trials": 1,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 1.0
+    }
+  ],
+  "trials": [
+    {
+      "task": "fix-slugify",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "end_turn",
+      "error": null,
+      "turns": 1,
+      "tool_calls": 0,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 2307,
+        "output": 4096,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "latency_seconds": 233.595384625,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_cases (hidden_test_slugify.HiddenSlugifyTest.test_cases) (given='Hello,  World!')\nFAIL hidden tests: FAIL: test_cases (hidden_test_slugify.HiddenSlugifyTest.test_cases) (given='  leading and trailing  ')\nFAIL hidden tests: FAIL: test_cases (hidden_test_slugify.HiddenSlugifyTest.test_cases) (given='---')\nFAIL hidden tests: FAIL: test_cases (hidden_test_slugify.HiddenSlugifyTest.test_cases) (given='a--b__c')\nFAIL",
+      "session_id": "ses_01M46Z9NF66DVPWCA21KHMVC1B"
+    }
+  ]
+}

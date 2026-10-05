@@ -1,0 +1,22 @@
+{
+  "task": "debug-event-replay",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 19,
+  "tool_calls": 18,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 171575,
+    "output": 2155,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 1167.975124709,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_random_sequences (hidden_test_ledger.RandomizedTest.test_random_sequences) (seed=39)\nFAIL hidden tests: FAIL: test_replay_tool_modes_agree (hidden_test_ledger.ReplayToolTest.test_replay_tool_modes_agree)\nFAIL hidden tests: FAIL: test_first_event_after_snapshot_survives_restart (hidden_test_ledger.SnapshotTest.test_first_event_after_snapshot_survives_restart)\nFAIL hidden tests: FAIL: test_large_amounts_round_trip (hidden_test_ledger.SnapshotTest.test_large_amounts_round_trip)\nFAIL hidden tests: FAIL: test_repeated_snapshots_and_restarts (hidden_test_ledger.SnapshotTest.test_repeated_snapshots_and_restarts)\nFAIL hidden tests: FAIL: test_small_amounts_round_trip (hidden_test_ledger.SnapshotTest.test_small_amounts_round_trip)\nFAIL hidden tests: FAIL: test_month_is_utc_month (hidden_test_ledger.StatementTest.test_month_is_utc_month)\nFAIL hidden tests: FAIL: test_rebuild_projections_twice (hidden_test_ledger.StatementTest.test_rebuild_projections_twice)\nFAIL hidden tests: FAIL: test_rebuild_then_live_events (hidden_test_ledger.StatementTest.test_rebuild_then_live_events)\nFAIL hidden tests: FAIL: test_year_boundary_in_utc (hidden_test_ledger.StatementTest.test_year_boundary_in_utc)\nFAIL hidden tests: FAIL: test_duplicate_after_restart (hidden_test_ledger.WebhookTest.test_duplicate_after_restart)\nFAIL hidden tests: FAIL: test_duplicate_after_snapshot_and_restart (hidden_test_ledger.WebhookTest.test_duplicate_after_snapshot_and_restart)\nFAIL hidden tests: FAIL: test_duplicate_in_a_new_process (hidden_test_ledger.WebhookTest.test_duplicate_in_a_new_process)\nFAIL hidden tests: FAIL: test_duplicate_with_different_payload (hidden_test_ledger.WebhookTest.test_duplicate_with_different_payload)\nFAIL",
+  "session_id": "ses_01M46YJ20MN7YC83EH0NRHJ3X3"
+}

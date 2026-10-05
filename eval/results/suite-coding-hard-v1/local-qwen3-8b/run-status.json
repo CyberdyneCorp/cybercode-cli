@@ -1,0 +1,13 @@
+{
+  "status": "aborted",
+  "complete_baseline": false,
+  "reason": "Stopped after discovering temperature=0 conflicts with Qwen3 decoding guidance; preserving all completed trials. A separately labeled sampled pilot is being tested.",
+  "stopped_at": "2026-10-05T21:52:03.178882+00:00",
+  "completed_trials": 9,
+  "planned_trials": 60,
+  "passed": 0,
+  "infrastructure_failures": 0,
+  "harness": "b99a74b",
+  "configuration": "eval/local-model/cyber.json",
+  "model_metadata": "eval/local-model/metadata.json"
+}

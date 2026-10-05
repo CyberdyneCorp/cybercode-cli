@@ -1,0 +1,22 @@
+{
+  "task": "fix-async-batch",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 7,
+  "tool_calls": 6,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 24469,
+    "output": 1256,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 199.95270775,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: test/fetchAll.test.js\nFAIL hidden tests: hidden.test.mjs\nFAIL",
+  "session_id": "ses_01M46ZVAN7314F623P03RBGWTW"
+}

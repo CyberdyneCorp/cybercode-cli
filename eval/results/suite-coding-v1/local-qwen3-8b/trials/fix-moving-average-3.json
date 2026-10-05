@@ -1,0 +1,22 @@
+{
+  "task": "fix-moving-average",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 6,
+  "tool_calls": 5,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 19471,
+    "output": 415,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 331.392542417,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_invalid_sizes_raise (hidden_test_moving_average.HiddenWindowTest.test_invalid_sizes_raise) (values=[1, 2, 3], size=4)\nFAIL hidden tests: FAIL: test_invalid_sizes_raise (hidden_test_moving_average.HiddenWindowTest.test_invalid_sizes_raise) (values=[1, 2, 3], size=0)\nFAIL hidden tests: FAIL: test_invalid_sizes_raise (hidden_test_moving_average.HiddenWindowTest.test_invalid_sizes_raise) (values=[1, 2, 3], size=-1)\nFAIL hidden tests: FAIL: test_invalid_sizes_raise (hidden_test_moving_average.HiddenWindowTest.test_invalid_sizes_raise) (values=[], size=1)\nFAIL hidden tests: FAIL: test_report (hidden_test_moving_average.HiddenWindowTest.test_report)\nFAIL hidden tests: FAIL: test_report_rejects_large_window (hidden_test_moving_average.HiddenWindowTest.test_report_rejects_large_window)\nFAIL",
+  "session_id": "ses_01M46YMJFZ9W2AYQKT3F72K6AZ"
+}

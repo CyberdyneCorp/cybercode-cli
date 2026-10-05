@@ -1,0 +1,22 @@
+{
+  "task": "fix-stable-sort",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 6,
+  "tool_calls": 5,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 18166,
+    "output": 437,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 153.586282,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: competition ranking shares ranks and skips\nFAIL",
+  "session_id": "ses_01M470BVJE72Q7C8BW2ZVW6PV1"
+}

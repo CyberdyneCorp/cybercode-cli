@@ -1,0 +1,22 @@
+{
+  "task": "fix-stable-sort",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 3,
+  "tool_calls": 2,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 7597,
+    "output": 213,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 68.014730792,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: sorts by score descending\nFAIL hidden tests: visible: sorts by score descending\nFAIL hidden tests: ties keep input order\nFAIL hidden tests: large inputs with many ties are sorted stably\nFAIL hidden tests: handles negative and fractional scores\nFAIL hidden tests: does not modify the input array\nFAIL hidden tests: competition ranking shares ranks and skips\nFAIL hidden tests: withRanks copies players and leaves the input untouched\nFAIL",
+  "session_id": "ses_01M4709RQQFPT5ECJFCE8HT4T9"
+}

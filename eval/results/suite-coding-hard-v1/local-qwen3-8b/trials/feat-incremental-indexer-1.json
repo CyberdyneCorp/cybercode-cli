@@ -1,0 +1,22 @@
+{
+  "task": "feat-incremental-indexer",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 13,
+  "tool_calls": 13,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 76056,
+    "output": 3172,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 455.19004025,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: ERROR: test_no_changes_reuses_everything (hidden_test_incremental.TargetedTest.test_no_changes_reuses_everything)\nFAIL hidden tests: ERROR: test_other_version_forces_full_build (hidden_test_incremental.TargetedTest.test_other_version_forces_full_build)\nFAIL hidden tests: ERROR: test_rename_is_remove_plus_parse (hidden_test_incremental.TargetedTest.test_rename_is_remove_plus_parse)\nFAIL hidden tests: ERROR: test_rename_onto_existing_path (hidden_test_incremental.TargetedTest.test_rename_onto_existing_path)\nFAIL hidden tests: ERROR: test_reverted_content_is_reused (hidden_test_incremental.TargetedTest.test_reverted_content_is_reused)\nFAIL hidden tests: ERROR: test_rewrite_same_content_new_mtime_is_reused (hidden_test_incremental.TargetedTest.test_rewrite_same_content_new_mtime_is_reused)\nFAIL hidden tests: ERROR: test_same_size_new_mtime_changed_content_is_parsed (hidden_test_incremental.TargetedTest.test_same_size_new_mtime_changed_content_is_parsed)\nFAIL hidden tests: ERROR: test_size_change_with_same_mtime_is_detected (hidden_test_incremental.TargetedTest.test_size_change_with_same_mtime_is_detected)\nFAIL hidden tests: ERROR: test_stemming_change_forces_full_build (hidden_test_incremental.TargetedTest.test_stemming_change_forces_full_build)\nFAIL hidden tests: ERROR: test_stopwords_change_forces_full_build (hidden_test_incremental.TargetedTest.test_stopwords_change_forces_full_build)\nFAIL hidden tests: ERROR: test_touch_without_change_updates_stat_only (hidden_test_incremental.TargetedTest.test_touch_without_change_updates_stat_only)\nFAIL hidden tests: ERROR: test_unchanged_stat_is_trusted (hidden_test_incremental.TargetedTest.test_unchanged_stat_is_trusted)\nFAIL hidden tests: FAIL: test_cli_output (hidden_test_incremental.TargetedTest.test_cli_output)\nFAIL hidden tests: FAIL: test_stats_type_is_exported (hidden_test_incremental.TargetedTest.test_stats_type_is_exported)\nFAIL",
+  "session_id": "ses_01M4700KRJG1EN6PCHADREGQTZ"
+}
