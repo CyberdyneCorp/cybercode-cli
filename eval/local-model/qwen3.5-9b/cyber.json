@@ -1,0 +1,39 @@
+{
+  "model": "local/qwen3.5:9b",
+  "providers": {
+    "local": {
+      "api": {
+        "type": "openai-compatible",
+        "url": "http://127.0.0.1:11434/v1",
+        "settings": {
+          "auth": "none"
+        }
+      },
+      "models": {
+        "qwen3.5:9b": {
+          "id": "cyber-qwen35:9b-32k",
+          "name": "Qwen3.5 9B (32k, sampled non-thinking)",
+          "limits": {
+            "context": 32768,
+            "output": 8192
+          },
+          "request": {
+            "temperature": 0.7,
+            "body": {
+              "seed": 42,
+              "top_p": 0.8,
+              "presence_penalty": 1.5,
+              "reasoning_effort": "none"
+            }
+          }
+        }
+      }
+    }
+  },
+  "compaction": {
+    "buffer": 8192,
+    "keep": {
+      "tokens": 8192
+    }
+  }
+}

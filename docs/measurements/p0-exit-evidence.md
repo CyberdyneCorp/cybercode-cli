@@ -74,7 +74,7 @@ Labels were checked against [GitHub's runner documentation](https://docs.github.
 
 ## Remaining gate
 
-- Complete passing local compatible-model suite and long-task evidence. Ollama 0.32.1 was already installed. The Qwen3 8B runs were stopped after 30 completed failures; all outcomes and the stop reason are retained. Thinking and sampled non-thinking pilots also failed. Local adapter connectivity works, but local quality remains unproven. See [local setup and investigations](../../eval/local-model/README.md).
+- Complete passing local compatible-model suite and long-task evidence. Ollama 0.32.1 was already installed. The Qwen3 8B runs were stopped after 30 completed failures; all outcomes and the stop reason are retained. Thinking and sampled non-thinking pilots also failed. Qwen3.5 9B subsequently passed a slugify pilot with real tool use and the hidden grader; its long-task pilot is running, with full suites queued sequentially afterward. This is not a complete local baseline. See [local setup and investigations](../../eval/local-model/README.md).
 
 OpenAI and Anthropic live baselines, recovery/trust tests, full backup/verify/restore, retention and logs remain implemented. Landlock fallback, PTY routes and the deferred TUI features do not block this exit gate.
 

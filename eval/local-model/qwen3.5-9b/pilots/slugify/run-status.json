@@ -1,0 +1,9 @@
+{
+  "status": "stopped after successful initial pilot",
+  "complete_baseline": false,
+  "completed_trials": 1,
+  "planned_trials": 3,
+  "passed": 1,
+  "reason": "One verified task pass established candidate viability. Stopped remaining pilot work to give the single-slot local engine exclusively to the long-task pilot, then the full 3-trial suites. All completed outcomes retained.",
+  "stopped_at": "2026-10-05T22:08:56.946281+00:00"
+}

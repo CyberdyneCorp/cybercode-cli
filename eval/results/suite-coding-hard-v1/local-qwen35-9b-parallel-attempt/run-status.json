@@ -1,0 +1,8 @@
+{
+  "status": "aborted setup attempt",
+  "complete_baseline": false,
+  "reason": "Ollama qwen35 forces serial requests despite OLLAMA_NUM_PARALLEL=4; stop queued concurrent suite setup and run final baselines sequentially.",
+  "completed_trials": 0,
+  "passed": 0,
+  "stopped_at": "2026-10-05T22:06:18.830385+00:00"
+}

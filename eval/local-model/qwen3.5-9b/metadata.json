@@ -1,0 +1,52 @@
+{
+  "status": "one passing slugify pilot preserved; long-task pilot running; full suites queued sequentially",
+  "recorded_at": "2026-10-05T22:00:44.696506+00:00",
+  "ollama_version": "0.32.1",
+  "model": "qwen3.5:9b",
+  "base_digest": "56671c2ab9385f9cfcb404638e32cd62d88e3501d44822208363c010179a3c90",
+  "api_model": "cyber-qwen35:9b-32k",
+  "alias_digest": "9cdf1c295798e6f297bd8844d0324ca1f5350830f5d7c9bfc63d59fab342a619",
+  "details": {
+    "parent_model": "qwen3.5:9b",
+    "format": "gguf",
+    "family": "qwen35",
+    "families": [
+      "qwen35"
+    ],
+    "parameter_size": "9.0B",
+    "quantization_level": "Q4_K_M"
+  },
+  "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+  ],
+  "parameters": "top_k                          20\ntop_p                          0.8\nmin_p                          0\nnum_ctx                        32768\npresence_penalty               1.5\nrepeat_penalty                 1\nseed                           42\ntemperature                    0.7",
+  "machine": "MacBook Pro Mac14,6; M2 Max 12 cores; 32 GB; macOS 27.0",
+  "adapter": "openai-compatible",
+  "harness": "b99a74b",
+  "temperature": 0.7,
+  "top_p": 0.8,
+  "presence_penalty": 1.5,
+  "seed": 42,
+  "reasoning_effort": "none",
+  "context": 32768,
+  "max_output_tokens": 8192,
+  "compaction_buffer": 8192,
+  "compaction_keep_tokens": 8192,
+  "observed_context": 32768,
+  "observed_size_vram": 7273300621,
+  "baseline_server": {
+    "host": "127.0.0.1:11434",
+    "observed_parallel_slots": 1,
+    "jobs_per_suite": 1,
+    "concurrent_suites": 1
+  },
+  "concurrency_setup_attempt": {
+    "requested_parallel_slots": 4,
+    "observed_parallel_slots": 1,
+    "reason": "Ollama logged: model architecture does not currently support parallel requests; architecture=qwen35",
+    "private_server_stopped": true
+  }
+}
