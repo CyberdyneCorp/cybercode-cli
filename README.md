@@ -1,8 +1,22 @@
 # Cyber Code (`cyber`)
 
-> A dependable, model-independent coding agent you can interrupt, inspect and resume. It brings the best of **OpenCode** (open server, any provider, durable runtime), **Codex** (fast Rust binary, strong sandbox, ergonomic CLI) and **Claude Code** (workflows, goals, loops, remote control, cross-session messaging, cloud runners) into one tool.
+> A model-independent coding agent with durable local sessions, repository tools, a terminal UI and a public server API.
 
-The **OpenSpec** for the product is the source of truth: `openspec/specs/<capability>/spec.md`. Delivery order is in [`ROADMAP.md`](ROADMAP.md). Architecture decisions are in [`docs/decisions`](docs/decisions/0001-storage-architecture.md). Implementation is under way. Milestones M0.1 (workspace, paths, event store, trust-gated config, evaluation fixtures), M0.2 (model catalog, provider adapters, streaming turns with tool calls) M0.3 (durable session runtime: inbox, Drains, interrupt, crash recovery, compaction, Context Epochs) M0.4 (built-in tools, permission engine, macOS/Linux sandbox, snapshots and revert) and M0.5 (HTTP/WebSocket/stdio API, background service, `cyber exec`, the TUI and the TypeScript SDK) are built, which completes the P0 milestones.
+Cyber Code is in **P0 (Local core)**. All five implementation milestones, M0.1–M0.5, are built; **P0 is not closed**. The remaining exit gate is a complete local-model coding baseline, including the long task. A Qwen3.5 9B pilot has passed one small coding task through Ollama's OpenAI-compatible endpoint; that is not a full baseline.
+
+Implemented today:
+
+- OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat adapters.
+- Durable prompt admission, streaming tool loops, interrupt/resume, crash recovery and compaction.
+- Built-in repository and web tools, permission rules, macOS/Linux sandboxing, snapshots and conflict-aware restore.
+- A background server, HTTP/SSE/WebSocket/stdio API, `cyber exec`, the TUI and a generated TypeScript SDK.
+- Database-plus-artifact backup, verification, restore, retention and logs.
+
+Recovery/trust tests, per-tool goldens, storage measurements and all six macOS/Linux build targets have passing evidence. Default-service startup meets the 150 ms first-frame target on the named M2 Max machine; the embedded-mode measurements retain an outlier. See [P0 exit evidence](docs/measurements/p0-exit-evidence.md) and [evaluation results and local-model setup](eval/README.md).
+
+**Next:** P1 starts with M1.1, covering Windows sandbox enforcement, network-policy integration and mode cycling with an auto-mode classifier. Its design is prepared; implementation has not started. Workflows, goals, loops, remote control, cloud runners and additional clients are later roadmap work. Deferred PTY routes, Landlock fallback and parts of the TUI are listed in the roadmap and are not required to exit P0.
+
+The [roadmap](ROADMAP.md) tracks delivery and deferrals. The [OpenSpec contracts](openspec/specs) describe both implemented and planned behavior, tagged by phase. [Architecture decisions](docs/decisions/0001-storage-architecture.md) record design rationale.
 
 ## Building
 
@@ -10,7 +24,7 @@ Common tasks are in the [`justfile`](justfile) (install [`just`](https://github.
 
 ```bash
 just build          # debug build: target/debug/cyber
-just ci             # everything CI checks: lint, tests, specs, SDK
+just ci             # local checks: lint, tests, specs, SDK (platform builds run in CI)
 just test -p cyber-server        # one crate, or `just test <name filter>`
 just test-linux     # the test suite on Linux in Docker (bubblewrap sandbox)
 just tui            # the TUI here;  just exec "fix the failing test"
@@ -78,38 +92,35 @@ python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
 
 ---
 
-## Principles
+## Design principles
 
-1. **Any model, no lock-in.** Native adapters for OpenAI Responses, Chat Completions-compatible endpoints, Anthropic Messages, Gemini, Bedrock, Vertex, Azure and local servers (Ollama, llama.cpp, vLLM). A single workflow can mix models.
-2. **Local-first, account-optional.** Everything that runs on one machine works offline and without login. A Cyber Account (CyberdyneAuth) is required only for networked features.
-3. **Server-first.** One `cyber` server per user serves many projects. TUI, `exec`, IDE, web, mobile and SDK clients all use the same public OpenAPI.
-4. **Durable by default.** Every model-visible fact is persisted before it is acted on: prompt admission, tool calls, context changes, workflow agent results. Acknowledged state survives process crashes; file-backed storage uses FULL durability under documented filesystem assumptions. Unrecorded stream fragments and uncertain external side effects follow explicit recovery rules.
-5. **Safe to leave unattended.** Permission modes, an OS sandbox, protected paths and budgets make background, looped and workflow work safe.
-6. **Compatible.** Reads `AGENTS.md`/`CLAUDE.md`, `SKILL.md` folders and MCP config, and can import Claude Code, Codex and OpenCode setups.
+1. **Provider independence.** The local core supports OpenAI Responses, Anthropic Messages and compatible Chat endpoints, including local servers. Additional native adapters and mixed-model workflows are planned.
+2. **Local-first.** Local state and local-model execution do not require a Cyber account. Hosted model calls require connectivity and provider credentials. Cyber Account and hosted services are planned.
+3. **Server-first.** The TUI, `exec` and TypeScript SDK share the public server API. IDE, web and mobile clients are planned.
+4. **Durable execution.** Prompt admission, tool calls and context changes are recorded before execution proceeds. Recovery handles interrupted streams and uncertain tool outcomes explicitly; file-backed storage uses FULL durability under the documented filesystem assumptions.
+5. **Controlled execution.** Permission rules, protected paths, an OS sandbox and snapshots constrain repository work. Windows enforcement and the auto-mode classifier are planned for M1.1.
+6. **Familiar conventions.** Repository instructions and skills use familiar `AGENTS.md`/`CLAUDE.md` and `SKILL.md` conventions. MCP integration and setup import are later roadmap work.
 
-## Architecture
+## Current architecture
 
-```
- clients:  TUI · cyber exec · Web (local, Relay, desktop) · IDE (ACP / VS Code) · Mobile · SDK (TS/Rust/Py) · GitHub App
-              │  HTTP + SSE + WebSocket (OpenAPI)          ▲ remote clients via Relay (E2E encrypted)
- ┌────────────▼──────────────────────────────────────────────────────────────────────────────┐
- │ cyber server (Rust, one per user; `cyber service`)                                         │
- │  Location services: config · agents · skills · commands · catalog · tools · permissions    │
- │  Session runtime: durable inbox → Drains → Turns · Context Epochs · compaction · snapshots   │
- │  Orchestration: subagents · Workflow Runs (QuickJS) · Goals · Loops · Teams · messaging     │
- │  Execution: sandbox · PTY · background tasks · LSP · formatters · MCP clients              │
- │  Extensibility: hooks · plugin host (JSON-RPC, out-of-process) · channels                  │
- │  Storage: SQLite (WAL) · append-only event store · git snapshot repos                       │
- └───────┬──────────────────────────────┬────────────────────────────────┬───────────────────┘
-         │ LLM providers (any)           │ CyberdyneAuth (OIDC)            │ Cyber Cloud (optional,
-         ▼                               ▼                                 ▼  self-hostable)
-   OpenAI · Anthropic · Gemini ·   login · entitlements · orgs ·      Relay · Share service ·
-   Bedrock · Vertex · Ollama · …   roles · managed policy             Runner orchestrator · Routines
+```text
+ TUI · cyber exec · TypeScript SDK
+                  │ HTTP / SSE / WebSocket / stdio JSON-RPC
+                  ▼
+ cyber server (Rust, one background service per user)
+   config · trust · model catalog · tools · permissions
+   durable inbox → Drains → Turns · compaction · snapshots
+                  │
+         ┌────────┼──────────────────┐
+         ▼        ▼                  ▼
+    SQLite WAL  sandbox +        model adapters
+    event store shadow-git       OpenAI · Anthropic ·
+                snapshots        OpenAI-compatible endpoints
 ```
 
-Storage rationale and alternatives: [Storage architecture](docs/decisions/0001-storage-architecture.md). SQLite owns local execution state; PostgreSQL supports shared hosted control-plane state. The roadmap describes target behavior, not shipped capabilities.
+**Stack:** Rust with tokio, axum, rusqlite and ratatui. SQLite is bundled. Linux sandbox builds also ship the `cyber-sandbox-exec` helper; see the [platform build matrix](.github/workflows/ci.yml). The generated TypeScript SDK is available now; plugin kits and generated Rust/Python SDKs are planned.
 
-**Stack:** Rust (tokio, axum, rusqlite, rquickjs) in one static binary `cyber`. Plugins are out-of-process over JSON-RPC 2.0 on stdio, with a TypeScript kit `@cyber-code/plugin`. SDKs are `@cyber-code/sdk` (TS) and the `cyber-sdk` crate (Rust), both generated from OpenAPI.
+SQLite owns local execution state. PostgreSQL is a design choice for later hosted control-plane services, not a dependency of the local core. See [Storage architecture](docs/decisions/0001-storage-architecture.md).
 
 ## Naming
 
@@ -121,10 +132,10 @@ Storage rationale and alternatives: [Storage architecture](docs/decisions/0001-s
 | Data / state / cache | `~/.local/share/cyber` · `~/.local/state/cyber` · `~/.cache/cyber` |
 | Database | `<data>/cyber.db` |
 | Env prefix | `CYBER_` |
-| OAuth client | public client `cyber-cli` registered in CyberdyneAuth |
-| Entitlement product key | `cyber-code` (plans e.g. `cyber-code:pro`, `cyber-code:team`) |
 
-## Glossary
+## Specification glossary
+
+These terms describe the product contracts. Workflows, goals, loops, runners, Relay, devices, channels and Cyber Account are planned capabilities. Subagent execution and the auto-mode classifier are also future work; this table is not a list of shipped features.
 
 | Term | Meaning |
 |---|---|
@@ -149,7 +160,9 @@ Storage rationale and alternatives: [Storage architecture](docs/decisions/0001-s
 | **Mode** | A permission mode: `default`, `accept-edits`, `plan`, `auto`, `dont-ask`, `bypass`. Planning is a Mode, not an agent. |
 | **Cyber Account** | An identity from CyberdyneAuth. It carries `sub`, `orgs`, `entitlements` and `roles`. |
 
-## Capability map
+## Specification capability map
+
+This is the full product scope, spanning P0–P4. See the [roadmap](ROADMAP.md) for each capability’s delivery phase; it is not an availability matrix.
 
 | Area | Capabilities |
 |---|---|
