@@ -1,7 +1,7 @@
 //! Preflight records for recursive policy preparation; no ACL mutation.
 
 use super::*;
-use identity::FileRecord;
+use identity::{FileRecord, ObjectKey};
 
 /// Owns verified records and checked directory pins for an observed tree.
 /// Child creation/deletion is not frozen; future children require separate tracking.
@@ -95,11 +95,11 @@ impl TreeInventory {
         profile: &Profile,
         policy: &ExistingTreePolicy,
     ) -> io::Result<ExistingTreeGrant> {
-        let policies = self.resolve_policy(policy)?;
+        let policies = self.resolve_rules(policy)?;
         self.verify()?;
         let mut owner = ExistingTreeGrant { leases: Vec::new() };
         for (node, access) in self.nodes.drain(..).zip(policies) {
-            match identity::grant_record_policy(profile, node.record, access) {
+            match identity::grant_record_policy(profile, node.record, access.policy()) {
                 Ok(lease) => owner.leases.push(lease),
                 Err(setup) => return Err(owner.rollback_error(setup)),
             }
@@ -110,34 +110,28 @@ impl TreeInventory {
         Ok(owner)
     }
 
-    fn resolve_policy(&self, policy: &ExistingTreePolicy) -> io::Result<Vec<ObjectPolicy>> {
+    fn resolve_rules(&self, policy: &ExistingTreePolicy) -> io::Result<Vec<ObjectRules>> {
         let readonly = self.exclusion_keys(&policy.read_only)?;
         let hidden = self.exclusion_keys(&policy.unreadable)?;
-        let base = match policy.access {
-            Access::Read => ObjectPolicy::ReadOnly,
-            Access::Write => ObjectPolicy::Writable,
+        let base = ObjectRules {
+            writable: matches!(policy.access, Access::Write),
+            read_only: false,
+            unreadable: false,
         };
-        let mut policies = Vec::with_capacity(self.nodes.len());
+        let mut rules = Vec::with_capacity(self.nodes.len());
         for node in &self.nodes {
-            let inherited = node.parent.map_or(base, |parent| policies[parent]);
-            let access = if hidden.contains(&node.record.key())
-                || inherited == ObjectPolicy::Unreadable
-            {
-                ObjectPolicy::Unreadable
-            } else if readonly.contains(&node.record.key()) || inherited == ObjectPolicy::ReadOnly {
-                ObjectPolicy::ReadOnly
-            } else {
-                inherited
-            };
-            policies.push(access);
+            let mut access = node.parent.map_or(base, |parent| rules[parent]);
+            access.read_only |= readonly.contains(&node.record.key());
+            access.unreadable |= hidden.contains(&node.record.key());
+            rules.push(access);
         }
-        Ok(policies)
+        Ok(rules)
     }
 
     fn exclusion_keys(
         &self,
         paths: &[PathBuf],
-    ) -> io::Result<std::collections::HashSet<(u64, [u8; 16])>> {
+    ) -> io::Result<std::collections::HashSet<ObjectKey>> {
         let mut keys = std::collections::HashSet::new();
         for path in paths {
             let _ancestors = retain_ancestors(path)?;
@@ -245,6 +239,7 @@ impl Drop for ExistingTreeGrant {
 }
 
 /// Restrictions on existing objects. Missing and out-of-tree paths are refused.
+#[derive(Clone)]
 pub struct ExistingTreePolicy {
     pub access: Access,
     pub read_only: Vec<PathBuf>,
@@ -299,4 +294,99 @@ fn policy_entry(
             ..Default::default()
         },
     }
+}
+
+/// A root's base access and explicit restrictions, resolved before any mutation.
+#[derive(Clone)]
+pub struct ExistingTreeRoot {
+    pub path: PathBuf,
+    pub policy: ExistingTreePolicy,
+}
+
+#[derive(Clone, Copy)]
+struct ObjectRules {
+    writable: bool,
+    read_only: bool,
+    unreadable: bool,
+}
+
+impl ObjectRules {
+    fn combine(&mut self, other: Self) {
+        self.writable |= other.writable;
+        self.read_only |= other.read_only;
+        self.unreadable |= other.unreadable;
+    }
+
+    fn policy(self) -> ObjectPolicy {
+        if self.unreadable {
+            ObjectPolicy::Unreadable
+        } else if self.read_only || !self.writable {
+            ObjectPolicy::ReadOnly
+        } else {
+            ObjectPolicy::Writable
+        }
+    }
+}
+
+struct ForestPreparation {
+    nodes: Vec<(Node, ObjectRules)>,
+    indexes: std::collections::HashMap<ObjectKey, usize>,
+    pins: Vec<File>,
+}
+
+impl ForestPreparation {
+    fn add(&mut self, root: &ExistingTreeRoot, limit: usize) -> io::Result<()> {
+        let mut tree = TreeInventory::capture(&root.path, limit)?;
+        let rules = tree.resolve_rules(&root.policy)?;
+        for (node, rule) in tree.nodes.drain(..).zip(rules) {
+            let key = node.record.key();
+            if let Some(&index) = self.indexes.get(&key) {
+                self.nodes[index].1.combine(rule);
+            } else {
+                if self.nodes.len() >= limit {
+                    return Err(io::Error::other("Forest inventory object limit exceeded"));
+                }
+                self.indexes.insert(key, self.nodes.len());
+                self.nodes.push((node, rule));
+            }
+        }
+        self.pins.append(&mut tree.pins);
+        Ok(())
+    }
+
+    fn grant(mut self, profile: &Profile) -> io::Result<ExistingTreeGrant> {
+        let mut owner = ExistingTreeGrant { leases: Vec::new() };
+        for (node, rule) in self.nodes.drain(..) {
+            match identity::grant_record_policy(profile, node.record, rule.policy()) {
+                Ok(lease) => owner.leases.push(lease),
+                Err(setup) => return Err(owner.rollback_error(setup)),
+            }
+        }
+        if let Err(setup) = owner.verify() {
+            return Err(owner.rollback_error(setup));
+        }
+        Ok(owner)
+    }
+}
+
+pub(super) fn grant_forest(
+    profile: &Profile,
+    roots: &[ExistingTreeRoot],
+    limit: usize,
+) -> io::Result<ExistingTreeGrant> {
+    if roots.is_empty() || limit == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Forest preparation requires roots and a nonzero object limit",
+        ));
+    }
+    let mut forest = ForestPreparation {
+        nodes: Vec::new(),
+        indexes: std::collections::HashMap::new(),
+        pins: Vec::new(),
+    };
+    for root in roots {
+        forest.add(root, limit)?;
+    }
+    forest.grant(profile)
 }

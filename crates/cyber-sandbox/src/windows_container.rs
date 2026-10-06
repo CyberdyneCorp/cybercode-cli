@@ -5,7 +5,7 @@
 mod identity;
 mod tree;
 pub use identity::IdentityGrant;
-pub use tree::{ExistingTreeGrant, ExistingTreePolicy, TreeInventory};
+pub use tree::{ExistingTreeGrant, ExistingTreePolicy, ExistingTreeRoot, TreeInventory};
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -160,6 +160,22 @@ impl Profile {
             .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
         self.ensure_unstarted()?;
         TreeInventory::capture(root, limit)?.grant_policy(self, policy)
+    }
+
+    /// Prepare overlapping existing roots once per verified object identity.
+    /// Base access combines; explicit exclusions remain restrictive.
+    pub fn grant_existing_forest(
+        &self,
+        roots: &[ExistingTreeRoot],
+        limit: usize,
+    ) -> io::Result<ExistingTreeGrant> {
+        let _preparation = self
+            .0
+            .preparation
+            .lock()
+            .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
+        self.ensure_unstarted()?;
+        tree::grant_forest(self, roots, limit)
     }
 
     fn grant_relocatable_object(
@@ -969,6 +985,151 @@ mod tests {
         assert!(profile.grant_relocatable(&path, Access::Write).is_err());
         assert_eq!(all_entries(&object), original);
         assert_eq!(all_entries(&file(&alias)), original);
+        profile.close().unwrap();
+    }
+
+    fn forest_allowed_mask(path: &Path, profile: &Profile) -> Option<u32> {
+        entries(&file(path), profile)
+            .into_iter()
+            .find(|entry| entry[0] == 0)
+            .map(|entry| u32::from_ne_bytes(entry[4..8].try_into().unwrap()))
+    }
+
+    #[test]
+    fn existing_forest_unions_base_access_and_preserves_exclusions_in_both_orders() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let workspace = root.join("workspace");
+        let protected = workspace.join("protected");
+        std::fs::create_dir_all(&protected).unwrap();
+        let writable = workspace.join("write.txt");
+        let readonly = protected.join("read.txt");
+        let hidden = workspace.join("secret.txt");
+        for path in [&writable, &readonly, &hidden] {
+            std::fs::write(path, "fixture").unwrap();
+        }
+        let before = [&writable, &readonly, &hidden].map(|path| stored_entries(&file(path)));
+        let mut roots = vec![
+            ExistingTreeRoot {
+                path: root.clone(),
+                policy: ExistingTreePolicy {
+                    access: Access::Read,
+                    read_only: vec![protected],
+                    unreadable: vec![hidden.clone()],
+                },
+            },
+            ExistingTreeRoot {
+                path: workspace,
+                policy: ExistingTreePolicy {
+                    access: Access::Write,
+                    read_only: vec![],
+                    unreadable: vec![],
+                },
+            },
+        ];
+        for _ in 0..2 {
+            let mut profile = Profile::new().unwrap();
+            let mut owner = profile.grant_existing_forest(&roots, 6).unwrap();
+            assert_eq!(
+                forest_allowed_mask(&writable, &profile),
+                Some(Access::Write.mask())
+            );
+            assert_eq!(
+                forest_allowed_mask(&readonly, &profile),
+                Some(Access::Read.mask())
+            );
+            assert_eq!(forest_allowed_mask(&hidden, &profile), None);
+            assert_eq!(entries(&file(&hidden), &profile).len(), 1);
+            owner.close().unwrap();
+            assert_eq!(
+                [&writable, &readonly, &hidden].map(|path| stored_entries(&file(path))),
+                before
+            );
+            profile.close().unwrap();
+            roots.reverse();
+        }
+        std::fs::rename(root, directory.path().join("moved")).unwrap();
+    }
+
+    #[test]
+    fn existing_forest_distinct_limits_and_later_root_failure_do_not_mutate() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let paths = [first.join("leaf.txt"), second.join("leaf.txt")];
+        for path in &paths {
+            std::fs::write(path, "fixture").unwrap();
+        }
+        let before = paths.each_ref().map(|path| stored_entries(&file(path)));
+        let policy = ExistingTreePolicy {
+            access: Access::Write,
+            read_only: vec![],
+            unreadable: vec![],
+        };
+        let mut roots = vec![
+            ExistingTreeRoot {
+                path: first.clone(),
+                policy: policy.clone(),
+            },
+            ExistingTreeRoot {
+                path: second.clone(),
+                policy,
+            },
+        ];
+        let mut profile = Profile::new().unwrap();
+        assert!(profile.grant_existing_forest(&[], 4).is_err());
+        assert!(profile.grant_existing_forest(&roots, 0).is_err());
+        assert!(profile.grant_existing_forest(&roots, 3).is_err());
+        roots[1].policy.unreadable.push(second.join("absent.txt"));
+        assert!(profile.grant_existing_forest(&roots, 4).is_err());
+        assert_eq!(
+            paths.each_ref().map(|path| stored_entries(&file(path))),
+            before
+        );
+        let duplicates = [roots[0].clone(), roots[0].clone()];
+        let mut owner = profile.grant_existing_forest(&duplicates, 2).unwrap();
+        owner.close().unwrap();
+        profile.close().unwrap();
+        std::fs::rename(first, directory.path().join("moved-first")).unwrap();
+        std::fs::rename(second, directory.path().join("moved-second")).unwrap();
+    }
+
+    #[test]
+    fn existing_forest_late_installation_failure_rolls_back_earlier_objects() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let leaf = nested.join("leaf.txt");
+        std::fs::write(&leaf, "original").unwrap();
+        let mut profile = Profile::new().unwrap();
+        let prior = profile.grant_relocatable(&leaf, Access::Read).unwrap();
+        let before = [&root, &nested].map(|path| stored_entries(&directory_file(path)));
+        let policy = ExistingTreePolicy {
+            access: Access::Write,
+            read_only: vec![],
+            unreadable: vec![],
+        };
+        let roots = [
+            ExistingTreeRoot {
+                path: root.clone(),
+                policy: policy.clone(),
+            },
+            ExistingTreeRoot {
+                path: nested,
+                policy,
+            },
+        ];
+        assert!(profile.grant_existing_forest(&roots, 3).is_err());
+        assert_eq!(
+            [&root, &root.join("nested")].map(|path| stored_entries(&directory_file(path))),
+            before
+        );
+        assert_mask(&file(&leaf), &profile, Access::Read);
+        std::fs::rename(root, directory.path().join("moved")).unwrap();
+        prior.close().unwrap();
         profile.close().unwrap();
     }
 

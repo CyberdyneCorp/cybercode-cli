@@ -12,7 +12,8 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, ExtendedFileIdType, FILE_ID_128, FILE_ID_DESCRIPTOR,
     FILE_ID_DESCRIPTOR_0, FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_WRITE, FileIdInfo,
-    FileIdType, GetFileInformationByHandle, GetFileInformationByHandleEx, OpenFileById,
+    FileIdType, GetFileInformationByHandle, GetFileInformationByHandleEx,
+    GetFinalPathNameByHandleW, OpenFileById, VOLUME_NAME_GUID,
 };
 use windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 
@@ -241,16 +242,19 @@ fn checked(result: i32) -> io::Result<()> {
     }
 }
 
+pub(super) type ObjectKey = (Arc<str>, u64, [u8; 16]);
+
 pub(super) struct FileRecord {
     volume: File,
+    volume_id: Arc<str>,
     serial: u64,
     id: [u8; 16],
     descriptor: FILE_ID_DESCRIPTOR,
 }
 
 impl FileRecord {
-    pub(super) fn key(&self) -> (u64, [u8; 16]) {
-        (self.serial, self.id)
+    pub(super) fn key(&self) -> ObjectKey {
+        (Arc::clone(&self.volume_id), self.serial, self.id)
     }
 
     pub(super) fn capture(path: &Path, file: &File) -> io::Result<Self> {
@@ -267,8 +271,10 @@ impl FileRecord {
                 "Object and volume hint disagree",
             ));
         }
+        let volume_id = volume_identity(&volume)?;
         let mut record = Self {
             volume,
+            volume_id,
             serial: info.VolumeSerialNumber,
             id: info.FileId.Identifier,
             descriptor: descriptor(info.FileId),
@@ -341,6 +347,37 @@ impl FileRecord {
         }
         Ok(file)
     }
+}
+
+fn volume_identity(volume: &File) -> io::Result<Arc<str>> {
+    let mut buffer = [0u16; 128];
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            volume.as_raw_handle(),
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            VOLUME_NAME_GUID,
+        )
+    } as usize;
+    if length == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length >= buffer.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Volume identity exceeds bound",
+        ));
+    }
+    let name = String::from_utf16(&buffer[..length])
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid volume identity"))?
+        .to_ascii_lowercase();
+    if !name.starts_with(r"\\?\volume{") || !name.ends_with("}\\") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Expected a volume GUID root",
+        ));
+    }
+    Ok(Arc::from(name))
 }
 
 fn descriptor(id: FILE_ID_128) -> FILE_ID_DESCRIPTOR {

@@ -8,7 +8,9 @@ use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle,
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use cyber_sandbox::windows_container::{Access, AclGrant, ExistingTreePolicy, Profile};
+use cyber_sandbox::windows_container::{
+    Access, AclGrant, ExistingTreePolicy, ExistingTreeRoot, Profile,
+};
 use cyber_sandbox::windows_launch::{StandardStreams, spawn, spawn_with_stdio};
 
 #[path = "windows_container_launch/package_allowance.rs"]
@@ -146,13 +148,25 @@ async fn existing_tree_exclusions_enforce_readonly_and_hidden_descendants() {
     std::fs::write(scope.join("writable/delete.txt"), "delete control").unwrap();
     std::fs::write(scope.join("protected/delete.txt"), "protected control").unwrap();
     let policy = ExistingTreePolicy {
-        access: Access::Write,
+        access: Access::Read,
         read_only: vec![scope.join("protected"), scope.join("secret")],
         unreadable: vec![scope.join("secret")],
     };
-    let mut tree = profile
-        .grant_existing_tree_policy(&scope, &policy, 9)
-        .unwrap();
+    let roots = [
+        ExistingTreeRoot {
+            path: scope.clone(),
+            policy,
+        },
+        ExistingTreeRoot {
+            path: scope.join("writable"),
+            policy: ExistingTreePolicy {
+                access: Access::Write,
+                read_only: vec![],
+                unreadable: vec![],
+            },
+        },
+    ];
+    let mut tree = profile.grant_existing_forest(&roots, 9).unwrap();
     let env = environment(directory.path(), "existing-policy", &profile);
     let child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
     let code = tokio::time::timeout(Duration::from_secs(10), child.wait_owned())
@@ -336,6 +350,12 @@ fn assert_profile_grants_sealed(profile: &Profile, root: &Path) {
         .grant_existing_tree(root, Access::Write, 0)
         .err()
         .expect("executed profiles must refuse tree grants before inventory");
+    assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(grant.to_string().contains("single-use"));
+    let grant = profile
+        .grant_existing_forest(&[], 0)
+        .err()
+        .expect("executed profiles must refuse forest preparation before inventory");
     assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
     assert!(grant.to_string().contains("single-use"));
     let policy = ExistingTreePolicy {
@@ -787,18 +807,34 @@ fn existing_policy_worker(root: &Path) -> std::io::Result<()> {
     if std::fs::read_to_string(scope.join("protected/leaf.txt"))? != "original" {
         return Err(std::io::Error::other("Read-only content changed"));
     }
-    denied_access(std::fs::write(
-        scope.join("protected/leaf.txt"),
-        "forbidden",
-    ))?;
-    denied_access(std::fs::remove_file(scope.join("protected/leaf.txt")))?;
-    denied_access(std::fs::remove_file(scope.join("protected/delete.txt")))?;
-    denied_access(std::fs::write(scope.join("protected/new.txt"), "forbidden"))?;
-    denied_access(std::fs::read(scope.join("secret/leaf.txt")))?;
-    denied_access(std::fs::write(scope.join("secret/leaf.txt"), "forbidden"))?;
+    denied_operation(
+        "protected file write",
+        std::fs::write(scope.join("protected/leaf.txt"), "forbidden"),
+    )?;
+    denied_operation(
+        "protected file delete",
+        std::fs::remove_file(scope.join("protected/leaf.txt")),
+    )?;
+    denied_operation(
+        "protected parent-delete control",
+        std::fs::remove_file(scope.join("protected/delete.txt")),
+    )?;
+    denied_operation(
+        "protected child creation",
+        std::fs::write(scope.join("protected/new.txt"), "forbidden"),
+    )?;
+    denied_operation(
+        "hidden file read",
+        std::fs::read(scope.join("secret/leaf.txt")),
+    )?;
+    denied_operation(
+        "hidden file write",
+        std::fs::write(scope.join("secret/leaf.txt"), "forbidden"),
+    )?;
     for name in ["writable", "protected", "secret"] {
         for right in [WRITE_DAC, WRITE_OWNER] {
-            denied_access(
+            denied_operation(
+                &format!("{name} security right {right:#x}"),
                 std::fs::OpenOptions::new()
                     .access_mode(right)
                     .open(scope.join(name).join("leaf.txt")),
@@ -808,11 +844,16 @@ fn existing_policy_worker(root: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn denied_access<T>(result: std::io::Result<T>) -> std::io::Result<()> {
+fn denied_operation<T>(operation: &str, result: std::io::Result<T>) -> std::io::Result<()> {
     match result {
         Err(error) if error.raw_os_error() == Some(5) => Ok(()),
-        Err(error) => Err(error),
-        Ok(_) => Err(std::io::Error::other("Excluded access was allowed")),
+        Err(error) => Err(std::io::Error::new(
+            error.kind(),
+            format!("{operation}: {error}"),
+        )),
+        Ok(_) => Err(std::io::Error::other(format!(
+            "Excluded access was allowed: {operation}"
+        ))),
     }
 }
 

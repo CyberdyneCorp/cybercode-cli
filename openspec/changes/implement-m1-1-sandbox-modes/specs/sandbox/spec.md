@@ -127,6 +127,16 @@
 - **AND** parent delete-child allowance SHALL NOT bypass invocation-specific exclusions
 - **AND** fixture allowances SHALL be scoped to temporary objects and restored through retained verified handles
 
+#### Scenario: Overlapping existing-root preparation
+- **WHEN** Windows prepares multiple overlapping existing filesystem roots for an invocation
+- **THEN** it SHALL preflight every root and exclusion before ACL mutation and deduplicate objects by verified volume/file identity
+- **AND** base read/write access SHALL combine across roots while explicit read-only and unreadable exclusions SHALL remain restrictive across every overlap
+- **AND** input root order and filesystem name aliases SHALL NOT widen exclusions
+- **AND** the object limit SHALL count distinct identities across the complete preparation
+- **AND** each object SHALL receive a single owned policy installation with all-object rollback/retry and final identity validation
+- **AND** directory pins SHALL remain alive through complete preparation, then release without preventing ordinary later directory moves
+- **AND** this existing-object forest SHALL NOT claim future-child inheritance, absent-name protection or runtime sandbox availability
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner
