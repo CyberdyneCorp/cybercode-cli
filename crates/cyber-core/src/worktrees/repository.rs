@@ -13,6 +13,8 @@ pub type GitFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Output>> + Send 
 
 /// Runtime implementations must provide sandboxed, cancellation-owned Git execution
 /// with ambient Git overrides removed. The core manager never spawns processes.
+/// On Windows, `directory` may be a short launch ancestor; `-C` selects the actual
+/// repository. Sandbox permissions must remain scoped to the requested worktree.
 pub trait GitExecution: Send + Sync {
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a>;
 }
@@ -239,10 +241,9 @@ async fn git(
     args: &[OsString],
 ) -> io::Result<Vec<u8>> {
     #[cfg(windows)]
-    let windows_args: Vec<OsString> = ["-c".into(), "core.longpaths=true".into()]
-        .into_iter()
-        .chain(args.iter().cloned())
-        .collect();
+    let (launch_directory, windows_args) = windows_git_launch(directory, args)?;
+    #[cfg(windows)]
+    let directory = launch_directory.as_path();
     #[cfg(windows)]
     let args = windows_args.as_slice();
     let output = execution.run(directory, args).await?;
@@ -253,6 +254,30 @@ async fn git(
         )));
     }
     Ok(output.stdout)
+}
+
+#[cfg(windows)]
+fn windows_git_launch(directory: &Path, args: &[OsString]) -> io::Result<(PathBuf, Vec<OsString>)> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let target = git_path_argument(directory)?;
+    for ancestor in directory.ancestors() {
+        let launch = git_path_argument(ancestor)?;
+        // CreateProcess cannot use a long current directory, even with long-path opt-in.
+        if launch.encode_wide().count() < 240 {
+            let args = [
+                "-c".into(),
+                "core.longpaths=true".into(),
+                "-C".into(),
+                target,
+            ]
+            .into_iter()
+            .chain(args.iter().cloned())
+            .collect();
+            return Ok((PathBuf::from(launch), args));
+        }
+    }
+    Err(invalid("No supported short Git launch directory"))
 }
 
 async fn git_path(

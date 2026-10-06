@@ -24,6 +24,11 @@ struct Execution {
 
 impl Execution {
     fn invoke(&self, directory: &Path, args: &[OsString]) -> io::Result<Output> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            assert!(directory.as_os_str().encode_wide().count() < 260);
+        }
         let mut command = Command::new("git");
         command
             .env_clear()
@@ -51,7 +56,11 @@ impl GitExecution for Execution {
                 .windows(2)
                 .any(|pair| pair[0] == "checkout-index" && pair[1] == "--all");
             if checkout && matches!(self.mode, Mode::CollideBeforeCheckout) {
-                std::fs::write(directory.join("tracked.txt"), "user file during setup")?;
+                let worktree = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "-C")
+                    .map_or(directory, |pair| Path::new(&pair[1]));
+                std::fs::write(worktree.join("tracked.txt"), "user file during setup")?;
             }
             let output = self.invoke(directory, args)?;
             if checkout && output.status.success() {
