@@ -4,12 +4,12 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::os::windows::io::{AsHandle, AsRawHandle};
+use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use cyber_sandbox::windows_container::{Access, AclGrant, Profile};
-use cyber_sandbox::windows_launch::spawn;
+use cyber_sandbox::windows_launch::{StandardStreams, spawn, spawn_with_stdio};
 
 fn environment(root: &Path, role: &str, profile: &Profile) -> BTreeMap<String, String> {
     BTreeMap::from([
@@ -118,7 +118,8 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
     assert_eq!(
         child.wait(Duration::from_secs(10)).unwrap(),
         0,
-        "worker stage failed; diagnostic: {}",
+        "worker stage failed; owned scratch: {:?}; diagnostic: {}",
+        scratch.file_name().unwrap(),
         std::fs::read_to_string(directory.path().join("write.txt")).unwrap()
     );
     assert_eq!(
@@ -143,6 +144,80 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
         grant.close().unwrap();
     }
     profile.close().unwrap();
+}
+
+#[test]
+fn redirected_streams_preserve_bytes_and_exclude_unlisted_inheritable_handles() {
+    use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let input = directory.path().join("stdin.txt");
+    std::fs::write(&input, "input λ\n").unwrap();
+    let stdin = std::fs::File::open(input).unwrap();
+    let stdout = std::fs::File::create(directory.path().join("stdout.txt")).unwrap();
+    let stderr = std::fs::File::create(directory.path().join("stderr.txt")).unwrap();
+    let sentinel = inheritable_event();
+    let mut env = environment(directory.path(), "streams", &profile);
+    env.insert(
+        "CYBER_UNLISTED_EVENT".into(),
+        (sentinel.as_raw_handle() as usize).to_string(),
+    );
+    let mut child = spawn_with_stdio(
+        &profile,
+        &program,
+        &arguments(),
+        &env,
+        directory.path(),
+        StandardStreams {
+            stdin: stdin.as_handle(),
+            stdout: stdout.as_handle(),
+            stderr: stderr.as_handle(),
+        },
+    )
+    .unwrap();
+    assert_eq!(child.wait(Duration::from_secs(10)).unwrap(), 0);
+    assert!(
+        std::fs::read_to_string(directory.path().join("stdout.txt"))
+            .unwrap()
+            .contains("stdout: input λ\n")
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("stderr.txt")).unwrap(),
+        "stderr: 日本語\n"
+    );
+    assert_eq!(
+        unsafe { WaitForSingleObject(sentinel.as_raw_handle(), 0) },
+        WAIT_TIMEOUT
+    );
+    drop(child);
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
+}
+
+fn inheritable_event() -> OwnedHandle {
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, ResetEvent, SetEvent, WaitForSingleObject,
+    };
+    let security = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        bInheritHandle: 1,
+        ..Default::default()
+    };
+    let raw = unsafe { CreateEventW(&security, 1, 0, std::ptr::null()) };
+    assert!(!raw.is_null());
+    let event = unsafe { OwnedHandle::from_raw_handle(raw) };
+    // Positive control: an inherited copy can signal this exact kernel object.
+    assert_ne!(unsafe { SetEvent(raw) }, 0);
+    assert_eq!(unsafe { WaitForSingleObject(raw, 0) }, WAIT_OBJECT_0);
+    assert_ne!(unsafe { ResetEvent(raw) }, 0);
+    event
 }
 
 #[test]
@@ -235,6 +310,9 @@ fn container_worker() {
     if std::env::args_os().skip(1).collect::<Vec<_>>() != arguments() {
         std::process::exit(47);
     }
+    if role == "streams" {
+        std::process::exit(if stream_worker().is_ok() { 0 } else { 52 });
+    }
     if role == "wait" {
         if std::fs::write(root.join("started.txt"), "running").is_err() {
             std::process::exit(48);
@@ -244,6 +322,27 @@ fn container_worker() {
     }
     let code = if role == "probe" { probe(&root) } else { 60 };
     std::process::exit(code);
+}
+
+fn stream_worker() -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    use windows_sys::Win32::System::Threading::SetEvent;
+    let unlisted = std::env::var("CYBER_UNLISTED_EVENT")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    if unsafe { SetEvent(unlisted as *mut core::ffi::c_void) } != 0 {
+        return Err(std::io::Error::other("Unlisted handle was inherited"));
+    }
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+    if input != "input λ\n" {
+        return Err(std::io::Error::other("Redirected input changed"));
+    }
+    std::io::stdout().write_all(format!("stdout: {input}").as_bytes())?;
+    std::io::stdout().flush()?;
+    std::io::stderr().write_all("stderr: 日本語\n".as_bytes())?;
+    std::io::stderr().flush()
 }
 
 fn probe(root: &Path) -> i32 {
@@ -324,9 +423,22 @@ fn private_temp() -> Result<(), serde_json::Value> {
             .strip_prefix(&storage)
             .ok()
             .map(|value| value.to_string_lossy().into_owned());
+        let leaf = path
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned());
+        let normalized_storage = storage
+            .to_string_lossy()
+            .trim_start_matches("\\\\?\\")
+            .to_lowercase();
+        let normalized_path = path
+            .to_string_lossy()
+            .trim_start_matches("\\\\?\\")
+            .to_lowercase();
+        let under_profile = normalized_path.starts_with(&format!("{normalized_storage}\\"));
         let path = std::fs::canonicalize(path).map_err(|error| {
             serde_json::json!({
-                "stage": name, "relative": relative, "code": error.raw_os_error()
+                "stage": name, "relative": relative, "leaf": leaf,
+                "under_profile": under_profile, "code": error.raw_os_error()
             })
         })?;
         if !path.starts_with(&resolved) {

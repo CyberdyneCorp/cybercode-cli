@@ -14,6 +14,13 @@
 - **AND** setup or verification failure SHALL terminate the suspended process without falling back to unrestricted execution
 - **AND** the child SHALL receive an explicit environment rather than inherit the parent's environment
 
+#### Scenario: Explicit Windows standard streams
+- **WHEN** a Windows sandbox invocation redirects stdin, stdout and stderr
+- **THEN** the launcher SHALL duplicate only the three supplied stream handles for inheritance and specify an explicit handle list
+- **AND** unrelated inheritable handles SHALL NOT be passed to the child
+- **AND** redirected streams SHALL preserve input bytes, EOF and separate Unicode stdout/stderr output
+- **AND** temporary parent duplicates SHALL be released after process creation or setup failure
+
 #### Scenario: Windows private temporary storage
 - **WHEN** a Windows sandbox invocation prepares its temporary storage
 - **THEN** TEMP and TMP SHALL identify an invocation-owned directory beneath that profile's storage

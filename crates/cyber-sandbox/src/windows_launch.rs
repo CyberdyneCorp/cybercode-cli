@@ -10,31 +10,71 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 
-use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows_sys::Win32::Foundation::{
+    DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::Security::{
     EqualSid, GetTokenInformation, SECURITY_CAPABILITIES, TOKEN_APPCONTAINER_INFORMATION,
     TOKEN_QUERY, TokenAppContainerSid, TokenIsAppContainer,
 };
 use windows_sys::Win32::System::Threading::{
     CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, InitializeProcThreadAttributeList,
-    OpenProcessToken, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-    PROCESS_INFORMATION, ResumeThread, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
-    WaitForSingleObject,
+    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    PROC_THREAD_ATTRIBUTE_JOB_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::windows_container::{AclGrant, Profile};
 use crate::windows_process::Job;
 
 /// Launch only after job assignment and exact AppContainer identity verification.
-/// The environment is explicit; no parent handles or credential variables are inherited.
-/// This low-level path has no redirected stdio and does not implement root policy.
+/// The environment is explicit and no parent handles are inherited.
+/// This low-level path does not implement root policy or credential filtering.
 pub fn spawn(
     profile: &Profile,
     program: &Path,
     args: &[OsString],
     environment: &BTreeMap<String, String>,
     directory: &Path,
+) -> io::Result<ContainerChild> {
+    spawn_inner(profile, program, args, environment, directory, None)
+}
+
+/// Explicit standard streams. Supplied handles must grant only intended stream access.
+pub struct StandardStreams<'a> {
+    pub stdin: BorrowedHandle<'a>,
+    pub stdout: BorrowedHandle<'a>,
+    pub stderr: BorrowedHandle<'a>,
+}
+
+/// Launch with exactly the three supplied stream handles, duplicated for inheritance.
+pub fn spawn_with_stdio(
+    profile: &Profile,
+    program: &Path,
+    args: &[OsString],
+    environment: &BTreeMap<String, String>,
+    directory: &Path,
+    streams: StandardStreams<'_>,
+) -> io::Result<ContainerChild> {
+    spawn_inner(
+        profile,
+        program,
+        args,
+        environment,
+        directory,
+        Some(streams),
+    )
+}
+
+fn spawn_inner(
+    profile: &Profile,
+    program: &Path,
+    args: &[OsString],
+    environment: &BTreeMap<String, String>,
+    directory: &Path,
+    streams: Option<StandardStreams<'_>>,
 ) -> io::Result<ContainerChild> {
     profile.ensure_active()?;
     if !program.is_absolute() || !directory.is_absolute() {
@@ -55,10 +95,18 @@ pub fn spawn(
     };
     let job = Job::new()?;
     let jobs = [job.handle()];
-    let mut attributes = Attributes::new(&capabilities, &jobs)?;
+    let streams = streams.map(InheritedStreams::new).transpose()?;
+    let handles = streams.as_ref().map(InheritedStreams::handles);
+    let mut attributes = Attributes::new(&capabilities, &jobs, handles.as_ref())?;
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
     startup.lpAttributeList = attributes.pointer();
+    if let Some(handles) = handles {
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = handles[0];
+        startup.StartupInfo.hStdOutput = handles[1];
+        startup.StartupInfo.hStdError = handles[2];
+    }
     let mut information = PROCESS_INFORMATION::default();
     // All buffers and security capabilities stay alive until the synchronous API returns.
     let created = unsafe {
@@ -67,7 +115,7 @@ pub fn spawn(
             command.as_mut_ptr(),
             null(),
             null(),
-            0,
+            i32::from(streams.is_some()),
             CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
             environment.as_ptr().cast(),
             directory.as_ptr(),
@@ -98,6 +146,43 @@ pub fn spawn(
         return Err(io::Error::last_os_error());
     }
     Ok(child)
+}
+
+struct InheritedStreams([OwnedHandle; 3]);
+
+impl InheritedStreams {
+    fn new(streams: StandardStreams<'_>) -> io::Result<Self> {
+        Ok(Self([
+            inheritable_duplicate(streams.stdin)?,
+            inheritable_duplicate(streams.stdout)?,
+            inheritable_duplicate(streams.stderr)?,
+        ]))
+    }
+
+    fn handles(&self) -> [HANDLE; 3] {
+        self.0.each_ref().map(AsRawHandle::as_raw_handle)
+    }
+}
+
+fn inheritable_duplicate(source: BorrowedHandle<'_>) -> io::Result<OwnedHandle> {
+    let owner = unsafe { GetCurrentProcess() };
+    let mut duplicate = null_mut();
+    if unsafe {
+        DuplicateHandle(
+            owner,
+            source.as_raw_handle(),
+            owner,
+            &mut duplicate,
+            0,
+            1,
+            DUPLICATE_SAME_ACCESS,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // DuplicateHandle transferred a real handle to this owner.
+    Ok(unsafe { OwnedHandle::from_raw_handle(duplicate) })
 }
 
 /// Dropping this owner terminates the process and closes the descendant-owning job.
@@ -210,9 +295,14 @@ struct Attributes {
 }
 
 impl Attributes {
-    fn new(capabilities: &SECURITY_CAPABILITIES, jobs: &[HANDLE; 1]) -> io::Result<Self> {
+    fn new(
+        capabilities: &SECURITY_CAPABILITIES,
+        jobs: &[HANDLE; 1],
+        handles: Option<&[HANDLE; 3]>,
+    ) -> io::Result<Self> {
+        let count = if handles.is_some() { 3 } else { 2 };
         let mut bytes = 0;
-        unsafe { InitializeProcThreadAttributeList(null_mut(), 2, 0, &mut bytes) };
+        unsafe { InitializeProcThreadAttributeList(null_mut(), count, 0, &mut bytes) };
         if bytes == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -221,11 +311,15 @@ impl Attributes {
             initialized: false,
         };
         // The storage is pointer-aligned and Windows supplied its required size.
-        if unsafe { InitializeProcThreadAttributeList(attributes.pointer(), 2, 0, &mut bytes) } == 0
+        if unsafe { InitializeProcThreadAttributeList(attributes.pointer(), count, 0, &mut bytes) }
+            == 0
         {
             return Err(io::Error::last_os_error());
         }
         attributes.initialized = true;
+        if let Some(handles) = handles {
+            attributes.streams(handles)?;
+        }
         // Atomic assignment closes the parent-death-before-assignment gap.
         if unsafe {
             UpdateProcThreadAttribute(
@@ -256,6 +350,24 @@ impl Attributes {
             return Err(io::Error::last_os_error());
         }
         Ok(attributes)
+    }
+
+    fn streams(&mut self, handles: &[HANDLE; 3]) -> io::Result<()> {
+        if unsafe {
+            UpdateProcThreadAttribute(
+                self.pointer(),
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                handles.as_ptr().cast(),
+                std::mem::size_of_val(handles),
+                null_mut(),
+                null(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     fn pointer(&mut self) -> windows_sys::Win32::System::Threading::LPPROC_THREAD_ATTRIBUTE_LIST {
