@@ -23,8 +23,8 @@
   - [x] Prove native Bash and PowerShell active-tool service shutdown, live child/grandchild termination, persisted outcome-unknown settlement and complete five-second deadline. The full Windows job and both cases pass at `9416d1c`; listener changes rerun this check.
   - [x] Own TCP and peer-checked Unix connection tasks, bound graceful drain to two seconds and prove unread large-event HTTP delivery cannot hold local service stop beyond its five-second deadline. All 67 selected integration tests and strict OpenSpec checks pass; the actual backpressure test, active Bash/PowerShell shutdown and compaction also pass on native Windows at `39d44aa`.
   - [x] Remove the runtime/tool-host reference cycle with a weak callback and prove idle/stopped application disposal releases host and database owners. All 78 selected integration tests, release Clippy and strict OpenSpec checks pass locally; the actual disposal test and full Windows job also pass at `2bfca16`.
-  - [ ] Prove native Git process cleanup, abandoned active-owner cancellation and active HTTP2 request cleanup within the complete service deadline.
-    - [ ] Prove pending HTTP2 handler resource release with the client still connected on native Windows. The new listener-level regression passes locally against unchanged production code in 2.01 seconds; native validation is queued. Application-owner cancellation and native Git cleanup remain separate open checks.
+  - [ ] Prove native Git process cleanup and abandoned active-owner cancellation within the complete service deadline.
+    - [x] Prove pending HTTP2 handler resource release with the client still connected on native Windows. The new listener-level regression passes locally against unchanged production code in 2.01 seconds and on native Windows at `9436cc7`. Application-owner cancellation and native Git cleanup remain separate open checks.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.
