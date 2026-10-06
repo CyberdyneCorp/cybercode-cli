@@ -16,3 +16,6 @@
 - [ ] Enforce org-policy mode restrictions; the full permission-mode requirement remains open.
 - [ ] Add Windows CI; run existing platform, recovery and trust regressions.
 - [ ] Update roadmap and capability specs with verified M1.1 behavior.
+
+- [x] Prove literal filesystem commands for accept-edits; preserve ordinary asks for unresolved paths/options and protected-path ceilings for symlink aliases.
+- [ ] Extend accept-edits proof to recursive copies, directory moves and remaining filesystem option semantics before closing the full requirement.

@@ -600,7 +600,7 @@ fn critical(path: &Path, scope: &RemovalScope<'_>) -> bool {
 }
 
 /// Decode a literal shell word; expansions, globbing and substitutions stay unresolved.
-fn literal(node: Node<'_>, source: &[u8]) -> Option<String> {
+pub(super) fn literal(node: Node<'_>, source: &[u8]) -> Option<String> {
     let raw = node.utf8_text(source).ok()?;
     let mut quote = None;
     let mut escaped = false;

@@ -86,3 +86,22 @@
 #### Scenario: Binding or function expansion exceeds the analysis budget
 - **WHEN** repeated scalar growth or nested function fan-out exceeds the bounded static-analysis budget
 - **THEN** the guard SHALL return an unresolved result and SHALL NOT permit automatic dispatch
+
+### Requirement: accept-edits mode
+(P1) In `accept-edits`, `edit`, `write`, `apply_patch` and `notebook_edit` inside the Location, and the filesystem commands `mkdir`, `touch`, `mv`, `cp` and `rm` (non-recursive) on paths inside the Location, SHALL evaluate as `allow` unless a rule denies them. Every other `ask` stays `ask`.
+
+#### Scenario: Edit auto-approved
+- **WHEN** a Session in `accept-edits` edits `src/main.rs`
+- **THEN** no prompt is shown
+
+#### Scenario: Dynamic shell targets are not proven workspace edits
+- **WHEN** a filesystem command's paths or execution context cannot be established from literal shell syntax
+- **THEN** accept-edits SHALL NOT automatically allow it, and ordinary rule and approval handling SHALL apply
+
+#### Scenario: Filesystem aliases retain protected-path ceilings
+- **WHEN** a literal filesystem operand resolves through a symlink to a protected configuration document
+- **THEN** accept-edits SHALL preserve the protected-path approval requirement
+
+#### Scenario: Nonrecursive removal with an option delimiter
+- **WHEN** a nonrecursive rm has literal workspace operands after `--`
+- **THEN** operand names starting with a dash SHALL be treated as paths rather than options

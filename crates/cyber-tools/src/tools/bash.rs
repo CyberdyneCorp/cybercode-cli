@@ -14,7 +14,7 @@ use tokio::io::AsyncReadExt;
 use super::{Tool, ToolError, def, failed, number, text};
 use crate::bash_analysis::{Analysis, analyze};
 use crate::host::Ctx;
-use crate::permissions::{RemovalScope, Request, bash_removal};
+use crate::permissions::{RemovalScope, Request, bash_removal, literal_edits};
 
 const CAPTURE: usize = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
@@ -71,11 +71,15 @@ async fn authorize(
     workdir: &Path,
     analysis: &Analysis,
 ) -> Result<(), ToolError> {
-    let mutates: Vec<PathBuf> = analysis
+    let edits = literal_edits(command, workdir);
+    let mut mutates: Vec<PathBuf> = analysis
         .commands
         .iter()
         .flat_map(|c| c.mutates.clone())
         .collect();
+    if let Some(paths) = &edits {
+        mutates = paths.clone();
+    }
     let mut external = mutates.clone();
     external.push(workdir.to_path_buf());
     let resources: Vec<String> = analysis.commands.iter().map(|c| c.text.clone()).collect();
@@ -100,7 +104,7 @@ async fn authorize(
         removal_risk,
         action: "bash".into(),
         resources,
-        file_edit: plain_file_commands(analysis),
+        file_edit: edits.is_some(),
         mutates,
         ..Request::default()
     };
@@ -112,21 +116,6 @@ async fn authorize(
         ctx.check_external(&external).await?;
         ctx.authorize(req, always, metadata).await
     }
-}
-
-/// `accept-edits` allows mkdir, touch, mv, cp and non-recursive rm.
-fn plain_file_commands(analysis: &Analysis) -> bool {
-    !analysis.unparseable
-        && analysis.commands.iter().all(|c| {
-            let mut words = c.text.split_whitespace();
-            match words.next() {
-                Some("mkdir" | "touch" | "mv" | "cp") => true,
-                Some("rm") => {
-                    !words.any(|w| w.starts_with('-') && (w.contains('r') || w.contains('R')))
-                }
-                _ => false,
-            }
-        })
 }
 
 fn shell(configured: &str) -> String {

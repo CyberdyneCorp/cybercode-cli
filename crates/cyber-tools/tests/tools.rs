@@ -461,3 +461,69 @@ async fn critical_bash_removals_are_refused_even_with_explicit_and_saved_allows(
         assert_eq!(f.read("keep.txt"), "preserve me");
     }
 }
+
+#[tokio::test]
+async fn accept_edits_does_not_auto_approve_dynamic_shell_paths() {
+    let f = Fixture::new();
+    let outside = f.dir.path().join("dynamic-created");
+    let command = format!("DEST='{}'; touch \"$DEST\"", outside.display());
+    let out = failed(
+        f.call("accept-edits", "bash", json!({"command": command}))
+            .await,
+    );
+    assert!(out.contains("no interactive approver"), "{out}");
+    assert!(!outside.exists());
+}
+
+#[tokio::test]
+async fn accept_edits_runs_proven_literal_filesystem_commands() {
+    let f = Fixture::new();
+    f.write("source file", "original");
+    ok(f.call("accept-edits", "bash", json!({"command": "mkdir -p build && cp 'source file' build/copied && mv build/copied build/renamed && touch build/new && rm -- build/renamed"})).await);
+    assert_eq!(f.read("source file"), "original");
+    assert!(f.repo.join("build/new").exists());
+    assert!(!f.repo.join("build/renamed").exists());
+    f.set_config(json!({"permissions": {"bash": "deny"}}));
+    let out = failed(
+        f.call("accept-edits", "bash", json!({"command": "touch blocked"}))
+            .await,
+    );
+    assert!(out.contains("denied"), "{out}");
+    assert!(!f.repo.join("blocked").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn accept_edits_retains_protected_ceilings_through_filesystem_aliases() {
+    let f = Fixture::new();
+    f.write(".cyber/hooks.jsonc", "original");
+    f.write("replacement", "replacement");
+    std::os::unix::fs::symlink(f.repo.join(".cyber/hooks.jsonc"), f.repo.join("alias")).unwrap();
+    std::fs::create_dir(f.repo.join("dest")).unwrap();
+    std::os::unix::fs::symlink(
+        f.repo.join(".cyber/hooks.jsonc"),
+        f.repo.join("dest/replacement"),
+    )
+    .unwrap();
+    for command in ["touch alias", "cp replacement dest"] {
+        let out = failed(
+            f.call("accept-edits", "bash", json!({"command": command}))
+                .await,
+        );
+        assert!(out.contains("no interactive approver"), "{command}: {out}");
+        assert_eq!(f.read(".cyber/hooks.jsonc"), "original");
+    }
+    let outside = f.dir.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, f.repo.join("escape")).unwrap();
+    let out = failed(
+        f.call(
+            "accept-edits",
+            "bash",
+            json!({"command": "touch escape/new"}),
+        )
+        .await,
+    );
+    assert!(out.contains("no interactive approver"), "{out}");
+    assert!(!outside.join("new").exists());
+}

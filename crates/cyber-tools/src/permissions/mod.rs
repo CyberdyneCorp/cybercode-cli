@@ -1,8 +1,11 @@
 //! The permission engine (`permissions-modes`).
 
 mod engine;
+mod filesystem;
 mod removals;
 pub mod saved;
+
+pub(crate) use filesystem::literal_edits;
 
 pub use removals::{RemovalRisk, RemovalScope, bash_removal};
 
