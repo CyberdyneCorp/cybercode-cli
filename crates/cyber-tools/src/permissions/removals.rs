@@ -6,6 +6,8 @@ use tree_sitter::{Node, Parser};
 
 use crate::bash_analysis::normalize;
 
+mod input;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemovalRisk {
     Critical(PathBuf),
@@ -101,6 +103,7 @@ fn walk(
     changed_directory: &mut bool,
     risks: &mut Vec<RemovalRisk>,
 ) {
+    input::inspect_input(node, source, scope, depth, *changed_directory, risks);
     if node.kind() == "command" {
         inspect_command(node, source, scope, depth, changed_directory, risks);
     }
@@ -121,9 +124,10 @@ fn inspect_command(
     let mut cursor = node.walk();
     let nodes: Vec<_> = node
         .named_children(&mut cursor)
-        .filter(|n| n.kind() != "variable_assignment")
+        .filter(|n| n.kind() != "variable_assignment" && !n.kind().ends_with("_redirect"))
         .collect();
     let Some(name) = nodes.first().and_then(|n| literal(*n, source)) else {
+        risks.push(RemovalRisk::Unresolved("dynamic shell command name".into()));
         return;
     };
     let name = Path::new(&name)
@@ -659,6 +663,55 @@ mod tests {
             bash_removal("find -L -delete", &scope()),
             Some(RemovalRisk::Critical(scope().workdir.to_path_buf()))
         );
+    }
+
+    #[test]
+    fn shell_stdin_is_code_but_ordinary_heredoc_data_is_not() {
+        for command in [
+            "bash <<'EOF'\nrm -rf /repo\nEOF\n",
+            "sh -s argument <<EOF\nrm -rf /repo\nEOF\n",
+            "env -u NAME bash <<'EOF'\nrm -rf /repo\nEOF\n",
+            "bash <<< 'rm -rf /repo'",
+            "bash 0<<< 'rm -rf /repo'",
+            "cat <<< 'rm -rf /repo' | bash",
+            "bash <<'EOF' | cat\nrm -rf /repo\nEOF\n",
+            "cat <<'EOF' | bash\nrm -rf /repo\nEOF\n",
+            "cat <<EOF\n$(rm -rf /repo)\nEOF\n",
+        ] {
+            assert_eq!(
+                bash_removal(command, &scope()),
+                Some(RemovalRisk::Critical("/repo".into())),
+                "{command}"
+            );
+        }
+        for command in [
+            "cat <<'EOF'\nrm -rf /repo\nEOF\n",
+            "cat <<'EOF'\n$(rm -rf /repo)\nEOF\n",
+            "bash -c 'echo done' <<'EOF'\nrm -rf /repo\nEOF\n",
+            "bash script.sh <<'EOF'\nrm -rf /repo\nEOF\n",
+            "bash <<'EOF'\necho 'rm -rf /repo'\nEOF\n",
+            "cat <<< 'rm -rf /repo'",
+            "cat <<< 'rm -rf /repo' | grep rm",
+            "rm build/file <<< 'rm -rf /repo'",
+        ] {
+            assert_eq!(bash_removal(command, &scope()), None, "{command}");
+        }
+        for command in [
+            "bash <<EOF\n$COMMAND\nEOF\n",
+            r#"bash <<< "$COMMAND""#,
+            "bash <<'EOF'\n$COMMAND /repo\nEOF\n",
+            "env -C /tmp bash <<'EOF'\nrm -rf ..\nEOF\n",
+            "bash 3<<< 'echo done' <&3",
+            "bash 0<<'EOF'\nrm -rf /repo\nEOF\n",
+        ] {
+            assert!(
+                matches!(
+                    bash_removal(command, &scope()),
+                    Some(RemovalRisk::Unresolved(_))
+                ),
+                "{command}"
+            );
+        }
     }
 
     #[test]

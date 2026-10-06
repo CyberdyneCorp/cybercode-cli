@@ -49,3 +49,11 @@
 #### Scenario: Symlink parent traversal targets a critical root
 - **WHEN** a removal traverses a symlink and parent components to a critical root
 - **THEN** analysis SHALL resolve the symlink before collapsing parent components and enforce the critical-removal guard
+
+#### Scenario: Shell stdin contains a critical removal
+- **WHEN** Bash receives a literal critical-root removal through a heredoc or here-string, directly or through a supported wrapper or pipeline
+- **THEN** the critical-removal guard SHALL apply before automatic or saved approval
+
+#### Scenario: Ordinary heredoc data is not executable source
+- **WHEN** a quoted heredoc containing removal text is delivered to `cat` without an executable shell consumer
+- **THEN** that literal text SHALL NOT trigger the critical-removal guard, while other applicable permission rules remain enforced
