@@ -30,6 +30,99 @@ fn inline_powershell_critical_removals_are_guarded() {
 }
 
 #[test]
+fn encoded_and_stdin_powershell_sources_preserve_critical_roots() {
+    for command in [
+        "pwsh -NoProfile -EncodedCommand UgBlAG0AbwB2AGUALQBJAHQAZQBtACAALwByAGUAcABvAA==",
+        "pwsh -NoProfile -Command - <<'PS'\nRemove-Item -LiteralPath /repo -Recurse\nPS\n",
+        "pwsh -NoProfile -File - <<< 'Remove-Item /repo'",
+        "pwsh -NoProfile -File - <<< 'Remove-Item /repo' > output.txt",
+        "cat <<'PS' | pwsh -NoProfile -Command -\nRemove-Item /repo\nPS\n",
+    ] {
+        assert_eq!(
+            risk(command),
+            Some(RemovalRisk::Critical(PathBuf::from("/repo"))),
+            "{command}"
+        );
+    }
+}
+
+fn encoded_powershell(source: &str) -> String {
+    use base64::Engine as _;
+    let bytes: Vec<_> = source.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[test]
+fn powershell_encoded_source_respects_flags_unicode_and_data() {
+    let critical = encoded_powershell("Remove-Item -LiteralPath /repo");
+    for flag in ["-EncodedCommand", "-e", "-ec", "-enc"] {
+        let command = format!("pwsh {flag} {critical} -NoProfile");
+        assert_eq!(
+            risk(&command),
+            Some(RemovalRisk::Critical(PathBuf::from("/repo"))),
+            "{command}"
+        );
+    }
+    let data = encoded_powershell("Write-Output 'Remove-Item /repo 🦀'");
+    for command in [
+        format!("pwsh -NoProfile -e {data}"),
+        format!("pwsh -e ' {data}\n' -NoProfile"),
+        format!("pwsh -NoProfile -e {data} <<'PS'\nRemove-Item /repo\nPS\n"),
+    ] {
+        assert_eq!(risk(&command), None, "{command}");
+    }
+}
+
+#[test]
+fn powershell_stdin_selection_does_not_interpret_output_or_overridden_sources() {
+    for command in [
+        "pwsh -NoProfile -Command - <<< 'Write-Output \"Remove-Item /repo\"'",
+        "pwsh -NoProfile -File - <<'PS'\nWrite-Output \"Remove-Item /repo\"\nPS\n",
+        "pwsh -NoProfile -Command 'Write-Output hello' <<'PS'\nRemove-Item /repo\nPS\n",
+        "cat <<< 'Remove-Item /repo' | grep Remove-Item",
+        "bash | cat <<< 'rm -rf /repo'",
+    ] {
+        assert_eq!(risk(command), None, "{command}");
+    }
+    for command in [
+        "pwsh -NoProfile -Command - <<'PS' < untrusted.ps1\nWrite-Output hello\nPS\n",
+        "pwsh -NoProfile -Command - <<'PS' < untrusted.ps1\nRemove-Item /repo\nPS\n",
+        "pwsh -NoProfile -Command - <<< 'Write-Output hello' < untrusted.ps1",
+        "pwsh -NoProfile -Command - <<< 'Remove-Item /repo' < untrusted.ps1",
+        "pwsh -NoProfile -Command - 3<<< 'Remove-Item /repo'",
+        "pwsh -NoProfile -File untrusted.ps1 <<'PS'\nRemove-Item /repo\nPS\n",
+        "pwsh -NoProfile untrusted.ps1 <<'PS'\nRemove-Item /repo\nPS\n",
+        "pwsh -NoProfile -Command - | cat <<< 'Remove-Item /repo'",
+        "pwsh -NoProfile -Command - <<PS\n$UNTRUSTED_SOURCE\nPS\n",
+    ] {
+        assert!(
+            matches!(risk(command), Some(RemovalRisk::Unresolved(_))),
+            "{command}: {:?}",
+            risk(command)
+        );
+    }
+}
+
+#[test]
+fn malformed_and_conflicting_encoded_powershell_source_stays_unresolved() {
+    for encoded in ["!!!!", "AA==", "ANg=", "ANw=", ""] {
+        let command = format!("pwsh -NoProfile -EncodedCommand '{encoded}'");
+        assert!(
+            matches!(risk(&command), Some(RemovalRisk::Unresolved(_))),
+            "{command}: {:?}",
+            risk(&command)
+        );
+    }
+    let safe = encoded_powershell("Write-Output hello");
+    let command = format!("pwsh -NoProfile -e {safe} -e {safe}");
+    assert!(matches!(risk(&command), Some(RemovalRisk::Unresolved(_))));
+    assert!(matches!(
+        risk("pwsh -NoProfile -Command"),
+        Some(RemovalRisk::Unresolved(_))
+    ));
+}
+
+#[test]
 fn powershell_aliases_bindings_arrays_and_static_delete_apis_preserve_roots() {
     for source in [
         "rEmOvE-iTeM -LiteralPath /repo -Recurse -Force",
@@ -98,7 +191,7 @@ fn uncertain_powershell_source_options_and_dispatch_require_confirmation() {
 
 #[cfg(windows)]
 #[test]
-fn powershell_guard_resolves_native_drive_and_verbatim_paths() {
+fn powershell_native_guard_resolves_drive_and_verbatim_paths() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("repo with spaces");
     std::fs::create_dir(&root).unwrap();
@@ -121,6 +214,61 @@ fn powershell_guard_resolves_native_drive_and_verbatim_paths() {
             Some(RemovalRisk::Critical(canonical.clone())),
             "{command}"
         );
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn powershell_native_cli_matches_encoded_and_stdin_source_contracts() {
+    use tokio::io::AsyncWriteExt as _;
+    let marker = "powershell-source-verified";
+    let source = format!("Write-Output '{marker} 🦀'");
+    let encoded = encoded_powershell(&source);
+    for flag in ["-EncodedCommand", "-e", "-ec", "-enc"] {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::process::Command::new("pwsh")
+                .args([flag, &encoded, "-NoProfile", "-NonInteractive"])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains(marker));
+    }
+    for flag in ["-Command", "-File"] {
+        let mut child = tokio::process::Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", flag, "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("{source}\n").as_bytes())
+            .await
+            .unwrap();
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains(marker));
     }
 }
 

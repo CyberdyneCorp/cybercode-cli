@@ -257,7 +257,7 @@ fn inspect_command(
             inline::invocation(interpreter, args, source, scope, depth, state, risks);
         }
         interpreter if powershell::recognizes(interpreter) => {
-            powershell::invocation(args, source, scope, depth, state, risks);
+            powershell::invocation(node, args, source, scope, depth, state, risks);
         }
         "command" | "builtin" | "exec" | "env" | "nohup" => {
             let mut cursor = node.walk();

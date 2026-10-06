@@ -795,6 +795,7 @@ dependencies = [
 name = "cyber-tools"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cyber-core",
  "cyber-llm",
  "cyber-sandbox",

@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64 = "0.22"
 cyber-core.workspace = true
 cyber-store.workspace = true
 cyber-server = { path = "../cyber-server" }

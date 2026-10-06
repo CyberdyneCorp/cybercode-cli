@@ -1,7 +1,11 @@
 //! PowerShell command-source analysis; unsupported dispatch retains manual confirmation.
 
 use super::{MAX_NESTING, RemovalRisk, RemovalScope, State, inspect_path, word};
+use base64::Engine as _;
 use tree_sitter::{Node, Parser};
+
+mod command_line;
+use command_line::Source;
 
 pub(super) fn recognizes(name: &str) -> bool {
     matches!(
@@ -18,6 +22,7 @@ fn unresolved(risks: &mut Vec<RemovalRisk>, reason: &str) {
 }
 
 pub(super) fn invocation(
+    command: Node<'_>,
     args: &[Node<'_>],
     source: &[u8],
     scope: &RemovalScope<'_>,
@@ -26,43 +31,83 @@ pub(super) fn invocation(
     risks: &mut Vec<RemovalRisk>,
 ) {
     let words: Option<Vec<_>> = args.iter().map(|n| word(*n, source, state)).collect();
-    let Some(words) = words else {
+    let Some(mut words) = words else {
         unresolved(risks, "dynamic invocation");
         return;
     };
-    let mut no_profile = false;
-    for (index, arg) in words.iter().enumerate() {
-        match arg.to_ascii_lowercase().as_str() {
-            "-noprofile" | "-nop" => no_profile = true,
-            "-nologo" | "-noninteractive" => {}
-            "-command" | "-c" => {
-                if !no_profile {
-                    unresolved(risks, "profile loading may change command resolution");
-                }
-                let size = words[index + 1..].iter().fold(0usize, |size, word| {
-                    size.saturating_add(word.len()).saturating_add(1)
-                });
-                if size > 1024 * 1024 {
-                    unresolved(risks, "source size limit exceeded");
-                    return;
-                }
-                inspect_program(
-                    &words[index + 1..].join(" "),
-                    scope,
-                    depth + 1,
-                    state,
-                    risks,
-                );
-                return;
-            }
-            "-help" | "-?" if index + 1 == words.len() => return,
-            _ => unresolved(risks, "unsupported invocation option or source"),
-        }
+    if super::input::stdin_dash(command, source) {
+        words.push("-".into());
     }
-    unresolved(risks, "missing literal command source");
+    let invocation = command_line::parse(&words);
+    if matches!(invocation.source, Source::Help) {
+        return;
+    }
+    if !invocation.no_profile {
+        unresolved(risks, "profile loading may change command resolution");
+    }
+    if !invocation.startup_certain {
+        unresolved(risks, "unsupported or conflicting startup options");
+    }
+    let mut child = state.clone();
+    if !invocation.no_profile || !invocation.startup_certain {
+        child.change_directory();
+    }
+    let code = match invocation.source {
+        Source::Text(words) => join_source(words),
+        Source::Encoded(text) => decode_source(text),
+        Source::Stdin => {
+            if !super::input::literal_stdin(command, source) {
+                unresolved(risks, "unresolved stdin source");
+            }
+            return;
+        }
+        Source::Missing | Source::Help => None,
+    };
+    match code {
+        Some(code) => inspect_program(&code, scope, depth + 1, &child, risks),
+        None => unresolved(risks, "missing, malformed or oversized source"),
+    }
 }
 
-fn inspect_program(
+fn join_source(words: &[String]) -> Option<String> {
+    if words.is_empty() {
+        return None;
+    }
+    let size = words.iter().fold(0usize, |size, word| {
+        size.saturating_add(word.len()).saturating_add(1)
+    });
+    (size <= 1024 * 1024).then(|| words.join(" "))
+}
+
+fn decode_source(text: &str) -> Option<String> {
+    if text.len() > 1024 * 1024 {
+        return None;
+    }
+    let text: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(text)
+        .ok()?;
+    let (pairs, remainder) = bytes.as_chunks::<2>();
+    if !remainder.is_empty() {
+        return None;
+    }
+    let units: Vec<_> = pairs
+        .iter()
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16(&units)
+        .ok()
+        .filter(|code| !code.is_empty())
+}
+
+pub(super) fn stdin_properties(args: &[Option<String>]) -> Option<bool> {
+    let words = args.iter().cloned().collect::<Option<Vec<_>>>()?;
+    let invocation = command_line::parse(&words);
+    matches!(invocation.source, Source::Stdin)
+        .then_some(!invocation.no_profile || !invocation.startup_certain)
+}
+
+pub(super) fn inspect_program(
     code: &str,
     scope: &RemovalScope<'_>,
     depth: usize,

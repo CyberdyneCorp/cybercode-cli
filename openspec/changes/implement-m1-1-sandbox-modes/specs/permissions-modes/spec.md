@@ -109,6 +109,15 @@
 - **WHEN** a PowerShell command's common parameters or uncertain control flow can change a later removal operand
 - **THEN** analysis SHALL invalidate the affected proof and require individual confirmation until the resulting target is established
 
+#### Scenario: Encoded or stdin PowerShell source targets a critical path
+- **WHEN** a bounded UTF-16LE encoded command or literal PowerShell stdin source removes a critical path
+- **THEN** decoding and interpreter-specific AST inspection SHALL enforce the same critical-path ceiling
+- **AND** malformed encoding or unproven source selection SHALL require individual confirmation
+
+#### Scenario: Another redirect replaces a literal interpreter source
+- **WHEN** a later stdin redirect replaces a heredoc or here-string with an unproven source
+- **THEN** analysis SHALL treat the effective source as unresolved and SHALL NOT report the unused body as an executed critical removal
+
 ### Requirement: accept-edits mode
 (P1) In `accept-edits`, `edit`, `write`, `apply_patch` and `notebook_edit` inside the Location, and the filesystem commands `mkdir`, `touch`, `mv`, `cp` and `rm` (non-recursive) on paths inside the Location, SHALL evaluate as `allow` unless a rule denies them. Every other `ask` stays `ask`.
 
