@@ -2,12 +2,12 @@
 
 use super::*;
 use std::os::windows::io::FromRawHandle;
-use windows_sys::Wdk::Storage::FileSystem::NtSetSecurityObject;
+use windows_sys::Wdk::Storage::FileSystem::{NtQuerySecurityObject, NtSetSecurityObject};
 use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, RtlNtStatusToDosError};
 use windows_sys::Win32::Security::{
-    GetSecurityDescriptorControl, InitializeSecurityDescriptor, SE_DACL_AUTO_INHERITED,
-    SE_DACL_DEFAULTED, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl,
-    SetSecurityDescriptorDacl,
+    GetSecurityDescriptorControl, GetSecurityDescriptorDacl, InitializeSecurityDescriptor,
+    SE_DACL_AUTO_INHERITED, SE_DACL_DEFAULTED, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR,
+    SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, ExtendedFileIdType, FILE_ID_128, FILE_ID_DESCRIPTOR,
@@ -89,12 +89,57 @@ pub(super) fn grant(
         Some(access.mask()),
         inheritance,
         set_acl,
+        read_acl,
     )?;
     Ok(IdentityGrant {
         record,
         profile: profile.clone(),
         active: true,
     })
+}
+
+pub(super) fn read_acl(file: &File) -> io::Result<(SecurityAllocation, *mut ACL)> {
+    let mut needed = 0;
+    let status = unsafe {
+        NtQuerySecurityObject(
+            file.as_raw_handle(),
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            0,
+            &mut needed,
+        )
+    };
+    if needed == 0 {
+        nt_result(status)?;
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Empty security descriptor",
+        ));
+    }
+    if needed > 1024 * 1024 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Security descriptor exceeds limit",
+        ));
+    }
+    let mut storage = vec![0u32; (needed as usize).div_ceil(4)];
+    let descriptor = storage.as_mut_ptr().cast();
+    nt_result(unsafe {
+        NtQuerySecurityObject(
+            file.as_raw_handle(),
+            DACL_SECURITY_INFORMATION,
+            descriptor,
+            needed,
+            &mut needed,
+        )
+    })?;
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut acl = null_mut();
+    checked(unsafe {
+        GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted)
+    })?;
+    Ok((SecurityAllocation::Native(storage), acl))
 }
 
 pub(super) fn set_acl(
@@ -123,6 +168,16 @@ pub(super) fn set_acl(
         ));
     }
     Ok(())
+}
+
+fn nt_result(status: i32) -> io::Result<()> {
+    if status < 0 {
+        Err(io::Error::from_raw_os_error(
+            unsafe { RtlNtStatusToDosError(status) } as i32,
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn checked(result: i32) -> io::Result<()> {

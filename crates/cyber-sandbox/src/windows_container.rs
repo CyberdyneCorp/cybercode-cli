@@ -414,6 +414,20 @@ impl Drop for AllocatedSid {
 
 struct LocalAllocation(*mut core::ffi::c_void);
 
+enum SecurityAllocation {
+    Local(LocalAllocation),
+    Native(Vec<u32>),
+}
+
+impl SecurityAllocation {
+    fn pointer(&self) -> *mut core::ffi::c_void {
+        match self {
+            Self::Local(allocation) => allocation.0,
+            Self::Native(storage) => storage.as_ptr().cast_mut().cast(),
+        }
+    }
+}
+
 struct TaskAllocation(*mut u16);
 
 impl TaskAllocation {
@@ -447,7 +461,7 @@ impl Drop for LocalAllocation {
     }
 }
 
-fn read_acl(file: &File) -> io::Result<(LocalAllocation, *mut ACL)> {
+fn read_acl(file: &File) -> io::Result<(SecurityAllocation, *mut ACL)> {
     let mut descriptor = null_mut();
     let mut acl = null_mut();
     // The retained file handle is valid; the ACL borrows the returned descriptor.
@@ -465,14 +479,15 @@ fn read_acl(file: &File) -> io::Result<(LocalAllocation, *mut ACL)> {
     };
     let allocation = LocalAllocation(descriptor);
     win32(status)?;
-    Ok((allocation, acl))
+    Ok((SecurityAllocation::Local(allocation), acl))
 }
 
 fn update_acl(file: &File, sid: PSID, mask: Option<u32>, inheritance: u32) -> io::Result<()> {
-    update_acl_using(file, sid, mask, inheritance, set_acl)
+    update_acl_using(file, sid, mask, inheritance, set_acl, read_acl)
 }
 
 type AclSetter = fn(&File, *mut core::ffi::c_void, *mut ACL) -> io::Result<()>;
+type AclReader = fn(&File) -> io::Result<(SecurityAllocation, *mut ACL)>;
 
 fn update_acl_using(
     file: &File,
@@ -480,11 +495,12 @@ fn update_acl_using(
     mask: Option<u32>,
     inheritance: u32,
     setter: AclSetter,
+    reader: AclReader,
 ) -> io::Result<()> {
     let _lock = ACL_UPDATE
         .lock()
         .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
-    let (descriptor, old) = read_acl(file)?;
+    let (descriptor, old) = reader(file)?;
     if old.is_null() {
         return if mask.is_some() {
             Err(io::Error::other("ACL leases refuse a null DACL"))
@@ -516,7 +532,7 @@ fn update_acl_using(
     let status = unsafe { SetEntriesInAclW(1, &entry, old, &mut merged) };
     let _merged = LocalAllocation(merged.cast());
     win32(status)?;
-    setter(file, descriptor.0, merged)
+    setter(file, descriptor.pointer(), merged)
 }
 
 fn set_acl(file: &File, _descriptor: *mut core::ffi::c_void, acl: *mut ACL) -> io::Result<()> {
@@ -563,12 +579,12 @@ fn remove_profile_entries(file: &File, sid: PSID) -> io::Result<()> {
     let _lock = ACL_UPDATE
         .lock()
         .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
-    let (descriptor, old) = read_acl(file)?;
+    let (descriptor, old) = identity::read_acl(file)?;
     if old.is_null() || sid_entries(old, sid)?.is_empty() {
         return Ok(());
     }
     let mut words = acl_without_sid(old, sid)?;
-    identity::set_acl(file, descriptor.0, words.as_mut_ptr().cast())
+    identity::set_acl(file, descriptor.pointer(), words.as_mut_ptr().cast())
 }
 
 fn acl_without_sid(old: *const ACL, sid: PSID) -> io::Result<Vec<u32>> {
@@ -675,6 +691,14 @@ mod tests {
     fn file(path: &Path) -> File {
         OpenOptions::new()
             .access_mode(READ_CONTROL | WRITE_DAC)
+            .open(path)
+            .unwrap()
+    }
+
+    fn directory_file(path: &Path) -> File {
+        OpenOptions::new()
+            .access_mode(READ_CONTROL | WRITE_DAC)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)
             .unwrap()
     }
@@ -918,8 +942,9 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let existing = root.join("existing.txt");
         std::fs::write(&existing, "existing").unwrap();
-        let existing_acl = all_entries(&file(&existing));
         let existing_stored = stored_entries(&file(&existing));
+        let root_object = directory_file(&root);
+        let root_stored = stored_entries(&root_object);
         let mut profile = Profile::new().unwrap();
         let mut other = Profile::new().unwrap();
         let lease = profile
@@ -934,11 +959,12 @@ mod tests {
             stored_after, existing_stored,
             "stored child ACL must be unchanged"
         );
-        eprintln!(
-            "stored child ACL unchanged; Win32 inheritance view equal: {}",
-            all_entries(&file(&existing)) == existing_acl,
-        );
-        assert_eq!(all_entries(&file(&existing)), existing_acl);
+        let own_root = entries(&root_object, &profile);
+        let unrelated_root: Vec<_> = stored_entries(&root_object)
+            .into_iter()
+            .filter(|entry| !own_root.contains(entry))
+            .collect();
+        assert_eq!(unrelated_root, root_stored);
         let created = root.join("created.txt");
         std::fs::write(&created, "created").unwrap();
         let object = file(&created);
@@ -950,10 +976,12 @@ mod tests {
         );
         let unrelated = other.grant_relocatable(&created, Access::Read).unwrap();
         let preserved = entries(&object, &other);
+        let child_stored = stored_entries(&object);
         let record = identity::FileRecord::capture(&created, &object).unwrap();
         lease.close().unwrap();
         // Suppressed propagation requires explicit cleanup of newly inherited entries.
-        assert_eq!(entries(&object, &profile), inherited);
+        assert_eq!(stored_entries(&object), child_stored);
+        assert_eq!(stored_entries(&root_object), root_stored);
         remove_profile_entries(&record.open().unwrap(), profile.sid()).unwrap();
         assert!(entries(&object, &profile).is_empty());
         assert_eq!(entries(&object, &other), preserved);
