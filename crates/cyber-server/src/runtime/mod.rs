@@ -227,7 +227,25 @@ pub struct Runtime {
     inner: Arc<Inner>,
 }
 
+/// A non-owning callback handle for hosts owned by the runtime itself.
+#[derive(Clone)]
+pub struct WeakRuntime {
+    inner: std::sync::Weak<Inner>,
+}
+
+impl WeakRuntime {
+    pub fn upgrade(&self) -> Option<Runtime> {
+        self.inner.upgrade().map(|inner| Runtime { inner })
+    }
+}
+
 impl Runtime {
+    pub fn downgrade(&self) -> WeakRuntime {
+        WeakRuntime {
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
+
     /// The event registry the store must be opened with.
     pub fn registry() -> EventRegistry {
         events::registry()

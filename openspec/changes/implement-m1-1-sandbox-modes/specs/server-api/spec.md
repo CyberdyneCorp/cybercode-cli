@@ -99,3 +99,8 @@
 - **AND** each connection SHALL receive at most two seconds of graceful drain before its blocked connection future and IO are dropped
 - **AND** the listener SHALL join the connection tasks before reporting completion
 - **AND** an interrupted event response MAY be truncated; committed events SHALL remain replayable from durable history
+
+#### Scenario: Runtime callbacks do not retain a disposed application
+- **WHEN** an idle application or an application whose runtime shutdown has completed loses all external runtime, host and database owners
+- **THEN** its built-in host callback SHALL NOT keep the runtime, host or database alive through a reference cycle
+- **AND** session tools SHALL still be able to use their callback while a runtime owner remains alive

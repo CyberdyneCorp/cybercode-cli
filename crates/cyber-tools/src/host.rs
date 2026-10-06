@@ -8,7 +8,7 @@ use cyber_core::env::EnvSource;
 use cyber_core::skills::{self, Discovery, SkillScope};
 use cyber_server::runtime::{
     CallState, Invocation, ModelResolver, PermissionAsk, PermissionReply, Reconciliation, Runtime,
-    ToolDef, ToolHost, ToolOutcome, TurnContext,
+    ToolDef, ToolHost, ToolOutcome, TurnContext, WeakRuntime,
 };
 use cyber_store::Store;
 use futures::future::BoxFuture;
@@ -51,7 +51,7 @@ pub struct BuiltinHost {
     tools: Vec<Box<dyn Tool>>,
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
-    runtime: OnceLock<Runtime>,
+    runtime: OnceLock<WeakRuntime>,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -72,11 +72,11 @@ impl BuiltinHost {
 
     /// Late-bind the runtime for tools that act on the Session (plan mode switches).
     pub fn attach(&self, runtime: Runtime) {
-        let _ = self.runtime.set(runtime);
+        let _ = self.runtime.set(runtime.downgrade());
     }
 
-    pub(crate) fn runtime(&self) -> Option<&Runtime> {
-        self.runtime.get()
+    pub(crate) fn runtime(&self) -> Option<Runtime> {
+        self.runtime.get().and_then(WeakRuntime::upgrade)
     }
 
     fn rules(&self, location: &Path) -> Vec<permissions::Rule> {

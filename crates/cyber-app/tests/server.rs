@@ -34,6 +34,28 @@ async fn app(root: &std::path::Path) -> App {
     .unwrap()
 }
 
+#[tokio::test]
+async fn dropping_an_idle_or_stopped_application_releases_its_host_and_database() {
+    for stopped in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let application = app(tmp.path()).await;
+        let host = Arc::downgrade(&application.host);
+        let store = Arc::downgrade(&application.store);
+        if stopped {
+            application.runtime.shutdown().await;
+        }
+        drop(application);
+        assert!(
+            host.upgrade().is_none(),
+            "the host outlived its application"
+        );
+        assert!(
+            store.upgrade().is_none(),
+            "the database outlived its application"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn the_password_is_generated_once_and_private() {
