@@ -38,7 +38,7 @@ pub(crate) async fn prepare_command(
     program: &str,
     args: &[String],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, program, args, true).await
+    prepare_scoped_command(ctx, program, args, true, None).await
 }
 
 /// Setup must not gain ambient temporary-directory access outside its owned roots.
@@ -47,7 +47,16 @@ pub(crate) async fn prepare_worktree_command(
     program: &str,
     args: &[String],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, program, args, false).await
+    prepare_scoped_command(ctx, program, args, false, None).await
+}
+
+/// Git creation may mutate only verified common metadata and the reserved target.
+pub(crate) async fn prepare_worktree_git(
+    ctx: &Ctx<'_>,
+    args: &[String],
+    writable: &[PathBuf],
+) -> Result<Prepared, ToolError> {
+    prepare_scoped_command(ctx, "git", args, false, Some(writable)).await
 }
 
 async fn prepare_scoped_command(
@@ -55,6 +64,7 @@ async fn prepare_scoped_command(
     program: &str,
     args: &[String],
     ambient_temp: bool,
+    git_roots: Option<&[PathBuf]>,
 ) -> Result<Prepared, ToolError> {
     let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
     let home = &ctx.host.opts.home;
@@ -80,9 +90,21 @@ async fn prepare_scoped_command(
         } else {
             (None, None)
         };
-    let writable = roots(ctx, &sandbox, &tmp, ambient_temp);
+    let writable = match git_roots {
+        Some(owned) => owned
+            .iter()
+            .cloned()
+            .chain([tmp.clone(), ctx.host.opts.tool_output_dir.clone()])
+            .chain(sandbox.extra_writable.iter().cloned())
+            .collect(),
+        None => roots(ctx, &sandbox, &tmp, ambient_temp),
+    };
     let launch = Launch {
-        read_only: writable.iter().flat_map(|r| protected_in(r)).collect(),
+        read_only: writable
+            .iter()
+            .filter(|root| !git_roots.is_some_and(|owned| owned.contains(root)))
+            .flat_map(|root| protected_in(root))
+            .collect(),
         unreadable: sandbox.unreadable(home),
         writable,
         proxy: proxy.as_ref().map(|p| p.endpoint.clone()),
@@ -322,6 +344,108 @@ mod tests {
                 "CUSTOM_SECRET"
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_provisioning_grants_only_owned_metadata_and_target() {
+        use crate::{BuiltinHost, HostOptions};
+        use cyber_server::runtime::{Asker, Invocation, Runtime};
+        use cyber_store::{Store, StoreOptions};
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let source = root.join("source");
+        let metadata = source.join(".git");
+        let target = root.join("target");
+        let sibling = root.join("sibling");
+        for directory in [&metadata, &target, &sibling] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        let store = Arc::new(
+            Store::open(StoreOptions::new(
+                cyber_core::paths::DatabaseLocation::File(root.join("store.db")),
+                Runtime::registry(),
+            ))
+            .unwrap(),
+        );
+        let host = BuiltinHost::new(HostOptions {
+            store,
+            tool_output_dir: root.join("output"),
+            allowed_dirs: vec![],
+            home: root.join("home"),
+            shell: "bash".into(),
+            config: Arc::new(|_| {
+                Ok((
+                    serde_json::json!({"sandbox": {"network": "off"}}),
+                    Default::default(),
+                ))
+            }),
+            global_config_dir: root.join("config"),
+            env: Arc::new(cyber_core::env::ProcessEnv),
+            models: None,
+            temp_dir: root.join("temp"),
+            sandbox_policy: None,
+            sandbox_helper: cyber_sandbox::find_helper(),
+        });
+        let inv = Invocation {
+            session_id: "ses_scope".into(),
+            directory: source.display().to_string(),
+            agent: "build".into(),
+            mode: "bypass".into(),
+            message_id: "msg_scope".into(),
+            call_id: "call_scope".into(),
+            name: "worktree".into(),
+            input: serde_json::Value::Null,
+            attempt: 1,
+            operation_key: "scope".into(),
+            asker: Asker::detached(),
+            rules: serde_json::Value::Null,
+        };
+        let ctx = Ctx {
+            host: &host,
+            inv: &inv,
+            policy: host.policy(&inv),
+            location: source.clone(),
+            cancel: Default::default(),
+        };
+        // Use the same provisioning route with a diagnostic process to test actual enforcement.
+        let args = vec!["-c".into(),
+            "printf metadata > \"$1/index\"; printf target > \"$2/cyber.json\"; if printf forbidden > \"$3/file\" 2>/dev/null; then exit 8; fi; if printf forbidden > \"$4/file\" 2>/dev/null; then exit 9; fi".into(),
+            "scope".into(), metadata.display().to_string(), target.display().to_string(),
+            source.display().to_string(), sibling.display().to_string()];
+        let prepared = prepare_scoped_command(
+            &ctx,
+            "bash",
+            &args,
+            false,
+            Some(&[metadata.clone(), target.clone()]),
+        )
+        .await
+        .unwrap();
+        let result = tokio::process::Command::new(&prepared.program)
+            .args(&prepared.args)
+            .env_clear()
+            .envs(prepared.env.iter().map(|(key, value)| (key, value)))
+            .current_dir(&source)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{:?}: {}",
+            result.status,
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(metadata.join("index")).unwrap(),
+            "metadata"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.join("cyber.json")).unwrap(),
+            "target"
+        );
+        assert!(!source.join("file").exists());
+        assert!(!sibling.join("file").exists());
     }
 
     #[tokio::test]

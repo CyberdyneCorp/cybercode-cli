@@ -103,6 +103,8 @@ impl Repository {
         };
         std::fs::create_dir_all(&records)?;
         write_new(&record, &managed)?;
+        // Materialize only the reserved target so Linux can bind it into the sandbox.
+        std::fs::create_dir(&managed.path)?;
         // A failed/cancelled creation leaves the pending record; do not delete user work.
         git(
             execution,
@@ -141,7 +143,9 @@ impl Repository {
         Ok(managed)
     }
 
-    fn target(
+    /// Resolve and create the storage root after runtime permission admission.
+    /// The named target itself is reserved under the repository lock by `create`.
+    pub fn target(
         &self,
         settings: &Settings,
         data: &Path,

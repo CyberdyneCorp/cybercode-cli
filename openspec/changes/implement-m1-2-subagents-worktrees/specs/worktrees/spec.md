@@ -3,6 +3,12 @@
 ### Requirement: Setup commands
 (P1) After creation the system SHALL run `worktrees.setup` commands (for example `["npm ci"]`) in the worktree inside the sandbox, streaming output to the Session. A failing setup SHALL be reported but SHALL NOT delete the worktree.
 
+#### Scenario: New Session creation runs setup automatically
+- **WHEN** the runtime creates a new Session through its managed-worktree creation entry point
+- **THEN** creation uses a cancellation-owned sandboxed Git port and the Session starts at the verified ready worktree
+- **AND** configured setup runs automatically with its progress attributed to that Session
+- **AND** setup failure returns the retained Session and worktree with the failed outcome
+
 #### Scenario: Setup failure reported
 - **WHEN** `npm ci` fails during setup
 - **THEN** the Session shows the failure and stays in the worktree
@@ -158,3 +164,14 @@
 - **WHEN** a file appears in the fresh worktree after registration but before initial checkout
 - **THEN** checkout fails without overwriting that file
 - **AND** pending ownership remains available for recovery
+
+#### Scenario: Creation permission and read-only admission
+- **WHEN** worktree creation is denied, its token is already cancelled, or the sandbox policy is read-only
+- **THEN** the runtime refuses before reserving ownership or creating the target
+- **AND** creation uses the persisted source Session's mode and rules rather than invocation overrides
+
+#### Scenario: Git creation scope is distinct from setup scope
+- **WHEN** managed Git creation runs with workspace-write policy
+- **THEN** only shared repository metadata, the reserved target, managed temporary/output directories and explicitly configured writable roots are writable
+- **AND** ordinary source checkout files and unrelated sibling worktrees are not implicitly writable
+- **AND** setup receives its normal protected-path policy without the Git metadata provisioning grants

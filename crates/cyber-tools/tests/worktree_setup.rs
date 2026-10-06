@@ -4,7 +4,6 @@ use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 use std::process::{Command, Output};
-#[cfg(unix)]
 use std::sync::Arc;
 use std::sync::Mutex;
 #[cfg(unix)]
@@ -451,4 +450,287 @@ async fn attached_session_receives_live_output_and_shutdown_stops_setup() {
             ));
         }
     }
+}
+
+fn creation_request(fixture: &support::Fixture, name: &str) -> cyber_tools::WorktreeSessionRequest {
+    cyber_tools::WorktreeSessionRequest {
+        session: cyber_server::runtime::CreateSession {
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        },
+        data: fixture.dir.path().canonicalize().unwrap(),
+        project_id: "prj_test".into(),
+        name: Name::parse(name).unwrap(),
+    }
+}
+
+async fn creation_source(flow: &support::flow::Flow) -> cyber_server::runtime::Invocation {
+    let source = flow
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: flow.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut inv = flow.f.invocation("bypass", "worktree", json!({}));
+    inv.session_id = source.id;
+    inv
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn creation_automatically_attaches_setup_and_preserves_failed_session() {
+    use cyber_server::runtime::{LiveEvent, NoSnapshots, SetupUpdate};
+    for fail in [false, true] {
+        let (fixture, _, _) = owned().await;
+        fixture.write(".worktreeinclude", ".env\n");
+        fixture.write(".env", "included");
+        fixture.write("cyber.json", "{}");
+        assert!(
+            invoke(&fixture.repo, &["add".into(), "cyber.json".into()])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(
+            invoke(
+                &fixture.repo,
+                &[
+                    "commit".into(),
+                    "--quiet".into(),
+                    "-m".into(),
+                    "config fixture".into()
+                ]
+            )
+            .unwrap()
+            .status
+            .success()
+        );
+        let source = if fail {
+            "printf ready; printf once >> setup-result; exit 7"
+        } else {
+            "printf ready; printf once >> setup-result"
+        };
+        fixture.set_config(
+            json!({"permissions": {"worktree": "allow"}, "worktrees": {"setup": [source]}}),
+        );
+        let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+        let inv = creation_source(&flow).await;
+        let mut events = flow.runtime.subscribe();
+        let result = flow
+            .f
+            .host
+            .create_worktree_session(
+                &inv,
+                CancellationToken::new(),
+                creation_request(&flow.f, "automatic"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.setup.unwrap(),
+            if fail {
+                SetupOutcome::Failed {
+                    index: 0,
+                    code: Some(7),
+                }
+            } else {
+                SetupOutcome::Completed
+            }
+        );
+        assert_eq!(
+            result.session.directory,
+            result.managed.path.display().to_string()
+        );
+        assert_eq!(
+            flow.runtime
+                .state(&result.session.id)
+                .await
+                .unwrap()
+                .info
+                .directory,
+            result.session.directory
+        );
+        assert_eq!(
+            flow.runtime
+                .state(&inv.session_id)
+                .await
+                .unwrap()
+                .info
+                .directory,
+            inv.directory
+        );
+        assert_eq!(
+            std::fs::read_to_string(result.managed.path.join(".env")).unwrap(),
+            "included"
+        );
+        assert_eq!(
+            std::fs::read_to_string(result.managed.path.join("cyber.json")).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(result.managed.path.join("setup-result")).unwrap(),
+            "once"
+        );
+        let mut finished = false;
+        while let Ok(event) = events.try_recv() {
+            if let LiveEvent::WorktreeSetup {
+                session_id,
+                worktree_id,
+                update: SetupUpdate::Finished { code, .. },
+                ..
+            } = event
+            {
+                assert_eq!(session_id, result.session.id);
+                assert_eq!(worktree_id, result.managed.id);
+                assert_eq!(code, Some(if fail { 7 } else { 0 }));
+                finished = true;
+            }
+        }
+        assert!(finished);
+        std::fs::write(result.managed.path.join("tracked.txt"), "user edit").unwrap();
+        let reused = flow
+            .f
+            .host
+            .create_worktree_session(
+                &inv,
+                CancellationToken::new(),
+                creation_request(&flow.f, "automatic"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reused.managed.id, result.managed.id);
+        assert_ne!(reused.session.id, result.session.id);
+        assert_eq!(
+            std::fs::read_to_string(result.managed.path.join("tracked.txt")).unwrap(),
+            "user edit"
+        );
+        assert_eq!(
+            std::fs::read_to_string(result.managed.path.join("setup-result")).unwrap(),
+            "once"
+        );
+    }
+}
+
+#[tokio::test]
+async fn creation_refuses_denied_read_only_and_cancelled_before_ownership() {
+    use cyber_server::runtime::NoSnapshots;
+    for case in [
+        "deny",
+        "read-only",
+        "cancel",
+        "wrong-location",
+        "existing-id",
+        "source-plan",
+    ] {
+        let (fixture, repository, _) = owned().await;
+        fixture.set_config(match case {
+            "deny" => json!({"permissions": {"worktree": "deny"}}),
+            "read-only" => {
+                json!({"permissions": {"worktree": "allow"}, "sandbox": {"policy": "read-only"}})
+            }
+            _ => json!({"permissions": {"worktree": "allow"}}),
+        });
+        let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+        let mut inv = creation_source(&flow).await;
+        if case == "source-plan" {
+            flow.runtime
+                .switch_mode(&inv.session_id, "plan")
+                .await
+                .unwrap();
+        }
+        let cancel = CancellationToken::new();
+        if case == "cancel" {
+            cancel.cancel();
+        }
+        if case == "wrong-location" {
+            inv.directory = flow.f.dir.path().display().to_string();
+        }
+        let mut request = creation_request(&flow.f, "refused");
+        if case == "existing-id" {
+            request.session.id = Some(inv.session_id.clone());
+        }
+        assert!(
+            flow.f
+                .host
+                .create_worktree_session(&inv, cancel, request)
+                .await
+                .is_err(),
+            "{case}"
+        );
+        assert!(
+            !repository
+                .common_dir
+                .join("cyber-worktrees/refused.json")
+                .exists(),
+            "{case}"
+        );
+        assert!(
+            !flow
+                .f
+                .dir
+                .path()
+                .join("worktrees/prj_test/refused")
+                .exists(),
+            "{case}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn creation_git_failure_preserves_pending_target_and_refuses_blind_retry() {
+    use cyber_server::runtime::NoSnapshots;
+    let (fixture, repository, _) = owned().await;
+    assert!(
+        invoke(&fixture.repo, &["branch".into(), "cyber/collision".into()])
+            .unwrap()
+            .status
+            .success()
+    );
+    fixture.set_config(json!({"permissions": {"worktree": "allow"}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let inv = creation_source(&flow).await;
+    let error = flow
+        .f
+        .host
+        .create_worktree_session(
+            &inv,
+            CancellationToken::new(),
+            creation_request(&flow.f, "collision"),
+        )
+        .await
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("already exists"), "{error}");
+    let record = repository.common_dir.join("cyber-worktrees/collision.json");
+    let pending: Managed = serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+    assert!(!pending.ready);
+    assert!(pending.path.is_dir());
+    std::fs::write(pending.path.join("user-file"), "preserve").unwrap();
+    let repeated = flow
+        .f
+        .host
+        .create_worktree_session(
+            &inv,
+            CancellationToken::new(),
+            creation_request(&flow.f, "collision"),
+        )
+        .await
+        .err()
+        .unwrap();
+    assert!(repeated.to_string().contains("recovery"), "{repeated}");
+    assert_eq!(
+        std::fs::read_to_string(pending.path.join("user-file")).unwrap(),
+        "preserve"
+    );
+    assert!(
+        RepositoryLock::try_acquire(&repository.common_dir)
+            .unwrap()
+            .is_some()
+    );
 }

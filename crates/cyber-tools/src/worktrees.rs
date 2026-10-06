@@ -1,8 +1,8 @@
-//! Sandboxed setup execution for a Session already located in an owned worktree.
+//! Owned sandboxed Git creation and journaled setup for managed worktree Sessions.
 
 use std::ffi::OsString;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output, Stdio};
 use std::sync::Mutex;
 use std::sync::{
@@ -12,10 +12,10 @@ use std::sync::{
 use std::time::Duration;
 
 use cyber_core::worktrees::{
-    GitExecution, GitFuture, Managed, Repository, Settings, SetupEvent, SetupExecution,
+    GitExecution, GitFuture, Managed, Name, Repository, Settings, SetupEvent, SetupExecution,
     SetupFuture, SetupOutcome, SetupSink, SetupStream,
 };
-use cyber_server::runtime::Invocation;
+use cyber_server::runtime::{CreateSession, Invocation, SessionInfo};
 use cyber_server::worktrees::{CommandDecision, CommandResult, SetupJournal};
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
@@ -24,7 +24,158 @@ use crate::host::{BuiltinHost, Ctx};
 use crate::permissions::Request;
 use crate::tools::process::Process;
 
+/// Inputs for creating a new Session in a managed worktree.
+pub struct WorktreeSessionRequest {
+    pub session: CreateSession,
+    pub data: PathBuf,
+    pub project_id: String,
+    pub name: Name,
+}
+
+/// A setup failure retains both the Session and its owned worktree.
+pub struct WorktreeSession {
+    pub session: SessionInfo,
+    pub managed: Managed,
+    pub setup: Result<SetupOutcome, String>,
+}
+
 impl BuiltinHost {
+    /// Create through owned sandboxed Git, then attach a fresh Session and run setup.
+    /// Existing Session Location changes are handled by the separate enter/exit flow.
+    pub async fn create_worktree_session(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        request: WorktreeSessionRequest,
+    ) -> io::Result<WorktreeSession> {
+        if request.session.id.is_some() {
+            return Err(io::Error::other(
+                "Worktree creation requires a fresh Session ID",
+            ));
+        }
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
+        let source = runtime
+            .state(&inv.session_id)
+            .await
+            .map_err(io::Error::other)?
+            .info;
+        if Path::new(&source.directory).canonicalize()?
+            != Path::new(&inv.directory).canonicalize()?
+        {
+            return Err(io::Error::other(
+                "Creation invocation differs from Session Location",
+            ));
+        }
+        let mut creation_inv = inv.clone();
+        creation_inv.mode = source.mode;
+        creation_inv.rules = source.rules;
+        creation_inv.agent = source.agent;
+        let owned_cancel = cancel.child_token();
+        let (repository, managed) = runtime
+            .own_worktree_setup(
+                owned_cancel.clone(),
+                self.create_worktree(&creation_inv, owned_cancel, &request),
+            )
+            .await?;
+        if cancel.is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Creation cancelled before Session admission",
+            ));
+        }
+        let mut session_request = request.session;
+        session_request.directory = managed.path.display().to_string();
+        let session = runtime
+            .create_session(session_request)
+            .await
+            .map_err(io::Error::other)?;
+        let mut setup_inv = inv.clone();
+        setup_inv.session_id = session.id.clone();
+        setup_inv.directory = session.directory.clone();
+        setup_inv.mode = session.mode.clone();
+        setup_inv.agent = session.agent.clone();
+        setup_inv.rules = session.rules.clone();
+        let setup = self
+            .setup_worktree_session(&setup_inv, cancel, &repository, &managed)
+            .await
+            .map_err(|error| error.to_string());
+        Ok(WorktreeSession {
+            session,
+            managed,
+            setup,
+        })
+    }
+
+    async fn create_worktree(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        request: &WorktreeSessionRequest,
+    ) -> io::Result<(Repository, Managed)> {
+        let location = Path::new(&inv.directory).canonicalize()?;
+        let ctx = Ctx {
+            host: self,
+            inv,
+            policy: self.policy(inv),
+            location,
+            cancel,
+        };
+        let (config, sources) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;
+        let sandbox = cyber_sandbox::SandboxConfig::resolve(
+            &config,
+            &sources,
+            self.opts.sandbox_policy.as_deref(),
+            &self.opts.home,
+        );
+        if sandbox.policy == cyber_sandbox::Policy::ReadOnly {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Read-only sandbox refuses worktree creation",
+            ));
+        }
+        let settings = Settings::from_config(&config).map_err(io::Error::other)?;
+        ctx.authorize(
+            Request {
+                action: "worktree".into(),
+                resources: vec![request.name.as_str().into()],
+                ..Request::default()
+            },
+            vec![request.name.as_str().into()],
+            serde_json::json!({"operation": "create", "name": request.name.as_str()}),
+        )
+        .await
+        .map_err(tool_error)?;
+        if ctx.cancel.is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Creation cancelled",
+            ));
+        }
+        let discovery = GitPort {
+            ctx: &ctx,
+            writable: Some(Vec::new()),
+        };
+        let repository = Repository::discover(&discovery, &ctx.location).await?;
+        let target =
+            repository.target(&settings, &request.data, &request.project_id, &request.name)?;
+        let execution = GitPort {
+            ctx: &ctx,
+            writable: Some(vec![repository.common_dir.clone(), target]),
+        };
+        let managed = repository
+            .create(
+                &execution,
+                &settings,
+                &request.data,
+                &request.project_id,
+                &request.name,
+            )
+            .await?;
+        Ok((repository, managed))
+    }
+
     /// Lifecycle entry point delivering setup progress to attached Session clients.
     pub async fn setup_worktree_session(
         &self,
@@ -173,6 +324,24 @@ impl Execution<'_> {
 impl GitExecution for Execution<'_> {
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a> {
         Box::pin(async move {
+            GitPort {
+                ctx: self.ctx,
+                writable: None,
+            }
+            .run(directory, args)
+            .await
+        })
+    }
+}
+
+struct GitPort<'a> {
+    ctx: &'a Ctx<'a>,
+    writable: Option<Vec<PathBuf>>,
+}
+
+impl GitExecution for GitPort<'_> {
+    fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a> {
+        Box::pin(async move {
             let mut arguments = vec![
                 "-c".into(),
                 "core.hooksPath=".into(),
@@ -186,10 +355,15 @@ impl GitExecution for Execution<'_> {
                         .into(),
                 );
             }
-            let mut prepared =
-                crate::sandboxing::prepare_worktree_command(self.ctx, "git", &arguments)
-                    .await
-                    .map_err(tool_error)?;
+            let mut prepared = match &self.writable {
+                Some(roots) => {
+                    crate::sandboxing::prepare_worktree_git(self.ctx, &arguments, roots).await
+                }
+                None => {
+                    crate::sandboxing::prepare_worktree_command(self.ctx, "git", &arguments).await
+                }
+            }
+            .map_err(tool_error)?;
             prepared
                 .env
                 .retain(|(key, _)| !key.to_ascii_uppercase().starts_with("GIT_"));
