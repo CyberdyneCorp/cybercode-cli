@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::future::Future;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Output;
@@ -13,8 +13,8 @@ pub type GitFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Output>> + Send 
 
 /// Runtime implementations must provide sandboxed, cancellation-owned Git execution
 /// with ambient Git overrides removed. The core manager never spawns processes.
-/// On Windows, `directory` may be a short launch ancestor; `-C` selects the actual
-/// repository. Sandbox permissions must remain scoped to the requested worktree.
+/// On Windows, long linked worktrees execute from their verified metadata directory
+/// with an explicit checkout destination. Sandbox scope must follow that destination.
 pub trait GitExecution: Send + Sync {
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a>;
 }
@@ -183,6 +183,7 @@ impl Repository {
     }
 
     async fn verify(&self, execution: &dyn GitExecution, managed: &Managed) -> io::Result<()> {
+        linked_git_directory(&managed.path)?;
         let found = Self::discover(execution, &managed.path).await?;
         let branch = line(
             git(
@@ -261,6 +262,28 @@ fn windows_git_launch(directory: &Path, args: &[OsString]) -> io::Result<(PathBu
     use std::os::windows::ffi::OsStrExt;
 
     let target = git_path_argument(directory)?;
+    if target.encode_wide().count() >= 240 {
+        let metadata = git_path_argument(&linked_git_directory(directory)?)?;
+        if metadata.encode_wide().count() >= 240 {
+            return Err(invalid(
+                "Linked Git metadata exceeds supported launch length",
+            ));
+        }
+        let mut prepared = vec![
+            "-c".into(),
+            "core.longpaths=true".into(),
+            "--git-dir".into(),
+            metadata.clone(),
+        ];
+        prepared.extend_from_slice(args);
+        if args.first().is_some_and(|value| value == "checkout-index") {
+            let mut prefix = OsString::from("--prefix=");
+            prefix.push(target);
+            prefix.push("/");
+            prepared.push(prefix);
+        }
+        return Ok((PathBuf::from(metadata), prepared));
+    }
     for ancestor in directory.ancestors() {
         let launch = git_path_argument(ancestor)?;
         // CreateProcess cannot use a long current directory, even with long-path opt-in.
@@ -285,6 +308,14 @@ async fn git_path(
     directory: &Path,
     flag: &str,
 ) -> io::Result<PathBuf> {
+    #[cfg(windows)]
+    if flag == "--show-toplevel" {
+        use std::os::windows::ffi::OsStrExt;
+        if git_path_argument(directory)?.encode_wide().count() >= 240 {
+            linked_git_directory(directory)?;
+            return directory.canonicalize();
+        }
+    }
     let path = PathBuf::from(line(
         git(
             execution,
@@ -350,6 +381,38 @@ fn replace_record(path: &Path, value: &Managed) -> io::Result<()> {
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+fn linked_git_directory(directory: &Path) -> io::Result<PathBuf> {
+    let marker = directory.join(".git");
+    if !std::fs::symlink_metadata(&marker)?.is_file() {
+        return Err(invalid("Managed worktree Git marker is not a regular file"));
+    }
+    let pointer = read_pointer(&marker)?;
+    let metadata = directory
+        .join(
+            pointer
+                .strip_prefix("gitdir: ")
+                .ok_or_else(|| invalid("Invalid Git marker"))?,
+        )
+        .canonicalize()?;
+    let backpointer = read_pointer(&metadata.join("gitdir"))?;
+    if metadata.join(backpointer).canonicalize()? != marker.canonicalize()? {
+        return Err(invalid("Managed worktree Git backpointer changed"));
+    }
+    Ok(metadata)
+}
+
+fn read_pointer(path: &Path) -> io::Result<String> {
+    let mut value = String::new();
+    std::fs::File::open(path)?
+        .take(65537)
+        .read_to_string(&mut value)?;
+    if value.len() > 65536 {
+        return Err(invalid("Git pointer exceeds supported size"));
+    }
+    let value = value.strip_suffix('\n').unwrap_or(&value);
+    Ok(value.strip_suffix('\r').unwrap_or(value).to_string())
 }
 
 #[cfg(not(windows))]

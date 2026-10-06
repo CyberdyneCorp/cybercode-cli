@@ -51,6 +51,12 @@
 - **THEN** only the explicit Git argument is converted to an equivalent supported spelling, with command-local long-path support
 - **AND** canonical ownership remains unchanged and ambiguous path components fail before branch creation
 - **AND** Windows process creation uses a short launch directory while Git selects the requested directory explicitly, without broadening sandbox access
+- **AND** long linked targets use verified metadata and an explicit checkout destination without an early long-directory change
+
+#### Scenario: Linked metadata no longer points back to the owned worktree
+- **WHEN** the metadata directory's `gitdir` backpointer no longer resolves to the owned worktree's regular `.git` marker
+- **THEN** creation verification or reuse fails without accepting the redirected repository
+- **AND** existing user files remain unchanged
 
 #### Scenario: Initial checkout does not overwrite a concurrent file
 - **WHEN** a file appears in the fresh worktree after registration but before initial checkout

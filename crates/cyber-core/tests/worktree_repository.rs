@@ -56,10 +56,16 @@ impl GitExecution for Execution {
                 .windows(2)
                 .any(|pair| pair[0] == "checkout-index" && pair[1] == "--all");
             if checkout && matches!(self.mode, Mode::CollideBeforeCheckout) {
-                let worktree = args
-                    .windows(2)
-                    .find(|pair| pair[0] == "-C")
-                    .map_or(directory, |pair| Path::new(&pair[1]));
+                let destination = args.iter().find_map(|arg| {
+                    arg.to_str()
+                        .and_then(|arg| arg.strip_prefix("--prefix="))
+                        .map(Path::new)
+                });
+                let worktree = destination.unwrap_or_else(|| {
+                    args.windows(2)
+                        .find(|pair| pair[0] == "-C")
+                        .map_or(directory, |pair| Path::new(&pair[1]))
+                });
                 std::fs::write(worktree.join("tracked.txt"), "user file during setup")?;
             }
             let output = self.invoke(directory, args)?;
@@ -454,5 +460,109 @@ fn initial_checkout_preserves_files_created_after_registration() {
         RepositoryLock::try_acquire(&repository.common_dir)
             .unwrap()
             .is_some()
+    );
+}
+
+#[test]
+fn changed_git_backpointer_refuses_reuse_and_preserves_user_files() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let name = Name::parse("backpointer").unwrap();
+    let managed = fixture
+        .create(&repository, &name, &Settings::default())
+        .unwrap();
+    let output = fixture
+        .execution
+        .invoke(
+            &managed.path,
+            &["rev-parse".into(), "--absolute-git-dir".into()],
+        )
+        .unwrap();
+    assert!(output.status.success());
+    let metadata = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim_end());
+    std::fs::write(
+        metadata.join("gitdir"),
+        fixture.repo.join(".git").to_str().unwrap(),
+    )
+    .unwrap();
+    std::fs::write(managed.path.join("tracked.txt"), "preserve after redirect").unwrap();
+    assert_eq!(
+        fixture
+            .create(&repository, &name, &Settings::default())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::InvalidData
+    );
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
+        "preserve after redirect"
+    );
+}
+
+#[test]
+fn metadata_checkout_targets_worktree_without_entering_its_directory() {
+    let fixture = Fixture::new();
+    let target = fixture.data.join("explicit-destination");
+    let args = [
+        "worktree".into(),
+        "add".into(),
+        "--no-checkout".into(),
+        "-b".into(),
+        "cyber/explicit".into(),
+        target.as_os_str().into(),
+        "HEAD".into(),
+    ];
+    let output = fixture.execution.invoke(&fixture.repo, &args).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let marker = std::fs::read_to_string(target.join(".git")).unwrap();
+    let metadata = PathBuf::from(marker.trim_end().strip_prefix("gitdir: ").unwrap());
+    let base_args: Vec<OsString> = vec![
+        "-c".into(),
+        "core.longpaths=true".into(),
+        "--git-dir".into(),
+        metadata.as_os_str().into(),
+    ];
+    let mut args = base_args.clone();
+    args.extend(["read-tree".into(), "HEAD".into()]);
+    assert!(
+        fixture
+            .execution
+            .invoke(&metadata, &args)
+            .unwrap()
+            .status
+            .success()
+    );
+    let mut prefix = OsString::from("--prefix=");
+    prefix.push(&target);
+    prefix.push("/");
+    let mut args = base_args;
+    args.extend(["checkout-index".into(), "--all".into(), prefix]);
+    let output = fixture.execution.invoke(&metadata, &args).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("tracked.txt")).unwrap(),
+        "base"
+    );
+    assert!(!metadata.join("tracked.txt").exists());
+    std::fs::write(target.join("tracked.txt"), "preserve collision").unwrap();
+    assert!(
+        !fixture
+            .execution
+            .invoke(&metadata, &args)
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("tracked.txt")).unwrap(),
+        "preserve collision"
     );
 }

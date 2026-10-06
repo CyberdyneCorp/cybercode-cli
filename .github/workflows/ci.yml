@@ -49,40 +49,58 @@ jobs:
       - name: Native worktree configuration, repository creation and lock ownership
         run: cargo test --locked -p cyber-core --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Unsupported Unix bridge refuses execution
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --test bridge
       - name: Native environment credential masking
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --lib env::tests
       - name: Native Windows process-tree ownership
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --test windows_job
       - name: Native parent-owned Windows process trees
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --test windows_parent_job
       - name: Native Windows AppContainer profile and ACL ownership
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --lib windows_container::tests
       - name: Native Windows AppContainer launch and direct-object isolation
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch
       - name: Native tool proxy transport
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
       - name: Native shell ownership and cancellation
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test windows_shell
       - name: Native PowerShell critical-path analysis
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test inline_removals powershell_native_
       - name: Native PowerShell filesystem facts
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test powershell_analysis native_
       - name: PowerShell source and legacy fallback contracts
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib tools::powershell::tests
       - name: Native PowerShell tool contracts
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test windows_powershell
       - name: Every registered tool has a golden
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test golden every_registered_tool_has_a_golden
       - name: Native runtime shutdown
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test runtime shutdown_
       - name: Native server listener lifecycle
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test server
       - name: Native pending HTTP2 request cleanup
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test transport
       - name: Native active-tool service shutdown
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test windows_service
       - name: Native CLI service shutdown
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test cli service_stop_uses_registered_http_shutdown
 
   sdk:
