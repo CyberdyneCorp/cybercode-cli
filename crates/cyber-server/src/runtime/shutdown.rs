@@ -64,6 +64,11 @@ impl Runtime {
         }
     }
 
+    /// Whether this runtime has permanently closed admission.
+    pub fn is_shutting_down(&self) -> bool {
+        self.inner.closed.is_cancelled()
+    }
+
     /// Resolve when this runtime stops accepting new work.
     pub async fn shutting_down(&self) {
         self.inner.closed.cancelled().await;

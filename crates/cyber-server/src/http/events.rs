@@ -20,7 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use super::AppState;
 use super::envelope::{location, query_value};
 use super::error::ApiError;
-use crate::runtime::LiveEvent;
+use crate::runtime::{LiveEvent, Runtime};
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 
@@ -136,8 +136,25 @@ fn sse_event(e: &EventEnvelope) -> Event {
         .unwrap_or_default()
 }
 
-fn stream_response(rx: mpsc::Receiver<Event>) -> Response {
+fn spawn_stream(
+    runtime: Runtime,
+    tx: mpsc::Sender<Event>,
+    producer: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            biased;
+            _ = runtime.shutting_down() => {},
+            _ = tx.closed() => {},
+            _ = producer => {},
+        }
+    });
+}
+
+fn stream_response(rx: mpsc::Receiver<Event>, runtime: Runtime) -> Response {
     let stream = tokio_stream::StreamExt::map(ReceiverStream::new(rx), Ok::<Event, Infallible>);
+    let stream =
+        futures::StreamExt::take_until(stream, async move { runtime.shutting_down().await });
     let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(HEARTBEAT).text(" heartbeat"))
         .into_response();
@@ -163,7 +180,8 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
         .to_string();
     let (tx, rx) = mpsc::channel(256);
     let mut live = state.runtime.subscribe();
-    tokio::spawn(async move {
+    let runtime = state.runtime.clone();
+    spawn_stream(runtime.clone(), tx.clone(), async move {
         let hello = EventEnvelope {
             id: "live:0".into(),
             kind: "server.connected".into(),
@@ -207,7 +225,7 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
             }
         }
     });
-    Ok(stream_response(rx))
+    Ok(stream_response(rx, runtime))
 }
 
 /// Replay durable events after `after` (or `Last-Event-ID`), then follow new ones without gaps.
@@ -241,8 +259,13 @@ async fn session_events(
     // Subscribe before replaying so nothing committed in between is missed.
     let live = state.runtime.subscribe();
     let (tx, rx) = mpsc::channel(256);
-    tokio::spawn(follow(state, id, directory, after, live, tx));
-    Ok(stream_response(rx))
+    let runtime = state.runtime.clone();
+    spawn_stream(
+        runtime.clone(),
+        tx.clone(),
+        follow(state, id, directory, after, live, tx),
+    );
+    Ok(stream_response(rx, runtime))
 }
 
 async fn follow(

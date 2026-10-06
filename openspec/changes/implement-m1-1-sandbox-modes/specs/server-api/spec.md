@@ -66,3 +66,10 @@
 - **AND** side-effecting interrupted tools SHALL retain outcome-unknown settlement
 - **AND** pending durable inbox rows SHALL remain available to a new runtime after restart
 - **AND** new sessions, forks, admissions, releases, compaction and resume requests SHALL fail clearly after admission closes
+
+#### Scenario: Attached streams cannot keep a stopped service alive
+- **WHEN** service shutdown starts with connected instance/session event streams or WebSockets
+- **THEN** event stream bodies and producer tasks SHALL observe runtime shutdown
+- **AND** producer tasks SHALL also end when their receiving client disconnects
+- **AND** each WebSocket SHALL cancel and join its pending request tasks and release its channel-owned tool registrations
+- **AND** its shutdown close-frame write SHALL be bounded so a client that stops reading cannot hold cleanup indefinitely

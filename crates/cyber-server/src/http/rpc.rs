@@ -309,23 +309,53 @@ async fn serve_socket(state: AppState, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Value>(256);
     let session = Arc::new(RpcSession::new(&state, tx));
+    let runtime = state.runtime.clone();
     let writer = tokio::spawn(async move {
-        while let Some(frame) = rx.recv().await {
-            if sink
-                .send(Message::Text(frame.to_string().into()))
-                .await
-                .is_err()
-            {
+        loop {
+            let frame = tokio::select! {
+                biased;
+                _ = runtime.shutting_down() => break,
+                frame = rx.recv() => frame,
+            };
+            let Some(frame) = frame else { return };
+            let sent = tokio::select! {
+                biased;
+                _ = runtime.shutting_down() => break,
+                sent = sink.send(Message::Text(frame.to_string().into())) => sent,
+            };
+            if sent.is_err() {
                 return;
             }
         }
+        // A client that no longer reads must not hold shutdown indefinitely.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            sink.send(Message::Close(None)),
+        )
+        .await;
     });
-    while let Some(Ok(message)) = stream.next().await {
+    let mut requests = tokio::task::JoinSet::new();
+    loop {
+        let message = tokio::select! {
+            biased;
+            _ = state.runtime.shutting_down() => break,
+            _ = requests.join_next(), if !requests.is_empty() => continue,
+            message = stream.next() => message,
+        };
+        let Some(Ok(message)) = message else { break };
         let Message::Text(text) = message else {
             continue;
         };
         let session = Arc::clone(&session);
-        tokio::spawn(async move { session.handle(&text).await });
+        requests.spawn(async move { session.handle(&text).await });
     }
-    writer.abort();
+    requests.abort_all();
+    while requests.join_next().await.is_some() {}
+    drop(session);
+    if state.runtime.is_shutting_down() {
+        let _ = writer.await;
+    } else {
+        writer.abort();
+        let _ = writer.await;
+    }
 }
