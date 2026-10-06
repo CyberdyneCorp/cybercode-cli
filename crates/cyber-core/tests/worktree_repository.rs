@@ -47,8 +47,9 @@ impl GitExecution for Execution {
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a> {
         Box::pin(async move {
             let output = self.invoke(directory, args)?;
-            if args.first().is_some_and(|arg| arg == "worktree")
-                && args.get(1).is_some_and(|arg| arg == "add")
+            if args
+                .windows(2)
+                .any(|pair| pair[0] == "worktree" && pair[1] == "add")
                 && output.status.success()
             {
                 match self.mode {
@@ -362,5 +363,58 @@ fn changed_branch_refuses_reuse_and_preserves_user_files() {
     assert_eq!(
         std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
         "preserve after branch switch"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_long_paths_are_preserved_at_the_git_argument_boundary() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let root = fixture
+        .data
+        .join("long-segment".repeat(8))
+        .join("another-segment".repeat(8));
+    let settings = Settings {
+        root: Some(root),
+        ..Default::default()
+    };
+    let managed = fixture
+        .create(&repository, &Name::parse("long-path").unwrap(), &settings)
+        .unwrap();
+    assert!(managed.path.as_os_str().len() > 260);
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
+        "base"
+    );
+    assert_eq!(
+        fixture
+            .create(&repository, &Name::parse("long-path").unwrap(), &settings)
+            .unwrap(),
+        managed
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_ambiguous_path_names_fail_before_ownership_or_branch_mutation() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let name = Name::parse("trailing.").unwrap();
+    assert!(
+        fixture
+            .create(&repository, &name, &Settings::default())
+            .is_err()
+    );
+    assert!(
+        !repository
+            .common_dir
+            .join("cyber-worktrees/trailing..json")
+            .exists()
+    );
+    assert!(
+        !fixture
+            .git(&["branch", "--list", "cyber/trailing."])
+            .contains("trailing")
     );
 }

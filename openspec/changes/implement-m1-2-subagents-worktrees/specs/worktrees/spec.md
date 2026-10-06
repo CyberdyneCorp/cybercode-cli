@@ -45,3 +45,8 @@
 #### Scenario: Unowned target is preserved
 - **WHEN** the requested worktree target exists without managed ownership
 - **THEN** creation fails before mutation and its contents remain unchanged
+
+#### Scenario: Windows canonical path reaches Git safely
+- **WHEN** Rust resolves a managed worktree root to a Windows verbatim drive path
+- **THEN** only the explicit Git argument is converted to an equivalent supported spelling, with command-local long-path support
+- **AND** canonical ownership remains unchanged and ambiguous path components fail before branch creation

@@ -54,6 +54,7 @@ impl Repository {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
         let target = self.target(settings, data, project_id, name)?;
+        let git_target = git_path_argument(&target)?;
         let records = self.common_dir.join("cyber-worktrees");
         let record = records.join(format!("{}.json", name.as_str()));
         if record.try_exists()? {
@@ -103,7 +104,7 @@ impl Repository {
                 "-b".into(),
                 managed.branch.clone().into(),
                 "--".into(),
-                managed.path.as_os_str().into(),
+                git_target,
                 managed.base.clone().into(),
             ],
         )
@@ -222,6 +223,13 @@ async fn git(
     directory: &Path,
     args: &[OsString],
 ) -> io::Result<Vec<u8>> {
+    #[cfg(windows)]
+    let windows_args: Vec<OsString> = ["-c".into(), "core.longpaths=true".into()]
+        .into_iter()
+        .chain(args.iter().cloned())
+        .collect();
+    #[cfg(windows)]
+    let args = windows_args.as_slice();
     let output = execution.run(directory, args).await?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
@@ -302,4 +310,61 @@ fn replace_record(path: &Path, value: &Managed) -> io::Result<()> {
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+#[cfg(not(windows))]
+fn git_path_argument(path: &Path) -> io::Result<OsString> {
+    Ok(path.as_os_str().into())
+}
+
+#[cfg(windows)]
+fn git_path_argument(path: &Path) -> io::Result<OsString> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Component, Prefix};
+    for component in path.components() {
+        if let Component::Normal(part) = component {
+            windows_component(part)?;
+        }
+    }
+    let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    match path.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(_) => Ok(OsString::from_wide(&wide[4..])),
+            Prefix::VerbatimUNC(_, _) => {
+                let mut normal = vec![b'\\' as u16; 2];
+                normal.extend_from_slice(&wide[8..]);
+                Ok(OsString::from_wide(&normal))
+            }
+            Prefix::Verbatim(_) | Prefix::DeviceNS(_) => {
+                Err(invalid("Unsupported Git path namespace"))
+            }
+            _ => Ok(path.as_os_str().into()),
+        },
+        _ => Ok(path.as_os_str().into()),
+    }
+}
+
+#[cfg(windows)]
+fn windows_component(part: &std::ffi::OsStr) -> io::Result<()> {
+    let value = part
+        .to_str()
+        .ok_or_else(|| invalid("Git path is not valid Unicode"))?;
+    let base = value
+        .split('.')
+        .next()
+        .unwrap_or(value)
+        .to_ascii_uppercase();
+    let device = ["CON", "PRN", "AUX", "NUL"].contains(&base.as_str())
+        || base
+            .strip_prefix("COM")
+            .or_else(|| base.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                ["1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"].contains(&suffix)
+            });
+    if value.ends_with('.') || value.ends_with(' ') || value.contains(':') || device {
+        return Err(invalid(
+            "Git path changes meaning outside the Windows verbatim namespace",
+        ));
+    }
+    Ok(())
 }
