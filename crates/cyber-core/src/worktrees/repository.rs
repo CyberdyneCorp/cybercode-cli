@@ -80,6 +80,14 @@ impl Repository {
         if stored != *managed {
             return Err(invalid("Managed worktree ownership changed"));
         }
+        self.git_status(execution, managed).await
+    }
+
+    pub(super) async fn git_status(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+    ) -> io::Result<WorktreeStatus> {
         let dirty = !git(
             execution,
             &managed.path,
@@ -128,7 +136,9 @@ impl Repository {
         let records = self.common_dir.join("cyber-worktrees");
         let metadata = match std::fs::symlink_metadata(&records) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return super::removal::pending_listing(self);
+            }
             Err(error) => return Err(error),
         };
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -161,6 +171,16 @@ impl Repository {
             };
             listed.push(entry);
         }
+        for pending in super::removal::pending_listing(self)? {
+            if !listed.iter().any(|entry| {
+                super::removal::listing_name(entry) == super::removal::listing_name(&pending)
+            }) {
+                listed.push(pending);
+            }
+        }
+        listed.sort_by(|left, right| {
+            super::removal::listing_name(left).cmp(super::removal::listing_name(right))
+        });
         Ok(listed)
     }
 
@@ -184,6 +204,7 @@ impl Repository {
         }
         let managed: Managed =
             serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
+        super::removal::check_record_admission(self, &managed)?;
         if managed.name != name
             || managed.common_dir != self.common_dir
             || !managed.path.is_absolute()
@@ -220,6 +241,7 @@ impl Repository {
         let git_target = git_path_argument(&target)?;
         let records = self.common_dir.join("cyber-worktrees");
         let record = records.join(format!("{}.json", name.as_str()));
+        super::removal::check_admission(self, name)?;
         if record.try_exists()? {
             return self
                 .reuse(execution, &record, &target, settings, name)
@@ -335,6 +357,7 @@ impl Repository {
     ) -> io::Result<Managed> {
         let managed: Managed =
             serde_json::from_slice(&std::fs::read(record)?).map_err(|e| invalid(e.to_string()))?;
+        super::removal::check_record_admission(self, &managed)?;
         if managed.path != target
             || managed.common_dir != self.common_dir
             || managed.name != name.as_str()
@@ -454,6 +477,9 @@ fn windows_git_launch(directory: &Path, args: &[OsString]) -> io::Result<(PathBu
             "--git-dir".into(),
             metadata.clone(),
         ];
+        if needs_working_tree(args) {
+            prepared.extend(["--work-tree".into(), target.clone()]);
+        }
         prepared.extend_from_slice(args);
         if args.first().is_some_and(|value| value == "checkout-index") {
             let mut prefix = OsString::from("--prefix=");
@@ -480,6 +506,18 @@ fn windows_git_launch(directory: &Path, args: &[OsString]) -> io::Result<(PathBu
         }
     }
     Err(invalid("No supported short Git launch directory"))
+}
+
+#[cfg(windows)]
+fn needs_working_tree(args: &[OsString]) -> bool {
+    let command = if args.first().is_some_and(|arg| arg == "--no-optional-locks") {
+        args.get(1)
+    } else {
+        args.first()
+    };
+    command.is_some_and(|command| {
+        command == "status" || (command == "ls-files" && args.iter().any(|arg| arg == "--others"))
+    })
 }
 
 async fn git_path(
@@ -542,7 +580,7 @@ fn line(bytes: Vec<u8>) -> io::Result<String> {
     Ok(value.strip_suffix('\n').unwrap_or(&value).to_string())
 }
 
-fn write_new(path: &Path, value: &Managed) -> io::Result<()> {
+pub(super) fn write_new(path: &Path, value: &impl Serialize) -> io::Result<()> {
     let bytes = serde_json::to_vec(value).map_err(|e| invalid(e.to_string()))?;
     let mut file = std::fs::File::options()
         .write(true)
@@ -552,7 +590,7 @@ fn write_new(path: &Path, value: &Managed) -> io::Result<()> {
     file.sync_all()
 }
 
-fn replace_record(path: &Path, value: &Managed) -> io::Result<()> {
+pub(super) fn replace_record(path: &Path, value: &impl Serialize) -> io::Result<()> {
     let temporary = path.with_extension(format!("{}.tmp", ulid::Ulid::new()));
     write_new(&temporary, value)?;
     std::fs::rename(&temporary, path)
@@ -595,12 +633,12 @@ fn read_pointer(path: &Path) -> io::Result<String> {
 }
 
 #[cfg(not(windows))]
-fn git_path_argument(path: &Path) -> io::Result<OsString> {
+pub(super) fn git_path_argument(path: &Path) -> io::Result<OsString> {
     Ok(path.as_os_str().into())
 }
 
 #[cfg(windows)]
-fn git_path_argument(path: &Path) -> io::Result<OsString> {
+pub(super) fn git_path_argument(path: &Path) -> io::Result<OsString> {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::{Component, Prefix};
     for component in path.components() {

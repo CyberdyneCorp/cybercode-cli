@@ -78,6 +78,7 @@ impl Repository {
         if !owned.ready || owned != *managed || owned.common_dir != self.common_dir {
             return Err(io::Error::other("Setup requires matching ready ownership"));
         }
+        super::removal::check_record_admission(self, &owned)?;
         if settings
             .setup
             .iter()

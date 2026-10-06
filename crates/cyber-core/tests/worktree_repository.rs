@@ -12,6 +12,8 @@ use futures::executor::block_on;
 mod inclusion;
 #[path = "worktree_repository/listing.rs"]
 mod listing;
+#[path = "worktree_repository/removal.rs"]
+mod removal;
 #[path = "worktree_repository/setup.rs"]
 mod setup;
 

@@ -26,6 +26,39 @@
 - **AND** a symlinked ownership directory is refused without following it
 
 
+### Requirement: Cleanup on exit
+(P1) When a Session that created a worktree ends, the system SHALL remove the worktree and delete its branch if it has no uncommitted changes and no commits beyond its base. Otherwise it SHALL keep both and print the path and branch. `worktrees.cleanup` SHALL accept `auto` (default), `keep`, or `ask`.
+
+#### Scenario: Unchanged worktree removed
+- **WHEN** a Session in a fresh worktree exits without changes
+- **THEN** the worktree directory and branch are removed
+
+#### Scenario: Required removal activity admission
+- **WHEN** a managed removal is admitted under the shared repository lock
+- **THEN** a required runtime activity port refuses active Sessions and fences new Location use across the complete operation
+- **AND** `--force` cannot bypass that admission
+
+#### Scenario: Unknown deletion outcomes are not redispatched
+- **WHEN** a durable tree or branch deletion intent lacks an acknowledged result
+- **THEN** recovery can reconcile missing artifacts through read-only checks
+- **AND** an existing tree or branch remains outcome unknown and cannot authorize repeating deletion
+- **AND** a recreated branch with the same object ID survives that recovery
+
+#### Scenario: Branch and path replacement survive recovery
+- **WHEN** a worktree path is replaced, its branch moves or the branch is checked out elsewhere during removal
+- **THEN** recovery preserves the replacement and refuses unsafe continuation
+- **AND** branch deletion uses compare-and-delete against the admitted object ID
+
+#### Scenario: Ignored local work is preserved
+- **WHEN** non-forced removal finds edited included ignored files or new ignored files
+- **THEN** it refuses without deleting them
+- **AND** unchanged copied ignored files can be identified from persisted inclusion hashes
+
+#### Scenario: Incomplete removal remains visible
+- **WHEN** ownership has been unlinked but the removal journal is not complete
+- **THEN** listing retains a recovery diagnostic and creation/reuse remains blocked
+- **AND** completed removal replay cannot delete a later creation at the same name
+
 ### Requirement: Session worktrees
 (P1) `cyber --worktree [name]` and `cyber exec --worktree [name]` SHALL create, or reuse, a managed worktree and start the Session in it. When `name` is omitted it SHALL be generated as `<adjective>-<noun>-<4 hex>`. The Session's Location SHALL be the worktree path.
 
