@@ -89,6 +89,11 @@ fn dropping_a_live_container_owner_terminates_the_original_process() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    let conflicting = spawn(&profile, &program, &arguments(), &env, directory.path())
+        .err()
+        .expect("one profile must not share temporary storage between live owners");
+    assert_eq!(conflicting.kind(), std::io::ErrorKind::WouldBlock);
+    assert_process_live(&retained);
     drop(child);
     assert_eq!(
         unsafe { WaitForSingleObject(retained.as_raw_handle(), 1000) },
@@ -145,7 +150,8 @@ fn live_container_descendant(root: &Path) -> u32 {
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "descendant never started"
+            "descendant never started; worker diagnostic: {}",
+            std::fs::read_to_string(root.join("write.txt")).unwrap()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -247,7 +253,12 @@ fn redirected_streams_preserve_bytes_and_exclude_unlisted_inheritable_handles() 
         },
     )
     .unwrap();
-    assert_eq!(child.wait(Duration::from_secs(10)).unwrap(), 0);
+    assert_eq!(
+        child.wait(Duration::from_secs(10)).unwrap(),
+        0,
+        "stream worker diagnostic: {}",
+        std::fs::read_to_string(directory.path().join("write.txt")).unwrap()
+    );
     assert!(
         std::fs::read_to_string(directory.path().join("stdout.txt"))
             .unwrap()
@@ -294,7 +305,9 @@ fn failed_process_creation_releases_private_storage_and_profile_owners() {
     let directory = tempfile::tempdir().unwrap();
     let mut profile = Profile::new().unwrap();
     let storage = profile.storage_path().unwrap();
-    let before = storage_entries(&storage);
+    let mut before = storage_entries(&storage);
+    // The profile-created default temp directory belongs to this invocation too.
+    before.remove(&OsString::from("Temp"));
     let env = environment(directory.path(), "probe", &profile);
     let failure = spawn(
         &profile,
@@ -316,6 +329,30 @@ fn storage_entries(storage: &Path) -> std::collections::BTreeSet<OsString> {
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect()
+}
+
+#[test]
+fn nonempty_profile_temp_is_preserved_and_failed_reservation_is_released() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let temp = profile.storage_path().unwrap().join("Temp");
+    std::fs::create_dir_all(&temp).unwrap();
+    let existing = temp.join("existing.txt");
+    std::fs::write(&existing, "preserve").unwrap();
+    let env = environment(directory.path(), "probe", &profile);
+    let program = directory.path().join("missing.exe");
+    let refusal = spawn(&profile, &program, &arguments(), &env, directory.path())
+        .err()
+        .expect("nonempty temp must be refused before cleanup ownership");
+    assert_eq!(refusal.kind(), std::io::ErrorKind::Other);
+    assert_eq!(std::fs::read_to_string(&existing).unwrap(), "preserve");
+    std::fs::remove_file(existing).unwrap();
+    let retry = spawn(&profile, &program, &arguments(), &env, directory.path())
+        .err()
+        .expect("missing executable must still be refused");
+    assert_eq!(retry.kind(), std::io::ErrorKind::NotFound);
+    assert!(!temp.exists());
+    profile.close().unwrap();
 }
 
 #[test]
@@ -380,10 +417,10 @@ fn container_worker() {
         std::process::exit(47);
     }
     if role == "streams" {
-        std::process::exit(if stream_worker().is_ok() { 0 } else { 52 });
+        exit_worker(&root, stream_worker(&root), "streams", 52);
     }
     if role == "tree" {
-        std::process::exit(if tree_worker(&root).is_ok() { 0 } else { 53 });
+        exit_worker(&root, tree_worker(&root), "tree", 53);
     }
     if role == "wait" {
         if std::fs::write(root.join("started.txt"), "running").is_err() {
@@ -394,6 +431,21 @@ fn container_worker() {
     }
     let code = if role == "probe" { probe(&root) } else { 60 };
     std::process::exit(code);
+}
+
+fn exit_worker(root: &Path, result: std::io::Result<()>, stage: &str, code: i32) -> ! {
+    if let Err(error) = result {
+        std::fs::write(
+            root.join("write.txt"),
+            serde_json::json!({
+                "stage": stage, "code": error.raw_os_error(), "error": error.to_string()
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::process::exit(code);
+    }
+    std::process::exit(0);
 }
 
 fn tree_worker(root: &Path) -> std::io::Result<()> {
@@ -419,21 +471,28 @@ fn tree_worker(root: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn stream_worker() -> std::io::Result<()> {
+fn stream_worker(root: &Path) -> std::io::Result<()> {
     use std::io::{Read, Write};
+    use windows_sys::Win32::Foundation::GetHandleInformation;
     use windows_sys::Win32::System::Threading::SetEvent;
     let unlisted = std::env::var("CYBER_UNLISTED_EVENT")
         .unwrap()
         .parse::<usize>()
         .unwrap();
-    if unsafe { SetEvent(unlisted as *mut core::ffi::c_void) } != 0 {
+    let raw = unlisted as *mut core::ffi::c_void;
+    let mut flags = 0;
+    std::fs::write(root.join("write.txt"), "stream: handle presence")?;
+    // Do not signal an absent handle: strict handle checking may raise an NT exception.
+    if unsafe { GetHandleInformation(raw, &mut flags) } != 0 && unsafe { SetEvent(raw) } != 0 {
         return Err(std::io::Error::other("Unlisted handle was inherited"));
     }
+    std::fs::write(root.join("write.txt"), "stream: stdin")?;
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
     if input != "input λ\n" {
         return Err(std::io::Error::other("Redirected input changed"));
     }
+    std::fs::write(root.join("write.txt"), "stream: output")?;
     std::io::stdout().write_all(format!("stdout: {input}").as_bytes())?;
     std::io::stdout().flush()?;
     std::io::stderr().write_all("stderr: 日本語\n".as_bytes())?;

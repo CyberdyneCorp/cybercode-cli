@@ -26,7 +26,7 @@ use windows_sys::Win32::System::Threading::{
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
-use crate::windows_container::{AclGrant, Profile};
+use crate::windows_container::{AclGrant, LaunchReservation, Profile};
 use crate::windows_process::Job;
 
 /// Launch only after job assignment and exact AppContainer identity verification.
@@ -196,15 +196,21 @@ pub struct ContainerChild {
 struct PrivateTemp {
     path: PathBuf,
     grant: Option<AclGrant>,
+    _reservation: LaunchReservation,
 }
 
 impl PrivateTemp {
     fn new(profile: &Profile) -> io::Result<Self> {
-        let path = profile
-            .storage_path()?
-            .join(cyber_core::ids::new_id("scratch"));
-        std::fs::create_dir(&path)?;
-        let mut temp = Self { path, grant: None };
+        let reservation = profile.reserve_launch()?;
+        // Windows rewrites TEMP/TMP to AC\Temp even with an explicit environment.
+        // The invocation's fresh identity owns this directory, not a shared host temp.
+        let path = profile.storage_path()?.join("Temp");
+        prepare_temp_directory(&path)?;
+        let mut temp = Self {
+            path,
+            grant: None,
+            _reservation: reservation,
+        };
         temp.grant = Some(profile.grant_private_directory(&temp.path)?);
         Ok(temp)
     }
@@ -222,6 +228,28 @@ impl PrivateTemp {
         }
         environment_block(&variables)
     }
+}
+
+fn prepare_temp_directory(path: &Path) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+    match std::fs::create_dir(path) {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::other(
+            "Private temporary storage refuses reparse points",
+        ));
+    }
+    if std::fs::read_dir(path)?.next().is_some() {
+        return Err(io::Error::other(
+            "Private temporary storage must be empty before launch",
+        ));
+    }
+    Ok(())
 }
 
 impl Drop for PrivateTemp {
@@ -289,16 +317,19 @@ impl Drop for ContainerChild {
     }
 }
 
-struct Attributes {
+struct Attributes<'a> {
     storage: Vec<usize>,
     initialized: bool,
+    _capabilities: &'a SECURITY_CAPABILITIES,
+    _jobs: &'a [HANDLE; 1],
+    _handles: Option<&'a [HANDLE; 3]>,
 }
 
-impl Attributes {
+impl<'a> Attributes<'a> {
     fn new(
-        capabilities: &SECURITY_CAPABILITIES,
-        jobs: &[HANDLE; 1],
-        handles: Option<&[HANDLE; 3]>,
+        capabilities: &'a SECURITY_CAPABILITIES,
+        jobs: &'a [HANDLE; 1],
+        handles: Option<&'a [HANDLE; 3]>,
     ) -> io::Result<Self> {
         let count = if handles.is_some() { 3 } else { 2 };
         let mut bytes = 0;
@@ -309,6 +340,9 @@ impl Attributes {
         let mut attributes = Self {
             storage: vec![0; bytes.div_ceil(std::mem::size_of::<usize>())],
             initialized: false,
+            _capabilities: capabilities,
+            _jobs: jobs,
+            _handles: handles,
         };
         // The storage is pointer-aligned and Windows supplied its required size.
         if unsafe { InitializeProcThreadAttributeList(attributes.pointer(), count, 0, &mut bytes) }
@@ -375,7 +409,7 @@ impl Attributes {
     }
 }
 
-impl Drop for Attributes {
+impl Drop for Attributes<'_> {
     fn drop(&mut self) {
         if self.initialized {
             unsafe { DeleteProcThreadAttributeList(self.pointer()) };

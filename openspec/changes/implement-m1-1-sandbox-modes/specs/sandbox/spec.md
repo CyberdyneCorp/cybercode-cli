@@ -29,6 +29,8 @@
 - **AND** caller-supplied TEMP/TMP values SHALL NOT redirect temporary storage outside that directory
 - **AND** command-owner cleanup SHALL revoke the grant and remove the invocation-owned temporary data
 - **AND** failed process creation SHALL release temporary storage and profile ownership
+- **AND** concurrent command owners for the same profile SHALL be refused before temporary-storage changes
+- **AND** preexisting nonempty or reparse-point temporary storage SHALL be refused without claiming cleanup ownership of that storage
 
 #### Scenario: Invocation-owned Windows profile and ACL leases
 - **WHEN** a Windows command invocation prepares an AppContainer identity and direct-object ACL grants

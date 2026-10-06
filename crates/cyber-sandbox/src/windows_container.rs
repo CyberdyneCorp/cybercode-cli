@@ -9,6 +9,7 @@ use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use windows_sys::Win32::Foundation::LocalFree;
@@ -40,6 +41,7 @@ struct ProfileInner {
     name: String,
     sid: Vec<u32>,
     active: bool,
+    launching: AtomicBool,
 }
 
 impl Profile {
@@ -71,6 +73,7 @@ impl Profile {
             name,
             sid: Vec::new(),
             active: true,
+            launching: AtomicBool::new(false),
         };
         inner.sid = sid.copy()?;
         Ok(Self(Arc::new(inner)))
@@ -153,6 +156,28 @@ impl Profile {
         } else {
             Err(io::Error::other("AppContainer profile is closed"))
         }
+    }
+
+    pub(crate) fn reserve_launch(&self) -> io::Result<LaunchReservation> {
+        self.ensure_active()?;
+        self.0
+            .launching
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "AppContainer profile already has a command owner",
+                )
+            })?;
+        Ok(LaunchReservation(self.clone()))
+    }
+}
+
+pub(crate) struct LaunchReservation(Profile);
+
+impl Drop for LaunchReservation {
+    fn drop(&mut self) {
+        self.0.0.launching.store(false, Ordering::Release);
     }
 }
 
