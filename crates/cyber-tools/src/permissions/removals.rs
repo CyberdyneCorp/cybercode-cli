@@ -142,7 +142,7 @@ fn inspect_command(
             inspect_shell(args, source, scope, depth, *changed_directory, risks);
         }
         "command" | "builtin" | "exec" | "env" | "nohup" => {
-            inspect_wrapper(args, source, scope, depth, *changed_directory, risks);
+            inspect_wrapper(name, args, source, scope, depth, *changed_directory, risks);
         }
         _ => {}
     }
@@ -225,7 +225,92 @@ fn inspect_eval(
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum WrapperCommand {
+    Run {
+        index: usize,
+        changes_directory: bool,
+    },
+    Lookup,
+    Unresolved,
+}
+
+fn wrapper_command(name: &str, values: &[Option<String>]) -> WrapperCommand {
+    let mut index = 0;
+    let mut changes_directory = false;
+    while let Some(value) = values.get(index) {
+        let Some(value) = value.as_deref() else {
+            return WrapperCommand::Unresolved;
+        };
+        if value == "--" {
+            index += 1;
+            break;
+        }
+        if name == "env" && value.contains('=') && !value.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        if !value.starts_with('-') || value == "-" {
+            break;
+        }
+        match wrapper_option(name, value) {
+            WrapperOption::Lookup => return WrapperCommand::Lookup,
+            WrapperOption::Unknown => return WrapperCommand::Unresolved,
+            WrapperOption::Flag => index += 1,
+            WrapperOption::Value { directory } => {
+                if values.get(index + 1).and_then(|v| v.as_ref()).is_none() {
+                    return WrapperCommand::Unresolved;
+                }
+                changes_directory |= directory;
+                index += 2;
+            }
+            WrapperOption::Attached { directory } => {
+                changes_directory |= directory;
+                index += 1;
+            }
+        }
+    }
+    if index == values.len() {
+        WrapperCommand::Lookup
+    } else {
+        WrapperCommand::Run {
+            index,
+            changes_directory,
+        }
+    }
+}
+
+enum WrapperOption {
+    Flag,
+    Value { directory: bool },
+    Attached { directory: bool },
+    Lookup,
+    Unknown,
+}
+
+fn wrapper_option(name: &str, value: &str) -> WrapperOption {
+    match (name, value) {
+        ("command", "-v" | "-V" | "-pv" | "-pV") | ("env" | "nohup", "--help" | "--version") => {
+            WrapperOption::Lookup
+        }
+        ("command", "-p")
+        | ("exec", "-c" | "-l" | "-cl" | "-lc")
+        | ("env", "-i" | "--ignore-environment" | "-0" | "--null") => WrapperOption::Flag,
+        ("exec", "-a") | ("env", "-u" | "--unset") => WrapperOption::Value { directory: false },
+        ("env", "-C" | "--chdir") => WrapperOption::Value { directory: true },
+        ("env", v) if v.starts_with("--unset=") || v.starts_with("-u") => {
+            WrapperOption::Attached { directory: false }
+        }
+        ("env", v) if v.starts_with("--chdir=") || v.starts_with("-C") => {
+            WrapperOption::Attached { directory: true }
+        }
+        ("exec", v) if v.starts_with("-a") => WrapperOption::Attached { directory: false },
+        _ => WrapperOption::Unknown,
+    }
+}
+
 fn inspect_wrapper(
+    name: &str,
     args: &[Node<'_>],
     source: &[u8],
     scope: &RemovalScope<'_>,
@@ -233,16 +318,30 @@ fn inspect_wrapper(
     changed_directory: bool,
     risks: &mut Vec<RemovalRisk>,
 ) {
-    let first = args
-        .iter()
-        .position(|n| literal(*n, source).is_some_and(|s| !s.starts_with('-') && !s.contains('=')));
-    let Some(index) = first else {
-        return;
+    let values: Vec<_> = args.iter().map(|n| literal(*n, source)).collect();
+    let (index, changes_directory) = match wrapper_command(name, &values) {
+        WrapperCommand::Run {
+            index,
+            changes_directory,
+        } => (index, changes_directory),
+        WrapperCommand::Lookup => return,
+        WrapperCommand::Unresolved => {
+            risks.push(RemovalRisk::Unresolved(
+                "dynamic or unsupported shell wrapper".into(),
+            ));
+            return;
+        }
     };
     // Preserve shell quoting by reparsing the source span, not joining decoded arguments.
     let source_slice = &source[args[index].start_byte()..args.last().unwrap().end_byte()];
     if let Ok(text) = std::str::from_utf8(source_slice) {
-        inspect(text, scope, depth + 1, changed_directory, risks);
+        inspect(
+            text,
+            scope,
+            depth + 1,
+            changed_directory || changes_directory,
+            risks,
+        );
     }
 }
 
@@ -259,7 +358,11 @@ fn inspect_find(
     {
         return;
     }
-    let paths: Vec<_> = args
+    let Some(start) = find_paths_start(args, source) else {
+        risks.push(RemovalRisk::Unresolved("dynamic find option".into()));
+        return;
+    };
+    let paths: Vec<_> = args[start..]
         .iter()
         .take_while(|n| {
             literal(**n, source).is_none_or(|s| !s.starts_with('-') && s != "!" && s != "(")
@@ -271,6 +374,24 @@ fn inspect_find(
     for node in paths {
         inspect_target(*node, source, scope, changed_directory, risks);
     }
+}
+
+fn find_paths_start(args: &[Node<'_>], source: &[u8]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(node) = args.get(index) {
+        let value = literal(*node, source)?;
+        match value.as_str() {
+            "-H" | "-L" | "-P" => index += 1,
+            "--" => return Some(index + 1),
+            "-D" => {
+                literal(*args.get(index + 1)?, source)?;
+                index += 2;
+            }
+            v if v.starts_with("-O") => index += 1,
+            _ => break,
+        }
+    }
+    Some(index)
 }
 
 fn inspect_target(
@@ -456,6 +577,88 @@ mod tests {
                 "{command}"
             );
         }
+    }
+
+    #[test]
+    fn wrapper_option_values_cannot_hide_removal_commands() {
+        for command in [
+            "env -u NAME rm -rf /repo",
+            "env --unset NAME rm -rf /repo",
+            "env --unset=NAME rm -rf /repo",
+            "env -uNAME A=1 rm -rf /repo",
+            "exec -a process-name rm -rf /repo",
+            "exec -aprocess-name rm -rf /repo",
+            "command -p -- rm -rf /repo",
+            "builtin -- eval 'rm -rf /repo'",
+            "nohup -- rm -rf /repo",
+            "env -C /tmp rm -rf /repo",
+        ] {
+            assert_eq!(
+                bash_removal(command, &scope()),
+                Some(RemovalRisk::Critical("/repo".into())),
+                "{command}"
+            );
+        }
+        for command in [
+            "env -C /tmp rm -rf ..",
+            "env --chdir=/tmp rm -rf ..",
+            "env -S 'rm -rf /repo'",
+            r#"env -u "$NAME" rm -rf /repo"#,
+        ] {
+            assert!(
+                matches!(
+                    bash_removal(command, &scope()),
+                    Some(RemovalRisk::Unresolved(_))
+                ),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrapper_lookups_and_literal_equals_paths_are_distinct() {
+        for command in [
+            "command -v rm",
+            "command -V rm",
+            "command -pv rm",
+            "env --help rm -rf /repo",
+            "nohup --version rm -rf /repo",
+            "exec rm build/name=value",
+            "command rm build/name=value",
+        ] {
+            assert_eq!(bash_removal(command, &scope()), None, "{command}");
+        }
+        assert_eq!(
+            bash_removal("exec rm name=value /repo", &scope()),
+            Some(RemovalRisk::Critical("/repo".into()))
+        );
+    }
+
+    #[test]
+    fn find_global_options_preserve_explicit_and_implicit_search_roots() {
+        for command in [
+            "find -L build -delete",
+            "find -H -P build -delete",
+            "find -O2 build -delete",
+            "find -D tree build -delete",
+        ] {
+            assert_eq!(bash_removal(command, &scope()), None, "{command}");
+        }
+        for command in [
+            "find -L /repo -delete",
+            "find -D tree /repo -delete",
+            "find -- /repo -delete",
+        ] {
+            assert_eq!(
+                bash_removal(command, &scope()),
+                Some(RemovalRisk::Critical("/repo".into())),
+                "{command}"
+            );
+        }
+        assert_eq!(
+            bash_removal("find -L -delete", &scope()),
+            Some(RemovalRisk::Critical(scope().workdir.to_path_buf()))
+        );
     }
 
     #[test]

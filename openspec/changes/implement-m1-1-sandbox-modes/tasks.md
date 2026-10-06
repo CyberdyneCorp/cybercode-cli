@@ -9,6 +9,7 @@
   - [ ] Host integration after protected/irreversible ceilings; config rules, overrides and statistics.
   - [x] Bash literal-removal core, sh/bash -c and eval, symlink/parent aliases, unresolved targets and manual warning UI; individual-confirmation cascade regression.
   - [ ] Complete remaining Bash shell-context cases (wrapper options, heredocs and variable bindings) before accepting full critical-removal coverage.
+    `env`/`exec` option values, command lookups and `find` global options are covered; unsupported/dynamic wrappers refuse automatic approval. Heredocs, bindings and additional wrappers remain.
   - [ ] PowerShell and Python/JavaScript inline removal analysis before classifier approval is enabled.
 - [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
 - [ ] Complete the four-mode cycle and pending/effective TUI state with tests.
