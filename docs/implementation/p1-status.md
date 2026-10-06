@@ -34,6 +34,8 @@ A native Windows CI job now checks workspace/test compilation, builds executable
 
 The first native Windows job confirmed the helper import failure; the next progressed to an inconsistent Unix-listener re-export, which is now gated with its implementation. Windows listener setup now uses TCP registration with no Unix socket, rejects Unix-only options before startup and preserves unbound socket-path files. Native CI includes registration/health, exclusive ownership and graceful-shutdown tests. The local Unix lifecycle tests pass; native Windows results remain pending.
 
+The native check at `44b4c1d` exposed a further Unix-only proxy constructor call in the tool launcher. That call is now compile-gated, and a real-listener transport test is included in native Windows CI. Native compilation and lifecycle success remain pending; TCP transport selection alone does not prove Windows sandbox networking.
+
 Built-in tool authorization is not connected to classifier allows yet. The next work is protected/irreversible ceilings and critical-path guards, then host integration, configuration, override/statistics commands and mode-disabling policy enforcement. Windows enforcement and its native runtime evidence remain unfinished. This runtime foundation passes 11 dedicated tests; full workspace validation passes 341 tests (one opt-in measurement ignored), release Clippy and strict OpenSpec validation.
 
 ## Requirement inventory

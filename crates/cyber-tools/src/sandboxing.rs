@@ -85,16 +85,16 @@ pub(crate) async fn prepare(
     })
 }
 
-async fn start_proxy(decide: Decide, tmp: &Path) -> std::io::Result<Proxy> {
+async fn start_proxy(decide: Decide, _tmp: &Path) -> std::io::Result<Proxy> {
+    #[cfg(unix)]
     if cyber_sandbox::proxy_uses_unix_socket() {
-        let socket = tmp.join(format!(
+        let socket = _tmp.join(format!(
             "proxy-{}.sock",
             ulid::Ulid::new().to_string().to_lowercase()
         ));
-        Proxy::start_unix(decide, &socket).await
-    } else {
-        Proxy::start(decide).await
+        return Proxy::start_unix(decide, &socket).await;
     }
+    Proxy::start(decide).await
 }
 
 /// Allowlisted and session-approved domains pass at once; others wait for the tool loop.
@@ -175,4 +175,32 @@ fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
     std::fs::create_dir_all(&dir)
         .map_err(|e| failed(format!("Could not create {}: {e}", dir.display())))?;
     Ok(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cyber_sandbox::proxy::Endpoint;
+
+    #[tokio::test]
+    async fn tool_proxy_listens_on_the_supported_platform_transport() {
+        let tmp = tempfile::tempdir().unwrap();
+        let decide: Decide = Arc::new(|_| Box::pin(async { false }));
+        let proxy = start_proxy(decide, tmp.path()).await.unwrap();
+        match &proxy.endpoint {
+            Endpoint::Tcp(port) => {
+                assert!(!cyber_sandbox::proxy_uses_unix_socket());
+                tokio::net::TcpStream::connect(("127.0.0.1", *port))
+                    .await
+                    .unwrap();
+            }
+            Endpoint::Unix(path) => {
+                assert!(cyber_sandbox::proxy_uses_unix_socket());
+                #[cfg(unix)]
+                tokio::net::UnixStream::connect(path).await.unwrap();
+                #[cfg(not(unix))]
+                panic!("unsupported Unix proxy endpoint: {}", path.display());
+            }
+        }
+    }
 }
