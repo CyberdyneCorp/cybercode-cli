@@ -37,6 +37,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     let ctx = Context::new(&cli.global)?;
     start_logging(&ctx, &cli.global)?;
     match command {
+        Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),
         Command::Db { cmd } => db::run(cmd, &ctx, &cli.global),

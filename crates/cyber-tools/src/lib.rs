@@ -15,4 +15,4 @@ pub use budget::Budget;
 pub use host::{BuiltinHost, ConfigFn, HostOptions};
 pub use schema::validate as validate_input;
 
-pub use worktrees::{WorktreeSession, WorktreeSessionRequest};
+pub use worktrees::{WorktreeListing, WorktreeSession, WorktreeSessionRequest};

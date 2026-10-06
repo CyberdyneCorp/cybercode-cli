@@ -255,6 +255,12 @@ export type Located_Array_of_ToolInfo = {
 };
 
 /** A Location-scoped response. */
+export type Located_Array_of_WorktreeEntry = {
+  location: LocationInfo;
+  data: WorktreeEntry[];
+};
+
+/** A Location-scoped response. */
 export type Located_Array_of_string = {
   location: LocationInfo;
   data: string[];
@@ -550,6 +556,22 @@ export type Usage = {
   reasoning: number;
   cache_read: number;
   cache_write: number;
+};
+
+export type WorktreeEntry = {
+  worktree: WorktreeInfo;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  sessions: SessionRow[];
+  status: "ready";
+} | {
+  worktree: WorktreeInfo;
+  status: "pending";
+} | {
+  name: string;
+  message: string;
+  status: "invalid";
 };
 
 export type WorktreeInfo = {

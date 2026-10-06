@@ -777,6 +777,103 @@ async fn verify_worktree_start(
             .is_none()
     );
     verify_worktree_replay(application, repo_header, body, idempotency_key).await;
+    verify_worktree_listing(application, repo_header, body, runs_setup).await;
+}
+
+#[cfg(unix)]
+async fn verify_worktree_listing(
+    application: &App,
+    repo_header: &str,
+    created: &serde_json::Value,
+    dirty: bool,
+) {
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode},
+    };
+    let source = std::path::Path::new(created["data"]["worktree"]["path"].as_str().unwrap());
+    let target_header = source.display().to_string();
+    let session_count = if dirty {
+        1
+    } else {
+        add_listing_sessions(
+            application,
+            &target_header,
+            created["data"]["session"]["id"].as_str().unwrap(),
+        )
+        .await
+    };
+    for header in [repo_header, &target_header] {
+        let response = application
+            .embedded()
+            .request(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("http://cyber.internal/api/v1/worktrees")
+                    .header("x-cyber-directory", header)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let listed: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let entries = listed["data"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_listing_entry(&entries[0], created, dirty, session_count);
+    }
+}
+
+#[cfg(unix)]
+fn assert_listing_entry(
+    entry: &serde_json::Value,
+    created: &serde_json::Value,
+    dirty: bool,
+    session_count: usize,
+) {
+    assert_eq!(entry["status"], "ready");
+    assert_eq!(entry["worktree"], created["data"]["worktree"]);
+    assert_eq!(entry["dirty"], dirty);
+    assert_eq!(entry["ahead"], 0);
+    assert_eq!(entry["behind"], 0);
+    let sessions = entry["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), session_count);
+    assert!(
+        sessions
+            .iter()
+            .any(|row| row["id"] == created["data"]["session"]["id"])
+    );
+    if !dirty {
+        assert!(sessions.iter().any(|row| row["archived"] == true));
+    }
+}
+
+#[cfg(unix)]
+async fn add_listing_sessions(application: &App, directory: &str, parent: &str) -> usize {
+    for index in 0..201 {
+        let session = application
+            .runtime
+            .create_session(cyber_server::runtime::CreateSession {
+                directory: directory.into(),
+                model: "test/main".into(),
+                parent_id: Some(parent.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        if index == 0 {
+            application
+                .runtime
+                .archive(&session.id, true)
+                .await
+                .unwrap();
+        }
+    }
+    202
 }
 
 #[cfg(unix)]

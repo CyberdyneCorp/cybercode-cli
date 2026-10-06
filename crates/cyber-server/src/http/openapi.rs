@@ -150,6 +150,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .status(201)
         .body::<super::worktrees::CreateWorktreeBody>(g)
         .ok::<Located<super::worktrees::CreatedWorktree>>(g),
+        op(
+            "get",
+            "/worktrees",
+            "v1.worktree.list",
+            "List managed worktrees, Git status and owning Sessions",
+        )
+        .located()
+        .ok::<Located<Vec<super::worktrees::WorktreeEntry>>>(g),
         op("post", "/sessions", "v1.session.create", "Create a Session")
             .located()
             .status(201)

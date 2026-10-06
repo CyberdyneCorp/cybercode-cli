@@ -52,6 +52,47 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn list_worktrees(
+        &self,
+        directory: PathBuf,
+    ) -> BoxFuture<
+        '_,
+        Result<Vec<cyber_server::http::worktrees::WorktreeEntry>, cyber_server::http::ApiError>,
+    > {
+        Box::pin(async move {
+            use cyber_core::worktrees::ListedWorktree;
+            use cyber_server::http::worktrees::WorktreeEntry;
+            let listings = self
+                .host
+                .list_worktrees(&directory, tokio_util::sync::CancellationToken::new())
+                .await
+                .map_err(worktree_error)?;
+            listings
+                .into_iter()
+                .map(|entry| match entry.ownership {
+                    ListedWorktree::Ready(managed) => {
+                        let status = entry.status.ok_or_else(|| {
+                            cyber_server::http::ApiError::conflict("Worktree status is unavailable")
+                        })?;
+                        Ok(WorktreeEntry::Ready {
+                            worktree: managed.into(),
+                            dirty: status.dirty,
+                            ahead: status.ahead,
+                            behind: status.behind,
+                            sessions: Vec::new(),
+                        })
+                    }
+                    ListedWorktree::Pending(managed) => Ok(WorktreeEntry::Pending {
+                        worktree: managed.into(),
+                    }),
+                    ListedWorktree::Invalid { name, error } => Ok(WorktreeEntry::Invalid {
+                        name,
+                        message: error,
+                    }),
+                })
+                .collect()
+        })
+    }
     fn create_worktree(
         &self,
         directory: PathBuf,
@@ -64,10 +105,7 @@ impl Services for AppServices {
     > {
         Box::pin(async move {
             use cyber_core::worktrees::SetupOutcome;
-            use cyber_server::http::{
-                ApiError,
-                worktrees::{SetupStatus, StartedWorktree},
-            };
+            use cyber_server::http::worktrees::{SetupStatus, StartedWorktree};
             let request = cyber_tools::WorktreeSessionRequest {
                 project_id: cyber_core::project::identify(&directory).id,
                 session,
@@ -83,17 +121,7 @@ impl Services for AppServices {
                     request,
                 )
                 .await
-                .map_err(|error| {
-                    if error.kind() == std::io::ErrorKind::PermissionDenied
-                        || error.to_string().contains("Permission denied")
-                    {
-                        ApiError::forbidden(error.to_string())
-                    } else if error.kind() == std::io::ErrorKind::InvalidInput {
-                        ApiError::invalid(error.to_string())
-                    } else {
-                        ApiError::conflict(error.to_string())
-                    }
-                })?;
+                .map_err(worktree_error)?;
             let setup = match result.setup {
                 Ok(SetupOutcome::Completed) => SetupStatus::Completed,
                 Ok(SetupOutcome::Failed { index, code }) => SetupStatus::Failed { index, code },
@@ -179,5 +207,18 @@ impl Services for AppServices {
 
     fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
         self.host.expand_skill(location, name, arguments)
+    }
+}
+
+fn worktree_error(error: std::io::Error) -> cyber_server::http::ApiError {
+    use cyber_server::http::ApiError;
+    if error.kind() == std::io::ErrorKind::PermissionDenied
+        || error.to_string().contains("Permission denied")
+    {
+        ApiError::forbidden(error.to_string())
+    } else if error.kind() == std::io::ErrorKind::InvalidInput {
+        ApiError::invalid(error.to_string())
+    } else {
+        ApiError::conflict(error.to_string())
     }
 }

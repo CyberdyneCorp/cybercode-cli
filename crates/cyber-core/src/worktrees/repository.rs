@@ -47,7 +47,78 @@ pub enum ListedWorktree {
     Invalid { name: String, error: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeStatus {
+    pub dirty: bool,
+    pub ahead: u64,
+    pub behind: u64,
+}
+
 impl Repository {
+    /// Read current Git status only after verifying ready ownership, while holding
+    /// the lifecycle lock. This snapshot is informational, not removal admission.
+    pub async fn status(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+    ) -> io::Result<WorktreeStatus> {
+        let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
+        })?;
+        let record = self.common_dir.join("cyber-worktrees").join(format!(
+            "{}.json",
+            Name::parse(&managed.name).map_err(invalid)?.as_str()
+        ));
+        let ListedWorktree::Ready(stored) = self
+            .inspect_record(execution, &record, &managed.name)
+            .await?
+        else {
+            return Err(invalid(
+                "Worktree creation is incomplete; recovery is required",
+            ));
+        };
+        if stored != *managed {
+            return Err(invalid("Managed worktree ownership changed"));
+        }
+        let dirty = !git(
+            execution,
+            &managed.path,
+            &[
+                "--no-optional-locks".into(),
+                "status".into(),
+                "--porcelain=v1".into(),
+                "-z".into(),
+                "--untracked-files=all".into(),
+            ],
+        )
+        .await?
+        .is_empty();
+        let counts = line(
+            git(
+                execution,
+                &managed.path,
+                &[
+                    "rev-list".into(),
+                    "--left-right".into(),
+                    "--count".into(),
+                    format!("{}...HEAD", managed.base).into(),
+                    "--".into(),
+                ],
+            )
+            .await?,
+        )?;
+        let mut counts = counts.split_whitespace();
+        let behind = parse_count(counts.next())?;
+        let ahead = parse_count(counts.next())?;
+        if counts.next().is_some() {
+            return Err(invalid("Invalid worktree ahead/behind counts"));
+        }
+        Ok(WorktreeStatus {
+            dirty,
+            ahead,
+            behind,
+        })
+    }
     /// Inspect durable ownership under the shared lifecycle lock. Pending or
     /// invalid records remain visible for recovery; listing never repairs them.
     pub async fn list(&self, execution: &dyn GitExecution) -> io::Result<Vec<ListedWorktree>> {
@@ -336,6 +407,12 @@ impl Repository {
         }
         Err(invalid("Managed worktree registration changed"))
     }
+}
+
+fn parse_count(value: Option<&str>) -> io::Result<u64> {
+    value
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| invalid("Invalid worktree ahead/behind counts"))
 }
 
 pub(super) async fn git(

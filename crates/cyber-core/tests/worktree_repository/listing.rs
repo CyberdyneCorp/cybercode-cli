@@ -1,6 +1,65 @@
 use super::*;
 use cyber_core::worktrees::ListedWorktree;
 
+#[test]
+fn status_measures_untracked_changes_and_divergence_from_creation_base() {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join("tracked.txt"), "second").unwrap();
+    fixture.git(&["commit", "-am", "second"]);
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("status").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        block_on(repository.status(&fixture.execution, &managed)).unwrap(),
+        cyber_core::worktrees::WorktreeStatus {
+            dirty: false,
+            ahead: 0,
+            behind: 0
+        }
+    );
+    std::fs::write(managed.path.join("untracked"), "user file").unwrap();
+    assert!(
+        block_on(repository.status(&fixture.execution, &managed))
+            .unwrap()
+            .dirty
+    );
+    std::fs::remove_file(managed.path.join("untracked")).unwrap();
+    for args in [
+        vec!["reset", "--hard", "HEAD~1"],
+        vec!["commit", "--allow-empty", "-m", "diverged"],
+    ] {
+        let output = fixture
+            .execution
+            .invoke(
+                &managed.path,
+                &args.into_iter().map(OsString::from).collect::<Vec<_>>(),
+            )
+            .unwrap();
+        assert!(output.status.success());
+    }
+    assert_eq!(
+        block_on(repository.status(&fixture.execution, &managed)).unwrap(),
+        cyber_core::worktrees::WorktreeStatus {
+            dirty: false,
+            ahead: 1,
+            behind: 1
+        }
+    );
+    let mut changed = managed.clone();
+    changed.id = "another-incarnation".into();
+    assert!(
+        block_on(repository.status(&fixture.execution, &changed))
+            .unwrap_err()
+            .to_string()
+            .contains("ownership changed")
+    );
+}
+
 struct InterruptedExecution;
 
 impl GitExecution for InterruptedExecution {

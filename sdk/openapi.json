@@ -628,6 +628,104 @@
           }
         ]
       },
+      "Located_Array_of_WorktreeEntry": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorktreeEntry"
+            }
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "WorktreeEntry": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "worktree": {
+                "$ref": "#/components/schemas/WorktreeInfo"
+              },
+              "dirty": {
+                "type": "boolean"
+              },
+              "ahead": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "behind": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "sessions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SessionRow"
+                }
+              },
+              "status": {
+                "type": "string",
+                "const": "ready"
+              }
+            },
+            "required": [
+              "status",
+              "worktree",
+              "dirty",
+              "ahead",
+              "behind",
+              "sessions"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "worktree": {
+                "$ref": "#/components/schemas/WorktreeInfo"
+              },
+              "status": {
+                "type": "string",
+                "const": "pending"
+              }
+            },
+            "required": [
+              "status",
+              "worktree"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "invalid"
+              }
+            },
+            "required": [
+              "status",
+              "name",
+              "message"
+            ]
+          }
+        ]
+      },
       "Located_Session": {
         "type": "object",
         "properties": {
@@ -2477,6 +2575,53 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateWorktreeBody"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "v1.worktree.list",
+        "summary": "List managed worktrees, Git status and owning Sessions",
+        "tags": [
+          "worktree"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Array_of_WorktreeEntry"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

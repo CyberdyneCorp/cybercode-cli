@@ -2,7 +2,7 @@
 
 use axum::extract::State;
 use axum::http::{StatusCode, request::Parts};
-use axum::routing::post;
+use axum::routing::get;
 use axum::{Json, Router};
 use cyber_core::worktrees::{Managed, Name};
 use schemars::JsonSchema;
@@ -65,8 +65,77 @@ pub struct CreatedWorktree {
     pub setup: SetupStatus,
 }
 
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum WorktreeEntry {
+    Ready {
+        worktree: WorktreeInfo,
+        dirty: bool,
+        ahead: u64,
+        behind: u64,
+        sessions: Vec<crate::runtime::SessionRow>,
+    },
+    Pending {
+        worktree: WorktreeInfo,
+    },
+    Invalid {
+        name: String,
+        message: String,
+    },
+}
+
 pub(super) fn routes() -> Router<AppState> {
-    Router::new().route("/worktrees", post(create))
+    Router::new().route("/worktrees", get(list).post(create))
+}
+
+async fn list(
+    State(state): State<AppState>,
+    parts: Parts,
+) -> Result<Json<Located<Vec<WorktreeEntry>>>, ApiError> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    let mut entries = state.services.list_worktrees(directory.clone()).await?;
+    attach_sessions(&state, &mut entries)?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data: entries,
+    }))
+}
+
+fn attach_sessions(state: &AppState, entries: &mut [WorktreeEntry]) -> Result<(), ApiError> {
+    let mut by_directory = session_locations(state)?;
+    for entry in entries {
+        if let WorktreeEntry::Ready {
+            worktree, sessions, ..
+        } = entry
+        {
+            *sessions = by_directory.remove(&worktree.path).unwrap_or_default();
+        }
+    }
+    Ok(())
+}
+
+fn session_locations(
+    state: &AppState,
+) -> Result<std::collections::HashMap<std::path::PathBuf, Vec<crate::runtime::SessionRow>>, ApiError>
+{
+    let mut result: std::collections::HashMap<_, Vec<_>> = std::collections::HashMap::new();
+    let mut filter = crate::runtime::ListFilter {
+        limit: Some(200),
+        include_archived: true,
+        ..Default::default()
+    };
+    loop {
+        let page = state.runtime.list(&filter)?;
+        for row in page.sessions {
+            if let Ok(directory) = std::path::Path::new(&row.directory).canonicalize() {
+                result.entry(directory).or_default().push(row);
+            }
+        }
+        filter.cursor = page.next;
+        if filter.cursor.is_none() {
+            return Ok(result);
+        }
+    }
 }
 
 async fn create(

@@ -350,6 +350,12 @@ export interface Operations {
     body: S.CreateWorktreeBody;
     response: S.Located_CreatedWorktree;
   };
+  "v1.worktree.list": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Array_of_WorktreeEntry;
+  };
 }
 
 export const operations = {
@@ -893,6 +899,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.worktree.list": {
+    tag: "worktree",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/worktrees",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
 } as const satisfies Record<string, OperationSpec>;
 
 /** Typed methods grouped by OpenAPI tag, bound to a `Caller`. */
@@ -1060,6 +1078,9 @@ export function createGroups(caller: Caller) {
       /** Create a managed worktree Session and run setup (`POST /api/v1/worktrees`) */
       create: (body: Operations["v1.worktree.create"]["body"], options?: RequestOptions): Promise<Operations["v1.worktree.create"]["response"]> =>
         caller.call("v1.worktree.create", { body }, options),
+      /** List managed worktrees, Git status and owning Sessions (`GET /api/v1/worktrees`) */
+      list: (options?: RequestOptions): Promise<Operations["v1.worktree.list"]["response"]> =>
+        caller.call("v1.worktree.list", {}, options),
     },
   };
 }

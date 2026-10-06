@@ -12,8 +12,8 @@ use std::sync::{
 use std::time::Duration;
 
 use cyber_core::worktrees::{
-    GitExecution, GitFuture, Managed, Name, Repository, Settings, SetupEvent, SetupExecution,
-    SetupFuture, SetupOutcome, SetupSink, SetupStream,
+    GitExecution, GitFuture, ListedWorktree, Managed, Name, Repository, Settings, SetupEvent,
+    SetupExecution, SetupFuture, SetupOutcome, SetupSink, SetupStream, WorktreeStatus,
 };
 use cyber_server::runtime::{Asker, CreateSession, Invocation, SessionInfo};
 use cyber_server::worktrees::{CommandDecision, CommandResult, SetupJournal};
@@ -39,6 +39,11 @@ pub struct WorktreeSession {
     pub setup: Result<SetupOutcome, String>,
 }
 
+pub struct WorktreeListing {
+    pub ownership: ListedWorktree,
+    pub status: Option<WorktreeStatus>,
+}
+
 struct SetupRecipe {
     settings: Settings,
     credentials: Vec<String>,
@@ -50,6 +55,95 @@ struct SetupAdmission<'a> {
 }
 
 impl BuiltinHost {
+    pub async fn list_worktrees(
+        &self,
+        directory: &Path,
+        cancel: CancellationToken,
+    ) -> io::Result<Vec<WorktreeListing>> {
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
+        let id = cyber_core::ids::new_id("call");
+        let inv = Invocation {
+            session_id: cyber_core::ids::new_id("ses"),
+            directory: directory.canonicalize()?.display().to_string(),
+            agent: "build".into(),
+            mode: "default".into(),
+            rules: serde_json::Value::Null,
+            message_id: cyber_core::ids::new_id("msg"),
+            operation_key: id.clone(),
+            call_id: id,
+            name: "worktree".into(),
+            input: serde_json::Value::Null,
+            attempt: 1,
+            asker: Asker::detached(),
+        };
+        runtime
+            .own_worktree_setup(cancel.clone(), self.list_worktrees_owned(&inv, cancel))
+            .await
+    }
+
+    async fn list_worktrees_owned(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+    ) -> io::Result<Vec<WorktreeListing>> {
+        let ctx = Ctx {
+            host: self,
+            inv,
+            policy: self.policy(inv),
+            location: Path::new(&inv.directory).canonicalize()?,
+            cancel,
+        };
+        authorize_worktree(
+            &ctx,
+            true,
+            Request {
+                action: "worktree".into(),
+                resources: vec![ctx.location.display().to_string()],
+                ..Default::default()
+            },
+            serde_json::json!({"operation":"list"}),
+        )
+        .await
+        .map_err(tool_error)?;
+        let execution = GitPort {
+            ctx: &ctx,
+            writable: Some(Vec::new()),
+            credentials: &[],
+        };
+        let repository = Repository::discover(&execution, &ctx.location).await?;
+        let mut result = Vec::new();
+        for mut ownership in repository.list(&execution).await? {
+            let status = if let ListedWorktree::Ready(managed) = &ownership {
+                match repository.status(&execution, managed).await {
+                    Ok(status) => Some(status),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::Interrupted
+                                | io::ErrorKind::WouldBlock
+                                | io::ErrorKind::PermissionDenied
+                        ) =>
+                    {
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        ownership = ListedWorktree::Invalid {
+                            name: managed.name.clone(),
+                            error: error.to_string(),
+                        };
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            result.push(WorktreeListing { ownership, status });
+        }
+        Ok(result)
+    }
+
     /// Create through owned sandboxed Git, then attach a fresh Session and run setup.
     /// Existing Session Location changes are handled by the separate enter/exit flow.
     pub async fn create_worktree_session(

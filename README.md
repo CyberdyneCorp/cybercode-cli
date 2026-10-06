@@ -66,7 +66,11 @@ cargo run -p cyber-server --example session -- openai/gpt-6-luna
 cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix the failing test" accept-edits
 ```
 
-Worktree startup runs trusted `worktrees.setup` commands inside the sandbox and reports output on stderr. Setup failure keeps the Session and files. Worktrees currently remain on disk; automatic exit cleanup and management/enter/exit commands are still being implemented. The corresponding API is `POST /api/v1/worktrees`, with `{ "name": "fix-login", "session": { "model": "provider/model" } }`; omit `name` to generate one.
+Worktree startup runs trusted `worktrees.setup` commands inside the sandbox and reports output on stderr. Setup failure keeps the Session and files.
+
+`cyber worktree list` shows path, branch, dirty state, ahead/behind counts relative to the creation base and associated Sessions; use `--format json` for structured output. Pending or invalid ownership records remain visible for recovery. Worktrees currently remain on disk; removal/prune, automatic exit cleanup and enter/exit commands are still being implemented.
+
+The APIs are `GET /api/v1/worktrees` for listing and `POST /api/v1/worktrees` for startup, with `{ "name": "fix-login", "session": { "model": "provider/model" } }`; omit `name` to generate one.
 
 
 On Linux the sandbox needs bubblewrap (`apt install bubblewrap`); without it commands fail closed unless you pass `--sandbox full-access`.

@@ -891,4 +891,7 @@ async fn worktree_request_validation_precedes_host_dispatch() {
         .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["_tag"], "ServiceUnavailableError");
+    let (status, body) = api.get("/worktrees").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["_tag"], "ServiceUnavailableError");
 }

@@ -12,6 +12,7 @@ use crate::commands::{
     models::ModelsArgs,
     serve::{ServeArgs, ServiceCmd},
     trust::TrustCmd,
+    worktrees::WorktreeCmd,
 };
 
 #[derive(Debug, Parser)]
@@ -109,6 +110,11 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Inspect managed Git worktrees of the current repository.
+    Worktree {
+        #[command(subcommand)]
+        cmd: WorktreeCmd,
+    },
     /// Inspect resolved paths, configuration and build information.
     Debug {
         #[command(subcommand)]
@@ -151,6 +157,18 @@ pub enum Command {
 #[cfg(test)]
 mod worktree_tests {
     use super::*;
+
+    #[test]
+    fn worktree_list_is_a_management_command() {
+        let cli = Cli::try_parse_from(["cyber", "worktree", "list", "--format", "json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Worktree {
+                cmd: WorktreeCmd::List
+            })
+        ));
+        assert_eq!(cli.global.format, Some(Format::Json));
+    }
 
     #[test]
     fn worktree_start_flags_support_named_and_generated_sessions() {

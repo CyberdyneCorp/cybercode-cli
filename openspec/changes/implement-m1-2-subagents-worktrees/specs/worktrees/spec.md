@@ -7,6 +7,13 @@
 - **WHEN** the user runs `cyber worktree remove spike` and it has uncommitted changes
 - **THEN** the command fails unless `--force` is given
 
+#### Scenario: Listing reports status and all owning Sessions
+- **WHEN** a client lists worktrees from either the primary or a managed linked checkout
+- **THEN** ready entries include dirty state and commits ahead/behind their immutable creation base
+- **AND** the CLI, API and SDK expose those entries with associated Sessions, including children and archived Sessions across all database pages
+- **AND** status inspection verifies durable ownership under the repository lock and does not refresh the Git index
+- **AND** listing is informational and does not grant removal admission
+
 #### Scenario: Listing preserves recovery evidence
 - **WHEN** a repository contains ready, pending or malformed ownership records
 - **THEN** listing returns ready records only after verifying their repository, branch and registration

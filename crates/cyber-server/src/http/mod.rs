@@ -80,6 +80,19 @@ pub struct AgentInfo {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn list_worktrees(
+        &self,
+        directory: PathBuf,
+    ) -> BoxFuture<'_, Result<Vec<worktrees::WorktreeEntry>, ApiError>> {
+        let _ = directory;
+        Box::pin(async {
+            Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "Managed worktree listing is unavailable in this host",
+            ))
+        })
+    }
     fn create_worktree(
         &self,
         directory: PathBuf,

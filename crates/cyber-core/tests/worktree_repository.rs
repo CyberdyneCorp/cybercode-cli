@@ -413,6 +413,9 @@ fn changed_branch_refuses_reuse_and_preserves_user_files() {
 #[test]
 fn windows_long_paths_are_preserved_at_the_git_argument_boundary() {
     let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join(".gitignore"), ".env\n").unwrap();
+    fixture.git(&["add", ".gitignore"]);
+    fixture.git(&["commit", "--quiet", "-m", "ignore included environment"]);
     std::fs::write(fixture.repo.join(".worktreeinclude"), ".env\n").unwrap();
     std::fs::write(fixture.repo.join(".env"), "long path included").unwrap();
     let repository = fixture.repository();
@@ -435,6 +438,15 @@ fn windows_long_paths_are_preserved_at_the_git_argument_boundary() {
     assert_eq!(
         std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
         "base"
+    );
+    let status = block_on(repository.status(&fixture.execution, &managed)).unwrap();
+    assert!(!status.dirty);
+    assert_eq!((status.ahead, status.behind), (0, 0));
+    std::fs::write(managed.path.join("tracked.txt"), "long target user edit").unwrap();
+    assert!(
+        block_on(repository.status(&fixture.execution, &managed))
+            .unwrap()
+            .dirty
     );
     assert_eq!(
         fixture

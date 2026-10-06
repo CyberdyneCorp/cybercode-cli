@@ -424,4 +424,36 @@ fn exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean() {
         "setup"
     );
     assert!(!repo.join("setup-result").exists());
+    verify_worktree_list_command(&env, &repo, target);
+}
+
+#[cfg(unix)]
+fn verify_worktree_list_command(env: &Env, repo: &Path, target: &Path) {
+    std::fs::write(repo.join(".git/cyber-worktrees/broken.json"), "not JSON").unwrap();
+    let listed = env.cyber(&[
+        "--cwd",
+        repo.to_str().unwrap(),
+        "worktree",
+        "list",
+        "--format",
+        "json",
+    ]);
+    let text = env.cyber(&["--cwd", repo.to_str().unwrap(), "worktree", "list"]);
+    let stopped = env.cyber(&["service", "stop"]);
+    assert!(stopped.status.success(), "{}", stderr(&stopped));
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    let entries = json(&listed);
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+    assert_eq!(entries[0]["status"], "invalid");
+    assert_eq!(entries[0]["name"], "broken");
+    assert_eq!(entries[1]["worktree"]["path"], target.to_str().unwrap());
+    assert_eq!(entries[1]["dirty"], true);
+    assert_eq!(entries[1]["ahead"], 0);
+    assert!(text.status.success(), "{}", stderr(&text));
+    assert!(stdout(&text).contains("ahead=0 behind=0 dirty"));
+    assert!(stdout(&text).contains("broken  invalid:"));
+    assert_eq!(
+        std::fs::read_to_string(target.join("setup-result")).unwrap(),
+        "setup"
+    );
 }
