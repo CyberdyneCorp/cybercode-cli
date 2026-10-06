@@ -54,7 +54,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install -g @fission-ai/openspec@latest
+      # Keep strict validation identical to the documented local toolchain.
+      - run: npm install -g @fission-ai/openspec@1.13.2
+      - run: openspec --version
       - run: openspec validate --all --strict
       - run: python3 scripts/spec_lint.py
       - name: Evaluation graders fail the fixtures and pass the reference solutions

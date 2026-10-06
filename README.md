@@ -83,9 +83,12 @@ The TypeScript SDK `@cyber-code/sdk` lives in [`sdk/typescript`](sdk/typescript/
 
 Evaluation fixtures and their manifests live in [`eval/`](eval/README.md).
 
+CI and local specification checks use OpenSpec 1.13.2. Pin the validator so upstream rule changes can be reviewed separately from product changes.
+
 ```bash
+npm install -g @fission-ai/openspec@1.13.2
 openspec list --specs
-openspec validate --specs --strict
+openspec validate --all --strict
 python3 scripts/spec_lint.py      # cross-spec registries: commands, routes, prefixes, phases
 python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
 ```
