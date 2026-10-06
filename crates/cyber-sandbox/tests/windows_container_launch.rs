@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -118,7 +118,22 @@ fn container_tree_case(normal_exit: bool) {
     let mut profile = Profile::new().unwrap();
     let (program, grants) = setup(directory.path(), &profile);
     let env = environment(directory.path(), "tree", &profile);
-    let mut child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
+    let stdin = std::fs::File::open(directory.path().join("read.txt")).unwrap();
+    let stdout = std::fs::File::create(directory.path().join("tree.stdout")).unwrap();
+    let stderr = std::fs::File::create(directory.path().join("tree.stderr")).unwrap();
+    let mut child = spawn_with_stdio(
+        &profile,
+        &program,
+        &arguments(),
+        &env,
+        directory.path(),
+        StandardStreams {
+            stdin: stdin.as_handle(),
+            stdout: stdout.as_handle(),
+            stderr: stderr.as_handle(),
+        },
+    )
+    .unwrap();
     let primary = child.as_handle().try_clone_to_owned().unwrap();
     let pid = live_container_descendant(directory.path());
     let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
@@ -235,11 +250,7 @@ fn redirected_streams_preserve_bytes_and_exclude_unlisted_inheritable_handles() 
     let stdout = std::fs::File::create(directory.path().join("stdout.txt")).unwrap();
     let stderr = std::fs::File::create(directory.path().join("stderr.txt")).unwrap();
     let sentinel = inheritable_event();
-    let mut env = environment(directory.path(), "streams", &profile);
-    env.insert(
-        "CYBER_UNLISTED_EVENT".into(),
-        (sentinel.as_raw_handle() as usize).to_string(),
-    );
+    let env = environment(directory.path(), "streams", &profile);
     let mut child = spawn_with_stdio(
         &profile,
         &program,
@@ -253,6 +264,13 @@ fn redirected_streams_preserve_bytes_and_exclude_unlisted_inheritable_handles() 
         },
     )
     .unwrap();
+    verify_stream_inheritance(
+        directory.path(),
+        child.as_handle(),
+        stdin.as_handle(),
+        &sentinel,
+    );
+    std::fs::write(directory.path().join("read.txt"), "streams-go").unwrap();
     assert_eq!(
         child.wait(Duration::from_secs(10)).unwrap(),
         0,
@@ -277,6 +295,62 @@ fn redirected_streams_preserve_bytes_and_exclude_unlisted_inheritable_handles() 
         grant.close().unwrap();
     }
     profile.close().unwrap();
+}
+
+fn verify_stream_inheritance(
+    root: &Path,
+    child: BorrowedHandle<'_>,
+    stdin: BorrowedHandle<'_>,
+    sentinel: &OwnedHandle,
+) {
+    use windows_sys::Win32::Foundation::CompareObjectHandles;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let input = loop {
+        let contents = std::fs::read_to_string(root.join("write.txt")).unwrap();
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents)
+            && let Some(input) = value["stdin"].as_u64()
+        {
+            break input as usize;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "stream handshake failed: {contents}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let inherited = duplicate_from_child(child, input).unwrap();
+    assert_ne!(
+        unsafe { CompareObjectHandles(inherited.as_raw_handle(), stdin.as_raw_handle()) },
+        0
+    );
+    match duplicate_from_child(child, sentinel.as_raw_handle() as usize) {
+        Ok(candidate) => assert_eq!(
+            unsafe { CompareObjectHandles(candidate.as_raw_handle(), sentinel.as_raw_handle()) },
+            0
+        ),
+        Err(error) => assert_eq!(error.raw_os_error(), Some(6)),
+    }
+}
+
+fn duplicate_from_child(child: BorrowedHandle<'_>, value: usize) -> std::io::Result<OwnedHandle> {
+    use windows_sys::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let mut copied = std::ptr::null_mut();
+    if unsafe {
+        DuplicateHandle(
+            child.as_raw_handle(),
+            value as *mut core::ffi::c_void,
+            GetCurrentProcess(),
+            &mut copied,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedHandle::from_raw_handle(copied) })
 }
 
 fn inheritable_event() -> OwnedHandle {
@@ -452,9 +526,6 @@ fn tree_worker(root: &Path) -> std::io::Result<()> {
     let _descendant = std::process::Command::new(std::env::current_exe()?)
         .args(arguments())
         .env("CYBER_CONTAINER_ROLE", "wait")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
         .spawn()?;
     std::fs::write(root.join("write.txt"), _descendant.id().to_string())?;
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
@@ -473,18 +544,20 @@ fn tree_worker(root: &Path) -> std::io::Result<()> {
 
 fn stream_worker(root: &Path) -> std::io::Result<()> {
     use std::io::{Read, Write};
-    use windows_sys::Win32::Foundation::GetHandleInformation;
-    use windows_sys::Win32::System::Threading::SetEvent;
-    let unlisted = std::env::var("CYBER_UNLISTED_EVENT")
-        .unwrap()
-        .parse::<usize>()
-        .unwrap();
-    let raw = unlisted as *mut core::ffi::c_void;
-    let mut flags = 0;
-    std::fs::write(root.join("write.txt"), "stream: handle presence")?;
-    // Do not signal an absent handle: strict handle checking may raise an NT exception.
-    if unsafe { GetHandleInformation(raw, &mut flags) } != 0 && unsafe { SetEvent(raw) } != 0 {
-        return Err(std::io::Error::other("Unlisted handle was inherited"));
+    let stdin = std::io::stdin();
+    std::fs::write(
+        root.join("write.txt"),
+        serde_json::json!({"stdin": stdin.as_raw_handle() as usize}).to_string(),
+    )?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::fs::read_to_string(root.join("read.txt"))? != "streams-go" {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "stream control timed out",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
     std::fs::write(root.join("write.txt"), "stream: stdin")?;
     let mut input = String::new();
@@ -547,10 +620,8 @@ fn probe(root: &Path) -> i32 {
         std::fs::write(root.join("write.txt"), diagnostic.to_string()).unwrap();
         return 50;
     }
-    let temp_file = std::env::temp_dir().join("roundtrip.txt");
-    if std::fs::write(&temp_file, "private").is_err()
-        || std::fs::read_to_string(&temp_file).ok().as_deref() != Some("private")
-    {
+    if let Err(diagnostic) = temp_roundtrip() {
+        std::fs::write(root.join("write.txt"), diagnostic.to_string()).unwrap();
         return 51;
     }
     let address = std::env::var("CYBER_CONTAINER_ADDRESS")
@@ -563,41 +634,49 @@ fn probe(root: &Path) -> i32 {
     0
 }
 
+fn temp_roundtrip() -> Result<(), serde_json::Value> {
+    let file = std::env::temp_dir().join("roundtrip.txt");
+    std::fs::write(&file, "private").map_err(|error| {
+        serde_json::json!({
+            "stage": "temp.write", "code": error.raw_os_error()
+        })
+    })?;
+    let contents = std::fs::read_to_string(&file).map_err(|error| {
+        serde_json::json!({
+            "stage": "temp.read", "code": error.raw_os_error()
+        })
+    })?;
+    if contents != "private" {
+        return Err(serde_json::json!({"stage": "temp.contents"}));
+    }
+    Ok(())
+}
+
 fn private_temp() -> Result<(), serde_json::Value> {
     let storage = PathBuf::from(std::env::var_os("CYBER_CONTAINER_STORAGE").unwrap());
-    // The owner canonicalized this SID-specific directory. The child need not
-    // gain read access to the outer directory to verify its own temp path.
-    let resolved = storage.clone();
+    // Exact owner-supplied path plus the subsequent two-sided file round trip
+    // establishes private temp access without reopening inaccessible ancestors.
+    let normalized_storage = normalized_windows_path(&storage);
+    let expected = format!("{normalized_storage}\\temp");
     for name in ["TEMP", "TMP"] {
         let path = PathBuf::from(
             std::env::var_os(name)
                 .ok_or_else(|| serde_json::json!({"stage": name, "missing": true}))?,
         );
-        let relative = path
-            .strip_prefix(&storage)
-            .ok()
-            .map(|value| value.to_string_lossy().into_owned());
-        let leaf = path
-            .file_name()
-            .map(|value| value.to_string_lossy().into_owned());
-        let normalized_storage = storage
-            .to_string_lossy()
-            .trim_start_matches("\\\\?\\")
-            .to_lowercase();
-        let normalized_path = path
-            .to_string_lossy()
-            .trim_start_matches("\\\\?\\")
-            .to_lowercase();
-        let under_profile = normalized_path.starts_with(&format!("{normalized_storage}\\"));
-        let path = std::fs::canonicalize(path).map_err(|error| {
-            serde_json::json!({
-                "stage": name, "relative": relative, "leaf": leaf,
-                "under_profile": under_profile, "code": error.raw_os_error()
-            })
-        })?;
-        if !path.starts_with(&resolved) {
-            return Err(serde_json::json!({"stage": name, "outside_profile": true}));
+        let normalized = normalized_windows_path(&path);
+        if normalized != expected {
+            return Err(serde_json::json!({
+                "stage": name,
+                "relative": normalized.strip_prefix(&format!("{normalized_storage}\\")),
+                "unexpected_temp": true
+            }));
         }
     }
     Ok(())
+}
+
+fn normalized_windows_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .trim_start_matches("\\\\?\\")
+        .to_lowercase()
 }
