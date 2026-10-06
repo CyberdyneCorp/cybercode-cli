@@ -44,6 +44,8 @@ jobs:
         run: cargo build --locked --workspace --bins
       - name: Smoke test CLI
         run: .\target\debug\cyber.exe --version
+      - name: Unsupported Unix bridge refuses execution
+        run: cargo test --locked -p cyber-sandbox --test bridge
 
   sdk:
     name: TypeScript SDK
