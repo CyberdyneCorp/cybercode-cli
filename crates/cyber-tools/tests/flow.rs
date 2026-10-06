@@ -643,3 +643,45 @@ async fn history_search_golden() {
         &flow.output(&id, "c1").await.replace(&message, "msg_fixed"),
     );
 }
+
+#[tokio::test]
+async fn critical_removal_asks_with_warning_despite_a_saved_approval() {
+    let f = Fixture::new();
+    f.write("keep.txt", "preserve me");
+    saved::save(&f.store, &f.repo, "bash", &["rm *".into()], "previous").unwrap();
+    let command = format!("rm -rf '{}'", f.repo.display());
+    let flow = Flow::with(
+        f,
+        vec![
+            call("c1", "bash", json!({"command": command})),
+            text("done"),
+        ],
+        true,
+        Arc::new(NoSnapshots),
+    );
+    let id = flow.session("accept-edits").await;
+    flow.prompt(&id, "run command").await;
+    let request = flow.pending(&id).await;
+    let PendingKind::Permission(ask) = request.kind else {
+        panic!("missing permission")
+    };
+    assert_eq!(ask.action, "bash");
+    assert_eq!(ask.metadata["severity"], "danger");
+    assert!(
+        ask.metadata["warning"]
+            .as_str()
+            .unwrap()
+            .starts_with("Danger:")
+    );
+    flow.runtime
+        .reply_permission(
+            &request.id,
+            PermissionReply::Reject {
+                message: Some("Keep the repository".into()),
+            },
+        )
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+    assert_eq!(flow.f.read("keep.txt"), "preserve me");
+}

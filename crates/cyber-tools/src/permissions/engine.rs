@@ -190,6 +190,8 @@ pub struct Request {
     pub mutates: Vec<PathBuf>,
     /// A file edit (edit, write, apply_patch) or a plain filesystem command.
     pub file_edit: bool,
+    /// A critical or unresolved removal, which automatic modes cannot authorize.
+    pub removal_risk: Option<super::RemovalRisk>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,16 +225,8 @@ impl Policy {
         if self.ceiling_denies(req) {
             return Decision::Deny("denied by a user rule".into());
         }
-        if self.mode == Mode::Plan && !req.read_only {
-            // The plan file is the one write plan mode allows outright.
-            return if self.only_plan_file(req) {
-                Decision::Allow
-            } else {
-                Decision::Deny(PLAN_DENY.into())
-            };
-        }
-        if self.touches_protected(req) && !self.exact_allow(req) {
-            return Decision::Ask;
+        if let Some(decision) = self.mode_ceiling(req) {
+            return decision;
         }
         let effect = if ruled == Effect::Ask && self.saved_allows(req) {
             Effect::Allow
@@ -240,6 +234,27 @@ impl Policy {
             ruled
         };
         self.apply_mode(req, effect)
+    }
+
+    fn mode_ceiling(&self, req: &Request) -> Option<Decision> {
+        if self.mode == Mode::Plan && (!req.read_only || req.removal_risk.is_some()) {
+            // The plan file is the one write plan mode allows outright.
+            return Some(if self.only_plan_file(req) && req.removal_risk.is_none() {
+                Decision::Allow
+            } else {
+                Decision::Deny(PLAN_DENY.into())
+            });
+        }
+        if let Some(risk) = &req.removal_risk {
+            return Some(match self.mode {
+                Mode::Auto | Mode::DontAsk | Mode::Bypass => Decision::Deny(risk.refusal()),
+                _ => Decision::Ask,
+            });
+        }
+        if self.touches_protected(req) && !self.exact_allow(req) {
+            return Some(Decision::Ask);
+        }
+        None
     }
 
     /// Explicit denies from user, global or command-line layers cannot be widened.
@@ -479,6 +494,40 @@ mod tests {
                 Decision::Deny(_)
             ),
             "deny rules still win"
+        );
+    }
+
+    #[test]
+    fn critical_removal_cannot_be_approved_by_rules_or_saved_patterns() {
+        let req = Request {
+            action: "bash".into(),
+            resources: vec!["rm -rf /repo".into()],
+            mutates: vec!["/repo".into()],
+            removal_risk: Some(super::super::RemovalRisk::Critical("/repo".into())),
+            ..Request::default()
+        };
+        let rules = vec![Rule::new("bash", "*", Effect::Allow, "global:x")];
+        for mode in [Mode::Auto, Mode::DontAsk, Mode::Bypass] {
+            let mut p = policy(rules.clone(), mode);
+            p.saved = vec![Rule::new("bash", "*", Effect::Allow, "saved")];
+            assert!(
+                matches!(p.decide(&req), Decision::Deny(reason) if reason.starts_with("Refused:"))
+            );
+        }
+        for mode in [Mode::Default, Mode::AcceptEdits] {
+            assert_eq!(policy(rules.clone(), mode).decide(&req), Decision::Ask);
+        }
+        assert_eq!(
+            policy(rules.clone(), Mode::Plan).decide(&req),
+            Decision::Deny(PLAN_DENY.into())
+        );
+        let denied = vec![Rule::new("bash", "*", Effect::Deny, "global:x")];
+        assert!(
+            matches!(
+                policy(denied, Mode::Default).decide(&req),
+                Decision::Deny(_)
+            ),
+            "manual approval cannot widen a deny"
         );
     }
 

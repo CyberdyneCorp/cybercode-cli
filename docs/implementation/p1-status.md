@@ -18,6 +18,8 @@ M1.1 design is in [the OpenSpec change](../../openspec/changes/implement-m1-1-sa
 
 The evaluator runtime foundation is implemented: tool-free bounded inference, strict allow/block replies, a durable `permission.auto_decided.1` event, per-Drain consecutive-block tracking, and hidden usage/cost accounting in replay, SQL session totals and evaluation budgets. Runtime tests cover valid decisions, malformed responses, unavailable models, replay, forced event-write failure, repeated blocks, timeout, cancellation and untrusted context.
 
+The first Bash critical-removal boundary is implemented. Literal removals, nested shell `-c`/`eval`, canonical aliases and unresolved targets are checked before automatic/saved allows. Manual prompts show a danger warning and cannot be approved by another request's always cascade. Tools, TUI and server validation passes 186 tests, with release Clippy passing. This does not close critical-removal coverage: wrapper options, heredocs, variable bindings, PowerShell and Python/JavaScript inline analysis remain.
+
 Built-in tool authorization is not connected to classifier allows yet. The next work is protected/irreversible ceilings and critical-path guards, then host integration, configuration, override/statistics commands and the four-mode TUI state. Windows enforcement and its native runtime evidence remain unfinished. This runtime foundation passes 11 dedicated tests; full workspace validation passes 341 tests (one opt-in measurement ignored), release Clippy and strict OpenSpec validation.
 
 ## Requirement inventory

@@ -136,6 +136,7 @@ pub enum Behavior {
     Panic,
     /// Ask for permission on `resource`, then report the reply.
     Ask(String),
+    AskConfirm(String),
     /// Review a request through the real auto-mode evaluator boundary.
     Auto(String),
     /// Ask one question, then report the answer.
@@ -208,6 +209,7 @@ impl ToolHost for Tools {
 
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         let behavior = self.behavior.lock().unwrap().get(&call.name).cloned();
+        let requires_confirmation = matches!(&behavior, Some(Behavior::AskConfirm(_)));
         let asker = call.asker.clone();
         let name = call.name.clone();
         let input = call.input.clone();
@@ -240,7 +242,7 @@ impl ToolHost for Tools {
                         Err(_) => ToolOutcome::Failed("Auto decision could not be recorded".into()),
                     }
                 }
-                Some(Behavior::Ask(resource)) => {
+                Some(Behavior::Ask(resource) | Behavior::AskConfirm(resource)) => {
                     let ask = PermissionAsk {
                         action: "bash".into(),
                         resources: vec![resource.clone()],
@@ -248,7 +250,11 @@ impl ToolHost for Tools {
                             "{} *",
                             resource.split(' ').next().unwrap_or_default()
                         )],
-                        metadata: json!({}),
+                        metadata: if requires_confirmation {
+                            json!({"requires_confirmation": true})
+                        } else {
+                            json!({})
+                        },
                     };
                     match asker.permission(ask).await {
                         PermissionReply::Once | PermissionReply::Always => {

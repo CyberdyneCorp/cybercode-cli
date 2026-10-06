@@ -443,3 +443,21 @@ async fn unknown_domains_are_denied_without_an_approver() {
         "{out}"
     );
 }
+
+#[tokio::test]
+async fn critical_bash_removals_are_refused_even_with_explicit_and_saved_allows() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions": {"bash": "allow", "external_directory": "allow"}}));
+    f.write("keep.txt", "preserve me");
+    cyber_tools::permissions::saved::save(&f.store, &f.repo, "bash", &["rm *".into()], "ses_test")
+        .unwrap();
+    let command = format!("rm -rf '{}'", f.repo.display());
+    for mode in ["auto", "dont-ask", "bypass"] {
+        let out = failed(f.call(mode, "bash", json!({"command": command})).await);
+        assert!(
+            out.starts_with("Refused: removal of critical path"),
+            "{mode}: {out}"
+        );
+        assert_eq!(f.read("keep.txt"), "preserve me");
+    }
+}

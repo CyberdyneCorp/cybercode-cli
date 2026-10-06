@@ -557,7 +557,10 @@ impl Ctx<'_> {
 }
 
 fn deny_message(reason: &str) -> String {
-    if reason.starts_with("Plan mode") || reason.starts_with("Not pre-approved") {
+    if reason.starts_with("Plan mode")
+        || reason.starts_with("Not pre-approved")
+        || reason.starts_with("Refused:")
+    {
         reason.to_string()
     } else {
         format!("Permission denied: {reason}")
@@ -587,7 +590,7 @@ pub(crate) fn resolve_path(location: &Path, home: &Path, path: &str) -> PathBuf 
 }
 
 /// Canonicalize the longest existing ancestor so symlinks cannot hide an escape.
-fn canonical(path: &Path) -> PathBuf {
+pub(crate) fn canonical(path: &Path) -> PathBuf {
     let mut existing = path.to_path_buf();
     let mut rest = Vec::new();
     while !existing.exists() {

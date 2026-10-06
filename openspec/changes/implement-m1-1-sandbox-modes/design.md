@@ -19,3 +19,9 @@ Cycle default → accept-edits → plan → auto → default. Keep bypass and do
 
 ## Phase boundary
 P0's incomplete local quality/long-task evidence is not waived by this proposal. P1 implementation is explicitly authorized while P0 validation continues. M1.1 implementation and P0 exit evidence are tracked independently; completing P1 code does not waive the remaining P0 gate.
+
+## Critical-removal boundary
+
+Critical-removal analysis runs before automatic rule and saved-approval effects. Explicit denies and plan restrictions remain final. Bash analysis must inspect syntax nodes, including nested `sh -c`/`bash -c` and `eval`, rather than search arbitrary quoted text. Literal targets are normalized and checked against Location, checkout, home, filesystem root and Location ancestors; canonical aliases cannot hide these roots. A removal whose target or shell context cannot be resolved requires manual approval and cannot be authorized by auto, dont-ask or bypass. Manual prompts carry a red warning and remain mandatory even after an always reply.
+
+Deliver Bash coverage first, then native PowerShell and Python/JavaScript inline-script coverage. The latter are still required by M1.1; Bash-only coverage does not close the requirement or enable classifier dispatch.

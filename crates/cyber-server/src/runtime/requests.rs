@@ -366,7 +366,10 @@ impl Inner {
             .into_iter()
             .filter(|r| match &r.kind {
                 PendingKind::Permission(ask) => {
-                    ask.action == approved.action
+                    !ask.metadata["requires_confirmation"]
+                        .as_bool()
+                        .unwrap_or(false)
+                        && ask.action == approved.action
                         && ask.resources.iter().all(|res| {
                             approved
                                 .always_patterns

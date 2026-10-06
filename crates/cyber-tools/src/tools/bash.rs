@@ -14,7 +14,7 @@ use tokio::io::AsyncReadExt;
 use super::{Tool, ToolError, def, failed, number, text};
 use crate::bash_analysis::{Analysis, analyze};
 use crate::host::Ctx;
-use crate::permissions::Request;
+use crate::permissions::{RemovalScope, Request, bash_removal};
 
 const CAPTURE: usize = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
@@ -78,18 +78,40 @@ async fn authorize(
         .collect();
     let mut external = mutates.clone();
     external.push(workdir.to_path_buf());
-    ctx.check_external(&external).await?;
     let resources: Vec<String> = analysis.commands.iter().map(|c| c.text.clone()).collect();
     let always: Vec<String> = analysis.commands.iter().map(|c| c.always.clone()).collect();
+    let project = cyber_core::config::project_root(&ctx.location);
+    let removal_risk = bash_removal(
+        command,
+        &RemovalScope {
+            location: &ctx.location,
+            project: &project,
+            home: &ctx.policy.home,
+            workdir,
+        },
+    );
+    let mut metadata = json!({"command": command});
+    if let Some(risk) = &removal_risk {
+        metadata["warning"] = json!(risk.warning());
+        metadata["severity"] = json!("danger");
+        metadata["requires_confirmation"] = json!(true);
+    }
     let req = Request {
+        removal_risk,
         action: "bash".into(),
         resources,
         file_edit: plain_file_commands(analysis),
         mutates,
         ..Request::default()
     };
-    ctx.authorize(req, always, json!({ "command": command }))
-        .await
+    // Critical warnings must reach the user before an external-directory approval.
+    if req.removal_risk.is_some() {
+        ctx.authorize(req, always, metadata).await?;
+        ctx.check_external(&external).await
+    } else {
+        ctx.check_external(&external).await?;
+        ctx.authorize(req, always, metadata).await
+    }
 }
 
 /// `accept-edits` allows mkdir, touch, mv, cp and non-recursive rm.

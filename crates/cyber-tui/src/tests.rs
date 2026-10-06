@@ -362,3 +362,27 @@ fn the_session_picker_renames_archives_and_confirms_deletes() {
         vec![Action::Delete("ses_2".into())]
     );
 }
+
+#[test]
+fn critical_permission_warning_is_visible_in_the_error_color() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    let mut request = permission();
+    if let Request::Permission { metadata, .. } = &mut request {
+        *metadata = json!({"warning": "Danger: this command can remove the repository.", "severity": "danger"});
+    }
+    app.requests = vec![request];
+    app.sync_overlay();
+    assert!(screen(&app).contains("Danger: this command can remove the repository."));
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|f| crate::view::draw(f, &app)).unwrap();
+    let buf = terminal.backend().buffer();
+    let warning = buf
+        .content
+        .iter()
+        .find(|cell| cell.symbol() == "D" && cell.fg == app.theme.error);
+    assert!(
+        warning.is_some(),
+        "danger warning must use the theme's error color"
+    );
+    assert!(screen(&app).contains("Allow once"));
+}

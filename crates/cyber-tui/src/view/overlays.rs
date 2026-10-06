@@ -114,11 +114,20 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     };
     let t = &app.theme;
     let rect = centered(area, 90, 24);
-    let mut lines: Vec<Line> = resources
+    let mut lines = Vec::new();
+    if let Some(warning) = metadata["warning"].as_str() {
+        lines.push(Line::from(Span::styled(
+            warning.to_owned(),
+            Style::default().fg(t.error).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::default());
+    }
+    let resource_lines: Vec<Line> = resources
         .iter()
         .take(6)
         .map(|r| Line::from(Span::styled(format!("  {r}"), Style::default().fg(t.text))))
         .collect();
+    lines.extend(resource_lines);
     if let Some(diff) = metadata["diff"].as_str() {
         lines.push(Line::default());
         for l in diff.lines().take(12) {

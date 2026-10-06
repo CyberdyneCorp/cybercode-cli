@@ -7,6 +7,9 @@
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.
   - [x] Tool-free evaluator runtime, strict bounded replies, durable event, hidden usage and per-Drain block tracking. Verified by 11 runtime tests; the full workspace, Clippy and OpenSpec checks pass.
   - [ ] Host integration after protected/irreversible ceilings; config rules, overrides and statistics.
+  - [x] Bash literal-removal core, sh/bash -c and eval, symlink/parent aliases, unresolved targets and manual warning UI; individual-confirmation cascade regression.
+  - [ ] Complete remaining Bash shell-context cases (wrapper options, heredocs and variable bindings) before accepting full critical-removal coverage.
+  - [ ] PowerShell and Python/JavaScript inline removal analysis before classifier approval is enabled.
 - [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
 - [ ] Complete the four-mode cycle and pending/effective TUI state with tests.
 - [ ] Add Windows CI; run existing platform, recovery and trust regressions.

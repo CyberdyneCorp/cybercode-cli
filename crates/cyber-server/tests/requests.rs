@@ -294,3 +294,62 @@ async fn doom_loop_in_dont_ask_mode_halts() {
     );
     assert_eq!(h.models.requests("test/main").len(), 3);
 }
+
+#[tokio::test]
+async fn always_approval_does_not_cascade_into_confirmation_only_requests() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "ask", "{}"), ("c2", "ask", "{}")]),
+                text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools
+        .defs
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|d| d.spec.name == "ask")
+        .unwrap()
+        .concurrency_safe = true;
+    h.tools
+        .set("ask", Behavior::AskConfirm("rm -rf /repo".into()));
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("review removals"))
+        .await
+        .unwrap();
+    let requests = wait_pending(&h, &id, 2).await;
+    h.runtime
+        .reply_permission(&requests[0].id, PermissionReply::Always)
+        .await
+        .unwrap();
+    let remaining = h.runtime.pending_requests(Some(&id));
+    assert_eq!(
+        remaining.len(),
+        1,
+        "the second critical action still needs its own approval"
+    );
+    h.runtime
+        .reply_permission(
+            &remaining[0].id,
+            PermissionReply::Reject {
+                message: Some("Keep the root".into()),
+            },
+        )
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    assert_eq!(
+        h.state(&id)
+            .await
+            .calls
+            .values()
+            .filter(|c| c.status == CallStatus::Ok)
+            .count(),
+        1
+    );
+}

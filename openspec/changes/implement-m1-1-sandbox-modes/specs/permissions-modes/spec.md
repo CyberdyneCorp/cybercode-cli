@@ -30,3 +30,22 @@
 #### Scenario: Fresh Drain resets fallback
 - **WHEN** three classifier blocks occurred in a previous Drain and a new Drain starts
 - **THEN** the consecutive-block counter SHALL reset before the next review
+
+### Requirement: Critical-path removal guard
+(P1) The system SHALL detect removals targeting critical paths (`/`, `~`, the home directory, the repository root, the Location root, `.git`, and any ancestor of the Location). These include `rm -rf`, `Remove-Item -Recurse`, `find -delete`, and removals inside nested shells or inline scripts. Such removals SHALL be denied in `auto`, `dont-ask` and `bypass` modes and SHALL require `ask` with a red warning in other modes. The model SHALL receive `Refused: removal of critical path <path>. Rewrite the command to target specific files.`
+
+#### Scenario: rm -rf on repo root under bypass
+- **WHEN** a `bypass` Session runs `rm -rf "$(git rev-parse --show-toplevel)"`
+- **THEN** the command is refused without execution
+
+#### Scenario: Saved approval cannot lift a critical removal guard
+- **WHEN** a critical removal matches an explicit allow rule or saved approval
+- **THEN** automatic modes SHALL still refuse it and manual modes SHALL still require individual confirmation
+
+#### Scenario: A confirmation-only request is not covered by an approval cascade
+- **WHEN** an always reply covers another pending critical-removal request's pattern
+- **THEN** that request SHALL remain pending until individually confirmed or rejected
+
+#### Scenario: Symlink parent traversal targets a critical root
+- **WHEN** a removal traverses a symlink and parent components to a critical root
+- **THEN** analysis SHALL resolve the symlink before collapsing parent components and enforce the critical-removal guard
