@@ -47,3 +47,7 @@ The path proof follows [Python removal API semantics](https://docs.python.org/3/
 ### Native Windows compilation gate
 
 Run workspace and test compilation on a native Windows runner before adding enforcement. Build the executables and smoke-test the CLI on the same runner. Unix-only network bridging must be compile-gated; its non-Unix entry point must refuse to execute a requested command rather than provide an unconfined fallback. The build/smoke job does not prove restricted-token, AppContainer, ACL, proxy-only networking or process-tree cleanup, and `available()` remains false until those native enforcement requirements are implemented and proven.
+
+### Windows listener lifecycle
+
+Represent the Unix listener path as an optional platform transport. Windows defaults to TCP and advertises `socket: null`; explicit Unix socket or socket-only flags fail before startup. Cleanup only touches a socket actually selected for a supported Unix listener. Run the registration/health, exclusive ownership and notified-shutdown test on Windows as well as Unix; Windows-specific tests retain pre-existing socket-path files and reject unsupported listener flags without a readiness event. This does not implement `service stop` or restricted-token execution; those remain separate native lifecycle requirements.

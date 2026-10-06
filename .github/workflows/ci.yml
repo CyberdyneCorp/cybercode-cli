@@ -46,6 +46,8 @@ jobs:
         run: .\target\debug\cyber.exe --version
       - name: Unsupported Unix bridge refuses execution
         run: cargo test --locked -p cyber-sandbox --test bridge
+      - name: Native server listener lifecycle
+        run: cargo test --locked -p cyber-app --test server
 
   sdk:
     name: TypeScript SDK

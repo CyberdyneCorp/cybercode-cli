@@ -55,10 +55,15 @@ fn the_password_is_generated_once_and_private() {
 async fn a_registered_server_is_healthy_and_unregisters_on_stop() {
     let tmp = tempfile::tempdir().unwrap();
     let p = paths(tmp.path());
+    #[cfg(not(unix))]
+    {
+        p.ensure().unwrap();
+        std::fs::write(p.state.join("cyber.sock"), "user file").unwrap();
+    }
     let stop = Arc::new(Notify::new());
     let opts = ServeOptions {
         port: Some(0),
-        socket: Some(tmp.path().join("s.sock")),
+        socket: cfg!(unix).then(|| tmp.path().join("s.sock")),
         register: true,
         ..ServeOptions::default()
     };
@@ -68,26 +73,33 @@ async fn a_registered_server_is_healthy_and_unregisters_on_stop() {
         |_| {},
         Arc::clone(&stop),
     ));
-    let reg = loop {
-        if let Some(r) = cyber_app::read_registration(&p) {
-            break r;
+    let reg = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(r) = cyber_app::read_registration(&p) {
+                break r;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+    })
+    .await
+    .expect("server did not register");
     assert!(cyber_app::health(&reg.url, cyber_app::version()).await);
     assert!(
         !cyber_app::health(&reg.url, "9.9.9").await,
         "a version mismatch is not healthy"
     );
+    #[cfg(unix)]
     assert!(tmp.path().join("s.sock").exists());
+    #[cfg(not(unix))]
+    assert!(reg.socket.is_none());
 
     // A second server for the same user is refused by the lock.
     let second = cyber_app::run_server_until(
         app(tmp.path()).await,
         ServeOptions {
             port: Some(0),
-            no_tcp: true,
-            socket: Some(tmp.path().join("t.sock")),
+            no_tcp: cfg!(unix),
+            socket: cfg!(unix).then(|| tmp.path().join("t.sock")),
             ..ServeOptions::default()
         },
         |_| {},
@@ -104,6 +116,11 @@ async fn a_registered_server_is_healthy_and_unregisters_on_stop() {
         .unwrap();
     assert!(cyber_app::read_registration(&p).is_none());
     assert!(!tmp.path().join("s.sock").exists());
+    #[cfg(not(unix))]
+    assert_eq!(
+        std::fs::read_to_string(p.state.join("cyber.sock")).unwrap(),
+        "user file"
+    );
 }
 
 /// Regression: `GET /tools` listed only built-in tools, not client-registered ones.
@@ -137,4 +154,45 @@ async fn registered_tools_are_listed_with_the_built_ins() {
         app.state.remote_tools.definitions().is_empty(),
         "registrations end with the channel"
     );
+}
+
+#[cfg(not(unix))]
+#[tokio::test]
+async fn unsupported_unix_listener_options_fail_before_readiness() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("user.socket");
+    std::fs::write(&marker, "keep me").unwrap();
+    for opts in [
+        ServeOptions {
+            socket: Some(marker.clone()),
+            register: true,
+            ..ServeOptions::default()
+        },
+        ServeOptions {
+            no_tcp: true,
+            register: true,
+            ..ServeOptions::default()
+        },
+    ] {
+        let ready = std::sync::atomic::AtomicBool::new(false);
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            cyber_app::run_server_until(
+                app(tmp.path()).await,
+                opts,
+                |_| ready.store(true, std::sync::atomic::Ordering::SeqCst),
+                Arc::new(Notify::new()),
+            ),
+        )
+        .await
+        .expect("unsupported transport did not fail promptly");
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Unix socket listeners are unavailable")
+        );
+        assert!(!ready.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(cyber_app::read_registration(&paths(tmp.path())).is_none());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me");
+    }
 }

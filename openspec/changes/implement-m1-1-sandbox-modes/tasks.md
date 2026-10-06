@@ -22,3 +22,6 @@
 
 - [x] Prove literal filesystem commands for accept-edits; preserve ordinary asks for unresolved paths/options and protected-path ceilings for symlink aliases.
 - [ ] Extend accept-edits proof to recursive copies, directory moves and remaining filesystem option semantics before closing the full requirement.
+
+- [x] Gate Unix transport exports and represent Windows TCP listener registration without a Unix socket; local Unix lifecycle regressions pass.
+- [ ] Prove Windows listener lifecycle and unsupported-flag rejection in the native CI job.

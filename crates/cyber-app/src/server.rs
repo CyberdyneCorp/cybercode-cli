@@ -70,6 +70,7 @@ pub async fn run_server_until(
     on_ready: impl FnOnce(&str),
     stop: Arc<Notify>,
 ) -> Result<(), String> {
+    let socket = local_socket(&opts, &app.paths)?;
     let _lock = cyber_store::OwnershipLock::acquire(&app.paths.server_lock())
         .map_err(|e| format!("another cyber server is already running for this user ({e})"))?;
     let router = app.router();
@@ -88,26 +89,23 @@ pub async fn run_server_until(
         .as_ref()
         .and_then(|l| l.local_addr().ok())
         .map(|a: SocketAddr| format!("http://{a}"));
-    let socket = opts
-        .socket
-        .clone()
-        .unwrap_or_else(|| app.paths.state.join("cyber.sock"));
     let registration = Registration {
         id: cyber_core::ids::new_id("srv"),
         version: crate::version().into(),
         url: url.clone().unwrap_or_default(),
-        socket: Some(socket.display().to_string()),
+        socket: socket.as_ref().map(|p| p.display().to_string()),
         pid: std::process::id(),
     };
     cyber_core::log::info(
         "server",
         "listening",
-        serde_json::json!({ "url": url, "socket": socket.display().to_string(), "pid": std::process::id() }),
+        serde_json::json!({ "url": url, "socket": registration.socket, "pid": std::process::id() }),
     );
-    on_ready(
-        url.as_deref()
-            .unwrap_or(&format!("unix:{}", socket.display())),
-    );
+    let address = url
+        .clone()
+        .or_else(|| socket.as_ref().map(|p| format!("unix:{}", p.display())))
+        .ok_or_else(|| "server has no available listener".to_string())?;
+    on_ready(&address);
     if opts.register {
         write_private(
             &registration_path(&app.paths),
@@ -120,7 +118,9 @@ pub async fn run_server_until(
             stop.notified().await
         }))
     });
-    let unix_task = unix(router, &socket, Arc::clone(&stop));
+    let unix_task = socket
+        .as_ref()
+        .and_then(|socket| unix(router, socket, Arc::clone(&stop)));
     stop.notified().await;
     stop.notify_waiters();
     if let Some(task) = tcp_task {
@@ -130,7 +130,9 @@ pub async fn run_server_until(
         let _ = task.await;
     }
     sweeper.abort();
-    let _ = std::fs::remove_file(&socket);
+    if let Some(socket) = socket {
+        let _ = std::fs::remove_file(socket);
+    }
     cyber_core::log::info(
         "server",
         "stopped",
@@ -140,6 +142,23 @@ pub async fn run_server_until(
         remove_registration(&app.paths, &registration.id);
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn local_socket(opts: &ServeOptions, paths: &Paths) -> Result<Option<PathBuf>, String> {
+    Ok(Some(
+        opts.socket
+            .clone()
+            .unwrap_or_else(|| paths.state.join("cyber.sock")),
+    ))
+}
+
+#[cfg(not(unix))]
+fn local_socket(opts: &ServeOptions, _paths: &Paths) -> Result<Option<PathBuf>, String> {
+    if opts.socket.is_some() || opts.no_tcp {
+        return Err("Unix socket listeners are unavailable on this platform; use TCP without --socket or --no-tcp".into());
+    }
+    Ok(None)
 }
 
 async fn bind(host: &str, port: Option<u16>) -> Result<tokio::net::TcpListener, String> {

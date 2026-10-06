@@ -12,6 +12,7 @@ M1.1 extends local execution to Windows and completes auto-mode permissions. P1 
 ### Modified Capabilities
 - `sandbox`: Windows enforcement and proxy contract verification.
 - `permissions-modes`: P1 cycling and safe auto-mode decisions.
+- `server-api`: truthful platform listener registration and native listener lifecycle.
 
 ## Impact
 Platform process launch, permission host/runtime, TUI mode state, durable event registry and Windows CI. Development proceeds under the active P1 implementation goal; incomplete P0 local-baseline evidence remains an independent release gate. Windows sandbox APIs require native tests; no security claim will rely solely on macOS validation.

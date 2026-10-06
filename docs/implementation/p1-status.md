@@ -32,6 +32,8 @@ Initial Python/JavaScript inline guards parse executable source with dedicated g
 
 A native Windows CI job now checks workspace/test compilation, builds executables and smoke-tests the CLI. The Unix proxy bridge has a compile-gated module and a non-Unix refusal entry point, with a native Windows test that a requested child does not run. Local macOS sandbox/helper validation passes 12 tests and workspace release Clippy. Windows compilation/refusal results remain pending; this does not prove or enable Windows sandbox enforcement.
 
+The first native Windows job confirmed the helper import failure; the next progressed to an inconsistent Unix-listener re-export, which is now gated with its implementation. Windows listener setup now uses TCP registration with no Unix socket, rejects Unix-only options before startup and preserves unbound socket-path files. Native CI includes registration/health, exclusive ownership and graceful-shutdown tests. The local Unix lifecycle tests pass; native Windows results remain pending.
+
 Built-in tool authorization is not connected to classifier allows yet. The next work is protected/irreversible ceilings and critical-path guards, then host integration, configuration, override/statistics commands and mode-disabling policy enforcement. Windows enforcement and its native runtime evidence remain unfinished. This runtime foundation passes 11 dedicated tests; full workspace validation passes 341 tests (one opt-in measurement ignored), release Clippy and strict OpenSpec validation.
 
 ## Requirement inventory

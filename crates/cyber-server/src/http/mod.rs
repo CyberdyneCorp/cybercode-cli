@@ -30,7 +30,9 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
-pub use serve::{EmbeddedClient, serve_tcp, serve_unix};
+#[cfg(unix)]
+pub use serve::serve_unix;
+pub use serve::{EmbeddedClient, serve_tcp};
 
 /// How a request reached the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

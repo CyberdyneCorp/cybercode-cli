@@ -1,6 +1,7 @@
 //! Transports: TCP, the Unix socket and the in-process embedded client
 //! (`server-api` → Listener defaults, Embedded transport).
 
+#[cfg(unix)]
 use std::path::Path;
 
 use axum::body::Body;
