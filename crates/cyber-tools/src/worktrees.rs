@@ -25,6 +25,34 @@ use crate::permissions::Request;
 use crate::tools::process::Process;
 
 impl BuiltinHost {
+    /// Lifecycle entry point delivering setup progress to attached Session clients.
+    pub async fn setup_worktree_session(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        repository: &Repository,
+        managed: &Managed,
+    ) -> io::Result<SetupOutcome> {
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime is not attached for setup output"))?;
+        let sink = runtime
+            .worktree_setup_sink(&inv.session_id, &inv.call_id, managed)
+            .await
+            .map_err(io::Error::other)?;
+        let owned_cancel = cancel.child_token();
+        let result = runtime
+            .own_worktree_setup(
+                owned_cancel.clone(),
+                self.setup_worktree(inv, owned_cancel, repository, managed, &sink),
+            )
+            .await;
+        if let Err(error) = &result {
+            let _ = sink.failed(&error.to_string());
+        }
+        result
+    }
+
     /// The lifecycle owner supplies the Session's streaming sink and settles this
     /// explicit setup attempt durably; interrupted commands must not be blindly retried.
     pub async fn setup_worktree(

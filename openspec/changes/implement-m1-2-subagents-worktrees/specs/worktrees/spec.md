@@ -51,6 +51,18 @@
 - **THEN** its new persistent creation ID gives setup an independent journal
 - **AND** legacy ownership without a creation ID requires recovery before journaled setup
 
+#### Scenario: Attached Session receives live setup output
+- **WHEN** setup runs for an existing Session located in the owned worktree
+- **THEN** its attached clients receive `session.worktree.setup` updates on the Location instance stream before command completion
+- **AND** updates identify the Session, worktree creation ID, call and command index, with distinct stdout and stderr channels
+- **AND** arbitrary output bytes are carried as bounded base64 chunks without including setup command source
+- **AND** other Locations remain filtered from a Location-scoped stream
+
+#### Scenario: Runtime closes during Session setup
+- **WHEN** the runtime shuts down during an owned setup command
+- **THEN** shutdown cancels its owned token and waits for settlement or bounded future disposal, stopping its process tree without removing the worktree
+- **AND** an intent without acknowledged settlement remains outcome unknown for recovery
+
 #### Scenario: Setup ownership mismatch
 - **WHEN** supplied managed ownership differs from the persisted ready record
 - **THEN** setup fails before any command is dispatched

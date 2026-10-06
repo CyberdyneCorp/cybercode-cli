@@ -117,6 +117,7 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
 fn session_of(event: &LiveEvent) -> &str {
     match event {
         LiveEvent::Durable { session_id, .. }
+        | LiveEvent::WorktreeSetup { session_id, .. }
         | LiveEvent::TextDelta { session_id, .. }
         | LiveEvent::ReasoningDelta { session_id, .. }
         | LiveEvent::ToolInputDelta { session_id, .. }
@@ -209,7 +210,10 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
                         .runtime
                         .state(&session)
                         .await
-                        .map(|s| s.info.directory)
+                        .map(|s| {
+                            std::fs::canonicalize(&s.info.directory)
+                                .map_or(s.info.directory, |path| path.display().to_string())
+                        })
                         .unwrap_or_default();
                     directories.insert(session.clone(), d.clone());
                     d

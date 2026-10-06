@@ -9,6 +9,12 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
+    WorktreeSetup {
+        session_id: String,
+        worktree_id: String,
+        call_id: String,
+        update: super::SetupUpdate,
+    },
     Durable {
         session_id: String,
         seq: i64,

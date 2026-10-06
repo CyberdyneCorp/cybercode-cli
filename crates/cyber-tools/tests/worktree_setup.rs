@@ -347,3 +347,108 @@ async fn output_delivery_failure_stops_the_setup_tree() {
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     assert_stopped(&managed, &repository).await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn attached_session_receives_live_output_and_shutdown_stops_setup() {
+    use base64::Engine as _;
+    use cyber_server::runtime::{CreateSession, LiveEvent, NoSnapshots, SetupChannel, SetupUpdate};
+    for shutdown in [false, true] {
+        let (fixture, repository, managed) = owned().await;
+        let source = format!("{TREE}printf diagnostic >&2; sleep 30");
+        fixture.set_config(
+            json!({"permissions": {"worktree": "allow"}, "worktrees": {"setup": [source.clone()]}}),
+        );
+        let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+        let info = flow
+            .runtime
+            .create_session(CreateSession {
+                directory: managed.path.display().to_string(),
+                model: "test/main".into(),
+                mode: Some("bypass".into()),
+                ..CreateSession::default()
+            })
+            .await
+            .unwrap();
+        let mut inv = flow.f.invocation("bypass", "worktree", json!({}));
+        inv.directory = info.directory;
+        inv.session_id = info.id.clone();
+        let host = Arc::clone(&flow.f.host);
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let owned_repository = repository.clone();
+        let owned_managed = managed.clone();
+        let mut events = flow.runtime.subscribe();
+        let job = tokio::spawn(async move {
+            host.setup_worktree_session(&inv, token, &owned_repository, &owned_managed)
+                .await
+        });
+        let received = async {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            while !stdout.windows(5).any(|part| part == b"ready")
+                || !stderr.windows(10).any(|part| part == b"diagnostic")
+            {
+                if let LiveEvent::WorktreeSetup {
+                    session_id,
+                    worktree_id,
+                    update: SetupUpdate::Output { stream, base64, .. },
+                    ..
+                } = events.recv().await.unwrap()
+                {
+                    assert_eq!(session_id, info.id);
+                    assert_eq!(worktree_id, managed.id);
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(base64)
+                        .unwrap();
+                    match stream {
+                        SetupChannel::Stdout => stdout.extend(bytes),
+                        SetupChannel::Stderr => stderr.extend(bytes),
+                    }
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), received)
+            .await
+            .unwrap();
+        assert!(
+            !job.is_finished(),
+            "output arrived only after command completion"
+        );
+        if shutdown {
+            flow.runtime.shutdown().await;
+        } else {
+            cancel.cancel();
+        }
+        let error = tokio::time::timeout(Duration::from_secs(2), job)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert_stopped(&managed, &repository).await;
+        if shutdown {
+            let journal = cyber_server::worktrees::SetupJournal::new(
+                Arc::clone(&flow.f.store),
+                &managed,
+                &[source],
+                &info.id,
+            )
+            .unwrap();
+            assert!(matches!(
+                journal.start(0).unwrap(),
+                cyber_server::worktrees::CommandDecision::Recorded(
+                    cyber_server::worktrees::CommandResult::Failed { .. }
+                )
+            ));
+        } else {
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                LiveEvent::WorktreeSetup {
+                    update: SetupUpdate::Failed { index: Some(0), .. },
+                    ..
+                }
+            ));
+        }
+    }
+}

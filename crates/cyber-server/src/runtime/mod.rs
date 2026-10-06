@@ -17,6 +17,8 @@ mod rewind;
 mod shutdown;
 mod title;
 mod view;
+mod worktree_output;
+pub use worktree_output::{SessionSetupSink, SetupChannel, SetupUpdate};
 
 use std::collections::HashMap;
 use std::path::PathBuf;

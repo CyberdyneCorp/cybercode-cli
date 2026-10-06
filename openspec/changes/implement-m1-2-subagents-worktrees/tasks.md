@@ -6,7 +6,7 @@
 - [ ] Implement `.worktreeinclude` copying and sandboxed setup with streamed output.
   - [ ] Verify primary-checkout gitignore inclusion, ignored files, tracked/user-file preservation, scoped copying and persisted fingerprints natively. All 71 local core tests pass; all sixteen native Windows repository cases pass at `ec8ba9f`, including long-target inclusion and alternate-stream refusal (run `37507000869`, job `112418076658`). Runtime scope wiring remains open.
   - [ ] Finish automatic post-creation setup, recovery resolution and Session delivery. Durable command intents/results now use the database writer, preserve unknown outcomes on disposal and prevent silent redispatch; creation IDs separate successive worktrees at the same path. The built-in host adapter now checks Session Location/worktree permission and connects the core dispatcher to scoped sandbox processes with credential filtering and live streaming; local real-process coverage passes, native platform acceptance remains open.
-  - [ ] Integrate sandboxed setup and streamed output with Session lifecycle, preserving the worktree after failure.
+  - [ ] Finish automatic sandboxed setup dispatch, TUI rendering and durable output artifacts. An attached-runtime wrapper now streams byte-exact setup progress on the Session’s Location instance stream and holds lifecycle admission until acknowledged cancellation or bounded disposal; worktree contents remain preserved.
 - [ ] Persist ownership and implement clean/dirty/ahead-aware cleanup, active-session refusal and recovery.
 - [ ] Implement CLI flags/management, enter/exit tools, API/SDK endpoints and lifecycle events.
 - [ ] Implement permission-gated foreground child sessions and agent catalogue/model selection.

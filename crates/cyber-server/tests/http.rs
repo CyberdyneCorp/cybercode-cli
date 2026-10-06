@@ -472,6 +472,130 @@ async fn session_stream_replays_then_follows_without_gaps() {
 }
 
 #[tokio::test]
+async fn location_stream_delivers_setup_output_and_filters_other_locations() {
+    use base64::Engine as _;
+    use cyber_core::worktrees::{Managed, SetupEvent, SetupSink, SetupStream};
+    use cyber_server::runtime::CreateSession;
+    use futures::StreamExt;
+
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let managed = Managed {
+        id: "wt_stream".into(),
+        name: "stream".into(),
+        path: h.repo.canonicalize().unwrap(),
+        branch: "cyber/stream".into(),
+        base: "base".into(),
+        common_dir: h.repo.join(".git"),
+        ready: true,
+        included: vec![],
+    };
+    let other = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.dir.path().display().to_string(),
+            model: "test/main".into(),
+            ..CreateSession::default()
+        })
+        .await
+        .unwrap();
+    let mut other_managed = managed.clone();
+    other_managed.id = "wt_other".into();
+    other_managed.path = h.dir.path().canonicalize().unwrap();
+    let base = tcp(&h, "pw").await;
+    let response = reqwest::Client::new()
+        .get(format!("{base}/event"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.bytes_stream();
+    let sink = h
+        .runtime
+        .worktree_setup_sink(&id, "call_setup", &managed)
+        .await
+        .unwrap();
+    let other_sink = h
+        .runtime
+        .worktree_setup_sink(&other.id, "call_other", &other_managed)
+        .await
+        .unwrap();
+    other_sink
+        .emit(SetupEvent::Started {
+            index: 0,
+            command: "other",
+        })
+        .unwrap();
+    sink.emit(SetupEvent::Started {
+        index: 0,
+        command: "private source",
+    })
+    .unwrap();
+    sink.emit(SetupEvent::Output {
+        stream: SetupStream::Stdout,
+        bytes: b"live\xff",
+    })
+    .unwrap();
+    let received = async {
+        let mut text = String::new();
+        while !text.contains("bGl2Zf8=") {
+            let chunk = stream.next().await.unwrap().unwrap();
+            text.push_str(&String::from_utf8_lossy(&chunk));
+        }
+        text
+    };
+    let text = tokio::time::timeout(Duration::from_secs(5), received)
+        .await
+        .unwrap();
+    assert!(text.contains("event: session.worktree.setup"));
+    assert!(text.contains(&id) && text.contains("wt_stream") && text.contains("call_setup"));
+    assert!(!text.contains(&other.id) && !text.contains("private source"));
+    assert!(text.contains(&base64::engine::general_purpose::STANDARD.encode(b"live\xff")));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn location_stream_normalizes_session_directory_aliases() {
+    use cyber_server::runtime::CreateSession;
+    use futures::StreamExt;
+    let h = Harness::new(Setup::default());
+    let alias = h.dir.path().join("repo-alias");
+    std::os::unix::fs::symlink(&h.repo, &alias).unwrap();
+    let session = h
+        .runtime
+        .create_session(CreateSession {
+            directory: alias.display().to_string(),
+            model: "test/main".into(),
+            ..CreateSession::default()
+        })
+        .await
+        .unwrap();
+    let base = tcp(&h, "pw").await;
+    let response = reqwest::Client::new()
+        .get(format!("{base}/event"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = response.bytes_stream();
+    h.runtime.rename(&session.id, "alias event").await.unwrap();
+    let received = async {
+        let mut text = String::new();
+        while !text.contains("alias event") {
+            text.push_str(&String::from_utf8_lossy(
+                &stream.next().await.unwrap().unwrap(),
+            ));
+        }
+        text
+    };
+    let text = tokio::time::timeout(Duration::from_secs(2), received)
+        .await
+        .unwrap();
+    assert!(text.contains(&session.id) && text.contains("session.renamed.1"));
+}
+
+#[tokio::test]
 async fn large_responses_are_compressed() {
     let h = Harness::new(Setup::default());
     let base = tcp(&h, "pw").await;
