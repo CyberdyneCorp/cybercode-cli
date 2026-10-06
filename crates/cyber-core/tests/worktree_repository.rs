@@ -175,6 +175,7 @@ fn creates_real_worktree_and_reuses_without_overwriting_user_edits() {
         .create(&repository, &name, &Settings::default())
         .unwrap();
     assert!(managed.ready);
+    assert!(managed.id.starts_with("wt_"));
     assert_eq!(managed.branch, "cyber/experiment");
     assert_eq!(managed.base, fixture.git(&["rev-parse", "HEAD"]));
     assert_eq!(

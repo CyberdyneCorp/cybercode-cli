@@ -320,6 +320,7 @@ pub fn registry() -> EventRegistry {
         registry.register(kind).expect("valid event types");
     }
     registry.projector(project);
+    crate::worktrees::register(&mut registry);
     registry
 }
 

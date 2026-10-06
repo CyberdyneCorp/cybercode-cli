@@ -5,6 +5,10 @@ use std::io;
 use std::path::Path;
 use std::process::{ExitStatus, Output, Stdio};
 use std::sync::Mutex;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::Duration;
 
 use cyber_core::worktrees::{
@@ -12,6 +16,7 @@ use cyber_core::worktrees::{
     SetupFuture, SetupOutcome, SetupSink, SetupStream,
 };
 use cyber_server::runtime::Invocation;
+use cyber_server::worktrees::{CommandDecision, CommandResult, SetupJournal};
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
@@ -56,7 +61,17 @@ impl BuiltinHost {
         )
         .await
         .map_err(tool_error)?;
-        let execution = Execution { ctx: &ctx };
+        let execution = Execution {
+            ctx: &ctx,
+            journal: SetupJournal::new(
+                Arc::clone(&self.opts.store),
+                managed,
+                &settings.setup,
+                &inv.session_id,
+            )?,
+            next_command: AtomicUsize::new(0),
+        };
+        execution.journal.validate()?;
         repository
             .setup(&execution, &execution, managed, &settings, sink)
             .await
@@ -65,6 +80,8 @@ impl BuiltinHost {
 
 struct Execution<'a> {
     ctx: &'a Ctx<'a>,
+    journal: SetupJournal,
+    next_command: AtomicUsize,
 }
 
 impl SetupExecution for Execution<'_> {
@@ -75,27 +92,53 @@ impl SetupExecution for Execution<'_> {
         sink: &'a dyn SetupSink,
     ) -> SetupFuture<'a> {
         Box::pin(async move {
-            #[cfg(not(windows))]
-            let prepared = crate::sandboxing::prepare_worktree_command(
-                self.ctx,
-                &crate::tools::bash::shell(&self.ctx.host.opts.shell),
-                &["-c".into(), command.into()],
-            )
-            .await;
-            #[cfg(windows)]
-            let prepared = {
-                let program = crate::tools::powershell::installed(&self.ctx.location)
-                    .ok_or_else(|| io::Error::other("PowerShell is required for Windows setup"))?;
-                crate::sandboxing::prepare_worktree_command(
-                    self.ctx,
-                    &program.display().to_string(),
-                    &crate::tools::powershell::arguments(command),
-                )
-                .await
+            let index = self.next_command.fetch_add(1, Ordering::Relaxed);
+            if let CommandDecision::Recorded(result) = self.journal.start(index)? {
+                return match result {
+                    CommandResult::Exited { code } => Ok(code),
+                    CommandResult::Failed { message } => Err(io::Error::other(message)),
+                };
+            }
+            let result = self.execute_setup(directory, command, sink).await;
+            let saved = match &result {
+                Ok(code) => CommandResult::Exited { code: *code },
+                Err(error) => CommandResult::Failed {
+                    message: error.to_string(),
+                },
             };
-            let status = run(self.ctx, prepared.map_err(tool_error)?, directory, sink).await?;
-            Ok(status.code())
+            self.journal.finish(index, saved)?;
+            result
         })
+    }
+}
+
+impl Execution<'_> {
+    async fn execute_setup(
+        &self,
+        directory: &Path,
+        command: &str,
+        sink: &dyn SetupSink,
+    ) -> io::Result<Option<i32>> {
+        #[cfg(not(windows))]
+        let prepared = crate::sandboxing::prepare_worktree_command(
+            self.ctx,
+            &crate::tools::bash::shell(&self.ctx.host.opts.shell),
+            &["-c".into(), command.into()],
+        )
+        .await;
+        #[cfg(windows)]
+        let prepared = {
+            let program = crate::tools::powershell::installed(&self.ctx.location)
+                .ok_or_else(|| io::Error::other("PowerShell is required for Windows setup"))?;
+            crate::sandboxing::prepare_worktree_command(
+                self.ctx,
+                &program.display().to_string(),
+                &crate::tools::powershell::arguments(command),
+            )
+            .await
+        };
+        let status = run(self.ctx, prepared.map_err(tool_error)?, directory, sink).await?;
+        Ok(status.code())
     }
 }
 

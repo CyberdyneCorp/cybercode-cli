@@ -145,7 +145,7 @@ async fn setup_runs_in_sandbox_streams_and_preserves_failed_worktree() {
     std::fs::write(&outside, "protected").unwrap();
     // The output explicitly distinguishes an enforced write denial from shell failure.
     let source = format!(
-        "printf ready; printf diagnostic >&2; printf changed > '{}'; if printf forbidden > '{}' 2>/dev/null; then exit 9; fi; printf '%s' \"${{HOME-unset}}\"; exit 7",
+        "printf ready; printf diagnostic >&2; printf changed >> '{}'; if printf forbidden > '{}' 2>/dev/null; then exit 9; fi; printf '%s' \"${{HOME-unset}}\"; exit 7",
         managed.path.join("result").display(),
         outside.display()
     );
@@ -165,8 +165,7 @@ async fn setup_runs_in_sandbox_streams_and_preserves_failed_worktree() {
             code: Some(7)
         }
     );
-    let bytes = sink.output.lock().unwrap();
-    let output = String::from_utf8_lossy(&bytes);
+    let output = String::from_utf8_lossy(&sink.output.lock().unwrap()).into_owned();
     assert!(
         output.contains("ready") && output.contains("diagnostic") && output.contains("unset"),
         "{output}"
@@ -178,6 +177,27 @@ async fn setup_runs_in_sandbox_streams_and_preserves_failed_worktree() {
     );
     assert!(!managed.path.join("unexpected").exists());
     assert!(managed.path.join("tracked.txt").exists());
+    inv.session_id = "ses_repeat".into();
+    let repeated = Sink::default();
+    assert_eq!(
+        fixture
+            .host
+            .setup_worktree(
+                &inv,
+                CancellationToken::new(),
+                &repository,
+                &managed,
+                &repeated
+            )
+            .await
+            .unwrap(),
+        outcome
+    );
+    assert!(repeated.output.lock().unwrap().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("result")).unwrap(),
+        "changed"
+    );
 }
 
 #[cfg(unix)]
@@ -235,6 +255,42 @@ async fn setup_cancellation_and_future_disposal_stop_live_descendants() {
             assert_eq!(error.kind(), io::ErrorKind::Interrupted);
         }
         assert_stopped(&managed, &repository).await;
+        let mut repeated = fixture.invocation("bypass", "worktree", json!({}));
+        repeated.directory = managed.path.display().to_string();
+        let replay = fixture
+            .host
+            .setup_worktree(
+                &repeated,
+                CancellationToken::new(),
+                &repository,
+                &managed,
+                &Sink::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(replay.to_string().contains(if abort {
+            "outcome unknown"
+        } else {
+            "Setup cancelled"
+        }));
+        assert_stopped(&managed, &repository).await;
+        fixture
+            .set_config(json!({"permissions": {"worktree": "allow"}, "worktrees": {"setup": []}}));
+        assert!(
+            fixture
+                .host
+                .setup_worktree(
+                    &repeated,
+                    CancellationToken::new(),
+                    &repository,
+                    &managed,
+                    &Sink::default()
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("configuration or ownership changed")
+        );
     }
 }
 

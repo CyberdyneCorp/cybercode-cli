@@ -72,6 +72,9 @@ jobs:
       - name: Native worktree setup admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test worktree_setup
+      - name: Native durable worktree setup recovery
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test worktree_setup_journal
       - name: Native shell ownership and cancellation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test windows_shell

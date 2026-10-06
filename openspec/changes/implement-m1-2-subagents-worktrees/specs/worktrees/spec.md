@@ -32,6 +32,25 @@
 - **WHEN** a setup leader exits while its descendants still hold stdout or stderr pipes
 - **THEN** the descendants are terminated and setup settles with the leader's exit code
 
+#### Scenario: Repeated setup reuses durable results
+- **WHEN** a setup request repeats the same owned worktree and command recipe after settlement
+- **THEN** recorded command results are reused without redispatching side effects
+- **AND** a nonzero, signal or execution failure still stops later commands
+
+#### Scenario: Setup intent survives process loss
+- **WHEN** a setup command's durable intent exists without a settled result after process loss or future disposal
+- **THEN** a new setup request refuses redispatch with an outcome-unknown recovery diagnostic
+- **AND** changing or emptying the command recipe cannot hide that intent
+
+#### Scenario: Setup command admission races
+- **WHEN** two lifecycle owners attempt to admit the same setup command
+- **THEN** optimistic concurrency permits at most one durable command intent and dispatch authorization
+
+#### Scenario: Recreated worktree does not reuse earlier setup
+- **WHEN** an owned worktree is removed and a new one is created with the same name and path
+- **THEN** its new persistent creation ID gives setup an independent journal
+- **AND** legacy ownership without a creation ID requires recovery before journaled setup
+
 #### Scenario: Setup ownership mismatch
 - **WHEN** supplied managed ownership differs from the persisted ready record
 - **THEN** setup fails before any command is dispatched

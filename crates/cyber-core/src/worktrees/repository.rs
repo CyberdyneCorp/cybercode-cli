@@ -27,6 +27,9 @@ pub struct Repository {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Managed {
+    /// Creation identity; older records require recovery before journaled setup.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub path: PathBuf,
     pub branch: String,
@@ -89,6 +92,7 @@ impl Repository {
         .await?;
         let base = commit(execution, &self.root, &settings.base).await?;
         let mut managed = Managed {
+            id: crate::ids::new_id("wt"),
             name: name.as_str().into(),
             path: target,
             branch,
