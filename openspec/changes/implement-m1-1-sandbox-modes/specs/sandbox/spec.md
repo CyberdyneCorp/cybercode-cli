@@ -88,6 +88,15 @@
 - **AND** cleanup SHALL remove only this invocation's explicit or inherited entries while preserving unrelated entries
 - **AND** this primitive alone SHALL NOT enable recursive roots or report Windows confinement as available
 
+#### Scenario: Recursive root inventory before ACL mutation
+- **WHEN** Windows filesystem preparation inventories an existing local directory tree
+- **THEN** it SHALL retain checked ancestor and descendant directory handles during enumeration
+- **AND** it SHALL record and verify each observed object's file and volume identity without changing any ACL
+- **AND** unsupported names, reparse points, multiply linked files, identity reopening failures and the caller's object limit SHALL abort preparation and release all pins
+- **AND** revalidation SHALL refuse deleted or changed recorded objects rather than accept replacement paths
+- **AND** directory pins SHALL be released when the inventory owner is dropped
+- **AND** this inventory SHALL NOT claim an atomic namespace snapshot, account for later-created children or enable recursive grants by itself
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner

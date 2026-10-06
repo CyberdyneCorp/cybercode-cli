@@ -60,25 +60,9 @@ pub(super) fn grant(
     inheritance: u32,
 ) -> io::Result<IdentityGrant> {
     let _ancestors = retain_ancestors(path)?;
-    // Identity updates use a single-object setter, never implicit child traversal.
-    let file = OpenOptions::new()
-        .access_mode(METADATA_ACCESS)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)?;
-    let metadata = file.metadata()?;
-    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Identity leases refuse reparse points",
-        ));
-    }
-    if !metadata.is_dir() && link_count(&file)? != 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Identity grants refuse multiply linked files",
-        ));
-    }
-    if inheritance != 0 && !metadata.is_dir() {
+    let file = open_object(path)?;
+    let directory = validate_object(&file)?;
+    if inheritance != 0 && !directory {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Inheritable identity grants require a directory",
@@ -98,6 +82,30 @@ pub(super) fn grant(
         profile: profile.clone(),
         active: true,
     })
+}
+
+pub(super) fn open_object(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .access_mode(METADATA_ACCESS)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+pub(super) fn validate_object(file: &File) -> io::Result<bool> {
+    let metadata = file.metadata()?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Identity preparation refuses reparse points",
+        ));
+    }
+    if !metadata.is_dir() && (!metadata.is_file() || link_count(file)? != 1) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Identity preparation requires ordinary singly linked files",
+        ));
+    }
+    Ok(metadata.is_dir())
 }
 
 pub(super) fn read_acl(file: &File) -> io::Result<(SecurityAllocation, *mut ACL)> {

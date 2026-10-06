@@ -3,7 +3,9 @@
 #![allow(unsafe_code)]
 
 mod identity;
+mod tree;
 pub use identity::IdentityGrant;
+pub use tree::TreeInventory;
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -232,21 +234,26 @@ fn retain_ancestors(path: &Path) -> io::Result<Vec<File>> {
         if matches!(component, Component::Prefix(_)) {
             continue;
         }
-        let directory = OpenOptions::new()
-            .access_mode(FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY)
-            .share_mode(FILE_SHARE_READ)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(&current)?;
-        let metadata = directory.metadata()?;
-        if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "ACL grant ancestors must be ordinary directories",
-            ));
-        }
+        let directory = pin_directory(&current)?;
         ancestors.push(directory);
     }
     Ok(ancestors)
+}
+
+fn pin_directory(path: &Path) -> io::Result<File> {
+    let directory = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let metadata = directory.metadata()?;
+    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ACL preparation requires ordinary directories",
+        ));
+    }
+    Ok(directory)
 }
 
 fn validate_local_path(components: &[Component<'_>]) -> io::Result<()> {
@@ -916,6 +923,92 @@ mod tests {
         assert_eq!(all_entries(&object), original);
         assert_eq!(all_entries(&file(&alias)), original);
         profile.close().unwrap();
+    }
+
+    #[test]
+    fn tree_inventory_pins_directories_without_acl_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let leaf = nested.join("leaf.txt");
+        std::fs::write(&leaf, "original").unwrap();
+        let before = stored_entries(&file(&leaf));
+        let directory_acls = [&root, &nested].map(|path| stored_entries(&directory_file(path)));
+        let inventory = TreeInventory::capture(&root, 3).unwrap();
+        assert_eq!(inventory.paths().count(), 3);
+        assert!(inventory.paths().any(|path| path == leaf));
+        inventory.verify().unwrap();
+        assert_eq!(stored_entries(&file(&leaf)), before);
+        assert_eq!(
+            [&root, &nested].map(|path| stored_entries(&directory_file(path))),
+            directory_acls
+        );
+        assert!(std::fs::rename(&nested, root.join("moved-nested")).is_err());
+        assert!(std::fs::rename(&root, directory.path().join("moved")).is_err());
+        drop(inventory);
+        std::fs::rename(&nested, root.join("moved-nested")).unwrap();
+        std::fs::rename(&root, directory.path().join("moved")).unwrap();
+    }
+
+    #[test]
+    fn tree_inventory_limits_and_hardlinks_release_all_pins() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        std::fs::create_dir(&root).unwrap();
+        let leaf = root.join("leaf.txt");
+        std::fs::write(&leaf, "original").unwrap();
+        let before = stored_entries(&file(&leaf));
+        assert!(TreeInventory::capture(&root, 0).is_err());
+        assert!(TreeInventory::capture(&root, 1).is_err());
+        let inventory = TreeInventory::capture(&root, 2).unwrap();
+        std::fs::hard_link(&leaf, root.join("alias.txt")).unwrap();
+        assert!(inventory.verify().is_err());
+        drop(inventory);
+        assert!(TreeInventory::capture(&root, 3).is_err());
+        assert_eq!(stored_entries(&file(&leaf)), before);
+        std::fs::rename(&root, directory.path().join("moved")).unwrap();
+    }
+
+    #[test]
+    fn tree_inventory_revalidation_refuses_replacement_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        std::fs::create_dir(&root).unwrap();
+        let leaf = root.join("leaf.txt");
+        std::fs::write(&leaf, "original").unwrap();
+        let inventory = TreeInventory::capture(&root, 2).unwrap();
+        std::fs::remove_file(&leaf).unwrap();
+        std::fs::write(&leaf, "replacement").unwrap();
+        let before = stored_entries(&file(&leaf));
+        assert!(inventory.verify().is_err());
+        assert_eq!(stored_entries(&file(&leaf)), before);
+        drop(inventory);
+        std::fs::rename(&root, directory.path().join("moved")).unwrap();
+    }
+
+    #[test]
+    fn tree_inventory_refuses_junctions_without_changing_target_acls() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let target = directory.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        let leaf = target.join("leaf.txt");
+        std::fs::write(&leaf, "outside").unwrap();
+        let before = stored_entries(&file(&leaf));
+        let link = root.join("junction");
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "mklink", "/j"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "junction setup failed: {output:?}");
+        assert!(TreeInventory::capture(&root, 10).is_err());
+        assert_eq!(stored_entries(&file(&leaf)), before);
+        std::fs::remove_dir(&link).unwrap();
+        std::fs::rename(&root, directory.path().join("moved")).unwrap();
     }
 
     #[test]

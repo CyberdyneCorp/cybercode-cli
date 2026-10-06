@@ -36,6 +36,7 @@
   - [ ] Prove native Git process cleanup and abandoned active-owner cancellation within the complete service deadline.
     - [x] Prove pending HTTP2 handler resource release with the client still connected on native Windows. The new listener-level regression passes locally against unchanged production code in 2.01 seconds and on native Windows at `9436cc7`. Application-owner cancellation and native Git cleanup remain separate open checks.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
+  - [ ] Implement and natively verify iterative recursive-root inventory, retained directory pins, object-limit refusal, reparse/hard-link refusal and original-identity revalidation before any ACL mutation.
   - [x] Verify file-identity ACL leases before recursive traversal: ordinary directory moves, original-object cleanup after path replacement, hard-link refusal, deleted-identity cleanup without touching replacements, suppressed automatic propagation and explicit inherited-entry cleanup preserving unrelated profiles. All twelve native profile/ACL tests, ten launch tests and the full CI matrix pass at `86d2a3a`. This does not implement a recursive root policy.
   - [x] Verify metadata-only identity handles coexist with directory preparation pins on native Windows at `e49357d`; native profile/ACL and launch steps pass. The remaining CI checks are running.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
