@@ -14,6 +14,12 @@
 - **AND** setup or verification failure SHALL terminate the suspended process without falling back to unrestricted execution
 - **AND** the child SHALL receive an explicit environment rather than inherit the parent's environment
 
+#### Scenario: Windows private temporary storage
+- **WHEN** a Windows sandbox invocation prepares its temporary storage
+- **THEN** TEMP and TMP SHALL identify an invocation-owned directory beneath that profile's storage
+- **AND** its ACL grant SHALL apply only to that identity and its private descendants
+- **AND** command-owner cleanup SHALL revoke the grant and remove the invocation-owned temporary data
+
 #### Scenario: Invocation-owned Windows profile and ACL leases
 - **WHEN** a Windows command invocation prepares an AppContainer identity and direct-object ACL grants
 - **THEN** it SHALL create a fresh profile rather than reuse an existing identity

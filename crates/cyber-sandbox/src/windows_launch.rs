@@ -6,7 +6,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ use windows_sys::Win32::System::Threading::{
     WaitForSingleObject,
 };
 
-use crate::windows_container::Profile;
+use crate::windows_container::{AclGrant, Profile};
 use crate::windows_process::Job;
 
 /// Launch only after job assignment and exact AppContainer identity verification.
@@ -46,7 +46,9 @@ pub fn spawn(
     let application = terminated(program.as_os_str())?;
     let directory = terminated(directory.as_os_str())?;
     let mut command = command_line(program.as_os_str(), args)?;
-    let environment = environment_block(environment)?;
+    environment_block(environment)?;
+    let temp = PrivateTemp::new(profile)?;
+    let environment = temp.environment(environment)?;
     let capabilities = SECURITY_CAPABILITIES {
         AppContainerSid: profile.sid(),
         ..Default::default()
@@ -82,6 +84,7 @@ pub fn spawn(
     let child = ContainerChild {
         job: Some(job),
         process,
+        _temp: temp,
         _profile: profile.clone(),
     };
     child
@@ -101,7 +104,62 @@ pub fn spawn(
 pub struct ContainerChild {
     job: Option<Job>,
     process: OwnedHandle,
+    _temp: PrivateTemp,
     _profile: Profile,
+}
+
+struct PrivateTemp {
+    path: PathBuf,
+    grant: Option<AclGrant>,
+}
+
+impl PrivateTemp {
+    fn new(profile: &Profile) -> io::Result<Self> {
+        let path = profile
+            .storage_path()?
+            .join(cyber_core::ids::new_id("scratch"));
+        std::fs::create_dir(&path)?;
+        let mut temp = Self { path, grant: None };
+        temp.grant = Some(profile.grant_private_directory(&temp.path)?);
+        Ok(temp)
+    }
+
+    fn environment(&self, input: &BTreeMap<String, String>) -> io::Result<Vec<u16>> {
+        let path = self.path.to_str().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "Temporary path is not Unicode")
+        })?;
+        let mut variables = input.clone();
+        variables.retain(|name, _| {
+            !name.eq_ignore_ascii_case("TEMP") && !name.eq_ignore_ascii_case("TMP")
+        });
+        for name in ["TEMP", "TMP"] {
+            variables.insert(name.into(), path.into());
+        }
+        environment_block(&variables)
+    }
+}
+
+impl Drop for PrivateTemp {
+    fn drop(&mut self) {
+        if let Some(grant) = self.grant.take()
+            && let Err(error) = grant.close()
+        {
+            temp_cleanup_error("revoke", error);
+        }
+        if let Err(error) = std::fs::remove_dir_all(&self.path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            temp_cleanup_error("remove", error);
+        }
+    }
+}
+
+fn temp_cleanup_error(operation: &str, error: io::Error) {
+    cyber_core::log::error(
+        "sandbox",
+        "Windows private temp cleanup failed",
+        serde_json::json!({"operation": operation, "error": error.to_string()}),
+    );
 }
 
 impl AsHandle for ContainerChild {
@@ -111,6 +169,11 @@ impl AsHandle for ContainerChild {
 }
 
 impl ContainerChild {
+    /// Invocation-owned scratch space, removed when this process owner is dropped.
+    pub fn temporary_directory(&self) -> &Path {
+        &self._temp.path
+    }
+
     /// A bounded synchronous wait, intended for launch helpers or blocking workers.
     pub fn wait(&mut self, timeout: Duration) -> io::Result<u32> {
         let milliseconds = timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32;

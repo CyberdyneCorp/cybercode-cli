@@ -111,6 +111,7 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
     let mut env = environment(directory.path(), "probe", &profile);
     env.insert("CYBER_CONTAINER_ADDRESS".into(), address.to_string());
     let mut child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
+    let scratch = child.temporary_directory().to_path_buf();
     assert_eq!(
         child.wait(Duration::from_secs(10)).unwrap(),
         0,
@@ -129,7 +130,12 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
         std::fs::read_to_string(directory.path().join("forbidden.txt")).unwrap(),
         "original"
     );
+    assert_eq!(
+        std::fs::read_to_string(scratch.join("roundtrip.txt")).unwrap(),
+        "private"
+    );
     drop(child);
+    assert!(!scratch.exists());
     for grant in grants {
         grant.close().unwrap();
     }
@@ -255,6 +261,12 @@ fn probe(root: &Path) -> i32 {
     if let Err(diagnostic) = private_temp() {
         std::fs::write(root.join("write.txt"), diagnostic.to_string()).unwrap();
         return 50;
+    }
+    let temp_file = std::env::temp_dir().join("roundtrip.txt");
+    if std::fs::write(&temp_file, "private").is_err()
+        || std::fs::read_to_string(&temp_file).ok().as_deref() != Some("private")
+    {
+        return 51;
     }
     let address = std::env::var("CYBER_CONTAINER_ADDRESS")
         .unwrap()

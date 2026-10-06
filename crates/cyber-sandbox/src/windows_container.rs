@@ -20,8 +20,8 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, GetAppContainerFolderPath,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CopySid, DACL_SECURITY_INFORMATION, EqualSid, FreeSid,
-    GetAce, GetLengthSid, PSID,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE, CopySid, DACL_SECURITY_INFORMATION,
+    EqualSid, FreeSid, GetAce, GetLengthSid, OBJECT_INHERIT_ACE, PSID,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
@@ -104,6 +104,18 @@ impl Profile {
 
     /// Grant only this object, with no inheritance or recursive traversal.
     pub fn grant(&self, path: &Path, access: Access) -> io::Result<AclGrant> {
+        self.grant_object(path, access, 0)
+    }
+
+    pub(crate) fn grant_private_directory(&self, path: &Path) -> io::Result<AclGrant> {
+        self.grant_object(
+            path,
+            Access::Write,
+            CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE,
+        )
+    }
+
+    fn grant_object(&self, path: &Path, access: Access, inheritance: u32) -> io::Result<AclGrant> {
         if !self.0.active {
             return Err(io::Error::other("AppContainer profile is closed"));
         }
@@ -114,7 +126,12 @@ impl Profile {
         if file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err(io::Error::other("ACL leases refuse reparse points"));
         }
-        update_acl(&file, self.sid(), Some(access.mask()))?;
+        if inheritance != 0 && !file.metadata()?.is_dir() {
+            return Err(io::Error::other(
+                "Inheritable grants require a private directory",
+            ));
+        }
+        update_acl(&file, self.sid(), Some(access.mask()), inheritance)?;
         Ok(AclGrant {
             profile: self.clone(),
             file,
@@ -173,8 +190,9 @@ impl Access {
 
 /// Keeps the original object handle and profile alive through revocation.
 pub struct AclGrant {
-    profile: Profile,
+    // Close the object handle before the last profile owner attempts deletion.
     file: File,
+    profile: Profile,
     active: bool,
 }
 
@@ -185,7 +203,7 @@ impl AclGrant {
 
     fn revoke(&mut self) -> io::Result<()> {
         if self.active {
-            update_acl(&self.file, self.profile.sid(), None)?;
+            update_acl(&self.file, self.profile.sid(), None, 0)?;
             self.active = false;
         }
         Ok(())
@@ -282,7 +300,7 @@ fn read_acl(file: &File) -> io::Result<(LocalAllocation, *mut ACL)> {
     Ok((allocation, acl))
 }
 
-fn update_acl(file: &File, sid: PSID, mask: Option<u32>) -> io::Result<()> {
+fn update_acl(file: &File, sid: PSID, mask: Option<u32>, inheritance: u32) -> io::Result<()> {
     let _lock = ACL_UPDATE
         .lock()
         .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
@@ -306,7 +324,7 @@ fn update_acl(file: &File, sid: PSID, mask: Option<u32>) -> io::Result<()> {
         } else {
             REVOKE_ACCESS
         },
-        grfInheritance: 0,
+        grfInheritance: inheritance,
         Trustee: TRUSTEE_W {
             TrusteeForm: TRUSTEE_IS_SID,
             ptstrName: sid.cast(),
