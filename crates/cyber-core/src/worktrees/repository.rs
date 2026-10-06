@@ -101,12 +101,27 @@ impl Repository {
             &[
                 "worktree".into(),
                 "add".into(),
+                "--no-checkout".into(),
                 "-b".into(),
                 managed.branch.clone().into(),
                 "--".into(),
                 git_target,
                 managed.base.clone().into(),
             ],
+        )
+        .await?;
+        // Run from the new worktree without Git's long absolute GIT_DIR checkout environment.
+        git(
+            execution,
+            &managed.path,
+            &["read-tree".into(), managed.base.clone().into()],
+        )
+        .await?;
+        // Never overwrite files written between registration and initial checkout.
+        git(
+            execution,
+            &managed.path,
+            &["checkout-index".into(), "--all".into()],
         )
         .await?;
         self.verify(execution, &managed).await?;

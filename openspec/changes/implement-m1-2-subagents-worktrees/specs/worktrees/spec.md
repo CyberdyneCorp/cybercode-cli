@@ -50,3 +50,8 @@
 - **WHEN** Rust resolves a managed worktree root to a Windows verbatim drive path
 - **THEN** only the explicit Git argument is converted to an equivalent supported spelling, with command-local long-path support
 - **AND** canonical ownership remains unchanged and ambiguous path components fail before branch creation
+
+#### Scenario: Initial checkout does not overwrite a concurrent file
+- **WHEN** a file appears in the fresh worktree after registration but before initial checkout
+- **THEN** checkout fails without overwriting that file
+- **AND** pending ownership remains available for recovery

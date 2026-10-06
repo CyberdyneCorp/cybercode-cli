@@ -13,6 +13,7 @@ enum Mode {
     Normal,
     FailAfterCreation,
     SuspendAfterCreation,
+    CollideBeforeCheckout,
 }
 
 struct Execution {
@@ -46,14 +47,16 @@ impl Execution {
 impl GitExecution for Execution {
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a> {
         Box::pin(async move {
-            let output = self.invoke(directory, args)?;
-            if args
+            let checkout = args
                 .windows(2)
-                .any(|pair| pair[0] == "worktree" && pair[1] == "add")
-                && output.status.success()
-            {
+                .any(|pair| pair[0] == "checkout-index" && pair[1] == "--all");
+            if checkout && matches!(self.mode, Mode::CollideBeforeCheckout) {
+                std::fs::write(directory.join("tracked.txt"), "user file during setup")?;
+            }
+            let output = self.invoke(directory, args)?;
+            if checkout && output.status.success() {
                 match self.mode {
-                    Mode::Normal => {}
+                    Mode::Normal | Mode::CollideBeforeCheckout => {}
                     Mode::FailAfterCreation => {
                         return Err(io::Error::other("injected failure after creation"));
                     }
@@ -416,5 +419,31 @@ fn windows_ambiguous_path_names_fail_before_ownership_or_branch_mutation() {
         !fixture
             .git(&["branch", "--list", "cyber/trailing."])
             .contains("trailing")
+    );
+}
+
+#[test]
+fn initial_checkout_preserves_files_created_after_registration() {
+    let mut fixture = Fixture::new();
+    let repository = fixture.repository();
+    fixture.execution.mode = Mode::CollideBeforeCheckout;
+    let name = Name::parse("collision").unwrap();
+    assert!(
+        fixture
+            .create(&repository, &name, &Settings::default())
+            .is_err()
+    );
+    let record = repository.common_dir.join("cyber-worktrees/collision.json");
+    let managed: cyber_core::worktrees::Managed =
+        serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+    assert!(!managed.ready);
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
+        "user file during setup"
+    );
+    assert!(
+        RepositoryLock::try_acquire(&repository.common_dir)
+            .unwrap()
+            .is_some()
     );
 }

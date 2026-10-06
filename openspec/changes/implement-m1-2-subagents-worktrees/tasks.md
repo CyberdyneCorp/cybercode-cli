@@ -2,7 +2,7 @@
 - [ ] Implement managed Git creation/reuse and per-repository cross-process locking.
   - [ ] Verify real repository creation, base/root/branch selection, reuse preserving edits, shared-directory contention, failure/cancellation ownership and runtime execution-port integration.
   - [x] Verify an owned nonblocking repository file lock across independent processes, normal disposal and forced owner termination at `2f8f199`; all four native cases pass. The creation manager uses the resolved common Git directory; full runtime lifecycle integration remains open.
-  - [ ] Verify equivalent Windows Git path arguments and long-path/ambiguous-name boundaries; native execution is pending.
+  - [ ] Verify equivalent Windows Git path arguments and long-path/ambiguous-name boundaries; ordinary paths and ambiguous-name refusal pass natively at `1aeb710`, but long-path checkout fails. Staged checkout has seven passing local repository regressions; native acceptance remains pending.
 - [ ] Implement `.worktreeinclude` copying and sandboxed setup with streamed output.
 - [ ] Persist ownership and implement clean/dirty/ahead-aware cleanup, active-session refusal and recovery.
 - [ ] Implement CLI flags/management, enter/exit tools, API/SDK endpoints and lifecycle events.
