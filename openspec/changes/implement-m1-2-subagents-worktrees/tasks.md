@@ -1,0 +1,13 @@
+- [x] Implement shared worktree settings, documented defaults and name validation; connect merged configuration validation and trust regressions. All 52 core tests, core Clippy and 57 strict specification checks pass locally; this does not verify native Git lifecycle.
+- [ ] Implement managed Git creation/reuse and per-repository cross-process locking.
+- [ ] Implement `.worktreeinclude` copying and sandboxed setup with streamed output.
+- [ ] Persist ownership and implement clean/dirty/ahead-aware cleanup, active-session refusal and recovery.
+- [ ] Implement CLI flags/management, enter/exit tools, API/SDK endpoints and lifecycle events.
+- [ ] Implement permission-gated foreground child sessions and agent catalogue/model selection.
+- [ ] Implement schema-validating return_result, one retry and SchemaMismatch settlement.
+- [ ] Implement background handback, tasks listing and cancellation.
+- [ ] Implement forked context and resume by name/session ID.
+- [ ] Integrate worktree isolation into child sessions.
+- [ ] Enforce concurrency, nesting and permission inheritance.
+- [ ] Implement result summarization, cost attribution, manual invocation and thread switching.
+- [ ] Verify full M1.2 contracts locally and on supported native platforms, preserve P0/M1.1 regressions and update roadmap evidence.

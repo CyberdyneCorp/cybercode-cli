@@ -12,3 +12,4 @@ pub mod skills;
 pub mod trust;
 pub mod version;
 pub mod wildcard;
+pub mod worktrees;

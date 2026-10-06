@@ -104,6 +104,9 @@ pub fn validate(
     if let Some(Value::Object(profiles)) = map.get("profiles") {
         check_profiles(profiles, &mut issues);
     }
+    if let Err(error) = crate::worktrees::Settings::from_config(value) {
+        issues.push(error);
+    }
     issues
 }
 

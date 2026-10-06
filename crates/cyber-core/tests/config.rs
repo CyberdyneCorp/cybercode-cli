@@ -393,3 +393,29 @@ fn secrets_are_redacted_for_display() {
     assert_eq!(r["providers"]["openai"]["headers"]["X-Org"], "***");
     assert_eq!(r["providers"]["openai"]["url"], "u");
 }
+
+#[test]
+fn worktree_validation_runs_after_workspace_trust_filtering() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "cyber.json",
+        r#"{"worktrees":{"setup":[42],"cleanup":"keep"}}"#,
+    );
+    let untrusted = fixture.load().unwrap();
+    assert_eq!(
+        untrusted.value.pointer("/worktrees/cleanup"),
+        Some(&json!("keep"))
+    );
+    assert!(untrusted.value.pointer("/worktrees/setup").is_none());
+    fixture.approve_current();
+    let error = fixture.load().unwrap_err().to_string();
+    assert!(error.contains("worktrees:"), "{error}");
+}
+
+#[test]
+fn invalid_worktree_cleanup_is_rejected_during_config_loading() {
+    let fixture = Fixture::new();
+    fixture.write("cyber.json", r#"{"worktrees":{"cleanup":"delete"}}"#);
+    let error = fixture.load().unwrap_err().to_string();
+    assert!(error.contains("worktrees:"), "{error}");
+}
