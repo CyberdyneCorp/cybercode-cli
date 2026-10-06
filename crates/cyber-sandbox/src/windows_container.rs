@@ -469,10 +469,22 @@ fn read_acl(file: &File) -> io::Result<(LocalAllocation, *mut ACL)> {
 }
 
 fn update_acl(file: &File, sid: PSID, mask: Option<u32>, inheritance: u32) -> io::Result<()> {
+    update_acl_using(file, sid, mask, inheritance, set_acl)
+}
+
+type AclSetter = fn(&File, *mut core::ffi::c_void, *mut ACL) -> io::Result<()>;
+
+fn update_acl_using(
+    file: &File,
+    sid: PSID,
+    mask: Option<u32>,
+    inheritance: u32,
+    setter: AclSetter,
+) -> io::Result<()> {
     let _lock = ACL_UPDATE
         .lock()
         .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
-    let (_descriptor, old) = read_acl(file)?;
+    let (descriptor, old) = read_acl(file)?;
     if old.is_null() {
         return if mask.is_some() {
             Err(io::Error::other("ACL leases refuse a null DACL"))
@@ -504,6 +516,10 @@ fn update_acl(file: &File, sid: PSID, mask: Option<u32>, inheritance: u32) -> io
     let status = unsafe { SetEntriesInAclW(1, &entry, old, &mut merged) };
     let _merged = LocalAllocation(merged.cast());
     win32(status)?;
+    setter(file, descriptor.0, merged)
+}
+
+fn set_acl(file: &File, _descriptor: *mut core::ffi::c_void, acl: *mut ACL) -> io::Result<()> {
     win32(unsafe {
         SetSecurityInfo(
             file.as_raw_handle(),
@@ -511,7 +527,7 @@ fn update_acl(file: &File, sid: PSID, mask: Option<u32>, inheritance: u32) -> io
             DACL_SECURITY_INFORMATION,
             null_mut(),
             null_mut(),
-            merged,
+            acl,
             null(),
         )
     })
@@ -547,22 +563,12 @@ fn remove_profile_entries(file: &File, sid: PSID) -> io::Result<()> {
     let _lock = ACL_UPDATE
         .lock()
         .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
-    let (_descriptor, old) = read_acl(file)?;
+    let (descriptor, old) = read_acl(file)?;
     if old.is_null() || sid_entries(old, sid)?.is_empty() {
         return Ok(());
     }
     let mut words = acl_without_sid(old, sid)?;
-    win32(unsafe {
-        SetSecurityInfo(
-            file.as_raw_handle(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            null_mut(),
-            null_mut(),
-            words.as_mut_ptr().cast(),
-            null(),
-        )
-    })
+    identity::set_acl(file, descriptor.0, words.as_mut_ptr().cast())
 }
 
 fn acl_without_sid(old: *const ACL, sid: PSID) -> io::Result<Vec<u32>> {
@@ -841,6 +847,23 @@ mod tests {
         assert!(profile.grant_relocatable(&path, Access::Write).is_err());
         assert_eq!(all_entries(&object), original);
         assert_eq!(all_entries(&file(&alias)), original);
+        profile.close().unwrap();
+    }
+
+    #[test]
+    fn deleted_identity_cleanup_does_not_touch_replacement_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("original.txt");
+        std::fs::write(&path, "original").unwrap();
+        let mut profile = Profile::new().unwrap();
+        let lease = profile.grant_relocatable(&path, Access::Write).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "replacement").unwrap();
+        let replacement = file(&path);
+        let original_acl = all_entries(&replacement);
+        lease.close().unwrap();
+        assert_eq!(all_entries(&replacement), original_acl);
+        assert!(entries(&replacement, &profile).is_empty());
         profile.close().unwrap();
     }
 

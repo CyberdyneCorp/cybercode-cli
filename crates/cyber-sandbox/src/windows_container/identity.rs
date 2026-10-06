@@ -2,13 +2,19 @@
 
 use super::*;
 use std::os::windows::io::FromRawHandle;
-use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+use windows_sys::Wdk::Storage::FileSystem::NtSetSecurityObject;
+use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, RtlNtStatusToDosError};
+use windows_sys::Win32::Security::{
+    GetSecurityDescriptorControl, InitializeSecurityDescriptor, SE_DACL_AUTO_INHERITED,
+    SE_DACL_DEFAULTED, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl,
+    SetSecurityDescriptorDacl,
+};
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, ExtendedFileIdType, FILE_ID_128, FILE_ID_DESCRIPTOR,
     FILE_ID_DESCRIPTOR_0, FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_WRITE, FileIdInfo,
     FileIdType, GetFileInformationByHandle, GetFileInformationByHandleEx, OpenFileById,
 };
-use windows_sys::Win32::System::SystemServices::MAXIMUM_ALLOWED;
+use windows_sys::Win32::System::SystemServices::{MAXIMUM_ALLOWED, SECURITY_DESCRIPTOR_REVISION};
 
 /// A direct-object grant reopened by verified file ID during cleanup.
 /// It owns no child handle and grants no recursive tree by itself.
@@ -52,8 +58,7 @@ pub(super) fn grant(
     inheritance: u32,
 ) -> io::Result<IdentityGrant> {
     let _ancestors = retain_ancestors(path)?;
-    // MAXIMUM_ALLOWED suppresses SetSecurityInfo's automatic child traversal.
-    // Every recursive object must be prepared and cleaned explicitly.
+    // Identity updates use a single-object setter, never implicit child traversal.
     let file = OpenOptions::new()
         .access_mode(MAXIMUM_ALLOWED)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
@@ -78,12 +83,54 @@ pub(super) fn grant(
         ));
     }
     let record = FileRecord::capture(path, &file)?;
-    update_acl(&file, profile.sid(), Some(access.mask()), inheritance)?;
+    update_acl_using(
+        &file,
+        profile.sid(),
+        Some(access.mask()),
+        inheritance,
+        set_acl,
+    )?;
     Ok(IdentityGrant {
         record,
         profile: profile.clone(),
         active: true,
     })
+}
+
+pub(super) fn set_acl(
+    file: &File,
+    original: *mut core::ffi::c_void,
+    acl: *mut ACL,
+) -> io::Result<()> {
+    let mut control = 0;
+    let mut revision = 0;
+    checked(unsafe { GetSecurityDescriptorControl(original, &mut control, &mut revision) })?;
+    let mut descriptor = SECURITY_DESCRIPTOR::default();
+    let raw = (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast();
+    checked(unsafe { InitializeSecurityDescriptor(raw, SECURITY_DESCRIPTOR_REVISION) })?;
+    checked(unsafe {
+        SetSecurityDescriptorDacl(raw, 1, acl, i32::from(control & SE_DACL_DEFAULTED != 0))
+    })?;
+    let preserve = SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED;
+    checked(unsafe { SetSecurityDescriptorControl(raw, preserve, control & preserve) })?;
+    // NtSetSecurityObject addresses this verified handle only. Preserve the
+    // descriptor's inheritance/protection state without traversing its children.
+    let status =
+        unsafe { NtSetSecurityObject(file.as_raw_handle(), DACL_SECURITY_INFORMATION, raw) };
+    if status < 0 {
+        return Err(io::Error::from_raw_os_error(
+            unsafe { RtlNtStatusToDosError(status) } as i32,
+        ));
+    }
+    Ok(())
+}
+
+fn checked(result: i32) -> io::Result<()> {
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) struct FileRecord {
