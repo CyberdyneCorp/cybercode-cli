@@ -11,6 +11,9 @@ use std::time::Duration;
 use cyber_sandbox::windows_container::{Access, AclGrant, ExistingTreePolicy, Profile};
 use cyber_sandbox::windows_launch::{StandardStreams, spawn, spawn_with_stdio};
 
+#[path = "windows_container_launch/package_allowance.rs"]
+mod package_allowance;
+
 fn environment(root: &Path, role: &str, profile: &Profile) -> BTreeMap<String, String> {
     BTreeMap::from([
         ("SystemRoot".into(), std::env::var("SystemRoot").unwrap()),
@@ -141,13 +144,14 @@ async fn existing_tree_exclusions_enforce_readonly_and_hidden_descendants() {
         }
     }
     std::fs::write(scope.join("writable/delete.txt"), "delete control").unwrap();
+    std::fs::write(scope.join("protected/delete.txt"), "protected control").unwrap();
     let policy = ExistingTreePolicy {
         access: Access::Write,
         read_only: vec![scope.join("protected"), scope.join("secret")],
         unreadable: vec![scope.join("secret")],
     };
     let mut tree = profile
-        .grant_existing_tree_policy(&scope, &policy, 8)
+        .grant_existing_tree_policy(&scope, &policy, 9)
         .unwrap();
     let env = environment(directory.path(), "existing-policy", &profile);
     let child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
@@ -731,6 +735,14 @@ fn container_worker() {
     if role == "streams" {
         exit_worker(&root, stream_worker(&root), "streams", 52);
     }
+    if role == "package-baseline" {
+        exit_worker(
+            &root,
+            package_allowance::baseline_worker(&root),
+            "package-baseline",
+            57,
+        );
+    }
     if role == "existing-policy" {
         exit_worker(&root, existing_policy_worker(&root), "existing-policy", 56);
     }
@@ -780,6 +792,7 @@ fn existing_policy_worker(root: &Path) -> std::io::Result<()> {
         "forbidden",
     ))?;
     denied_access(std::fs::remove_file(scope.join("protected/leaf.txt")))?;
+    denied_access(std::fs::remove_file(scope.join("protected/delete.txt")))?;
     denied_access(std::fs::write(scope.join("protected/new.txt"), "forbidden"))?;
     denied_access(std::fs::read(scope.join("secret/leaf.txt")))?;
     denied_access(std::fs::write(scope.join("secret/leaf.txt"), "forbidden"))?;

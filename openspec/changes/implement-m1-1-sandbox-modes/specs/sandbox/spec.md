@@ -120,6 +120,13 @@
 - **AND** rollback and cleanup SHALL remove only the invocation identity's entries
 - **AND** existing-object exclusions SHALL NOT claim protection of absent names or future children, or enable Windows runtime confinement by themselves
 
+#### Scenario: Exclusion denies survive broad application permissions
+- **WHEN** native validation installs broad application-package allowances on fixture directories and files
+- **THEN** an unrestricted-by-exclusions AppContainer identity SHALL first prove allowed reads/writes, creation and parent-based deletion against that same fixture
+- **AND** a separate fresh identity with exclusion policy SHALL retain ordinary writable operations while denying protected writes/deletion/creation, hidden reads/writes and security changes
+- **AND** parent delete-child allowance SHALL NOT bypass invocation-specific exclusions
+- **AND** fixture allowances SHALL be scoped to temporary objects and restored through retained verified handles
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner
