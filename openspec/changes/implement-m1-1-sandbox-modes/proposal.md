@@ -7,12 +7,14 @@ M1.1 extends local execution to Windows and completes auto-mode permissions. P1 
 - Add auto-mode classification using the evaluator role, durable decisions, consecutive-block tracking and attended/unattended fallbacks.
 - Include auto in Shift+Tab's documented cycle and show pending mode changes until the next Turn.
 - Add native Windows CI to prove runtime enforcement, rather than treating a successful cross-build as sandbox evidence.
+- Add native PowerShell tool discovery, permission resources and foreground dispatch through the shared process owner.
 
 ## Capabilities
 ### Modified Capabilities
 - `sandbox`: Windows enforcement and proxy contract verification.
 - `permissions-modes`: P1 cycling and safe auto-mode decisions.
 - `server-api`: truthful platform listener registration and native listener lifecycle.
+- `builtin-tools`: native PowerShell discovery, authorization and foreground lifecycle.
 
 ## Impact
 Platform process launch, permission host/runtime, TUI mode state, durable event registry and Windows CI. Development proceeds under the active P1 implementation goal; incomplete P0 local-baseline evidence remains an independent release gate. Windows sandbox APIs require native tests; no security claim will rely solely on macOS validation.

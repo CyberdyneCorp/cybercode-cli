@@ -1,15 +1,17 @@
 - [ ] Track P0 local baseline/long-task evidence separately; the six-platform CI matrix passes. This does not block authorized P1 implementation.
 - [ ] Audit Windows compilation, shell, process cancellation and service lifecycle boundaries.
-  Source audit is recorded in `windows-audit.md`; native compilation, TCP listener lifecycle and the standalone job-owner helper now pass. Shell dispatch, native tool cancellation and authenticated service lifecycle remain open.
+  Source audit is recorded in `windows-audit.md`; native compilation, TCP listener lifecycle and the standalone job-owner helper now pass. Native Bash dispatch and cancellation pass; native PowerShell dispatch verification and authenticated service lifecycle remain open.
 - [ ] Implement restricted-token AppContainer launch, scoped ACL grants and job-object cleanup.
   - [x] Add and prove an isolated Windows job-owner helper before native tool integration; verify normal exit and forced termination clean up grandchildren. Native Windows tests pass at `5351154`; built-in dispatch integration and confinement remain open.
-  - [x] Add the parent-owned job launch interface and private helper permit before user-code dispatch. Local sandbox regressions and workspace Clippy pass; Windows-only proof is pending.
+  - [x] Add the parent-owned job launch interface and private helper permit before user-code dispatch. Local sandbox regressions and workspace Clippy pass; native ownership proof passes at `d4d8416`.
   - [x] Prove parent death before/after assignment, owner drop, explicit termination and aborted wait futures on native Windows, then integrate tool cancellation and timeout. Native CI passes at `d4d8416`.
   - [x] Route foreground shell execution through the parent-owned Windows process interface, including full access; accept configured Unix-shell `.exe` names and locate the Windows helper filename.
   - [x] Prove native host timeout/cancellation, normal-exit descendant cleanup, output/environment/stdin preservation and missing-helper refusal at `d4d8416`. Native PowerShell tool dispatch and confinement remain separate required work.
   - [ ] Complete native PowerShell permission facts, then register and verify dispatch with the shared process owner.
-    - [x] Collect bounded native resources and initial literal filesystem operands; six cross-platform parser tests pass.
-    - [ ] Prove native drive-path facts, parameter abbreviations, advanced mutation semantics and complete protected/irreversible boundaries.
+    - [x] Collect bounded native resources and initial literal filesystem operands; six cross-platform parser tests pass; native drive-path facts also pass at `d205ded`.
+    - [x] Prove initial native drive-path facts at `d205ded`.
+    - [ ] Verify native registration, rule filtering, golden/Unicode output, closed stdin, timeout and cancellation with individual approval.
+    - [ ] Complete legacy output encoding, parameter abbreviations, advanced mutation semantics and protected/irreversible boundaries.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.

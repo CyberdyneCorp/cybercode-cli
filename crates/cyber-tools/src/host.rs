@@ -42,7 +42,7 @@ pub struct HostOptions {
     pub temp_dir: PathBuf,
     /// The `--sandbox` flag, which alone may select `full-access`.
     pub sandbox_policy: Option<String>,
-    /// `cyber-sandbox-exec`, needed on Linux for proxied network access.
+    /// Sandbox helper: Linux proxy bridging and Windows process ownership.
     pub sandbox_helper: Option<PathBuf>,
 }
 
@@ -332,6 +332,10 @@ impl ToolHost for BuiltinHost {
             .filter(|d| {
                 d.spec.name != "websearch" || self.websearch_available(Path::new(&turn.directory))
             })
+            .filter(|d| {
+                d.spec.name != "powershell"
+                    || tools::powershell::installed(Path::new(&turn.directory)).is_some()
+            })
             .collect()
     }
 
@@ -365,7 +369,7 @@ impl ToolHost for BuiltinHost {
                 inv: &inv,
                 cancel,
             };
-            let keep_tail = inv.name == "bash";
+            let keep_tail = matches!(inv.name.as_str(), "bash" | "powershell");
             match tool.run(&ctx).await {
                 Ok(text) => match self.budget(&ctx.location).apply(text, keep_tail) {
                     Ok(text) => ToolOutcome::Ok(text),

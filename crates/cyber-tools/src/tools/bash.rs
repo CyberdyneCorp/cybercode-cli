@@ -18,8 +18,8 @@ use crate::host::Ctx;
 use crate::permissions::{RemovalScope, Request, bash_removal, literal_edits};
 
 const CAPTURE: usize = 1024 * 1024;
-const DEFAULT_TIMEOUT_MS: u64 = 120_000;
-const MAX_TIMEOUT_MS: u64 = 600_000;
+pub(super) const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+pub(super) const MAX_TIMEOUT_MS: u64 = 600_000;
 const SHELLS: &[&str] = &["bash", "zsh", "sh", "dash"];
 
 pub(crate) struct Bash;
@@ -81,10 +81,6 @@ async fn authorize(
     if let Some(paths) = &edits {
         mutates = paths.clone();
     }
-    let mut external = mutates.clone();
-    external.push(workdir.to_path_buf());
-    let resources: Vec<String> = analysis.commands.iter().map(|c| c.text.clone()).collect();
-    let always: Vec<String> = analysis.commands.iter().map(|c| c.always.clone()).collect();
     let project = cyber_core::config::project_root(&ctx.location);
     let removal_risk = bash_removal(
         command,
@@ -95,6 +91,31 @@ async fn authorize(
             workdir,
         },
     );
+    authorize_facts(
+        ctx,
+        command,
+        workdir,
+        analysis,
+        removal_risk,
+        edits.is_some(),
+        mutates,
+    )
+    .await
+}
+
+pub(super) async fn authorize_facts(
+    ctx: &Ctx<'_>,
+    command: &str,
+    workdir: &Path,
+    analysis: &Analysis,
+    removal_risk: Option<crate::permissions::RemovalRisk>,
+    file_edit: bool,
+    mutates: Vec<PathBuf>,
+) -> Result<(), ToolError> {
+    let mut external = mutates.clone();
+    external.push(workdir.to_path_buf());
+    let resources: Vec<String> = analysis.commands.iter().map(|c| c.text.clone()).collect();
+    let always: Vec<String> = analysis.commands.iter().map(|c| c.always.clone()).collect();
     let mut metadata = json!({"command": command});
     if let Some(risk) = &removal_risk {
         metadata["warning"] = json!(risk.warning());
@@ -105,7 +126,7 @@ async fn authorize(
         removal_risk,
         action: "bash".into(),
         resources,
-        file_edit: edits.is_some(),
+        file_edit,
         mutates,
         ..Request::default()
     };
@@ -181,8 +202,16 @@ async fn execute(
     workdir: &Path,
     timeout_ms: u64,
 ) -> Result<String, ToolError> {
-    let mut prepared =
-        crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell), command).await?;
+    let prepared = crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell), command).await?;
+    execute_prepared(ctx, prepared, workdir, timeout_ms).await
+}
+
+pub(super) async fn execute_prepared(
+    ctx: &Ctx<'_>,
+    mut prepared: crate::sandboxing::Prepared,
+    workdir: &Path,
+    timeout_ms: u64,
+) -> Result<String, ToolError> {
     let mut child = Process::spawn(
         &prepared.program,
         &prepared.args,

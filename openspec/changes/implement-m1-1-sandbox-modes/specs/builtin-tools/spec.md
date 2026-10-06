@@ -13,3 +13,15 @@
 - **AND** ordinary quoted output SHALL remain data
 - **AND** literal filesystem targets SHALL participate in external-directory and protected-path checks
 - **AND** unresolved bindings or command contexts SHALL NOT enable classifier approval
+
+#### Scenario: Native PowerShell foreground lifecycle
+- **WHEN** an approved native PowerShell call times out or its Turn is interrupted
+- **THEN** its parent-owned process boundary SHALL terminate the interpreter and settle the call
+- **AND** closed standard input SHALL remain closed to the user command
+- **AND** unavailable Windows confinement or a missing process-owner helper SHALL refuse launch
+
+#### Scenario: Native PowerShell discovery and modes
+- **WHEN** Windows tool definitions are requested
+- **THEN** interpreter discovery SHALL prefer an installed absolute `pwsh.exe` before `powershell.exe` and exclude checkout executables and relative PATH entries
+- **AND** plan mode or a `bash` tool deny SHALL hide `powershell`
+- **AND** a denied constituent command SHALL refuse compound source execution

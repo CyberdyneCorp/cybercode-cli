@@ -3,6 +3,7 @@
 pub(crate) mod bash;
 mod fs;
 pub(crate) mod patch;
+pub(crate) mod powershell;
 mod process;
 mod search;
 mod session;
@@ -31,7 +32,7 @@ pub(crate) trait Tool: Send + Sync {
 }
 
 pub(crate) fn all() -> Vec<Box<dyn Tool>> {
-    vec![
+    let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(fs::Read),
         Box::new(fs::Write),
         Box::new(fs::Edit),
@@ -48,13 +49,21 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(session::HistorySearch),
         Box::new(session::PlanEnter),
         Box::new(session::PlanExit),
-    ]
+    ];
+    #[cfg(windows)]
+    let tools = {
+        let mut tools = tools;
+        tools.push(Box::new(powershell::PowerShell));
+        tools
+    };
+    tools
 }
 
 /// The permission action a tool checks.
 pub(crate) fn action_of(name: &str) -> &str {
     match name {
         "write" | "edit" | "apply_patch" => "edit",
+        "powershell" => "bash",
         other => other,
     }
 }

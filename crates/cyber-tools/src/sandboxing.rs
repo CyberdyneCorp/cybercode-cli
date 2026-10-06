@@ -30,6 +30,14 @@ pub(crate) async fn prepare(
     shell: &str,
     command: &str,
 ) -> Result<Prepared, ToolError> {
+    prepare_command(ctx, shell, &["-c".to_string(), command.to_string()]).await
+}
+
+pub(crate) async fn prepare_command(
+    ctx: &Ctx<'_>,
+    program: &str,
+    args: &[String],
+) -> Result<Prepared, ToolError> {
     let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
     let home = &ctx.host.opts.home;
     let sandbox = SandboxConfig::resolve(
@@ -63,8 +71,7 @@ pub(crate) async fn prepare(
         helper: ctx.host.opts.sandbox_helper.clone(),
         config: sandbox.clone(),
     };
-    let wrapped = cyber_sandbox::wrap(&launch, shell, &["-c".to_string(), command.to_string()])
-        .map_err(|e| failed(e.to_string()))?;
+    let wrapped = cyber_sandbox::wrap(&launch, program, args).map_err(|e| failed(e.to_string()))?;
     let base: Vec<(String, String)> = if sandbox.policy == Policy::FullAccess {
         std::env::vars().collect()
     } else {

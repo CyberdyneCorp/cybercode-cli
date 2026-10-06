@@ -19,7 +19,7 @@ async fn every_registered_tool_has_a_golden() {
                 .flat_map(|patch| f.tool_names(mode, patch))
         })
         .collect();
-    let fixtures: BTreeSet<_> =
+    let mut fixtures: BTreeSet<_> =
         std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/goldens"))
             .unwrap()
             .map(|e| {
@@ -32,6 +32,9 @@ async fn every_registered_tool_has_a_golden() {
                     .to_string()
             })
             .collect();
+    if !names.contains("powershell") {
+        fixtures.remove("powershell");
+    }
     assert_eq!(names, fixtures);
 }
 
