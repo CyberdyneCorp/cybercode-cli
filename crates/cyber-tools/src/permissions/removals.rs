@@ -7,6 +7,7 @@ use tree_sitter::{Node, Parser};
 use crate::bash_analysis::normalize;
 
 mod bindings;
+mod inline;
 mod input;
 use bindings::{State, word};
 
@@ -250,6 +251,9 @@ fn inspect_command(
         "eval" => inspect_eval(node, args, source, scope, depth, state, risks),
         shell if SHELLS.contains(&shell) => {
             inspect_shell(node, args, source, scope, depth, state, risks);
+        }
+        interpreter if inline::language(interpreter).is_some() => {
+            inline::invocation(interpreter, args, source, scope, depth, state, risks);
         }
         "command" | "builtin" | "exec" | "env" | "nohup" => {
             let mut cursor = node.walk();

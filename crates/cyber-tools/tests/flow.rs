@@ -685,3 +685,40 @@ async fn critical_removal_asks_with_warning_despite_a_saved_approval() {
     flow.settle(&id).await;
     assert_eq!(flow.f.read("keep.txt"), "preserve me");
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_os_sandbox_blocks_inline_writes_after_individual_approval() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions": {"bash": "allow"}}));
+    let target = f.repo.join(".git/hooks-pre-commit");
+    let script = format!(
+        "python3 -c \"open('{}', 'w').write('x')\"",
+        target.display()
+    );
+    let flow = Flow::with(
+        f,
+        vec![call("c1", "bash", json!({"command": script})), text("done")],
+        true,
+        Arc::new(NoSnapshots),
+    );
+    let id = flow.session("default").await;
+    flow.prompt(&id, "run the probe").await;
+    let pending = flow.pending(&id).await;
+    let PendingKind::Permission(ask) = &pending.kind else {
+        panic!("expected permission request")
+    };
+    assert_eq!(ask.action, "bash");
+    assert_eq!(ask.metadata["requires_confirmation"], true);
+    flow.runtime
+        .reply_permission(&pending.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+    let out = flow.output(&id, "c1").await;
+    assert!(
+        out.contains("Operation not permitted") || out.contains("PermissionError"),
+        "{out}"
+    );
+    assert!(!target.exists());
+}

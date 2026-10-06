@@ -87,6 +87,19 @@
 - **WHEN** repeated scalar growth or nested function fan-out exceeds the bounded static-analysis budget
 - **THEN** the guard SHALL return an unresolved result and SHALL NOT permit automatic dispatch
 
+#### Scenario: Inline Python and JavaScript call a critical removal API
+- **WHEN** a literal Python `-c` or JavaScript eval invocation calls a removal API on the repository root, home or Location ancestor
+- **THEN** the same critical-path guard SHALL apply before saved or automatic approval
+- **AND** import aliases, literal scalar bindings and nested executable source SHALL NOT hide the removal
+
+#### Scenario: Inline program contains removal text as data
+- **WHEN** a quoted string containing removal code is only printed by a supported inline program
+- **THEN** that text SHALL NOT be interpreted as an executable removal
+
+#### Scenario: Inline removal dispatch is unresolved
+- **WHEN** a target, dynamic call or execution context cannot be proven by inline analysis
+- **THEN** automatic modes SHALL refuse it and manual modes SHALL require individual confirmation
+
 ### Requirement: accept-edits mode
 (P1) In `accept-edits`, `edit`, `write`, `apply_patch` and `notebook_edit` inside the Location, and the filesystem commands `mkdir`, `touch`, `mv`, `cp` and `rm` (non-recursive) on paths inside the Location, SHALL evaluate as `allow` unless a rule denies them. Every other `ask` stays `ask`.
 

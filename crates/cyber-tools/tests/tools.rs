@@ -391,25 +391,6 @@ async fn question_without_a_user_fails_clearly() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn the_os_sandbox_blocks_writes_that_command_analysis_cannot_see() {
-    let f = Fixture::new();
-    f.set_config(json!({"permissions": {"bash": "allow"}}));
-    // The script hides its target from command analysis; only the OS layer can stop it.
-    let target = f.repo.join(".git/hooks-pre-commit");
-    let script = format!(
-        "python3 -c \"open('{}', 'w').write('x')\"",
-        target.display()
-    );
-    let out = ok(f.call("default", "bash", json!({"command": script})).await);
-    assert!(
-        out.contains("Operation not permitted") || out.contains("PermissionError"),
-        "{out}"
-    );
-    assert!(!target.exists());
-}
-
-#[cfg(target_os = "macos")]
-#[tokio::test]
 async fn sandboxed_commands_get_a_private_writable_tmpdir() {
     let f = Fixture::new();
     f.set_config(json!({"permissions": {"bash": "allow"}}));
@@ -526,4 +507,30 @@ async fn accept_edits_retains_protected_ceilings_through_filesystem_aliases() {
     );
     assert!(out.contains("no interactive approver"), "{out}");
     assert!(!outside.join("new").exists());
+}
+
+#[tokio::test]
+async fn inline_critical_removals_cannot_be_lifted_by_rules_or_saved_approvals() {
+    let f = Fixture::new();
+    f.write("keep.txt", "preserve me");
+    f.set_config(json!({"permissions": {"bash": "allow", "external_directory": "allow"}}));
+    cyber_tools::permissions::saved::save(&f.store, &f.repo, "bash", &["*".into()], "ses_test")
+        .unwrap();
+    // The test workspace is nonempty. These nonrecursive APIs cannot remove it,
+    // even if a regression accidentally reaches the interpreter.
+    for command in [
+        "python3 -c 'import os; os.rmdir(\".\")'",
+        "node -e 'require(\"fs\").rmdirSync(\".\")'",
+    ] {
+        for mode in ["auto", "dont-ask", "bypass"] {
+            let out = failed(f.call(mode, "bash", json!({"command": command})).await);
+            assert!(
+                out.starts_with("Refused: removal of critical path"),
+                "{mode}: {out}"
+            );
+            assert_eq!(f.read("keep.txt"), "preserve me");
+        }
+        let out = failed(f.call("default", "bash", json!({"command": command})).await);
+        assert!(out.contains("no interactive approver"), "{out}");
+    }
 }
