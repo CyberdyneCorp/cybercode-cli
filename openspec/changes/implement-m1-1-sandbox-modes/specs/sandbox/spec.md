@@ -1,11 +1,29 @@
 ## MODIFIED Requirements
 
+### Requirement: Credential masking
+(P0) Sandboxed processes SHALL receive an environment filtered by `sandbox.env`. Variables matching `*_TOKEN`, `*_KEY`, `*_SECRET`, `*PASSWORD*`, `AWS_*`, `GITHUB_TOKEN` and the provider credential variables known to `provider-credentials` SHALL be removed unless listed in `sandbox.env.allow`. Credential files (`~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.docker/config.json`, `~/.ssh`) SHALL be unreadable unless listed in `sandbox.readable_paths`.
+
+#### Scenario: API key hidden from shell
+- **WHEN** the server environment has `OPENAI_API_KEY` and the model runs `env` in the sandbox
+- **THEN** the output does not contain `OPENAI_API_KEY`
+
+#### Scenario: Platform-aware credential names
+- **WHEN** environment filtering compares a variable with a known credential name or explicit allowed name
+- **THEN** Windows SHALL use ordinal case-insensitive name comparison and Unix SHALL use case-sensitive comparison
+- **AND** Unicode normalization SHALL NOT create an unintended allowed-name match
+- **AND** a failed name comparison SHALL NOT authorize an exception or expose a potentially matched credential
+
 ### Requirement: Windows enforcement
 (P1) On Windows the system SHALL run sandboxed processes with a restricted token in an AppContainer, with ACLs granting write access to writable roots only. When unavailable, it SHALL report `sandbox unavailable` as on Linux.
 
 #### Scenario: Windows restricted write
 - **WHEN** a sandboxed PowerShell command writes `C:\Windows\Temp\x` outside the writable roots
 - **THEN** access is denied
+
+#### Scenario: Scoped file access cannot change security
+- **WHEN** an AppContainer receives read or write access to an invocation-scoped file
+- **THEN** it SHALL NOT receive permission to change that file's DACL or owner
+- **AND** native validation SHALL distinguish these denied security rights from allowed ordinary file writes
 
 #### Scenario: Verify Windows process identity before execution
 - **WHEN** a Windows sandbox process is created

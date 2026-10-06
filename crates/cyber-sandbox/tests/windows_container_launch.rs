@@ -40,6 +40,7 @@ fn setup(root: &Path, profile: &Profile) -> (PathBuf, Vec<AclGrant>) {
     for name in ["read.txt", "write.txt", "forbidden.txt", "started.txt"] {
         std::fs::write(root.join(name), "original").unwrap();
     }
+    assert_parent_security_access(root);
     let grants = vec![
         profile.grant(root, Access::Read).unwrap(),
         profile.grant(&program, Access::Read).unwrap(),
@@ -52,6 +53,19 @@ fn setup(root: &Path, profile: &Profile) -> (PathBuf, Vec<AclGrant>) {
             .unwrap(),
     ];
     (program, grants)
+}
+
+fn assert_parent_security_access(root: &Path) {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{WRITE_DAC, WRITE_OWNER};
+    for name in ["read.txt", "write.txt"] {
+        for right in [WRITE_DAC, WRITE_OWNER] {
+            std::fs::OpenOptions::new()
+                .access_mode(right)
+                .open(root.join(name))
+                .unwrap();
+        }
+    }
 }
 
 fn arguments() -> Vec<OsString> {
@@ -659,6 +673,10 @@ fn probe(root: &Path) -> i32 {
     if std::fs::write(root.join("forbidden.txt"), "forbidden").is_ok() {
         return 44;
     }
+    if let Err(diagnostic) = security_rights_denied(root) {
+        std::fs::write(root.join("write.txt"), diagnostic.to_string()).unwrap();
+        return 54;
+    }
     let extras: Vec<String> = std::env::vars()
         .map(|(name, _)| name)
         .filter(|name| {
@@ -699,6 +717,32 @@ fn probe(root: &Path) -> i32 {
         return 46;
     }
     0
+}
+
+fn security_rights_denied(root: &Path) -> Result<(), serde_json::Value> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{WRITE_DAC, WRITE_OWNER};
+    for name in ["read.txt", "write.txt"] {
+        for right in [WRITE_DAC, WRITE_OWNER] {
+            match std::fs::OpenOptions::new()
+                .access_mode(right)
+                .open(root.join(name))
+            {
+                Err(error) if error.raw_os_error() == Some(5) => {}
+                Err(error) => {
+                    return Err(serde_json::json!({
+                        "stage": "security.access", "file": name, "right": right, "code": error.raw_os_error()
+                    }));
+                }
+                Ok(_) => {
+                    return Err(serde_json::json!({
+                        "stage": "security.access", "file": name, "right": right, "unexpected_allow": true
+                    }));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn temp_roundtrip() -> Result<(), serde_json::Value> {
