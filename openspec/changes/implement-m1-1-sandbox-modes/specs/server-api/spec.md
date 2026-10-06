@@ -93,6 +93,12 @@
 - **AND** each WebSocket SHALL cancel and join its pending request tasks and release its channel-owned tool registrations
 - **AND** its shutdown close-frame write SHALL be bounded so a client that stops reading cannot hold cleanup indefinitely
 
+#### Scenario: Pending HTTP2 handler ownership
+- **WHEN** listener shutdown begins with a pending HTTP2 request handler and a connected client
+- **THEN** the listener SHALL bound graceful connection shutdown
+- **AND** the pending handler SHALL release its owned resources within the complete five-second shutdown deadline
+- **AND** cleanup SHALL NOT require the client to disconnect first
+
 #### Scenario: A backpressured connection cannot prevent listener completion
 - **WHEN** shutdown starts while an HTTP response is blocked by a connected client that stops reading
 - **THEN** the TCP or peer-checked Unix listener SHALL stop accepting new connections and own the cleanup of its connection tasks

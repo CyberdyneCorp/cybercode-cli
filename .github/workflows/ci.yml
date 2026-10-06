@@ -72,6 +72,8 @@ jobs:
         run: cargo test --locked -p cyber-server --test runtime shutdown_
       - name: Native server listener lifecycle
         run: cargo test --locked -p cyber-app --test server
+      - name: Native pending HTTP2 request cleanup
+        run: cargo test --locked -p cyber-server --test transport
       - name: Native active-tool service shutdown
         run: cargo test --locked -p cyber-app --test windows_service
       - name: Native CLI service shutdown
