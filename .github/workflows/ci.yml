@@ -58,6 +58,8 @@ jobs:
         run: cargo test --locked -p cyber-tools --test windows_shell
       - name: Native PowerShell critical-path analysis
         run: cargo test --locked -p cyber-tools --test inline_removals powershell_native_
+      - name: Native PowerShell filesystem facts
+        run: cargo test --locked -p cyber-tools --test powershell_analysis native_
       - name: Native server listener lifecycle
         run: cargo test --locked -p cyber-app --test server
 

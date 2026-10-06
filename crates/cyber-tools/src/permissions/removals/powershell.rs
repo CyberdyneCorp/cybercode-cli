@@ -5,6 +5,7 @@ use base64::Engine as _;
 use tree_sitter::{Node, Parser};
 
 mod command_line;
+mod facts;
 use command_line::Source;
 
 pub(super) fn recognizes(name: &str) -> bool {
@@ -114,6 +115,17 @@ pub(super) fn inspect_program(
     state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
+    inspect_with_commands(code, scope, depth, state, risks, &mut None);
+}
+
+pub(super) fn inspect_with_commands(
+    code: &str,
+    scope: &RemovalScope<'_>,
+    depth: usize,
+    state: &State,
+    risks: &mut Vec<RemovalRisk>,
+    commands: &mut Option<Vec<crate::bash_analysis::SimpleCommand>>,
+) {
     if depth > MAX_NESTING || code.len() > 1024 * 1024 {
         unresolved(risks, "source or nesting limit exceeded");
         return;
@@ -143,6 +155,7 @@ pub(super) fn inspect_program(
         0,
         &mut state,
         risks,
+        commands,
     );
 }
 
@@ -153,6 +166,7 @@ fn walk(
     depth: usize,
     state: &mut State,
     risks: &mut Vec<RemovalRisk>,
+    commands: &mut Option<Vec<crate::bash_analysis::SimpleCommand>>,
 ) {
     if depth > 128 || !state.visit() {
         unresolved(risks, "analysis budget exhausted");
@@ -165,7 +179,12 @@ fn walk(
             return;
         }
         "assignment_expression" => assignment(node, source, state, risks),
-        "command" => command(node, source, scope, state, risks),
+        "command" => {
+            if let Some(commands) = commands {
+                commands.push(facts::command(node, source, scope, state));
+            }
+            command(node, source, scope, state, risks);
+        }
         "invokation_expression" | "invokation_foreach_expression" => {
             member_removal(node, source, scope, state, risks)
         }
@@ -190,7 +209,7 @@ fn walk(
         if state.exhausted() {
             break;
         }
-        walk(child, source, scope, depth + 1, state, risks);
+        walk(child, source, scope, depth + 1, state, risks, commands);
     }
     if state.exhausted() {
         unresolved(risks, "analysis budget exhausted");

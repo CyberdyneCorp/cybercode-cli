@@ -14,7 +14,7 @@ Implemented today:
 
 Recovery/trust tests, per-tool goldens, storage measurements and all six macOS/Linux build targets have passing evidence. Default-service startup meets the 150 ms first-frame target on the named M2 Max machine; the embedded-mode measurements retain an outlier. See [P0 exit evidence](docs/measurements/p0-exit-evidence.md) and [evaluation results and local-model setup](eval/README.md).
 
-**In progress:** P1 implementation is authorized and starts with M1.1, covering Windows sandbox enforcement, network-policy integration and mode cycling with an auto-mode classifier. The evaluator runtime foundation, Bash and initial Python/JavaScript removal guards, four-mode TUI cycling and effective/pending mode display are implemented. Classifier approval integration and native Windows enforcement remain open while P0 local-model validation continues. See [P1 implementation status](docs/implementation/p1-status.md). Workflows, goals, loops, remote control, cloud runners and additional clients are later roadmap work. Deferred PTY routes, Landlock fallback and parts of the TUI are listed in the roadmap and are not required to exit P0.
+**In progress:** P1 starts with M1.1. The evaluator runtime, Bash and initial Python/JavaScript/PowerShell removal guards, four-mode TUI cycling and effective/pending mode display are implemented. Native Windows builds and parent-owned foreground command cleanup pass CI. Classifier approval integration, the native PowerShell tool and Windows confinement remain open. See [P1 implementation status](docs/implementation/p1-status.md) for all five milestones and remaining contracts, including the local web client and editor integrations. P0 local-model validation continues separately. Workflows, goals, loops, remote control and cloud runners belong to later phases. Deferred PTY routes, Landlock fallback and parts of the TUI are not required to exit P0.
 
 The [roadmap](ROADMAP.md) tracks delivery and deferrals. The [OpenSpec contracts](openspec/specs) describe both implemented and planned behavior, tagged by phase. [Architecture decisions](docs/decisions/0001-storage-architecture.md) record design rationale.
 
@@ -101,7 +101,7 @@ python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
 2. **Local-first.** Local state and local-model execution do not require a Cyber account. Hosted model calls require connectivity and provider credentials. Cyber Account and hosted services are planned.
 3. **Server-first.** The TUI, `exec` and TypeScript SDK share the public server API. IDE, web and mobile clients are planned.
 4. **Durable execution.** Prompt admission, tool calls and context changes are recorded before execution proceeds. Recovery handles interrupted streams and uncertain tool outcomes explicitly; file-backed storage uses FULL durability under the documented filesystem assumptions.
-5. **Controlled execution.** Permission rules, protected paths, an OS sandbox and snapshots constrain repository work. Windows enforcement and the auto-mode classifier are planned for M1.1.
+5. **Controlled execution.** Permission rules, protected paths, an OS sandbox and snapshots constrain repository work. Windows enforcement and classifier approval integration remain M1.1 work.
 6. **Familiar conventions.** Repository instructions and skills use familiar `AGENTS.md`/`CLAUDE.md` and `SKILL.md` conventions. MCP integration and setup import are later roadmap work.
 
 ## Current architecture
@@ -121,7 +121,7 @@ python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
                 snapshots        OpenAI-compatible endpoints
 ```
 
-**Stack:** Rust with tokio, axum, rusqlite and ratatui. SQLite is bundled. Linux sandbox builds also ship the `cyber-sandbox-exec` helper; see the [platform build matrix](.github/workflows/ci.yml). The generated TypeScript SDK is available now; plugin kits and generated Rust/Python SDKs are planned.
+**Stack:** Rust with tokio, axum, rusqlite and ratatui. SQLite is bundled. Linux sandboxing and Windows command ownership use the `cyber-sandbox-exec` helper; see the [platform build matrix](.github/workflows/ci.yml). The generated TypeScript SDK is available now; plugin kits and generated Rust/Python SDKs are planned.
 
 SQLite owns local execution state. PostgreSQL is a design choice for later hosted control-plane services, not a dependency of the local core. See [Storage architecture](docs/decisions/0001-storage-architecture.md).
 

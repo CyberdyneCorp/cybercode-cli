@@ -66,6 +66,45 @@ pub fn bash_removal(command: &str, scope: &RemovalScope<'_>) -> Option<RemovalRi
         .or_else(|| risks.into_iter().next())
 }
 
+/// Native PowerShell command resources and removal risks from one bounded AST walk.
+pub fn powershell_analysis(
+    source: &str,
+    scope: &RemovalScope<'_>,
+) -> (crate::bash_analysis::Analysis, Option<RemovalRisk>) {
+    let mut risks = Vec::new();
+    let mut commands = Some(Vec::new());
+    powershell::inspect_with_commands(
+        source,
+        scope,
+        0,
+        &State::new(scope, false),
+        &mut risks,
+        &mut commands,
+    );
+    let mut commands = commands.unwrap();
+    let unparseable = commands.is_empty();
+    if unparseable {
+        let text = source.trim().to_string();
+        commands.push(crate::bash_analysis::SimpleCommand {
+            always: text.clone(),
+            text,
+            mutates: Vec::new(),
+        });
+    }
+    let risk = risks
+        .iter()
+        .find(|r| matches!(r, RemovalRisk::Critical(_)))
+        .cloned()
+        .or_else(|| risks.into_iter().next());
+    (
+        crate::bash_analysis::Analysis {
+            commands,
+            unparseable,
+        },
+        risk,
+    )
+}
+
 fn inspect(
     command: &str,
     scope: &RemovalScope<'_>,
