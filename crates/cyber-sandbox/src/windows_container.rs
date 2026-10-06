@@ -919,6 +919,23 @@ mod tests {
     }
 
     #[test]
+    fn identity_directory_grants_coexist_with_preparation_pins() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let moved = directory.path().join("moved");
+        std::fs::create_dir(&root).unwrap();
+        let guards = retain_ancestors(&root.join("future.txt")).unwrap();
+        let mut profile = Profile::new().unwrap();
+        let lease = profile.grant_relocatable(&root, Access::Read).unwrap();
+        assert!(std::fs::rename(&root, &moved).is_err());
+        lease.close().unwrap();
+        assert!(std::fs::rename(&root, &moved).is_err());
+        drop(guards);
+        std::fs::rename(&root, &moved).unwrap();
+        profile.close().unwrap();
+    }
+
+    #[test]
     fn deleted_identity_cleanup_does_not_touch_replacement_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("original.txt");

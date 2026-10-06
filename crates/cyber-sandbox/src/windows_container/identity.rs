@@ -14,7 +14,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_ID_DESCRIPTOR_0, FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_WRITE, FileIdInfo,
     FileIdType, GetFileInformationByHandle, GetFileInformationByHandleEx, OpenFileById,
 };
-use windows_sys::Win32::System::SystemServices::{MAXIMUM_ALLOWED, SECURITY_DESCRIPTOR_REVISION};
+use windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
+
+const METADATA_ACCESS: u32 = READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES;
 
 /// A direct-object grant reopened by verified file ID during cleanup.
 /// It owns no child handle and grants no recursive tree by itself.
@@ -60,7 +62,7 @@ pub(super) fn grant(
     let _ancestors = retain_ancestors(path)?;
     // Identity updates use a single-object setter, never implicit child traversal.
     let file = OpenOptions::new()
-        .access_mode(MAXIMUM_ALLOWED)
+        .access_mode(METADATA_ACCESS)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)?;
     let metadata = file.metadata()?;
@@ -264,7 +266,7 @@ impl FileRecord {
             OpenFileById(
                 self.volume.as_raw_handle(),
                 &self.descriptor,
-                MAXIMUM_ALLOWED,
+                METADATA_ACCESS,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 null(),
                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
