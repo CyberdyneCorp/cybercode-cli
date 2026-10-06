@@ -11,7 +11,7 @@ use std::time::Duration;
 use cyber_sandbox::windows_container::{Access, AclGrant, Profile};
 use cyber_sandbox::windows_launch::spawn;
 
-fn environment(root: &Path, role: &str) -> BTreeMap<String, String> {
+fn environment(root: &Path, role: &str, profile: &Profile) -> BTreeMap<String, String> {
     BTreeMap::from([
         ("SystemRoot".into(), std::env::var("SystemRoot").unwrap()),
         (
@@ -19,6 +19,10 @@ fn environment(root: &Path, role: &str) -> BTreeMap<String, String> {
             std::env::var("LOCALAPPDATA").unwrap(),
         ),
         ("CYBER_CONTAINER_ROOT".into(), root.to_str().unwrap().into()),
+        (
+            "CYBER_CONTAINER_STORAGE".into(),
+            profile.storage_path().unwrap().to_str().unwrap().into(),
+        ),
         ("CYBER_CONTAINER_ROLE".into(), role.into()),
     ])
 }
@@ -67,7 +71,7 @@ fn dropping_a_live_container_owner_terminates_the_original_process() {
     let directory = tempfile::tempdir().unwrap();
     let mut profile = Profile::new().unwrap();
     let (program, grants) = setup(directory.path(), &profile);
-    let env = environment(directory.path(), "wait");
+    let env = environment(directory.path(), "wait", &profile);
     let child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
     let retained = child.as_handle().try_clone_to_owned().unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -97,7 +101,7 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let _control = std::net::TcpStream::connect(address).unwrap();
-    let mut env = environment(directory.path(), "probe");
+    let mut env = environment(directory.path(), "probe", &profile);
     env.insert("CYBER_CONTAINER_ADDRESS".into(), address.to_string());
     let mut child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
     assert_eq!(
@@ -129,7 +133,7 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
 fn invalid_launch_inputs_fail_before_starting_a_process() {
     let directory = tempfile::tempdir().unwrap();
     let mut profile = Profile::new().unwrap();
-    let env = environment(directory.path(), "probe");
+    let env = environment(directory.path(), "probe", &profile);
     assert!(
         spawn(
             &profile,
@@ -224,6 +228,9 @@ fn probe(root: &Path) -> i32 {
                 "SYSTEMROOT",
                 "LOCALAPPDATA",
                 "CYBER_CONTAINER_ROOT",
+                "CYBER_CONTAINER_STORAGE",
+                "TEMP",
+                "TMP",
                 "CYBER_CONTAINER_ROLE",
                 "CYBER_CONTAINER_ADDRESS",
             ]
@@ -238,6 +245,9 @@ fn probe(root: &Path) -> i32 {
         .unwrap();
         return 45;
     }
+    if !private_temp() {
+        return 50;
+    }
     let address = std::env::var("CYBER_CONTAINER_ADDRESS")
         .unwrap()
         .parse()
@@ -246,4 +256,16 @@ fn probe(root: &Path) -> i32 {
         return 46;
     }
     0
+}
+
+fn private_temp() -> bool {
+    let storage = PathBuf::from(std::env::var_os("CYBER_CONTAINER_STORAGE").unwrap());
+    let Ok(storage) = std::fs::canonicalize(storage) else {
+        return false;
+    };
+    ["TEMP", "TMP"].iter().all(|name| {
+        std::env::var_os(name)
+            .and_then(|value| std::fs::canonicalize(PathBuf::from(value)).ok())
+            .is_some_and(|path| path.starts_with(&storage))
+    })
 }

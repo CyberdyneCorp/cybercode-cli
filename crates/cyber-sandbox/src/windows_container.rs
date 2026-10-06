@@ -4,19 +4,20 @@
 
 use std::fs::{File, OpenOptions};
 use std::io;
+use std::os::windows::ffi::OsStringExt;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::{Arc, Mutex};
 
 use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Security::Authorization::{
-    EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo, REVOKE_ACCESS, SE_FILE_OBJECT,
-    SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_W,
+    ConvertSidToStringSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo, REVOKE_ACCESS,
+    SE_FILE_OBJECT, SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::Isolation::{
-    CreateAppContainerProfile, DeleteAppContainerProfile,
+    CreateAppContainerProfile, DeleteAppContainerProfile, GetAppContainerFolderPath,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CopySid, DACL_SECURITY_INFORMATION, EqualSid, FreeSid,
@@ -26,6 +27,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, READ_CONTROL, WRITE_DAC,
 };
+use windows_sys::Win32::System::Com::CoTaskMemFree;
 
 // Serialize our own read/merge/write operations on shared objects.
 static ACL_UPDATE: Mutex<()> = Mutex::new(());
@@ -75,6 +77,22 @@ impl Profile {
 
     pub fn name(&self) -> &str {
         &self.0.name
+    }
+
+    /// Ask Windows for the storage belonging to this exact profile identity.
+    pub fn storage_path(&self) -> io::Result<PathBuf> {
+        self.ensure_active()?;
+        let mut sid = null_mut();
+        let status = unsafe { ConvertSidToStringSidW(self.sid(), &mut sid) };
+        let _sid = LocalAllocation(sid.cast());
+        if status == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut path = null_mut();
+        let status = unsafe { GetAppContainerFolderPath(sid, &mut path) };
+        let allocation = TaskAllocation(path);
+        hresult(status)?;
+        allocation.path()
     }
 
     /// Refuse deletion while clones or ACL leases still own the identity.
@@ -209,6 +227,30 @@ impl Drop for AllocatedSid {
 }
 
 struct LocalAllocation(*mut core::ffi::c_void);
+
+struct TaskAllocation(*mut u16);
+
+impl TaskAllocation {
+    fn path(&self) -> io::Result<PathBuf> {
+        if self.0.is_null() {
+            return Err(io::Error::other("AppContainer storage path is missing"));
+        }
+        // Windows returns a valid NUL-terminated UTF-16 allocation.
+        let mut length = 0;
+        while unsafe { *self.0.add(length) } != 0 {
+            length += 1;
+        }
+        let units = unsafe { std::slice::from_raw_parts(self.0, length) };
+        Ok(std::ffi::OsString::from_wide(units).into())
+    }
+}
+
+impl Drop for TaskAllocation {
+    fn drop(&mut self) {
+        // GetAppContainerFolderPath transfers a CoTaskMem allocation to the caller.
+        unsafe { CoTaskMemFree(self.0.cast()) };
+    }
+}
 
 impl Drop for LocalAllocation {
     fn drop(&mut self) {
