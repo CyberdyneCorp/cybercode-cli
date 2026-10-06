@@ -7,7 +7,7 @@ use std::io;
 use std::os::windows::ffi::OsStringExt;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::{AsRawHandle, BorrowedHandle};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,7 +27,8 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, READ_CONTROL, WRITE_DAC,
+    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_READ, READ_CONTROL, WRITE_DAC,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Threading::ResumeThread;
@@ -131,6 +132,7 @@ impl Profile {
             .lock()
             .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
         self.ensure_unstarted()?;
+        let _ancestors = retain_ancestors(path)?;
         let file = OpenOptions::new()
             .access_mode(READ_CONTROL | WRITE_DAC)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
@@ -192,6 +194,79 @@ impl Profile {
         }
         Ok(())
     }
+}
+
+/// Pin each checked directory while opening and granting the leaf. Sharing only
+/// reads refuses conflicting directory writers and deletion/rename handles.
+fn retain_ancestors(path: &Path) -> io::Result<Vec<File>> {
+    let components: Vec<_> = path.components().collect();
+    validate_local_path(&components)?;
+    let mut current = PathBuf::new();
+    let mut ancestors = Vec::new();
+    for component in &components[..components.len() - 1] {
+        current.push(component.as_os_str());
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
+        let directory = OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&current)?;
+        let metadata = directory.metadata()?;
+        if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ACL grant ancestors must be ordinary directories",
+            ));
+        }
+        ancestors.push(directory);
+    }
+    Ok(ancestors)
+}
+
+fn validate_local_path(components: &[Component<'_>]) -> io::Result<()> {
+    let local = matches!(
+        components.first(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+    );
+    let rooted = matches!(components.get(1), Some(Component::RootDir));
+    let ordinary = components
+        .get(2..)
+        .is_some_and(|tail| !tail.is_empty() && tail.iter().all(ordinary_component));
+    if local && rooted && ordinary {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ACL grants require an absolute local path without parent traversal",
+        ))
+    }
+}
+
+fn ordinary_component(component: &Component<'_>) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    let Component::Normal(name) = component else {
+        return false;
+    };
+    let units: Vec<_> = name.encode_wide().collect();
+    if matches!(units.last(), Some(32 | 46))
+        || units
+            .iter()
+            .any(|unit| matches!(unit, 0..=31 | 47 | 58 | 92))
+    {
+        return false;
+    }
+    let name = String::from_utf16_lossy(&units).to_ascii_uppercase();
+    let stem = name.split('.').next().unwrap_or("").trim_end();
+    let reserved = matches!(stem, "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(
+                stem.get(3..),
+                Some("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+            ));
+    !reserved
 }
 
 pub(crate) struct LaunchReservation(Profile);
@@ -694,6 +769,10 @@ mod tests {
         let target = directory.path().join("target");
         let link = directory.path().join("junction");
         std::fs::create_dir(&target).unwrap();
+        let nested = target.join("nested.txt");
+        std::fs::write(&nested, "outside").unwrap();
+        let nested_object = file(&nested);
+        let original = all_entries(&nested_object);
         let status = std::process::Command::new("cmd.exe")
             .args(["/d", "/c", "mklink", "/j"])
             .arg(&link)
@@ -706,6 +785,16 @@ mod tests {
         );
         let mut profile = Profile::new().unwrap();
         assert!(profile.grant(&link, Access::Write).is_err());
+        assert!(
+            profile
+                .grant(&link.join("nested.txt"), Access::Write)
+                .is_err()
+        );
+        assert_eq!(all_entries(&nested_object), original);
+        let ordinary = profile.grant(&nested, Access::Write).unwrap();
+        assert_mask(&nested_object, &profile, Access::Write);
+        ordinary.close().unwrap();
+        assert_eq!(all_entries(&nested_object), original);
         let object = OpenOptions::new()
             .access_mode(READ_CONTROL)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
@@ -714,5 +803,62 @@ mod tests {
         assert!(entries(&object, &profile).is_empty());
         std::fs::remove_dir(&link).unwrap();
         profile.close().unwrap();
+    }
+
+    #[test]
+    fn ancestor_handles_pin_paths_until_grant_preparation_finishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory.path().join("parent");
+        let moved = directory.path().join("moved");
+        std::fs::create_dir(&parent).unwrap();
+        let path = parent.join("file.txt");
+        std::fs::write(&path, "original").unwrap();
+        let ancestors = retain_ancestors(&path).unwrap();
+        assert!(std::fs::rename(&parent, &moved).is_err());
+        assert!(
+            OpenOptions::new()
+                .access_mode(FILE_GENERIC_WRITE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&parent)
+                .is_err()
+        );
+        drop(ancestors);
+        std::fs::rename(&parent, &moved).unwrap();
+        let mut profile = Profile::new().unwrap();
+        let lease = profile
+            .grant(&moved.join("file.txt"), Access::Read)
+            .unwrap();
+        // Preparation guards must not restrict ordinary later directory writes.
+        std::fs::write(moved.join("another.txt"), "later").unwrap();
+        std::fs::rename(&moved, &parent).unwrap();
+        lease.close().unwrap();
+        assert!(entries(&file(&path), &profile).is_empty());
+        profile.close().unwrap();
+    }
+
+    #[test]
+    fn unsafe_path_shapes_are_refused_before_acl_changes() {
+        for path in [
+            "relative.txt",
+            r"C:relative.txt",
+            r"C:\parent\..\file.txt",
+            r"\\server\share\file.txt",
+            r"\\.\PhysicalDrive0",
+            r"C:\parent\.. \file.txt",
+            r"C:\parent\file.txt:stream",
+            r"C:\parent\NUL.txt",
+            r"C:\parent\COM¹",
+        ] {
+            let components: Vec<_> = Path::new(path).components().collect();
+            assert_eq!(
+                validate_local_path(&components).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput,
+                "{path}"
+            );
+        }
+        for path in [r"C:\parent\file.txt", r"\\?\C:\parent\file.txt"] {
+            let components: Vec<_> = Path::new(path).components().collect();
+            validate_local_path(&components).unwrap();
+        }
     }
 }

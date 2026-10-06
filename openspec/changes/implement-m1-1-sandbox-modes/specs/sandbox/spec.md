@@ -57,6 +57,8 @@
 - **AND** another identity's grant added during the lease SHALL survive cleanup
 - **AND** profile deletion SHALL refuse while a grant lease still owns the identity
 - **AND** reparse points and overlapping grants for the same identity SHALL be refused
+- **AND** direct-object grant preparation SHALL refuse paths through reparse-point ancestors and retain checked ancestor handles until the original object is opened and its ACL updated
+- **AND** relative, parent-traversing and unsupported device paths SHALL be refused before ACL mutation
 - **AND** implementing these ownership primitives alone SHALL NOT report Windows confinement as available
 
 #### Scenario: Successful invocation identities are single-use
