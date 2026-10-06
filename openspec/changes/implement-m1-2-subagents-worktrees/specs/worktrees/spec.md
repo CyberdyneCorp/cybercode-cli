@@ -1,5 +1,27 @@
 ## MODIFIED Requirements
 
+### Requirement: Setup commands
+(P1) After creation the system SHALL run `worktrees.setup` commands (for example `["npm ci"]`) in the worktree inside the sandbox, streaming output to the Session. A failing setup SHALL be reported but SHALL NOT delete the worktree.
+
+#### Scenario: Setup failure reported
+- **WHEN** `npm ci` fails during setup
+- **THEN** the Session shows the failure and stays in the worktree
+
+#### Scenario: Ordered streaming setup
+- **WHEN** trusted resolved configuration supplies multiple setup commands
+- **THEN** commands execute sequentially through the runtime's sandboxed, cancellation-owned execution port in the verified owned worktree
+- **AND** stdout and stderr chunks reach the Session as they arrive
+- **AND** the first nonzero or signal termination stops subsequent commands
+
+#### Scenario: Interrupted setup preserves user work
+- **WHEN** setup execution fails or its owning future is cancelled
+- **THEN** the worktree and files already written remain intact and the repository lock is released
+- **AND** the runtime settles the process tree before retry or cleanup
+
+#### Scenario: Setup ownership mismatch
+- **WHEN** supplied managed ownership differs from the persisted ready record
+- **THEN** setup fails before any command is dispatched
+
 ### Requirement: Untracked file inclusion
 (P1) After creating a worktree, the system SHALL copy untracked files matching patterns in `.worktreeinclude` (gitignore syntax, read from the repository root) from the main checkout. Typical entries are `.env` and `config/local.*`. Copies SHALL never overwrite tracked files.
 

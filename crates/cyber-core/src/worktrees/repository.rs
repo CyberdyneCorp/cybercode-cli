@@ -187,7 +187,11 @@ impl Repository {
         Ok(managed)
     }
 
-    async fn verify(&self, execution: &dyn GitExecution, managed: &Managed) -> io::Result<()> {
+    pub(super) async fn verify(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+    ) -> io::Result<()> {
         linked_git_directory(&managed.path)?;
         let found = Self::discover(execution, &managed.path).await?;
         let branch = line(

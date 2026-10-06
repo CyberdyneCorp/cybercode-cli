@@ -10,6 +10,8 @@ use futures::executor::block_on;
 
 #[path = "worktree_repository/inclusion.rs"]
 mod inclusion;
+#[path = "worktree_repository/setup.rs"]
+mod setup;
 
 #[derive(Clone, Copy)]
 enum Mode {

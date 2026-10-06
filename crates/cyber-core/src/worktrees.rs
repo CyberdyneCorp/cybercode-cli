@@ -2,8 +2,10 @@
 
 mod includes;
 mod repository;
+mod setup;
 pub use includes::IncludedFile;
 pub use repository::{GitExecution, GitFuture, Managed, Repository};
+pub use setup::{SetupEvent, SetupExecution, SetupFuture, SetupOutcome, SetupSink, SetupStream};
 
 use std::path::PathBuf;
 
