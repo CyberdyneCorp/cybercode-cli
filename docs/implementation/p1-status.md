@@ -70,6 +70,8 @@ The low-level Windows launcher creates suspended, capability-free AppContainer p
 
 Direct-object Windows ACL preparation additionally pins and checks all local-disk ancestors before touching the leaf ACL, refusing parent junctions, parent traversal and unsupported path namespaces. New native tests cover junction refusal with an unchanged target ACL, directory replacement/write-handle refusal during preparation, guard release and retained-object revocation after a file moves to another directory. The native profile/ACL and launch steps pass at `b0cb751` ([CI evidence](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37454361291/job/112238207164)); the remaining CI checks are pending. This is preparation for recursive filesystem policy, which remains open.
 
+Recursive Windows root work adds relocatable direct-object leases: capture file/volume identity, verify reopening before mutation and reopen the original object for cleanup after directory movement or path replacement. Identity-based ACL writes suppress automatic child propagation; inherited profile entries are removed explicitly without replacing unrelated ACL entries. Multiply linked files are refused by this single-object primitive. Local tests and cross-target lint pass; new native regressions remain pending. Recursive traversal, exclusions, dynamic-child accounting, crash recovery and actual tool integration are still required.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

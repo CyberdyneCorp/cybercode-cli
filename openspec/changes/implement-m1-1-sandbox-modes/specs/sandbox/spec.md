@@ -69,6 +69,15 @@
 - **AND** grants and successful resume SHALL be serialized so its scope cannot widen after command execution starts
 - **AND** revocation and profile cleanup SHALL remain possible after execution
 
+#### Scenario: Relocatable object ACL cleanup
+- **WHEN** recursive-root preparation records a scoped object by Windows file identity
+- **THEN** it SHALL verify reopening that identity on its original volume before installing a grant
+- **AND** cleanup SHALL reopen and reverify the original object rather than trust its previous path
+- **AND** ordinary directory moves SHALL NOT require keeping every child object handle open
+- **AND** identity-based ACL updates SHALL NOT automatically propagate through unchecked children
+- **AND** cleanup SHALL remove only this invocation's explicit or inherited entries while preserving unrelated entries
+- **AND** this primitive alone SHALL NOT enable recursive roots or report Windows confinement as available
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner

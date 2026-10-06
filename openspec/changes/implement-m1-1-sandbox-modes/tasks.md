@@ -34,6 +34,7 @@
   - [ ] Prove native Git process cleanup and abandoned active-owner cancellation within the complete service deadline.
     - [x] Prove pending HTTP2 handler resource release with the client still connected on native Windows. The new listener-level regression passes locally against unchanged production code in 2.01 seconds and on native Windows at `9436cc7`. Application-owner cancellation and native Git cleanup remain separate open checks.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
+  - [ ] Verify file-identity ACL leases before recursive traversal: ordinary directory moves, original-object cleanup after path replacement, hard-link refusal, suppressed automatic propagation and explicit inherited-entry cleanup preserving unrelated profiles. Local and cross-target checks pass; native execution remains pending. This does not implement a recursive root policy.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.
   - [x] Tool-free evaluator runtime, strict bounded replies, durable event, hidden usage and per-Drain block tracking. Verified by 11 runtime tests; the full workspace, Clippy and OpenSpec checks pass.

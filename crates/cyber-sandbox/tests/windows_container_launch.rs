@@ -215,6 +215,11 @@ fn assert_profile_grants_sealed(profile: &Profile, root: &Path) {
         .err()
         .expect("executed profiles must not widen their grant scope");
     assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
+    let grant = profile
+        .grant_relocatable(&late, Access::Write)
+        .err()
+        .expect("executed profiles must also refuse identity-recorded grants");
+    assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 fn container_tree_case(normal_exit: bool) {

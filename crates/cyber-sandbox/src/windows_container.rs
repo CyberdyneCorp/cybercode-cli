@@ -2,6 +2,9 @@
 //! This foundation does not launch or enable the Windows sandbox.
 #![allow(unsafe_code)]
 
+mod identity;
+pub use identity::IdentityGrant;
+
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::windows::ffi::OsStringExt;
@@ -115,6 +118,27 @@ impl Profile {
     /// Grant only this object, with no inheritance or recursive traversal.
     pub fn grant(&self, path: &Path, access: Access) -> io::Result<AclGrant> {
         self.grant_object(path, access, 0)
+    }
+
+    /// Record a single object's identity without retaining its child handle.
+    /// This does not recursively grant a directory or enable confinement.
+    pub fn grant_relocatable(&self, path: &Path, access: Access) -> io::Result<IdentityGrant> {
+        self.grant_relocatable_object(path, access, 0)
+    }
+
+    fn grant_relocatable_object(
+        &self,
+        path: &Path,
+        access: Access,
+        inheritance: u32,
+    ) -> io::Result<IdentityGrant> {
+        let _preparation = self
+            .0
+            .preparation
+            .lock()
+            .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
+        self.ensure_unstarted()?;
+        identity::grant(self, path, access, inheritance)
     }
 
     pub(crate) fn grant_private_directory(&self, path: &Path) -> io::Result<AclGrant> {
@@ -503,6 +527,45 @@ fn prepare_private_acl(file: &File, sid: PSID) -> io::Result<()> {
     if old.is_null() {
         return Err(io::Error::other("Private directories refuse a null DACL"));
     }
+    let mut words = acl_without_sid(old, sid)?;
+    let replacement = words.as_mut_ptr().cast::<ACL>();
+    // Prevent the parent from reintroducing the inherited profile grant.
+    win32(unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            replacement,
+            null(),
+        )
+    })
+}
+
+fn remove_profile_entries(file: &File, sid: PSID) -> io::Result<()> {
+    let _lock = ACL_UPDATE
+        .lock()
+        .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
+    let (_descriptor, old) = read_acl(file)?;
+    if old.is_null() || sid_entries(old, sid)?.is_empty() {
+        return Ok(());
+    }
+    let mut words = acl_without_sid(old, sid)?;
+    win32(unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            words.as_mut_ptr().cast(),
+            null(),
+        )
+    })
+}
+
+fn acl_without_sid(old: *const ACL, sid: PSID) -> io::Result<Vec<u32>> {
     let own = sid_entries(old, sid)?;
     // The descriptor owns this valid ACL; u32 storage preserves its alignment.
     let size = u32::from(unsafe { (*old).AclSize });
@@ -536,18 +599,7 @@ fn prepare_private_acl(file: &File, sid: PSID) -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
     }
-    // Prevent the parent from reintroducing the inherited profile grant.
-    win32(unsafe {
-        SetSecurityInfo(
-            file.as_raw_handle(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            null_mut(),
-            null_mut(),
-            replacement,
-            null(),
-        )
-    })
+    Ok(words)
 }
 
 fn sid_entries(acl: *const ACL, sid: PSID) -> io::Result<Vec<Vec<u8>>> {
@@ -742,6 +794,95 @@ mod tests {
         assert!(entries(&original, &profile).is_empty());
         assert!(entries(&replacement, &profile).is_empty());
         profile.close().unwrap();
+    }
+
+    #[test]
+    fn identity_leases_allow_directory_moves_and_preserve_other_profiles() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let moved = directory.path().join("moved");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("original.txt");
+        std::fs::write(&path, "original").unwrap();
+        let mut first = Profile::new().unwrap();
+        let mut other = Profile::new().unwrap();
+        let lease = first.grant_relocatable(&path, Access::Write).unwrap();
+        let unrelated = other.grant_relocatable(&path, Access::Read).unwrap();
+        assert!(first.close().is_err());
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(&path, "replacement").unwrap();
+        let original = file(&moved.join("original.txt"));
+        let replacement = file(&path);
+        assert_mask(&original, &first, Access::Write);
+        let preserved = entries(&original, &other);
+        assert!(entries(&replacement, &first).is_empty());
+        let replacement_acl = all_entries(&replacement);
+        lease.close().unwrap();
+        assert!(entries(&original, &first).is_empty());
+        assert_eq!(entries(&original, &other), preserved);
+        assert_eq!(all_entries(&replacement), replacement_acl);
+        unrelated.close().unwrap();
+        assert!(entries(&original, &other).is_empty());
+        first.close().unwrap();
+        other.close().unwrap();
+    }
+
+    #[test]
+    fn identity_setup_refuses_hardlinks_without_acl_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("original.txt");
+        let alias = directory.path().join("alias.txt");
+        std::fs::write(&path, "original").unwrap();
+        std::fs::hard_link(&path, &alias).unwrap();
+        let object = file(&path);
+        let original = all_entries(&object);
+        let mut profile = Profile::new().unwrap();
+        assert!(profile.grant_relocatable(&path, Access::Write).is_err());
+        assert_eq!(all_entries(&object), original);
+        assert_eq!(all_entries(&file(&alias)), original);
+        profile.close().unwrap();
+    }
+
+    #[test]
+    fn identity_updates_do_not_propagate_and_cleanup_removes_inherited_grants() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        std::fs::create_dir(&root).unwrap();
+        let existing = root.join("existing.txt");
+        std::fs::write(&existing, "existing").unwrap();
+        let existing_acl = all_entries(&file(&existing));
+        let mut profile = Profile::new().unwrap();
+        let mut other = Profile::new().unwrap();
+        let lease = profile
+            .grant_relocatable_object(
+                &root,
+                Access::Write,
+                CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE,
+            )
+            .unwrap();
+        assert_eq!(all_entries(&file(&existing)), existing_acl);
+        let created = root.join("created.txt");
+        std::fs::write(&created, "created").unwrap();
+        let object = file(&created);
+        assert_mask(&object, &profile, Access::Write);
+        let inherited = entries(&object, &profile);
+        assert_ne!(
+            inherited[0][1] & windows_sys::Win32::Security::INHERITED_ACE as u8,
+            0,
+        );
+        let unrelated = other.grant_relocatable(&created, Access::Read).unwrap();
+        let preserved = entries(&object, &other);
+        let record = identity::FileRecord::capture(&created, &object).unwrap();
+        lease.close().unwrap();
+        // Suppressed propagation requires explicit cleanup of newly inherited entries.
+        assert_eq!(entries(&object, &profile), inherited);
+        remove_profile_entries(&record.open().unwrap(), profile.sid()).unwrap();
+        assert!(entries(&object, &profile).is_empty());
+        assert_eq!(entries(&object, &other), preserved);
+        unrelated.close().unwrap();
+        profile.close().unwrap();
+        other.close().unwrap();
     }
 
     #[test]
