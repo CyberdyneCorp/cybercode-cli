@@ -11,6 +11,8 @@ mod seatbelt;
 #[cfg(windows)]
 pub mod windows_container;
 #[cfg(windows)]
+pub mod windows_launch;
+#[cfg(windows)]
 pub mod windows_process;
 
 use std::collections::BTreeMap;

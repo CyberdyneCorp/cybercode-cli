@@ -7,6 +7,13 @@
 - **WHEN** a sandboxed PowerShell command writes `C:\Windows\Temp\x` outside the writable roots
 - **THEN** access is denied
 
+#### Scenario: Verify Windows process identity before execution
+- **WHEN** a Windows sandbox process is created
+- **THEN** its primary thread SHALL remain suspended until parent-owned job assignment succeeds
+- **AND** its token SHALL be verified as an AppContainer with the invocation's exact SID before user code can run
+- **AND** setup or verification failure SHALL terminate the suspended process without falling back to unrestricted execution
+- **AND** the child SHALL receive an explicit environment rather than inherit the parent's environment
+
 #### Scenario: Invocation-owned Windows profile and ACL leases
 - **WHEN** a Windows command invocation prepares an AppContainer identity and direct-object ACL grants
 - **THEN** it SHALL create a fresh profile rather than reuse an existing identity

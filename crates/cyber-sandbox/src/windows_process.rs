@@ -11,7 +11,7 @@ use std::ptr::null;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject,
 };
@@ -19,10 +19,28 @@ use windows_sys::Win32::System::JobObjects::{
 /// Private stdin permit used only after the server assigns the trusted helper.
 pub(crate) const START: &[u8] = b"CYBER-JOB-START\n";
 
-struct Job(OwnedHandle);
+pub(crate) struct Job(OwnedHandle);
 
 impl Job {
-    fn new() -> io::Result<Self> {
+    pub(crate) fn handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.0.as_raw_handle()
+    }
+
+    pub(crate) fn verify_handle(
+        &self,
+        process: windows_sys::Win32::Foundation::HANDLE,
+    ) -> io::Result<()> {
+        let mut assigned = 0;
+        if unsafe { IsProcessInJob(process, self.handle(), &mut assigned) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if assigned == 0 {
+            return Err(io::Error::other("Process is not in the parent-owned job"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn new() -> io::Result<Self> {
         // Neither a public name nor an inheritable handle can keep the job alive.
         let raw = unsafe { CreateJobObjectW(null(), null()) };
         if raw.is_null() {
@@ -51,7 +69,14 @@ impl Job {
         let raw = child
             .raw_handle()
             .ok_or_else(|| io::Error::other("Windows helper exited before job assignment"))?;
-        // Tokio owns this live process handle. Only trusted handshake code is running.
+        self.assign_handle(raw)
+    }
+
+    pub(crate) fn assign_handle(
+        &self,
+        raw: windows_sys::Win32::Foundation::HANDLE,
+    ) -> io::Result<()> {
+        // The caller retains the process handle and has not permitted user code to run.
         if unsafe { AssignProcessToJobObject(self.0.as_raw_handle(), raw) } == 0 {
             return Err(io::Error::last_os_error());
         }

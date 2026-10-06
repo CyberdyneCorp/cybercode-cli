@@ -104,8 +104,16 @@ impl Profile {
         })
     }
 
-    fn sid(&self) -> PSID {
+    pub(crate) fn sid(&self) -> PSID {
         self.0.sid.as_ptr().cast_mut().cast()
+    }
+
+    pub(crate) fn ensure_active(&self) -> io::Result<()> {
+        if self.0.active {
+            Ok(())
+        } else {
+            Err(io::Error::other("AppContainer profile is closed"))
+        }
     }
 }
 
