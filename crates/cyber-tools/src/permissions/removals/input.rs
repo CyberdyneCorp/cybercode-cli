@@ -1,6 +1,9 @@
 //! Analyze shell source delivered through stdin without interpreting ordinary data as code.
 
-use super::{RemovalRisk, RemovalScope, SHELLS, WrapperCommand, inspect, literal, wrapper_command};
+use super::{
+    RemovalRisk, RemovalScope, SHELLS, State, WrapperCommand, inspect, literal, word,
+    wrapper_command,
+};
 use std::path::Path;
 use tree_sitter::Node;
 
@@ -9,7 +12,7 @@ pub(super) fn inspect_input(
     source: &[u8],
     scope: &RemovalScope<'_>,
     depth: usize,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     let command = match node.kind() {
@@ -20,19 +23,32 @@ pub(super) fn inspect_input(
     let Some(command) = command.filter(|n| n.kind() == "command") else {
         return;
     };
-    let consumer = stdin_shell(&command_words(command, source), changed_directory)
-        .or_else(|| forwarded_shell(node, source, changed_directory));
+    let consumer = stdin_shell(
+        &command_words(command, source, state),
+        state.directory_changed,
+    )
+    .or_else(|| forwarded_shell(node, source, state));
     let mut cursor = node.walk();
     for redirect in node.named_children(&mut cursor) {
-        if let Some(directory_change) =
-            consumer.or_else(|| pipeline_shell(redirect, source, changed_directory))
+        if let Some(directory_change) = consumer.or_else(|| pipeline_shell(redirect, source, state))
         {
-            inspect_redirect(redirect, source, scope, depth, directory_change, risks);
+            let mut child = state.shell_child(command, source, scope);
+            if command_words(command, source, state)
+                .first()
+                .and_then(|v| v.as_deref())
+                == Some("env")
+            {
+                child.invalidate();
+            }
+            if directory_change {
+                child.change_directory();
+            }
+            inspect_redirect(redirect, source, scope, depth, &child, risks);
         }
     }
 }
 
-fn command_words(node: Node<'_>, source: &[u8]) -> Vec<Option<String>> {
+fn command_words(node: Node<'_>, source: &[u8], state: &State) -> Vec<Option<String>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
         .filter(|n| n.kind() != "variable_assignment" && !n.kind().ends_with("_redirect"))
@@ -43,11 +59,11 @@ fn command_words(node: Node<'_>, source: &[u8]) -> Vec<Option<String>> {
                     next.kind() == "herestring_redirect" && n.end_byte() == next.start_byte()
                 }))
         })
-        .map(|n| literal(n, source))
+        .map(|n| word(n, source, state))
         .collect()
 }
 
-fn pipeline_shell(node: Node<'_>, source: &[u8], changed_directory: bool) -> Option<bool> {
+fn pipeline_shell(node: Node<'_>, source: &[u8], state: &State) -> Option<bool> {
     if node.kind() != "heredoc_redirect" {
         return None;
     }
@@ -59,16 +75,16 @@ fn pipeline_shell(node: Node<'_>, source: &[u8], changed_directory: bool) -> Opt
     pipeline
         .named_children(&mut cursor)
         .filter(|n| n.kind() == "command")
-        .find_map(|n| stdin_shell(&command_words(n, source), changed_directory))
+        .find_map(|n| stdin_shell(&command_words(n, source, state), state.directory_changed))
 }
 
-fn forwarded_shell(node: Node<'_>, source: &[u8], changed_directory: bool) -> Option<bool> {
+fn forwarded_shell(node: Node<'_>, source: &[u8], state: &State) -> Option<bool> {
     let pipeline = node.parent().filter(|n| n.kind() == "pipeline")?;
     let mut cursor = pipeline.walk();
     pipeline
         .named_children(&mut cursor)
         .filter(|n| n.kind() == "command")
-        .find_map(|n| stdin_shell(&command_words(n, source), changed_directory))
+        .find_map(|n| stdin_shell(&command_words(n, source, state), state.directory_changed))
 }
 
 fn stdin_shell(mut words: &[Option<String>], mut changed_directory: bool) -> Option<bool> {
@@ -126,7 +142,7 @@ fn inspect_redirect(
     source: &[u8],
     scope: &RemovalScope<'_>,
     depth: usize,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     let mut cursor = node.walk();
@@ -163,7 +179,7 @@ fn inspect_redirect(
     {
         risks.push(RemovalRisk::Unresolved("expanded shell heredoc".into()));
     }
-    inspect(&script, scope, depth + 1, changed_directory, risks);
+    inspect(&script, scope, depth + 1, state, risks);
 }
 
 fn expands_heredoc(node: Node<'_>, source: &[u8]) -> bool {

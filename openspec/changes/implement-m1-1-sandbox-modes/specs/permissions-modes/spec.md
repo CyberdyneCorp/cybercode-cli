@@ -57,3 +57,23 @@
 #### Scenario: Ordinary heredoc data is not executable source
 - **WHEN** a quoted heredoc containing removal text is delivered to `cat` without an executable shell consumer
 - **THEN** that literal text SHALL NOT trigger the critical-removal guard, while other applicable permission rules remain enforced
+
+#### Scenario: A scalar binding resolves a critical target
+- **WHEN** a Bash invocation assigns a literal repository-root value to a variable and removes its quoted expansion
+- **THEN** the guard SHALL report the resolved critical path and SHALL enforce the same ceiling as a literal operand
+
+#### Scenario: Inline assignment does not replace outer argument expansion
+- **WHEN** a removal has a temporary environment assignment and a quoted variable operand
+- **THEN** analysis SHALL resolve that operand using the outer shell state before the temporary assignment, while nested executable source uses its own assignment context
+
+#### Scenario: Uncertain variable mutation cannot authorize dispatch
+- **WHEN** a branch, loop, read or unsupported mutation can change a bound removal target
+- **THEN** the target SHALL remain unresolved unless its execution value can be proven, and automatic modes SHALL NOT allow it
+
+#### Scenario: A substitution's directory change is local
+- **WHEN** command substitution changes its own directory and a later command removes a literal noncritical workspace file
+- **THEN** analysis SHALL use the outer working directory for the later operand instead of inheriting the substitution's directory state
+
+#### Scenario: Binding or function expansion exceeds the analysis budget
+- **WHEN** repeated scalar growth or nested function fan-out exceeds the bounded static-analysis budget
+- **THEN** the guard SHALL return an unresolved result and SHALL NOT permit automatic dispatch

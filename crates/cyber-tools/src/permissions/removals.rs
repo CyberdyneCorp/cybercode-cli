@@ -6,7 +6,9 @@ use tree_sitter::{Node, Parser};
 
 use crate::bash_analysis::normalize;
 
+mod bindings;
 mod input;
+use bindings::{State, word};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemovalRisk {
@@ -54,7 +56,7 @@ const MAX_NESTING: usize = 8;
 /// concrete explanation even when another action in the same command is ambiguous.
 pub fn bash_removal(command: &str, scope: &RemovalScope<'_>) -> Option<RemovalRisk> {
     let mut risks = Vec::new();
-    inspect(command, scope, 0, false, &mut risks);
+    inspect(command, scope, 0, &State::new(scope, false), &mut risks);
     risks
         .iter()
         .find(|r| matches!(r, RemovalRisk::Critical(_)))
@@ -66,9 +68,13 @@ fn inspect(
     command: &str,
     scope: &RemovalScope<'_>,
     depth: usize,
-    inherited_directory_change: bool,
+    inherited: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
+    if inherited.exhausted() {
+        analysis_limit(risks);
+        return;
+    }
     if depth > MAX_NESTING {
         risks.push(RemovalRisk::Unresolved(
             "nested shell limit exceeded".into(),
@@ -84,15 +90,22 @@ fn inspect(
         risks.push(RemovalRisk::Unresolved("unparseable shell command".into()));
         return;
     };
-    let mut changed_directory = inherited_directory_change;
+    let mut state = inherited.clone();
     walk(
         tree.root_node(),
         command.as_bytes(),
         scope,
         depth,
-        &mut changed_directory,
+        &mut state,
         risks,
     );
+}
+
+fn analysis_limit(risks: &mut Vec<RemovalRisk>) {
+    let risk = RemovalRisk::Unresolved("shell analysis budget exhausted".into());
+    if !risks.contains(&risk) {
+        risks.push(risk);
+    }
 }
 
 fn walk(
@@ -100,17 +113,104 @@ fn walk(
     source: &[u8],
     scope: &RemovalScope<'_>,
     depth: usize,
-    changed_directory: &mut bool,
+    state: &mut State,
     risks: &mut Vec<RemovalRisk>,
 ) {
-    input::inspect_input(node, source, scope, depth, *changed_directory, risks);
+    if !state.visit() {
+        analysis_limit(risks);
+        return;
+    }
+    state.register_function(node, source);
+    let isolated = matches!(
+        node.kind(),
+        "subshell" | "command_substitution" | "function_definition"
+    );
+    if isolated {
+        let mut child = state.clone();
+        walk_children(node, source, scope, depth, &mut child, risks);
+        if node.kind() == "function_definition" {
+            state.merge_functions(child.functions);
+        }
+        return;
+    }
+    if matches!(
+        node.kind(),
+        "if_statement"
+            | "case_statement"
+            | "for_statement"
+            | "while_statement"
+            | "c_style_for_statement"
+            | "list"
+            | "pipeline"
+    ) {
+        inspect_branches(node, source, scope, depth, state, risks);
+        return;
+    }
+    if node.kind() == "variable_assignment" && node.parent().is_none_or(|n| n.kind() != "command") {
+        state.assignment(node, source, scope);
+    }
+    if matches!(
+        node.kind(),
+        "declaration_command"
+            | "unset_command"
+            | "arithmetic_expansion"
+            | "arithmetic_command"
+            | "binary_expression"
+            | "unary_expression"
+            | "postfix_expression"
+    ) {
+        state.invalidate();
+    }
+    input::inspect_input(node, source, scope, depth, state, risks);
     if node.kind() == "command" {
-        inspect_command(node, source, scope, depth, changed_directory, risks);
+        inspect_command(node, source, scope, depth, state, risks);
+    }
+    walk_children(node, source, scope, depth, state, risks);
+}
+
+fn walk_children(
+    node: Node<'_>,
+    source: &[u8],
+    scope: &RemovalScope<'_>,
+    depth: usize,
+    state: &mut State,
+    risks: &mut Vec<RemovalRisk>,
+) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if state.exhausted() {
+            analysis_limit(risks);
+            break;
+        }
+        walk(child, source, scope, depth, state, risks);
+    }
+}
+
+fn inspect_branches(
+    node: Node<'_>,
+    source: &[u8],
+    scope: &RemovalScope<'_>,
+    depth: usize,
+    state: &mut State,
+    risks: &mut Vec<RemovalRisk>,
+) {
+    if matches!(
+        node.kind(),
+        "for_statement" | "while_statement" | "c_style_for_statement"
+    ) {
+        state.invalidate();
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        walk(child, source, scope, depth, changed_directory, risks);
+        if state.exhausted() {
+            analysis_limit(risks);
+            break;
+        }
+        let mut branch = state.clone();
+        walk(child, source, scope, depth, &mut branch, risks);
+        state.merge_uncertainty(branch);
     }
+    state.invalidate();
 }
 
 fn inspect_command(
@@ -118,7 +218,7 @@ fn inspect_command(
     source: &[u8],
     scope: &RemovalScope<'_>,
     depth: usize,
-    changed_directory: &mut bool,
+    state: &mut State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     let mut cursor = node.walk();
@@ -126,7 +226,7 @@ fn inspect_command(
         .named_children(&mut cursor)
         .filter(|n| n.kind() != "variable_assignment" && !n.kind().ends_with("_redirect"))
         .collect();
-    let Some(name) = nodes.first().and_then(|n| literal(*n, source)) else {
+    let Some(name) = nodes.first().and_then(|n| word(*n, source, state)) else {
         risks.push(RemovalRisk::Unresolved("dynamic shell command name".into()));
         return;
     };
@@ -135,20 +235,68 @@ fn inspect_command(
         .and_then(|s| s.to_str())
         .unwrap_or(&name);
     let args = &nodes[1..];
-    match name {
-        "cd" | "pushd" | "popd" => *changed_directory = true,
-        "rm" | "rmdir" | "unlink" => {
-            inspect_removal(args, source, scope, *changed_directory, risks);
+    if let Some(bodies) = state.functions.get(name).cloned() {
+        let child = state.prefix_child(node, source, scope);
+        for body in bodies {
+            inspect(&body, scope, depth + 1, &child, risks);
         }
-        "find" => inspect_find(args, source, scope, *changed_directory, risks),
-        "eval" => inspect_eval(args, source, scope, depth, *changed_directory, risks),
+    }
+    match name {
+        "cd" | "pushd" | "popd" => state.change_directory(),
+        "rm" | "rmdir" | "unlink" => {
+            inspect_removal(args, source, scope, state, risks);
+        }
+        "find" => inspect_find(args, source, scope, state, risks),
+        "eval" => inspect_eval(node, args, source, scope, depth, state, risks),
         shell if SHELLS.contains(&shell) => {
-            inspect_shell(args, source, scope, depth, *changed_directory, risks);
+            inspect_shell(node, args, source, scope, depth, state, risks);
         }
         "command" | "builtin" | "exec" | "env" | "nohup" => {
-            inspect_wrapper(name, args, source, scope, depth, *changed_directory, risks);
+            let mut cursor = node.walk();
+            if node
+                .named_children(&mut cursor)
+                .any(|n| n.kind() == "variable_assignment")
+            {
+                risks.push(RemovalRisk::Unresolved(
+                    "environment-prefixed shell wrapper".into(),
+                ));
+            }
+            inspect_wrapper(name, args, source, scope, depth, state, risks);
+        }
+        "alias" | "unalias" | "trap" | "shopt" | "." | "source" => {
+            risks.push(RemovalRisk::Unresolved(
+                "indirect shell state or callback".into(),
+            ));
         }
         _ => {}
+    }
+    if state.functions.contains_key(name)
+        || matches!(
+            name,
+            "eval"
+                | "."
+                | "source"
+                | "read"
+                | "mapfile"
+                | "readarray"
+                | "let"
+                | "export"
+                | "readonly"
+                | "declare"
+                | "typeset"
+                | "local"
+                | "printf"
+                | "set"
+                | "getopts"
+                | "trap"
+                | "command"
+                | "builtin"
+        )
+    {
+        state.invalidate();
+        if state.functions.contains_key(name) || matches!(name, "eval" | "." | "source") {
+            state.change_directory();
+        }
     }
 }
 
@@ -156,12 +304,12 @@ fn inspect_removal(
     args: &[Node<'_>],
     source: &[u8],
     scope: &RemovalScope<'_>,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     let mut options = true;
     for node in args {
-        let value = literal(*node, source);
+        let value = word(*node, source, state);
         if options && value.as_deref() == Some("--") {
             options = false;
             continue;
@@ -169,60 +317,48 @@ fn inspect_removal(
         if options && value.is_some_and(|s| s.starts_with('-')) {
             continue;
         }
-        inspect_target(*node, source, scope, changed_directory, risks);
+        inspect_target(*node, source, scope, state, risks);
     }
 }
 
 fn inspect_shell(
+    command: Node<'_>,
     args: &[Node<'_>],
     source: &[u8],
     scope: &RemovalScope<'_>,
     depth: usize,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     let flag = args.iter().position(|n| {
-        literal(*n, source)
+        word(*n, source, state)
             .is_some_and(|s| s.starts_with('-') && !s.starts_with("--") && s.contains('c'))
     });
     if let Some(index) = flag {
-        inspect_script(
-            args.get(index + 1).copied(),
-            source,
-            scope,
-            depth,
-            changed_directory,
-            risks,
-        );
-    }
-}
-
-fn inspect_script(
-    node: Option<Node<'_>>,
-    source: &[u8],
-    scope: &RemovalScope<'_>,
-    depth: usize,
-    changed_directory: bool,
-    risks: &mut Vec<RemovalRisk>,
-) {
-    if let Some(script) = node.and_then(|n| literal(n, source)) {
-        inspect(&script, scope, depth + 1, changed_directory, risks);
-    } else {
-        risks.push(RemovalRisk::Unresolved("dynamic shell script".into()));
+        if let Some(script) = args.get(index + 1).and_then(|n| word(*n, source, state)) {
+            let child = state.shell_child(command, source, scope);
+            inspect(&script, scope, depth + 1, &child, risks);
+        } else {
+            risks.push(RemovalRisk::Unresolved("dynamic shell script".into()));
+        }
     }
 }
 
 fn inspect_eval(
+    command: Node<'_>,
     args: &[Node<'_>],
     source: &[u8],
     scope: &RemovalScope<'_>,
     depth: usize,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
-    let parts: Option<Vec<_>> = args.iter().map(|n| literal(*n, source)).collect();
+    let parts: Option<Vec<_>> = args.iter().map(|n| word(*n, source, state)).collect();
     match parts {
-        Some(parts) => inspect(&parts.join(" "), scope, depth + 1, changed_directory, risks),
+        Some(parts) => {
+            let child = state.prefix_child(command, source, scope);
+            inspect(&parts.join(" "), scope, depth + 1, &child, risks);
+        }
         _ => risks.push(RemovalRisk::Unresolved(
             "dynamic eval or directory change".into(),
         )),
@@ -319,10 +455,10 @@ fn inspect_wrapper(
     source: &[u8],
     scope: &RemovalScope<'_>,
     depth: usize,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
-    let values: Vec<_> = args.iter().map(|n| literal(*n, source)).collect();
+    let values: Vec<_> = args.iter().map(|n| word(*n, source, state)).collect();
     let (index, changes_directory) = match wrapper_command(name, &values) {
         WrapperCommand::Run {
             index,
@@ -336,16 +472,18 @@ fn inspect_wrapper(
             return;
         }
     };
+    let mut child = state.clone();
+    if changes_directory {
+        child.change_directory();
+    }
+    // Wrapper environment options may unset or replace values before nested source runs.
+    if name == "env" {
+        child.invalidate();
+    }
     // Preserve shell quoting by reparsing the source span, not joining decoded arguments.
     let source_slice = &source[args[index].start_byte()..args.last().unwrap().end_byte()];
     if let Ok(text) = std::str::from_utf8(source_slice) {
-        inspect(
-            text,
-            scope,
-            depth + 1,
-            changed_directory || changes_directory,
-            risks,
-        );
+        inspect(text, scope, depth + 1, &child, risks);
     }
 }
 
@@ -353,42 +491,42 @@ fn inspect_find(
     args: &[Node<'_>],
     source: &[u8],
     scope: &RemovalScope<'_>,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     if !args
         .iter()
-        .any(|n| literal(*n, source).as_deref() == Some("-delete"))
+        .any(|n| word(*n, source, state).as_deref() == Some("-delete"))
     {
         return;
     }
-    let Some(start) = find_paths_start(args, source) else {
+    let Some(start) = find_paths_start(args, source, state) else {
         risks.push(RemovalRisk::Unresolved("dynamic find option".into()));
         return;
     };
     let paths: Vec<_> = args[start..]
         .iter()
         .take_while(|n| {
-            literal(**n, source).is_none_or(|s| !s.starts_with('-') && s != "!" && s != "(")
+            word(**n, source, state).is_none_or(|s| !s.starts_with('-') && s != "!" && s != "(")
         })
         .collect();
     if paths.is_empty() {
-        inspect_path(".", false, scope, changed_directory, risks);
+        inspect_path(".", false, scope, state, risks);
     }
     for node in paths {
-        inspect_target(*node, source, scope, changed_directory, risks);
+        inspect_target(*node, source, scope, state, risks);
     }
 }
 
-fn find_paths_start(args: &[Node<'_>], source: &[u8]) -> Option<usize> {
+fn find_paths_start(args: &[Node<'_>], source: &[u8], state: &State) -> Option<usize> {
     let mut index = 0;
     while let Some(node) = args.get(index) {
-        let value = literal(*node, source)?;
+        let value = word(*node, source, state)?;
         match value.as_str() {
             "-H" | "-L" | "-P" => index += 1,
             "--" => return Some(index + 1),
             "-D" => {
-                literal(*args.get(index + 1)?, source)?;
+                word(*args.get(index + 1)?, source, state)?;
                 index += 2;
             }
             v if v.starts_with("-O") => index += 1,
@@ -402,7 +540,7 @@ fn inspect_target(
     node: Node<'_>,
     source: &[u8],
     scope: &RemovalScope<'_>,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     let raw = node.utf8_text(source).unwrap_or_default();
@@ -413,15 +551,9 @@ fn inspect_target(
         risks.push(RemovalRisk::Critical(scope.project.to_path_buf()));
         return;
     }
-    let value = match raw {
-        "$HOME" | "${HOME}" | "\"$HOME\"" | "\"${HOME}\"" => Some(scope.home.display().to_string()),
-        "$PWD" | "${PWD}" | "\"$PWD\"" | "\"${PWD}\"" if !changed_directory => {
-            Some(scope.workdir.display().to_string())
-        }
-        _ => literal(node, source),
-    };
+    let value = word(node, source, state);
     match value {
-        Some(path) => inspect_path(&path, raw.starts_with('~'), scope, changed_directory, risks),
+        Some(path) => inspect_path(&path, raw.starts_with('~'), scope, state, risks),
         None => risks.push(RemovalRisk::Unresolved("dynamic removal argument".into())),
     }
 }
@@ -430,7 +562,7 @@ fn inspect_path(
     text: &str,
     expand_home: bool,
     scope: &RemovalScope<'_>,
-    changed_directory: bool,
+    state: &State,
     risks: &mut Vec<RemovalRisk>,
 ) {
     let path = if expand_home && text == "~" {
@@ -439,7 +571,7 @@ fn inspect_path(
         scope.home.join(&text[2..])
     } else if Path::new(text).is_absolute() {
         PathBuf::from(text)
-    } else if changed_directory {
+    } else if state.directory_changed {
         risks.push(RemovalRisk::Unresolved(
             "relative removal after directory change".into(),
         ));
@@ -712,6 +844,127 @@ mod tests {
                 "{command}"
             );
         }
+    }
+
+    #[test]
+    fn literal_bindings_resolve_targets_commands_and_function_calls() {
+        for command in [
+            r#"ROOT=/repo; rm -rf "$ROOT""#,
+            r#"ROOT=/repo; COPY="$ROOT"; rm -rf "${COPY}/.""#,
+            r#"COMMAND=rm; "$COMMAND" -rf /repo"#,
+            r#"TARGET=/repo bash -c 'rm -rf "$TARGET"'"#,
+            r#"TARGET=build; TARGET=/repo bash -c 'rm -rf "$TARGET"'"#,
+            r#"ROOT=/repo; eval 'rm -rf "$ROOT"'"#,
+            r#"ROOT=build; ROOT=/repo eval 'rm -rf "$ROOT"'"#,
+            r#"ROOT=/repo; ROOT=build eval "rm -rf '$ROOT'""#,
+            r#"ROOT=build; cleanup() { rm -rf "$ROOT"; }; ROOT=/repo; cleanup"#,
+            r#"ROOT=build; cleanup() { rm -rf "$ROOT"; }; ROOT=/repo cleanup"#,
+            r#"HOME=/repo; rm -rf "$HOME""#,
+            r#"ROOT=build; if true; then cleanup() { rm -rf "$ROOT"; }; else cleanup() { echo done; }; fi; ROOT=/repo; cleanup"#,
+            r#"ROOT=build; outer() { cleanup() { rm -rf "$ROOT"; }; }; outer; ROOT=/repo; cleanup"#,
+            r#"TARGET=/repo; TARGET=build rm -rf "$TARGET""#,
+            r#"SHELL=bash; "$SHELL" <<'EOF'
+rm -rf /repo
+EOF
+"#,
+        ] {
+            assert_eq!(
+                bash_removal(command, &scope()),
+                Some(RemovalRisk::Critical("/repo".into())),
+                "{command}"
+            );
+        }
+        assert_eq!(
+            bash_removal(r#"TARGET=~; rm -rf "$TARGET""#, &scope()),
+            Some(RemovalRisk::Critical(crate::host::canonical(scope().home)))
+        );
+    }
+
+    #[test]
+    fn local_scopes_and_inline_assignments_preserve_outer_expansion() {
+        for command in [
+            r#"ROOT=build; echo done; rm -rf "$ROOT""#,
+            r#"ROOT=build; (ROOT=/repo; echo done); rm -rf "$ROOT""#,
+            r#"ROOT=build; echo "$(ROOT=/repo; echo done)"; rm -rf "$ROOT""#,
+            r#"echo "$(cd /tmp)"; rm -rf build/file"#,
+            "change_dir() { cd /tmp; }; rm -rf build/file",
+            r#"TARGET=build; TARGET=/repo rm -rf "$TARGET""#,
+            r#"ROOT=build; ROOT=/repo eval "rm -rf '$ROOT'""#,
+            r#"ROOT='build/*'; rm -rf "$ROOT""#,
+        ] {
+            assert_eq!(bash_removal(command, &scope()), None, "{command}");
+        }
+        assert_eq!(
+            bash_removal(
+                r#"ROOT=/repo; (ROOT=build; echo done); rm -rf "$ROOT""#,
+                &scope()
+            ),
+            Some(RemovalRisk::Critical("/repo".into()))
+        );
+    }
+
+    #[test]
+    fn uncertain_binding_changes_cannot_produce_an_automatic_allow() {
+        for command in [
+            r#"ROOT=build; if true; then ROOT=/repo; fi; rm -rf "$ROOT""#,
+            r#"ROOT=build; read ROOT; rm -rf "$ROOT""#,
+            r#"ROOT=build; read ROOT && rm -rf "$ROOT""#,
+            r#"ROOT=build; if read ROOT; then rm -rf "$ROOT"; fi"#,
+            r#"ROOT=build; for ROOT in /repo; do rm -rf "$ROOT"; done"#,
+            r#"ROOT=build; while read ROOT; do rm -rf "$ROOT"; done"#,
+            r#"ROOT=build; unset ROOT; rm -rf "$ROOT""#,
+            r#"ROOT=build; ((ROOT=1)); rm -rf "$ROOT""#,
+            r#"ROOT=(/repo); rm -rf "$ROOT""#,
+            r#"ROOT=build; ROOT+=' /repo'; rm -rf "$ROOT""#,
+            r#"ROOT='build /repo'; rm -rf $ROOT"#,
+            r#"ROOT='build/*'; rm -rf $ROOT"#,
+            r#"ROOT=build; env ROOT=/repo bash -c 'rm -rf "$ROOT"'"#,
+            r#"ROOT=build; ROOT=/repo command bash -c 'rm -rf "$ROOT"'"#,
+            r#"ROOT=build; trap 'rm /repo' EXIT; rm -rf "$ROOT""#,
+            r#"ROOT=build; alias rm='rm /repo'; rm -rf "$ROOT""#,
+            r#"ROOT=build; source configuration.sh; rm -rf "$ROOT""#,
+        ] {
+            assert!(
+                matches!(
+                    bash_removal(command, &scope()),
+                    Some(RemovalRisk::Unresolved(_))
+                ),
+                "{command}: {:?}",
+                bash_removal(command, &scope())
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_scalar_expansion_is_bounded_and_remains_unresolved() {
+        let mut command = String::from("TARGET=x;");
+        for _ in 0..32 {
+            command.push_str("TARGET=$TARGET$TARGET;");
+        }
+        command.push_str("rm -rf \"$TARGET\"");
+        assert!(matches!(
+            bash_removal(&command, &scope()),
+            Some(RemovalRisk::Unresolved(_))
+        ));
+    }
+
+    #[test]
+    fn function_fan_out_shares_one_analysis_budget() {
+        let mut command = String::from("f0() { echo done; };\n");
+        for level in 1..9 {
+            command.push_str(&format!("f{level}() {{ "));
+            for _ in 0..20 {
+                command.push_str(&format!("f{}; ", level - 1));
+            }
+            command.push_str("};\n");
+        }
+        command.push_str("f8");
+        assert_eq!(
+            bash_removal(&command, &scope()),
+            Some(RemovalRisk::Unresolved(
+                "shell analysis budget exhausted".into()
+            ))
+        );
     }
 
     #[test]
