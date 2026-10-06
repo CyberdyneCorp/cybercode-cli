@@ -14,7 +14,7 @@
   - [x] Initial Python/JavaScript inline AST removal guards, literal/API alias/path proof, nested eval/shell source and fail-closed unknown dispatch.
   - [x] Initial PowerShell command-source AST guard for removal aliases, module-qualified names, scalar bindings, target arrays and static deletion APIs; unknown dispatch and parameter-mutated bindings require individual confirmation.
   - [x] Add bounded UTF-16LE encoded-command analysis and literal PowerShell stdin dispatch, retaining unresolved overrides/profiles/startup state and individual confirmation. Local tools validation passes 126 tests; native CLI contract checks are added separately.
-  - [ ] Prove the new native PowerShell encoding/stdin CLI contract tests in Windows CI.
+  - [x] Prove the native PowerShell encoding/stdin CLI contract tests in Windows CI. The native test step passes at `6bdca22`; this does not prove native tool dispatch or complete permission analysis.
   - [ ] Complete PowerShell advanced bindings/pipelines and native dispatch, plus additional interpreter contexts, higher-order dispatch, producer/module-loading trust and protected/irreversible inline mutation facts before classifier approval is enabled.
 - [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
 - [x] Complete the four-mode cycle and pending/effective TUI state with tests. Turn modes are pinned durably through tool settlement, with legacy replay, rapid-selection serialization and TUI bypass confirmation.
