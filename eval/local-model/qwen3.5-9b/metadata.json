@@ -1,5 +1,5 @@
 {
-  "status": "slugify pilot passed; long-task pilot failed at 63 turns/2400-second timeout; first full suite running on corrected harness, hard suite queued",
+  "status": "slugify pilot passed; long-task pilot failed at 63 turns/2400-second timeout; v1 running on 1d8d1e4, hard suite queued on verified immutable 4a32b58",
   "recorded_at": "2026-10-05T22:00:44.696506+00:00",
   "ollama_version": "0.32.1",
   "model": "qwen3.5:9b",
@@ -51,6 +51,6 @@
   },
   "full_suite_harnesses": {
     "suite-coding-v1": "1d8d1e4",
-    "suite-coding-hard-v1": "pending validated committed binary snapshot; report will identify its revision"
+    "suite-coding-hard-v1": "4a32b58 (verified immutable binary snapshot; waits for v1 completion)"
   }
 }
