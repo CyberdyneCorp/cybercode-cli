@@ -682,6 +682,10 @@ mod tests {
     fn all_entries(file: &File) -> Vec<Vec<u8>> {
         let (_descriptor, acl) = read_acl(file).unwrap();
         assert!(!acl.is_null());
+        acl_entries(acl)
+    }
+
+    fn acl_entries(acl: *const ACL) -> Vec<Vec<u8>> {
         let mut entries = Vec::new();
         for index in 0..unsafe { (*acl).AceCount } {
             let mut raw = null_mut();
@@ -692,6 +696,46 @@ mod tests {
             });
         }
         entries
+    }
+
+    fn stored_entries(file: &File) -> Vec<Vec<u8>> {
+        use windows_sys::Wdk::Storage::FileSystem::NtQuerySecurityObject;
+        use windows_sys::Win32::Security::GetSecurityDescriptorDacl;
+        let mut needed = 0;
+        unsafe {
+            NtQuerySecurityObject(
+                file.as_raw_handle(),
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                0,
+                &mut needed,
+            );
+        }
+        assert!(needed > 0 && needed <= 1024 * 1024);
+        let mut storage = vec![0u32; (needed as usize).div_ceil(4)];
+        let descriptor = storage.as_mut_ptr().cast();
+        let status = unsafe {
+            NtQuerySecurityObject(
+                file.as_raw_handle(),
+                DACL_SECURITY_INFORMATION,
+                descriptor,
+                needed,
+                &mut needed,
+            )
+        };
+        assert!(status >= 0, "security query failed: {status:#x}");
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut acl = null_mut();
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted)
+            },
+            0,
+        );
+        assert_ne!(present, 0);
+        assert!(!acl.is_null());
+        acl_entries(acl)
     }
 
     fn assert_mask(file: &File, profile: &Profile, access: Access) {
@@ -875,6 +919,7 @@ mod tests {
         let existing = root.join("existing.txt");
         std::fs::write(&existing, "existing").unwrap();
         let existing_acl = all_entries(&file(&existing));
+        let existing_stored = stored_entries(&file(&existing));
         let mut profile = Profile::new().unwrap();
         let mut other = Profile::new().unwrap();
         let lease = profile
@@ -884,6 +929,15 @@ mod tests {
                 CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE,
             )
             .unwrap();
+        let stored_after = stored_entries(&file(&existing));
+        assert_eq!(
+            stored_after, existing_stored,
+            "stored child ACL must be unchanged"
+        );
+        eprintln!(
+            "stored child ACL unchanged; Win32 inheritance view equal: {}",
+            all_entries(&file(&existing)) == existing_acl,
+        );
         assert_eq!(all_entries(&file(&existing)), existing_acl);
         let created = root.join("created.txt");
         std::fs::write(&created, "created").unwrap();

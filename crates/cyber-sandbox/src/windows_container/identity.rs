@@ -166,7 +166,7 @@ impl FileRecord {
     }
 
     fn verify_reopening(&mut self, original: &File) -> io::Result<()> {
-        match self.open() {
+        match self.open_raw() {
             Ok(file) => drop(file),
             // NTFS may require its classic 64-bit ID rather than the ReFS form.
             // This alternative must still match the full captured identity.
@@ -177,7 +177,7 @@ impl FileRecord {
                     FileId: ((u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow))
                         as i64,
                 };
-                drop(self.open()?);
+                drop(self.open_raw()?);
             }
             Err(error) => return Err(error),
         }
@@ -185,6 +185,26 @@ impl FileRecord {
     }
 
     pub(super) fn open(&self) -> io::Result<File> {
+        match self.open_raw() {
+            Err(error) if error.raw_os_error() == Some(87) => {
+                // The descriptor form was successfully verified during capture.
+                // NTFS reports a stale/deleted file reference as invalid parameter.
+                if information(&self.volume)?.VolumeSerialNumber != self.serial {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Recorded volume identity changed",
+                    ));
+                }
+                Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Verified Windows file identity no longer exists",
+                ))
+            }
+            result => result,
+        }
+    }
+
+    fn open_raw(&self) -> io::Result<File> {
         let raw = unsafe {
             OpenFileById(
                 self.volume.as_raw_handle(),
