@@ -13,6 +13,7 @@ use cyber_sandbox::windows_container::{
 };
 use cyber_sandbox::windows_launch::{StandardStreams, spawn, spawn_with_stdio};
 
+#[cfg(feature = "windows-test-controls")]
 #[path = "windows_container_launch/package_allowance.rs"]
 mod package_allowance;
 
@@ -755,6 +756,7 @@ fn container_worker() {
     if role == "streams" {
         exit_worker(&root, stream_worker(&root), "streams", 52);
     }
+    #[cfg(feature = "windows-test-controls")]
     if role == "package-baseline" {
         exit_worker(
             &root,

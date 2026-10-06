@@ -1,4 +1,4 @@
-//! Capability-free AppContainer process launch. Tool dispatch remains disabled.
+//! Capability-free less-privileged AppContainer process launch. Tool dispatch remains disabled.
 #![allow(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,11 +20,14 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::System::Threading::{
     CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    InitializeProcThreadAttributeList, OpenProcessToken,
+    PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
     PROC_THREAD_ATTRIBUTE_JOB_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
     PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
+
+use windows_sys::Win32::System::WindowsProgramming::PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
 
 use crate::windows_container::{AclGrant, LaunchReservation, Profile};
 use crate::windows_process::Job;
@@ -39,7 +42,7 @@ pub fn spawn(
     environment: &BTreeMap<String, String>,
     directory: &Path,
 ) -> io::Result<ContainerChild> {
-    spawn_inner(profile, program, args, environment, directory, None)
+    spawn_inner(profile, program, args, environment, directory, None, true)
 }
 
 /// Explicit standard streams. Supplied handles must grant only intended stream access.
@@ -65,7 +68,20 @@ pub fn spawn_with_stdio(
         environment,
         directory,
         Some(streams),
+        true,
     )
+}
+
+/// Ordinary AppContainer positive control; never used by tool dispatch.
+#[cfg(feature = "windows-test-controls")]
+pub fn spawn_with_package_allowances_for_test(
+    profile: &Profile,
+    program: &Path,
+    args: &[OsString],
+    environment: &BTreeMap<String, String>,
+    directory: &Path,
+) -> io::Result<ContainerChild> {
+    spawn_inner(profile, program, args, environment, directory, None, false)
 }
 
 fn spawn_inner(
@@ -75,6 +91,7 @@ fn spawn_inner(
     environment: &BTreeMap<String, String>,
     directory: &Path,
     streams: Option<StandardStreams<'_>>,
+    opt_out: bool,
 ) -> io::Result<ContainerChild> {
     profile.ensure_active()?;
     if !program.is_absolute() || !directory.is_absolute() {
@@ -97,7 +114,13 @@ fn spawn_inner(
     let jobs = [job.handle()];
     let streams = streams.map(InheritedStreams::new).transpose()?;
     let handles = streams.as_ref().map(InheritedStreams::handles);
-    let mut attributes = Attributes::new(&capabilities, &jobs, handles.as_ref())?;
+    let package_policy = opt_out.then_some(PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT);
+    let mut attributes = Attributes::new(
+        &capabilities,
+        &jobs,
+        handles.as_ref(),
+        package_policy.as_ref(),
+    )?;
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
     startup.lpAttributeList = attributes.pointer();
@@ -334,6 +357,7 @@ struct Attributes<'a> {
     _capabilities: &'a SECURITY_CAPABILITIES,
     _jobs: &'a [HANDLE; 1],
     _handles: Option<&'a [HANDLE; 3]>,
+    _package_policy: Option<&'a u32>,
 }
 
 impl<'a> Attributes<'a> {
@@ -341,8 +365,9 @@ impl<'a> Attributes<'a> {
         capabilities: &'a SECURITY_CAPABILITIES,
         jobs: &'a [HANDLE; 1],
         handles: Option<&'a [HANDLE; 3]>,
+        package_policy: Option<&'a u32>,
     ) -> io::Result<Self> {
-        let count = if handles.is_some() { 3 } else { 2 };
+        let count = 2 + u32::from(handles.is_some()) + u32::from(package_policy.is_some());
         let mut bytes = 0;
         unsafe { InitializeProcThreadAttributeList(null_mut(), count, 0, &mut bytes) };
         if bytes == 0 {
@@ -354,6 +379,7 @@ impl<'a> Attributes<'a> {
             _capabilities: capabilities,
             _jobs: jobs,
             _handles: handles,
+            _package_policy: package_policy,
         };
         // The storage is pointer-aligned and Windows supplied its required size.
         if unsafe { InitializeProcThreadAttributeList(attributes.pointer(), count, 0, &mut bytes) }
@@ -362,6 +388,9 @@ impl<'a> Attributes<'a> {
             return Err(io::Error::last_os_error());
         }
         attributes.initialized = true;
+        if let Some(policy) = package_policy {
+            attributes.package_policy(policy)?;
+        }
         if let Some(handles) = handles {
             attributes.streams(handles)?;
         }
@@ -395,6 +424,24 @@ impl<'a> Attributes<'a> {
             return Err(io::Error::last_os_error());
         }
         Ok(attributes)
+    }
+
+    fn package_policy(&mut self, policy: &u32) -> io::Result<()> {
+        if unsafe {
+            UpdateProcThreadAttribute(
+                self.pointer(),
+                0,
+                PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize,
+                (policy as *const u32).cast(),
+                std::mem::size_of_val(policy),
+                null_mut(),
+                null(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     fn streams(&mut self, handles: &[HANDLE; 3]) -> io::Result<()> {

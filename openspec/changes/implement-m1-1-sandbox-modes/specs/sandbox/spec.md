@@ -169,3 +169,14 @@
 #### Scenario: Unknown domain prompts
 - **WHEN** a sandboxed `curl https://example.org` runs with the default allowlist
 - **THEN** a `network` request for `example.org` is raised and the connection waits up to 120 s for a decision
+
+
+## ADDED Requirements
+
+### Requirement: Invocation launch excludes ambient package wildcard authority
+(P1) Default Windows invocation launch SHALL opt out of All Application Packages authority using less-privileged AppContainer creation, while preserving capability-free identity verification and suspended job assignment. Attribute failure SHALL fail closed. Ordinary AppContainer creation SHALL be available only as an explicitly enabled test control, without a runtime permission-mode or configuration override.
+
+#### Scenario: Broad package permission cannot widen protected access
+- **WHEN** a fixture grants All Application Packages full access to protected files
+- **THEN** ordinary AppContainer controls prove the allowance works before and after owned-policy cleanup
+- **AND** default invocation launch denies protected writes, deletion, child creation and hidden access while allowing scoped writable access

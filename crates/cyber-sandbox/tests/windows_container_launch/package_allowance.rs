@@ -217,7 +217,12 @@ async fn run_probe(root: &Path, role: &str, with_policy: bool) {
             .unwrap()
     });
     let env = environment(root, role, &profile);
-    let child = spawn(&profile, &program, &arguments(), &env, root).unwrap();
+    let launch = if with_policy {
+        spawn
+    } else {
+        cyber_sandbox::windows_launch::spawn_with_package_allowances_for_test
+    };
+    let child = launch(&profile, &program, &arguments(), &env, root).unwrap();
     let code = tokio::time::timeout(Duration::from_secs(10), child.wait_owned())
         .await
         .unwrap()

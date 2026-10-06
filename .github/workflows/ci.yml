@@ -57,7 +57,7 @@ jobs:
       - name: Native Windows AppContainer profile and ACL ownership
         run: cargo test --locked -p cyber-sandbox --lib windows_container::tests
       - name: Native Windows AppContainer launch and direct-object isolation
-        run: cargo test --locked -p cyber-sandbox --test windows_container_launch
+        run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch
       - name: Native tool proxy transport
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
       - name: Native shell ownership and cancellation
