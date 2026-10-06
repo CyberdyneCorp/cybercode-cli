@@ -39,6 +39,10 @@ impl cyber_core::env::EnvSource for TestEnv {
 
 impl Fixture {
     pub fn new() -> Self {
+        Self::with_shell("bash", cyber_sandbox::find_helper())
+    }
+
+    pub fn with_shell(shell: &str, helper: Option<PathBuf>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let repo = root.join("repo");
@@ -58,14 +62,14 @@ impl Fixture {
             tool_output_dir: root.join("tool-output"),
             allowed_dirs: Vec::new(),
             home: root.join("home"),
-            shell: "bash".into(),
+            shell: shell.into(),
             config: Arc::new(move |_| Ok((shared.lock().unwrap().clone(), BTreeMap::new()))),
             global_config_dir: root.join("home/.config/cyber"),
             env: Arc::clone(&env) as Arc<dyn cyber_core::env::EnvSource + Send + Sync>,
             models: None,
             temp_dir: root.join("tmp"),
             sandbox_policy: None,
-            sandbox_helper: cyber_sandbox::find_helper(),
+            sandbox_helper: helper,
         });
         Self {
             dir,

@@ -6,6 +6,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use super::process::Process;
 use cyber_server::runtime::{RetrySafety, ToolDef};
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
@@ -123,6 +124,10 @@ fn shell(configured: &str) -> String {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
+    #[cfg(windows)]
+    let lower = name.to_ascii_lowercase();
+    #[cfg(windows)]
+    let name = lower.strip_suffix(".exe").unwrap_or(&lower);
     if SHELLS.contains(&name) && Path::new(configured).exists() {
         configured.to_string()
     } else {
@@ -178,24 +183,26 @@ async fn execute(
 ) -> Result<String, ToolError> {
     let mut prepared =
         crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell), command).await?;
-    let mut cmd = tokio::process::Command::new(&prepared.program);
-    cmd.args(&prepared.args)
-        .env_clear()
-        .envs(prepared.env.iter().map(|(k, v)| (k, v)))
-        .current_dir(workdir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .env("CYBER", "1")
-        .env("CYBER_PID", std::process::id().to_string())
-        .env("CYBER_SESSION_ID", &ctx.inv.session_id)
-        .env("CYBER_PROJECT_DIR", &ctx.location);
-    #[cfg(unix)]
-    cmd.process_group(0);
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| failed(format!("Could not start the shell: {e}")))?;
+    let mut child = Process::spawn(
+        &prepared.program,
+        &prepared.args,
+        ctx.host.opts.sandbox_helper.as_deref(),
+        |cmd| {
+            cmd.env_clear()
+                .envs(prepared.env.iter().map(|(k, v)| (k, v)))
+                .current_dir(workdir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .env("CYBER", "1")
+                .env("CYBER_PID", std::process::id().to_string())
+                .env("CYBER_SESSION_ID", &ctx.inv.session_id)
+                .env("CYBER_PROJECT_DIR", &ctx.location);
+        },
+    )
+    .await
+    .map_err(|e| failed(format!("Could not start the shell: {e}")))?;
     let capture = Arc::new(Mutex::new(Capture {
         tail: Vec::new(),
         dropped: 0,
@@ -204,18 +211,15 @@ async fn execute(
     }));
     let readers = [
         child
-            .stdout
-            .take()
+            .stdout()
             .map(|s| tokio::spawn(pump(s, Arc::clone(&capture)))),
         child
-            .stderr
-            .take()
+            .stderr()
             .map(|s| tokio::spawn(pump(s, Arc::clone(&capture)))),
     ];
-    let pid = child.id();
     let ended = wait(ctx, &mut child, &mut prepared.asks, timeout_ms).await;
     if !matches!(ended, Ended::Exited(_)) {
-        kill_group(pid);
+        child.terminate();
         let _ = child.wait().await;
     }
     for reader in readers.into_iter().flatten() {
@@ -235,7 +239,7 @@ async fn execute(
 /// Wait for exit, timeout or cancellation, answering the proxy's network questions meanwhile.
 async fn wait(
     ctx: &Ctx<'_>,
-    child: &mut tokio::process::Child,
+    child: &mut Process,
     asks: &mut Option<tokio::sync::mpsc::Receiver<crate::sandboxing::NetworkAsk>>,
     timeout_ms: u64,
 ) -> Ended {
@@ -303,19 +307,3 @@ fn render(capture: &Capture, ended: Ended, timeout_ms: u64) -> String {
         Ended::Cancelled => out,
     }
 }
-
-/// Terminate the command's whole process group.
-#[cfg(unix)]
-#[allow(unsafe_code)]
-fn kill_group(pid: Option<u32>) {
-    let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()) else {
-        return;
-    };
-    // SAFETY: killpg only sends a signal; the group was created by process_group(0) at spawn.
-    unsafe {
-        libc::killpg(pid, libc::SIGKILL);
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_group(_pid: Option<u32>) {}

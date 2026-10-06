@@ -826,6 +826,7 @@ dependencies = [
  "tree-sitter-powershell",
  "tree-sitter-python",
  "ulid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -20,6 +20,13 @@
 - **AND** assigned helpers and command descendants SHALL terminate when the server-owned job handle closes
 - **AND** cancellation or dropping the command owner SHALL terminate descendants without relying on a reusable PID
 
+#### Scenario: Full-access Windows command ownership
+- **WHEN** a foreground shell command runs on Windows with explicit full-access policy
+- **THEN** its process tree SHALL retain the same parent-owned job lifetime boundary
+- **AND** timeout and cancellation SHALL terminate live descendants
+- **AND** a missing process-owner helper SHALL refuse execution rather than bypass ownership
+- **AND** this lifetime boundary SHALL NOT report AppContainer confinement as available
+
 ### Requirement: Network isolation and allowlist proxy
 (P0) Sandboxed processes SHALL have no direct network access by default (`sandbox.network: "proxy"`). Their HTTP(S) traffic SHALL go through a local proxy that allows only domains in `sandbox.allowed_domains`, which defaults to the package registries `registry.npmjs.org`, `pypi.org`, `files.pythonhosted.org`, `crates.io`, `static.crates.io`, `proxy.golang.org` and `github.com`. A connection to another domain SHALL raise a `network` permission request with the domain as resource, and an approval SHALL add the domain for the Session (or persist it with `always`). `sandbox.network: "off"` SHALL block everything, and `"on"` SHALL allow everything.
 

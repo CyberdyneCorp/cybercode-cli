@@ -54,6 +54,8 @@ jobs:
         run: cargo test --locked -p cyber-sandbox --test windows_parent_job
       - name: Native tool proxy transport
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
+      - name: Native shell ownership and cancellation
+        run: cargo test --locked -p cyber-tools --test windows_shell
       - name: Native PowerShell critical-path analysis
         run: cargo test --locked -p cyber-tools --test inline_removals powershell_native_
       - name: Native server listener lifecycle

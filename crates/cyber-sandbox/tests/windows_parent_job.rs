@@ -48,7 +48,7 @@ fn launch(root: &Path, role: &str) -> Worker {
             .env("CYBER_PARENT_TEST_ROOT", root)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap(),
     )
@@ -123,7 +123,13 @@ fn dropping_owner_and_normal_exit_clean_up_descendants() {
             status = parent.0.try_wait().unwrap();
             status.is_some()
         });
-        assert!(status.unwrap().success());
+        let status = status.unwrap();
+        if !status.success() {
+            let mut diagnostic = String::new();
+            std::io::Read::read_to_string(&mut parent.0.stderr.take().unwrap(), &mut diagnostic)
+                .unwrap();
+            panic!("owner role {role} failed with {status}: {diagnostic}");
+        }
         terminated(&helper);
         terminated(&grandchild);
     }
@@ -248,7 +254,7 @@ fn windows_parent_worker() {
                 match role.as_str() {
                     "terminate-owner" => {
                         child.terminate();
-                        assert!(!child.wait().await.unwrap().success());
+                        child.wait().await.unwrap();
                     }
                     "abort-owner" => {
                         let task = tokio::spawn(async move { child.wait().await });

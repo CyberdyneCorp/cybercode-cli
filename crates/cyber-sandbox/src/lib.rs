@@ -149,6 +149,9 @@ pub fn proxy_uses_unix_socket() -> bool {
 /// Locate `cyber-sandbox-exec`: `CYBER_SANDBOX_HELPER`, next to the running executable (or
 /// its parent directory, for test binaries under `target/*/deps`), then `PATH`.
 pub fn find_helper() -> Option<PathBuf> {
+    #[cfg(windows)]
+    const NAME: &str = "cyber-sandbox-exec.exe";
+    #[cfg(not(windows))]
     const NAME: &str = "cyber-sandbox-exec";
     if let Some(path) = std::env::var_os("CYBER_SANDBOX_HELPER") {
         return Some(PathBuf::from(path));

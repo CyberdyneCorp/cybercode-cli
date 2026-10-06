@@ -3,6 +3,7 @@
 pub(crate) mod bash;
 mod fs;
 pub(crate) mod patch;
+mod process;
 mod search;
 mod session;
 mod skill;
