@@ -2,6 +2,7 @@
 - [ ] Audit Windows compilation, shell, process cancellation and service lifecycle boundaries.
   Source audit is recorded in `windows-audit.md`; Windows compilation and native lifecycle verification remain pending.
 - [ ] Implement restricted-token AppContainer launch, scoped ACL grants and job-object cleanup.
+  - [ ] Add and prove an isolated Windows job-owner helper before native tool integration; verify normal exit and forced termination clean up grandchildren.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.

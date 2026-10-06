@@ -36,6 +36,8 @@ The first native Windows job confirmed the helper import failure; the next progr
 
 The native check at `44b4c1d` exposed a further Unix-only proxy constructor call in the tool launcher. That call is now compile-gated, and a real-listener transport test is included in native Windows CI. Native compilation and lifecycle success remain pending; TCP transport selection alone does not prove Windows sandbox networking.
 
+A separate Windows `--job` helper now establishes process-tree ownership before spawning a command. Native tests cover a live grandchild after normal completion and forced termination, executable paths containing spaces, exit status, invalid arguments and launch failure. Native results and integration into tool dispatch remain pending. This helper does not grant AppContainer confinement or enable sandbox availability; the existing 12 macOS sandbox/helper tests and workspace release Clippy pass.
+
 Built-in tool authorization is not connected to classifier allows yet. The next work is protected/irreversible ceilings and critical-path guards, then host integration, configuration, override/statistics commands and mode-disabling policy enforcement. Windows enforcement and its native runtime evidence remain unfinished. This runtime foundation passes 11 dedicated tests; full workspace validation passes 341 tests (one opt-in measurement ignored), release Clippy and strict OpenSpec validation.
 
 ## Requirement inventory

@@ -1,4 +1,4 @@
-//! Linux proxy-bridge helper; unsupported platforms refuse to launch a command.
+//! Unix proxy bridge and Windows process-tree owner, selected explicitly.
 
 use std::process::ExitCode;
 
@@ -6,7 +6,16 @@ use std::process::ExitCode;
 #[path = "../proxy_bridge.rs"]
 mod proxy_bridge;
 
+#[cfg(windows)]
+#[path = "../windows_job.rs"]
+mod windows_job;
+
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--job")) {
+        return windows_job::run();
+    }
+
     #[cfg(unix)]
     return proxy_bridge::run();
 
