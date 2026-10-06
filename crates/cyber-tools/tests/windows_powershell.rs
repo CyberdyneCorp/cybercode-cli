@@ -219,7 +219,7 @@ async fn native_powershell_timeout_and_cancellation_settle_and_terminate_the_int
                 .unwrap();
             assert_eq!(
                 flow.runtime.state(&id).await.unwrap().calls["native"].status,
-                CallStatus::Interrupted
+                CallStatus::OutcomeUnknown
             );
         } else {
             tokio::time::timeout(Duration::from_secs(20), flow.runtime.wait_idle(&id))
