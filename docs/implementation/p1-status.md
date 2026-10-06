@@ -303,3 +303,7 @@ Unchecked means not yet audited and accepted under this goal; some functionality
 - [ ] `worktrees`: Worktree management commands
 - [ ] `worktrees`: Concurrency safety
 - [ ] `worktrees`: Worktree events
+
+## Provider credential environment integration
+
+Built-in command environment preparation now combines provider credential names from the loaded catalog with names from the current location configuration. Disabled/unavailable providers remain covered, and location overrides cannot remove loaded catalog names from masking. Only names are supplied to filtering; credentials are not resolved or logged for command execution. Explicit environment exceptions and full-access execution retain their existing behavior. All 136 local tools tests, including three focused tool-boundary tests, tools/server release Clippy and all 56 strict OpenSpec checks pass. Native Windows execution of the new tool-boundary tests remains pending; recursive credential-file isolation is still open.

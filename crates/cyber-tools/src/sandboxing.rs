@@ -72,11 +72,12 @@ pub(crate) async fn prepare_command(
         config: sandbox.clone(),
     };
     let wrapped = cyber_sandbox::wrap(&launch, program, args).map_err(|e| failed(e.to_string()))?;
-    let base: Vec<(String, String)> = if sandbox.policy == Policy::FullAccess {
-        std::env::vars().collect()
-    } else {
-        cyber_sandbox::mask_env(std::env::vars(), &sandbox.env_allow, &[])
-    };
+    let base = command_environment(
+        std::env::vars(),
+        &sandbox,
+        &config,
+        ctx.host.opts.models.as_deref(),
+    );
     let mut env: Vec<(String, String)> = base
         .into_iter()
         .filter(|(k, _)| !wrapped.env.contains_key(k) && k != "TMPDIR")
@@ -90,6 +91,30 @@ pub(crate) async fn prepare_command(
         asks,
         _proxy: proxy,
     })
+}
+
+fn command_environment(
+    vars: impl Iterator<Item = (String, String)>,
+    sandbox: &SandboxConfig,
+    config: &serde_json::Value,
+    models: Option<&dyn cyber_server::runtime::ModelResolver>,
+) -> Vec<(String, String)> {
+    if sandbox.policy == Policy::FullAccess {
+        return vars.collect();
+    }
+    let mut credentials = models
+        .map(|resolver| resolver.credential_env_names())
+        .unwrap_or_default();
+    credentials.extend(
+        config["providers"]
+            .as_object()
+            .into_iter()
+            .flat_map(|providers| providers.values())
+            .flat_map(|provider| provider["env"].as_array().into_iter().flatten())
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_owned),
+    );
+    cyber_sandbox::mask_env(vars, &sandbox.env_allow, &credentials)
 }
 
 async fn start_proxy(decide: Decide, _tmp: &Path) -> std::io::Result<Proxy> {
@@ -188,6 +213,98 @@ fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
 mod tests {
     use super::*;
     use cyber_sandbox::proxy::Endpoint;
+
+    fn credential_fixture() -> cyber_server::runtime::CatalogResolver {
+        cyber_server::runtime::CatalogResolver::new(
+            &serde_json::json!({
+                "catalog-only": {"name": "Catalog", "env": ["CatalogCredential"], "models": {}}
+            }),
+            serde_json::json!({"providers": {
+                "disabled": {"disabled": true, "env": ["DisabledCredential"]},
+                "unavailable": {"env": ["UnavailableCredential"]}
+            }}),
+            &std::collections::HashMap::<String, String>::new(),
+        )
+    }
+
+    fn filtered_names(
+        config: serde_json::Value,
+        policy: Option<&str>,
+        models: Option<&dyn cyber_server::runtime::ModelResolver>,
+    ) -> Vec<String> {
+        let sandbox = SandboxConfig::resolve(&config, &Default::default(), policy, Path::new("."));
+        let vars = [
+            "CatalogCredential",
+            "DisabledCredential",
+            "UnavailableCredential",
+            "LocationCredential",
+            "PATH",
+            "LocationCredentialExtra",
+            "CUSTOM_SECRET",
+        ]
+        .map(|name| (name.to_owned(), "fixture".to_owned()));
+        command_environment(vars.into_iter(), &sandbox, &config, models)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    }
+
+    #[test]
+    fn loaded_and_location_credentials_are_filtered_from_tool_environments() {
+        let resolver = credential_fixture();
+        let config = serde_json::json!({"providers": {
+            "catalog-only": {"env": []},
+            "local": {"env": ["LocationCredential"]}
+        }});
+        assert_eq!(
+            filtered_names(config.clone(), None, Some(&resolver)),
+            ["PATH", "LocationCredentialExtra"]
+        );
+        assert_eq!(
+            filtered_names(config, None, None),
+            [
+                "CatalogCredential",
+                "DisabledCredential",
+                "UnavailableCredential",
+                "PATH",
+                "LocationCredentialExtra"
+            ]
+        );
+        assert_eq!(
+            filtered_names(serde_json::json!({}), None, Some(&resolver)),
+            ["LocationCredential", "PATH", "LocationCredentialExtra"]
+        );
+    }
+
+    #[test]
+    fn tool_environment_exceptions_and_full_access_preserve_explicit_choices() {
+        let resolver = credential_fixture();
+        let config = serde_json::json!({
+            "providers": {"local": {"env": ["LocationCredential"]}},
+            "sandbox": {"env": {"allow": ["DisabledCredential", "CUSTOM_SECRET"]}}
+        });
+        assert_eq!(
+            filtered_names(config.clone(), None, Some(&resolver)),
+            [
+                "DisabledCredential",
+                "PATH",
+                "LocationCredentialExtra",
+                "CUSTOM_SECRET"
+            ]
+        );
+        assert_eq!(
+            filtered_names(config, Some("full-access"), Some(&resolver)),
+            [
+                "CatalogCredential",
+                "DisabledCredential",
+                "UnavailableCredential",
+                "LocationCredential",
+                "PATH",
+                "LocationCredentialExtra",
+                "CUSTOM_SECRET"
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn tool_proxy_listens_on_the_supported_platform_transport() {

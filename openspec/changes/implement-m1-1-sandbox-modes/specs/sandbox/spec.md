@@ -13,6 +13,15 @@
 - **AND** Unicode normalization SHALL NOT create an unintended allowed-name match
 - **AND** a failed name comparison SHALL NOT authorize an exception or expose a potentially matched credential
 
+#### Scenario: Catalog credentials reach tool environment filtering
+- **WHEN** a sandboxed built-in command prepares its environment
+- **THEN** filtering SHALL include credential environment names from every provider in the loaded catalog, including disabled or unavailable providers
+- **AND** filtering SHALL additionally include credential names in the current location's provider configuration
+- **AND** omission or replacement of a provider in location configuration SHALL NOT remove loaded catalog names from filtering
+- **AND** filtering SHALL inspect credential names without exposing their values
+- **AND** explicit `sandbox.env.allow` exceptions SHALL retain their platform-aware semantics
+- **AND** explicit full-access execution SHALL preserve its unfiltered environment behavior
+
 ### Requirement: Windows enforcement
 (P1) On Windows the system SHALL run sandboxed processes with a restricted token in an AppContainer, with ACLs granting write access to writable roots only. When unavailable, it SHALL report `sandbox unavailable` as on Linux.
 

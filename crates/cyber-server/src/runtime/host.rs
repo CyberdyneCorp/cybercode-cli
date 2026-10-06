@@ -27,6 +27,11 @@ pub struct ResolvedModel {
 
 pub trait ModelResolver: Send + Sync {
     fn resolve(&self, model_ref: &str) -> Result<ResolvedModel, String>;
+    /// Known provider credential environment names; includes unavailable providers.
+    fn credential_env_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// The configured model for a role, following the role fallbacks.
     fn role(&self, role: ModelRole) -> Option<String>;
 }
@@ -53,6 +58,14 @@ impl CatalogResolver {
 }
 
 impl ModelResolver for CatalogResolver {
+    fn credential_env_names(&self) -> Vec<String> {
+        self.catalog
+            .providers
+            .values()
+            .flat_map(|provider| provider.env.iter().cloned())
+            .collect()
+    }
+
     fn resolve(&self, model_ref: &str) -> Result<ResolvedModel, String> {
         let r = ModelRef::parse(model_ref).map_err(|e| e.to_string())?;
         let target = self.catalog.resolve(&r, None).map_err(|e| e.to_string())?;
