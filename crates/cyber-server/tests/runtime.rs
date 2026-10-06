@@ -884,3 +884,236 @@ async fn a_panicking_drain_releases_the_session() {
         CallStatus::Interrupted
     );
 }
+
+#[tokio::test]
+async fn shutdown_cancels_all_sessions_and_preserves_durable_queued_input() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "write", "{}")]),
+                tools(&[("c2", "read", "{}")]),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("write", Behavior::UntilCancelled);
+    h.tools.set("read", Behavior::UntilCancelled);
+    let first = h.session().await;
+    h.runtime
+        .admit(&first, admit("write", Delivery::Queue))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    let second = h.session().await;
+    h.runtime
+        .admit(&second, admit("read", Delivery::Queue))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    for id in [&first, &second] {
+        let mut pending = admit("queued for restart", Delivery::Queue);
+        pending.resume = false;
+        h.runtime.admit(id, pending).await.unwrap();
+        h.runtime.wake(id).await.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(5), h.runtime.shutdown())
+        .await
+        .unwrap();
+    assert_eq!(
+        h.state(&first).await.calls["c1"].status,
+        CallStatus::OutcomeUnknown
+    );
+    assert_eq!(
+        h.state(&second).await.calls["c2"].status,
+        CallStatus::Interrupted
+    );
+    for id in [&first, &second] {
+        assert!(!h.runtime.is_running(id));
+        assert_eq!(
+            h.state(id).await.inbox.last().unwrap().status,
+            InputStatus::Pending
+        );
+        assert!(matches!(
+            h.runtime.wake(id).await,
+            Err(RuntimeError::ShuttingDown)
+        ));
+        assert!(matches!(
+            h.runtime.resume(id).await,
+            Err(RuntimeError::ShuttingDown)
+        ));
+        assert!(matches!(
+            h.runtime
+                .admit(id, admit("too late", Delivery::Queue))
+                .await,
+            Err(RuntimeError::ShuttingDown)
+        ));
+        assert!(matches!(
+            h.runtime.compact(id, None).await,
+            Err(RuntimeError::ShuttingDown)
+        ));
+    }
+    h.runtime.shutdown().await;
+    let restarted = h.restart();
+    assert_eq!(
+        restarted
+            .state(&first)
+            .await
+            .unwrap()
+            .inbox
+            .last()
+            .unwrap()
+            .status,
+        InputStatus::Pending
+    );
+}
+
+#[tokio::test]
+async fn shutdown_settles_pending_approval_and_rejects_new_sessions() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![tools(&[("c1", "ask", "{}")])])],
+        interactive: true,
+        ..Setup::default()
+    });
+    h.tools.set("ask", Behavior::Ask("approval".into()));
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("ask", Delivery::Queue))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while h.runtime.pending_requests(Some(&id)).is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), h.runtime.shutdown())
+        .await
+        .unwrap();
+    assert!(h.runtime.pending_requests(Some(&id)).is_empty());
+    assert!(!h.runtime.is_running(&id));
+    assert!(matches!(
+        h.runtime
+            .create_session(cyber_server::runtime::CreateSession {
+                directory: h.repo.display().to_string(),
+                model: "test/main".into(),
+                ..Default::default()
+            })
+            .await,
+        Err(RuntimeError::ShuttingDown)
+    ));
+}
+
+struct PendingModel {
+    active: Arc<std::sync::atomic::AtomicUsize>,
+    open: bool,
+}
+struct ActiveRequest(Arc<std::sync::atomic::AtomicUsize>);
+impl Drop for ActiveRequest {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+impl cyber_llm::Adapter for PendingModel {
+    fn stream(
+        &self,
+        _request: cyber_llm::LlmRequest,
+    ) -> futures::future::BoxFuture<'_, Result<cyber_llm::adapters::EventStream, cyber_llm::LlmError>>
+    {
+        use futures::StreamExt;
+        Box::pin(async move {
+            self.active
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let guard = ActiveRequest(Arc::clone(&self.active));
+            if self.open {
+                let _guard = guard;
+                std::future::pending().await
+            } else {
+                Ok(futures::stream::once(async move {
+                    let event =
+                        std::future::pending::<Result<cyber_llm::LlmEvent, cyber_llm::LlmError>>()
+                            .await;
+                    drop(guard);
+                    event
+                })
+                .boxed())
+            }
+        })
+    }
+}
+struct PendingModels {
+    models: Arc<Models>,
+    adapter: Arc<PendingModel>,
+}
+impl cyber_server::runtime::ModelResolver for PendingModels {
+    fn resolve(&self, model: &str) -> Result<cyber_server::runtime::ResolvedModel, String> {
+        let mut resolved =
+            cyber_server::runtime::ModelResolver::resolve(self.models.as_ref(), model)?;
+        resolved.adapter = self.adapter.clone();
+        Ok(resolved)
+    }
+    fn role(&self, role: cyber_llm::catalog::ModelRole) -> Option<String> {
+        cyber_server::runtime::ModelResolver::role(self.models.as_ref(), role)
+    }
+}
+
+#[tokio::test]
+async fn shutdown_drops_main_and_background_title_inference_during_open_or_stream() {
+    use cyber_server::runtime::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for open in [true, false] {
+        let h = Harness::new(Setup::default());
+        let active = Arc::new(AtomicUsize::new(0));
+        let runtime = Runtime::new(RuntimeOptions {
+            store: h.store.clone(),
+            resolver: Arc::new(PendingModels {
+                models: h.models.clone(),
+                adapter: Arc::new(PendingModel {
+                    active: active.clone(),
+                    open,
+                }),
+            }),
+            tools: h.tools.clone(),
+            global_config_dir: h.repo.join("global"),
+            shell: "bash".into(),
+            claude_compat: false,
+            compaction: CompactionConfig::default(),
+            retry: cyber_llm::RetryPolicy::default(),
+            max_steps: None,
+            today: None,
+            interactive: true,
+            snapshots: Arc::new(NoSnapshots),
+        });
+        let id = runtime
+            .create_session(CreateSession {
+                directory: h.repo.display().to_string(),
+                model: "test/main".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        runtime
+            .admit(&id, admit("start both requests", Delivery::Queue))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while active.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("main and title requests did not start");
+        tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
+            .await
+            .unwrap();
+        assert_eq!(
+            active.load(Ordering::SeqCst),
+            0,
+            "inference request survived shutdown"
+        );
+        assert!(!runtime.is_running(&id));
+        assert!(runtime.state(&id).await.unwrap().info.default_title);
+    }
+}

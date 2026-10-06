@@ -91,6 +91,11 @@ impl From<RuntimeError> for ApiError {
             RuntimeError::PromptConflict(_) => Self::conflict(message),
             RuntimeError::Busy(_) => Self::new(StatusCode::CONFLICT, "SessionBusyError", message),
             RuntimeError::Invalid(m) => Self::invalid(m),
+            RuntimeError::ShuttingDown => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ServerShuttingDownError",
+                message,
+            ),
             RuntimeError::ContextBlocked(_) => Self::conflict(message),
             RuntimeError::RewindConflict(paths) => {
                 let mut err = Self::new(StatusCode::CONFLICT, "RewindConflictError", message);

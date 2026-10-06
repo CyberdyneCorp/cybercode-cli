@@ -142,13 +142,15 @@ pub async fn run_server_until(
         .and_then(|socket| unix(router, socket, Arc::clone(&stop)));
     stop.notified().await;
     stop.notify_waiters();
+    sweeper.abort();
+    let _ = sweeper.await;
+    app.runtime.shutdown().await;
     if let Some(task) = tcp_task {
         let _ = task.await;
     }
     if let Some(task) = unix_task {
         let _ = task.await;
     }
-    sweeper.abort();
     if let Some(socket) = socket {
         let _ = std::fs::remove_file(socket);
     }

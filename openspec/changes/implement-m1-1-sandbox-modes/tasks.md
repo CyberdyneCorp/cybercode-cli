@@ -15,6 +15,8 @@
 - [x] Add authenticated registration-bound service shutdown over TCP and Unix socket-only transport, with local stale-PID, identity/authentication and password-replacement regressions. Native Windows proof remains open.
 - [ ] Verify healthy service reuse and version/stale-registration replacement using authenticated shutdown or an unowned local server lock.
 - [ ] Prove service shutdown interrupts active inference/tools and closes attached streams within its deadline.
+  - [x] Validate the runtime admission gate, all-session cancellation, pending-input preservation, approval cleanup and tracked title-task cancellation with three new scenarios and 50 selected integration tests. Native runtime proof is pending.
+  - [ ] Close HTTP event streams and WebSockets and prove the complete service shutdown deadline.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.

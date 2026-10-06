@@ -91,29 +91,24 @@ async fn pass(
     let mut first = forced;
     let mut overflow_retried = false;
     loop {
-        if cancel.is_cancelled() || !eligible(&handle, continue_tools, first).await {
+        if !eligible(&handle, continue_tools, first, cancel).await {
             return Ok(());
         }
-        let resolved = boundary(inner, &handle, continue_tools).await?;
-        let promoted = resolved.1;
-        if !(continue_tools || promoted || first) {
+        let Some(resolved) = prepare_pass(inner, &handle, continue_tools, first, cancel).await?
+        else {
             return Ok(());
-        }
+        };
         first = false;
-        let resolved = resolved.0;
-        if inner.needs_compaction(&handle, &resolved).await? {
-            inner
-                .compact_and_continue(&handle, CompactionTrigger::Auto, &resolved)
-                .await?;
-        }
         match inner.run_turn(&handle, &resolved, cancel).await? {
             TurnEnd::Tools => continue_tools = true,
             TurnEnd::Done => continue_tools = false,
             TurnEnd::Overflow if inner.options.compaction.auto && !overflow_retried => {
                 overflow_retried = true;
-                inner
-                    .compact_and_continue(&handle, CompactionTrigger::Overflow, &resolved)
-                    .await?;
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Ok(()),
+                    result = inner.compact_and_continue(&handle, CompactionTrigger::Overflow, &resolved) => result?,
+                }
                 continue_tools = true;
             }
             TurnEnd::Overflow => {
@@ -126,7 +121,41 @@ async fn pass(
     }
 }
 
-async fn eligible(handle: &Handle, continue_tools: bool, first: bool) -> bool {
+/// Resolve the safe boundary and automatic compaction before any tool can dispatch.
+async fn prepare_pass(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    continue_tools: bool,
+    first: bool,
+    cancel: &CancellationToken,
+) -> Result<Option<ResolvedModel>, RuntimeError> {
+    let (resolved, promoted) = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Ok(None),
+        result = boundary(inner, handle, continue_tools) => result?,
+    };
+    if !(continue_tools || promoted || first) {
+        return Ok(None);
+    }
+    if inner.needs_compaction(handle, &resolved).await? {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(None),
+            result = inner.compact_and_continue(handle, CompactionTrigger::Auto, &resolved) => result?,
+        }
+    }
+    Ok(Some(resolved))
+}
+
+async fn eligible(
+    handle: &Handle,
+    continue_tools: bool,
+    first: bool,
+    cancel: &CancellationToken,
+) -> bool {
+    if cancel.is_cancelled() {
+        return false;
+    }
     let compaction = handle
         .pending_compaction
         .lock()

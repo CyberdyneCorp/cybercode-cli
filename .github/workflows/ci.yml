@@ -66,6 +66,8 @@ jobs:
         run: cargo test --locked -p cyber-tools --test windows_powershell
       - name: Every registered tool has a golden
         run: cargo test --locked -p cyber-tools --test golden every_registered_tool_has_a_golden
+      - name: Native runtime shutdown
+        run: cargo test --locked -p cyber-server --test runtime shutdown_
       - name: Native server listener lifecycle
         run: cargo test --locked -p cyber-app --test server
       - name: Native CLI service shutdown

@@ -26,6 +26,10 @@ impl Env {
             .env("CYBER_HOME", self.root.join("cyber-home"))
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .current_dir(&self.root);
+        #[cfg(windows)]
+        if let Some(system) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system);
+        }
         command
     }
 
@@ -308,21 +312,24 @@ fn service_stop_uses_registered_http_shutdown() {
     let mut command = env.command(&["serve", "--register", "--port", "0"]);
     #[cfg(unix)]
     command.arg("--socket").arg(env.root.join("s.sock"));
+    let diagnostic = env.root.join("server-stderr.log");
     let mut server = OwnedService(
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(std::fs::File::create(&diagnostic).unwrap())
             .spawn()
             .unwrap(),
     );
     let registration = env.root.join("cyber-home/state/server.json");
     let deadline = Instant::now() + Duration::from_secs(10);
     while !registration.is_file() {
-        assert!(
-            server.0.try_wait().unwrap().is_none(),
-            "server exited before registration"
-        );
+        if let Some(status) = server.0.try_wait().unwrap() {
+            panic!(
+                "server exited before registration ({status}): {}",
+                std::fs::read_to_string(&diagnostic).unwrap_or_default()
+            );
+        }
         assert!(Instant::now() < deadline, "server did not register");
         std::thread::sleep(Duration::from_millis(10));
     }

@@ -14,6 +14,7 @@ mod host;
 mod model;
 mod requests;
 mod rewind;
+mod shutdown;
 mod title;
 mod view;
 
@@ -25,7 +26,7 @@ use cyber_llm::{Content, RetryPolicy};
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, Notify, broadcast};
+use tokio::sync::{Mutex, Notify, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
 pub use auto::{AutoDecision, AutoEffect, AutoReview};
@@ -60,6 +61,8 @@ pub enum RuntimeError {
     PromptConflict(String),
     #[error("SessionBusyError: session {0} is running")]
     Busy(String),
+    #[error("ServerShuttingDownError: the server is shutting down")]
+    ShuttingDown,
     #[error("InvalidRequestError: {0}")]
     Invalid(String),
     #[error("ContextInitializationBlocked: {}", .0.join(", "))]
@@ -211,6 +214,10 @@ pub(crate) struct Inner {
     sessions: StdMutex<HashMap<String, Arc<Handle>>>,
     drains: StdMutex<HashMap<String, DrainEntry>>,
     idle: Notify,
+    lifecycle: RwLock<()>,
+    shutdown_lock: Mutex<()>,
+    closed: CancellationToken,
+    background: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
@@ -236,6 +243,10 @@ impl Runtime {
             sessions: StdMutex::default(),
             drains: StdMutex::default(),
             idle: Notify::new(),
+            lifecycle: RwLock::new(()),
+            shutdown_lock: Mutex::new(()),
+            closed: CancellationToken::new(),
+            background: StdMutex::default(),
             waiters: StdMutex::default(),
             me: me.clone(),
         });
@@ -271,6 +282,7 @@ impl Runtime {
 
     /// Create a Session, or return the existing one unchanged when `id` is taken.
     pub async fn create_session(&self, req: CreateSession) -> Result<SessionInfo, RuntimeError> {
+        let _admission = self.inner.open().await?;
         let id = req
             .id
             .clone()
@@ -306,6 +318,7 @@ impl Runtime {
         session_id: &str,
         admission: Admission,
     ) -> Result<Receipt, RuntimeError> {
+        let _admission = self.inner.open().await?;
         let handle = self.inner.handle(session_id).await?;
         self.inner.commit_staged_revert(&handle).await?;
         let message_id = admission
@@ -331,7 +344,7 @@ impl Runtime {
             receipt_for(&state, &message_id, stored[0].seq)
         };
         if admission.resume && admission.delivery != Delivery::Hold {
-            self.wake(session_id).await?;
+            self.inner.start_drain(session_id, false);
         }
         Ok(receipt)
     }
@@ -365,6 +378,7 @@ impl Runtime {
         message_id: &str,
         delivery: Delivery,
     ) -> Result<(), RuntimeError> {
+        let _admission = self.inner.open().await?;
         if delivery == Delivery::Hold {
             return Err(RuntimeError::Invalid(
                 "release a held input as steer or queue".into(),
@@ -378,7 +392,8 @@ impl Runtime {
             Some(delivery),
         )
         .await?;
-        self.wake(session_id).await
+        self.inner.start_drain(session_id, false);
+        Ok(())
     }
 
     /// Refuse a held row; it is kept as `refused` and never promoted.
@@ -414,6 +429,7 @@ impl Runtime {
 
     /// Start a Drain when idle, or record one coalesced follow-up when one is running.
     pub async fn wake(&self, session_id: &str) -> Result<(), RuntimeError> {
+        let _admission = self.inner.open().await?;
         self.inner.handle(session_id).await?;
         self.inner.start_drain(session_id, false);
         Ok(())
@@ -421,6 +437,7 @@ impl Runtime {
 
     /// Join an active Drain, or start one that performs at least one Turn.
     pub async fn resume(&self, session_id: &str) -> Result<(), RuntimeError> {
+        let _admission = self.inner.open().await?;
         self.inner.handle(session_id).await?;
         self.inner.start_drain(session_id, true);
         Ok(())
@@ -482,6 +499,7 @@ impl Runtime {
         session_id: &str,
         instructions: Option<String>,
     ) -> Result<(), RuntimeError> {
+        let _admission = self.inner.open().await?;
         let handle = self.inner.handle(session_id).await?;
         if self.is_running(session_id) {
             *handle
@@ -490,9 +508,11 @@ impl Runtime {
                 .unwrap_or_else(PoisonError::into_inner) = Some(instructions);
             return Ok(());
         }
-        self.inner
-            .compact(&handle, CompactionTrigger::Manual, instructions)
-            .await
+        tokio::select! {
+            biased;
+            _ = self.inner.closed.cancelled() => Err(RuntimeError::ShuttingDown),
+            result = self.inner.compact(&handle, CompactionTrigger::Manual, instructions) => result,
+        }
     }
 
     pub async fn switch_model(&self, session_id: &str, model: &str) -> Result<(), RuntimeError> {
@@ -630,6 +650,7 @@ impl Runtime {
         session_id: &str,
         before_message: Option<&str>,
     ) -> Result<SessionInfo, RuntimeError> {
+        let _admission = self.inner.open().await?;
         let handle = self.inner.handle(session_id).await?;
         let state = handle.state.lock().await.clone();
         let cut = match before_message {
@@ -975,6 +996,9 @@ impl Inner {
 
     fn start_drain(self: &Arc<Self>, id: &str, forced: bool) {
         let mut drains = self.drains.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.closed.is_cancelled() {
+            return;
+        }
         if let Some(entry) = drains.get_mut(id) {
             entry.follow_up = true;
             return;

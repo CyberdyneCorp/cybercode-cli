@@ -58,3 +58,11 @@
 - **THEN** shutdown SHALL authenticate with the existing password before the replacement is written
 - **AND** refused shutdown SHALL preserve the existing credentials and registration
 - **AND** successful replacement SHALL restart the service with the new password
+
+#### Scenario: Shutdown settles active runtime work
+- **WHEN** the listener owner begins service shutdown
+- **THEN** runtime admission SHALL close and all active session drains SHALL receive cancellation
+- **AND** shutdown SHALL await tool settlement and background title-task completion
+- **AND** side-effecting interrupted tools SHALL retain outcome-unknown settlement
+- **AND** pending durable inbox rows SHALL remain available to a new runtime after restart
+- **AND** new sessions, forks, admissions, releases, compaction and resume requests SHALL fail clearly after admission closes

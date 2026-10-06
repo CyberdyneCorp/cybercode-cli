@@ -14,10 +14,22 @@ const SYSTEM: &str = "Write a short title (at most 8 words) for this coding conv
 impl Inner {
     /// Generate a title from the first prompt in the background. Failure keeps the default.
     pub(crate) fn spawn_title(self: &Arc<Self>, handle: Arc<Handle>) {
+        let mut tasks = self
+            .background
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.closed.is_cancelled() {
+            return;
+        }
+        tasks.retain(|task| !task.is_finished());
         let inner = Arc::clone(self);
-        tokio::spawn(async move {
-            let _ = inner.generate_title(&handle).await;
-        });
+        tasks.push(tokio::spawn(async move {
+            tokio::select! {
+                biased;
+                _ = inner.closed.cancelled() => {},
+                _ = inner.generate_title(&handle) => {},
+            }
+        }));
     }
 
     async fn generate_title(&self, handle: &Handle) -> Result<(), String> {
