@@ -48,6 +48,33 @@
           "features"
         ]
       },
+      "StopService": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "StopAccepted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "stopping": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "stopping"
+        ]
+      },
       "Data_LocationInfo": {
         "type": "object",
         "properties": {
@@ -1884,6 +1911,57 @@
           }
         },
         "security": []
+      }
+    },
+    "/api/v1/service/stop": {
+      "post": {
+        "operationId": "v1.service.stop",
+        "summary": "Stop the server matching this registration identity",
+        "tags": [
+          "service"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopService"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/openapi.json": {

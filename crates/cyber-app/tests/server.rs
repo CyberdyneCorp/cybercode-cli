@@ -196,3 +196,174 @@ async fn unsupported_unix_listener_options_fail_before_readiness() {
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me");
     }
 }
+
+async fn registered(
+    socket_only: bool,
+) -> (
+    tempfile::TempDir,
+    Paths,
+    Arc<Notify>,
+    tokio::task::JoinHandle<Result<(), String>>,
+    cyber_app::Registration,
+) {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = paths(tmp.path());
+    let application = app(tmp.path()).await;
+    std::fs::write(p.state.join("password"), "test-password-123456").unwrap();
+    let stop = Arc::new(Notify::new());
+    let task = tokio::spawn(cyber_app::run_server_until(
+        application,
+        ServeOptions {
+            port: Some(0),
+            no_tcp: socket_only,
+            register: true,
+            ..ServeOptions::default()
+        },
+        |_| {},
+        Arc::clone(&stop),
+    ));
+    let reg = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(reg) = cyber_app::read_registration(&p) {
+                break reg;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("server registration");
+    (tmp, p, stop, task, reg)
+}
+
+#[tokio::test]
+async fn service_stop_requires_authentication_and_matching_registration_identity() {
+    let (_tmp, p, stop, task, reg) = registered(false).await;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let url = format!("{}/api/v1/service/stop", reg.url);
+    let unauthorized = client
+        .post(&url)
+        .json(&serde_json::json!({"id": reg.id}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), 401);
+    let mismatch = client
+        .post(&url)
+        .basic_auth("cyber", Some("test-password-123456"))
+        .json(&serde_json::json!({"id": "srv_stale"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mismatch.status(), 409);
+    let forbidden = client
+        .post(&url)
+        .basic_auth("cyber", Some("test-password-123456"))
+        .header("origin", "https://untrusted.example")
+        .json(&serde_json::json!({"id": reg.id}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), 403);
+    assert_eq!(cyber_app::read_registration(&p).unwrap().id, reg.id);
+    assert!(!task.is_finished());
+    stop.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_service_ignores_stale_pid_and_stops_the_registered_server() {
+    let (_tmp, p, stop, mut task, mut reg) = registered(false).await;
+    // An invalid PID is safe against the old implementation and proves dispatch is identity-bound.
+    reg.pid = u32::MAX;
+    std::fs::write(
+        cyber_app::registration_path(&p),
+        serde_json::to_string(&reg).unwrap(),
+    )
+    .unwrap();
+    let result = cyber_app::stop_service(&p).await;
+    let finished = tokio::time::timeout(Duration::from_secs(2), &mut task).await;
+    // Clean up the owned test server even when testing a baseline without the new route.
+    if finished.is_err() {
+        stop.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        finished.is_ok(),
+        "registered server continued running after service stop"
+    );
+    assert_eq!(result.unwrap(), Some(reg));
+    assert!(cyber_app::read_registration(&p).is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn socket_only_service_stops_over_its_authenticated_peer_transport() {
+    let (_tmp, p, _stop, task, reg) = registered(true).await;
+    assert!(reg.url.is_empty());
+    assert_eq!(cyber_app::stop_service(&p).await.unwrap(), Some(reg));
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(cyber_app::read_registration(&p).is_none());
+}
+
+#[tokio::test]
+async fn password_replacement_authenticates_shutdown_with_the_existing_password() {
+    let (_tmp, p, _stop, task, _reg) = registered(false).await;
+    assert!(
+        cyber_app::replace_password(&p, "replacement-password-654321")
+            .await
+            .unwrap()
+    );
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(p.state.join("password")).unwrap(),
+        "replacement-password-654321"
+    );
+    assert!(cyber_app::read_registration(&p).is_none());
+}
+
+#[tokio::test]
+async fn refused_password_replacement_preserves_credentials_and_registration() {
+    let (_tmp, p, stop, task, mut reg) = registered(false).await;
+    reg.id = "srv_stale".into();
+    std::fs::write(
+        cyber_app::registration_path(&p),
+        serde_json::to_string(&reg).unwrap(),
+    )
+    .unwrap();
+    let result = cyber_app::replace_password(&p, "replacement-password-654321").await;
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read_to_string(p.state.join("password")).unwrap(),
+        "test-password-123456"
+    );
+    assert_eq!(cyber_app::read_registration(&p), Some(reg));
+    assert!(!task.is_finished());
+    stop.notify_waiters();
+    stop.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}

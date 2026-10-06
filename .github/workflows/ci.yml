@@ -68,6 +68,8 @@ jobs:
         run: cargo test --locked -p cyber-tools --test golden every_registered_tool_has_a_golden
       - name: Native server listener lifecycle
         run: cargo test --locked -p cyber-app --test server
+      - name: Native CLI service shutdown
+        run: cargo test --locked -p cyber-cli --test cli service_stop_uses_registered_http_shutdown
 
   sdk:
     name: TypeScript SDK

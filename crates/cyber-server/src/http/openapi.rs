@@ -11,6 +11,7 @@ use super::catalog::{Health, ToolInfo};
 use super::envelope::{Data, Located, LocationInfo, Page};
 use super::error::ErrorBody;
 use super::events::{EventEnvelope, HistoryPage};
+use super::service::{StopAccepted, StopService};
 use super::sessions::*;
 use super::{AgentInfo, CommandInfo, ModelInfo};
 use crate::runtime::{FileDiff, InboxRow, PendingRequest, Receipt, RevertState, SessionRow};
@@ -102,6 +103,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "Health and version (unauthenticated)",
         )
         .ok::<Health>(g),
+        op(
+            "post",
+            "/service/stop",
+            "v1.service.stop",
+            "Stop the server matching this registration identity",
+        )
+        .body::<StopService>(g)
+        .ok::<StopAccepted>(g),
         op("get", "/openapi.json", "v1.health.openapi", "This document"),
         op("get", "/location", "v1.location.get", "Resolve a Location")
             .located()

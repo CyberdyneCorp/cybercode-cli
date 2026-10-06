@@ -470,6 +470,15 @@ export type Sourced = {
   text: string;
 };
 
+export type StopAccepted = {
+  id: string;
+  stopping: boolean;
+};
+
+export type StopService = {
+  id: string;
+};
+
 /** Durable task state (`compaction` → Durable task state), derived from promoted input. */
 export type TaskState = {
   version: number;

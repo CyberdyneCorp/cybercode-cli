@@ -17,16 +17,20 @@ impl Env {
         Self { _dir: dir, root }
     }
 
-    fn cyber(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_cyber"))
+    fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
+        command
             .args(args)
             .env_clear()
             .env("HOME", self.root.join("home"))
             .env("CYBER_HOME", self.root.join("cyber-home"))
             .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .current_dir(&self.root)
-            .output()
-            .unwrap()
+            .current_dir(&self.root);
+        command
+    }
+
+    fn cyber(&self, args: &[&str]) -> Output {
+        self.command(args).output().unwrap()
     }
 
     fn repo(&self, config: &str) -> PathBuf {
@@ -284,4 +288,57 @@ fn db_backup_without_a_database_is_a_usage_error() {
         env.cyber(&["db", "backup", "x.db"]).status.code() == Some(2),
         "no database yet is a usage error"
     );
+}
+
+struct OwnedService(std::process::Child);
+
+impl Drop for OwnedService {
+    fn drop(&mut self) {
+        // This is our actual child handle, never a PID from a registration file.
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn service_stop_uses_registered_http_shutdown() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let env = Env::new();
+    let mut command = env.command(&["serve", "--register", "--port", "0"]);
+    #[cfg(unix)]
+    command.arg("--socket").arg(env.root.join("s.sock"));
+    let mut server = OwnedService(
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let registration = env.root.join("cyber-home/state/server.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !registration.is_file() {
+        assert!(
+            server.0.try_wait().unwrap().is_none(),
+            "server exited before registration"
+        );
+        assert!(Instant::now() < deadline, "server did not register");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = env.cyber(&["service", "stop", "--format", "json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = server.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CLI stop left its owned server running"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!registration.exists());
 }

@@ -31,7 +31,9 @@ pub use registration::{
     Registration, ServerClientInfo, health, read_registration, registration_path, start_service,
     stop_service,
 };
-pub use server::{ServeOptions, password, run_server, run_server_until, serve_stdio};
+pub use server::{
+    ServeOptions, password, replace_password, run_server, run_server_until, serve_stdio,
+};
 
 /// What an App is built from.
 pub struct AppOptions {
@@ -157,6 +159,7 @@ impl App {
             opts.paths.state.join("model.json"),
         );
         let state = AppState {
+            service: None,
             runtime: runtime.clone(),
             remote_tools,
             store: Arc::clone(&store),

@@ -60,6 +60,7 @@ impl Services for FakeServices {
 
 fn state(h: &Harness, password: Option<&str>) -> AppState {
     AppState {
+        service: None,
         runtime: h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&h.store),
@@ -647,6 +648,7 @@ async fn clients_register_tools_that_the_model_can_call() {
         snapshots: Arc::new(cyber_server::runtime::NoSnapshots),
     });
     let state = AppState {
+        service: None,
         runtime: runtime.clone(),
         remote_tools: remote,
         store,

@@ -52,6 +52,20 @@ pub fn password(paths: &Paths) -> Result<String, String> {
     Ok(value)
 }
 
+/// Stop a registered server using its existing credentials before replacing the password.
+/// The caller restarts the service when this returns `true`.
+pub async fn replace_password(paths: &Paths, value: &str) -> Result<bool, String> {
+    if value.len() < 16 {
+        return Err("the password must be at least 16 characters".into());
+    }
+    let restart = crate::read_registration(paths).is_some();
+    if restart {
+        crate::stop_service(paths).await?;
+    }
+    write_private(&paths.state.join("password"), value)?;
+    Ok(restart)
+}
+
 /// Serve until SIGINT or SIGTERM. Only one server per OS user holds the lock.
 pub async fn run_server(
     app: App,
@@ -73,7 +87,6 @@ pub async fn run_server_until(
     let socket = local_socket(&opts, &app.paths)?;
     let _lock = cyber_store::OwnershipLock::acquire(&app.paths.server_lock())
         .map_err(|e| format!("another cyber server is already running for this user ({e})"))?;
-    let router = app.router();
     let retention = crate::retention::Retention::from_config(
         &(app.config)(&app.state.options.default_directory)
             .map(|(v, _)| v)
@@ -96,6 +109,12 @@ pub async fn run_server_until(
         socket: socket.as_ref().map(|p| p.display().to_string()),
         pid: std::process::id(),
     };
+    let mut state = app.state.clone();
+    state.service = Some(http::ServiceControl {
+        id: registration.id.clone(),
+        stop: Arc::clone(&stop),
+    });
+    let router = http::router(state);
     cyber_core::log::info(
         "server",
         "listening",

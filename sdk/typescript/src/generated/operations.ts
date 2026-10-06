@@ -154,6 +154,12 @@ export interface Operations {
     body: S.QuestionReplyBody;
     response: void;
   };
+  "v1.service.stop": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.StopService;
+    response: S.StopAccepted;
+  };
   "v1.session.agent": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -515,6 +521,18 @@ export const operations = {
     method: "POST",
     path: "/api/v1/sessions/{sessionID}/questions/{requestID}/reply",
     pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.service.stop": {
+    tag: "service",
+    name: "stop",
+    method: "POST",
+    path: "/api/v1/service/stop",
+    pathParams: [],
     query: [],
     body: "required",
     located: false,
@@ -926,6 +944,11 @@ export function createGroups(caller: Caller) {
       /** Answer or dismiss a question (`POST /api/v1/sessions/{sessionID}/questions/{requestID}/reply`) */
       reply: (sessionID: string, requestID: string, body: Operations["v1.question.reply"]["body"], options?: RequestOptions): Promise<Operations["v1.question.reply"]["response"]> =>
         caller.call("v1.question.reply", { path: { sessionID, requestID }, body }, options),
+    },
+    service: {
+      /** Stop the server matching this registration identity (`POST /api/v1/service/stop`) */
+      stop: (body: Operations["v1.service.stop"]["body"], options?: RequestOptions): Promise<Operations["v1.service.stop"]["response"]> =>
+        caller.call("v1.service.stop", { body }, options),
     },
     session: {
       /** Switch the agent (`POST /api/v1/sessions/{sessionID}/agent`) */

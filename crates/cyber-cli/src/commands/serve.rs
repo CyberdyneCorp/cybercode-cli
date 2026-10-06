@@ -179,10 +179,10 @@ fn password(
             "the password must be at least 16 characters",
         ));
     }
-    cyber_core::trust::write_private_atomic(&ctx.paths.state.join("password"), value.as_bytes())?;
-    if cyber_app::read_registration(&ctx.paths).is_some() {
-        rt.block_on(cyber_app::stop_service(&ctx.paths))
-            .map_err(CliError::runtime)?;
+    let restart = rt
+        .block_on(cyber_app::replace_password(&ctx.paths, &value))
+        .map_err(CliError::runtime)?;
+    if restart {
         rt.block_on(start(ctx))?;
     }
     Ok(())

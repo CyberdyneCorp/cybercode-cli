@@ -140,14 +140,42 @@ pub async fn stop_service(paths: &Paths) -> Result<Option<Registration>, String>
     let Some(reg) = read_registration(paths) else {
         return Ok(None);
     };
-    let status = std::process::Command::new("kill")
-        .arg(reg.pid.to_string())
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !status.success() {
-        // The process is gone; clear the stale registration.
-        let _ = std::fs::remove_file(registration_path(paths));
-        return Ok(Some(reg));
+    #[allow(unused_mut)]
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy();
+    #[allow(unused_mut)]
+    let mut url = reg.url.clone();
+    #[cfg(unix)]
+    if url.is_empty() {
+        let socket = reg
+            .socket
+            .as_ref()
+            .ok_or("registration has no server listener")?;
+        builder = builder.unix_socket(socket.as_str());
+        url = "http://localhost".into();
+    }
+    let password = std::fs::read_to_string(paths.state.join("password"))
+        .map_err(|e| format!("cannot read server credentials: {e}"))?;
+    let response = builder
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("{url}/api/v1/service/stop"))
+        .basic_auth("cyber", Some(password.trim()))
+        .json(&serde_json::json!({"id": reg.id}))
+        .send()
+        .await
+        .map_err(|e| format!("cannot request server shutdown: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("server shutdown refused ({})", response.status()));
+    }
+    let accepted: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("invalid shutdown response: {e}"))?;
+    if accepted["id"] != reg.id || accepted["stopping"] != true {
+        return Err("server shutdown response did not match the registration".into());
     }
     for _ in 0..100 {
         if read_registration(paths).is_none_or(|r| r.id != reg.id) {

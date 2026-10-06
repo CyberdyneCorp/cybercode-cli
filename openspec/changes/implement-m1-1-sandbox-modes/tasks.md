@@ -1,6 +1,6 @@
 - [ ] Track P0 local baseline/long-task evidence separately; the six-platform CI matrix passes. This does not block authorized P1 implementation.
 - [ ] Audit Windows compilation, shell, process cancellation and service lifecycle boundaries.
-  Source audit is recorded in `windows-audit.md`; native compilation, TCP listener lifecycle and the standalone job-owner helper now pass. Native Bash dispatch and cancellation pass; native PowerShell dispatch verification and authenticated service lifecycle remain open.
+  Source audit is recorded in `windows-audit.md`; native compilation, TCP listener lifecycle and the standalone job-owner helper now pass. Native Bash and PowerShell foreground dispatch and cancellation pass; active-work service lifecycle remains open.
 - [ ] Implement restricted-token AppContainer launch, scoped ACL grants and job-object cleanup.
   - [x] Add and prove an isolated Windows job-owner helper before native tool integration; verify normal exit and forced termination clean up grandchildren. Native Windows tests pass at `5351154`; built-in dispatch integration and confinement remain open.
   - [x] Add the parent-owned job launch interface and private helper permit before user-code dispatch. Local sandbox regressions and workspace Clippy pass; native ownership proof passes at `d4d8416`.
@@ -10,8 +10,11 @@
   - [ ] Complete native PowerShell permission facts, then register and verify dispatch with the shared process owner.
     - [x] Collect bounded native resources and initial literal filesystem operands; six cross-platform parser tests pass; native drive-path facts also pass at `d205ded`.
     - [x] Prove initial native drive-path facts at `d205ded`.
-    - [ ] Verify native registration, rule filtering, golden/Unicode output, closed stdin, timeout and cancellation with individual approval.
+    - [x] Verify native registration, rule filtering, golden/Unicode output, closed stdin, legacy source encoding, timeout and cancellation with individual approval at `99edbe9`. Side-effecting cancellation preserves outcome-unknown settlement, and retained interpreter handles prove termination.
     - [ ] Complete legacy output encoding, parameter abbreviations, advanced mutation semantics and protected/irreversible boundaries.
+- [x] Add authenticated registration-bound service shutdown over TCP and Unix socket-only transport, with local stale-PID, identity/authentication and password-replacement regressions. Native Windows proof remains open.
+- [ ] Verify healthy service reuse and version/stale-registration replacement using authenticated shutdown or an unowned local server lock.
+- [ ] Prove service shutdown interrupts active inference/tools and closes attached streams within its deadline.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.

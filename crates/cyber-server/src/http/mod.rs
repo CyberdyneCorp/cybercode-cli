@@ -13,6 +13,7 @@ pub mod openapi;
 pub mod remote_tools;
 pub mod rpc;
 mod serve;
+mod service;
 mod sessions;
 
 use std::path::{Path, PathBuf};
@@ -33,6 +34,7 @@ pub use error::{ApiError, ErrorBody};
 #[cfg(unix)]
 pub use serve::serve_unix;
 pub use serve::{EmbeddedClient, serve_tcp};
+pub use service::ServiceControl;
 
 /// How a request reached the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +104,8 @@ pub struct HttpOptions {
 
 #[derive(Clone)]
 pub struct AppState {
+    /// Present only while this application owns server listeners.
+    pub service: Option<ServiceControl>,
     pub runtime: Runtime,
     /// Tools registered by connected clients over JSON-RPC.
     pub remote_tools: Arc<remote_tools::RemoteTools>,
@@ -141,6 +145,7 @@ pub fn router(state: AppState) -> Router {
         .merge(sessions::routes())
         .merge(events::routes())
         .merge(catalog::routes())
+        .merge(service::routes())
         .route("/ws", axum::routing::get(rpc::upgrade))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
