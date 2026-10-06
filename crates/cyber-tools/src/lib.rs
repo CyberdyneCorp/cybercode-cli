@@ -9,6 +9,7 @@ mod reconcile;
 mod sandboxing;
 mod schema;
 mod tools;
+mod worktrees;
 
 pub use budget::Budget;
 pub use host::{BuiltinHost, ConfigFn, HostOptions};

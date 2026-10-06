@@ -18,6 +18,20 @@
 - **THEN** the worktree and files already written remain intact and the repository lock is released
 - **AND** the runtime settles the process tree before retry or cleanup
 
+#### Scenario: Setup remains scoped to managed roots
+- **WHEN** setup runs with workspace-write policy
+- **THEN** it can write in the owned worktree and its managed temporary/output directories
+- **AND** writing to an unrelated sibling directory is denied unless explicitly configured as a writable root
+- **AND** protected paths and credential filtering remain enforced
+
+#### Scenario: Setup stream delivery fails
+- **WHEN** delivery of a live stdout or stderr chunk fails
+- **THEN** the command's owned process tree is terminated and the failure is reported without deleting the worktree
+
+#### Scenario: Setup leader exits before descendants
+- **WHEN** a setup leader exits while its descendants still hold stdout or stderr pipes
+- **THEN** the descendants are terminated and setup settles with the leader's exit code
+
 #### Scenario: Setup ownership mismatch
 - **WHEN** supplied managed ownership differs from the persisted ready record
 - **THEN** setup fails before any command is dispatched

@@ -4,7 +4,7 @@ pub(crate) mod bash;
 mod fs;
 pub(crate) mod patch;
 pub(crate) mod powershell;
-mod process;
+pub(crate) mod process;
 mod search;
 mod session;
 mod skill;

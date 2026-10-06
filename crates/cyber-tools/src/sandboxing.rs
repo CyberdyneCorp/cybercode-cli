@@ -38,6 +38,24 @@ pub(crate) async fn prepare_command(
     program: &str,
     args: &[String],
 ) -> Result<Prepared, ToolError> {
+    prepare_scoped_command(ctx, program, args, true).await
+}
+
+/// Setup must not gain ambient temporary-directory access outside its owned roots.
+pub(crate) async fn prepare_worktree_command(
+    ctx: &Ctx<'_>,
+    program: &str,
+    args: &[String],
+) -> Result<Prepared, ToolError> {
+    prepare_scoped_command(ctx, program, args, false).await
+}
+
+async fn prepare_scoped_command(
+    ctx: &Ctx<'_>,
+    program: &str,
+    args: &[String],
+    ambient_temp: bool,
+) -> Result<Prepared, ToolError> {
     let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
     let home = &ctx.host.opts.home;
     let sandbox = SandboxConfig::resolve(
@@ -62,7 +80,7 @@ pub(crate) async fn prepare_command(
         } else {
             (None, None)
         };
-    let writable = roots(ctx, &sandbox, &tmp);
+    let writable = roots(ctx, &sandbox, &tmp, ambient_temp);
     let launch = Launch {
         read_only: writable.iter().flat_map(|r| protected_in(r)).collect(),
         unreadable: sandbox.unreadable(home),
@@ -181,7 +199,7 @@ pub(crate) async fn answer(ctx: &Ctx<'_>, host: String) -> bool {
 
 /// Location, worktree root, the Session's temp directory, managed tool output and
 /// `sandbox.writable_roots`.
-fn roots(ctx: &Ctx<'_>, sandbox: &SandboxConfig, tmp: &Path) -> Vec<PathBuf> {
+fn roots(ctx: &Ctx<'_>, sandbox: &SandboxConfig, tmp: &Path, ambient_temp: bool) -> Vec<PathBuf> {
     let mut roots = vec![
         ctx.location.clone(),
         cyber_core::config::project_root(&ctx.location),
@@ -189,7 +207,7 @@ fn roots(ctx: &Ctx<'_>, sandbox: &SandboxConfig, tmp: &Path) -> Vec<PathBuf> {
         ctx.host.opts.tool_output_dir.clone(),
     ];
     // macOS tools such as mktemp use the per-user temp directory even when TMPDIR is set.
-    if cfg!(target_os = "macos") {
+    if cfg!(target_os = "macos") && ambient_temp {
         roots.push(std::env::temp_dir());
     }
     roots.extend(sandbox.extra_writable.iter().cloned());

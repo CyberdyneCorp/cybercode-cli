@@ -94,7 +94,7 @@ impl Tool for PowerShell {
     }
 }
 
-fn arguments(source: &str) -> Vec<String> {
+pub(crate) fn arguments(source: &str) -> Vec<String> {
     let bytes: Vec<u8> = source.encode_utf16().flat_map(u16::to_le_bytes).collect();
     vec![
         "-NoLogo".into(),

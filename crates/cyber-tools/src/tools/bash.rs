@@ -19,7 +19,7 @@ use crate::permissions::{RemovalScope, Request, bash_removal, literal_edits};
 
 const CAPTURE: usize = 1024 * 1024;
 pub(super) const DEFAULT_TIMEOUT_MS: u64 = 120_000;
-pub(super) const MAX_TIMEOUT_MS: u64 = 600_000;
+pub(crate) const MAX_TIMEOUT_MS: u64 = 600_000;
 const SHELLS: &[&str] = &["bash", "zsh", "sh", "dash"];
 
 pub(crate) struct Bash;
@@ -140,7 +140,7 @@ pub(super) async fn authorize_facts(
     }
 }
 
-fn shell(configured: &str) -> String {
+pub(crate) fn shell(configured: &str) -> String {
     let name = Path::new(configured)
         .file_name()
         .and_then(|n| n.to_str())

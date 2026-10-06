@@ -69,6 +69,9 @@ jobs:
       - name: Native tool proxy transport
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
+      - name: Native worktree setup admission
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test worktree_setup
       - name: Native shell ownership and cancellation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test windows_shell
