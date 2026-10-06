@@ -8,6 +8,10 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::response::Response;
 use axum::{Extension, Router};
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder;
+use hyper_util::service::TowerToHyperService;
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 use super::Transport;
@@ -18,9 +22,53 @@ pub async fn serve_tcp(
     listener: tokio::net::TcpListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    axum::serve(listener, router.layer(Extension(Transport::Tcp)))
-        .with_graceful_shutdown(shutdown)
-        .await
+    serve_owned(router.layer(Extension(Transport::Tcp)), listener, shutdown).await;
+    Ok(())
+}
+
+/// Own connection tasks so a blocked socket cannot prevent listener shutdown indefinitely.
+async fn serve_owned(
+    router: Router,
+    mut listener: impl axum::serve::Listener,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) {
+    let closing = CancellationToken::new();
+    let _on_drop = closing.clone().drop_guard();
+    let mut connections = tokio::task::JoinSet::new();
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => break,
+            _ = connections.join_next(), if !connections.is_empty() => {},
+            (io, _) = listener.accept() => {
+                connections.spawn(serve_connection(router.clone(), io, closing.clone()));
+            }
+        }
+    }
+    drop(listener);
+    closing.cancel();
+    while connections.join_next().await.is_some() {}
+}
+
+async fn serve_connection(
+    router: Router,
+    io: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    closing: CancellationToken,
+) {
+    let mut builder = Builder::new(TokioExecutor::new());
+    builder.http2().enable_connect_protocol();
+    let connection =
+        builder.serve_connection_with_upgrades(TokioIo::new(io), TowerToHyperService::new(router));
+    tokio::pin!(connection);
+    tokio::select! {
+        biased;
+        _ = closing.cancelled() => {},
+        _ = &mut connection => return,
+    }
+    connection.as_mut().graceful_shutdown();
+    // On timeout the owned connection future and its IO are dropped before this task ends.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), connection).await;
 }
 
 /// Serve on a Unix socket (mode 0600). Only peers running as this OS user are accepted.
@@ -39,9 +87,8 @@ pub async fn serve_unix(
         inner: listener,
         uid,
     };
-    axum::serve(checked, router.layer(Extension(Transport::Unix)))
-        .with_graceful_shutdown(shutdown)
-        .await
+    serve_owned(router.layer(Extension(Transport::Unix)), checked, shutdown).await;
+    Ok(())
 }
 
 #[cfg(unix)]

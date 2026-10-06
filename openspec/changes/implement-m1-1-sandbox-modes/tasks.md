@@ -20,7 +20,8 @@
   - [x] Prove cancellation drops blocked pre-turn tracking and post-turn tracking, changed-path and diff operations without recording a completed snapshot. All 41 runtime/context-compaction tests, release Clippy and strict OpenSpec checks pass locally; the four-stage regression also passes on native Windows at `4883ac6`.
   - [x] Prove idle/manual, queued manual, automatic and overflow summary opening/streaming interruption, preserved conversation entries and absent completed summaries in eight cases. All 42 runtime/context-compaction tests and strict OpenSpec checks pass locally; native compaction execution remains open.
   - [ ] Prove native Bash and PowerShell active-tool service shutdown, live child/grandchild termination, persisted outcome-unknown settlement and complete five-second deadline. The dedicated native CI step is added; compilation and execution are pending.
-  - [ ] Prove native Git process cleanup, native compaction interruption and backpressured-client behavior within the complete service deadline.
+  - [x] Own TCP and peer-checked Unix connection tasks, bound graceful drain to two seconds and prove unread large-event HTTP delivery cannot hold local service stop beyond its five-second deadline. All 67 selected integration tests and strict OpenSpec checks pass; native backpressure remains open.
+  - [ ] Prove native Git process cleanup, native compaction interruption and native backpressured-client behavior within the complete service deadline.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.

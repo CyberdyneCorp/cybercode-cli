@@ -206,11 +206,13 @@ async fn registered(
     tokio::task::JoinHandle<Result<(), String>>,
     cyber_app::Registration,
     Arc<cyber_server::http::remote_tools::RemoteTools>,
+    cyber_server::runtime::Runtime,
 ) {
     let tmp = tempfile::tempdir().unwrap();
     let p = paths(tmp.path());
     let application = app(tmp.path()).await;
     let tools = application.state.remote_tools.clone();
+    let runtime = application.runtime.clone();
     std::fs::write(p.state.join("password"), "test-password-123456").unwrap();
     let stop = Arc::new(Notify::new());
     let task = tokio::spawn(cyber_app::run_server_until(
@@ -234,12 +236,12 @@ async fn registered(
     })
     .await
     .expect("server registration");
-    (tmp, p, stop, task, reg, tools)
+    (tmp, p, stop, task, reg, tools, runtime)
 }
 
 #[tokio::test]
 async fn service_stop_requires_authentication_and_matching_registration_identity() {
-    let (_tmp, p, stop, task, reg, _tools) = registered(false).await;
+    let (_tmp, p, stop, task, reg, _tools, _runtime) = registered(false).await;
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(2))
@@ -282,7 +284,7 @@ async fn service_stop_requires_authentication_and_matching_registration_identity
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stop_service_ignores_stale_pid_and_stops_the_registered_server() {
-    let (_tmp, p, stop, mut task, mut reg, _tools) = registered(false).await;
+    let (_tmp, p, stop, mut task, mut reg, _tools, _runtime) = registered(false).await;
     // An invalid PID is safe against the old implementation and proves dispatch is identity-bound.
     reg.pid = u32::MAX;
     std::fs::write(
@@ -313,7 +315,7 @@ async fn stop_service_ignores_stale_pid_and_stops_the_registered_server() {
 #[cfg(unix)]
 #[tokio::test]
 async fn socket_only_service_stops_over_its_authenticated_peer_transport() {
-    let (_tmp, p, _stop, task, reg, _tools) = registered(true).await;
+    let (_tmp, p, _stop, task, reg, _tools, _runtime) = registered(true).await;
     assert!(reg.url.is_empty());
     assert_eq!(cyber_app::stop_service(&p).await.unwrap(), Some(reg));
     tokio::time::timeout(Duration::from_secs(5), task)
@@ -326,7 +328,7 @@ async fn socket_only_service_stops_over_its_authenticated_peer_transport() {
 
 #[tokio::test]
 async fn password_replacement_authenticates_shutdown_with_the_existing_password() {
-    let (_tmp, p, _stop, task, _reg, _tools) = registered(false).await;
+    let (_tmp, p, _stop, task, _reg, _tools, _runtime) = registered(false).await;
     assert!(
         cyber_app::replace_password(&p, "replacement-password-654321")
             .await
@@ -346,7 +348,7 @@ async fn password_replacement_authenticates_shutdown_with_the_existing_password(
 
 #[tokio::test]
 async fn refused_password_replacement_preserves_credentials_and_registration() {
-    let (_tmp, p, stop, task, mut reg, _tools) = registered(false).await;
+    let (_tmp, p, stop, task, mut reg, _tools, _runtime) = registered(false).await;
     reg.id = "srv_stale".into();
     std::fs::write(
         cyber_app::registration_path(&p),
@@ -374,7 +376,7 @@ async fn refused_password_replacement_preserves_credentials_and_registration() {
 async fn shutdown_closes_attached_event_streams_and_websocket_tools() {
     use base64::Engine;
     use futures::{SinkExt, StreamExt};
-    let (_tmp, p, stop, mut task, reg, tools) = registered(false).await;
+    let (_tmp, p, stop, mut task, reg, tools, _runtime) = registered(false).await;
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let response = client
         .get(format!("{}/api/v1/event", reg.url))
@@ -482,4 +484,76 @@ async fn shutdown_closes_attached_event_streams_and_websocket_tools() {
     .await
     .expect("WebSocket tool registrations survived shutdown");
     assert!(cyber_app::read_registration(&p).is_none());
+}
+
+#[tokio::test]
+async fn shutdown_finishes_with_a_backpressured_event_connection() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery};
+    let (tmp, p, stop, mut task, reg, _tools, runtime) = registered(false).await;
+    let mut socket = slow_event_connection(&reg.url).await;
+    let id = runtime
+        .create_session(CreateSession {
+            directory: tmp.path().display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let mut prompt = Admission::text("x".repeat(8 * 1024 * 1024), Delivery::Queue);
+    prompt.resume = false;
+    runtime.admit(&id, prompt).await.unwrap();
+    read_event_prefix(&mut socket, b"event: session.prompt.admitted.1\n").await;
+    let started = std::time::Instant::now();
+    let stopped = cyber_app::stop_service(&p).await;
+    let finished = tokio::time::timeout(Duration::from_secs(2), &mut task).await;
+    drop(socket);
+    if finished.is_err() {
+        stop.notify_waiters();
+        stop.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        panic!("backpressured connection held service shutdown open: {stopped:?}");
+    }
+    finished.unwrap().unwrap().unwrap();
+    assert_eq!(stopped.unwrap(), Some(reg));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(cyber_app::read_registration(&p).is_none());
+}
+
+async fn slow_event_connection(url: &str) -> tokio::net::TcpStream {
+    use base64::Engine;
+    use tokio::io::AsyncWriteExt;
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(1024).unwrap();
+    let address = url.trim_start_matches("http://").parse().unwrap();
+    let mut socket = socket.connect(address).await.unwrap();
+    let token = base64::engine::general_purpose::STANDARD.encode("cyber:test-password-123456");
+    socket.write_all(format!("GET /api/v1/event?scope=all HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic {token}\r\n\r\n").as_bytes()).await.unwrap();
+    let initial = read_event_prefix(&mut socket, b"\n\n\r\n").await;
+    assert!(
+        initial
+            .windows(b"server.connected".len())
+            .any(|w| w == b"server.connected")
+    );
+    socket
+}
+
+async fn read_event_prefix(socket: &mut tokio::net::TcpStream, needle: &[u8]) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut bytes = Vec::new();
+        loop {
+            bytes.push(socket.read_u8().await.unwrap());
+            if bytes.ends_with(needle) {
+                break bytes;
+            }
+            assert!(bytes.len() < 16384, "event prefix was not sent");
+        }
+    })
+    .await
+    .unwrap()
 }

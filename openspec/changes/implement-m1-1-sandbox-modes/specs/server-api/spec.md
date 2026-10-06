@@ -92,3 +92,10 @@
 - **AND** producer tasks SHALL also end when their receiving client disconnects
 - **AND** each WebSocket SHALL cancel and join its pending request tasks and release its channel-owned tool registrations
 - **AND** its shutdown close-frame write SHALL be bounded so a client that stops reading cannot hold cleanup indefinitely
+
+#### Scenario: A backpressured connection cannot prevent listener completion
+- **WHEN** shutdown starts while an HTTP response is blocked by a connected client that stops reading
+- **THEN** the TCP or peer-checked Unix listener SHALL stop accepting new connections and own the cleanup of its connection tasks
+- **AND** each connection SHALL receive at most two seconds of graceful drain before its blocked connection future and IO are dropped
+- **AND** the listener SHALL join the connection tasks before reporting completion
+- **AND** an interrupted event response MAY be truncated; committed events SHALL remain replayable from durable history
