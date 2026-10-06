@@ -47,6 +47,12 @@
 - **AND** process-tree setup failure SHALL refuse to launch the command
 - **AND** successful command completion SHALL preserve its exit code
 
+#### Scenario: Owned asynchronous AppContainer wait
+- **WHEN** an AppContainer command is awaited asynchronously
+- **THEN** the wait future SHALL own the command's process and job lifetime without an uncancellable blocking wait worker
+- **AND** dropping the unpolled future or aborting its task SHALL release that owner and terminate the command
+- **AND** normal completion SHALL preserve the command exit code and release its temporary storage and profile reservation
+
 #### Scenario: Windows parent dies during command launch
 - **WHEN** the server dies before or after assigning a trusted launch helper to its parent-owned job
 - **THEN** user code SHALL NOT start before successful assignment

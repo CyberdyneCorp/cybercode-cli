@@ -287,6 +287,19 @@ impl ContainerChild {
         &self._temp.path
     }
 
+    /// Own the process throughout asynchronous waiting, including cancellation.
+    /// Discarding this future also discards its process/job owner before first poll.
+    pub async fn wait_owned(mut self) -> io::Result<u32> {
+        loop {
+            match self.wait(Duration::ZERO) {
+                Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                result => return result,
+            }
+        }
+    }
+
     /// A bounded synchronous wait, intended for launch helpers or blocking workers.
     pub fn wait(&mut self, timeout: Duration) -> io::Result<u32> {
         let milliseconds = timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32;

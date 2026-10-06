@@ -112,6 +112,70 @@ fn container_owner_and_normal_exit_terminate_live_descendants() {
     }
 }
 
+#[tokio::test]
+async fn discarding_and_aborting_owned_waits_terminate_live_containers() {
+    for abort_task in [false, true] {
+        owned_wait_disposal_case(abort_task).await;
+    }
+}
+
+async fn owned_wait_disposal_case(abort_task: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let env = environment(directory.path(), "wait", &profile);
+    let child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
+    let retained = child.as_handle().try_clone_to_owned().unwrap();
+    let scratch = child.temporary_directory().to_path_buf();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::fs::read_to_string(directory.path().join("started.txt")).unwrap() != "running" {
+        assert!(std::time::Instant::now() < deadline, "worker never started");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_process_live(&retained);
+    let waiting = child.wait_owned();
+    if abort_task {
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            entered.send(()).unwrap();
+            waiting.await
+        });
+        ready.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    } else {
+        drop(waiting);
+    }
+    assert_process_terminated(&retained);
+    assert!(!scratch.exists());
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
+}
+
+#[tokio::test]
+async fn owned_wait_preserves_exit_code_and_releases_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let env = environment(directory.path(), "exit", &profile);
+    let child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
+    let scratch = child.temporary_directory().to_path_buf();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), child.wait_owned())
+            .await
+            .unwrap()
+            .unwrap(),
+        73
+    );
+    assert!(!scratch.exists());
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
+}
+
 fn container_tree_case(normal_exit: bool) {
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
     let directory = tempfile::tempdir().unwrap();
@@ -489,6 +553,9 @@ fn container_worker() {
     let root = PathBuf::from(std::env::var_os("CYBER_CONTAINER_ROOT").unwrap());
     if std::env::args_os().skip(1).collect::<Vec<_>>() != arguments() {
         std::process::exit(47);
+    }
+    if role == "exit" {
+        std::process::exit(73);
     }
     if role == "streams" {
         exit_worker(&root, stream_worker(&root), "streams", 52);

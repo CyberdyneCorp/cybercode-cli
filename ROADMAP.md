@@ -57,7 +57,7 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 4. **M1.4 Memory & intelligence:** auto-memory, LSP diagnostics feedback, formatters, isolated browser verification with revision-linked artifacts.
 5. **M1.5 Migration path:** `cyber import claude|codex|opencode`, ACP for Zed/JetBrains, VS Code extension.
 
-Current M1.1 work adds invocation-specific Windows AppContainer profiles and direct-object ACL leases with retained-handle cleanup. Cross-target checks and all five native ACL tests pass at `1ec59c3`. Command confinement, root exclusions, credential isolation and proxy-only networking remain open. The runtime/tool-host ownership-cycle regression passes the full native Windows job at `2bfca16`.
+Current M1.1 work adds invocation-specific Windows AppContainer profiles, direct-object ACL leases and suspended launch with exact identity verification. Native profile/ACL and launch test steps pass at `043bbb1`, including scoped file access, private Temp data, explicit standard streams, loopback denial and live descendant cleanup. The remaining Windows job is still running. Built-in tool integration, recursive roots/exclusions, credential isolation, proxy-only networking and crash recovery remain open. The runtime/tool-host ownership-cycle regression passes the full native Windows job at `2bfca16`.
 
 **Exit criteria**
 - With the sandbox enabled, a `bypass`-mode session cannot write outside writable roots or reach non-allowlisted hosts (escape test suite).
