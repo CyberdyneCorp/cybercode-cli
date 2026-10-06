@@ -12,8 +12,10 @@ mod windows_job;
 
 fn main() -> ExitCode {
     #[cfg(windows)]
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--job")) {
-        return windows_job::run();
+    if let Some(mode) = std::env::args_os().nth(1)
+        && (mode == "--job" || mode == "--parent-job")
+    {
+        return windows_job::run(mode == "--parent-job");
     }
 
     #[cfg(unix)]

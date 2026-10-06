@@ -42,6 +42,8 @@ Built-in tool authorization is not connected to classifier allows yet. The next 
 
 ## Requirement inventory
 
+The parent-owned Windows job interface now uses a trusted helper permit after process-handle assignment. The parent keeps the sole non-inheritable outer job handle; EOF before assignment refuses user execution, while wait settlement, explicit termination, owner drop and aborted futures close the job. New native tests exercise real parent death before/after assignment, descendant cleanup and output/exit-status preservation. Local sandbox regressions and workspace release Clippy pass; these Windows-only tests still need native CI verification. Built-in cancellation/timeout integration, AppContainer, ACL and network confinement remain open. The previous PowerShell increment's complete CI run at `6bdca22` passed.
+
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.
 
 225 P1-tagged requirements across 32 capabilities.

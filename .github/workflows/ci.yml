@@ -40,6 +40,8 @@ jobs:
           key: windows-native
       - name: Check workspace and test compilation
         run: cargo check --locked --workspace --all-targets
+      - name: Check native Windows lint
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build workspace executables
         run: cargo build --locked --workspace --bins
       - name: Smoke test CLI
@@ -48,6 +50,8 @@ jobs:
         run: cargo test --locked -p cyber-sandbox --test bridge
       - name: Native Windows process-tree ownership
         run: cargo test --locked -p cyber-sandbox --test windows_job
+      - name: Native parent-owned Windows process trees
+        run: cargo test --locked -p cyber-sandbox --test windows_parent_job
       - name: Native tool proxy transport
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
       - name: Native PowerShell critical-path analysis

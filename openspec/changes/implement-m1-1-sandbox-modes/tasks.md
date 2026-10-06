@@ -3,6 +3,8 @@
   Source audit is recorded in `windows-audit.md`; native compilation, TCP listener lifecycle and the standalone job-owner helper now pass. Shell dispatch, native tool cancellation and authenticated service lifecycle remain open.
 - [ ] Implement restricted-token AppContainer launch, scoped ACL grants and job-object cleanup.
   - [x] Add and prove an isolated Windows job-owner helper before native tool integration; verify normal exit and forced termination clean up grandchildren. Native Windows tests pass at `5351154`; built-in dispatch integration and confinement remain open.
+  - [x] Add the parent-owned job launch interface and private helper permit before user-code dispatch. Local sandbox regressions and workspace Clippy pass; Windows-only proof is pending.
+  - [ ] Prove parent death before/after assignment, owner drop, explicit termination and aborted wait futures on native Windows, then integrate tool cancellation and timeout.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.

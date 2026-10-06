@@ -1,9 +1,9 @@
 //! Windows process-tree ownership. This does not implement sandbox confinement.
 #![allow(unsafe_code)]
 
-use std::io;
+use std::io::{self, Read};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::ptr::null;
 
 use windows_sys::Win32::System::JobObjects::{
@@ -42,13 +42,25 @@ fn own_process_tree() -> io::Result<OwnedHandle> {
     Ok(job)
 }
 
-pub(super) fn run() -> ExitCode {
+pub(super) fn run(parent_owned: bool) -> ExitCode {
     let mut args = std::env::args_os().skip(2);
     let delimiter = args.next();
     let program = args.next();
     if delimiter.as_deref() != Some(std::ffi::OsStr::new("--")) || program.is_none() {
         eprintln!("usage: cyber-sandbox-exec --job -- program [args...]");
         return ExitCode::from(2);
+    }
+    if parent_owned {
+        let mut permit = [0_u8; 16];
+        let start = b"CYBER-JOB-START\n";
+        if std::io::stdin()
+            .read_exact(&mut permit[..start.len()])
+            .is_err()
+            || &permit[..start.len()] != start
+        {
+            eprintln!("cyber-sandbox-exec: parent job assignment was not confirmed");
+            return ExitCode::from(69);
+        }
     }
     let _job = match own_process_tree() {
         Ok(job) => job,
@@ -57,7 +69,12 @@ pub(super) fn run() -> ExitCode {
             return ExitCode::from(69);
         }
     };
-    let code = match Command::new(program.unwrap()).args(args).status() {
+    let mut command = Command::new(program.unwrap());
+    command.args(args);
+    if parent_owned {
+        command.stdin(Stdio::null());
+    }
+    let code = match command.status() {
         Ok(status) => status.code().unwrap_or(1),
         Err(error) => {
             eprintln!("cyber-sandbox-exec: cannot launch command: {error}");

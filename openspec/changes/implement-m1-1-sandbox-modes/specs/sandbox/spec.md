@@ -13,6 +13,13 @@
 - **AND** process-tree setup failure SHALL refuse to launch the command
 - **AND** successful command completion SHALL preserve its exit code
 
+#### Scenario: Windows parent dies during command launch
+- **WHEN** the server dies before or after assigning a trusted launch helper to its parent-owned job
+- **THEN** user code SHALL NOT start before successful assignment
+- **AND** an unassigned helper SHALL refuse execution when its private parent channel closes
+- **AND** assigned helpers and command descendants SHALL terminate when the server-owned job handle closes
+- **AND** cancellation or dropping the command owner SHALL terminate descendants without relying on a reusable PID
+
 ### Requirement: Network isolation and allowlist proxy
 (P0) Sandboxed processes SHALL have no direct network access by default (`sandbox.network: "proxy"`). Their HTTP(S) traffic SHALL go through a local proxy that allows only domains in `sandbox.allowed_domains`, which defaults to the package registries `registry.npmjs.org`, `pypi.org`, `files.pythonhosted.org`, `crates.io`, `static.crates.io`, `proxy.golang.org` and `github.com`. A connection to another domain SHALL raise a `network` permission request with the domain as resource, and an approval SHALL add the domain for the Session (or persist it with `always`). `sandbox.network: "off"` SHALL block everything, and `"on"` SHALL allow everything.
 
