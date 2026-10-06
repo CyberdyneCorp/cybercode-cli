@@ -34,5 +34,8 @@ tokio-tungstenite = "0.28"
 tempfile.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "signal", "sync", "macros", "process", "fs", "test-util"] }
 
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [lints]
 workspace = true

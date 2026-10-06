@@ -79,6 +79,13 @@
 - **AND** idle manual callers SHALL receive the shutdown error
 - **AND** cancelled compaction SHALL preserve existing conversation entries without recording a completed summary
 
+#### Scenario: Stop an active native Windows foreground shell
+- **WHEN** authenticated service stop interrupts a dispatched Bash or PowerShell call with live descendants on Windows
+- **THEN** service shutdown SHALL settle the interrupted side-effecting call as outcome unknown and stop the shell's owned process tree
+- **AND** listener completion, worker termination and removal of its registration SHALL finish within the five-second stop deadline
+- **AND** a fresh runtime SHALL read the settled call from the database without starting a follow-up provider turn
+- **AND** this lifecycle evidence SHALL NOT report filesystem or network confinement as available
+
 #### Scenario: Attached streams cannot keep a stopped service alive
 - **WHEN** service shutdown starts with connected instance/session event streams or WebSockets
 - **THEN** event stream bodies and producer tasks SHALL observe runtime shutdown

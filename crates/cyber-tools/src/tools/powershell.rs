@@ -178,19 +178,30 @@ mod tests {
         let source =
             "param(); [IO.File]::WriteAllText('encoded-source.txt', 'quotes \" & 💡'); exit 23";
         let helper = cyber_sandbox::find_helper().expect("native process owner helper");
+        let diagnostics = root.path().join("legacy-stderr.txt");
         let mut command =
             cyber_sandbox::windows_process::OwnedCommand::new(&helper, &program, arguments(source));
         command
             .command_mut()
             .current_dir(root.path())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::fs::File::create(&diagnostics).unwrap());
         let mut child = command.spawn().await.unwrap();
-        let status = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
+        let status = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait())
             .await
-            .unwrap()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "legacy PowerShell did not exit: {error}; stderr: {}",
+                    std::fs::read_to_string(&diagnostics).unwrap_or_default()
+                )
+            })
             .unwrap();
-        assert_eq!(status.code(), Some(23));
+        assert_eq!(
+            status.code(),
+            Some(23),
+            "{}",
+            std::fs::read_to_string(&diagnostics).unwrap_or_default()
+        );
         assert_eq!(
             std::fs::read_to_string(root.path().join("encoded-source.txt")).unwrap(),
             "quotes \" & 💡"
