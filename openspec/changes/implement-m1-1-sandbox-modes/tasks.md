@@ -1,8 +1,8 @@
 - [ ] Track P0 local baseline/long-task evidence separately; the six-platform CI matrix passes. This does not block authorized P1 implementation.
 - [ ] Audit Windows compilation, shell, process cancellation and service lifecycle boundaries.
-  Source audit is recorded in `windows-audit.md`; Windows compilation and native lifecycle verification remain pending.
+  Source audit is recorded in `windows-audit.md`; native compilation, TCP listener lifecycle and the standalone job-owner helper now pass. Shell dispatch, native tool cancellation and authenticated service lifecycle remain open.
 - [ ] Implement restricted-token AppContainer launch, scoped ACL grants and job-object cleanup.
-  - [ ] Add and prove an isolated Windows job-owner helper before native tool integration; verify normal exit and forced termination clean up grandchildren.
+  - [x] Add and prove an isolated Windows job-owner helper before native tool integration; verify normal exit and forced termination clean up grandchildren. Native Windows tests pass at `5351154`; built-in dispatch integration and confinement remain open.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.
@@ -12,7 +12,8 @@
   - [ ] Complete remaining Bash shell-context cases (wrapper options, heredocs and variable bindings) before accepting full critical-removal coverage.
     `env`/`exec` option values, command lookups and `find` global options are covered; unsupported/dynamic wrappers refuse automatic approval. Direct/wrapped shell heredocs and here-strings, including forwarding to a shell in a pipeline, now have regression coverage. Expansion and dynamic command names require manual review. Literal scalar bindings, dynamic command names and function invocation contexts now have regression coverage, with subshell isolation and conservative branch/loop mutation handling. Advanced bindings, additional wrappers and remaining shell-flow cases are still open.
   - [x] Initial Python/JavaScript inline AST removal guards, literal/API alias/path proof, nested eval/shell source and fail-closed unknown dispatch.
-  - [ ] PowerShell, additional interpreter/stdin contexts, higher-order dispatch, module-loading trust and protected/irreversible inline mutation facts before classifier approval is enabled.
+  - [x] Initial PowerShell command-source AST guard for removal aliases, module-qualified names, scalar bindings, target arrays and static deletion APIs; unknown dispatch and parameter-mutated bindings require individual confirmation.
+  - [ ] Complete PowerShell encoded/stdin sources, advanced bindings/pipelines and native dispatch, plus additional interpreter contexts, higher-order dispatch, module-loading trust and protected/irreversible inline mutation facts before classifier approval is enabled.
 - [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
 - [x] Complete the four-mode cycle and pending/effective TUI state with tests. Turn modes are pinned durably through tool settlement, with legacy replay, rapid-selection serialization and TUI bypass confirmation.
 - [ ] Enforce org-policy mode restrictions; the full permission-mode requirement remains open.
@@ -25,4 +26,4 @@
 - [ ] Extend accept-edits proof to recursive copies, directory moves and remaining filesystem option semantics before closing the full requirement.
 
 - [x] Gate Unix transport exports and represent Windows TCP listener registration without a Unix socket; local Unix lifecycle regressions pass.
-- [ ] Prove Windows listener lifecycle and unsupported-flag rejection in the native CI job.
+- [x] Prove Windows listener lifecycle and unsupported-flag rejection in the native CI job. The Windows job passes at `a54aeb9`; this does not implement authenticated service shutdown or sandbox enforcement.

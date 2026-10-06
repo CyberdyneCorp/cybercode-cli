@@ -9,6 +9,7 @@ use crate::bash_analysis::normalize;
 mod bindings;
 mod inline;
 mod input;
+mod powershell;
 use bindings::{State, word};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,6 +255,9 @@ fn inspect_command(
         }
         interpreter if inline::language(interpreter).is_some() => {
             inline::invocation(interpreter, args, source, scope, depth, state, risks);
+        }
+        interpreter if powershell::recognizes(interpreter) => {
+            powershell::invocation(args, source, scope, depth, state, risks);
         }
         "command" | "builtin" | "exec" | "env" | "nohup" => {
             let mut cursor = node.walk();

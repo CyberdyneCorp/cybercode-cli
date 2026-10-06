@@ -50,6 +50,8 @@ jobs:
         run: cargo test --locked -p cyber-sandbox --test windows_job
       - name: Native tool proxy transport
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
+      - name: Native PowerShell critical-path analysis
+        run: cargo test --locked -p cyber-tools --test inline_removals powershell_guard_resolves_native_drive_and_verbatim_paths
       - name: Native server listener lifecycle
         run: cargo test --locked -p cyber-app --test server
 

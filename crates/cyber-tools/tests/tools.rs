@@ -521,6 +521,7 @@ async fn inline_critical_removals_cannot_be_lifted_by_rules_or_saved_approvals()
     for command in [
         "python3 -c 'import os; os.rmdir(\".\")'",
         "node -e 'require(\"fs\").rmdirSync(\".\")'",
+        "pwsh -NoProfile -Command '[IO.Directory]::Delete(\".\")'",
     ] {
         for mode in ["auto", "dont-ask", "bypass"] {
             let out = failed(f.call(mode, "bash", json!({"command": command})).await);

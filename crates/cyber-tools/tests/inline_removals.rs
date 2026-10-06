@@ -15,6 +15,116 @@ fn risk(command: &str) -> Option<RemovalRisk> {
 }
 
 #[test]
+fn inline_powershell_critical_removals_are_guarded() {
+    for command in [
+        "pwsh -NoProfile -Command 'Remove-Item -LiteralPath /repo -Recurse'",
+        "powershell.exe -Command 'Remove-Item -Path /repo -Force'",
+        "pwsh -c 'Microsoft.PowerShell.Management\\Remove-Item /repo'",
+    ] {
+        assert_eq!(
+            risk(command),
+            Some(RemovalRisk::Critical(PathBuf::from("/repo"))),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn powershell_aliases_bindings_arrays_and_static_delete_apis_preserve_roots() {
+    for source in [
+        "rEmOvE-iTeM -LiteralPath /repo -Recurse -Force",
+        "ri /repo",
+        "rm /repo",
+        "rmdir /repo",
+        "rd /repo",
+        "del /repo",
+        "erase /repo",
+        "$target=\"/repo\"; Remove-Item $TARGET",
+        "Remove-Item -Path \"safe\", \"/repo\"",
+        "Remove-Item -LiteralPath $HOME",
+        "Remove-Item -LiteralPath $PWD",
+        "[System.IO.Directory]::Delete(\"/repo\", $true)",
+        "[IO.File]::Delete(\"/repo\")",
+        "& { Remove-Item /repo }",
+    ] {
+        let command = format!("pwsh -NoProfile -Command '{source}'");
+        assert!(
+            matches!(risk(&command), Some(RemovalRisk::Critical(_))),
+            "{command}: {:?}",
+            risk(&command)
+        );
+    }
+}
+
+#[test]
+fn powershell_quoted_data_and_specific_literal_files_are_not_critical_roots() {
+    for source in [
+        "Write-Output \"Remove-Item /repo -Recurse\"",
+        "# Remove-Item /repo\nWrite-Output \"hello\"",
+        "Remove-Item -LiteralPath /repo/build/file",
+        "Remove-Item -LiteralPath \"/repo/a[b]\"",
+        "$target=\"/repo/file\"; Remove-Item $target",
+    ] {
+        let command = format!("pwsh -NoProfile -Command '{source}'");
+        assert_eq!(risk(&command), None, "{command}");
+    }
+}
+
+#[test]
+fn uncertain_powershell_source_options_and_dispatch_require_confirmation() {
+    for source in [
+        "pwsh -Command 'Write-Output hello'",
+        "pwsh -NoProfile -Command 'Remove-Item $unknown'",
+        "pwsh -NoProfile -Command 'Remove-Item -Path /repo/*'",
+        "pwsh -NoProfile -Command 'Remove-Item -LiteralPath Registry::HKCU'",
+        "pwsh -NoProfile -Command 'Invoke-Expression $source'",
+        "pwsh -NoProfile -EncodedCommand AA==",
+        "pwsh -NoProfile -File untrusted.ps1",
+        "pwsh -NoProfile -Command 'Set-Location somewhere; Remove-Item .'",
+        "pwsh -NoProfile -Command '$p=\"/repo\"; if ($maybe) {$p=\"safe\"}; Remove-Item $p'",
+        "pwsh -NoProfile -Command '$p=\"/repo\"; $p+=\"safe\"; Remove-Item $p'",
+        "pwsh -NoProfile -Command '$block={Remove-Item /repo}; Write-Output $block'",
+        "pwsh -NoProfile -Command 'Remove-Item -UnknownFlag safe'",
+        "pwsh -NoProfile -Command '$p=\"safe\"; Write-Output /repo -OutVariable p; Remove-Item $p'",
+        "pwsh -NoProfile -Command 'Write-Output \"unterminated'",
+    ] {
+        assert!(
+            matches!(risk(source), Some(RemovalRisk::Unresolved(_))),
+            "{source}: {:?}",
+            risk(source)
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn powershell_guard_resolves_native_drive_and_verbatim_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("repo with spaces");
+    std::fs::create_dir(&root).unwrap();
+    let canonical = std::fs::canonicalize(&root).unwrap();
+    for target in [&root, &canonical] {
+        let command = format!(
+            "pwsh -NoProfile -Command 'Remove-Item -LiteralPath \"{}\" -Recurse'",
+            target.display()
+        );
+        assert_eq!(
+            bash_removal(
+                &command,
+                &RemovalScope {
+                    location: &root,
+                    project: &root,
+                    home: temp.path(),
+                    workdir: &root
+                }
+            ),
+            Some(RemovalRisk::Critical(canonical.clone())),
+            "{command}"
+        );
+    }
+}
+
+#[test]
 fn direct_inline_python_and_javascript_removals_are_critical() {
     for command in [
         "python3 -c 'import shutil; shutil.rmtree(\".\")'",
