@@ -29,6 +29,22 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  windows:
+    name: Windows build
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-native
+      - name: Check workspace and test compilation
+        run: cargo check --locked --workspace --all-targets
+      - name: Build workspace executables
+        run: cargo build --locked --workspace --bins
+      - name: Smoke test CLI
+        run: .\target\debug\cyber.exe --version
+
   sdk:
     name: TypeScript SDK
     runs-on: ubuntu-latest

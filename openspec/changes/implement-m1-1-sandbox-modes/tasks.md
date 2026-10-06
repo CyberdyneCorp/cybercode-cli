@@ -16,6 +16,8 @@
 - [x] Complete the four-mode cycle and pending/effective TUI state with tests. Turn modes are pinned durably through tool settlement, with legacy replay, rapid-selection serialization and TUI bypass confirmation.
 - [ ] Enforce org-policy mode restrictions; the full permission-mode requirement remains open.
 - [ ] Add Windows CI; run existing platform, recovery and trust regressions.
+  - [x] Add a native Windows workspace/test-compilation and executable smoke job.
+  - [ ] Prove Windows compilation, sandbox enforcement and native lifecycle/recovery behavior.
 - [ ] Update roadmap and capability specs with verified M1.1 behavior.
 
 - [x] Prove literal filesystem commands for accept-edits; preserve ordinary asks for unresolved paths/options and protected-path ceilings for symlink aliases.
