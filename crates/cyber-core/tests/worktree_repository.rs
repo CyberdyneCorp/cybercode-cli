@@ -8,12 +8,17 @@ use std::task::{Context, Poll};
 use cyber_core::worktrees::{GitExecution, GitFuture, Name, Repository, RepositoryLock, Settings};
 use futures::executor::block_on;
 
+#[path = "worktree_repository/inclusion.rs"]
+mod inclusion;
+
 #[derive(Clone, Copy)]
 enum Mode {
     Normal,
     FailAfterCreation,
     SuspendAfterCreation,
     CollideBeforeCheckout,
+    CollideWithIncludedFile,
+    UnsafeUntrackedPath(&'static [u8]),
 }
 
 struct Execution {
@@ -55,7 +60,12 @@ impl GitExecution for Execution {
             let checkout = args
                 .windows(2)
                 .any(|pair| pair[0] == "checkout-index" && pair[1] == "--all");
-            if checkout && matches!(self.mode, Mode::CollideBeforeCheckout) {
+            let collision = match self.mode {
+                Mode::CollideBeforeCheckout => Some("tracked.txt"),
+                Mode::CollideWithIncludedFile => Some(".env"),
+                _ => None,
+            };
+            if checkout && let Some(file) = collision {
                 let destination = args.iter().find_map(|arg| {
                     arg.to_str()
                         .and_then(|arg| arg.strip_prefix("--prefix="))
@@ -66,12 +76,22 @@ impl GitExecution for Execution {
                         .find(|pair| pair[0] == "-C")
                         .map_or(directory, |pair| Path::new(&pair[1]))
                 });
-                std::fs::write(worktree.join("tracked.txt"), "user file during setup")?;
+                std::fs::write(worktree.join(file), "user file during setup")?;
             }
-            let output = self.invoke(directory, args)?;
+            let mut output = self.invoke(directory, args)?;
+            if let Mode::UnsafeUntrackedPath(path) = self.mode
+                && args
+                    .windows(2)
+                    .any(|pair| pair[0] == "ls-files" && pair[1] == "--others")
+            {
+                output.stdout = path.to_vec();
+            }
             if checkout && output.status.success() {
                 match self.mode {
-                    Mode::Normal | Mode::CollideBeforeCheckout => {}
+                    Mode::Normal
+                    | Mode::CollideBeforeCheckout
+                    | Mode::CollideWithIncludedFile
+                    | Mode::UnsafeUntrackedPath(_) => {}
                     Mode::FailAfterCreation => {
                         return Err(io::Error::other("injected failure after creation"));
                     }
@@ -388,6 +408,8 @@ fn changed_branch_refuses_reuse_and_preserves_user_files() {
 #[test]
 fn windows_long_paths_are_preserved_at_the_git_argument_boundary() {
     let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join(".worktreeinclude"), ".env\n").unwrap();
+    std::fs::write(fixture.repo.join(".env"), "long path included").unwrap();
     let repository = fixture.repository();
     let root = fixture
         .data
@@ -401,6 +423,10 @@ fn windows_long_paths_are_preserved_at_the_git_argument_boundary() {
         .create(&repository, &Name::parse("long-path").unwrap(), &settings)
         .unwrap();
     assert!(managed.path.as_os_str().len() > 260);
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join(".env")).unwrap(),
+        "long path included"
+    );
     assert_eq!(
         std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
         "base"

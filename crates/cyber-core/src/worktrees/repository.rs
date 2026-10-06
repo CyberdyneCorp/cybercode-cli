@@ -33,6 +33,8 @@ pub struct Managed {
     pub base: String,
     pub common_dir: PathBuf,
     pub ready: bool,
+    #[serde(default)]
+    pub included: Vec<super::IncludedFile>,
 }
 
 impl Repository {
@@ -93,6 +95,7 @@ impl Repository {
             base,
             common_dir: self.common_dir.clone(),
             ready: false,
+            included: Vec::new(),
         };
         std::fs::create_dir_all(&records)?;
         write_new(&record, &managed)?;
@@ -126,6 +129,8 @@ impl Repository {
             &["checkout-index".into(), "--all".into()],
         )
         .await?;
+        self.verify(execution, &managed).await?;
+        managed.included = super::includes::copy(execution, &self.root, &managed.path).await?;
         self.verify(execution, &managed).await?;
         managed.ready = true;
         replace_record(&record, &managed)?;
@@ -236,7 +241,7 @@ impl Repository {
     }
 }
 
-async fn git(
+pub(super) async fn git(
     execution: &dyn GitExecution,
     directory: &Path,
     args: &[OsString],
@@ -448,7 +453,7 @@ fn git_path_argument(path: &Path) -> io::Result<OsString> {
 }
 
 #[cfg(windows)]
-fn windows_component(part: &std::ffi::OsStr) -> io::Result<()> {
+pub(super) fn windows_component(part: &std::ffi::OsStr) -> io::Result<()> {
     let value = part
         .to_str()
         .ok_or_else(|| invalid("Git path is not valid Unicode"))?;

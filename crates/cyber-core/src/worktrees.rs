@@ -1,6 +1,8 @@
 //! Shared configuration and names for managed worktrees.
 
+mod includes;
 mod repository;
+pub use includes::IncludedFile;
 pub use repository::{GitExecution, GitFuture, Managed, Repository};
 
 use std::path::PathBuf;

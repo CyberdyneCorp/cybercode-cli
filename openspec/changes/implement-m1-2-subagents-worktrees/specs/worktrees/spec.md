@@ -1,5 +1,34 @@
 ## MODIFIED Requirements
 
+### Requirement: Untracked file inclusion
+(P1) After creating a worktree, the system SHALL copy untracked files matching patterns in `.worktreeinclude` (gitignore syntax, read from the repository root) from the main checkout. Typical entries are `.env` and `config/local.*`. Copies SHALL never overwrite tracked files.
+
+#### Scenario: .env copied
+- **WHEN** `.worktreeinclude` contains `.env*` and the main checkout has `.env.local`
+- **THEN** the new worktree contains a copy of `.env.local`
+
+#### Scenario: Ignored environment file is included
+- **WHEN** `.worktreeinclude` selects an untracked `.env.local` that Git otherwise ignores
+- **THEN** the new worktree contains its content and file permissions
+- **AND** negated patterns remain excluded and destination tracked files remain unchanged
+
+#### Scenario: Existing untracked destination is preserved
+- **WHEN** a selected destination file already exists during initial inclusion
+- **THEN** inclusion fails without overwriting it and creation remains pending
+
+#### Scenario: Inclusion cannot escape either checkout
+- **WHEN** a selected source is a symlink or Git enumeration returns an unsafe relative path
+- **THEN** inclusion fails without copying outside the source or worktree roots
+
+#### Scenario: Reuse preserves copied user edits
+- **WHEN** a previously included file is edited in a ready worktree
+- **THEN** reuse does not recopy that file from the main checkout
+
+#### Scenario: Creation from a linked checkout still uses primary inclusion sources
+- **WHEN** a managed worktree is created from an existing linked checkout
+- **THEN** `.worktreeinclude` and selected untracked files are read from the primary checkout
+- **AND** edits in the existing linked checkout are preserved
+
 ### Requirement: Worktree location and branch naming
 (P1) Managed worktrees SHALL be created at `worktrees.root`, defaulting to `<data>/worktrees/<project_id>/<name>`, on a new branch `worktrees.branch_prefix` + name (default `cyber/`), from base `worktrees.base` (default the current `HEAD`). Names SHALL match `^[a-z0-9][a-z0-9._-]{0,62}$`.
 
