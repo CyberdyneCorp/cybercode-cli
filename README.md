@@ -14,7 +14,7 @@ Implemented today:
 
 Recovery/trust tests, per-tool goldens, storage measurements and all six macOS/Linux build targets have passing evidence. Default-service startup meets the 150 ms first-frame target on the named M2 Max machine; the embedded-mode measurements retain an outlier. See [P0 exit evidence](docs/measurements/p0-exit-evidence.md) and [evaluation results and local-model setup](eval/README.md).
 
-**In progress:** P1 starts with M1.1. The evaluator runtime, Bash and initial Python/JavaScript/PowerShell removal guards, four-mode TUI cycling and effective/pending mode display are implemented. Native Windows builds and parent-owned Bash/PowerShell cleanup pass CI. AppContainer profile/ACL and low-level launch tests also pass, including scoped file access, private Temp data, standard streams, loopback denial and descendant cleanup. Built-in sandbox integration, recursive root policy, proxy-only networking, classifier approvals and complete PowerShell permission coverage remain open. See [P1 implementation status](docs/implementation/p1-status.md) for all five milestones and remaining contracts, including the local web client and editor integrations. P0 local-model quality and long-task gates remain open. Workflows, goals, loops, remote control and cloud runners belong to later phases. Deferred PTY routes, Landlock fallback and parts of the TUI are not required to exit P0.
+**In progress:** M1.1 and M1.2 are active. The evaluator foundation, removal guards, four-mode TUI cycling and effective/pending mode display are implemented. Native Windows builds, process ownership and profile/ACL tests pass, but the stricter LPAC launch suite fails on Winsock initialization and descendant spawning; full Windows sandbox enforcement remains unaccepted. Managed worktree creation, inclusion, journaled setup and Session streaming are connected to startup clients; cleanup, enter/exit and subagents remain open. See [P1 implementation status](docs/implementation/p1-status.md) for all five milestones, including the local web client and editor integrations. P0 local-model quality and long-task gates remain open. Workflows, goals, loops, remote control and cloud runners belong to later phases. Deferred PTY routes, Landlock fallback and parts of the TUI are not required to exit P0.
 
 The [roadmap](ROADMAP.md) tracks delivery and deferrals. The [OpenSpec contracts](openspec/specs) describe both implemented and planned behavior, tagged by phase. [Architecture decisions](docs/decisions/0001-storage-architecture.md) record design rationale.
 
@@ -44,6 +44,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p cyber-cli --                   # the TUI in the current directory (starts the background server)
 cargo run -p cyber-cli -- exec "fix the failing test"            # one non-interactive run
 cargo run -p cyber-cli -- exec --format stream-json --ephemeral "explain this repo"
+cargo run -p cyber-cli -- --worktree fix-login                   # TUI in a managed checkout
+cargo run -p cyber-cli -- exec --worktree fix-login "fix login"  # reuse checkout, new Session
+cargo run -p cyber-cli -- exec --worktree -- "fix login"         # generated worktree name
 cargo run -p cyber-cli -- service status   # the background server; also start|stop|restart|password
 cargo run -p cyber-cli -- api v1.session.list                    # any API operation
 cargo run -p cyber-cli -- doctor           # config, keys, catalog, database, sandbox, tools, server
@@ -62,6 +65,9 @@ cargo run -p cyber-server --example session -- openai/gpt-6-luna
 # a coding task with the built-in tools, the OS sandbox and snapshots (uses OPENAI_API_KEY)
 cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix the failing test" accept-edits
 ```
+
+Worktree startup runs trusted `worktrees.setup` commands inside the sandbox and reports output on stderr. Setup failure keeps the Session and files. Worktrees currently remain on disk; automatic exit cleanup and management/enter/exit commands are still being implemented. The corresponding API is `POST /api/v1/worktrees`, with `{ "name": "fix-login", "session": { "model": "provider/model" } }`; omit `name` to generate one.
+
 
 On Linux the sandbox needs bubblewrap (`apt install bubblewrap`); without it commands fail closed unless you pass `--sandbox full-access`.
 

@@ -1,5 +1,37 @@
 ## MODIFIED Requirements
 
+### Requirement: Session worktrees
+(P1) `cyber --worktree [name]` and `cyber exec --worktree [name]` SHALL create, or reuse, a managed worktree and start the Session in it. When `name` is omitted it SHALL be generated as `<adjective>-<noun>-<4 hex>`. The Session's Location SHALL be the worktree path.
+
+#### Scenario: Start in a new worktree
+- **WHEN** the user runs `cyber --worktree fix-login`
+- **THEN** a worktree `fix-login` is created on branch `cyber/fix-login` and the TUI opens with that path as its Location
+
+#### Scenario: Explicit user startup preserves permission rules
+- **WHEN** an authenticated client explicitly requests a new managed-worktree Session
+- **THEN** its request authorizes that creation/setup operation without persisting a broader Session permission rule or changing the selected mode
+- **AND** denied rules, plan mode and read-only sandbox policy still refuse creation
+- **AND** startup does not create an additional source Session
+
+#### Scenario: API startup streams and preserves failure
+- **WHEN** a client posts a valid creation request to `/api/v1/worktrees`
+- **THEN** setup output uses its creation call ID on the live event stream before completion
+- **AND** the response identifies the actual worktree Location, retained Session and setup outcome
+- **AND** replay of the same idempotency key returns that outcome without redispatching side effects
+
+#### Scenario: Startup keeps source checkout trust scoped
+- **WHEN** the source checkout has approved setup definitions and startup creates a new checkout
+- **THEN** the already resolved source recipe executes as part of creation
+- **AND** source-defined credential environment names remain filtered under the target sandbox policy, including names from disabled providers
+- **AND** explicit environment allow rules and user-selected full access keep their existing meaning
+- **AND** the new checkout receives no trust approval from that operation
+- **AND** unapproved source setup definitions remain inactive
+
+#### Scenario: Startup selection is unambiguous
+- **WHEN** a client combines worktree startup with Session resume/fork or ephemeral exec
+- **THEN** the CLI rejects the combination before worktree creation
+- **AND** named and generated worktree startup remain available for fresh persistent Sessions
+
 ### Requirement: Setup commands
 (P1) After creation the system SHALL run `worktrees.setup` commands (for example `["npm ci"]`) in the worktree inside the sandbox, streaming output to the Session. A failing setup SHALL be reported but SHALL NOT delete the worktree.
 

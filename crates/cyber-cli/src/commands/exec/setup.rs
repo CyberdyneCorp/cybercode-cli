@@ -39,6 +39,16 @@ pub fn prompt(words: &[String]) -> Result<String, CliError> {
 }
 
 pub fn validate(args: &ExecArgs) -> Result<(), CliError> {
+    if args.worktree.is_some()
+        && (args.ephemeral || args.resume_last || args.session.is_some() || args.fork)
+    {
+        return Err(CliError::usage(
+            "--worktree starts a fresh persistent Session and cannot be combined with --ephemeral, --continue, --session or --fork",
+        ));
+    }
+    if let Some(name) = args.worktree.as_deref().filter(|name| !name.is_empty()) {
+        cyber_core::worktrees::Name::parse(name).map_err(CliError::usage)?;
+    }
     if args.ephemeral && (args.resume_last || args.session.is_some() || args.fork) {
         return Err(CliError::usage(
             "--ephemeral cannot be combined with --continue, --session or --fork",
@@ -141,6 +151,9 @@ pub async fn session(
             "model": global.model, "agent": args.agent, "mode": mode(args, global),
             "title": args.name, "rules": never_ask(), "max_steps": args.max_turns,
         });
+        if let Some(name) = &args.worktree {
+            return crate::commands::worktrees::start(client, name, body, args.quiet).await;
+        }
         let created = client.post("/sessions", body).await.map_err(api)?;
         return Ok(created["data"].clone());
     };

@@ -15,7 +15,7 @@ pub fn run(
     global: &GlobalArgs,
     project: Option<&str>,
 ) -> Result<(), CliError> {
-    let start = start(launch)?;
+    let mut start = start(launch)?;
     let mut global = GlobalArgs {
         cwd: global.cwd.clone(),
         profile: global.profile.clone(),
@@ -39,9 +39,14 @@ pub fn run(
     }
     let summary = super::serve::runtime()?.block_on(async {
         let (client, _app) = connect(&ctx, launch).await?;
+        let directory = if let Some(name) = &launch.worktree {
+            let session = super::worktrees::start(&client.at(&ctx.location.display().to_string()), name, serde_json::json!({"model": global.model, "agent": launch.agent, "mode": global.mode}), false).await?;
+            start = Start::Resume(session["id"].as_str().ok_or_else(|| CliError::runtime("Worktree Session has no ID"))?.into());
+            session["directory"].as_str().ok_or_else(|| CliError::runtime("Worktree Session has no Location"))?.to_owned()
+        } else { ctx.location.display().to_string() };
         let opts = TuiOptions {
             client,
-            directory: ctx.location.display().to_string(),
+            directory,
             state_dir: ctx.paths.state.clone(),
             start,
             fork: launch.fork,
@@ -61,6 +66,14 @@ pub fn run(
 }
 
 fn start(launch: &LaunchArgs) -> Result<Start, CliError> {
+    if launch.worktree.is_some() && (launch.resume_last || launch.resume.is_some() || launch.fork) {
+        return Err(CliError::usage(
+            "--worktree starts a fresh Session and cannot be combined with --continue, --resume or --fork",
+        ));
+    }
+    if let Some(name) = launch.worktree.as_deref().filter(|name| !name.is_empty()) {
+        cyber_core::worktrees::Name::parse(name).map_err(CliError::usage)?;
+    }
     if launch.resume_last && launch.resume.is_some() {
         return Err(CliError::usage(
             "--continue and --resume cannot be combined",

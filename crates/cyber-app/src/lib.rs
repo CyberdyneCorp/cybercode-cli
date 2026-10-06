@@ -157,6 +157,7 @@ impl App {
             Arc::clone(&remote_tools),
             config,
             opts.paths.state.join("model.json"),
+            opts.paths.data.clone(),
         );
         let state = AppState {
             service: None,

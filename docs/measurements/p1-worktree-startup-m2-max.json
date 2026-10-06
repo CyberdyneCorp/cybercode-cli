@@ -1,0 +1,73 @@
+{
+  "machine": "MacBook Pro Mac14,6; Apple M2 Max 12 cores; 32 GB RAM; macOS 27.0",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "binary": "target/release/cyber",
+  "runs": 20,
+  "terminal": "xterm-256color PTY 120x32",
+  "cache": "OS file cache retained; fresh app data and processes per sample",
+  "results": {
+    "embedded": {
+      "samples_ms": [
+        116.452084,
+        69.890833,
+        69.992417,
+        65.758042,
+        70.225791,
+        68.147791,
+        69.960334,
+        68.404083,
+        89.229125,
+        71.199417,
+        69.490667,
+        67.785084,
+        67.870625,
+        66.1185,
+        66.410042,
+        66.308833,
+        70.74825,
+        68.238834,
+        69.175584,
+        68.344584
+      ],
+      "p50_ms": 68.404083,
+      "p95_ms": 89.229125,
+      "p99_ms": 116.452084,
+      "min_ms": 65.758042,
+      "max_ms": 116.452084
+    },
+    "service-cold": {
+      "samples_ms": [
+        99.987958,
+        90.647583,
+        86.865042,
+        88.9715,
+        86.948542,
+        88.591917,
+        87.701792,
+        87.70225,
+        87.974042,
+        88.061791,
+        74.479417,
+        85.937583,
+        74.994917,
+        87.011416,
+        74.472958,
+        85.944958,
+        89.1465,
+        86.472125,
+        87.355667,
+        74.744709
+      ],
+      "p50_ms": 87.011416,
+      "p95_ms": 90.647583,
+      "p99_ms": 99.987958,
+      "min_ms": 74.472958,
+      "max_ms": 99.987958
+    }
+  },
+  "binary_sha256": "fe37fab96ae318aa56b908bbb45bdc6f451d1981ee931541b6ee2f95fe4340da",
+  "base_commit": "5e2218c2cf0c861154cba7eec61848ac8d6c9717",
+  "rust_source_tree_sha256": "55030e1959729c59c97d6ede0ad749b8da040df9c6e8b3033e0155954c2a6750",
+  "cargo_lock_sha256": "0c7ab7dbcac77446c90f2656031384c35bf97088f161d4913dbcca603f427760",
+  "provenance": "Working tree with P1 worktree startup changes, before commit; Rust source tree and compiled binary checksums identify the measured implementation."
+}

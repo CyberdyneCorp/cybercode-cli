@@ -202,6 +202,7 @@ pub enum Decision {
 }
 
 /// Rules for one evaluation, in layer order, plus the facts Modes need.
+#[derive(Clone)]
 pub struct Policy {
     /// Defaults, config, agent and Session rules, lowest priority first.
     pub rules: Vec<Rule>,

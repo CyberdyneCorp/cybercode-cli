@@ -15,7 +15,7 @@ use cyber_core::worktrees::{
     GitExecution, GitFuture, Managed, Name, Repository, Settings, SetupEvent, SetupExecution,
     SetupFuture, SetupOutcome, SetupSink, SetupStream,
 };
-use cyber_server::runtime::{CreateSession, Invocation, SessionInfo};
+use cyber_server::runtime::{Asker, CreateSession, Invocation, SessionInfo};
 use cyber_server::worktrees::{CommandDecision, CommandResult, SetupJournal};
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
@@ -37,6 +37,16 @@ pub struct WorktreeSession {
     pub session: SessionInfo,
     pub managed: Managed,
     pub setup: Result<SetupOutcome, String>,
+}
+
+struct SetupRecipe {
+    settings: Settings,
+    credentials: Vec<String>,
+}
+
+struct SetupAdmission<'a> {
+    explicit: bool,
+    recipe: Option<&'a SetupRecipe>,
 }
 
 impl BuiltinHost {
@@ -72,11 +82,67 @@ impl BuiltinHost {
         creation_inv.mode = source.mode;
         creation_inv.rules = source.rules;
         creation_inv.agent = source.agent;
+        self.create_worktree_session_owned(&runtime, &creation_inv, cancel, request, false)
+            .await
+    }
+
+    /// An authenticated client explicitly requests isolation for a new Session.
+    /// This authorizes this creation/setup operation, without changing its Session rules.
+    pub async fn start_worktree_session(
+        &self,
+        directory: &Path,
+        call_id: String,
+        cancel: CancellationToken,
+        request: WorktreeSessionRequest,
+    ) -> io::Result<WorktreeSession> {
+        if request.session.id.is_some() || call_id.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "A fresh Session and creation call ID are required",
+            ));
+        }
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
+        let inv = Invocation {
+            session_id: cyber_core::ids::new_id("ses"),
+            directory: directory.canonicalize()?.display().to_string(),
+            agent: request
+                .session
+                .agent
+                .clone()
+                .unwrap_or_else(|| "build".into()),
+            mode: request
+                .session
+                .mode
+                .clone()
+                .unwrap_or_else(|| "default".into()),
+            rules: request.session.rules.clone().unwrap_or_default(),
+            message_id: cyber_core::ids::new_id("msg"),
+            operation_key: call_id.clone(),
+            call_id,
+            name: "worktree".into(),
+            input: serde_json::Value::Null,
+            attempt: 1,
+            asker: Asker::detached(),
+        };
+        self.create_worktree_session_owned(&runtime, &inv, cancel, request, true)
+            .await
+    }
+
+    async fn create_worktree_session_owned(
+        &self,
+        runtime: &cyber_server::runtime::Runtime,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        request: WorktreeSessionRequest,
+        explicit: bool,
+    ) -> io::Result<WorktreeSession> {
         let owned_cancel = cancel.child_token();
-        let (repository, managed) = runtime
+        let (repository, managed, recipe) = runtime
             .own_worktree_setup(
                 owned_cancel.clone(),
-                self.create_worktree(&creation_inv, owned_cancel, &request),
+                self.create_worktree(inv, owned_cancel, &request, explicit),
             )
             .await?;
         if cancel.is_cancelled() {
@@ -87,6 +153,9 @@ impl BuiltinHost {
         }
         let mut session_request = request.session;
         session_request.directory = managed.path.display().to_string();
+        if explicit {
+            session_request.id = Some(inv.session_id.clone());
+        }
         let session = runtime
             .create_session(session_request)
             .await
@@ -98,7 +167,16 @@ impl BuiltinHost {
         setup_inv.agent = session.agent.clone();
         setup_inv.rules = session.rules.clone();
         let setup = self
-            .setup_worktree_session(&setup_inv, cancel, &repository, &managed)
+            .setup_worktree_session_authorized(
+                &setup_inv,
+                cancel,
+                &repository,
+                &managed,
+                SetupAdmission {
+                    explicit: true,
+                    recipe: Some(&recipe),
+                },
+            )
             .await
             .map_err(|error| error.to_string());
         Ok(WorktreeSession {
@@ -113,7 +191,8 @@ impl BuiltinHost {
         inv: &Invocation,
         cancel: CancellationToken,
         request: &WorktreeSessionRequest,
-    ) -> io::Result<(Repository, Managed)> {
+        explicit: bool,
+    ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let location = Path::new(&inv.directory).canonicalize()?;
         let ctx = Ctx {
             host: self,
@@ -136,13 +215,14 @@ impl BuiltinHost {
             ));
         }
         let settings = Settings::from_config(&config).map_err(io::Error::other)?;
-        ctx.authorize(
+        authorize_worktree(
+            &ctx,
+            explicit,
             Request {
                 action: "worktree".into(),
                 resources: vec![request.name.as_str().into()],
                 ..Request::default()
             },
-            vec![request.name.as_str().into()],
             serde_json::json!({"operation": "create", "name": request.name.as_str()}),
         )
         .await
@@ -156,6 +236,7 @@ impl BuiltinHost {
         let discovery = GitPort {
             ctx: &ctx,
             writable: Some(Vec::new()),
+            credentials: &[],
         };
         let repository = Repository::discover(&discovery, &ctx.location).await?;
         let target =
@@ -163,6 +244,7 @@ impl BuiltinHost {
         let execution = GitPort {
             ctx: &ctx,
             writable: Some(vec![repository.common_dir.clone(), target]),
+            credentials: &[],
         };
         let managed = repository
             .create(
@@ -173,7 +255,14 @@ impl BuiltinHost {
                 &request.name,
             )
             .await?;
-        Ok((repository, managed))
+        Ok((
+            repository,
+            managed,
+            SetupRecipe {
+                settings,
+                credentials: crate::sandboxing::credential_env_names(&config),
+            },
+        ))
     }
 
     /// Lifecycle entry point delivering setup progress to attached Session clients.
@@ -183,6 +272,27 @@ impl BuiltinHost {
         cancel: CancellationToken,
         repository: &Repository,
         managed: &Managed,
+    ) -> io::Result<SetupOutcome> {
+        self.setup_worktree_session_authorized(
+            inv,
+            cancel,
+            repository,
+            managed,
+            SetupAdmission {
+                explicit: false,
+                recipe: None,
+            },
+        )
+        .await
+    }
+
+    async fn setup_worktree_session_authorized(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        repository: &Repository,
+        managed: &Managed,
+        admission: SetupAdmission<'_>,
     ) -> io::Result<SetupOutcome> {
         let runtime = self
             .runtime()
@@ -195,7 +305,14 @@ impl BuiltinHost {
         let result = runtime
             .own_worktree_setup(
                 owned_cancel.clone(),
-                self.setup_worktree(inv, owned_cancel, repository, managed, &sink),
+                self.setup_worktree_authorized(
+                    inv,
+                    owned_cancel,
+                    repository,
+                    managed,
+                    &sink,
+                    admission,
+                ),
             )
             .await;
         if let Err(error) = &result {
@@ -214,6 +331,29 @@ impl BuiltinHost {
         managed: &Managed,
         sink: &dyn SetupSink,
     ) -> io::Result<SetupOutcome> {
+        self.setup_worktree_authorized(
+            inv,
+            cancel,
+            repository,
+            managed,
+            sink,
+            SetupAdmission {
+                explicit: false,
+                recipe: None,
+            },
+        )
+        .await
+    }
+
+    async fn setup_worktree_authorized(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        repository: &Repository,
+        managed: &Managed,
+        sink: &dyn SetupSink,
+        admission: SetupAdmission<'_>,
+    ) -> io::Result<SetupOutcome> {
         if Path::new(&inv.directory).canonicalize()? != managed.path {
             return Err(io::Error::other(
                 "Session is not located in the owned worktree",
@@ -226,16 +366,22 @@ impl BuiltinHost {
             location: managed.path.clone(),
             cancel,
         };
-        let (config, _) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;
-        let settings = Settings::from_config(&config).map_err(io::Error::other)?;
-        ctx.authorize(
+        let settings = match admission.recipe {
+            Some(recipe) => recipe.settings.clone(),
+            None => {
+                let (config, _) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;
+                Settings::from_config(&config).map_err(io::Error::other)?
+            }
+        };
+        authorize_worktree(
+            &ctx,
+            admission.explicit,
             Request {
                 action: "worktree".into(),
                 resources: vec![managed.name.clone()],
                 mutates: vec![managed.path.clone()],
                 ..Request::default()
             },
-            vec![managed.name.clone()],
             serde_json::json!({"operation": "setup", "path": managed.path}),
         )
         .await
@@ -249,6 +395,10 @@ impl BuiltinHost {
                 &inv.session_id,
             )?,
             next_command: AtomicUsize::new(0),
+            credentials: admission
+                .recipe
+                .map(|recipe| recipe.credentials.clone())
+                .unwrap_or_default(),
         };
         execution.journal.validate()?;
         repository
@@ -261,6 +411,7 @@ struct Execution<'a> {
     ctx: &'a Ctx<'a>,
     journal: SetupJournal,
     next_command: AtomicUsize,
+    credentials: Vec<String>,
 }
 
 impl SetupExecution for Execution<'_> {
@@ -303,6 +454,7 @@ impl Execution<'_> {
             self.ctx,
             &crate::tools::bash::shell(&self.ctx.host.opts.shell),
             &["-c".into(), command.into()],
+            &self.credentials,
         )
         .await;
         #[cfg(windows)]
@@ -313,6 +465,7 @@ impl Execution<'_> {
                 self.ctx,
                 &program.display().to_string(),
                 &crate::tools::powershell::arguments(command),
+                &self.credentials,
             )
             .await
         };
@@ -327,6 +480,7 @@ impl GitExecution for Execution<'_> {
             GitPort {
                 ctx: self.ctx,
                 writable: None,
+                credentials: &self.credentials,
             }
             .run(directory, args)
             .await
@@ -337,6 +491,7 @@ impl GitExecution for Execution<'_> {
 struct GitPort<'a> {
     ctx: &'a Ctx<'a>,
     writable: Option<Vec<PathBuf>>,
+    credentials: &'a [String],
 }
 
 impl GitExecution for GitPort<'_> {
@@ -360,7 +515,13 @@ impl GitExecution for GitPort<'_> {
                     crate::sandboxing::prepare_worktree_git(self.ctx, &arguments, roots).await
                 }
                 None => {
-                    crate::sandboxing::prepare_worktree_command(self.ctx, "git", &arguments).await
+                    crate::sandboxing::prepare_worktree_command(
+                        self.ctx,
+                        "git",
+                        &arguments,
+                        self.credentials,
+                    )
+                    .await
                 }
             }
             .map_err(tool_error)?;
@@ -514,4 +675,30 @@ fn tool_error(error: crate::tools::ToolError) -> io::Error {
             io::Error::new(io::ErrorKind::Interrupted, "Setup cancelled")
         }
     }
+}
+
+async fn authorize_worktree(
+    ctx: &Ctx<'_>,
+    explicit: bool,
+    request: Request,
+    metadata: serde_json::Value,
+) -> Result<(), crate::tools::ToolError> {
+    if explicit {
+        let mut approved = ctx.policy.clone();
+        if approved.mode != crate::permissions::Mode::Plan {
+            approved.mode = crate::permissions::Mode::Bypass;
+        }
+        match approved.decide(&request) {
+            crate::permissions::Decision::Allow | crate::permissions::Decision::Ask => {
+                return Ok(());
+            }
+            crate::permissions::Decision::Deny(reason) => {
+                return Err(crate::tools::ToolError::Failed(format!(
+                    "Permission denied: {reason}"
+                )));
+            }
+        }
+    }
+    let resources = request.resources.clone();
+    ctx.authorize(request, resources, metadata).await
 }

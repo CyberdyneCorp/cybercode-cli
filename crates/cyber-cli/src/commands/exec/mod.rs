@@ -1,7 +1,7 @@
 //! `cyber exec` (`exec-mode`): one non-interactive run against a Session.
 
 mod report;
-mod setup;
+pub(crate) mod setup;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -18,6 +18,9 @@ use report::{Out, Run};
 
 #[derive(Debug, Args)]
 pub struct ExecArgs {
+    /// Start a new Session in a managed worktree; omit NAME to generate one.
+    #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "NAME")]
+    pub worktree: Option<String>,
     /// The prompt; stdin is appended when it is not a terminal.
     pub prompt: Vec<String>,
     /// Reuse the most recent root Session of the Location.
@@ -113,6 +116,13 @@ pub fn run(args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), Cli
         let backend = setup::backend(&args, ctx).await?;
         let client = backend.client.at(&ctx.location.display().to_string());
         let session = setup::session(&client, &args, global).await?;
+        let client = if args.worktree.is_some() {
+            client.at(session["directory"]
+                .as_str()
+                .ok_or_else(|| CliError::runtime("Worktree Session has no Location"))?)
+        } else {
+            client
+        };
         let out = Out::new(format, &args, &session);
         execute(&client, &session, &args, prompt, timeout, out).await
     })?;

@@ -872,3 +872,23 @@ async fn clients_register_tools_that_the_model_can_call() {
     );
     assert!(!offered.iter().any(|d| d.spec.name == "lookup_ticket"));
 }
+
+#[tokio::test]
+async fn worktree_request_validation_precedes_host_dispatch() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    for body in [
+        json!({"name": "../escape"}),
+        json!({"call_id": "invalid call"}),
+        json!({"session": {"id": "ses_existing"}}),
+    ] {
+        let (status, body, _) = api.call(Method::POST, "/worktrees", Some(body), &[]).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["_tag"], "InvalidRequestError");
+    }
+    let (status, body, _) = api
+        .call(Method::POST, "/worktrees", Some(json!({})), &[])
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["_tag"], "ServiceUnavailableError");
+}

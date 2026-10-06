@@ -245,7 +245,7 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-fn session(state: &AppState, s: SessionState) -> Session {
+pub(super) fn session(state: &AppState, s: SessionState) -> Session {
     let status = if state.runtime.is_running(&s.info.id) {
         "running"
     } else {

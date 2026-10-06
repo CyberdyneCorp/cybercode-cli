@@ -74,6 +74,9 @@ pub struct GlobalArgs {
 /// TUI launch flags (`tui` → Launch flags).
 #[derive(Debug, Args)]
 pub struct LaunchArgs {
+    /// Start a new Session in a managed worktree; omit NAME to generate one.
+    #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "NAME")]
+    pub worktree: Option<String>,
     /// Resume the most recent Session of the Location.
     #[arg(short = 'c', long = "continue")]
     pub resume_last: bool,
@@ -124,7 +127,7 @@ pub enum Command {
         cmd: TrustCmd,
     },
     /// Run one prompt non-interactively (alias: cyber -p).
-    Exec(ExecArgs),
+    Exec(Box<ExecArgs>),
     /// Run the server in the foreground.
     Serve(ServeArgs),
     /// Manage the background server.
@@ -143,4 +146,48 @@ pub enum Command {
     },
     #[command(external_subcommand)]
     External(Vec<String>),
+}
+
+#[cfg(test)]
+mod worktree_tests {
+    use super::*;
+
+    #[test]
+    fn worktree_start_flags_support_named_and_generated_sessions() {
+        let launch = Cli::try_parse_from(["cyber", "--worktree", "fix-login"]).unwrap();
+        assert_eq!(launch.launch.worktree.as_deref(), Some("fix-login"));
+        let launch = Cli::try_parse_from(["cyber", "--worktree"]).unwrap();
+        assert_eq!(launch.launch.worktree.as_deref(), Some(""));
+        for (args, name) in [
+            (
+                vec!["cyber", "exec", "--worktree", "fix-login", "fix"],
+                "fix-login",
+            ),
+            (vec!["cyber", "exec", "--worktree", "--", "fix"], ""),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let Some(Command::Exec(args)) = cli.command else {
+                panic!("expected exec")
+            };
+            assert_eq!(args.worktree.as_deref(), Some(name));
+            assert_eq!(args.prompt, ["fix"]);
+        }
+    }
+
+    #[test]
+    fn isolated_exec_refuses_resume_ephemeral_and_invalid_names() {
+        for option in ["--continue", "--ephemeral", "--fork"] {
+            let cli =
+                Cli::try_parse_from(["cyber", "exec", "--worktree=fix", option, "prompt"]).unwrap();
+            let Some(Command::Exec(args)) = cli.command else {
+                panic!("expected exec")
+            };
+            assert!(crate::commands::exec::setup::validate(&args).is_err());
+        }
+        let cli = Cli::try_parse_from(["cyber", "exec", "--worktree=../escape", "prompt"]).unwrap();
+        let Some(Command::Exec(args)) = cli.command else {
+            panic!("expected exec")
+        };
+        assert!(crate::commands::exec::setup::validate(&args).is_err());
+    }
 }

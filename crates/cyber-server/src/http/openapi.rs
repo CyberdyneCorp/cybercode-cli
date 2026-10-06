@@ -140,6 +140,16 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .located()
         .query(&["limit", "cursor", "search", "children", "archived"])
         .ok::<Located<Page<SessionRow>>>(g),
+        op(
+            "post",
+            "/worktrees",
+            "v1.worktree.create",
+            "Create a managed worktree Session and run setup",
+        )
+        .located()
+        .status(201)
+        .body::<super::worktrees::CreateWorktreeBody>(g)
+        .ok::<Located<super::worktrees::CreatedWorktree>>(g),
         op("post", "/sessions", "v1.session.create", "Create a Session")
             .located()
             .status(201)

@@ -15,6 +15,7 @@ pub mod rpc;
 mod serve;
 mod service;
 mod sessions;
+pub mod worktrees;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -79,6 +80,23 @@ pub struct AgentInfo {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn create_worktree(
+        &self,
+        directory: PathBuf,
+        session: crate::runtime::CreateSession,
+        name: cyber_core::worktrees::Name,
+        call_id: String,
+    ) -> BoxFuture<'_, Result<worktrees::StartedWorktree, ApiError>> {
+        let _ = (directory, session, name, call_id);
+        Box::pin(async {
+            Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "Managed worktree creation is unavailable in this host",
+            ))
+        })
+    }
+
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;
@@ -143,6 +161,7 @@ async fn request_log(
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(worktrees::routes())
         .merge(events::routes())
         .merge(catalog::routes())
         .merge(service::routes())

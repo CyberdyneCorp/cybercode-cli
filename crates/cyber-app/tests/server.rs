@@ -579,3 +579,250 @@ async fn read_event_prefix(socket: &mut tokio::net::TcpStream, needle: &[u8]) ->
     .await
     .unwrap()
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn public_worktree_creation_streams_setup_and_retains_failed_session() {
+    public_worktree_start(false, false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn public_worktree_creation_uses_approved_source_recipe_without_trusting_target() {
+    public_worktree_start(true, true).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn public_worktree_creation_leaves_unapproved_source_setup_inactive() {
+    public_worktree_start(true, false).await;
+}
+
+#[cfg(unix)]
+async fn public_worktree_start(project_setup: bool, approve: bool) {
+    use axum::{
+        body::Body,
+        http::{Method, Request},
+    };
+    use cyber_server::runtime::{LiveEvent, SetupUpdate};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let (repo, p) = worktree_start_fixture(&root, project_setup, approve);
+    let runs_setup = !project_setup || approve;
+    let application = app(&root).await;
+    let mut events = application.runtime.subscribe();
+    let client = application.embedded();
+    let repo_header = repo.display().to_string();
+    let idempotency_key = format!("worktree-public-start-{project_setup}-{approve}");
+    let request = Request::builder().method(Method::POST).uri("http://cyber.internal/api/v1/worktrees")
+        .header("x-cyber-directory", &repo_header).header("content-type", "application/json")
+        .header("idempotency-key", &idempotency_key)
+        .body(Body::from(serde_json::json!({"name": "public", "call_id": "call_public", "session": {"model": "test/main", "mode": "dont-ask"}}).to_string())).unwrap();
+    let task = tokio::spawn(async move { client.request(request).await });
+    if runs_setup {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let LiveEvent::WorktreeSetup {
+                    call_id,
+                    update: SetupUpdate::Output { .. },
+                    ..
+                } = events.recv().await.unwrap()
+                {
+                    assert_eq!(call_id, "call_public");
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !task.is_finished(),
+            "output arrived only after setup finished"
+        );
+    }
+    let response = task.await.unwrap();
+    assert_eq!(response.status(), 201);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    verify_worktree_start(
+        &application,
+        &repo_header,
+        &p,
+        &body,
+        runs_setup,
+        &idempotency_key,
+    )
+    .await;
+    application.runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+fn worktree_start_fixture(
+    root: &std::path::Path,
+    project_setup: bool,
+    approve: bool,
+) -> (std::path::PathBuf, Paths) {
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["config", "user.name", "Worktree"],
+        vec!["config", "user.email", "test@example.invalid"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    std::fs::write(repo.join("tracked"), "base").unwrap();
+    for args in [
+        vec!["add", "tracked"],
+        vec!["commit", "--quiet", "-m", "initial"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let p = paths(root);
+    p.ensure().unwrap();
+    // Bash leaves masked HOME absent; zsh synthesizes it from the account record.
+    std::fs::write(
+        p.config.join("cyber.jsonc"),
+        serde_json::json!({"shell": "bash"}).to_string(),
+    )
+    .unwrap();
+    let config_file = if project_setup {
+        repo.join("cyber.jsonc")
+    } else {
+        p.config.join("cyber.jsonc")
+    };
+    std::fs::write(config_file, serde_json::json!({"shell": "bash", "providers": {"local": {"disabled": true, "env": ["HOME"]}}, "worktrees": {"setup": ["if [ \"${HOME+x}\" ]; then exit 8; fi; printf ready; sleep 1; printf once >> setup-result; exit 7"]}}).to_string()).unwrap();
+    if project_setup {
+        for args in [
+            vec!["add", "cyber.jsonc"],
+            vec!["commit", "--quiet", "-m", "setup fixture"],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(&repo)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+    }
+    if approve {
+        let home = root.join("home");
+        let report = cyber_core::config::trust_report(&cyber_core::config::LoadRequest {
+            location: &repo,
+            paths: &p,
+            home: &home,
+            env: &cyber_core::env::ProcessEnv,
+            profile: None,
+            overrides: &[],
+            flags: Default::default(),
+        })
+        .unwrap();
+        cyber_core::trust::TrustStore::new(p.trust_file())
+            .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+            .unwrap();
+    }
+    (repo, p)
+}
+
+#[cfg(unix)]
+async fn verify_worktree_start(
+    application: &App,
+    repo_header: &str,
+    p: &Paths,
+    body: &serde_json::Value,
+    runs_setup: bool,
+    idempotency_key: &str,
+) {
+    assert_eq!(
+        body["data"]["setup"]["status"],
+        if runs_setup { "failed" } else { "completed" }
+    );
+    if runs_setup {
+        assert_eq!(body["data"]["setup"]["code"], 7);
+    }
+    assert_eq!(body["data"]["session"]["mode"], "dont-ask");
+    let directory = body["data"]["session"]["directory"].as_str().unwrap();
+    assert_eq!(body["location"]["directory"], directory);
+    assert_eq!(body["data"]["worktree"]["path"], directory);
+    let result_file = std::path::Path::new(directory).join("setup-result");
+    if runs_setup {
+        assert_eq!(std::fs::read_to_string(result_file).unwrap(), "once");
+    } else {
+        assert!(!result_file.exists());
+    }
+    assert!(
+        cyber_core::trust::TrustStore::new(p.trust_file())
+            .approval(std::path::Path::new(directory))
+            .unwrap()
+            .is_none()
+    );
+    verify_worktree_replay(application, repo_header, body, idempotency_key).await;
+}
+
+#[cfg(unix)]
+async fn verify_worktree_replay(
+    application: &App,
+    repo_header: &str,
+    body: &serde_json::Value,
+    idempotency_key: &str,
+) {
+    use axum::{
+        body::Body,
+        http::{Method, Request},
+    };
+    let source_sessions = application
+        .embedded()
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("http://cyber.internal/api/v1/sessions")
+                .header("x-cyber-directory", repo_header)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    let source_sessions: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(source_sessions.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        source_sessions["data"]["data"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "startup created an extra source Session"
+    );
+    // Replaying the same API request retains both the Session and its failed result.
+    let replay = application.embedded().request(Request::builder().method(Method::POST).uri("http://cyber.internal/api/v1/worktrees")
+        .header("x-cyber-directory", repo_header).header("content-type", "application/json").header("idempotency-key", idempotency_key)
+        .body(Body::from(serde_json::json!({"name": "public", "call_id": "call_public", "session": {"model": "test/main", "mode": "dont-ask"}}).to_string())).unwrap()).await;
+    let replayed: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(replay.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(&replayed, body);
+}

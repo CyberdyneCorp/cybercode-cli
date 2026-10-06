@@ -734,3 +734,50 @@ async fn creation_git_failure_preserves_pending_target_and_refuses_blind_retry()
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn explicit_start_preserves_denied_rules_and_read_only_admission() {
+    use cyber_server::runtime::NoSnapshots;
+    for case in ["deny", "read-only", "session-deny", "plan", "cancel"] {
+        let (fixture, repository, _) = owned().await;
+        fixture.set_config(match case {
+            "deny" => json!({"permissions": {"worktree": "deny"}}),
+            "read-only" => json!({"sandbox": {"policy": "read-only"}}),
+            _ => json!({}),
+        });
+        let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+        let mut request = creation_request(&flow.f, "explicit-refused");
+        request.session.mode = Some(if case == "plan" { "plan" } else { "dont-ask" }.into());
+        if case == "session-deny" {
+            request.session.rules = Some(json!({"worktree": "deny"}));
+        }
+        let cancel = CancellationToken::new();
+        if case == "cancel" {
+            cancel.cancel();
+        }
+        assert!(
+            flow.f
+                .host
+                .start_worktree_session(&flow.f.repo, "call_explicit".into(), cancel, request)
+                .await
+                .is_err(),
+            "{case}"
+        );
+        assert!(
+            !repository
+                .common_dir
+                .join("cyber-worktrees/explicit-refused.json")
+                .exists(),
+            "{case}"
+        );
+        assert!(
+            !flow
+                .f
+                .dir
+                .path()
+                .join("worktrees/prj_test/explicit-refused")
+                .exists(),
+            "{case}"
+        );
+    }
+}

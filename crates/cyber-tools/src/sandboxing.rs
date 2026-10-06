@@ -38,7 +38,7 @@ pub(crate) async fn prepare_command(
     program: &str,
     args: &[String],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, program, args, true, None).await
+    prepare_scoped_command(ctx, program, args, true, None, &[]).await
 }
 
 /// Setup must not gain ambient temporary-directory access outside its owned roots.
@@ -46,8 +46,20 @@ pub(crate) async fn prepare_worktree_command(
     ctx: &Ctx<'_>,
     program: &str,
     args: &[String],
+    credentials: &[String],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, program, args, false, None).await
+    prepare_scoped_command(ctx, program, args, false, None, credentials).await
+}
+
+pub(crate) fn credential_env_names(config: &serde_json::Value) -> Vec<String> {
+    config["providers"]
+        .as_object()
+        .into_iter()
+        .flat_map(|providers| providers.values())
+        .flat_map(|provider| provider["env"].as_array().into_iter().flatten())
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Git creation may mutate only verified common metadata and the reserved target.
@@ -56,7 +68,7 @@ pub(crate) async fn prepare_worktree_git(
     args: &[String],
     writable: &[PathBuf],
 ) -> Result<Prepared, ToolError> {
-    prepare_scoped_command(ctx, "git", args, false, Some(writable)).await
+    prepare_scoped_command(ctx, "git", args, false, Some(writable), &[]).await
 }
 
 async fn prepare_scoped_command(
@@ -65,6 +77,7 @@ async fn prepare_scoped_command(
     args: &[String],
     ambient_temp: bool,
     git_roots: Option<&[PathBuf]>,
+    extra_credentials: &[String],
 ) -> Result<Prepared, ToolError> {
     let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
     let home = &ctx.host.opts.home;
@@ -117,6 +130,7 @@ async fn prepare_scoped_command(
         &sandbox,
         &config,
         ctx.host.opts.models.as_deref(),
+        extra_credentials,
     );
     let mut env: Vec<(String, String)> = base
         .into_iter()
@@ -138,6 +152,7 @@ fn command_environment(
     sandbox: &SandboxConfig,
     config: &serde_json::Value,
     models: Option<&dyn cyber_server::runtime::ModelResolver>,
+    extra_credentials: &[String],
 ) -> Vec<(String, String)> {
     if sandbox.policy == Policy::FullAccess {
         return vars.collect();
@@ -145,15 +160,8 @@ fn command_environment(
     let mut credentials = models
         .map(|resolver| resolver.credential_env_names())
         .unwrap_or_default();
-    credentials.extend(
-        config["providers"]
-            .as_object()
-            .into_iter()
-            .flat_map(|providers| providers.values())
-            .flat_map(|provider| provider["env"].as_array().into_iter().flatten())
-            .filter_map(serde_json::Value::as_str)
-            .map(str::to_owned),
-    );
+    credentials.extend(credential_env_names(config));
+    credentials.extend_from_slice(extra_credentials);
     cyber_sandbox::mask_env(vars, &sandbox.env_allow, &credentials)
 }
 
@@ -283,7 +291,7 @@ mod tests {
             "CUSTOM_SECRET",
         ]
         .map(|name| (name.to_owned(), "fixture".to_owned()));
-        command_environment(vars.into_iter(), &sandbox, &config, models)
+        command_environment(vars.into_iter(), &sandbox, &config, models, &[])
             .into_iter()
             .map(|(name, _)| name)
             .collect()
@@ -344,6 +352,35 @@ mod tests {
                 "CUSTOM_SECRET"
             ]
         );
+    }
+
+    #[test]
+    fn captured_source_credentials_respect_env_allow_and_full_access() {
+        let extra = vec!["SourceCredential".into()];
+        for (config, policy, expected) in [
+            (serde_json::json!({}), None, vec!["SourceCredentialExtra"]),
+            (
+                serde_json::json!({"sandbox": {"env": {"allow": ["SourceCredential"]}}}),
+                None,
+                vec!["SourceCredential", "SourceCredentialExtra"],
+            ),
+            (
+                serde_json::json!({}),
+                Some("full-access"),
+                vec!["SourceCredential", "SourceCredentialExtra"],
+            ),
+        ] {
+            let sandbox =
+                SandboxConfig::resolve(&config, &Default::default(), policy, Path::new("."));
+            let vars = ["SourceCredential", "SourceCredentialExtra"]
+                .map(|name| (name.into(), "fixture".into()));
+            let names: Vec<_> =
+                command_environment(vars.into_iter(), &sandbox, &config, None, &extra)
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect();
+            assert_eq!(names, expected);
+        }
     }
 
     #[cfg(unix)]
@@ -419,6 +456,7 @@ mod tests {
             &args,
             false,
             Some(&[metadata.clone(), target.clone()]),
+            &[],
         )
         .await
         .unwrap();

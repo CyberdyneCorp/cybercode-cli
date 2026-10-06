@@ -16,6 +16,7 @@ pub struct AppServices {
     remote: Arc<RemoteTools>,
     config: Arc<ConfigFn>,
     recent_file: PathBuf,
+    data: PathBuf,
 }
 
 impl AppServices {
@@ -25,6 +26,7 @@ impl AppServices {
         remote: Arc<RemoteTools>,
         config: Arc<ConfigFn>,
         recent_file: PathBuf,
+        data: PathBuf,
     ) -> Self {
         Self {
             resolver,
@@ -32,6 +34,7 @@ impl AppServices {
             remote,
             config,
             recent_file,
+            data,
         }
     }
 }
@@ -49,6 +52,61 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn create_worktree(
+        &self,
+        directory: PathBuf,
+        session: cyber_server::runtime::CreateSession,
+        name: cyber_core::worktrees::Name,
+        call_id: String,
+    ) -> BoxFuture<
+        '_,
+        Result<cyber_server::http::worktrees::StartedWorktree, cyber_server::http::ApiError>,
+    > {
+        Box::pin(async move {
+            use cyber_core::worktrees::SetupOutcome;
+            use cyber_server::http::{
+                ApiError,
+                worktrees::{SetupStatus, StartedWorktree},
+            };
+            let request = cyber_tools::WorktreeSessionRequest {
+                project_id: cyber_core::project::identify(&directory).id,
+                session,
+                data: self.data.clone(),
+                name,
+            };
+            let result = self
+                .host
+                .start_worktree_session(
+                    &directory,
+                    call_id,
+                    tokio_util::sync::CancellationToken::new(),
+                    request,
+                )
+                .await
+                .map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::PermissionDenied
+                        || error.to_string().contains("Permission denied")
+                    {
+                        ApiError::forbidden(error.to_string())
+                    } else if error.kind() == std::io::ErrorKind::InvalidInput {
+                        ApiError::invalid(error.to_string())
+                    } else {
+                        ApiError::conflict(error.to_string())
+                    }
+                })?;
+            let setup = match result.setup {
+                Ok(SetupOutcome::Completed) => SetupStatus::Completed,
+                Ok(SetupOutcome::Failed { index, code }) => SetupStatus::Failed { index, code },
+                Err(message) => SetupStatus::Error { message },
+            };
+            Ok(StartedWorktree {
+                worktree: result.managed.into(),
+                session: result.session,
+                setup,
+            })
+        })
+    }
+
     fn models(&self, _location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>> {
         Box::pin(async move {
             let rows = self

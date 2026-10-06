@@ -44,7 +44,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Serve(args) => serve::serve(args, &ctx),
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),
-        Command::Exec(args) => exec::run(args, &ctx, &cli.global),
+        Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
         Command::External(_) => unreachable!("handled above"),
@@ -88,3 +88,5 @@ pub(crate) fn start_logging(ctx: &Context, global: &GlobalArgs) -> Result<(), Cl
     );
     Ok(())
 }
+
+pub(crate) mod worktrees;

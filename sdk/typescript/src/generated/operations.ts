@@ -344,6 +344,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_ToolInfo;
   };
+  "v1.worktree.create": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.CreateWorktreeBody;
+    response: S.Located_CreatedWorktree;
+  };
 }
 
 export const operations = {
@@ -875,6 +881,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.worktree.create": {
+    tag: "worktree",
+    name: "create",
+    method: "POST",
+    path: "/api/v1/worktrees",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
 } as const satisfies Record<string, OperationSpec>;
 
 /** Typed methods grouped by OpenAPI tag, bound to a `Caller`. */
@@ -1037,6 +1055,11 @@ export function createGroups(caller: Caller) {
       /** Built-in tool schema bundle (`GET /api/v1/tools/schema`) */
       schema: (options?: RequestOptions): Promise<Operations["v1.tool.schema"]["response"]> =>
         caller.call("v1.tool.schema", {}, options),
+    },
+    worktree: {
+      /** Create a managed worktree Session and run setup (`POST /api/v1/worktrees`) */
+      create: (body: Operations["v1.worktree.create"]["body"], options?: RequestOptions): Promise<Operations["v1.worktree.create"]["response"]> =>
+        caller.call("v1.worktree.create", { body }, options),
     },
   };
 }

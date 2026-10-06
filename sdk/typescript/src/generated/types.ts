@@ -97,6 +97,20 @@ export type CreateBody = {
   max_steps?: number | null;
 };
 
+export type CreateWorktreeBody = {
+  /** Generated when omitted. */
+  name?: string | null;
+  /** Correlates live setup updates with this request. */
+  call_id?: string | null;
+  session?: CreateBody;
+};
+
+export type CreatedWorktree = {
+  worktree: WorktreeInfo;
+  session: Session;
+  setup: SetupStatus;
+};
+
 export type Cursor = {
   previous?: string | null;
   next?: string | null;
@@ -244,6 +258,12 @@ export type Located_Array_of_ToolInfo = {
 export type Located_Array_of_string = {
   location: LocationInfo;
   data: string[];
+};
+
+/** A Location-scoped response. */
+export type Located_CreatedWorktree = {
+  location: LocationInfo;
+  data: CreatedWorktree;
 };
 
 /** A Location-scoped response. */
@@ -456,6 +476,17 @@ export type SessionRow = {
   cost: number;
 };
 
+export type SetupStatus = {
+  status: "completed";
+} | {
+  index: number;
+  code?: number | null;
+  status: "failed";
+} | {
+  message: string;
+  status: "error";
+};
+
 export type ShellBody = {
   command: string;
 };
@@ -519,4 +550,12 @@ export type Usage = {
   reasoning: number;
   cache_read: number;
   cache_write: number;
+};
+
+export type WorktreeInfo = {
+  id: string;
+  name: string;
+  path: string;
+  branch: string;
+  base: string;
 };

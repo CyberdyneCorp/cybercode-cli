@@ -349,3 +349,79 @@ fn service_stop_uses_registered_http_shutdown() {
     }
     assert!(!registration.exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["config", "user.name", "Worktree"],
+        vec!["config", "user.email", "test@example.invalid"],
+    ] {
+        assert!(
+            Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    std::fs::write(repo.join("tracked"), "base").unwrap();
+    for args in [
+        vec!["add", "tracked"],
+        vec!["commit", "--quiet", "-m", "initial"],
+    ] {
+        assert!(
+            Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let config = env.root.join("cyber-home/config/cyber.jsonc");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(config, serde_json::json!({"worktrees": {"setup": ["printf setup-ready; sleep 0.15; printf setup > setup-result"]}}).to_string()).unwrap();
+    // An unavailable model ends the prompt locally after startup, without a provider call.
+    let output = env.cyber(&[
+        "--cwd",
+        repo.to_str().unwrap(),
+        "exec",
+        "--embedded",
+        "--worktree",
+        "from-cli",
+        "--model",
+        "missing/model",
+        "--format",
+        "json",
+        "prompt",
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let result = json(&output);
+    assert!(result["session_id"].as_str().unwrap().starts_with("ses_"));
+    assert!(
+        stderr(&output).contains("setup-ready"),
+        "{}",
+        stderr(&output)
+    );
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(repo.join(".git/cyber-worktrees/from-cli.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["ready"], true);
+    let target = Path::new(record["path"].as_str().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(target.join("tracked")).unwrap(),
+        "base"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("setup-result")).unwrap(),
+        "setup"
+    );
+    assert!(!repo.join("setup-result").exists());
+}
