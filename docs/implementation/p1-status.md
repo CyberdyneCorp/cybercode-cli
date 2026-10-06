@@ -1,0 +1,247 @@
+# P1 implementation status
+
+The active goal covers all P1-tagged product contracts, not only the five milestone titles. Implementation starts with M1.1. P0 local-model evaluation continues independently and remains an open release gate.
+
+## Delivery sequence
+
+- [ ] M1.1: Windows sandbox and network enforcement; classifier, permission ceilings, mode cycling and pending state.
+- [ ] M1.2: Subagents, schema validation, worktree isolation, background results and concurrency limits.
+- [ ] M1.3: Hooks, out-of-process plugin host, MCP authentication/search/resources/prompts and complete skills support.
+- [ ] M1.4: Memory, code intelligence, formatters and isolated browser verification.
+- [ ] M1.5: Setup import, ACP and VS Code integration.
+- [ ] Remaining P1 contracts: local web client, providers/credentials, API and SDK surfaces, observability/budgets, configuration, exec and TUI functionality.
+- [ ] Exit evidence: native Windows escape tests, reference import compatibility, versioned coding benchmarks and internal quality gate.
+
+M1.1 design is in [the OpenSpec change](../../openspec/changes/implement-m1-1-sandbox-modes). Native Windows enforcement must be proven on Windows; compilation alone is insufficient. Comparative quality claims require published measurements.
+
+## Requirement inventory
+
+Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.
+
+225 P1-tagged requirements across 32 capabilities.
+
+- [ ] `agents-subagents`: Agent tool spawns subagents
+- [ ] `agents-subagents`: Structured subagent output
+- [ ] `agents-subagents`: Background subagents and handback
+- [ ] `agents-subagents`: Forked subagents
+- [ ] `agents-subagents`: Resume subagents by name
+- [ ] `agents-subagents`: Worktree isolation for subagents
+- [ ] `agents-subagents`: Concurrency cap
+- [ ] `agents-subagents`: Nesting depth
+- [ ] `agents-subagents`: Subagent permission inheritance
+- [ ] `agents-subagents`: Subagent result summarization
+- [ ] `agents-subagents`: Cost attribution
+- [ ] `agents-subagents`: Manual invocation by mention
+- [ ] `agents-subagents`: Agent thread switching
+- [ ] `agents-subagents`: Agent tool catalogue
+- [ ] `background-tasks`: Background bash
+- [ ] `background-tasks`: Job registry
+- [ ] `background-tasks`: Completion notices
+- [ ] `background-tasks`: Reading job output
+- [ ] `background-tasks`: Monitor tool
+- [ ] `background-tasks`: Tasks view
+- [ ] `background-tasks`: Stop kills process trees
+- [ ] `background-tasks`: Concurrency limits
+- [ ] `background-tasks`: Jobs end with their session
+- [ ] `background-tasks`: PTY sessions
+- [ ] `background-tasks`: Model interaction with PTYs
+- [ ] `background-tasks`: Notify tool
+- [ ] `background-tasks`: Send file to user
+- [ ] `background-tasks`: Background job events
+- [ ] `background-tasks`: Background commands from the user
+- [ ] `browser-verification`: Supported optional browser integration
+- [ ] `browser-verification`: Verification artifacts and lifecycle
+- [ ] `builtin-tools`: Capability-owned tool catalog
+- [ ] `builtin-tools`: powershell tool
+- [ ] `builtin-tools`: notebook_edit tool
+- [ ] `builtin-tools`: monitor tool
+- [ ] `client-sdk`: Hook callbacks
+- [ ] `code-intelligence`: LSP enablement
+- [ ] `code-intelligence`: Built-in servers
+- [ ] `code-intelligence`: Custom and overridden servers
+- [ ] `code-intelligence`: Lazy spawning and root detection
+- [ ] `code-intelligence`: Diagnostics after edits
+- [ ] `code-intelligence`: lsp tool
+- [ ] `code-intelligence`: Read warms servers
+- [ ] `code-intelligence`: LSP status and shutdown
+- [ ] `code-intelligence`: Formatter enablement and detection
+- [ ] `code-intelligence`: Custom formatters
+- [ ] `code-intelligence`: Formatter execution
+- [ ] `code-intelligence`: Formatter status
+- [ ] `compaction`: Compaction hooks
+- [ ] `compaction`: Tool output pruning
+- [ ] `compaction`: Native provider compaction
+- [ ] `compat-import`: Import command
+- [ ] `compat-import`: Claude Code sources
+- [ ] `compat-import`: Codex sources
+- [ ] `compat-import`: OpenCode sources
+- [ ] `compat-import`: Read-time skill compatibility
+- [ ] `compat-import`: Read-time MCP compatibility
+- [ ] `compat-import`: Mapping report
+- [ ] `compat-import`: Secret safety during import
+- [ ] `compat-import`: Source detection
+- [ ] `compat-import`: Idempotent re-import
+- [ ] `configuration`: Config inspection by agents
+- [ ] `configuration`: References
+- [ ] `cross-session-messaging`: Reachable session listing
+- [ ] `cross-session-messaging`: Addressing
+- [ ] `cross-session-messaging`: Send message tool
+- [ ] `cross-session-messaging`: Message content limits
+- [ ] `cross-session-messaging`: Delivery semantics
+- [ ] `cross-session-messaging`: Inbound controls
+- [ ] `cross-session-messaging`: Outcome reporting
+- [ ] `cross-session-messaging`: Replies
+- [ ] `cross-session-messaging`: Idle notifications
+- [ ] `cross-session-messaging`: Rate limits
+- [ ] `cross-session-messaging`: Permission boundaries stay per session
+- [ ] `cross-session-messaging`: Untrusted content
+- [ ] `cross-session-messaging`: Local transport
+- [ ] `cross-session-messaging`: Non-interactive sessions
+- [ ] `cross-session-messaging`: Transcript and audit
+- [ ] `cross-session-messaging`: Usage attribution
+- [ ] `cross-session-messaging`: Disable switch
+- [ ] `cross-session-messaging`: Messaging API
+- [ ] `editor-integration`: ACP command and transport
+- [ ] `editor-integration`: ACP initialize and capabilities
+- [ ] `editor-integration`: ACP session lifecycle
+- [ ] `editor-integration`: ACP config options
+- [ ] `editor-integration`: ACP prompting and streaming
+- [ ] `editor-integration`: ACP tool calls and permissions
+- [ ] `editor-integration`: ACP file write-through
+- [ ] `editor-integration`: ACP client MCP servers
+- [ ] `editor-integration`: VS Code extension
+- [ ] `editor-integration`: Inline diff review
+- [ ] `editor-integration`: Selection mentions and plan review
+- [ ] `editor-integration`: IDE context source
+- [ ] `editor-integration`: IDE detection and extension install
+- [ ] `exec-mode`: Permission denial log
+- [ ] `exec-mode`: Structured final output
+- [ ] `exec-mode`: CI usage
+- [ ] `exec-mode`: Streaming input and partial output
+- [ ] `hooks`: Hook configuration
+- [ ] `hooks`: Hook scopes and merge order
+- [ ] `hooks`: Supported events
+- [ ] `hooks`: Matchers
+- [ ] `hooks`: Command handlers
+- [ ] `hooks`: HTTP handlers
+- [ ] `hooks`: Prompt handlers
+- [ ] `hooks`: MCP tool handlers
+- [ ] `hooks`: Decision schema
+- [ ] `hooks`: Decision merging
+- [ ] `hooks`: Interaction with permissions
+- [ ] `hooks`: Stop hooks and loop prevention
+- [ ] `hooks`: Timeouts and async hooks
+- [ ] `hooks`: Parallel execution within a group
+- [ ] `hooks`: Sandboxing of command hooks
+- [ ] `hooks`: Trust for project hooks
+- [ ] `hooks`: Hooks viewer and CLI
+- [ ] `hooks`: Hook context injection on lifecycle events
+- [ ] `hooks`: Hook observability
+- [ ] `hooks`: Conditional, one-shot and annotated handlers
+- [ ] `installation-upgrade`: Shell integration on install
+- [ ] `mcp`: Tool search and deferred loading
+- [ ] `mcp`: OAuth
+- [ ] `mcp`: Elicitation
+- [ ] `mcp`: Roots and sampling
+- [ ] `mcp`: Organization MCP controls
+- [ ] `mcp`: Server options
+- [ ] `memory`: Memory locations
+- [ ] `memory`: Memory file format
+- [ ] `memory`: Index loading
+- [ ] `memory`: Memory tool
+- [ ] `memory`: Automatic memory generation
+- [ ] `memory`: Memory toggles
+- [ ] `memory`: Secret redaction
+- [ ] `memory`: Deduplication and updates
+- [ ] `memory`: Staleness notice
+- [ ] `memory`: Memory command
+- [ ] `memory`: Memory changes during a Session
+- [ ] `memory`: Explicit remember requests
+- [ ] `memory`: Memory HTTP API
+- [ ] `observability-costs`: Usage commands
+- [ ] `observability-costs`: Context window meter
+- [ ] `observability-costs`: Status line data contract
+- [ ] `observability-costs`: OpenTelemetry export
+- [ ] `observability-costs`: Prompt content privacy in telemetry
+- [ ] `observability-costs`: Debug traces
+- [ ] `observability-costs`: Doctor health checks
+- [ ] `observability-costs`: Performance diagnostics
+- [ ] `observability-costs`: Usage data retention
+- [ ] `observability-costs`: Diagnostics bundle
+- [ ] `permissions-modes`: Critical-path removal guard
+- [ ] `permissions-modes`: accept-edits mode
+- [ ] `permissions-modes`: auto mode classifier
+- [ ] `permissions-modes`: dont-ask mode
+- [ ] `permissions-modes`: bypass mode
+- [ ] `permissions-modes`: Auto-mode configuration and override
+- [ ] `permissions-modes`: Rule dry run
+- [ ] `plugins-marketplace`: Plugin manifest
+- [ ] `plugins-marketplace`: Component discovery defaults
+- [ ] `plugins-marketplace`: Install scopes
+- [ ] `plugins-marketplace`: Plugin sources
+- [ ] `plugins-marketplace`: Plugin CLI
+- [ ] `plugins-marketplace`: Plugin host process
+- [ ] `plugins-marketplace`: Host protocol
+- [ ] `plugins-marketplace`: Restart and backoff
+- [ ] `plugins-marketplace`: Scoped registrations
+- [ ] `plugins-marketplace`: Capability declaration and enforcement
+- [ ] `plugins-marketplace`: User configuration
+- [ ] `plugins-marketplace`: TypeScript plugin kit
+- [ ] `plugins-marketplace`: Pure mode
+- [ ] `plugins-marketplace`: Trust and signing
+- [ ] `provider-catalog`: Small model selection
+- [ ] `provider-catalog`: Tool-call emulation for models without native tools
+- [ ] `provider-catalog`: Additional native provider adapters
+- [ ] `provider-catalog`: Model fallback chain
+- [ ] `provider-credentials`: Multiple connections per provider
+- [ ] `provider-credentials`: Provider OAuth flows
+- [ ] `provider-credentials`: Command credentials
+- [ ] `sandbox`: Windows enforcement
+- [ ] `sandbox`: Escalation requests
+- [ ] `sandbox`: Excluded commands
+- [ ] `sandbox`: Container detection
+- [ ] `sandbox`: Sandbox CLI
+- [ ] `sandbox`: Sandbox events and audit
+- [ ] `sandbox`: Named sandbox profiles
+- [ ] `sandbox`: Environment policy
+- [ ] `session-runtime`: Eager tool execution
+- [ ] `session-runtime`: Structured output
+- [ ] `session-runtime`: Side chat
+- [ ] `skills-commands`: Remote skill sources
+- [ ] `skills-commands`: Skill-scoped tool approvals and model
+- [ ] `skills-commands`: Shell output injection
+- [ ] `skills-commands`: Bundled skills
+- [ ] `skills-commands`: Path-triggered and forked skills
+- [ ] `snapshots-checkpoints`: Non-git fallback
+- [ ] `snapshots-checkpoints`: Rewind targets
+- [ ] `snapshots-checkpoints`: Undo and redo shortcuts
+- [ ] `storage-events`: Retention and garbage collection
+- [ ] `storage-events`: Transcript persistence switch
+- [ ] `system-context`: Instruction imports
+- [ ] `system-context`: Nested rule files on read
+- [ ] `system-context`: Skills, references, and MCP instruction sources
+- [ ] `system-context`: Context inspection
+- [ ] `system-context`: Path-scoped rules and overrides
+- [ ] `tool-registry`: Deferred tools and tool search
+- [ ] `tool-registry`: Eager execution during streaming
+- [ ] `tool-registry`: Annotations drive modes and hooks
+- [ ] `tui`: Permission mode indicator and cycling
+- [ ] `tui`: Rewind UI
+- [ ] `tui`: Background tasks view
+- [ ] `tui`: Subagent threads and side chat
+- [ ] `tui`: Status line
+- [ ] `tui`: Accessibility
+- [ ] `tui`: Reasoning display and effort command
+- [ ] `vcs-integration`: Local review command
+- [ ] `vcs-integration`: Commit and PR text generation
+- [ ] `vcs-integration`: PR checkout and linked sessions
+- [ ] `web-client`: Local web client
+- [ ] `worktrees`: Session worktrees
+- [ ] `worktrees`: Worktree location and branch naming
+- [ ] `worktrees`: Untracked file inclusion
+- [ ] `worktrees`: Setup commands
+- [ ] `worktrees`: Enter and exit tools
+- [ ] `worktrees`: Cleanup on exit
+- [ ] `worktrees`: Worktree management commands
+- [ ] `worktrees`: Concurrency safety
+- [ ] `worktrees`: Worktree events

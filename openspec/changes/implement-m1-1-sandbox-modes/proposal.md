@@ -1,5 +1,5 @@
 ## Why
-After the P0 gate closes, M1.1 extends local execution to Windows and completes auto-mode permissions. P0 already implements the allowlist proxy and most mode selection plumbing; those should be reused and verified.
+M1.1 extends local execution to Windows and completes auto-mode permissions. P1 implementation is authorized while the remaining P0 local-model validation continues independently. P0 already implements the allowlist proxy and most mode selection plumbing; those should be reused and verified.
 
 ## What Changes
 - Add Windows restricted-token AppContainer execution with scoped filesystem ACLs, credential masking, child-process cleanup and fail-closed behavior.
@@ -14,4 +14,4 @@ After the P0 gate closes, M1.1 extends local execution to Windows and completes 
 - `permissions-modes`: P1 cycling and safe auto-mode decisions.
 
 ## Impact
-Platform process launch, permission host/runtime, TUI mode state, durable event registry and Windows CI. Development starts after local-baseline and full-platform P0 evidence is resolved. Windows sandbox APIs require native tests; no security claim will rely solely on macOS validation.
+Platform process launch, permission host/runtime, TUI mode state, durable event registry and Windows CI. Development proceeds under the active P1 implementation goal; incomplete P0 local-baseline evidence remains an independent release gate. Windows sandbox APIs require native tests; no security claim will rely solely on macOS validation.

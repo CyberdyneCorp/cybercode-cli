@@ -14,7 +14,7 @@ Implemented today:
 
 Recovery/trust tests, per-tool goldens, storage measurements and all six macOS/Linux build targets have passing evidence. Default-service startup meets the 150 ms first-frame target on the named M2 Max machine; the embedded-mode measurements retain an outlier. See [P0 exit evidence](docs/measurements/p0-exit-evidence.md) and [evaluation results and local-model setup](eval/README.md).
 
-**Next:** P1 starts with M1.1, covering Windows sandbox enforcement, network-policy integration and mode cycling with an auto-mode classifier. Its design is prepared; implementation has not started. Workflows, goals, loops, remote control, cloud runners and additional clients are later roadmap work. Deferred PTY routes, Landlock fallback and parts of the TUI are listed in the roadmap and are not required to exit P0.
+**In progress:** P1 implementation is authorized and starts with M1.1, covering Windows sandbox enforcement, network-policy integration and mode cycling with an auto-mode classifier. Its design and source audit are prepared; implementation work is starting while P0 local-model validation continues. Workflows, goals, loops, remote control, cloud runners and additional clients are later roadmap work. Deferred PTY routes, Landlock fallback and parts of the TUI are listed in the roadmap and are not required to exit P0.
 
 The [roadmap](ROADMAP.md) tracks delivery and deferrals. The [OpenSpec contracts](openspec/specs) describe both implemented and planned behavior, tagged by phase. [Architecture decisions](docs/decisions/0001-storage-architecture.md) record design rationale.
 

@@ -18,4 +18,4 @@ Persist `permission.auto_decided.1` before acting. Track three consecutive block
 Cycle default → accept-edits → plan → auto → default. Keep bypass and dont-ask outside the cycle. The effective mode for an in-flight Turn stays fixed; show the requested mode as pending until the next Turn. Reuse the existing mode API and durable event instead of creating a second switching mechanism.
 
 ## Phase boundary
-P0's incomplete local quality/long-task evidence is not waived by this proposal. This is the next milestone's specification and task inventory; implementation is gated on closing P0.
+P0's incomplete local quality/long-task evidence is not waived by this proposal. P1 implementation is explicitly authorized while P0 validation continues. M1.1 implementation and P0 exit evidence are tracked independently; completing P1 code does not waive the remaining P0 gate.

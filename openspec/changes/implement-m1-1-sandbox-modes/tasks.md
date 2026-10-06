@@ -1,4 +1,4 @@
-- [ ] Resolve P0 local baseline/long-task evidence and verify its complete platform CI matrix.
+- [ ] Track P0 local baseline/long-task evidence separately; the six-platform CI matrix passes. This does not block authorized P1 implementation.
 - [ ] Audit Windows compilation, shell, process cancellation and service lifecycle boundaries.
   Source audit is recorded in `windows-audit.md`; Windows compilation and native lifecycle verification remain pending.
 - [ ] Implement restricted-token AppContainer launch, scoped ACL grants and job-object cleanup.
