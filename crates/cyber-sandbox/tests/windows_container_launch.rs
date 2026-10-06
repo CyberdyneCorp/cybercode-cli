@@ -101,6 +101,75 @@ fn dropping_a_live_container_owner_terminates_the_original_process() {
 }
 
 #[test]
+fn container_owner_and_normal_exit_terminate_live_descendants() {
+    for normal_exit in [false, true] {
+        container_tree_case(normal_exit);
+    }
+}
+
+fn container_tree_case(normal_exit: bool) {
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let env = environment(directory.path(), "tree", &profile);
+    let mut child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
+    let primary = child.as_handle().try_clone_to_owned().unwrap();
+    let pid = live_container_descendant(directory.path());
+    let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    assert!(!raw.is_null());
+    let descendant = unsafe { OwnedHandle::from_raw_handle(raw) };
+    assert_process_live(&descendant);
+    if normal_exit {
+        std::fs::write(directory.path().join("read.txt"), "finish").unwrap();
+        assert_eq!(child.wait(Duration::from_secs(10)).unwrap(), 0);
+    }
+    drop(child);
+    assert_process_terminated(&primary);
+    assert_process_terminated(&descendant);
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
+}
+
+fn live_container_descendant(root: &Path) -> u32 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let ready = std::fs::read_to_string(root.join("started.txt")).unwrap() == "running";
+        let pid = std::fs::read_to_string(root.join("write.txt"))
+            .unwrap()
+            .parse::<u32>();
+        if ready && let Ok(pid) = pid {
+            return pid;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "descendant never started"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn assert_process_live(process: &OwnedHandle) {
+    use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+    assert_eq!(
+        unsafe { WaitForSingleObject(process.as_raw_handle(), 0) },
+        WAIT_TIMEOUT
+    );
+}
+
+fn assert_process_terminated(process: &OwnedHandle) {
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+    assert_eq!(
+        unsafe { WaitForSingleObject(process.as_raw_handle(), 1000) },
+        WAIT_OBJECT_0
+    );
+}
+
+#[test]
 fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() {
     let directory = tempfile::tempdir().unwrap();
     let mut profile = Profile::new().unwrap();
@@ -313,6 +382,9 @@ fn container_worker() {
     if role == "streams" {
         std::process::exit(if stream_worker().is_ok() { 0 } else { 52 });
     }
+    if role == "tree" {
+        std::process::exit(if tree_worker(&root).is_ok() { 0 } else { 53 });
+    }
     if role == "wait" {
         if std::fs::write(root.join("started.txt"), "running").is_err() {
             std::process::exit(48);
@@ -322,6 +394,29 @@ fn container_worker() {
     }
     let code = if role == "probe" { probe(&root) } else { 60 };
     std::process::exit(code);
+}
+
+fn tree_worker(root: &Path) -> std::io::Result<()> {
+    let _descendant = std::process::Command::new(std::env::current_exe()?)
+        .args(arguments())
+        .env("CYBER_CONTAINER_ROLE", "wait")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    std::fs::write(root.join("write.txt"), _descendant.id().to_string())?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::fs::read_to_string(root.join("read.txt"))? != "finish" {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "tree control timed out",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Deliberately leave the live descendant for the command owner's job to kill.
+    Ok(())
 }
 
 fn stream_worker() -> std::io::Result<()> {
