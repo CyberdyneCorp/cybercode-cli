@@ -67,6 +67,12 @@
 - **AND** pending durable inbox rows SHALL remain available to a new runtime after restart
 - **AND** new sessions, forks, admissions, releases, compaction and resume requests SHALL fail clearly after admission closes
 
+#### Scenario: Snapshot collection cannot block drain shutdown
+- **WHEN** a session drain is waiting for a pre-turn snapshot or post-turn snapshot, changed-path list or diff during shutdown
+- **THEN** its cancellation SHALL drop that snapshot operation and allow the drain to finish
+- **AND** the turn's durable provider and tool settlement SHALL finish before optional post-turn snapshot work is skipped
+- **AND** cancelled post-turn collection SHALL NOT record a completed snapshot or diff
+
 #### Scenario: Attached streams cannot keep a stopped service alive
 - **WHEN** service shutdown starts with connected instance/session event streams or WebSockets
 - **THEN** event stream bodies and producer tasks SHALL observe runtime shutdown

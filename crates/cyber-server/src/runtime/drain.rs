@@ -346,9 +346,17 @@ impl Inner {
         resolved: &ResolvedModel,
         cancel: &CancellationToken,
     ) -> Result<TurnEnd, RuntimeError> {
-        let pre = self.take_snapshot(handle).await;
+        let pre = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(TurnEnd::Stopped),
+            pre = self.take_snapshot(handle) => pre,
+        };
         let result = self.turn(handle, resolved, cancel, pre.clone()).await;
-        self.after_turn(handle, pre).await;
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {},
+            _ = self.after_turn(handle, pre) => {},
+        }
         result
     }
 

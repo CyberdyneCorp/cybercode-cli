@@ -1117,3 +1117,141 @@ async fn shutdown_drops_main_and_background_title_inference_during_open_or_strea
         assert!(runtime.state(&id).await.unwrap().info.default_title);
     }
 }
+
+struct GatedSnapshots {
+    blocked: usize,
+    calls: std::sync::atomic::AtomicUsize,
+    active: Arc<std::sync::atomic::AtomicUsize>,
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl GatedSnapshots {
+    async fn gate(&self) {
+        use std::sync::atomic::Ordering;
+        if self.calls.fetch_add(1, Ordering::SeqCst) == self.blocked {
+            self.active.fetch_add(1, Ordering::SeqCst);
+            let _guard = ActiveRequest(self.active.clone());
+            self.started.notify_one();
+            self.release.notified().await;
+        }
+    }
+}
+
+impl cyber_server::runtime::Snapshots for GatedSnapshots {
+    fn track(
+        &self,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Option<cyber_server::runtime::Snapshot>, String>>
+    {
+        Box::pin(async move {
+            self.gate().await;
+            Ok(Some(cyber_server::runtime::Snapshot {
+                tree: "tree".into(),
+                skipped: Vec::new(),
+            }))
+        })
+    }
+
+    fn changed(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, String>> {
+        Box::pin(async move {
+            self.gate().await;
+            Ok(vec!["file".into()])
+        })
+    }
+
+    fn diff(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<cyber_server::runtime::FileDiff>, String>> {
+        Box::pin(async move {
+            self.gate().await;
+            Ok(Vec::new())
+        })
+    }
+
+    fn restore(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, cyber_server::runtime::RestoreError>>
+    {
+        Box::pin(async { unreachable!("this test never rewinds") })
+    }
+}
+
+#[tokio::test]
+async fn shutdown_drops_blocked_pre_post_snapshot_and_diff_work() {
+    use cyber_server::runtime::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for blocked in 0..4 {
+        let h = Harness::new(Setup {
+            scripts: vec![("test/main", vec![text("done")])],
+            ..Setup::default()
+        });
+        let snapshots = Arc::new(GatedSnapshots {
+            blocked,
+            calls: AtomicUsize::new(0),
+            active: Arc::new(AtomicUsize::new(0)),
+            started: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let runtime = Runtime::new(RuntimeOptions {
+            store: h.store.clone(),
+            resolver: h.models.clone(),
+            tools: h.tools.clone(),
+            global_config_dir: h.repo.join("global"),
+            shell: "bash".into(),
+            claude_compat: false,
+            compaction: CompactionConfig::default(),
+            retry: cyber_llm::RetryPolicy::default(),
+            max_steps: None,
+            today: None,
+            interactive: true,
+            snapshots: snapshots.clone(),
+        });
+        let id = runtime
+            .create_session(CreateSession {
+                directory: h.repo.display().to_string(),
+                model: "test/main".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        runtime
+            .admit(&id, admit("go", Delivery::Queue))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), snapshots.started.notified())
+            .await
+            .expect("snapshot stage did not start");
+        let stopped = tokio::time::timeout(Duration::from_secs(2), runtime.shutdown()).await;
+        if stopped.is_err() {
+            snapshots.release.notify_one();
+            tokio::time::timeout(Duration::from_secs(2), runtime.shutdown())
+                .await
+                .unwrap();
+            panic!("snapshot stage {blocked} held shutdown open");
+        }
+        assert_eq!(snapshots.active.load(Ordering::SeqCst), 0);
+        assert!(!runtime.is_running(&id));
+        assert!(
+            runtime
+                .state(&id)
+                .await
+                .unwrap()
+                .steps
+                .iter()
+                .all(|step| step.post.is_none())
+        );
+    }
+}
