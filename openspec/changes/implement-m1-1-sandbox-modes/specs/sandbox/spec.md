@@ -18,7 +18,10 @@
 - **WHEN** a Windows sandbox invocation prepares its temporary storage
 - **THEN** TEMP and TMP SHALL identify an invocation-owned directory beneath that profile's storage
 - **AND** its ACL grant SHALL apply only to that identity and its private descendants
+- **AND** inherited profile grants on a newly created private directory SHALL be replaced with an owned, revocable grant while preserving unrelated ACL entries
+- **AND** caller-supplied TEMP/TMP values SHALL NOT redirect temporary storage outside that directory
 - **AND** command-owner cleanup SHALL revoke the grant and remove the invocation-owned temporary data
+- **AND** failed process creation SHALL release temporary storage and profile ownership
 
 #### Scenario: Invocation-owned Windows profile and ACL leases
 - **WHEN** a Windows command invocation prepares an AppContainer identity and direct-object ACL grants

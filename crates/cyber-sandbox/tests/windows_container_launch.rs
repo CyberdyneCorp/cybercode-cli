@@ -110,6 +110,9 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
     let _control = std::net::TcpStream::connect(address).unwrap();
     let mut env = environment(directory.path(), "probe", &profile);
     env.insert("CYBER_CONTAINER_ADDRESS".into(), address.to_string());
+    // Caller-provided temporary paths cannot escape invocation-owned storage.
+    env.insert("temp".into(), directory.path().to_str().unwrap().into());
+    env.insert("Tmp".into(), directory.path().to_str().unwrap().into());
     let mut child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
     let scratch = child.temporary_directory().to_path_buf();
     assert_eq!(
@@ -140,6 +143,35 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
         grant.close().unwrap();
     }
     profile.close().unwrap();
+}
+
+#[test]
+fn failed_process_creation_releases_private_storage_and_profile_owners() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let storage = profile.storage_path().unwrap();
+    let before = storage_entries(&storage);
+    let env = environment(directory.path(), "probe", &profile);
+    let failure = spawn(
+        &profile,
+        &directory.path().join("missing.exe"),
+        &arguments(),
+        &env,
+        directory.path(),
+    )
+    .err()
+    .expect("missing executable must fail before running user code");
+    assert_eq!(failure.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(storage_entries(&storage), before);
+    // No failed-launch guard may retain the profile or its ACL lease.
+    profile.close().unwrap();
+}
+
+fn storage_entries(storage: &Path) -> std::collections::BTreeSet<OsString> {
+    std::fs::read_dir(storage)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect()
 }
 
 #[test]

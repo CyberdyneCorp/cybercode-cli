@@ -20,8 +20,9 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, GetAppContainerFolderPath,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE, CopySid, DACL_SECURITY_INFORMATION,
-    EqualSid, FreeSid, GetAce, GetLengthSid, OBJECT_INHERIT_ACE, PSID,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, AddAce, CONTAINER_INHERIT_ACE, CopySid,
+    DACL_SECURITY_INFORMATION, EqualSid, FreeSid, GetAce, GetLengthSid, InitializeAcl,
+    OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSID,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
@@ -130,6 +131,9 @@ impl Profile {
             return Err(io::Error::other(
                 "Inheritable grants require a private directory",
             ));
+        }
+        if inheritance != 0 {
+            prepare_private_acl(&file, self.sid())?;
         }
         update_acl(&file, self.sid(), Some(access.mask()), inheritance)?;
         Ok(AclGrant {
@@ -349,6 +353,63 @@ fn update_acl(file: &File, sid: PSID, mask: Option<u32>, inheritance: u32) -> io
     })
 }
 
+/// Only for a freshly created, invocation-owned directory, never a shared root.
+/// Replace the profile's inherited entries with a revocable explicit lease.
+fn prepare_private_acl(file: &File, sid: PSID) -> io::Result<()> {
+    let _lock = ACL_UPDATE
+        .lock()
+        .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
+    let (_descriptor, old) = read_acl(file)?;
+    if old.is_null() {
+        return Err(io::Error::other("Private directories refuse a null DACL"));
+    }
+    let own = sid_entries(old, sid)?;
+    // The descriptor owns this valid ACL; u32 storage preserves its alignment.
+    let size = u32::from(unsafe { (*old).AclSize });
+    let revision = u32::from(unsafe { (*old).AclRevision });
+    let mut words = vec![0u32; (size as usize).div_ceil(4)];
+    let replacement = words.as_mut_ptr().cast::<ACL>();
+    if unsafe { InitializeAcl(replacement, size, revision) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    for index in 0..unsafe { (*old).AceCount } {
+        let mut raw = null_mut();
+        if unsafe { GetAce(old, u32::from(index), &mut raw) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let header = unsafe { &*raw.cast::<ACE_HEADER>() };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(raw.cast::<u8>(), usize::from(header.AceSize)) };
+        if own.iter().any(|entry| entry.as_slice() == bytes) {
+            continue;
+        }
+        if unsafe {
+            AddAce(
+                replacement,
+                revision,
+                u32::MAX,
+                raw,
+                u32::from(header.AceSize),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    // Prevent the parent from reintroducing the inherited profile grant.
+    win32(unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            replacement,
+            null(),
+        )
+    })
+}
+
 fn sid_entries(acl: *const ACL, sid: PSID) -> io::Result<Vec<Vec<u8>>> {
     let mut entries = Vec::new();
     // The ACL is borrowed from the live security descriptor returned by Windows.
@@ -488,6 +549,39 @@ mod tests {
         assert_eq!(all_entries(&object), original);
         first.close().unwrap();
         second.close().unwrap();
+    }
+
+    #[test]
+    fn private_directory_replaces_inherited_identity_with_revocable_lease() {
+        let mut profile = Profile::new().unwrap();
+        let mut other = Profile::new().unwrap();
+        let path = profile.storage_path().unwrap().join("private-acl-test");
+        std::fs::create_dir(&path).unwrap();
+        let object = OpenOptions::new()
+            .access_mode(READ_CONTROL | WRITE_DAC)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&path)
+            .unwrap();
+        assert!(!entries(&object, &profile).is_empty());
+        let unrelated = other.grant(&path, Access::Read).unwrap();
+        let preserved = entries(&object, &other);
+        let lease = profile.grant_private_directory(&path).unwrap();
+        assert_mask(&object, &profile, Access::Write);
+        assert_eq!(entries(&object, &other), preserved);
+        let nested = path.join("nested.txt");
+        std::fs::write(&nested, "private").unwrap();
+        let nested_object = file(&nested);
+        assert_mask(&nested_object, &profile, Access::Write);
+        lease.close().unwrap();
+        assert!(entries(&object, &profile).is_empty());
+        assert!(entries(&nested_object, &profile).is_empty());
+        assert_eq!(entries(&object, &other), preserved);
+        unrelated.close().unwrap();
+        drop(nested_object);
+        drop(object);
+        std::fs::remove_dir_all(&path).unwrap();
+        profile.close().unwrap();
+        other.close().unwrap();
     }
 
     #[test]
