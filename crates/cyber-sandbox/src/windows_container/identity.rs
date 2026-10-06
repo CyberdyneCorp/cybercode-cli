@@ -31,7 +31,11 @@ impl IdentityGrant {
         self.revoke()
     }
 
-    fn revoke(&mut self) -> io::Result<()> {
+    pub(super) fn verify(&self) -> io::Result<()> {
+        validate_object(&self.record.open()?).map(|_| ())
+    }
+
+    pub(super) fn revoke(&mut self) -> io::Result<()> {
         if !self.active {
             return Ok(());
         }
@@ -69,6 +73,23 @@ pub(super) fn grant(
         ));
     }
     let record = FileRecord::capture(path, &file)?;
+    grant_record(profile, record, access, inheritance)
+}
+
+pub(super) fn grant_record(
+    profile: &Profile,
+    record: FileRecord,
+    access: Access,
+    inheritance: u32,
+) -> io::Result<IdentityGrant> {
+    let file = record.open()?;
+    let directory = validate_object(&file)?;
+    if inheritance != 0 && !directory {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Inheritable identity grants require a directory",
+        ));
+    }
     update_acl_using(
         &file,
         profile.sid(),

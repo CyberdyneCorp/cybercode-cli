@@ -120,6 +120,51 @@ fn dropping_a_live_container_owner_terminates_the_original_process() {
     profile.close().unwrap();
 }
 
+#[tokio::test]
+async fn existing_tree_grants_allow_nested_files_and_deny_outside_writes() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{WRITE_DAC, WRITE_OWNER};
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let scope = directory.path().join("scope");
+    std::fs::create_dir_all(scope.join("nested")).unwrap();
+    let leaf = scope.join("nested/leaf.txt");
+    std::fs::write(&leaf, "original").unwrap();
+    for right in [WRITE_DAC, WRITE_OWNER] {
+        std::fs::OpenOptions::new()
+            .access_mode(right)
+            .open(&leaf)
+            .unwrap();
+    }
+    let mut tree = profile
+        .grant_existing_tree(&scope, Access::Write, 3)
+        .unwrap();
+    let env = environment(directory.path(), "existing-tree", &profile);
+    let child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
+    let code = tokio::time::timeout(Duration::from_secs(10), child.wait_owned())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        code,
+        0,
+        "{}",
+        std::fs::read_to_string(directory.path().join("write.txt")).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(&leaf).unwrap(), "tree allowed");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("forbidden.txt")).unwrap(),
+        "original"
+    );
+    assert_profile_grants_sealed(&profile, directory.path());
+    tree.close().unwrap();
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
+}
+
 #[test]
 fn container_owner_and_normal_exit_terminate_live_descendants() {
     for normal_exit in [false, true] {
@@ -220,6 +265,12 @@ fn assert_profile_grants_sealed(profile: &Profile, root: &Path) {
         .err()
         .expect("executed profiles must also refuse identity-recorded grants");
     assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
+    let grant = profile
+        .grant_existing_tree(root, Access::Write, 0)
+        .err()
+        .expect("executed profiles must refuse tree grants before inventory");
+    assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(grant.to_string().contains("single-use"));
 }
 
 fn container_tree_case(normal_exit: bool) {
@@ -606,6 +657,9 @@ fn container_worker() {
     if role == "streams" {
         exit_worker(&root, stream_worker(&root), "streams", 52);
     }
+    if role == "existing-tree" {
+        exit_worker(&root, existing_tree_worker(&root), "existing-tree", 55);
+    }
     if role == "tree" {
         exit_worker(&root, tree_worker(&root), "tree", 53);
     }
@@ -633,6 +687,26 @@ fn exit_worker(root: &Path, result: std::io::Result<()>, stage: &str, code: i32)
         std::process::exit(code);
     }
     std::process::exit(0);
+}
+
+fn existing_tree_worker(root: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{WRITE_DAC, WRITE_OWNER};
+    let leaf = root.join("scope/nested/leaf.txt");
+    std::fs::write(&leaf, "tree allowed")?;
+    if std::fs::read_to_string(&leaf)? != "tree allowed" {
+        return Err(std::io::Error::other("Allowed tree read changed"));
+    }
+    if std::fs::write(root.join("forbidden.txt"), "outside").is_ok() {
+        return Err(std::io::Error::other("Outside write was allowed"));
+    }
+    for right in [WRITE_DAC, WRITE_OWNER] {
+        match std::fs::OpenOptions::new().access_mode(right).open(&leaf) {
+            Err(error) if error.raw_os_error() == Some(5) => {}
+            _ => return Err(std::io::Error::other("Tree grant exposed security rights")),
+        }
+    }
+    Ok(())
 }
 
 fn tree_worker(root: &Path) -> std::io::Result<()> {

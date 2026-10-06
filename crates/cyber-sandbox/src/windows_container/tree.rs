@@ -63,6 +63,32 @@ impl TreeInventory {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(super) fn release_pins_for_test(&mut self) {
+        self.pins.clear();
+    }
+
+    pub(super) fn grant_existing(
+        mut self,
+        profile: &Profile,
+        access: Access,
+    ) -> io::Result<ExistingTreeGrant> {
+        self.verify()?;
+        let mut owner = ExistingTreeGrant { leases: Vec::new() };
+        // Directory pins remain owned by self until every grant is prepared.
+        // An error drops owner first, rolling back its earlier successful grants.
+        for node in self.nodes.drain(..) {
+            match identity::grant_record(profile, node.record, access, 0) {
+                Ok(lease) => owner.leases.push(lease),
+                Err(setup) => return Err(owner.rollback_error(setup)),
+            }
+        }
+        if let Err(setup) = owner.verify() {
+            return Err(owner.rollback_error(setup));
+        }
+        Ok(owner)
+    }
+
     fn enumerate(&mut self, cursor: usize, limit: usize) -> io::Result<()> {
         for entry in std::fs::read_dir(&self.nodes[cursor].path)? {
             let entry = entry?;
@@ -99,5 +125,50 @@ impl Node {
             directory,
             record: FileRecord::capture(path, &file)?,
         })
+    }
+}
+
+/// Revocable grants for observed existing objects, without child inheritance.
+/// It owns no child handles, so ordinary directory moves remain possible.
+pub struct ExistingTreeGrant {
+    leases: Vec<IdentityGrant>,
+}
+
+impl ExistingTreeGrant {
+    fn verify(&self) -> io::Result<()> {
+        for lease in &self.leases {
+            lease.verify()?;
+        }
+        Ok(())
+    }
+
+    fn rollback_error(&mut self, setup: io::Error) -> io::Error {
+        match self.close() {
+            Ok(()) => setup,
+            Err(rollback) => io::Error::other(format!(
+                "Tree grant setup failed: {setup}; rollback failed: {rollback}"
+            )),
+        }
+    }
+
+    /// Attempt every revocation; failed leases remain owned for a later retry.
+    pub fn close(&mut self) -> io::Result<()> {
+        let mut first_error = None;
+        self.leases.retain_mut(|lease| match lease.revoke() {
+            Ok(()) => false,
+            Err(error) => {
+                first_error.get_or_insert(error);
+                true
+            }
+        });
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
+impl Drop for ExistingTreeGrant {
+    fn drop(&mut self) {
+        if let Err(error) = self.close() {
+            cleanup_error("existing tree ACL revocation", error);
+        }
     }
 }

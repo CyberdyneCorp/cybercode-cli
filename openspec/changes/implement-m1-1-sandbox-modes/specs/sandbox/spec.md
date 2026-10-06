@@ -97,6 +97,17 @@
 - **AND** directory pins SHALL be released when the inventory owner is dropped
 - **AND** this inventory SHALL NOT claim an atomic namespace snapshot, account for later-created children or enable recursive grants by itself
 
+#### Scenario: Owned existing-tree grants
+- **WHEN** a fresh Windows profile grants access to inventoried existing tree objects
+- **THEN** preparation SHALL hold the profile's grant/start lock and checked directory pins through the grant transaction
+- **AND** every grant SHALL target its verified object identity without implicit child propagation
+- **AND** all owned existing identities SHALL be revalidated before preparation returns successfully
+- **AND** a later setup failure SHALL revoke every prior grant owned by the transaction while preserving preexisting and unrelated grants
+- **AND** cleanup SHALL attempt every owned object and retain failed revocations for retry
+- **AND** ordinary directory movement and path replacement SHALL NOT redirect revocation onto replacement objects
+- **AND** post-start preparation SHALL be refused before inventory or ACL mutation
+- **AND** existing-object ownership SHALL NOT claim future-child inheritance, exclusions, recursive runtime policy or Windows sandbox availability
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner

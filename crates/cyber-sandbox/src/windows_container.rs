@@ -5,7 +5,7 @@
 mod identity;
 mod tree;
 pub use identity::IdentityGrant;
-pub use tree::TreeInventory;
+pub use tree::{ExistingTreeGrant, TreeInventory};
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -126,6 +126,23 @@ impl Profile {
     /// This does not recursively grant a directory or enable confinement.
     pub fn grant_relocatable(&self, path: &Path, access: Access) -> io::Result<IdentityGrant> {
         self.grant_relocatable_object(path, access, 0)
+    }
+
+    /// Grant observed existing objects only, with no future-child inheritance.
+    /// Recursive exclusions and runtime policy require separate preparation.
+    pub fn grant_existing_tree(
+        &self,
+        root: &Path,
+        access: Access,
+        limit: usize,
+    ) -> io::Result<ExistingTreeGrant> {
+        let _preparation = self
+            .0
+            .preparation
+            .lock()
+            .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
+        self.ensure_unstarted()?;
+        TreeInventory::capture(root, limit)?.grant_existing(self, access)
     }
 
     fn grant_relocatable_object(
@@ -925,6 +942,144 @@ mod tests {
         profile.close().unwrap();
     }
 
+    struct DeniedDacl {
+        file: File,
+        descriptor: SecurityAllocation,
+        acl: *mut ACL,
+    }
+
+    impl Drop for DeniedDacl {
+        fn drop(&mut self) {
+            if let Err(error) = identity::set_acl(&self.file, self.descriptor.pointer(), self.acl) {
+                cleanup_error("test DACL restoration", error);
+            }
+        }
+    }
+
+    fn deny_new_dacl_handles(file: File) -> DeniedDacl {
+        use windows_sys::Win32::Security::Authorization::{ConvertStringSidToSidW, DENY_ACCESS};
+        let (descriptor, old) = identity::read_acl(&file).unwrap();
+        // Owner Rights suppresses implicit WRITE_DAC; World covers explicit grants.
+        let sids = ["S-1-1-0", "S-1-3-4"].map(|name| {
+            let mut sid = null_mut();
+            assert_ne!(
+                unsafe { ConvertStringSidToSidW(wide(name).as_ptr(), &mut sid) },
+                0
+            );
+            LocalAllocation(sid)
+        });
+        let entries = sids.each_ref().map(|sid| EXPLICIT_ACCESS_W {
+            grfAccessPermissions: WRITE_DAC,
+            grfAccessMode: DENY_ACCESS,
+            grfInheritance: 0,
+            Trustee: TRUSTEE_W {
+                TrusteeForm: TRUSTEE_IS_SID,
+                ptstrName: sid.0.cast(),
+                ..Default::default()
+            },
+        });
+        let mut acl = null_mut();
+        win32(unsafe { SetEntriesInAclW(2, entries.as_ptr(), old, &mut acl) }).unwrap();
+        let _allocation = LocalAllocation(acl.cast());
+        identity::set_acl(&file, descriptor.pointer(), acl).unwrap();
+        DeniedDacl {
+            file,
+            descriptor,
+            acl: old,
+        }
+    }
+
+    #[test]
+    fn existing_tree_revocation_failure_preserves_retry_and_cleans_other_objects() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let leaf = nested.join("leaf.txt");
+        std::fs::write(&leaf, "original").unwrap();
+        let mut profile = Profile::new().unwrap();
+        let mut owner = profile
+            .grant_existing_tree(&root, Access::Write, 3)
+            .unwrap();
+        let denied = deny_new_dacl_handles(directory_file(&root));
+        assert_eq!(
+            identity::open_object(&root).unwrap_err().raw_os_error(),
+            Some(5)
+        );
+        assert_eq!(owner.close().unwrap_err().raw_os_error(), Some(5));
+        assert_mask(&denied.file, &profile, Access::Write);
+        assert!(entries(&directory_file(&nested), &profile).is_empty());
+        assert!(entries(&file(&leaf), &profile).is_empty());
+        assert!(profile.close().is_err());
+        drop(denied);
+        owner.close().unwrap();
+        assert!(entries(&directory_file(&root), &profile).is_empty());
+        profile.close().unwrap();
+    }
+
+    #[test]
+    fn existing_tree_grants_revoke_moved_objects_and_preserve_other_profiles() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let nested = root.join("nested");
+        let leaf = nested.join("leaf.txt");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(&leaf, "original").unwrap();
+        let mut profile = Profile::new().unwrap();
+        let mut other = Profile::new().unwrap();
+        let mut owner = profile
+            .grant_existing_tree(&root, Access::Write, 3)
+            .unwrap();
+        let other_grant = other.grant_relocatable(&leaf, Access::Read).unwrap();
+        assert!(profile.close().is_err());
+        let moved = directory.path().join("moved");
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(&leaf, "replacement").unwrap();
+        let replacement = stored_entries(&file(&leaf));
+        let original = file(&moved.join("nested/leaf.txt"));
+        assert_mask(&original, &profile, Access::Write);
+        assert_mask(&original, &other, Access::Read);
+        owner.close().unwrap();
+        owner.close().unwrap();
+        assert!(entries(&original, &profile).is_empty());
+        assert!(entries(&directory_file(&moved), &profile).is_empty());
+        assert!(entries(&directory_file(&moved.join("nested")), &profile).is_empty());
+        assert_mask(&original, &other, Access::Read);
+        assert_eq!(stored_entries(&file(&leaf)), replacement);
+        profile.close().unwrap();
+        other_grant.close().unwrap();
+        other.close().unwrap();
+    }
+
+    #[test]
+    fn existing_tree_partial_setup_rolls_back_prior_grants() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let nested = root.join("nested");
+        let leaf = nested.join("leaf.txt");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(&leaf, "original").unwrap();
+        let mut profile = Profile::new().unwrap();
+        let prior = profile.grant_relocatable(&leaf, Access::Read).unwrap();
+        let directories = [&root, &nested].map(|path| stored_entries(&directory_file(path)));
+        let leaf_acl = stored_entries(&file(&leaf));
+        assert!(
+            profile
+                .grant_existing_tree(&root, Access::Write, 3)
+                .is_err()
+        );
+        assert_eq!(
+            [&root, &nested].map(|path| stored_entries(&directory_file(path))),
+            directories
+        );
+        assert_eq!(stored_entries(&file(&leaf)), leaf_acl);
+        assert_mask(&file(&leaf), &profile, Access::Read);
+        std::fs::rename(&root, directory.path().join("moved")).unwrap();
+        prior.close().unwrap();
+        profile.close().unwrap();
+    }
+
     #[test]
     fn tree_inventory_pins_directories_without_acl_changes() {
         let directory = tempfile::tempdir().unwrap();
@@ -961,8 +1116,16 @@ mod tests {
         let before = stored_entries(&file(&leaf));
         assert!(TreeInventory::capture(&root, 0).is_err());
         assert!(TreeInventory::capture(&root, 1).is_err());
-        let inventory = TreeInventory::capture(&root, 2).unwrap();
-        std::fs::hard_link(&leaf, root.join("alias.txt")).unwrap();
+        let mut inventory = TreeInventory::capture(&root, 2).unwrap();
+        let alias = root.join("alias.txt");
+        assert_eq!(
+            std::fs::hard_link(&leaf, &alias)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(32)
+        );
+        inventory.release_pins_for_test();
+        std::fs::hard_link(&leaf, &alias).unwrap();
         assert!(inventory.verify().is_err());
         drop(inventory);
         assert!(TreeInventory::capture(&root, 3).is_err());
