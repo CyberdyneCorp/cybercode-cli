@@ -5,7 +5,7 @@
 mod identity;
 mod tree;
 pub use identity::IdentityGrant;
-pub use tree::{ExistingTreeGrant, TreeInventory};
+pub use tree::{ExistingTreeGrant, ExistingTreePolicy, TreeInventory};
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex};
 
 use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo, REVOKE_ACCESS,
-    SE_FILE_OBJECT, SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_W,
+    ConvertSidToStringSidW, DENY_ACCESS, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo,
+    REVOKE_ACCESS, SE_FILE_OBJECT, SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, GetAppContainerFolderPath,
@@ -31,9 +31,10 @@ use windows_sys::Win32::Security::{
     OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSID,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY,
-    FILE_READ_ATTRIBUTES, FILE_SHARE_READ, READ_CONTROL, WRITE_DAC,
+    DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DELETE_CHILD,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_READ, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Threading::ResumeThread;
@@ -143,6 +144,22 @@ impl Profile {
             .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
         self.ensure_unstarted()?;
         TreeInventory::capture(root, limit)?.grant_existing(self, access)
+    }
+
+    /// Apply exclusions to observed existing objects; absent/future names are not protected.
+    pub fn grant_existing_tree_policy(
+        &self,
+        root: &Path,
+        policy: &ExistingTreePolicy,
+        limit: usize,
+    ) -> io::Result<ExistingTreeGrant> {
+        let _preparation = self
+            .0
+            .preparation
+            .lock()
+            .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
+        self.ensure_unstarted()?;
+        TreeInventory::capture(root, limit)?.grant_policy(self, policy)
     }
 
     fn grant_relocatable_object(
@@ -521,22 +538,6 @@ fn update_acl_using(
     setter: AclSetter,
     reader: AclReader,
 ) -> io::Result<()> {
-    let _lock = ACL_UPDATE
-        .lock()
-        .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
-    let (descriptor, old) = reader(file)?;
-    if old.is_null() {
-        return if mask.is_some() {
-            Err(io::Error::other("ACL leases refuse a null DACL"))
-        } else {
-            Ok(())
-        };
-    }
-    if mask.is_some() && !sid_entries(old, sid)?.is_empty() {
-        return Err(io::Error::other(
-            "This profile already has a grant on the object",
-        ));
-    }
     let entry = EXPLICIT_ACCESS_W {
         grfAccessPermissions: mask.unwrap_or_default(),
         grfAccessMode: if mask.is_some() {
@@ -551,9 +552,38 @@ fn update_acl_using(
             ..Default::default()
         },
     };
+    merge_acl_entries(file, sid, &[entry], mask.is_some(), setter, reader)
+}
+
+fn merge_acl_entries(
+    file: &File,
+    sid: PSID,
+    entries: &[EXPLICIT_ACCESS_W],
+    installing: bool,
+    setter: AclSetter,
+    reader: AclReader,
+) -> io::Result<()> {
+    let _lock = ACL_UPDATE
+        .lock()
+        .map_err(|_| io::Error::other("ACL update lock poisoned"))?;
+    let (descriptor, old) = reader(file)?;
+    if old.is_null() {
+        return if installing {
+            Err(io::Error::other("ACL leases refuse a null DACL"))
+        } else {
+            Ok(())
+        };
+    }
+    if installing && !sid_entries(old, sid)?.is_empty() {
+        return Err(io::Error::other(
+            "This profile already has a grant on the object",
+        ));
+    }
     let mut merged = null_mut();
-    // The descriptor, entry and aligned SID stay alive through merging and installation.
-    let status = unsafe { SetEntriesInAclW(1, &entry, old, &mut merged) };
+    // The descriptor, entries and aligned SID stay alive through merging and installation.
+    let count =
+        u32::try_from(entries.len()).map_err(|_| io::Error::other("Too many ACL entries"))?;
+    let status = unsafe { SetEntriesInAclW(count, entries.as_ptr(), old, &mut merged) };
     let _merged = LocalAllocation(merged.cast());
     win32(status)?;
     setter(file, descriptor.pointer(), merged)
@@ -940,6 +970,87 @@ mod tests {
         assert_eq!(all_entries(&object), original);
         assert_eq!(all_entries(&file(&alias)), original);
         profile.close().unwrap();
+    }
+
+    #[test]
+    fn existing_tree_policy_resolves_case_aliases_and_descendant_precedence() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        let protected = root.join("Protected");
+        let secret = protected.join("Secret");
+        std::fs::create_dir_all(&secret).unwrap();
+        let readable = protected.join("read.txt");
+        let hidden = secret.join("credential.txt");
+        std::fs::write(&readable, "readable").unwrap();
+        std::fs::write(&hidden, "fixture").unwrap();
+        let policy = ExistingTreePolicy {
+            access: Access::Write,
+            read_only: vec![root.join("pRoTeCtEd")],
+            unreadable: vec![secret],
+        };
+        let mut profile = Profile::new().unwrap();
+        let root_before = stored_entries(&directory_file(&root));
+        let readable_before = stored_entries(&file(&readable));
+        let hidden_before = stored_entries(&file(&hidden));
+        let mut owner = profile
+            .grant_existing_tree_policy(&root, &policy, 5)
+            .unwrap();
+        let mut other = Profile::new().unwrap();
+        let other_grant = other.grant_relocatable(&hidden, Access::Read).unwrap();
+        let readonly = entries(&file(&readable), &profile);
+        assert_eq!(readonly.len(), 2);
+        assert_eq!(readonly[0][0], 1);
+        let denied = u32::from_ne_bytes(readonly[0][4..8].try_into().unwrap());
+        assert_eq!(denied & (SYNCHRONIZE | READ_CONTROL), 0);
+        assert_ne!(denied & DELETE, 0);
+        let hidden_entries = entries(&file(&hidden), &profile);
+        assert_eq!(hidden_entries.len(), 1);
+        assert_eq!(hidden_entries[0][0], 1);
+        assert_eq!(
+            u32::from_ne_bytes(hidden_entries[0][4..8].try_into().unwrap()),
+            FILE_ALL_ACCESS
+        );
+        owner.close().unwrap();
+        assert_mask(&file(&hidden), &other, Access::Read);
+        other_grant.close().unwrap();
+        other.close().unwrap();
+        assert_eq!(stored_entries(&directory_file(&root)), root_before);
+        assert_eq!(stored_entries(&file(&readable)), readable_before);
+        assert_eq!(stored_entries(&file(&hidden)), hidden_before);
+        profile.close().unwrap();
+    }
+
+    #[test]
+    fn existing_tree_policy_missing_and_outside_exclusions_leave_acls_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tree");
+        std::fs::create_dir(&root).unwrap();
+        let leaf = root.join("leaf.txt");
+        let outside = directory.path().join("outside.txt");
+        std::fs::write(&leaf, "original").unwrap();
+        std::fs::write(&outside, "outside").unwrap();
+        let mut profile = Profile::new().unwrap();
+        let root_before = stored_entries(&directory_file(&root));
+        let before = [&leaf, &outside].map(|path| stored_entries(&file(path)));
+        for exclusion in [root.join("absent.txt"), outside.clone()] {
+            let policy = ExistingTreePolicy {
+                access: Access::Write,
+                read_only: vec![],
+                unreadable: vec![exclusion],
+            };
+            assert!(
+                profile
+                    .grant_existing_tree_policy(&root, &policy, 2)
+                    .is_err()
+            );
+        }
+        assert_eq!(stored_entries(&directory_file(&root)), root_before);
+        assert_eq!(
+            [&leaf, &outside].map(|path| stored_entries(&file(path))),
+            before
+        );
+        profile.close().unwrap();
+        std::fs::rename(&root, directory.path().join("moved")).unwrap();
     }
 
     struct DeniedDacl {

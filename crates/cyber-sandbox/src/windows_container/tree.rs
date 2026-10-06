@@ -13,6 +13,7 @@ pub struct TreeInventory {
 struct Node {
     path: PathBuf,
     directory: bool,
+    parent: Option<usize>,
     record: FileRecord,
 }
 
@@ -29,7 +30,7 @@ impl TreeInventory {
         let mut pins = retain_ancestors(root)?;
         pins.push(pin_directory(root)?);
         let mut tree = Self {
-            nodes: vec![Node::capture(root)?],
+            nodes: vec![Node::capture(root, None)?],
             pins,
         };
         let mut cursor = 0;
@@ -89,6 +90,75 @@ impl TreeInventory {
         Ok(owner)
     }
 
+    pub(super) fn grant_policy(
+        mut self,
+        profile: &Profile,
+        policy: &ExistingTreePolicy,
+    ) -> io::Result<ExistingTreeGrant> {
+        let policies = self.resolve_policy(policy)?;
+        self.verify()?;
+        let mut owner = ExistingTreeGrant { leases: Vec::new() };
+        for (node, access) in self.nodes.drain(..).zip(policies) {
+            match identity::grant_record_policy(profile, node.record, access) {
+                Ok(lease) => owner.leases.push(lease),
+                Err(setup) => return Err(owner.rollback_error(setup)),
+            }
+        }
+        if let Err(setup) = owner.verify() {
+            return Err(owner.rollback_error(setup));
+        }
+        Ok(owner)
+    }
+
+    fn resolve_policy(&self, policy: &ExistingTreePolicy) -> io::Result<Vec<ObjectPolicy>> {
+        let readonly = self.exclusion_keys(&policy.read_only)?;
+        let hidden = self.exclusion_keys(&policy.unreadable)?;
+        let base = match policy.access {
+            Access::Read => ObjectPolicy::ReadOnly,
+            Access::Write => ObjectPolicy::Writable,
+        };
+        let mut policies = Vec::with_capacity(self.nodes.len());
+        for node in &self.nodes {
+            let inherited = node.parent.map_or(base, |parent| policies[parent]);
+            let access = if hidden.contains(&node.record.key())
+                || inherited == ObjectPolicy::Unreadable
+            {
+                ObjectPolicy::Unreadable
+            } else if readonly.contains(&node.record.key()) || inherited == ObjectPolicy::ReadOnly {
+                ObjectPolicy::ReadOnly
+            } else {
+                inherited
+            };
+            policies.push(access);
+        }
+        Ok(policies)
+    }
+
+    fn exclusion_keys(
+        &self,
+        paths: &[PathBuf],
+    ) -> io::Result<std::collections::HashSet<(u64, [u8; 16])>> {
+        let mut keys = std::collections::HashSet::new();
+        for path in paths {
+            let _ancestors = retain_ancestors(path)?;
+            let file = identity::open_object(path)?;
+            identity::validate_object(&file)?;
+            let record = FileRecord::capture(path, &file)?;
+            if !self
+                .nodes
+                .iter()
+                .any(|node| node.record.key() == record.key())
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Exclusion is outside the inventoried tree",
+                ));
+            }
+            keys.insert(record.key());
+        }
+        Ok(keys)
+    }
+
     fn enumerate(&mut self, cursor: usize, limit: usize) -> io::Result<()> {
         for entry in std::fs::read_dir(&self.nodes[cursor].path)? {
             let entry = entry?;
@@ -103,7 +173,7 @@ impl TreeInventory {
             if directory_hint {
                 self.pins.push(pin_directory(&path)?);
             }
-            let node = Node::capture(&path)?;
+            let node = Node::capture(&path, Some(cursor))?;
             if node.directory && !directory_hint {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -117,12 +187,13 @@ impl TreeInventory {
 }
 
 impl Node {
-    fn capture(path: &Path) -> io::Result<Self> {
+    fn capture(path: &Path, parent: Option<usize>) -> io::Result<Self> {
         let file = identity::open_object(path)?;
         let directory = identity::validate_object(&file)?;
         Ok(Self {
             path: path.to_owned(),
             directory,
+            parent,
             record: FileRecord::capture(path, &file)?,
         })
     }
@@ -170,5 +241,62 @@ impl Drop for ExistingTreeGrant {
         if let Err(error) = self.close() {
             cleanup_error("existing tree ACL revocation", error);
         }
+    }
+}
+
+/// Restrictions on existing objects. Missing and out-of-tree paths are refused.
+pub struct ExistingTreePolicy {
+    pub access: Access,
+    pub read_only: Vec<PathBuf>,
+    pub unreadable: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ObjectPolicy {
+    ReadOnly,
+    Writable,
+    Unreadable,
+}
+
+impl ObjectPolicy {
+    pub(super) fn entries(self, sid: PSID) -> Vec<EXPLICIT_ACCESS_W> {
+        let security = WRITE_DAC | WRITE_OWNER;
+        // Generic write includes READ_CONTROL and SYNCHRONIZE, which reads need.
+        let writes = (FILE_GENERIC_WRITE & !(READ_CONTROL | SYNCHRONIZE))
+            | DELETE
+            | FILE_DELETE_CHILD
+            | security;
+        let denied = match self {
+            Self::ReadOnly => writes,
+            Self::Writable => security | FILE_DELETE_CHILD,
+            Self::Unreadable => FILE_ALL_ACCESS,
+        };
+        let mut entries = vec![policy_entry(sid, denied, DENY_ACCESS)];
+        let allowed = match self {
+            Self::ReadOnly => Some(Access::Read.mask()),
+            Self::Writable => Some(Access::Write.mask()),
+            Self::Unreadable => None,
+        };
+        if let Some(mask) = allowed {
+            entries.push(policy_entry(sid, mask, GRANT_ACCESS));
+        }
+        entries
+    }
+}
+
+fn policy_entry(
+    sid: PSID,
+    mask: u32,
+    mode: windows_sys::Win32::Security::Authorization::ACCESS_MODE,
+) -> EXPLICIT_ACCESS_W {
+    EXPLICIT_ACCESS_W {
+        grfAccessPermissions: mask,
+        grfAccessMode: mode,
+        grfInheritance: 0,
+        Trustee: TRUSTEE_W {
+            TrusteeForm: TRUSTEE_IS_SID,
+            ptstrName: sid.cast(),
+            ..Default::default()
+        },
     }
 }

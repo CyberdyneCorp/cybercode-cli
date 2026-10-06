@@ -105,6 +105,28 @@ pub(super) fn grant_record(
     })
 }
 
+pub(super) fn grant_record_policy(
+    profile: &Profile,
+    record: FileRecord,
+    policy: tree::ObjectPolicy,
+) -> io::Result<IdentityGrant> {
+    let file = record.open()?;
+    validate_object(&file)?;
+    merge_acl_entries(
+        &file,
+        profile.sid(),
+        &policy.entries(profile.sid()),
+        true,
+        set_acl,
+        read_acl,
+    )?;
+    Ok(IdentityGrant {
+        record,
+        profile: profile.clone(),
+        active: true,
+    })
+}
+
 pub(super) fn open_object(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .access_mode(METADATA_ACCESS)
@@ -227,6 +249,10 @@ pub(super) struct FileRecord {
 }
 
 impl FileRecord {
+    pub(super) fn key(&self) -> (u64, [u8; 16]) {
+        (self.serial, self.id)
+    }
+
     pub(super) fn capture(path: &Path, file: &File) -> io::Result<Self> {
         let root: PathBuf = path.components().take(2).collect();
         // A volume-root hint does not pin any movable child directory.

@@ -8,7 +8,7 @@ use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle,
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use cyber_sandbox::windows_container::{Access, AclGrant, Profile};
+use cyber_sandbox::windows_container::{Access, AclGrant, ExistingTreePolicy, Profile};
 use cyber_sandbox::windows_launch::{StandardStreams, spawn, spawn_with_stdio};
 
 fn environment(root: &Path, role: &str, profile: &Profile) -> BTreeMap<String, String> {
@@ -114,6 +114,69 @@ fn dropping_a_live_container_owner_terminates_the_original_process() {
         unsafe { WaitForSingleObject(retained.as_raw_handle(), 1000) },
         WAIT_OBJECT_0
     );
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
+}
+
+#[tokio::test]
+async fn existing_tree_exclusions_enforce_readonly_and_hidden_descendants() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{WRITE_DAC, WRITE_OWNER};
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let scope = directory.path().join("scope");
+    for name in ["writable", "protected", "secret"] {
+        std::fs::create_dir_all(scope.join(name)).unwrap();
+        std::fs::write(scope.join(name).join("leaf.txt"), "original").unwrap();
+    }
+    for name in ["writable", "protected", "secret"] {
+        for right in [WRITE_DAC, WRITE_OWNER] {
+            std::fs::OpenOptions::new()
+                .access_mode(right)
+                .open(scope.join(name).join("leaf.txt"))
+                .unwrap();
+        }
+    }
+    std::fs::write(scope.join("writable/delete.txt"), "delete control").unwrap();
+    let policy = ExistingTreePolicy {
+        access: Access::Write,
+        read_only: vec![scope.join("protected"), scope.join("secret")],
+        unreadable: vec![scope.join("secret")],
+    };
+    let mut tree = profile
+        .grant_existing_tree_policy(&scope, &policy, 8)
+        .unwrap();
+    let env = environment(directory.path(), "existing-policy", &profile);
+    let child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
+    let code = tokio::time::timeout(Duration::from_secs(10), child.wait_owned())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        code,
+        0,
+        "{}",
+        std::fs::read_to_string(directory.path().join("write.txt")).unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(scope.join("writable/leaf.txt")).unwrap(),
+        "policy allowed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(scope.join("protected/leaf.txt")).unwrap(),
+        "original"
+    );
+    assert_eq!(
+        std::fs::read_to_string(scope.join("secret/leaf.txt")).unwrap(),
+        "original"
+    );
+    assert!(!scope.join("protected/new.txt").exists());
+    assert!(!scope.join("writable/delete.txt").exists());
+    assert_profile_grants_sealed(&profile, directory.path());
+    tree.close().unwrap();
     for grant in grants {
         grant.close().unwrap();
     }
@@ -269,6 +332,17 @@ fn assert_profile_grants_sealed(profile: &Profile, root: &Path) {
         .grant_existing_tree(root, Access::Write, 0)
         .err()
         .expect("executed profiles must refuse tree grants before inventory");
+    assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(grant.to_string().contains("single-use"));
+    let policy = ExistingTreePolicy {
+        access: Access::Write,
+        read_only: vec![],
+        unreadable: vec![],
+    };
+    let grant = profile
+        .grant_existing_tree_policy(root, &policy, 0)
+        .err()
+        .expect("executed profiles must refuse policy preparation before inventory");
     assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
     assert!(grant.to_string().contains("single-use"));
 }
@@ -657,6 +731,9 @@ fn container_worker() {
     if role == "streams" {
         exit_worker(&root, stream_worker(&root), "streams", 52);
     }
+    if role == "existing-policy" {
+        exit_worker(&root, existing_policy_worker(&root), "existing-policy", 56);
+    }
     if role == "existing-tree" {
         exit_worker(&root, existing_tree_worker(&root), "existing-tree", 55);
     }
@@ -687,6 +764,43 @@ fn exit_worker(root: &Path, result: std::io::Result<()>, stage: &str, code: i32)
         std::process::exit(code);
     }
     std::process::exit(0);
+}
+
+fn existing_policy_worker(root: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{WRITE_DAC, WRITE_OWNER};
+    let scope = root.join("scope");
+    std::fs::write(scope.join("writable/leaf.txt"), "policy allowed")?;
+    std::fs::remove_file(scope.join("writable/delete.txt"))?;
+    if std::fs::read_to_string(scope.join("protected/leaf.txt"))? != "original" {
+        return Err(std::io::Error::other("Read-only content changed"));
+    }
+    denied_access(std::fs::write(
+        scope.join("protected/leaf.txt"),
+        "forbidden",
+    ))?;
+    denied_access(std::fs::remove_file(scope.join("protected/leaf.txt")))?;
+    denied_access(std::fs::write(scope.join("protected/new.txt"), "forbidden"))?;
+    denied_access(std::fs::read(scope.join("secret/leaf.txt")))?;
+    denied_access(std::fs::write(scope.join("secret/leaf.txt"), "forbidden"))?;
+    for name in ["writable", "protected", "secret"] {
+        for right in [WRITE_DAC, WRITE_OWNER] {
+            denied_access(
+                std::fs::OpenOptions::new()
+                    .access_mode(right)
+                    .open(scope.join(name).join("leaf.txt")),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn denied_access<T>(result: std::io::Result<T>) -> std::io::Result<()> {
+    match result {
+        Err(error) if error.raw_os_error() == Some(5) => Ok(()),
+        Err(error) => Err(error),
+        Ok(_) => Err(std::io::Error::other("Excluded access was allowed")),
+    }
 }
 
 fn existing_tree_worker(root: &Path) -> std::io::Result<()> {

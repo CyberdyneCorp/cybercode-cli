@@ -108,6 +108,18 @@
 - **AND** post-start preparation SHALL be refused before inventory or ACL mutation
 - **AND** existing-object ownership SHALL NOT claim future-child inheritance, exclusions, recursive runtime policy or Windows sandbox availability
 
+#### Scenario: Existing-object exclusion policies
+- **WHEN** Windows preparation applies read-only and unreadable exclusions to inventoried existing objects
+- **THEN** exclusion paths SHALL resolve to verified identities in the inventory before any ACL mutation
+- **AND** missing, unsupported or out-of-tree exclusions SHALL fail preparation
+- **AND** exclusions SHALL apply to recorded descendants by parent identity relationships, with unreadable taking precedence over read-only
+- **AND** read-only objects SHALL receive invocation-specific write/delete/security-right denies while retaining allowed reads
+- **AND** writable objects SHALL deny DACL/owner changes and parent delete-child bypass while retaining ordinary deletion through each writable child's own grant
+- **AND** unreadable objects SHALL deny all file access for the invocation identity
+- **AND** each object's allow/deny entries SHALL be installed together while preserving unrelated ACEs
+- **AND** rollback and cleanup SHALL remove only the invocation identity's entries
+- **AND** existing-object exclusions SHALL NOT claim protection of absent names or future children, or enable Windows runtime confinement by themselves
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner
