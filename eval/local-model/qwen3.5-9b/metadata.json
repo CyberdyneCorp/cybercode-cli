@@ -1,5 +1,5 @@
 {
-  "status": "one passing slugify pilot preserved; long-task pilot running; full suites queued sequentially",
+  "status": "slugify pilot passed; long-task pilot failed at 63 turns/2400-second timeout; first full suite running on corrected harness, hard suite queued",
   "recorded_at": "2026-10-05T22:00:44.696506+00:00",
   "ollama_version": "0.32.1",
   "model": "qwen3.5:9b",
@@ -48,5 +48,9 @@
     "observed_parallel_slots": 1,
     "reason": "Ollama logged: model architecture does not currently support parallel requests; architecture=qwen35",
     "private_server_stopped": true
+  },
+  "full_suite_harnesses": {
+    "suite-coding-v1": "1d8d1e4",
+    "suite-coding-hard-v1": "pending validated committed binary snapshot; report will identify its revision"
   }
 }

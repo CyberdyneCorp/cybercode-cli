@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "report": "cyber-eval",
+  "harness": {
+    "version": "0.1.0",
+    "git_sha": "b99a74b",
+    "target": "aarch64-apple-darwin"
+  },
+  "manifest": {
+    "id": "suite-coding-v1",
+    "path": "eval/manifests/suite-coding-v1.json",
+    "sha256": "sha256:3744cb61b08b32a57f4b0141526964ae8a18364762e458eaa474447778f48e93",
+    "kind": "suite"
+  },
+  "model": {
+    "ref": "local/qwen3.5:9b",
+    "provider": "local",
+    "name": "Qwen3.5 9B (32k, sampled non-thinking)",
+    "context_limit": 32768
+  },
+  "deterministic": false,
+  "started_at": "2026-10-05T22:03:06Z",
+  "finished_at": "2026-10-05T22:43:15Z",
+  "trials_per_task": 1,
+  "options": {
+    "mode": "bypass",
+    "sandbox": "workspace-write",
+    "interactive": false
+  },
+  "summary": {
+    "tasks": 1,
+    "trials": 1,
+    "passed": 0,
+    "success_rate": 0.0,
+    "success_ci95": [
+      0.0,
+      0.7935
+    ],
+    "infrastructure_failures": 0,
+    "human_interventions": 0,
+    "cost_usd": 0.0,
+    "cost_per_success_usd": null,
+    "median_cost_per_successful_task_usd": null,
+    "median_latency_seconds": 2400.0,
+    "unpriced": true,
+    "tokens": {
+      "input": 1079249,
+      "output": 28289,
+      "cache_read": 0,
+      "cache_write": 0
+    }
+  },
+  "tasks": [
+    {
+      "id": "build-inventory-cli",
+      "tags": [
+        "long",
+        "greenfield",
+        "python",
+        "cli"
+      ],
+      "trials": 1,
+      "passed": 0,
+      "infrastructure_failures": 0,
+      "cost_usd": 0.0,
+      "median_turns": 63.0
+    }
+  ],
+  "trials": [
+    {
+      "task": "build-inventory-cli",
+      "trial": 1,
+      "passed": false,
+      "infrastructure_failure": false,
+      "stop_reason": "timeout",
+      "error": null,
+      "turns": 63,
+      "tool_calls": 63,
+      "cost_usd": 0.0,
+      "unpriced": true,
+      "tokens": {
+        "input": 1079249,
+        "output": 28289,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "latency_seconds": 2400.009813334,
+      "grader_exit": 1,
+      "grader_tail": "FAIL hidden tests: FAIL: test_invalid_values (hidden_test_inventory.AddTest.test_invalid_values) (args=['A-1', 'x', '--price', '-1'])\nFAIL hidden tests: FAIL: test_invalid_values (hidden_test_inventory.AddTest.test_invalid_values) (args=['A-1', 'x', '--price', '1.'])\nFAIL hidden tests: FAIL: test_invalid_values (hidden_test_inventory.AddTest.test_invalid_values) (args=['A-1', 'x', '--price', 'abc'])\nFAIL hidden tests: FAIL: test_invalid_values (hidden_test_inventory.AddTest.test_invalid_values) (args=['A-1', 'x', '--price', '1e3'])\nFAIL hidden tests: FAIL: test_remove (hidden_test_inventory.ChangeCommandsTest.test_remove)\nFAIL hidden tests: FAIL: test_stock_errors (hidden_test_inventory.ChangeCommandsTest.test_stock_errors)\nFAIL hidden tests: FAIL: test_update (hidden_test_inventory.ChangeCommandsTest.test_update)\nFAIL hidden tests: FAIL: test_update_errors (hidden_test_inventory.ChangeCommandsTest.test_update_errors)\nFAIL hidden tests: FAIL: test_filters (hidden_test_inventory.ReadCommandsTest.test_filters)\nFAIL hidden tests: FAIL: test_list_table (hidden_test_inventory.ReadCommandsTest.test_list_table)\nFAIL hidden tests: FAIL: test_show (hidden_test_inventory.ReadCommandsTest.test_show)\nFAIL hidden tests: FAIL: test_table_widths_and_singular (hidden_test_inventory.ReadCommandsTest.test_table_widths_and_singular)\nFAIL hidden tests: FAIL: test_unreadable_stores (hidden_test_inventory.StoreFormatTest.test_unreadable_stores) (content='{\"version\": 1, \"items\": [{\"sku\": \"A-1\"}]}')\nFAIL hidden tests: FAIL: test_unreadable_stores (hidden_test_inventory.StoreFormatTest.test_unreadable_stores) (content='{\"version\": 1, \"items\": [{\"sku\": \"A-1\", \"name\": \"x\", \"category\": \"general\", \"quantity\": \"1\", \"price\": \"1.00\"}]}')\nFAIL",
+      "session_id": "ses_01M471F39T57HA0ZMA13JR98C2"
+    }
+  ]
+}
