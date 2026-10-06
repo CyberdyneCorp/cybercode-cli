@@ -27,8 +27,8 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES,
-    FILE_SHARE_READ, READ_CONTROL, WRITE_DAC,
+    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_READ, READ_CONTROL, WRITE_DAC,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Threading::ResumeThread;
@@ -209,7 +209,7 @@ fn retain_ancestors(path: &Path) -> io::Result<Vec<File>> {
             continue;
         }
         let directory = OpenOptions::new()
-            .access_mode(FILE_READ_ATTRIBUTES)
+            .access_mode(FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY)
             .share_mode(FILE_SHARE_READ)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(&current)?;
@@ -823,6 +823,14 @@ mod tests {
                 .is_err()
         );
         drop(ancestors);
+        // The same requested directory rights succeed after the guards release.
+        drop(
+            OpenOptions::new()
+                .access_mode(FILE_GENERIC_WRITE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&parent)
+                .unwrap(),
+        );
         std::fs::rename(&parent, &moved).unwrap();
         let mut profile = Profile::new().unwrap();
         let lease = profile
