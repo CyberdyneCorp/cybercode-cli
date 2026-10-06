@@ -245,7 +245,8 @@ fn probe(root: &Path) -> i32 {
         .unwrap();
         return 45;
     }
-    if !private_temp() {
+    if let Err(diagnostic) = private_temp() {
+        std::fs::write(root.join("write.txt"), diagnostic.to_string()).unwrap();
         return 50;
     }
     let address = std::env::var("CYBER_CONTAINER_ADDRESS")
@@ -258,14 +259,27 @@ fn probe(root: &Path) -> i32 {
     0
 }
 
-fn private_temp() -> bool {
+fn private_temp() -> Result<(), serde_json::Value> {
     let storage = PathBuf::from(std::env::var_os("CYBER_CONTAINER_STORAGE").unwrap());
-    let Ok(storage) = std::fs::canonicalize(storage) else {
-        return false;
-    };
-    ["TEMP", "TMP"].iter().all(|name| {
-        std::env::var_os(name)
-            .and_then(|value| std::fs::canonicalize(PathBuf::from(value)).ok())
-            .is_some_and(|path| path.starts_with(&storage))
-    })
+    let resolved = std::fs::canonicalize(&storage)
+        .map_err(|error| serde_json::json!({"stage": "storage", "code": error.raw_os_error()}))?;
+    for name in ["TEMP", "TMP"] {
+        let path = PathBuf::from(
+            std::env::var_os(name)
+                .ok_or_else(|| serde_json::json!({"stage": name, "missing": true}))?,
+        );
+        let relative = path
+            .strip_prefix(&storage)
+            .ok()
+            .map(|value| value.to_string_lossy().into_owned());
+        let path = std::fs::canonicalize(path).map_err(|error| {
+            serde_json::json!({
+                "stage": name, "relative": relative, "code": error.raw_os_error()
+            })
+        })?;
+        if !path.starts_with(&resolved) {
+            return Err(serde_json::json!({"stage": name, "outside_profile": true}));
+        }
+    }
+    Ok(())
 }
