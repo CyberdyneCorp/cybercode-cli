@@ -430,6 +430,10 @@ mod tests {
         let mut second = Profile::new().unwrap();
         assert_ne!(first.name(), second.name());
         assert_ne!(first.0.sid, second.0.sid);
+        assert_ne!(
+            first.storage_path().unwrap().canonicalize().unwrap(),
+            second.storage_path().unwrap().canonicalize().unwrap()
+        );
         let name = first.name().to_owned();
         assert!(Profile::named(name.clone()).is_err());
         let clone = first.clone();

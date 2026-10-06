@@ -21,7 +21,14 @@ fn environment(root: &Path, role: &str, profile: &Profile) -> BTreeMap<String, S
         ("CYBER_CONTAINER_ROOT".into(), root.to_str().unwrap().into()),
         (
             "CYBER_CONTAINER_STORAGE".into(),
-            profile.storage_path().unwrap().to_str().unwrap().into(),
+            profile
+                .storage_path()
+                .unwrap()
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .into(),
         ),
         ("CYBER_CONTAINER_ROLE".into(), role.into()),
     ])
@@ -261,8 +268,9 @@ fn probe(root: &Path) -> i32 {
 
 fn private_temp() -> Result<(), serde_json::Value> {
     let storage = PathBuf::from(std::env::var_os("CYBER_CONTAINER_STORAGE").unwrap());
-    let resolved = std::fs::canonicalize(&storage)
-        .map_err(|error| serde_json::json!({"stage": "storage", "code": error.raw_os_error()}))?;
+    // The owner canonicalized this SID-specific directory. The child need not
+    // gain read access to the outer directory to verify its own temp path.
+    let resolved = storage.clone();
     for name in ["TEMP", "TMP"] {
         let path = PathBuf::from(
             std::env::var_os(name)
