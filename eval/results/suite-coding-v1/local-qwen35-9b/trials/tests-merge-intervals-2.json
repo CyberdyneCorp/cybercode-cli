@@ -1,0 +1,23 @@
+{
+  "task": "tests-merge-intervals",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 28,
+  "tool_calls": 28,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 369337,
+    "output": 10213,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 781.542476583,
+  "grader_exit": 1,
+  "grader_tail": "FAIL mutant survived: m04_sorts_input_in_place (Mutant: sorts the caller's list in place)\nFAIL",
+  "session_id": "ses_01M480XZRKJNGVSM40FC87XRK2"
+}

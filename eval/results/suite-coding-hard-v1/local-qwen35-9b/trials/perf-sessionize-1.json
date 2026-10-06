@@ -1,0 +1,23 @@
+{
+  "task": "perf-sessionize",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": true,
+  "stop_reason": "error",
+  "error": "transport: Transport: stream ended before the response completed",
+  "turns": 0,
+  "tool_calls": 0,
+  "cost_usd": 0.0,
+  "unpriced": false,
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 11.507616833,
+  "grader_exit": null,
+  "grader_tail": "",
+  "session_id": "ses_01M489G8NVJPC42T0YEVFMFTZD"
+}

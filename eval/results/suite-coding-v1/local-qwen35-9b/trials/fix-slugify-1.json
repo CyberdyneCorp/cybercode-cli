@@ -1,0 +1,23 @@
+{
+  "task": "fix-slugify",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 8,
+  "tool_calls": 7,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 28162,
+    "output": 1280,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 82.510346292,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M473RN2AQZK4NCPAYWMTATWH"
+}

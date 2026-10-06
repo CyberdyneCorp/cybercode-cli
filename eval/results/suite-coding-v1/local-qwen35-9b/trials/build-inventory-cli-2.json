@@ -1,0 +1,23 @@
+{
+  "task": "build-inventory-cli",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": true,
+  "stop_reason": "error",
+  "error": "transport: Transport: stream ended before the response completed",
+  "turns": 27,
+  "tool_calls": 27,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 441415,
+    "output": 22148,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 1433.526588291,
+  "grader_exit": null,
+  "grader_tail": "",
+  "session_id": "ses_01M487YA0D6NVF1CY506HX245M"
+}

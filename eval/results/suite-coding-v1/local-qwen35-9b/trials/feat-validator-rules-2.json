@@ -1,0 +1,23 @@
+{
+  "task": "feat-validator-rules",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 31,
+  "tool_calls": 30,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 447818,
+    "output": 9974,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 860.931565125,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: FAIL: test_enum_bool_not_number (test_validator.ValidatorTest.test_enum_bool_not_number)\nFAIL visible tests: FAIL: test_enum_invalid (test_validator.ValidatorTest.test_enum_invalid)\nFAIL visible tests: FAIL: test_enum_invalid_mixed_values (test_validator.ValidatorTest.test_enum_invalid_mixed_values)\nFAIL visible tests: FAIL: test_enum_root_level (test_validator.ValidatorTest.test_enum_root_level)\nFAIL visible tests: FAIL: test_items_invalid_property (test_validator.ValidatorTest.test_items_invalid_property)\nFAIL visible tests: FAIL: test_items_maximum_exceeded (test_validator.ValidatorTest.test_items_maximum_exceeded)\nFAIL visible tests: FAIL: test_items_minimum_exceeded (test_validator.ValidatorTest.test_items_minimum_exceeded)\nFAIL visible tests: FAIL: test_items_multiple_errors (test_validator.ValidatorTest.test_items_multiple_errors)\nFAIL",
+  "session_id": "ses_01M47RXZN1XMWXQ588WWKT0SEC"
+}

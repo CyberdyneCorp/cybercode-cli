@@ -1,0 +1,23 @@
+{
+  "task": "feat-cli-flags",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 31,
+  "tool_calls": 31,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 274914,
+    "output": 7790,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 584.3486585,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: FAIL: test_ignore_case (test_wordfreq.WordfreqTest.test_ignore_case)\nFAIL visible tests: FAIL: test_unreadable_file (test_wordfreq.WordfreqTest.test_unreadable_file)\nFAIL",
+  "session_id": "ses_01M47MQVM0VX7R820JBW3NRY9Z"
+}

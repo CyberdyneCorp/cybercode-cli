@@ -1,0 +1,23 @@
+{
+  "task": "tests-merge-intervals",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": true,
+  "stop_reason": "error",
+  "error": "transport: stream ended before the response completed",
+  "turns": 7,
+  "tool_calls": 8,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 56418,
+    "output": 6628,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 373.185175167,
+  "grader_exit": null,
+  "grader_tail": "",
+  "session_id": "ses_01M480JK62WFQS8M36PMANBHAS"
+}

@@ -1,0 +1,23 @@
+{
+  "task": "feat-cli-flags",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 24,
+  "tool_calls": 25,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 235769,
+    "output": 6076,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 421.350143458,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_default_top_is_ten (hidden_test_wordfreq.HiddenWordfreqTest.test_default_top_is_ten)\nFAIL",
+  "session_id": "ses_01M47KRVSNWK9FWRAPW1RMQ001"
+}

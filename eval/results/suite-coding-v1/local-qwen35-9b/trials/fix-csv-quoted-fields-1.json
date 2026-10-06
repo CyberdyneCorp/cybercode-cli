@@ -1,0 +1,23 @@
+{
+  "task": "fix-csv-quoted-fields",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "timeout",
+  "error": null,
+  "turns": 21,
+  "tool_calls": 24,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 174854,
+    "output": 8158,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 900.009256333,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: parses simple records\nFAIL hidden tests: visible: simple records and totals\nFAIL hidden tests: CRLF and mixed line endings\nFAIL hidden tests: one trailing line ending adds no record\nFAIL hidden tests: empty fields\nFAIL hidden tests: line breaks inside quotes belong to the field\nFAIL hidden tests: totals with quotes, CRLF and reordered columns\nFAIL",
+  "session_id": "ses_01M475YAF98M4CXFW4ZMZ1D4Z5"
+}

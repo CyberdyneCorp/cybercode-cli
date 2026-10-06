@@ -1,0 +1,23 @@
+{
+  "task": "feat-paginate",
+  "trial": 3,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 7,
+  "tool_calls": 8,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 27859,
+    "output": 2281,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 136.232064875,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M47QYAXQ6RFXDWG1M3CHBRDE"
+}

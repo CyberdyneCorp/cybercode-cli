@@ -1,6 +1,6 @@
 # P0 exit evidence
 
-P0 remains open. This change adds evidence and CI jobs; it does not start P1.
+P0 remains open. P1 implementation proceeds independently under the authorized implementation goal; the local-model gate below has not been waived.
 
 Reference machine: MacBook Pro **Mac14,6**, Apple **M2 Max** (12 cores: 8 performance + 4 efficiency), **32 GB RAM**, macOS **27.0** (26A428), local **APFS SSD**. Rust **1.98.0** (88d9e12ae). Storage source: `4cf19506`. The new startup samples include the readiness polling fix in `close-p0-exit-criteria`; its source checksum is recorded in the JSON. OS filesystem caches are retained. These are process cold starts, not cache-evicted or reboot measurements.
 
@@ -74,7 +74,7 @@ Labels were checked against [GitHub's runner documentation](https://docs.github.
 
 ## Remaining gate
 
-- Complete passing local compatible-model suite and long-task evidence. Ollama 0.32.1 was already installed. The Qwen3 8B runs were stopped after 30 completed failures; all outcomes and the stop reason are retained. Thinking and sampled non-thinking pilots also failed. Qwen3.5 9B subsequently passed a slugify pilot with real tool use and the hidden grader; its long-task pilot is running, with full suites queued sequentially afterward. This is not a complete local baseline. See [local setup and investigations](../../eval/local-model/README.md).
+- Complete passing local compatible-model suite and long-task evidence. Ollama 0.32.1 was already installed. The Qwen3 8B runs were stopped after 30 completed failures; all outcomes and the stop reason are retained. Thinking and sampled non-thinking pilots also failed. Qwen3.5 9B completed the standard suite at `1d8d1e4` with 29/60 passes and three infrastructure failures. Its hard attempt at immutable `4a32b58` ended with 60 transport failures, each before a completed Turn; this is not evidence of hard-task coding quality. Its long-task pilot failed after 63 Turns at the timeout with failing hidden tests. Reports and all individual outcomes are preserved. Valid hard-suite and successful long-task evidence remain missing. See [local results and investigations](../../eval/local-model/qwen3.5-9b/README.md).
 
 OpenAI and Anthropic live baselines, recovery/trust tests, full backup/verify/restore, retention and logs remain implemented. Landlock fallback, PTY routes and the deferred TUI features do not block this exit gate.
 

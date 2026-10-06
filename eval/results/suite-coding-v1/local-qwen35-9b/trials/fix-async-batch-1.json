@@ -1,0 +1,23 @@
+{
+  "task": "fix-async-batch",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 31,
+  "tool_calls": 34,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 285263,
+    "output": 9916,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 754.798555792,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: fetches every url\nFAIL hidden tests: visible: fetches every url and retry returns success\nFAIL hidden tests: results keep url order even when later urls finish first\nFAIL hidden tests: concurrency limit is reached but never exceeded\nFAIL hidden tests: a new call starts as soon as one settles\nFAIL hidden tests: flaky urls are retried per url\nFAIL",
+  "session_id": "ses_01M47EY603N6E7AAFEJ19Z46JS"
+}

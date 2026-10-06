@@ -1,0 +1,23 @@
+{
+  "task": "fix-async-batch",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "max_turns",
+  "error": null,
+  "turns": 31,
+  "tool_calls": 34,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 316672,
+    "output": 11590,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 878.45476,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: concurrency limit is reached but never exceeded\nFAIL",
+  "session_id": "ses_01M47GGNTFHJB0JRRRGC2ZZ70V"
+}

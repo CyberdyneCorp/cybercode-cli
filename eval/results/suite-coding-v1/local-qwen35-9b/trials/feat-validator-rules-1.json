@@ -1,0 +1,23 @@
+{
+  "task": "feat-validator-rules",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "timeout",
+  "error": null,
+  "turns": 30,
+  "tool_calls": 30,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 364693,
+    "output": 11961,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 900.004388667,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_enum_compares_json_types (hidden_test_validator.HiddenEnumTest.test_enum_compares_json_types)\nFAIL hidden tests: FAIL: test_enum_with_null (hidden_test_validator.HiddenEnumTest.test_enum_with_null)\nFAIL hidden tests: FAIL: test_string_enum_message (hidden_test_validator.HiddenEnumTest.test_string_enum_message)\nFAIL hidden tests: FAIL: test_items_with_enum (hidden_test_validator.HiddenItemsTest.test_items_with_enum)\nFAIL",
+  "session_id": "ses_01M47R2GE26XQS06KX337F3KAJ"
+}

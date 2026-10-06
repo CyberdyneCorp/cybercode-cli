@@ -1,0 +1,23 @@
+{
+  "task": "feat-ttl-cache",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "timeout",
+  "error": null,
+  "turns": 16,
+  "tool_calls": 16,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 226252,
+    "output": 14383,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 900.009252208,
+  "grader_exit": 1,
+  "grader_tail": "FAIL visible tests: ERROR: test_expiry (test_cache.TTLCacheTest.test_expiry)\nFAIL visible tests: ERROR: test_get_does_not_affect_expiry (test_cache.TTLCacheTest.test_get_does_not_affect_expiry)\nFAIL visible tests: ERROR: test_len_counts_only_live_entries (test_cache.TTLCacheTest.test_len_counts_only_live_entries)\nFAIL visible tests: FAIL: test_eviction_removes_expired_first (test_cache.TTLCacheTest.test_eviction_removes_expired_first)\nFAIL",
+  "session_id": "ses_01M47PRVRWGEJ47MA3SE2A3HNH"
+}

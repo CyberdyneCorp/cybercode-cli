@@ -1,0 +1,23 @@
+{
+  "task": "refactor-split-function",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "timeout",
+  "error": null,
+  "turns": 24,
+  "tool_calls": 24,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 315443,
+    "output": 15037,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 902.969726333,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=221)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=241)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=245)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=249)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=252)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=262)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=263)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=269)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=276)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=281)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=289)\nFAIL hidden tests: FAIL: test_random_inputs_match_original (hidden_test_orders.HiddenBehaviourTest.test_random_inputs_match_original) (index=292)\nFAIL hidden tests: FAIL: test_process_orders_is_thin (hidden_test_orders.HiddenStructureTest.test_process_orders_is_thin)\nFAIL hidden tests: FAIL: test_process_orders_uses_the_pieces (hidden_test_orders.HiddenStructureTest.test_process_orders_uses_the_pieces)\nFAIL",
+  "session_id": "ses_01M47X7J9PF89DMVSFW0SGTPFT"
+}

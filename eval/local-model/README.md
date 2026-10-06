@@ -1,6 +1,6 @@
 # Local compatible-adapter baseline
 
-The original Qwen3 investigation is recorded below. [Qwen3.5 9B](qwen3.5-9b/README.md) is the next candidate; it has one passing small-task pilot and pending full-suite/long-task evidence.
+The original Qwen3 investigation is recorded below. [Qwen3.5 9B](qwen3.5-9b/README.md) completed the standard suite with 29/60 passes and three infrastructure failures. Its hard-suite attempt ended with 60 transport failures before any completed Turn; its long-task pilot also failed. All outcomes are preserved, and the local P0 gate remains open.
 
 The local baseline uses Qwen3 8B Q4_K_M on Ollama 0.32.1, through `/v1/chat/completions` and Cyber's **OpenAI-compatible** adapter. It does not use a native Ollama adapter or a hosted model. See `metadata.json` for hardware, model identity and decoding settings.
 

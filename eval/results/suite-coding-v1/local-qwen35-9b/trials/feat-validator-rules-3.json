@@ -1,0 +1,23 @@
+{
+  "task": "feat-validator-rules",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 27,
+  "tool_calls": 28,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 374417,
+    "output": 11682,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 856.484675625,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_enum_compares_json_types (hidden_test_validator.HiddenEnumTest.test_enum_compares_json_types)\nFAIL hidden tests: FAIL: test_each_item_validated_with_index_path (hidden_test_validator.HiddenItemsTest.test_each_item_validated_with_index_path)\nFAIL hidden tests: FAIL: test_items_with_enum (hidden_test_validator.HiddenItemsTest.test_items_with_enum)\nFAIL hidden tests: FAIL: test_missing_and_items_errors_together (hidden_test_validator.HiddenItemsTest.test_missing_and_items_errors_together)\nFAIL hidden tests: FAIL: test_nested_arrays (hidden_test_validator.HiddenItemsTest.test_nested_arrays)\nFAIL hidden tests: FAIL: test_scalar_items (hidden_test_validator.HiddenItemsTest.test_scalar_items)\nFAIL",
+  "session_id": "ses_01M47SR8Z8RCPW1F85KQXWWGJE"
+}

@@ -1,0 +1,23 @@
+{
+  "task": "fix-cursor-pagination",
+  "trial": 2,
+  "passed": false,
+  "infrastructure_failure": true,
+  "stop_reason": "error",
+  "error": "transport: Transport: stream ended before the response completed",
+  "turns": 0,
+  "tool_calls": 0,
+  "cost_usd": 0.0,
+  "unpriced": false,
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 14.595660875,
+  "grader_exit": null,
+  "grader_tail": "",
+  "session_id": "ses_01M489M0JCVPJA5ZSFAPHN9NDD"
+}

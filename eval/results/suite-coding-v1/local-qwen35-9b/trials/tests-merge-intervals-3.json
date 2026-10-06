@@ -1,0 +1,23 @@
+{
+  "task": "tests-merge-intervals",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 2,
+  "tool_calls": 2,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 6556,
+    "output": 8380,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 331.648728208,
+  "grader_exit": 1,
+  "grader_tail": "FAIL test_intervals.py does not exist\nFAIL",
+  "session_id": "ses_01M481NVW592JY213FVX29AM0P"
+}

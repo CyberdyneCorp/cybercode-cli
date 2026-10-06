@@ -1,0 +1,23 @@
+{
+  "task": "debug-cross-module",
+  "trial": 1,
+  "passed": true,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 10,
+  "tool_calls": 14,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 45065,
+    "output": 1237,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 114.794424791,
+  "grader_exit": 0,
+  "grader_tail": "PASS",
+  "session_id": "ses_01M48429C3VYRHJC95THWSJYXB"
+}

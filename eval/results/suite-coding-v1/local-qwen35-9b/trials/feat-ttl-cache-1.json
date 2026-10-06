@@ -1,0 +1,23 @@
+{
+  "task": "feat-ttl-cache",
+  "trial": 1,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "end_turn",
+  "error": null,
+  "turns": 25,
+  "tool_calls": 24,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 404612,
+    "output": 16169,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 897.455407667,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: FAIL: test_expired_entries_are_dropped_before_live_ones (hidden_test_cache.HiddenTTLCacheTest.test_expired_entries_are_dropped_before_live_ones)\nFAIL",
+  "session_id": "ses_01M47NE1RE8XPP6KXT0BJ9JVMV"
+}

@@ -1,0 +1,23 @@
+{
+  "task": "fix-csv-quoted-fields",
+  "trial": 3,
+  "passed": false,
+  "infrastructure_failure": false,
+  "stop_reason": "timeout",
+  "error": null,
+  "turns": 21,
+  "tool_calls": 24,
+  "cost_usd": 0.0,
+  "unpriced": true,
+  "tokens": {
+    "input": 219675,
+    "output": 12252,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "latency_seconds": 900.012829584,
+  "grader_exit": 1,
+  "grader_tail": "FAIL hidden tests: line breaks inside quotes belong to the field\nFAIL hidden tests: totals with quotes, CRLF and reordered columns\nFAIL",
+  "session_id": "ses_01M47D0EYVXK2YNP8FHQMWHSH3"
+}
