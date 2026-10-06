@@ -7,6 +7,15 @@
 - **WHEN** a sandboxed PowerShell command writes `C:\Windows\Temp\x` outside the writable roots
 - **THEN** access is denied
 
+#### Scenario: Invocation-owned Windows profile and ACL leases
+- **WHEN** a Windows command invocation prepares an AppContainer identity and direct-object ACL grants
+- **THEN** it SHALL create a fresh profile rather than reuse an existing identity
+- **AND** ACL cleanup SHALL target the retained original object handle and remove only that profile's entries from the current ACL
+- **AND** another identity's grant added during the lease SHALL survive cleanup
+- **AND** profile deletion SHALL refuse while a grant lease still owns the identity
+- **AND** reparse points and overlapping grants for the same identity SHALL be refused
+- **AND** implementing these ownership primitives alone SHALL NOT report Windows confinement as available
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner

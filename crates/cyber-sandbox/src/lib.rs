@@ -9,6 +9,8 @@ pub mod proxy;
 #[cfg(target_os = "macos")]
 mod seatbelt;
 #[cfg(windows)]
+pub mod windows_container;
+#[cfg(windows)]
 pub mod windows_process;
 
 use std::collections::BTreeMap;

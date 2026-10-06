@@ -52,6 +52,8 @@ jobs:
         run: cargo test --locked -p cyber-sandbox --test windows_job
       - name: Native parent-owned Windows process trees
         run: cargo test --locked -p cyber-sandbox --test windows_parent_job
+      - name: Native Windows AppContainer profile and ACL ownership
+        run: cargo test --locked -p cyber-sandbox --lib windows_container::tests
       - name: Native tool proxy transport
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests
       - name: Native shell ownership and cancellation
