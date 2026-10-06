@@ -244,12 +244,22 @@ async fn service_shutdown_case(tool: &str) {
         CallStatus::Dispatched
     );
     stop_and_verify(&mut server, &paths, registration, &child, &grandchild).await;
-    assert!(!running.is_running(&id));
+    verify_settlement(&running, &reloaded, &paths, &id, &model).await;
+}
+
+async fn verify_settlement(
+    running: &Runtime,
+    reloaded: &Runtime,
+    paths: &Paths,
+    id: &str,
+    model: &Model,
+) {
+    assert!(!running.is_running(id));
     assert_eq!(
-        reloaded.state(&id).await.unwrap().calls["service_call"].status,
+        reloaded.state(id).await.unwrap().calls["service_call"].status,
         CallStatus::OutcomeUnknown
     );
-    assert!(cyber_app::read_registration(&paths).is_none());
+    assert!(cyber_app::read_registration(paths).is_none());
     assert_eq!(
         model.0.requests().len(),
         1,
