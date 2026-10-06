@@ -1045,12 +1045,15 @@ impl cyber_llm::Adapter for PendingModel {
 struct PendingModels {
     models: Arc<Models>,
     adapter: Arc<PendingModel>,
+    model: Option<&'static str>,
 }
 impl cyber_server::runtime::ModelResolver for PendingModels {
     fn resolve(&self, model: &str) -> Result<cyber_server::runtime::ResolvedModel, String> {
         let mut resolved =
             cyber_server::runtime::ModelResolver::resolve(self.models.as_ref(), model)?;
-        resolved.adapter = self.adapter.clone();
+        if self.model.is_none_or(|selected| selected == model) {
+            resolved.adapter = self.adapter.clone();
+        }
         Ok(resolved)
     }
     fn role(&self, role: cyber_llm::catalog::ModelRole) -> Option<String> {
@@ -1069,6 +1072,7 @@ async fn shutdown_drops_main_and_background_title_inference_during_open_or_strea
             store: h.store.clone(),
             resolver: Arc::new(PendingModels {
                 models: h.models.clone(),
+                model: None,
                 adapter: Arc::new(PendingModel {
                     active: active.clone(),
                     open,
@@ -1115,6 +1119,147 @@ async fn shutdown_drops_main_and_background_title_inference_during_open_or_strea
         );
         assert!(!runtime.is_running(&id));
         assert!(runtime.state(&id).await.unwrap().info.default_title);
+    }
+}
+
+#[tokio::test]
+async fn shutdown_drops_idle_and_drain_compaction_during_open_or_stream() {
+    for trigger in ["idle", "auto", "manual", "overflow"] {
+        for open in [true, false] {
+            compaction_shutdown_case(trigger, open).await;
+        }
+    }
+}
+
+async fn compaction_shutdown_case(trigger: &str, open: bool) {
+    use cyber_server::runtime::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (h, id) = compaction_shutdown_history(trigger).await;
+    let before = h.state(&id).await;
+    let active = Arc::new(AtomicUsize::new(0));
+    let runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: Arc::new(PendingModels {
+            models: h.models.clone(),
+            model: Some("test/summary"),
+            adapter: Arc::new(PendingModel {
+                active: active.clone(),
+                open,
+            }),
+        }),
+        tools: h.tools.clone(),
+        global_config_dir: h.repo.join("global"),
+        shell: "bash".into(),
+        claude_compat: false,
+        compaction: CompactionConfig {
+            auto: matches!(trigger, "auto" | "overflow"),
+            keep_tokens: 4,
+            ..Default::default()
+        },
+        retry: cyber_llm::RetryPolicy::default(),
+        max_steps: None,
+        today: None,
+        interactive: true,
+        snapshots: Arc::new(NoSnapshots),
+    });
+    let compact = start_shutdown_compaction(&runtime, &h.tools, &id, trigger).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while active.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("compaction request did not start");
+    tokio::time::timeout(Duration::from_secs(2), runtime.shutdown())
+        .await
+        .unwrap();
+    if let Some(compact) = compact {
+        assert!(matches!(
+            compact.await.unwrap(),
+            Err(RuntimeError::ShuttingDown)
+        ));
+    }
+    assert_eq!(
+        active.load(Ordering::SeqCst),
+        0,
+        "summary request survived shutdown"
+    );
+    assert!(!runtime.is_running(&id));
+    assert_uncompacted_history(&runtime.state(&id).await.unwrap(), &before, trigger);
+    assert_uncompacted_history(&h.restart().state(&id).await.unwrap(), &before, trigger);
+}
+
+fn assert_uncompacted_history(
+    state: &cyber_server::runtime::SessionState,
+    before: &cyber_server::runtime::SessionState,
+    trigger: &str,
+) {
+    assert!(state.compacted.is_none());
+    assert!(state.entries.starts_with(&before.entries));
+    let added_steps = usize::from(matches!(trigger, "manual" | "overflow"));
+    assert_eq!(state.steps.len(), before.steps.len() + added_steps);
+}
+
+async fn compaction_shutdown_history(trigger: &str) -> (Harness, String) {
+    use cyber_server::runtime::CompactionConfig;
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                text("first response"),
+                text("second response"),
+                if trigger == "manual" {
+                    tools(&[("c1", "read", "{}")])
+                } else {
+                    error(ErrorKind::ContextOverflow, "prompt too large")
+                },
+            ],
+        )],
+        context_limit: if trigger == "auto" { 1 } else { 200_000 },
+        compaction: CompactionConfig {
+            auto: false,
+            ..Default::default()
+        },
+        ..Setup::default()
+    });
+    h.tools.set("read", Behavior::Gated);
+    let id = h.session().await;
+    for prompt in ["first instruction", "second instruction"] {
+        h.runtime
+            .admit(&id, admit(prompt, Delivery::Queue))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+    }
+    h.runtime.shutdown().await;
+    (h, id)
+}
+
+async fn start_shutdown_compaction(
+    runtime: &cyber_server::runtime::Runtime,
+    tools: &Tools,
+    id: &str,
+    trigger: &str,
+) -> Option<tokio::task::JoinHandle<Result<(), RuntimeError>>> {
+    if trigger != "idle" {
+        runtime
+            .admit(id, admit("continue", Delivery::Queue))
+            .await
+            .unwrap();
+        if trigger == "manual" {
+            tokio::time::timeout(Duration::from_secs(2), tools.started.notified())
+                .await
+                .unwrap();
+            runtime.compact(id, None).await.unwrap();
+            tools.release.notify_one();
+        }
+        None
+    } else {
+        let task_runtime = runtime.clone();
+        let task_id = id.to_string();
+        Some(tokio::spawn(async move {
+            task_runtime.compact(&task_id, None).await
+        }))
     }
 }
 

@@ -16,9 +16,10 @@
 - [ ] Verify healthy service reuse and version/stale-registration replacement using authenticated shutdown or an unowned local server lock.
 - [ ] Prove service shutdown interrupts active inference/tools and closes attached streams within its deadline.
   - [x] Validate the runtime admission gate, all-session cancellation, pending-input preservation, approval cleanup and tracked title-task cancellation with three new scenarios and 50 selected integration tests. Native runtime proof also passes at `4868aa5`.
-  - [x] Verify scoped HTTP event streams and WebSockets, channel-owned tool release and the attached-client shutdown regression. All 51 selected integration tests pass locally, with release Clippy and strict OpenSpec validation; native transport proof remains open.
+  - [x] Verify scoped HTTP event streams and WebSockets, channel-owned tool release and the attached-client shutdown regression. All 51 selected integration tests pass locally, with release Clippy and strict OpenSpec validation; the actual attached-client shutdown regression also passes on native Windows at `e8dda31`.
   - [x] Prove cancellation drops blocked pre-turn tracking and post-turn tracking, changed-path and diff operations without recording a completed snapshot. All 41 runtime/context-compaction tests, release Clippy and strict OpenSpec checks pass locally.
-  - [ ] Prove native Git process cleanup, compaction interruption, active native tool cancellation and backpressured-client behavior within the complete service deadline.
+  - [x] Prove idle/manual, queued manual, automatic and overflow summary opening/streaming interruption, preserved conversation entries and absent completed summaries in eight cases. All 42 runtime/context-compaction tests and strict OpenSpec checks pass locally; native compaction execution remains open.
+  - [ ] Prove native Git process cleanup, native compaction interruption, active native tool cancellation and backpressured-client behavior within the complete service deadline.
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.

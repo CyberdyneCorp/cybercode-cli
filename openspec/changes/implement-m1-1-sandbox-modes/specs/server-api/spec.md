@@ -73,6 +73,12 @@
 - **AND** the turn's durable provider and tool settlement SHALL finish before optional post-turn snapshot work is skipped
 - **AND** cancelled post-turn collection SHALL NOT record a completed snapshot or diff
 
+#### Scenario: Shutdown interrupts compaction inference
+- **WHEN** shutdown starts while idle manual, queued manual, automatic or overflow compaction is opening or streaming a summary request
+- **THEN** the runtime SHALL cancel that request and allow shutdown to finish
+- **AND** idle manual callers SHALL receive the shutdown error
+- **AND** cancelled compaction SHALL preserve existing conversation entries without recording a completed summary
+
 #### Scenario: Attached streams cannot keep a stopped service alive
 - **WHEN** service shutdown starts with connected instance/session event streams or WebSockets
 - **THEN** event stream bodies and producer tasks SHALL observe runtime shutdown
