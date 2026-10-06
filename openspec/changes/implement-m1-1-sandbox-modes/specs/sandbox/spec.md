@@ -180,3 +180,8 @@
 - **WHEN** a fixture grants All Application Packages full access to protected files
 - **THEN** ordinary AppContainer controls prove the allowance works before and after owned-policy cleanup
 - **AND** default invocation launch denies protected writes, deletion, child creation and hidden access while allowing scoped writable access
+
+#### Scenario: Runtime initialization failure is not accepted as network isolation
+- **WHEN** a native launch fixture cannot initialize Winsock or create its required descendant
+- **THEN** the original runtime assertion fails and reports its stage
+- **AND** read-only system registry and own-token access probes include successful host controls without granting additional runtime authority

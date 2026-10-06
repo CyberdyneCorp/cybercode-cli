@@ -894,7 +894,15 @@ fn tree_worker(root: &Path) -> std::io::Result<()> {
         .args(arguments())
         .env("CYBER_CONTAINER_ROLE", "wait")
         .spawn()
-        .map_err(|error| std::io::Error::new(error.kind(), format!("Spawn descendant: {error}")))?;
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "Spawn descendant: {error}; access probes: {}",
+                    runtime_access_diagnostics()
+                ),
+            )
+        })?;
     std::fs::write(root.join("write.txt"), _descendant.id().to_string())?;
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::fs::read_to_string(root.join("read.txt"))? != "finish" {
@@ -1000,7 +1008,8 @@ fn probe(root: &Path) -> i32 {
         std::fs::write(
             root.join("write.txt"),
             serde_json::json!({
-                "stage": "winsock-startup", "code": error.raw_os_error(), "error": error.to_string()
+                "stage": "winsock-startup", "code": error.raw_os_error(), "error": error.to_string(),
+                "access_probes": runtime_access_diagnostics()
             })
             .to_string(),
         )
@@ -1033,6 +1042,62 @@ fn winsock_startup() -> std::io::Result<()> {
         }));
     }
     Ok(())
+}
+
+fn runtime_access_diagnostics() -> serde_json::Value {
+    use windows_sys::Win32::Security::{TOKEN_DUPLICATE, TOKEN_QUERY};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let mut token = std::ptr::null_mut();
+    let token_code = if unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_QUERY | TOKEN_DUPLICATE,
+            &mut token,
+        )
+    } == 0
+    {
+        std::io::Error::last_os_error().raw_os_error()
+    } else {
+        drop(unsafe { OwnedHandle::from_raw_handle(token) });
+        Some(0)
+    };
+    let registry: Vec<_> = [
+        r"SYSTEM\CurrentControlSet\Services\WinSock2\Parameters",
+        r"SYSTEM\CurrentControlSet\Services\WinSock2\Parameters\Protocol_Catalog9",
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options",
+    ]
+    .into_iter()
+    .map(|key| serde_json::json!({"key": key, "code": registry_read_probe(key)}))
+    .collect();
+    serde_json::json!({"own_token_duplicate": token_code, "system_registry": registry})
+}
+
+fn registry_read_probe(key: &str) -> u32 {
+    use windows_sys::Win32::System::Registry::{
+        HKEY_LOCAL_MACHINE, KEY_READ, RegCloseKey, RegOpenKeyExW,
+    };
+    let key: Vec<u16> = key.encode_utf16().chain(Some(0)).collect();
+    let mut handle = std::ptr::null_mut();
+    let code = unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, key.as_ptr(), 0, KEY_READ, &mut handle) };
+    if code == 0 {
+        unsafe { RegCloseKey(handle) };
+    }
+    code
+}
+
+#[test]
+fn host_runtime_access_probes_have_positive_controls() {
+    winsock_startup().unwrap();
+    let diagnostic = runtime_access_diagnostics();
+    assert_eq!(diagnostic["own_token_duplicate"], 0);
+    for entry in diagnostic["system_registry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .take(2)
+    {
+        assert_eq!(entry["code"], 0, "Host Winsock key read failed: {entry}");
+    }
 }
 
 fn security_rights_denied(root: &Path) -> Result<(), serde_json::Value> {
