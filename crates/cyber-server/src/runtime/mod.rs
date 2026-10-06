@@ -4,6 +4,7 @@
 //! promotes input at Safe Boundaries and runs Turns until nothing is eligible. Every fact
 //! the model sees is committed before it is acted on, so a restart rebuilds state by replay.
 
+mod auto;
 mod bus;
 mod compaction;
 mod context;
@@ -27,6 +28,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, broadcast};
 use tokio_util::sync::CancellationToken;
 
+pub use auto::{AutoDecision, AutoEffect, AutoReview};
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, base_prompt};
@@ -191,6 +193,8 @@ pub(crate) struct Handle {
     pub halt: std::sync::atomic::AtomicBool,
     /// Fingerprints of calls since the last promoted input, for doom-loop detection.
     pub recent_calls: StdMutex<Vec<String>>,
+    /// Serialized auto reviews and consecutive blocks, reset for each new Drain.
+    pub auto_blocks: Mutex<u32>,
 }
 
 struct DrainEntry {
@@ -879,6 +883,7 @@ impl Inner {
             pending_compaction: StdMutex::default(),
             halt: std::sync::atomic::AtomicBool::new(false),
             recent_calls: StdMutex::default(),
+            auto_blocks: Mutex::new(0),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

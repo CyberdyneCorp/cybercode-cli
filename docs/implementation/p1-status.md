@@ -14,6 +14,12 @@ The active goal covers all P1-tagged product contracts, not only the five milest
 
 M1.1 design is in [the OpenSpec change](../../openspec/changes/implement-m1-1-sandbox-modes). Native Windows enforcement must be proven on Windows; compilation alone is insufficient. Comparative quality claims require published measurements.
 
+## M1.1 progress
+
+The evaluator runtime foundation is implemented: tool-free bounded inference, strict allow/block replies, a durable `permission.auto_decided.1` event, per-Drain consecutive-block tracking, and hidden usage/cost accounting in replay, SQL session totals and evaluation budgets. Runtime tests cover valid decisions, malformed responses, unavailable models, replay, forced event-write failure, repeated blocks, timeout, cancellation and untrusted context.
+
+Built-in tool authorization is not connected to classifier allows yet. The next work is protected/irreversible ceilings and critical-path guards, then host integration, configuration, override/statistics commands and the four-mode TUI state. Windows enforcement and its native runtime evidence remain unfinished. This runtime foundation passes 11 dedicated tests; full workspace validation passes 341 tests (one opt-in measurement ignored), release Clippy and strict OpenSpec validation.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

@@ -103,7 +103,7 @@ pub(crate) struct Waiter {
 /// The per-call handle tools use to ask the user.
 #[derive(Clone)]
 pub struct Asker {
-    inner: Weak<Inner>,
+    pub(super) inner: Weak<Inner>,
     pub session_id: String,
     pub call_id: String,
     pub message_id: String,

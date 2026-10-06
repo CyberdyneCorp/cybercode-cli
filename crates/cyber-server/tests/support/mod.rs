@@ -136,6 +136,8 @@ pub enum Behavior {
     Panic,
     /// Ask for permission on `resource`, then report the reply.
     Ask(String),
+    /// Review a request through the real auto-mode evaluator boundary.
+    Auto(String),
     /// Ask one question, then report the answer.
     AskQuestion,
 }
@@ -207,6 +209,8 @@ impl ToolHost for Tools {
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         let behavior = self.behavior.lock().unwrap().get(&call.name).cloned();
         let asker = call.asker.clone();
+        let name = call.name.clone();
+        let input = call.input.clone();
         self.executed.lock().unwrap().push(call);
         Box::pin(async move {
             match behavior {
@@ -223,6 +227,19 @@ impl ToolHost for Tools {
                 }
                 Some(Behavior::Crash) => ToolOutcome::Crashed("panic: index out of bounds".into()),
                 Some(Behavior::Panic) => panic!("tool host defect"),
+                Some(Behavior::Auto(resource)) => {
+                    let review = AutoReview {
+                        action: "bash".into(),
+                        resources: vec![resource],
+                        tool: name,
+                        input,
+                        policy: "Only modify this repository".into(),
+                    };
+                    match asker.review_auto(review, cancel).await {
+                        Ok(decision) => ToolOutcome::Ok(serde_json::to_string(&decision).unwrap()),
+                        Err(_) => ToolOutcome::Failed("Auto decision could not be recorded".into()),
+                    }
+                }
                 Some(Behavior::Ask(resource)) => {
                     let ask = PermissionAsk {
                         action: "bash".into(),

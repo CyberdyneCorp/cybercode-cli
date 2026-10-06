@@ -440,6 +440,12 @@ impl SessionState {
 
     fn apply_meta(&mut self, kind: &str, e: &StoredEvent) -> Result<(), String> {
         match kind {
+            "permission.auto_decided" => {
+                let decision: super::auto::AutoDecision = decode(e)?;
+                if let Some(usage) = decision.usage {
+                    self.add_hidden(&usage, decision.cost);
+                }
+            }
             "session.compaction.completed" => self.on_compacted(decode(e)?),
             "session.title.generated" | "session.renamed" => {
                 let titled: Titled = decode(e)?;
@@ -650,7 +656,7 @@ impl SessionState {
         self.open_step = None;
     }
 
-    /// Usage of hidden calls (title, compaction) counts toward totals but not steps.
+    /// Usage of hidden calls (title, compaction, permission review) counts toward totals but not steps.
     fn add_hidden(&mut self, usage: &cyber_llm::Usage, cost: Option<f64>) {
         self.totals.usage.add(usage);
         match cost {

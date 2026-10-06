@@ -286,6 +286,10 @@ fn apply(r: &mut TrialResult, kind: &str, data: &Value) -> bool {
             add_usage(r, data);
             return true;
         }
+        "permission.auto_decided" if data["usage"].is_object() => {
+            add_usage(r, data);
+            return true;
+        }
         "session.compaction.completed" => {
             add_usage(r, data);
             return true;
@@ -406,6 +410,33 @@ mod tests {
         assert!(
             over_budget(&r, &task),
             "compaction cost also exhausts the budget"
+        );
+    }
+
+    #[test]
+    fn auto_review_is_metered_without_counting_as_a_turn() {
+        let task = task();
+        let mut r = TrialResult::failed(&task, 1, String::new());
+        assert!(apply(
+            &mut r,
+            "permission.auto_decided.1",
+            &json!({
+                "decision": "allow", "usage": {"input": 90, "output": 5, "reasoning": 6}, "cost": 0.5
+            })
+        ));
+        assert!(over_budget(&r, &task));
+        assert_eq!(r.turns, 0);
+        assert_eq!(r.cost_usd, 0.5);
+        assert!(!apply(
+            &mut r,
+            "permission.auto_decided.1",
+            &json!({
+                "decision": "fallback", "usage": null, "cost": null
+            })
+        ));
+        assert!(
+            !r.unpriced,
+            "a fallback without inference is not unpriced work"
         );
     }
 

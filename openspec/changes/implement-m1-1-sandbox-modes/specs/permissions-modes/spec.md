@@ -17,3 +17,16 @@
 #### Scenario: Fallback after repeated blocks
 - **WHEN** the classifier blocks 3 calls in a row
 - **THEN** the next ask is shown to the user as a normal prompt
+
+#### Scenario: Malformed evaluator output
+- **WHEN** the evaluator returns extra keys, an empty reason, a tool call or an incomplete response
+- **THEN** the decision SHALL fall back to approval or unattended denial and SHALL NOT authorize execution
+- **AND** any reported evaluator usage SHALL be included in session and evaluation totals without counting a coding Turn
+
+#### Scenario: Durable decision failure
+- **WHEN** the evaluator returns allow but the auto-decision event cannot be committed
+- **THEN** the tool SHALL NOT execute
+
+#### Scenario: Fresh Drain resets fallback
+- **WHEN** three classifier blocks occurred in a previous Drain and a new Drain starts
+- **THEN** the consecutive-block counter SHALL reset before the next review

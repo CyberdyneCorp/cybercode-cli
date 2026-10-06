@@ -37,6 +37,9 @@ pub(crate) enum TurnEnd {
 }
 
 pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: CancellationToken) {
+    if let Ok(handle) = inner.handle(&id).await {
+        *handle.auto_blocks.lock().await = 0;
+    }
     let mut forced = forced;
     loop {
         // A defect must not leave the Session registered as running forever.

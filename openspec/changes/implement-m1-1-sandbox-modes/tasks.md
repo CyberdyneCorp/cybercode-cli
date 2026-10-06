@@ -5,6 +5,8 @@
 - [ ] Prove Windows filesystem and credential isolation with native runtime tests.
 - [ ] Verify proxy transport/enforcement on Windows and extend domain approval/timeout tests.
 - [ ] Implement strict evaluator classification and durable decision events with usage accounting.
+  - [x] Tool-free evaluator runtime, strict bounded replies, durable event, hidden usage and per-Drain block tracking. Verified by 11 runtime tests; the full workspace, Clippy and OpenSpec checks pass.
+  - [ ] Host integration after protected/irreversible ceilings; config rules, overrides and statistics.
 - [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
 - [ ] Complete the four-mode cycle and pending/effective TUI state with tests.
 - [ ] Add Windows CI; run existing platform, recovery and trust regressions.
