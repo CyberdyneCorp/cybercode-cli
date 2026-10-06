@@ -838,7 +838,8 @@ mod tests {
             .unwrap();
         // Preparation guards must not restrict ordinary later directory writes.
         std::fs::write(moved.join("another.txt"), "later").unwrap();
-        std::fs::rename(&moved, &parent).unwrap();
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::rename(moved.join("file.txt"), &path).unwrap();
         lease.close().unwrap();
         assert!(entries(&file(&path), &profile).is_empty());
         profile.close().unwrap();
