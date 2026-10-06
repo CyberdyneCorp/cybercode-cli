@@ -323,6 +323,15 @@ fn quote(value: &OsStr, output: &mut Vec<u16>) -> io::Result<()> {
 }
 
 fn environment_block(environment: &BTreeMap<String, String>) -> io::Result<Vec<u16>> {
+    if !environment
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("LOCALAPPDATA") && !value.is_empty())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "AppContainer environment requires nonempty LOCALAPPDATA",
+        ));
+    }
     let mut names = BTreeSet::new();
     let mut entries = Vec::new();
     for (name, value) in environment {

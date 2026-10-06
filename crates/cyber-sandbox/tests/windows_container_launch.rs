@@ -14,6 +14,10 @@ use cyber_sandbox::windows_launch::spawn;
 fn environment(root: &Path, role: &str) -> BTreeMap<String, String> {
     BTreeMap::from([
         ("SystemRoot".into(), std::env::var("SystemRoot").unwrap()),
+        (
+            "LOCALAPPDATA".into(),
+            std::env::var("LOCALAPPDATA").unwrap(),
+        ),
         ("CYBER_CONTAINER_ROOT".into(), root.to_str().unwrap().into()),
         ("CYBER_CONTAINER_ROLE".into(), role.into()),
     ])
@@ -147,6 +151,18 @@ fn invalid_launch_inputs_fail_before_starting_a_process() {
         )
         .is_err()
     );
+    let mut missing = env.clone();
+    missing.remove("LOCALAPPDATA");
+    let missing_error = spawn(
+        &profile,
+        &std::env::current_exe().unwrap(),
+        &[],
+        &missing,
+        directory.path(),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(missing_error.kind(), std::io::ErrorKind::InvalidInput);
     profile.close().unwrap();
     assert!(
         spawn(
@@ -203,6 +219,7 @@ fn probe(root: &Path) -> i32 {
     if std::env::vars().any(|(name, _)| {
         ![
             "SYSTEMROOT",
+            "LOCALAPPDATA",
             "CYBER_CONTAINER_ROOT",
             "CYBER_CONTAINER_ROLE",
             "CYBER_CONTAINER_ADDRESS",
