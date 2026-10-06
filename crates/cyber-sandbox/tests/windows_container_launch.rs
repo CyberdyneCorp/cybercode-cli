@@ -103,7 +103,8 @@ fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() 
     assert_eq!(
         child.wait(Duration::from_secs(10)).unwrap(),
         0,
-        "worker stage failed"
+        "worker stage failed; diagnostic: {}",
+        std::fs::read_to_string(directory.path().join("write.txt")).unwrap()
     );
     assert_eq!(
         std::fs::read_to_string(directory.path().join("write.txt")).unwrap(),
@@ -216,16 +217,25 @@ fn probe(root: &Path) -> i32 {
     if std::fs::write(root.join("forbidden.txt"), "forbidden").is_ok() {
         return 44;
     }
-    if std::env::vars().any(|(name, _)| {
-        ![
-            "SYSTEMROOT",
-            "LOCALAPPDATA",
-            "CYBER_CONTAINER_ROOT",
-            "CYBER_CONTAINER_ROLE",
-            "CYBER_CONTAINER_ADDRESS",
-        ]
-        .contains(&name.to_uppercase().as_str())
-    }) {
+    let extras: Vec<String> = std::env::vars()
+        .map(|(name, _)| name)
+        .filter(|name| {
+            ![
+                "SYSTEMROOT",
+                "LOCALAPPDATA",
+                "CYBER_CONTAINER_ROOT",
+                "CYBER_CONTAINER_ROLE",
+                "CYBER_CONTAINER_ADDRESS",
+            ]
+            .contains(&name.to_uppercase().as_str())
+        })
+        .collect();
+    if !extras.is_empty() {
+        std::fs::write(
+            root.join("write.txt"),
+            serde_json::to_string(&extras).unwrap(),
+        )
+        .unwrap();
         return 45;
     }
     let address = std::env::var("CYBER_CONTAINER_ADDRESS")
