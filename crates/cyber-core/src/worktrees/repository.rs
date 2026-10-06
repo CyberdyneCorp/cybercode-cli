@@ -40,7 +40,92 @@ pub struct Managed {
     pub included: Vec<super::IncludedFile>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListedWorktree {
+    Ready(Managed),
+    Pending(Managed),
+    Invalid { name: String, error: String },
+}
+
 impl Repository {
+    /// Inspect durable ownership under the shared lifecycle lock. Pending or
+    /// invalid records remain visible for recovery; listing never repairs them.
+    pub async fn list(&self, execution: &dyn GitExecution) -> io::Result<Vec<ListedWorktree>> {
+        let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
+        })?;
+        let records = self.common_dir.join("cyber-worktrees");
+        let metadata = match std::fs::symlink_metadata(&records) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(invalid(
+                "Worktree ownership directory is not a regular directory",
+            ));
+        }
+        let mut paths = std::fs::read_dir(records)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<io::Result<Vec<_>>>()?;
+        paths.retain(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        });
+        paths.sort();
+        let mut listed = Vec::with_capacity(paths.len());
+        for path in paths {
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let entry = match self.inspect_record(execution, &path, &name).await {
+                Ok(entry) => entry,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
+                Err(error) => ListedWorktree::Invalid {
+                    name,
+                    error: error.to_string(),
+                },
+            };
+            listed.push(entry);
+        }
+        Ok(listed)
+    }
+
+    async fn inspect_record(
+        &self,
+        execution: &dyn GitExecution,
+        record: &Path,
+        name: &str,
+    ) -> io::Result<ListedWorktree> {
+        Name::parse(name).map_err(invalid)?;
+        let metadata = std::fs::symlink_metadata(record)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(invalid("Worktree ownership record is not a regular file"));
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(record)?
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > 1024 * 1024 {
+            return Err(invalid("Worktree ownership record exceeds 1 MiB"));
+        }
+        let managed: Managed =
+            serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
+        if managed.name != name
+            || managed.common_dir != self.common_dir
+            || !managed.path.is_absolute()
+        {
+            return Err(invalid("Managed worktree ownership does not match record"));
+        }
+        if !managed.ready {
+            return Ok(ListedWorktree::Pending(managed));
+        }
+        self.verify(execution, &managed).await?;
+        Ok(ListedWorktree::Ready(managed))
+    }
+
     pub async fn discover(execution: &dyn GitExecution, location: &Path) -> io::Result<Self> {
         let root = git_path(execution, location, "--show-toplevel").await?;
         let common_dir = git_path(execution, location, "--git-common-dir").await?;

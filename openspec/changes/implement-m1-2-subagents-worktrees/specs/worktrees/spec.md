@@ -1,5 +1,24 @@
 ## MODIFIED Requirements
 
+### Requirement: Worktree management commands
+(P1) The CLI SHALL provide `cyber worktree list` (name, path, branch, ahead/behind, dirty, owning sessions), `cyber worktree remove <name> [--force]`, and `cyber worktree prune [--older-than <days>]` (default 14). The server SHALL expose `GET/POST/DELETE /api/v1/worktrees`. Ownership inspection SHALL hold the repository lifecycle lock, verify ready records and retain pending or invalid records as recovery diagnostics without repairing or deleting them.
+
+#### Scenario: Dirty worktree removal refused
+- **WHEN** the user runs `cyber worktree remove spike` and it has uncommitted changes
+- **THEN** the command fails unless `--force` is given
+
+#### Scenario: Listing preserves recovery evidence
+- **WHEN** a repository contains ready, pending or malformed ownership records
+- **THEN** listing returns ready records only after verifying their repository, branch and registration
+- **AND** pending and invalid records remain visible with their distinct recovery status
+- **AND** listing preserves user edits and ownership records
+
+#### Scenario: Listing refuses unsafe records and contention
+- **WHEN** the repository lifecycle lock is held or an ownership record is oversized, symlinked or inconsistent with its name and repository
+- **THEN** contention returns a retryable busy error and unsafe records receive invalid-record diagnostics
+- **AND** a symlinked ownership directory is refused without following it
+
+
 ### Requirement: Session worktrees
 (P1) `cyber --worktree [name]` and `cyber exec --worktree [name]` SHALL create, or reuse, a managed worktree and start the Session in it. When `name` is omitted it SHALL be generated as `<adjective>-<noun>-<4 hex>`. The Session's Location SHALL be the worktree path.
 
