@@ -1,9 +1,11 @@
 //! Shared configuration and names for managed worktrees.
 
+mod activity;
 mod includes;
 mod removal;
 mod repository;
 mod setup;
+pub use activity::{CheckoutActivity, CheckoutLease};
 pub use includes::IncludedFile;
 pub use removal::{RemovalActivity, RemovalPhase, RemovalRecord};
 pub use repository::{

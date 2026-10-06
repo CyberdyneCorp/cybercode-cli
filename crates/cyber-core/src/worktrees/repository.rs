@@ -184,7 +184,7 @@ impl Repository {
         Ok(listed)
     }
 
-    async fn inspect_record(
+    pub(super) async fn inspect_record(
         &self,
         execution: &dyn GitExecution,
         record: &Path,

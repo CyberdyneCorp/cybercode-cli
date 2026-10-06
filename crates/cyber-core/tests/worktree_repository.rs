@@ -8,6 +8,8 @@ use std::task::{Context, Poll};
 use cyber_core::worktrees::{GitExecution, GitFuture, Name, Repository, RepositoryLock, Settings};
 use futures::executor::block_on;
 
+#[path = "worktree_repository/activity.rs"]
+mod activity;
 #[path = "worktree_repository/inclusion.rs"]
 mod inclusion;
 #[path = "worktree_repository/listing.rs"]
