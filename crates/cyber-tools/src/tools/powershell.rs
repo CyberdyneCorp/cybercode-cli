@@ -178,11 +178,8 @@ mod tests {
         let source =
             "param(); [IO.File]::WriteAllText('encoded-source.txt', 'quotes \" & 💡'); exit 23";
         let helper = cyber_sandbox::find_helper().expect("native process owner helper");
-        let mut command = cyber_sandbox::windows_process::OwnedCommand::new(
-            &helper,
-            &program,
-            &arguments(source),
-        );
+        let mut command =
+            cyber_sandbox::windows_process::OwnedCommand::new(&helper, &program, arguments(source));
         command
             .command_mut()
             .current_dir(root.path())
