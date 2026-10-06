@@ -7,3 +7,7 @@ Child-session orchestration will use existing durable admission and drain owners
 
 ## Verification
 Shared configuration/naming tests are groundwork, not proof of worktree isolation. Integration gates require real temporary Git repositories, concurrent processes, dirty/ahead preservation, session ownership, sandboxed setup, and child-runtime tests with deterministic providers. Native platform execution is required for subprocess and file-lock behavior. Keep M1.2 open until all product surfaces and behavioral contracts pass.
+
+
+### Repository lock ownership
+Use the standard-library file lock API, available at the workspace Rust 1.89 minimum, on the persistent `cyber-worktree.lock` file. Open read/write without truncating, try an exclusive lock without blocking and distinguish contention from I/O failure. A non-cloneable guard owns the file handle; drop or process termination releases it. Never unlink the file as cleanup, which could split cooperating processes across different lock-file identities. The lifecycle manager must resolve the shared repository Git directory before acquiring this primitive and hold it through a complete operation. Async contention polling must remain cancellable; active-session refusal is a separate durable ownership check. Native tests must prove independent processes contend, owner disposal releases, forced owner termination releases and separate repositories do not contend. These primitives alone do not close the concurrency requirement.

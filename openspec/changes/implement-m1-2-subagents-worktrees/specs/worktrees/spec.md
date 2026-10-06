@@ -15,3 +15,18 @@
 - **WHEN** resolved worktree configuration has an invalid cleanup policy or non-string setup command
 - **THEN** configuration loading fails with a worktrees-specific diagnostic
 - **AND** untrusted project setup definitions remain inactive until approved
+
+### Requirement: Concurrency safety
+(P1) Worktree creation and removal SHALL be serialized per repository with a cross-process file lock at `<repo git dir>/cyber-worktree.lock`. The system SHALL refuse to remove a worktree that is the Location of a running Session.
+
+#### Scenario: Remove while in use
+- **WHEN** `cyber worktree remove spike` runs while a Session works in `spike`
+- **THEN** it fails with `Worktree in use by ses_<id>`
+
+#### Scenario: Lock owner exits unexpectedly
+- **WHEN** a process holding the repository worktree lock terminates unexpectedly
+- **THEN** another process can acquire the same lock without deleting or replacing its file
+
+#### Scenario: Independent repository locks
+- **WHEN** two processes operate on different repositories
+- **THEN** a worktree lock in one repository does not prevent acquiring the other

@@ -106,3 +106,28 @@ impl Name {
         &self.0
     }
 }
+
+/// Exclusive lock for cooperating lifecycle operations in a shared repository.
+/// Keep its persistent file in place; deleting it can split lock ownership.
+#[derive(Debug)]
+pub struct RepositoryLock {
+    _file: std::fs::File,
+}
+
+impl RepositoryLock {
+    /// The caller must supply the repository's resolved common Git directory.
+    /// `None` denotes contention; filesystem and locking failures remain errors.
+    pub fn try_acquire(git_dir: &std::path::Path) -> std::io::Result<Option<Self>> {
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(git_dir.join("cyber-worktree.lock"))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(error),
+        }
+    }
+}
