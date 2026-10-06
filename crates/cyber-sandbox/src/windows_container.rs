@@ -6,7 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::windows::ffi::OsStringExt;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, BorrowedHandle};
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +30,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, READ_CONTROL, WRITE_DAC,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
+use windows_sys::Win32::System::Threading::ResumeThread;
 
 // Serialize our own read/merge/write operations on shared objects.
 static ACL_UPDATE: Mutex<()> = Mutex::new(());
@@ -42,6 +43,8 @@ struct ProfileInner {
     sid: Vec<u32>,
     active: bool,
     launching: AtomicBool,
+    used: AtomicBool,
+    preparation: Mutex<()>,
 }
 
 impl Profile {
@@ -74,6 +77,8 @@ impl Profile {
             sid: Vec::new(),
             active: true,
             launching: AtomicBool::new(false),
+            used: AtomicBool::new(false),
+            preparation: Mutex::new(()),
         };
         inner.sid = sid.copy()?;
         Ok(Self(Arc::new(inner)))
@@ -120,9 +125,12 @@ impl Profile {
     }
 
     fn grant_object(&self, path: &Path, access: Access, inheritance: u32) -> io::Result<AclGrant> {
-        if !self.0.active {
-            return Err(io::Error::other("AppContainer profile is closed"));
-        }
+        let _preparation = self
+            .0
+            .preparation
+            .lock()
+            .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
+        self.ensure_unstarted()?;
         let file = OpenOptions::new()
             .access_mode(READ_CONTROL | WRITE_DAC)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
@@ -169,11 +177,43 @@ impl Profile {
                     "AppContainer profile already has a command owner",
                 )
             })?;
-        Ok(LaunchReservation(self.clone()))
+        let reservation = LaunchReservation(self.clone());
+        self.ensure_unstarted()?;
+        Ok(reservation)
+    }
+
+    fn ensure_unstarted(&self) -> io::Result<()> {
+        self.ensure_active()?;
+        if self.0.used.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "AppContainer profiles are single-use after command start",
+            ));
+        }
+        Ok(())
     }
 }
 
 pub(crate) struct LaunchReservation(Profile);
+
+impl LaunchReservation {
+    pub(crate) fn resume(&self, thread: BorrowedHandle<'_>) -> io::Result<()> {
+        // Serialize final scope preparation and execution start. No further
+        // grants can race successful resume; setup failure keeps the identity unused.
+        let _preparation = self
+            .0
+            .0
+            .preparation
+            .lock()
+            .map_err(|_| io::Error::other("Profile preparation lock poisoned"))?;
+        self.0.ensure_unstarted()?;
+        if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
+            return Err(io::Error::last_os_error());
+        }
+        self.0.0.used.store(true, Ordering::Release);
+        Ok(())
+    }
+}
 
 impl Drop for LaunchReservation {
     fn drop(&mut self) {

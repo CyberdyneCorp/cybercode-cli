@@ -108,6 +108,7 @@ fn dropping_a_live_container_owner_terminates_the_original_process() {
         .expect("one profile must not share temporary storage between live owners");
     assert_eq!(conflicting.kind(), std::io::ErrorKind::WouldBlock);
     assert_process_live(&retained);
+    assert_profile_grants_sealed(&profile, directory.path());
     drop(child);
     assert_eq!(
         unsafe { WaitForSingleObject(retained.as_raw_handle(), 1000) },
@@ -162,6 +163,7 @@ async fn owned_wait_disposal_case(abort_task: bool) {
     }
     assert_process_terminated(&retained);
     assert!(!scratch.exists());
+    assert_profile_reuse_refused(&profile, &program, &env, directory.path());
     for grant in grants {
         grant.close().unwrap();
     }
@@ -184,10 +186,35 @@ async fn owned_wait_preserves_exit_code_and_releases_storage() {
         73
     );
     assert!(!scratch.exists());
+    assert_profile_reuse_refused(&profile, &program, &env, directory.path());
     for grant in grants {
         grant.close().unwrap();
     }
     profile.close().unwrap();
+}
+
+fn assert_profile_reuse_refused(
+    profile: &Profile,
+    program: &Path,
+    env: &BTreeMap<String, String>,
+    root: &Path,
+) {
+    let retry = spawn(profile, program, &arguments(), env, root)
+        .err()
+        .expect("completed or cancelled invocation must not reuse earlier identity grants");
+    assert_eq!(retry.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(!profile.storage_path().unwrap().join("Temp").exists());
+    assert_profile_grants_sealed(profile, root);
+}
+
+fn assert_profile_grants_sealed(profile: &Profile, root: &Path) {
+    let late = root.join("late-grant.txt");
+    std::fs::write(&late, "unchanged").unwrap();
+    let grant = profile
+        .grant(&late, Access::Write)
+        .err()
+        .expect("executed profiles must not widen their grant scope");
+    assert_eq!(grant.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 fn container_tree_case(normal_exit: bool) {

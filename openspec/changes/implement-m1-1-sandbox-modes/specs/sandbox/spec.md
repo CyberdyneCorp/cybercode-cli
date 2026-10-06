@@ -59,6 +59,14 @@
 - **AND** reparse points and overlapping grants for the same identity SHALL be refused
 - **AND** implementing these ownership primitives alone SHALL NOT report Windows confinement as available
 
+#### Scenario: Successful invocation identities are single-use
+- **WHEN** a top-level command has started under an AppContainer profile
+- **THEN** the profile SHALL NOT launch another top-level command after the first owner completes or is cancelled
+- **AND** the next invocation SHALL create a fresh profile rather than reuse earlier identity grants
+- **AND** setup failure before successful resume SHALL release the reservation without consuming the profile
+- **AND** grants and successful resume SHALL be serialized so its scope cannot widen after command execution starts
+- **AND** revocation and profile cleanup SHALL remain possible after execution
+
 #### Scenario: Windows command process-tree lifetime
 - **WHEN** a native Windows command leaves descendants running and its command owner exits normally or is terminated
 - **THEN** the descendants SHALL terminate with the owner

@@ -22,7 +22,7 @@ use windows_sys::Win32::System::Threading::{
     EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess,
     InitializeProcThreadAttributeList, OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
     PROC_THREAD_ATTRIBUTE_JOB_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
@@ -142,9 +142,7 @@ fn spawn_inner(
         .verify_handle(child.process.as_raw_handle())?;
     verify_identity(child.process.as_raw_handle(), profile)?;
     // User code cannot run until both ownership and identity checks have succeeded.
-    if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
-        return Err(io::Error::last_os_error());
-    }
+    child._temp._reservation.resume(thread.as_handle())?;
     Ok(child)
 }
 
