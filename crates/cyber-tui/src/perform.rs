@@ -21,6 +21,10 @@ pub enum Msg {
     Files(Vec<String>),
     /// Another Session is now open.
     Switched(Session),
+    ModeChanged {
+        session_id: String,
+        result: Result<Session, String>,
+    },
     Toast(String),
     Done,
 }
@@ -205,9 +209,14 @@ async fn switch(client: &Client, session: &Session, action: Action) -> Result<Ms
                     .await
             }
             Action::SwitchMode(mode) => {
-                client
-                    .post(&format!("/sessions/{id}/mode"), json!({ "mode": mode }))
-                    .await
+                return Ok(Msg::ModeChanged {
+                    session_id: id.into(),
+                    result: client
+                        .post(&format!("/sessions/{id}/mode"), json!({ "mode": mode }))
+                        .await
+                        .map_err(err)
+                        .map(|v| Session::parse(&v["data"])),
+                });
             }
             Action::Fork => {
                 client

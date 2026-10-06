@@ -151,6 +151,8 @@ fn teardown(terminal: &mut Term) {
 struct Refresh {
     in_flight: bool,
     again: bool,
+    mode_in_flight: bool,
+    queued_mode: Option<(String, String)>,
 }
 
 async fn event_loop(
@@ -232,8 +234,11 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
             requests,
         } => {
             refresh.in_flight = false;
+            if session.id != app.session.id || session.seq < app.session.seq {
+                return vec![Action::Refresh];
+            }
             app.streaming.retain(|id, _| !items.iter().any(|i| i.id() == id && matches!(i, crate::model::Item::Assistant { text, .. } if !text.is_empty())));
-            app.session = session;
+            app.set_session(session);
             app.items = items;
             app.queued = queued;
             app.requests = requests;
@@ -242,12 +247,15 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
                 return vec![Action::Refresh];
             }
         }
+        Msg::ModeChanged { session_id, result } => {
+            return mode_changed(app, refresh, session_id, result);
+        }
         Msg::Sessions(items) => app.open_picker(PickerKind::Sessions, "Sessions", items),
         Msg::Models(items) => app.open_picker(PickerKind::Models, "Models", items),
         Msg::Commands(items) => app.commands = items,
         Msg::Files(files) => app.files = files,
         Msg::Switched(session) => {
-            app.session = session;
+            app.set_session(session);
             app.items.clear();
             app.streaming.clear();
             return vec![Action::Refresh];
@@ -256,6 +264,32 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         Msg::Done => {}
     }
     Vec::new()
+}
+
+fn mode_changed(
+    app: &mut App,
+    refresh: &mut Refresh,
+    session_id: String,
+    result: Result<crate::model::Session, String>,
+) -> Vec<Action> {
+    refresh.mode_in_flight = false;
+    let queued = refresh.queued_mode.take();
+    if session_id == app.session.id {
+        match result {
+            Ok(session) if session.seq >= app.session.seq => app.set_session(session),
+            Ok(_) => {}
+            Err(error) => {
+                if queued.is_none() {
+                    app.mode_selection = None;
+                }
+                app.toast(error);
+            }
+        }
+    }
+    match queued {
+        Some((id, mode)) if id == app.session.id => vec![Action::SwitchMode(mode)],
+        _ => vec![Action::Refresh],
+    }
 }
 
 fn spawn_commands(client: &Client, tx: &mpsc::Sender<Result<Msg, String>>) {
@@ -285,6 +319,13 @@ fn dispatch(
             }
             Action::Refresh if refresh.in_flight => refresh.again = true,
             action => {
+                if let Action::SwitchMode(mode) = &action {
+                    if refresh.mode_in_flight {
+                        refresh.queued_mode = Some((app.session.id.clone(), mode.clone()));
+                        continue;
+                    }
+                    refresh.mode_in_flight = true;
+                }
                 if action == Action::Refresh {
                     refresh.in_flight = true;
                 }
@@ -348,4 +389,106 @@ fn set_title(app: &App) {
         terminal::SetTitle(format!("cyber · {} · {status}", app.session.title))
     );
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+    use crate::model::Session;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn app() -> App {
+        App::new(
+            Session {
+                id: "current".into(),
+                mode: "default".into(),
+                seq: 0,
+                ..Session::default()
+            },
+            Vec::new(),
+            "cyber",
+        )
+    }
+
+    #[test]
+    fn latest_selection_follows_the_first_ack_and_rejection_restores_the_server_selection() {
+        let mut app = app();
+        let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE);
+        app.on_key(key);
+        app.on_key(key);
+        let mut refresh = Refresh {
+            mode_in_flight: true,
+            queued_mode: Some(("current".into(), "plan".into())),
+            ..Refresh::default()
+        };
+        let accepted = Session {
+            id: "current".into(),
+            mode: "accept-edits".into(),
+            seq: 1,
+            ..Session::default()
+        };
+        assert_eq!(
+            mode_changed(&mut app, &mut refresh, "current".into(), Ok(accepted)),
+            vec![Action::SwitchMode("plan".into())]
+        );
+        assert!(app.mode_label().contains("plan (switching)"));
+        mode_changed(
+            &mut app,
+            &mut refresh,
+            "current".into(),
+            Err("mode denied".into()),
+        );
+        assert_eq!(app.mode_label(), "accept-edits");
+        assert_eq!(app.on_key(key), vec![Action::SwitchMode("plan".into())]);
+    }
+
+    #[test]
+    fn old_session_results_cannot_restore_an_old_mode() {
+        let mut app = app();
+        app.session.mode = "auto".into();
+        let mut refresh = Refresh {
+            mode_in_flight: true,
+            queued_mode: Some(("current".into(), "plan".into())),
+            ..Refresh::default()
+        };
+        let old = Session {
+            id: "old-session".into(),
+            mode: "bypass".into(),
+            seq: 50,
+            ..Session::default()
+        };
+        assert_eq!(
+            mode_changed(&mut app, &mut refresh, "old-session".into(), Ok(old)),
+            vec![Action::SwitchMode("plan".into())]
+        );
+        assert_eq!(app.session.mode, "auto");
+        assert_eq!(app.session.id, "current");
+    }
+
+    #[test]
+    fn stale_refresh_does_not_overwrite_a_newer_mode_ack() {
+        let mut app = app();
+        app.session.seq = 10;
+        app.session.mode = "auto".into();
+        let mut refresh = Refresh::default();
+        for (id, seq) in [("current", 9), ("old-session", 20)] {
+            let snapshot = Msg::Snapshot {
+                session: Session {
+                    id: id.into(),
+                    seq,
+                    mode: "bypass".into(),
+                    ..Session::default()
+                },
+                items: Vec::new(),
+                queued: Vec::new(),
+                requests: Vec::new(),
+            };
+            assert_eq!(
+                apply(&mut app, Ok(snapshot), &mut refresh),
+                vec![Action::Refresh]
+            );
+            assert_eq!(app.session.id, "current");
+            assert_eq!(app.session.mode, "auto");
+        }
+    }
 }

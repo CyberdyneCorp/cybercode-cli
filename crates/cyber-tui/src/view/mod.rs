@@ -38,6 +38,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::Permission(step) => overlays::permission(f, app, step, area),
         Overlay::Question(form) => overlays::question(f, app, form, area),
         Overlay::Help => overlays::help(f, app, area),
+        Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
     }
 }
 
@@ -52,7 +53,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(format!("· {} ", s.title), Style::default().fg(t.text)),
         Span::styled(
-            format!("· {} · {} · {status}", s.model, s.mode),
+            format!("· {} · {} · {status}", s.model, app.mode_label()),
             Style::default().fg(t.muted),
         ),
     ]);
@@ -112,7 +113,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_composer(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
-    let title = format!(" {} ", app.session.mode);
+    let title = format!(" {} ", app.mode_label());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(t.border))

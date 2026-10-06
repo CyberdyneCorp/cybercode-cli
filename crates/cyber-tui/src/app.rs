@@ -13,7 +13,7 @@ use crate::model::{Choice, Item, Queued, Request, Session};
 use crate::theme::{self, Theme};
 
 /// Modes Shift+Tab cycles through; the others are set with `/mode`.
-const CYCLE_MODES: [&str; 3] = ["default", "accept-edits", "plan"];
+const CYCLE_MODES: [&str; 4] = ["default", "accept-edits", "plan", "auto"];
 pub const MODES: [&str; 6] = [
     "default",
     "accept-edits",
@@ -147,6 +147,7 @@ pub enum Overlay {
     Permission(PermStep),
     Question(QuestionForm),
     Help,
+    ConfirmBypass,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -159,6 +160,7 @@ pub struct Completion {
 
 pub struct App {
     pub session: Session,
+    pub(crate) mode_selection: Option<String>,
     pub items: Vec<Item>,
     /// Text streaming in for assistant messages not yet durable.
     pub streaming: BTreeMap<String, String>,
@@ -185,6 +187,7 @@ impl App {
     pub fn new(session: Session, history: Vec<String>, theme_name: &str) -> Self {
         Self {
             session,
+            mode_selection: None,
             items: Vec::new(),
             streaming: BTreeMap::new(),
             queued: Vec::new(),
@@ -204,6 +207,29 @@ impl App {
             quit: false,
             focused: true,
         }
+    }
+
+    pub(crate) fn set_session(&mut self, session: Session) {
+        if session.id != self.session.id || self.mode_selection.as_deref() == Some(&session.mode) {
+            self.mode_selection = None;
+        }
+        self.session = session;
+    }
+
+    pub fn mode_label(&self) -> String {
+        match &self.mode_selection {
+            Some(mode) if mode != &self.session.mode => {
+                let mut current = self.session.clone();
+                current.pending_mode = None;
+                format!("{} → {mode} (switching)", current.mode_label())
+            }
+            _ => self.session.mode_label(),
+        }
+    }
+
+    fn request_mode(&mut self, mode: &str) -> Vec<Action> {
+        self.mode_selection = Some(mode.into());
+        vec![Action::SwitchMode(mode.into())]
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {
@@ -252,6 +278,7 @@ impl App {
             Overlay::Picker(_) => self.picker_key(key),
             Overlay::Permission(_) => self.permission_key(key),
             Overlay::Question(_) => self.question_key(key),
+            Overlay::ConfirmBypass => self.confirm_bypass_key(key),
             Overlay::Help => {
                 self.overlay = Overlay::None;
                 Vec::new()
@@ -357,12 +384,35 @@ impl App {
         vec![Action::RemoveQueued(last.message_id)]
     }
 
+    fn select_mode(&mut self, mode: &str) -> Vec<Action> {
+        if mode == "bypass" && self.session.mode != "bypass" {
+            self.overlay = Overlay::ConfirmBypass;
+            Vec::new()
+        } else {
+            self.request_mode(mode)
+        }
+    }
+
+    fn confirm_bypass_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char('y' | 'Y') => {
+                self.overlay = Overlay::None;
+                self.request_mode("bypass")
+            }
+            KeyCode::Esc | KeyCode::Char('n' | 'N') => {
+                self.overlay = Overlay::None;
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     fn cycle_mode(&mut self) -> Vec<Action> {
         let i = CYCLE_MODES
             .iter()
-            .position(|m| *m == self.session.mode)
+            .position(|m| *m == self.mode_selection.as_deref().unwrap_or(&self.session.mode))
             .map_or(0, |i| (i + 1) % CYCLE_MODES.len());
-        vec![Action::SwitchMode(CYCLE_MODES[i].into())]
+        self.request_mode(CYCLE_MODES[i])
     }
 
     /// Keep the autocomplete menu in step with the word at the cursor.
@@ -461,7 +511,7 @@ impl App {
             "compact" => vec![Action::Compact(
                 (!args.is_empty()).then(|| args.to_string()),
             )],
-            "mode" if MODES.contains(&args) => vec![Action::SwitchMode(args.into())],
+            "mode" if MODES.contains(&args) => self.select_mode(args),
             "mode" => {
                 let items = MODES
                     .iter()
@@ -583,7 +633,7 @@ impl App {
         match picker.kind {
             PickerKind::Sessions => vec![Action::Open(choice.key)],
             PickerKind::Models => vec![Action::SwitchModel(choice.key)],
-            PickerKind::Modes => vec![Action::SwitchMode(choice.key)],
+            PickerKind::Modes => self.select_mode(&choice.key),
             PickerKind::Themes => {
                 self.theme = theme::by_name(&choice.key);
                 vec![Action::SaveTheme(self.theme.name)]

@@ -253,6 +253,8 @@ pub struct SessionState {
     pub totals: Totals,
     pub steps_since_input: u32,
     pub open_step: Option<String>,
+    /// Last Turn mode, retained while its tool groups settle.
+    pub turn_mode: Option<String>,
     pub steps: Vec<StepSnapshot>,
     /// File diffs by user message.
     pub diffs: BTreeMap<String, Vec<super::host::FileDiff>>,
@@ -276,10 +278,23 @@ impl SessionState {
             totals: Totals::default(),
             steps_since_input: 0,
             open_step: None,
+            turn_mode: None,
             steps: Vec::new(),
             diffs: BTreeMap::new(),
             revert: None,
         }
+    }
+
+    pub fn effective_mode(&self, running: bool) -> &str {
+        if running {
+            self.turn_mode.as_deref().unwrap_or(&self.info.mode)
+        } else {
+            &self.info.mode
+        }
+    }
+
+    pub fn pending_mode(&self, running: bool) -> Option<&str> {
+        (self.effective_mode(running) != self.info.mode).then_some(self.info.mode.as_str())
     }
 
     /// Rebuild from the full event history.
@@ -567,6 +582,7 @@ impl SessionState {
     }
 
     fn on_step_started(&mut self, s: StepStarted) {
+        self.turn_mode = Some(s.mode.unwrap_or_else(|| self.info.mode.clone()));
         self.open_step = Some(s.message_id.clone());
         self.steps.push(StepSnapshot {
             step_id: s.message_id.clone(),

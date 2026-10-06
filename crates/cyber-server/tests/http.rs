@@ -172,6 +172,39 @@ async fn create_prompt_and_read_messages() {
 }
 
 #[tokio::test]
+async fn session_reports_effective_and_pending_modes_until_the_next_turn() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c0", "clock", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("clock", Behavior::Gated);
+    let api = Api::new(&h);
+    let id = h.session().await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("inspect"))
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    let (status, switched) = api
+        .post(&format!("/sessions/{id}/mode"), json!({"mode":"plan"}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(switched["data"]["mode"], "plan");
+    assert_eq!(switched["data"]["effective_mode"], "default");
+    assert_eq!(switched["data"]["pending_mode"], "plan");
+    let (_, snapshot) = api.get(&format!("/sessions/{id}")).await;
+    assert_eq!(snapshot["data"]["pending_mode"], "plan");
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let (_, idle) = api.get(&format!("/sessions/{id}")).await;
+    assert_eq!(idle["data"]["effective_mode"], "plan");
+    assert!(idle["data"]["pending_mode"].is_null());
+}
+
+#[tokio::test]
 async fn errors_are_tagged() {
     let h = Harness::new(Setup::default());
     let api = Api::new(&h);

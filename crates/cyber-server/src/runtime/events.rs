@@ -145,6 +145,9 @@ pub struct SystemAdded {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepStarted {
+    /// Permission mode pinned for inference and all tools of this Turn.
+    #[serde(default)]
+    pub mode: Option<String>,
     pub message_id: String,
     pub provider: String,
     pub model: String,

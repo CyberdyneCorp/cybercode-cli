@@ -12,6 +12,7 @@
     `env`/`exec` option values, command lookups and `find` global options are covered; unsupported/dynamic wrappers refuse automatic approval. Direct/wrapped shell heredocs and here-strings, including forwarding to a shell in a pipeline, now have regression coverage. Expansion and dynamic command names require manual review. Literal scalar bindings, dynamic command names and function invocation contexts now have regression coverage, with subshell isolation and conservative branch/loop mutation handling. Advanced bindings, additional wrappers and remaining shell-flow cases are still open.
   - [ ] PowerShell and Python/JavaScript inline removal analysis before classifier approval is enabled.
 - [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
-- [ ] Complete the four-mode cycle and pending/effective TUI state with tests.
+- [x] Complete the four-mode cycle and pending/effective TUI state with tests. Turn modes are pinned durably through tool settlement, with legacy replay, rapid-selection serialization and TUI bypass confirmation.
+- [ ] Enforce org-policy mode restrictions; the full permission-mode requirement remains open.
 - [ ] Add Windows CI; run existing platform, recovery and trust regressions.
 - [ ] Update roadmap and capability specs with verified M1.1 behavior.

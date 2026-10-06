@@ -319,6 +319,18 @@
             "type": "string",
             "description": "`idle` or `running`."
           },
+          "effective_mode": {
+            "type": "string",
+            "description": "Mode of the running Turn, or the selected mode while idle.",
+            "default": ""
+          },
+          "pending_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Selected mode waiting for the next Turn."
+          },
           "seq": {
             "type": "integer",
             "format": "int64",

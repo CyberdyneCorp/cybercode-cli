@@ -426,6 +426,7 @@ impl Inner {
         request.cache_key = Some(state.info.id.clone());
         let message_id = cyber_core::ids::new_id("msg");
         let payload = StepStarted {
+            mode: Some(state.info.mode.clone()),
             message_id: message_id.clone(),
             provider: resolved.provider.clone(),
             model: resolved.model.clone(),
@@ -674,7 +675,9 @@ impl Inner {
                 .iter()
                 .map(|c| c.call_id.clone())
                 .collect();
-            (turn_context(&state, resolved), paused)
+            let mut turn = turn_context(&state, resolved);
+            turn.mode = state.effective_mode(true).into();
+            (turn, paused)
         };
         let groups = groups(calls, defs);
         for (index, group) in groups.iter().enumerate() {

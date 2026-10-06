@@ -29,6 +29,11 @@ pub struct Session {
     pub info: SessionInfo,
     /// `idle` or `running`.
     pub status: String,
+    /// Mode of the running Turn, or the selected mode while idle.
+    #[serde(default)]
+    pub effective_mode: String,
+    /// Selected mode waiting for the next Turn.
+    pub pending_mode: Option<String>,
     /// Sequence of the last durable event; stream from here to follow new activity.
     pub seq: i64,
     pub totals: Totals,
@@ -246,7 +251,12 @@ fn session(state: &AppState, s: SessionState) -> Session {
     } else {
         "idle"
     };
+    let running = status == "running";
+    let effective_mode = s.effective_mode(running).to_string();
+    let pending_mode = s.pending_mode(running).map(str::to_string);
     Session {
+        effective_mode,
+        pending_mode,
         status: status.into(),
         seq: s.last_seq,
         totals: s.totals,

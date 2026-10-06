@@ -325,6 +325,112 @@ fn shift_tab_cycles_modes_and_ctrl_c_quits_when_empty() {
 }
 
 #[test]
+fn mode_cycle_includes_auto_and_excludes_unattended_modes() {
+    for (current, next) in [
+        ("default", "accept-edits"),
+        ("accept-edits", "plan"),
+        ("plan", "auto"),
+        ("auto", "default"),
+        ("bypass", "default"),
+        ("dont-ask", "default"),
+    ] {
+        let mut s = session(false);
+        s.mode = current.into();
+        let mut app = App::new(s, Vec::new(), "cyber");
+        assert_eq!(
+            app.on_key(key(KeyCode::BackTab)),
+            vec![Action::SwitchMode(next.into())]
+        );
+    }
+}
+
+#[test]
+fn pending_mode_keeps_the_effective_mode_visible_and_cycles_the_selection() {
+    let s = Session::parse(
+        &json!({"mode":"plan", "effective_mode":"default", "pending_mode":"plan", "status":"running"}),
+    );
+    let mut app = App::new(s, Vec::new(), "cyber");
+    assert!(screen(&app).contains("default → plan (pending)"));
+    assert!(screen(&app).contains("Esc to interrupt"));
+    assert_eq!(
+        app.on_key(key(KeyCode::BackTab)),
+        vec![Action::SwitchMode("auto".into())]
+    );
+    app.set_session(Session::parse(
+        &json!({"mode":"auto", "effective_mode":"plan", "pending_mode":"auto", "status":"running"}),
+    ));
+    assert!(screen(&app).contains("⏸ plan → auto (pending)"));
+    app.set_session(Session::parse(
+        &json!({"mode":"auto", "effective_mode":"auto", "pending_mode":null, "status":"running"}),
+    ));
+    let visible = screen(&app);
+    assert!(!visible.contains("(pending)"));
+    assert!(!visible.contains("(switching)"));
+    assert_eq!(
+        Session::parse(&json!({"mode":"auto"})).mode_label(),
+        "auto",
+        "older servers retain a mode indicator"
+    );
+}
+
+#[test]
+fn bypass_requires_confirmation_from_slash_command_and_picker() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    typed(&mut app, "/mode bypass");
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert!(matches!(app.overlay, Overlay::ConfirmBypass));
+    assert!(screen(&app).contains("without normal permission prompts"));
+    assert!(
+        app.on_key(key(KeyCode::Enter)).is_empty(),
+        "Enter does not accidentally confirm"
+    );
+    assert!(app.on_key(key(KeyCode::Esc)).is_empty());
+    assert_eq!(app.session.mode, "default");
+    typed(&mut app, "/mode");
+    app.on_key(key(KeyCode::Enter));
+    let Overlay::Picker(picker) = &mut app.overlay else {
+        panic!("mode picker")
+    };
+    picker.selected = picker
+        .filtered
+        .iter()
+        .position(|i| picker.items[*i].key == "bypass")
+        .unwrap();
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert!(matches!(app.overlay, Overlay::ConfirmBypass));
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('y'))),
+        vec![Action::SwitchMode("bypass".into())]
+    );
+}
+
+#[test]
+fn rapid_cycle_tracks_latest_selection_until_acknowledged() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    assert_eq!(
+        app.on_key(key(KeyCode::BackTab)),
+        vec![Action::SwitchMode("accept-edits".into())]
+    );
+    assert_eq!(
+        app.on_key(key(KeyCode::BackTab)),
+        vec![Action::SwitchMode("plan".into())]
+    );
+    assert!(screen(&app).contains("default → plan (switching)"));
+    let mut intermediate = session(true);
+    intermediate.mode = "accept-edits".into();
+    intermediate.effective_mode = "default".into();
+    intermediate.pending_mode = Some("accept-edits".into());
+    app.set_session(intermediate);
+    assert!(screen(&app).contains("default → plan (switching)"));
+    let mut accepted = session(true);
+    accepted.mode = "plan".into();
+    accepted.effective_mode = "default".into();
+    accepted.pending_mode = Some("plan".into());
+    app.set_session(accepted);
+    assert!(screen(&app).contains("default → plan (pending)"));
+}
+
+#[test]
 fn the_session_picker_renames_archives_and_confirms_deletes() {
     let mut app = App::new(session(false), Vec::new(), "cyber");
     let items = vec![crate::model::Choice {

@@ -7,6 +7,15 @@
 - **WHEN** the user presses Shift+Tab twice from `default` on a P1 build
 - **THEN** the Session mode becomes `plan`
 
+#### Scenario: A switch during inference applies to the next Turn's tools
+- **WHEN** the user changes mode while a model response is in flight
+- **THEN** all tool groups from that response SHALL use the mode pinned at Turn start, and the next Turn SHALL use the new selection
+- **AND** replay SHALL preserve that distinction, including legacy start events without an explicit mode field
+
+#### Scenario: Pending mode is visible after reconnect
+- **WHEN** a selected mode differs from the mode of a running Turn
+- **THEN** Session responses SHALL expose `effective_mode` and `pending_mode`, and the TUI SHALL display the effective mode with the pending selection and offer interrupt
+
 ### Requirement: auto mode classifier
 (P1) In `auto`, every request that would be `ask` SHALL be reviewed by a classifier using `model_roles.evaluator`, else `small_model`. The classifier SHALL receive the tool call, the last 20 messages, the Location and the user's stated boundaries. It SHALL return `allow` or `block` with a reason. The system SHALL block irreversible or out-of-scope actions (force pushes, deploys, deletes outside the Location, credential access, data exfiltration to non-allowlisted hosts). After 3 consecutive blocks in one Drain, or when the classifier is unavailable, the system SHALL fall back to `ask`, or to `deny` when no user is attached. Each decision SHALL be recorded as `permission.auto_decided.1` with the reason.
 

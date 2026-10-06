@@ -10,6 +10,8 @@ pub struct Session {
     pub model: String,
     pub agent: String,
     pub mode: String,
+    pub effective_mode: String,
+    pub pending_mode: Option<String>,
     pub running: bool,
     pub seq: i64,
     pub cost: f64,
@@ -18,6 +20,23 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn mode_label(&self) -> String {
+        let effective = if self.effective_mode.is_empty() {
+            &self.mode
+        } else {
+            &self.effective_mode
+        };
+        let current = if effective == "plan" {
+            "⏸ plan"
+        } else {
+            effective
+        };
+        match &self.pending_mode {
+            Some(pending) => format!("{current} → {pending} (pending)"),
+            None => current.to_string(),
+        }
+    }
+
     pub fn parse(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
         Self {
@@ -27,6 +46,11 @@ impl Session {
             model: s("model"),
             agent: s("agent"),
             mode: s("mode"),
+            effective_mode: v["effective_mode"]
+                .as_str()
+                .unwrap_or_else(|| v["mode"].as_str().unwrap_or_default())
+                .into(),
+            pending_mode: v["pending_mode"].as_str().map(str::to_string),
             running: v["status"] == "running",
             seq: v["seq"].as_i64().unwrap_or(-1),
             cost: v["totals"]["cost"].as_f64().unwrap_or(0.0),

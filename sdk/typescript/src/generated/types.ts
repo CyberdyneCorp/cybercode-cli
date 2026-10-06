@@ -427,6 +427,10 @@ export type Session = {
   max_steps?: number | null;
   /** `idle` or `running`. */
   status: string;
+  /** Mode of the running Turn, or the selected mode while idle. */
+  effective_mode?: string;
+  /** Selected mode waiting for the next Turn. */
+  pending_mode?: string | null;
   /** Sequence of the last durable event; stream from here to follow new activity. */
   seq: number;
   totals: Totals;

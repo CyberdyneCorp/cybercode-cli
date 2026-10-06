@@ -342,3 +342,22 @@ pub fn completion(f: &mut Frame, app: &App, c: &Completion, composer: Rect) {
         rect,
     );
 }
+
+pub(super) fn confirm_bypass(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered(area, 70, 6);
+    let lines = vec![
+        Line::from(Span::styled(
+            "Tools can run without normal permission prompts.",
+            Style::default().fg(app.theme.warning),
+        )),
+        Line::from(""),
+        Line::from("y to enable bypass · n / Esc to cancel"),
+    ];
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(frame(app, "Enable bypass mode?")),
+        rect,
+    );
+}
