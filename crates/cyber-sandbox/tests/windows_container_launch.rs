@@ -880,10 +880,21 @@ fn existing_tree_worker(root: &Path) -> std::io::Result<()> {
 }
 
 fn tree_worker(root: &Path) -> std::io::Result<()> {
-    let _descendant = std::process::Command::new(std::env::current_exe()?)
+    let executable = std::env::current_exe().map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("Resolve descendant executable: {error}"),
+        )
+    })?;
+    let readable = std::fs::File::open(&executable).map_err(|error| {
+        std::io::Error::new(error.kind(), format!("Read descendant executable: {error}"))
+    })?;
+    drop(readable);
+    let _descendant = std::process::Command::new(executable)
         .args(arguments())
         .env("CYBER_CONTAINER_ROLE", "wait")
-        .spawn()?;
+        .spawn()
+        .map_err(|error| std::io::Error::new(error.kind(), format!("Spawn descendant: {error}")))?;
     std::fs::write(root.join("write.txt"), _descendant.id().to_string())?;
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::fs::read_to_string(root.join("read.txt"))? != "finish" {
@@ -985,6 +996,17 @@ fn probe(root: &Path) -> i32 {
         std::fs::write(root.join("write.txt"), diagnostic.to_string()).unwrap();
         return 51;
     }
+    if let Err(error) = winsock_startup() {
+        std::fs::write(
+            root.join("write.txt"),
+            serde_json::json!({
+                "stage": "winsock-startup", "code": error.raw_os_error(), "error": error.to_string()
+            })
+            .to_string(),
+        )
+        .unwrap();
+        return 58;
+    }
     let address = std::env::var("CYBER_CONTAINER_ADDRESS")
         .unwrap()
         .parse()
@@ -993,6 +1015,24 @@ fn probe(root: &Path) -> i32 {
         return 46;
     }
     0
+}
+
+fn winsock_startup() -> std::io::Result<()> {
+    use windows_sys::Win32::Networking::WinSock::{
+        WSACleanup, WSADATA, WSAGetLastError, WSAStartup,
+    };
+    // Diagnose initialization before Rust's networking path, which panics on failure.
+    let mut data: WSADATA = unsafe { std::mem::zeroed() };
+    let result = unsafe { WSAStartup(0x0202, &mut data) };
+    if result != 0 {
+        return Err(std::io::Error::from_raw_os_error(result));
+    }
+    if unsafe { WSACleanup() } != 0 {
+        return Err(std::io::Error::from_raw_os_error(unsafe {
+            WSAGetLastError()
+        }));
+    }
+    Ok(())
 }
 
 fn security_rights_denied(root: &Path) -> Result<(), serde_json::Value> {
