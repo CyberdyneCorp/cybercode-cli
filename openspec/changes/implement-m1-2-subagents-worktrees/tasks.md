@@ -1,5 +1,6 @@
-- [x] Implement shared worktree settings, documented defaults and name validation; connect merged configuration validation and trust regressions. All 52 core tests, core Clippy and 57 strict specification checks pass locally; this does not verify native Git lifecycle.
+- [x] Implement shared worktree settings, documented defaults and name validation; connect merged configuration validation and trust regressions. All 62 core tests, local/core Windows cross-target Clippy and 57 strict specification checks pass locally; this does not verify native Git lifecycle.
 - [ ] Implement managed Git creation/reuse and per-repository cross-process locking.
+  - [ ] Verify real repository creation, base/root/branch selection, reuse preserving edits, shared-directory contention, failure/cancellation ownership and runtime execution-port integration.
   - [ ] Verify an owned nonblocking repository file lock across independent processes, normal disposal and forced owner termination; integrate it with the shared-Git-directory lifecycle manager.
 - [ ] Implement `.worktreeinclude` copying and sandboxed setup with streamed output.
 - [ ] Persist ownership and implement clean/dirty/ahead-aware cleanup, active-session refusal and recovery.

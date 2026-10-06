@@ -50,12 +50,12 @@ fn independent_processes_contend_and_owner_drop_releases_without_truncation() {
     let repo = tempfile::tempdir().unwrap();
     let lock_path = repo.path().join("cyber-worktree.lock");
     std::fs::write(&lock_path, "persistent metadata").unwrap();
-    let owner = RepositoryLock::try_acquire(repo.path()).unwrap().unwrap();
-    assert_probe(repo.path(), "busy");
     assert_eq!(
         std::fs::read_to_string(&lock_path).unwrap(),
         "persistent metadata"
     );
+    let owner = RepositoryLock::try_acquire(repo.path()).unwrap().unwrap();
+    assert_probe(repo.path(), "busy");
     drop(owner);
     assert_probe(repo.path(), "acquired");
     assert_eq!(

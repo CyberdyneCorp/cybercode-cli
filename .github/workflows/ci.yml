@@ -46,8 +46,8 @@ jobs:
         run: cargo build --locked --workspace --bins
       - name: Smoke test CLI
         run: .\target\debug\cyber.exe --version
-      - name: Native worktree configuration and cross-process lock ownership
-        run: cargo test --locked -p cyber-core --test worktrees --test worktree_lock --test config
+      - name: Native worktree configuration, repository creation and lock ownership
+        run: cargo test --locked -p cyber-core --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Unsupported Unix bridge refuses execution
         run: cargo test --locked -p cyber-sandbox --test bridge
       - name: Native environment credential masking

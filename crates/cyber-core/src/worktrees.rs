@@ -1,5 +1,8 @@
 //! Shared configuration and names for managed worktrees.
 
+mod repository;
+pub use repository::{GitExecution, GitFuture, Managed, Repository};
+
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -129,5 +132,12 @@ impl RepositoryLock {
             Err(std::fs::TryLockError::WouldBlock) => Ok(None),
             Err(std::fs::TryLockError::Error(error)) => Err(error),
         }
+    }
+}
+
+impl Drop for RepositoryLock {
+    fn drop(&mut self) {
+        // Release explicitly before close, including transient inherited descriptors.
+        let _ = self._file.unlock();
     }
 }

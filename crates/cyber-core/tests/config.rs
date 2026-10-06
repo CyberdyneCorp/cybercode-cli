@@ -100,10 +100,8 @@ fn nearest_project_document_wins_and_sources_are_attributed() {
     );
     let resolved = config::load(&f.request(&pkg, &[])).unwrap();
     assert_eq!(resolved.value["model"], "ollama/qwen3");
-    assert_eq!(
-        resolved.sources["/model"],
-        format!("project:{}", nested.display())
-    );
+    let source = resolved.sources["/model"].strip_prefix("project:").unwrap();
+    assert_eq!(Path::new(source), nested);
     assert_eq!(
         resolved.sources["/mode"],
         format!("global:{}", f.paths.config.join("cyber.jsonc").display())

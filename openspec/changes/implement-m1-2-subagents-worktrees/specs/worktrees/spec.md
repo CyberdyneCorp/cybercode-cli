@@ -30,3 +30,18 @@
 #### Scenario: Independent repository locks
 - **WHEN** two processes operate on different repositories
 - **THEN** a worktree lock in one repository does not prevent acquiring the other
+
+
+## ADDED Requirements
+
+### Requirement: Managed creation ownership
+(P1) Managed Git worktree creation SHALL hold the shared repository lock, resolve a commit base and record pending ownership before invoking creation through the runtime's sandboxed Git execution port. It SHALL refuse unowned existing paths and preserve pending creation artifacts on failure or cancellation. Reuse SHALL verify the common repository and branch without resetting user edits.
+
+#### Scenario: Interrupted creation remains recoverable
+- **WHEN** Git creation fails after pending ownership is recorded
+- **THEN** the pending record and any resulting path or branch remain available for recovery
+- **AND** a later request does not blindly repeat checkout
+
+#### Scenario: Unowned target is preserved
+- **WHEN** the requested worktree target exists without managed ownership
+- **THEN** creation fails before mutation and its contents remain unchanged

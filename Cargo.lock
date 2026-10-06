@@ -695,6 +695,7 @@ name = "cyber-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures",
  "serde",
  "serde_json",
  "serde_yaml_ng",
