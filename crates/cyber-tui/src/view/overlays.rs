@@ -378,3 +378,18 @@ pub(super) fn confirm_bypass(f: &mut Frame, app: &App, area: Rect) {
         rect,
     );
 }
+
+pub(super) fn confirm_stop_tasks(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered(area, 70, 6);
+    let lines = vec![
+        Line::from("Stop all running background tasks of this Session?"),
+        Line::from("y / Enter to stop · n / Esc to cancel"),
+    ];
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(frame(app, "Stop background tasks?")),
+        rect,
+    );
+}

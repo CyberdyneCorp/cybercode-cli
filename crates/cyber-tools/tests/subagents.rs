@@ -334,7 +334,6 @@ async fn concurrency_waits_fifo_without_creating_queued_children() {
 #[tokio::test]
 async fn unsupported_spawn_options_fail_before_creating_sessions() {
     for option in [
-        json!({"background":true}),
         json!({"fork":true}),
         json!({"resume":"general"}),
         json!({"isolation":"worktree"}),

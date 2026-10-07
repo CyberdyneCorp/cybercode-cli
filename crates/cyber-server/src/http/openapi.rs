@@ -111,6 +111,23 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .body::<StopService>(g)
         .ok::<StopAccepted>(g),
+        op(
+            "get",
+            "/jobs",
+            "v1.job.list",
+            "List durable background tasks",
+        )
+        .query(&["session_id", "limit", "cursor"])
+        .ok::<Page<crate::runtime::Job>>(g),
+        op("get", "/jobs/{id}", "v1.job.get", "Read a background task")
+            .ok::<Data<crate::runtime::Job>>(g),
+        op(
+            "post",
+            "/jobs/{id}/stop",
+            "v1.job.stop",
+            "Cancel a background task and await settlement",
+        )
+        .ok::<Data<crate::runtime::Job>>(g),
         op("get", "/openapi.json", "v1.health.openapi", "This document"),
         op("get", "/location", "v1.location.get", "Resolve a Location")
             .located()

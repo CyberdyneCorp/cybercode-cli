@@ -1,4 +1,4 @@
-//! Foreground ownership: permits remain held until a canceled child has settled.
+//! Child ownership: permits remain held until a canceled child has settled.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -43,10 +43,11 @@ impl ChildGuard {
         let stop = CancellationToken::new();
         let finished = CancellationToken::new();
         let (cancel, done) = (stop.clone(), finished.clone());
+        let weak = runtime.downgrade();
         let owner = tokio::spawn(async move {
             tokio::select! {
                 biased;
-                _ = cancel.cancelled() => { let _ = runtime.interrupt(&id).await; }
+                _ = cancel.cancelled() => { if let Some(runtime) = weak.upgrade() { let _ = runtime.interrupt(&id).await; } }
                 _ = done.cancelled() => {}
             }
             drop(permit);

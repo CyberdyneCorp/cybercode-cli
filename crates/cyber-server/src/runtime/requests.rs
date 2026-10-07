@@ -293,6 +293,26 @@ impl Inner {
         true
     }
 
+    pub(crate) async fn abandon_requests(&self, session: &str) -> Result<(), RuntimeError> {
+        for request in self.owned_pending(session) {
+            if let Some(waiter) = self.take_waiter(&request.id) {
+                match waiter.reply {
+                    Reply::Permission(sender) => {
+                        let reply = PermissionReply::Reject { message: None };
+                        self.record_reply(&request, &reply).await?;
+                        let _ = sender.send(reply);
+                    }
+                    Reply::Question(sender) => {
+                        self.record_question_reply(&request, &QuestionReply::Dismissed)
+                            .await?;
+                        let _ = sender.send(QuestionReply::Dismissed);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn pending(&self, session_id: Option<&str>) -> Vec<PendingRequest> {
         self.waiters
             .lock()

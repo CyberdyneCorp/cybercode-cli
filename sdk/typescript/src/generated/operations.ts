@@ -98,6 +98,28 @@ export interface Operations {
     body: undefined;
     response: unknown;
   };
+  "v1.job.get": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Job;
+  };
+  "v1.job.list": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      limit?: QueryValue;
+      cursor?: QueryValue;
+    };
+    body: undefined;
+    response: S.Page_Job;
+  };
+  "v1.job.stop": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Job;
+  };
   "v1.location.get": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -441,6 +463,42 @@ export const operations = {
     body: "none",
     located: false,
     unwrap: false,
+    stream: false,
+  },
+  "v1.job.get": {
+    tag: "job",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/jobs/{id}",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.job.list": {
+    tag: "job",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/jobs",
+    pathParams: [],
+    query: ["session_id", "limit", "cursor"],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.job.stop": {
+    tag: "job",
+    name: "stop",
+    method: "POST",
+    path: "/api/v1/jobs/{id}/stop",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.location.get": {
@@ -946,6 +1004,17 @@ export function createGroups(caller: Caller) {
       /** This document (`GET /api/v1/openapi.json`) */
       openapi: (options?: RequestOptions): Promise<Operations["v1.health.openapi"]["response"]> =>
         caller.call("v1.health.openapi", {}, options),
+    },
+    job: {
+      /** Read a background task (`GET /api/v1/jobs/{id}`) */
+      get: (id: string, options?: RequestOptions): Promise<Operations["v1.job.get"]["response"]> =>
+        caller.call("v1.job.get", { path: { id } }, options),
+      /** List durable background tasks (`GET /api/v1/jobs`) */
+      list: (query?: Operations["v1.job.list"]["query"], options?: RequestOptions): Promise<Operations["v1.job.list"]["response"]> =>
+        caller.call("v1.job.list", { query }, options),
+      /** Cancel a background task and await settlement (`POST /api/v1/jobs/{id}/stop`) */
+      stop: (id: string, options?: RequestOptions): Promise<Operations["v1.job.stop"]["response"]> =>
+        caller.call("v1.job.stop", { path: { id } }, options),
     },
     location: {
       /** Resolve a Location (`GET /api/v1/location`) */

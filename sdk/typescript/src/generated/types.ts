@@ -129,6 +129,10 @@ export type Data_Array_of_PendingRequest = {
   data: PendingRequest[];
 };
 
+export type Data_Job = {
+  data: Job;
+};
+
 export type Data_LocationInfo = {
   data: LocationInfo;
 };
@@ -231,6 +235,29 @@ export type InboxRow = {
 
 export type InputStatus = "pending" | "held" | "promoted" | "refused";
 
+export type Job = {
+  id: string;
+  session_id: string;
+  child_id: string;
+  name: string;
+  kind: string;
+  description: string;
+  status: JobStatus;
+  started_ms: number;
+  ended_ms?: number | null;
+  exit_code?: number | null;
+  output_path?: string | null;
+  result?: unknown;
+  error?: string | null;
+  /** Known cost lower bound; unpriced marks an unknown total. */
+  cost: number;
+  unpriced?: boolean;
+  tokens: number;
+  notified: boolean;
+};
+
+export type JobStatus = "running" | "completed" | "error" | "cancelled" | "interrupted";
+
 /** A Location-scoped response. */
 export type Located_Array_of_AgentInfo = {
   location: LocationInfo;
@@ -325,6 +352,11 @@ export type ModelInfo = {
   available: boolean;
   context_limit: number;
   reasoning: boolean;
+};
+
+export type Page_Job = {
+  data: Job[];
+  cursor: Cursor;
 };
 
 export type Page_Message = {

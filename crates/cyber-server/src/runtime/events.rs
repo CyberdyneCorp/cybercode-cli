@@ -344,6 +344,7 @@ pub fn registry() -> EventRegistry {
     for kind in ALL {
         registry.register(kind).expect("valid event types");
     }
+    super::jobs::register(&mut registry);
     registry.projector(project);
     crate::worktrees::register(&mut registry);
     registry
@@ -356,6 +357,7 @@ fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
 fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
     let id = &e.aggregate_id;
     let d = &e.data;
+    super::jobs::project(tx, e)?;
     match e.kind.as_str() {
         CREATED => insert_session(tx, e)?,
         ADMITTED => {

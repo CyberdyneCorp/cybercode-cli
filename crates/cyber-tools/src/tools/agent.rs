@@ -1,9 +1,9 @@
-//! Permission-gated foreground child Sessions using the shared runtime.
+//! Permission-gated foreground and background child Sessions using the shared runtime.
 
 use cyber_core::config::AgentProfile;
 use cyber_server::runtime::{
     Admission, CallStatus, CreateSession, Delivery, Entry, RetrySafety, Runtime, SessionInfo,
-    SessionState, StructuredSchema, ToolDef,
+    SessionState, StructuredSchema, ToolDef, WeakRuntime,
 };
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
@@ -19,7 +19,7 @@ impl Tool for Agent {
     fn def(&self) -> ToolDef {
         def(
             "agent",
-            "Delegate a focused task to a foreground subagent and return its final answer and Session ID.",
+            "Delegate a focused task to a subagent; wait for its final result or start a background task with completion handback.",
             json!({"type":"object", "required":["prompt"], "additionalProperties":false, "properties":{
                 "prompt":{"type":"string"}, "agent":{"type":"string"}, "description":{"type":"string"},
                 "model":{"type":"string"}, "output_schema":{}, "isolation":{"type":"string", "enum":["none","worktree"]},
@@ -36,6 +36,8 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    background: bool,
+    name: Option<String>,
     output_schema: Option<StructuredSchema>,
     profile: AgentProfile,
     description: String,
@@ -83,7 +85,23 @@ fn configured(ctx: &Ctx<'_>) -> Result<Spawn, ToolError> {
         .map(StructuredSchema::new)
         .transpose()
         .map_err(failed)?;
+    let background = input
+        .get("background")
+        .and_then(Value::as_bool)
+        .unwrap_or(profile.background);
+    let name = input
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if name
+        .as_ref()
+        .is_some_and(|name| name.trim().is_empty() || name.len() > 128)
+    {
+        return Err(failed("name must contain 1–128 bytes"));
+    }
     Ok(Spawn {
+        background,
+        name,
         output_schema,
         profile,
         description: description.into(),
@@ -118,13 +136,12 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<(), ToolError
         .and_then(Value::as_bool)
         .unwrap_or(profile.background);
     if isolation != "none"
-        || background
         || input.get("fork").and_then(Value::as_bool).unwrap_or(false)
         || input.get("resume").is_some()
-        || input.get("name").is_some()
+        || (!background && input.get("name").is_some())
     {
         return Err(failed(
-            "This agent execution path currently supports fresh foreground Sessions with isolation none; requested orchestration is not implemented yet",
+            "This agent execution path currently supports fresh Sessions with isolation none; requested orchestration is not implemented yet",
         ));
     }
     Ok(())
@@ -179,8 +196,16 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
         _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted),
         permit = pool.acquire_owned() => permit.map_err(|e| failed(e.to_string()))?,
     };
+    revalidate_spawn(ctx, &mut spawn).await?;
+    execute_child(ctx, runtime, parent, spawn, permit).await
+}
+
+async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolError> {
     // Queued or approved calls may outlive a profile/configuration reload.
-    spawn.profile = configured(ctx)?.profile;
+    let latest = configured(ctx)?;
+    spawn.profile = latest.profile;
+    spawn.background = latest.background;
+    spawn.name = latest.name;
     let policy = ctx.host.policy(ctx.inv).await.map_err(failed)?;
     let request = Request {
         action: "agent".into(),
@@ -190,7 +215,7 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
     if let Decision::Deny(reason) = policy.decide(&request) {
         return Err(failed(format!("Permission denied: {reason}")));
     }
-    execute_child(ctx, runtime, parent, spawn, permit).await
+    Ok(())
 }
 
 fn child_mode(parent: &str, requested: Option<&str>) -> String {
@@ -211,24 +236,126 @@ async fn execute_child(
     spawn: Spawn,
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<String, ToolError> {
+    let mut spawn = spawn;
+    let reservation = reserve_background(ctx, &runtime, &parent, &mut spawn).await?;
     let id = cyber_core::ids::new_id("ses");
     let guard = ChildGuard::new(runtime.clone(), id.clone(), permit);
     let result = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
-        result = create_and_wait(ctx, &runtime, &parent, &spawn, &id) => result,
+        result = create_child(ctx, &runtime, &parent, &spawn, &id) => result,
+    };
+    if let Err(error) = result {
+        guard.settle(true).await;
+        return Err(error);
+    }
+    let weak = runtime.downgrade();
+    let bytes = spawn.result_bytes;
+    let dir = ctx.host.opts.tool_output_dir.clone();
+    let structured = spawn.output_schema.is_some();
+    if spawn.background {
+        let run = ChildRun {
+            weak,
+            id,
+            structured,
+            bytes,
+            dir,
+        };
+        return handoff_background(&runtime, &parent, spawn, reservation, guard, run).await;
+    }
+    let result = tokio::select! {
+        biased;
+        _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
+        result = finish_child(&weak, &id, structured, bytes, dir) => result,
     };
     guard.settle(result.is_err()).await;
     result
 }
 
-async fn create_and_wait(
+struct ChildRun {
+    weak: WeakRuntime,
+    id: String,
+    structured: bool,
+    bytes: usize,
+    dir: std::path::PathBuf,
+}
+
+async fn reserve_background(
+    ctx: &Ctx<'_>,
+    runtime: &Runtime,
+    parent: &SessionInfo,
+    spawn: &mut Spawn,
+) -> Result<Option<cyber_server::runtime::JobAdmission>, ToolError> {
+    if !spawn.background {
+        return Ok(None);
+    }
+    let reservation = tokio::select! { biased; _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted), result=runtime.reserve_child_job(&parent.id) => result.map_err(|e| failed(e.to_string()))? };
+    revalidate_spawn(ctx, spawn).await?;
+    if !spawn.background {
+        return Ok(None);
+    }
+    let jobs = runtime
+        .jobs(Some(&parent.id))
+        .map_err(|e| failed(e.to_string()))?;
+    if let Some(name) = &spawn.name {
+        if let Some(existing) = jobs.iter().find(|job| job.name == *name) {
+            let status = if existing.status == cyber_server::runtime::JobStatus::Running {
+                "active"
+            } else {
+                "used"
+            };
+            return Err(failed(format!("Background name already {status}: {name}")));
+        }
+    } else {
+        let used = jobs
+            .into_iter()
+            .map(|job| job.name)
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut name = spawn.profile.name.clone();
+        let mut suffix = 2;
+        while used.contains(&name) {
+            name = format!("{}-{suffix}", spawn.profile.name);
+            suffix += 1;
+        }
+        spawn.name = Some(name);
+    }
+    Ok(Some(reservation))
+}
+
+async fn handoff_background(
+    runtime: &Runtime,
+    parent: &SessionInfo,
+    spawn: Spawn,
+    reservation: Option<cyber_server::runtime::JobAdmission>,
+    guard: ChildGuard,
+    run: ChildRun,
+) -> Result<String, ToolError> {
+    let id = run.id.clone();
+    let work = Box::pin(async move {
+        let result = finish_child(&run.weak, &run.id, run.structured, run.bytes, run.dir).await;
+        guard.settle(result.is_err()).await;
+        result
+            .and_then(|text| serde_json::from_str(&text).map_err(|e| failed(e.to_string())))
+            .map_err(|e| match e {
+                ToolError::Failed(text) => text,
+                ToolError::Aborted => "Subagent interrupted".into(),
+            })
+    });
+    let name = spawn.name.unwrap_or(spawn.profile.name);
+    let job = runtime
+        .start_child_job(&parent.id, &id, name, spawn.description, reservation, work)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    Ok(json!({"id":id,"job_id":job.id,"name":job.name,"state":"running"}).to_string())
+}
+
+async fn create_child(
     ctx: &Ctx<'_>,
     runtime: &Runtime,
     parent: &SessionInfo,
     spawn: &Spawn,
     id: &str,
-) -> Result<String, ToolError> {
+) -> Result<(), ToolError> {
     let model = ctx.inv.input.get("model").and_then(Value::as_str);
     runtime
         .create_session(CreateSession {
@@ -238,7 +365,16 @@ async fn create_and_wait(
             worktree_id: parent.worktree_id.clone(),
             parent_id: Some(parent.id.clone()),
             agent: Some(spawn.profile.name.clone()),
-            title: Some(format!("{} (@{})", spawn.description, spawn.profile.name)),
+            title: Some(if spawn.background {
+                format!(
+                    "{}: {} (@{})",
+                    spawn.name.as_deref().unwrap_or(&spawn.profile.name),
+                    spawn.description,
+                    spawn.profile.name
+                )
+            } else {
+                format!("{} (@{})", spawn.description, spawn.profile.name)
+            }),
             model: model.unwrap_or(&parent.model).into(),
             model_is_default: model.is_none(),
             mode: Some(child_mode(
@@ -255,11 +391,28 @@ async fn create_and_wait(
         .admit(id, admission)
         .await
         .map_err(|e| failed(e.to_string()))?;
-    runtime.wait_idle(id).await;
-    if spawn.output_schema.is_some() {
-        return structured_result(runtime, id).await;
+    Ok(())
+}
+
+async fn finish_child(
+    weak: &WeakRuntime,
+    id: &str,
+    structured: bool,
+    bytes: usize,
+    dir: std::path::PathBuf,
+) -> Result<String, ToolError> {
+    weak.wait_idle(id)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    if structured {
+        return structured_result(weak, id).await;
     }
-    let state = runtime.state(id).await.map_err(|e| failed(e.to_string()))?;
+    let state = weak
+        .upgrade()
+        .ok_or_else(|| failed("Server stopped"))?
+        .state(id)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
     let answer = state
         .entries
         .iter()
@@ -275,24 +428,24 @@ async fn create_and_wait(
     if !answer.finished || !answer.calls.is_empty() {
         return Err(failed("Subagent stopped without a completed answer"));
     }
-    render_result(ctx, spawn, id, &answer.text)
+    render_result(bytes, dir, id, &answer.text)
 }
 
 fn render_result(
-    ctx: &Ctx<'_>,
-    spawn: &Spawn,
+    bytes: usize,
+    dir: std::path::PathBuf,
     id: &str,
     answer: &str,
 ) -> Result<String, ToolError> {
     let budget = crate::Budget {
-        max_bytes: spawn.result_bytes,
+        max_bytes: bytes,
         max_lines: usize::MAX,
-        dir: ctx.host.opts.tool_output_dir.clone(),
+        dir,
     };
     let mut result = json!({"id":id,"text":answer});
-    if answer.len() > spawn.result_bytes {
+    if answer.len() > bytes {
         let path = budget.store(answer).map_err(failed)?;
-        let mut end = spawn.result_bytes;
+        let mut end = bytes;
         while !answer.is_char_boundary(end) {
             end -= 1;
         }
@@ -302,8 +455,13 @@ fn render_result(
     Ok(result.to_string())
 }
 
-async fn structured_result(runtime: &Runtime, id: &str) -> Result<String, ToolError> {
-    let state = runtime.state(id).await.map_err(|e| failed(e.to_string()))?;
+async fn structured_result(weak: &WeakRuntime, id: &str) -> Result<String, ToolError> {
+    let state = weak
+        .upgrade()
+        .ok_or_else(|| failed("Server stopped"))?
+        .state(id)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
     if let Some(value) = state.structured_result() {
         return Ok(json!({"id":id,"result":value}).to_string());
     }
@@ -316,12 +474,20 @@ async fn structured_result(runtime: &Runtime, id: &str) -> Result<String, ToolEr
         Delivery::Queue,
     );
     admission.source = "session".into();
-    runtime
+    weak.upgrade()
+        .ok_or_else(|| failed("Server stopped"))?
         .admit(id, admission)
         .await
         .map_err(|e| failed(e.to_string()))?;
-    runtime.wait_idle(id).await;
-    let state = runtime.state(id).await.map_err(|e| failed(e.to_string()))?;
+    weak.wait_idle(id)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    let state = weak
+        .upgrade()
+        .ok_or_else(|| failed("Server stopped"))?
+        .state(id)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
     match state.structured_result() {
         Some(value) => Ok(json!({"id":id,"result":value}).to_string()),
         None => {

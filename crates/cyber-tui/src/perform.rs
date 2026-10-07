@@ -15,6 +15,10 @@ pub enum Msg {
         queued: Vec<Queued>,
         requests: Vec<Request>,
     },
+    Tasks {
+        session_id: String,
+        items: Vec<Choice>,
+    },
     Sessions(Vec<Choice>),
     Models(Vec<Choice>),
     Commands(Vec<Choice>),
@@ -100,6 +104,9 @@ pub async fn perform(client: &Client, session: &Session, action: Action) -> Resu
         | Action::Fork
         | Action::NewSession
         | Action::Open(_) => switch(client, session, action).await,
+        Action::LoadTasks | Action::OpenTask(_) | Action::StopTask(_) | Action::StopTasks => {
+            manage_tasks(client, session, action).await
+        }
         Action::LoadSessions => sessions(client).await,
         Action::Rename { .. } | Action::Archive(_) | Action::Delete(_) => {
             manage(client, action).await
@@ -361,6 +368,99 @@ fn encode(s: &str) -> String {
             }
         })
         .collect()
+}
+
+async fn manage_tasks(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::LoadTasks => tasks(client, &session.id).await,
+        Action::OpenTask(id) => {
+            let job = client.get(&format!("/jobs/{id}")).await.map_err(err)?;
+            let child = job["data"]["child_id"]
+                .as_str()
+                .ok_or("Task has no child Session")?;
+            switch(client, session, Action::Open(child.into())).await
+        }
+        Action::StopTask(id) => {
+            client
+                .post(&format!("/jobs/{id}/stop"), json!({}))
+                .await
+                .map_err(err)?;
+            tasks(client, &session.id).await
+        }
+        Action::StopTasks => {
+            let jobs = fetch_jobs(client, &session.id).await?;
+            for job in jobs.iter().filter(|job| job["status"] == "running") {
+                if let Some(id) = job["id"].as_str() {
+                    client
+                        .post(&format!("/jobs/{id}/stop"), json!({}))
+                        .await
+                        .map_err(err)?;
+                }
+            }
+            tasks(client, &session.id).await
+        }
+        _ => Ok(Msg::Done),
+    }
+}
+
+async fn tasks(client: &Client, session: &str) -> Result<Msg, String> {
+    let jobs = fetch_jobs(client, session).await?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let items = jobs
+        .iter()
+        .map(|job| {
+            let elapsed = (job["ended_ms"].as_i64().unwrap_or(now)
+                - job["started_ms"].as_i64().unwrap_or(now))
+            .max(0)
+                / 1000;
+            let last = job
+                .pointer("/result/text")
+                .and_then(Value::as_str)
+                .or_else(|| job["error"].as_str())
+                .unwrap_or("")
+                .lines()
+                .last()
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect::<String>();
+            Choice {
+                key: job["id"].as_str().unwrap_or("").into(),
+                label: format!(
+                    "{} ({})",
+                    job["name"].as_str().unwrap_or("task"),
+                    job["status"].as_str().unwrap_or("unknown")
+                ),
+                detail: format!(
+                    "{} · {elapsed}s · {last}",
+                    job["kind"].as_str().unwrap_or("task")
+                ),
+            }
+        })
+        .collect();
+    Ok(Msg::Tasks {
+        session_id: session.into(),
+        items,
+    })
+}
+
+async fn fetch_jobs(client: &Client, session: &str) -> Result<Vec<Value>, String> {
+    let mut jobs = Vec::new();
+    let mut cursor = String::new();
+    loop {
+        let page = client
+            .get(&format!("/jobs?session_id={session}&limit=200{cursor}"))
+            .await
+            .map_err(err)?;
+        jobs.extend(page["data"].as_array().into_iter().flatten().cloned());
+        match page.pointer("/cursor/next").and_then(Value::as_str) {
+            Some(next) => cursor = format!("&cursor={}", encode(next)),
+            None => return Ok(jobs),
+        }
+    }
 }
 
 #[cfg(test)]

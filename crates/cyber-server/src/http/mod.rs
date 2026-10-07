@@ -9,6 +9,7 @@ mod error;
 mod events;
 mod guard;
 mod idempotency;
+mod jobs;
 pub mod openapi;
 pub mod remote_tools;
 pub mod rpc;
@@ -174,6 +175,7 @@ async fn request_log(
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(jobs::routes())
         .merge(worktrees::routes())
         .merge(events::routes())
         .merge(catalog::routes())

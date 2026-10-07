@@ -164,6 +164,11 @@
 - **WHEN** a background subagent completes while the parent is mid-Drain
 - **THEN** the handback waits in the inbox and is promoted when the parent would otherwise go idle
 
+#### Scenario: Parent interruption preserves a background child
+- **WHEN** the parent Drain is interrupted after a background call hands off ownership
+- **THEN** the child SHALL remain running and continue under its existing permission and Mode ceilings
+- **AND** explicit task cancellation or Session deletion SHALL stop it
+
 ### Requirement: Forked subagents
 (P1) A spawn with `fork: true` SHALL create a child Session that inherits the parent's full projected history, Context Epoch baseline, agent and model (unless overridden), instead of starting with only the prompt. The `/subtask <prompt>` command SHALL spawn a forked background subagent; `/fork` SHALL copy the whole Session into a new independent top-level Session.
 

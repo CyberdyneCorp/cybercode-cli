@@ -561,3 +561,44 @@ fn routed_child_prompt_refresh_replaces_a_settled_request_form() {
     assert!(matches!(app.overlay, Overlay::Question(_)));
     assert!(screen(&app).contains("Which storage?"));
 }
+
+#[test]
+fn tasks_picker_opens_children_and_stops_selected_jobs() {
+    use crate::app::PickerKind;
+    let mut app = App::new(session(false), vec![], "cyber");
+    typed(&mut app, "/tasks");
+    assert!(matches!(
+        app.on_key(key(KeyCode::Enter)).as_slice(),
+        [Action::LoadTasks]
+    ));
+    let items = vec![crate::model::Choice {
+        key: "job_1".into(),
+        label: "scan (running)".into(),
+        detail: "subagent · 3s".into(),
+    }];
+    app.open_picker(PickerKind::Tasks, "Tasks", items.clone());
+    assert!(screen(&app).contains("scan (running)"));
+    assert!(
+        matches!(app.on_key(with(KeyCode::Char('s'),KeyModifiers::CONTROL)).as_slice(),[Action::StopTask(id)] if id=="job_1")
+    );
+    app.open_picker(PickerKind::Tasks, "Tasks", items);
+    assert!(
+        matches!(app.on_key(key(KeyCode::Enter)).as_slice(),[Action::OpenTask(id)] if id=="job_1")
+    );
+}
+
+#[test]
+fn stop_all_tasks_requires_confirmation() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    typed(&mut app, "/stop");
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert_eq!(app.overlay, Overlay::ConfirmStopTasks);
+    assert!(screen(&app).contains("Stop all running background tasks"));
+    assert!(app.on_key(key(KeyCode::Esc)).is_empty());
+    typed(&mut app, "/stop");
+    app.on_key(key(KeyCode::Enter));
+    assert!(matches!(
+        app.on_key(key(KeyCode::Char('y'))).as_slice(),
+        [Action::StopTasks]
+    ));
+}

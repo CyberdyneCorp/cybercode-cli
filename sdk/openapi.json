@@ -75,6 +75,148 @@
           "stopping"
         ]
       },
+      "Page_Job": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Job"
+            }
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ]
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "child_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "output_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result": true,
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cost": {
+            "type": "number",
+            "format": "double",
+            "description": "Known cost lower bound; unpriced marks an unknown total."
+          },
+          "unpriced": {
+            "type": "boolean"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "notified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "child_id",
+          "name",
+          "kind",
+          "description",
+          "status",
+          "started_ms",
+          "cost",
+          "tokens",
+          "notified"
+        ]
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "completed",
+          "error",
+          "cancelled",
+          "interrupted"
+        ]
+      },
+      "Cursor": {
+        "type": "object",
+        "properties": {
+          "previous": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Data_Job": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Job"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "Data_LocationInfo": {
         "type": "object",
         "properties": {
@@ -203,23 +345,6 @@
           "updated_at",
           "cost"
         ]
-      },
-      "Cursor": {
-        "type": "object",
-        "properties": {
-          "previous": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "next": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
       },
       "CreateWorktreeBody": {
         "type": "object",
@@ -2256,6 +2381,153 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StopService"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "operationId": "v1.job.list",
+        "summary": "List durable background tasks",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}": {
+      "get": {
+        "operationId": "v1.job.get",
+        "summary": "Read a background task",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/stop": {
+      "post": {
+        "operationId": "v1.job.stop",
+        "summary": "Cancel a background task and await settlement",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

@@ -1173,3 +1173,53 @@ async fn typed_child_results_are_available_in_message_history() {
         );
     }
 }
+
+#[tokio::test]
+async fn background_job_routes_list_scope_and_stop_a_child() {
+    use cyber_server::runtime::{CreateSession, JobStatus};
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("cancel notice handled")])],
+        ..Setup::default()
+    });
+    let parent = h.session().await;
+    let other = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            title: Some("Background child".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let job = h
+        .runtime
+        .start_child_job(
+            &parent,
+            &child,
+            "scan".into(),
+            "Inspect project sources".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    let api = Api::new(&h);
+    let (status, list) = api.get(&format!("/jobs?session_id={parent}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["data"][0]["id"], job.id);
+    assert!(
+        api.get(&format!("/jobs?session_id={other}")).await.1["data"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let (status, stopped) = api.post(&format!("/jobs/{}/stop", job.id), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stopped["data"]["status"], "cancelled");
+    assert_eq!(h.runtime.job(&job.id).unwrap().status, JobStatus::Cancelled);
+    assert_eq!(api.get("/jobs/missing").await.0, StatusCode::NOT_FOUND);
+}

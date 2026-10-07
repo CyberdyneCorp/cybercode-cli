@@ -13,6 +13,8 @@ mod context;
 mod drain;
 mod events;
 mod host;
+mod jobs;
+pub use jobs::{Job, JobAdmission, JobStatus};
 mod location;
 mod model;
 mod requests;
@@ -233,8 +235,16 @@ pub(crate) struct Inner {
     shutdown_lock: Mutex<()>,
     closed: CancellationToken,
     background: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
+    jobs: StdMutex<HashMap<String, Arc<jobs::Control>>>,
+    job_admission: Arc<Mutex<()>>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.closed.cancel();
+    }
 }
 
 #[derive(Clone)]
@@ -280,6 +290,8 @@ impl Runtime {
             shutdown_lock: Mutex::new(()),
             closed: CancellationToken::new(),
             background: StdMutex::default(),
+            jobs: StdMutex::default(),
+            job_admission: Arc::new(Mutex::new(())),
             waiters: StdMutex::default(),
             me: me.clone(),
         });
@@ -796,8 +808,13 @@ impl Runtime {
 
     /// Delete a Session, its child Sessions, inbox rows and history.
     pub async fn delete(&self, session_id: &str) -> Result<(), RuntimeError> {
+        let _jobs = self.inner.job_admission.lock().await;
         self.inner.handle(session_id).await?;
         let ids = self.inner.descendants(session_id)?;
+        if self.is_running(session_id) {
+            return Err(RuntimeError::Busy(session_id.into()));
+        }
+        self.cancel_session_jobs(&ids).await?;
         if ids.iter().any(|id| self.is_running(id)) {
             return Err(RuntimeError::Busy(session_id.into()));
         }

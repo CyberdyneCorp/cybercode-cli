@@ -9,6 +9,7 @@ pub(crate) mod process;
 mod search;
 mod session;
 mod skill;
+mod task;
 mod web;
 pub(crate) mod websearch;
 
@@ -51,6 +52,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(session::PlanEnter),
         Box::new(session::PlanExit),
         Box::new(agent::Agent),
+        Box::new(task::TaskStop),
     ];
     #[cfg(windows)]
     let tools = {

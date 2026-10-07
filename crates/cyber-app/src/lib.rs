@@ -150,6 +150,7 @@ impl App {
             snapshots,
         });
         host.attach(runtime.clone());
+        runtime.recover_jobs().await.map_err(|e| e.to_string())?;
         let config_for_app = Arc::clone(&config);
         let services = services::AppServices::new(
             resolver,

@@ -46,6 +46,10 @@ pub enum Action {
         request: String,
         body: Value,
     },
+    LoadTasks,
+    OpenTask(String),
+    StopTask(String),
+    StopTasks,
     LoadSessions,
     Open(String),
     NewSession,
@@ -70,6 +74,7 @@ pub enum Action {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PickerKind {
+    Tasks,
     Sessions,
     Models,
     Themes,
@@ -148,6 +153,7 @@ pub enum Overlay {
     Question(QuestionForm),
     Help,
     ConfirmBypass,
+    ConfirmStopTasks,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -286,6 +292,14 @@ impl App {
             Overlay::Permission(_) => self.permission_key(key),
             Overlay::Question(_) => self.question_key(key),
             Overlay::ConfirmBypass => self.confirm_bypass_key(key),
+            Overlay::ConfirmStopTasks => {
+                self.overlay = Overlay::None;
+                if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
+                    vec![Action::StopTasks]
+                } else {
+                    Vec::new()
+                }
+            }
             Overlay::Help => {
                 self.overlay = Overlay::None;
                 Vec::new()
@@ -511,6 +525,11 @@ impl App {
             .split_once(' ')
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
+            "tasks" | "ps" => vec![Action::LoadTasks],
+            "stop" => {
+                self.overlay = Overlay::ConfirmStopTasks;
+                Vec::new()
+            }
             "model" | "models" => vec![Action::LoadModels],
             "resume" | "sessions" => vec![Action::LoadSessions],
             "new" | "clear" => vec![Action::NewSession],
@@ -573,6 +592,15 @@ impl App {
         };
         if picker.pending.is_some() {
             return session_op_key(picker, key);
+        }
+        if picker.kind == PickerKind::Tasks
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('s')
+        {
+            return picker
+                .current()
+                .map(|choice| vec![Action::StopTask(choice.key.clone())])
+                .unwrap_or_default();
         }
         if picker.kind == PickerKind::Sessions && key.modifiers.contains(KeyModifiers::CONTROL) {
             return self.session_action(key);
@@ -638,6 +666,7 @@ impl App {
             return Vec::new();
         };
         match picker.kind {
+            PickerKind::Tasks => vec![Action::OpenTask(choice.key)],
             PickerKind::Sessions => vec![Action::Open(choice.key)],
             PickerKind::Models => vec![Action::SwitchModel(choice.key)],
             PickerKind::Modes => self.select_mode(&choice.key),
@@ -782,6 +811,11 @@ impl App {
             {
                 self.session.running = true;
                 vec![Action::Refresh]
+            }
+            k if k.starts_with("job.")
+                && matches!(&self.overlay,Overlay::Picker(picker) if picker.kind == PickerKind::Tasks) =>
+            {
+                vec![Action::LoadTasks, Action::Refresh]
             }
             k if is_durable(k) => vec![Action::Refresh],
             _ => Vec::new(),

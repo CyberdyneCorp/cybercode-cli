@@ -111,6 +111,15 @@ jobs:
       - name: Native structured result HTTP history
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http typed_child_results_are_available_in_message_history
+      - name: Native background subagent ownership and registry recovery
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test background_subagents -p cyber-server --test jobs
+      - name: Native background job API controls
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http background_job_routes_list_scope_and_stop_a_child
+      - name: Native background task TUI controls
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui --lib tasks
       - name: Native foreground subagent ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subagents
