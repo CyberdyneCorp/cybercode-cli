@@ -83,7 +83,7 @@ async fn a_pending_resume_clears_terminal_output_atomically_and_survives_restart
 
 #[tokio::test]
 async fn background_attempt_reports_only_new_priced_usage() {
-    use cyber_server::runtime::{JobAttempt, JobUsage};
+    use cyber_server::runtime::JobAttempt;
     let h = Harness::new(Setup {
         scripts: vec![(
             "test/main",
@@ -110,7 +110,7 @@ async fn background_attempt_reports_only_new_priced_usage() {
         .unwrap();
     h.runtime.wait_idle(&id).await;
     let state = h.state(&id).await;
-    let baseline = JobUsage::of(&state);
+    let baseline = h.runtime.job_usage(&id).unwrap();
     let owner = h.runtime.claim_child_execution(&parent, &id).unwrap();
     h.runtime
         .resume_child(

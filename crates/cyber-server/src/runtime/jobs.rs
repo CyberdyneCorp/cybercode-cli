@@ -49,7 +49,7 @@ pub struct Job {
 }
 
 /// Usage accumulated before an attempt, kept independently of its public Job snapshot.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobUsage {
     #[serde(default)]
     cost: f64,
@@ -57,8 +57,24 @@ pub struct JobUsage {
     tokens: u64,
     #[serde(default)]
     unpriced_steps: u32,
+    #[serde(default)]
+    children: Option<super::ChildrenUsage>,
+}
+impl Default for JobUsage {
+    fn default() -> Self {
+        Self {
+            cost: 0.0,
+            tokens: 0,
+            unpriced_steps: 0,
+            children: Some(super::ChildrenUsage {
+                children_usage_complete: true,
+                ..Default::default()
+            }),
+        }
+    }
 }
 impl JobUsage {
+    /// Own usage only. Use Runtime::job_usage for a complete subtree baseline.
     pub fn of(state: &super::SessionState) -> Self {
         Self {
             cost: state.totals.cost,
@@ -66,6 +82,7 @@ impl JobUsage {
                 + state.totals.usage.output
                 + state.totals.usage.reasoning,
             unpriced_steps: state.totals.unpriced_steps,
+            children: None,
         }
     }
 }
@@ -150,6 +167,22 @@ impl WeakRuntime {
 }
 
 impl Runtime {
+    /// Read own and descendant counters from one durable database snapshot.
+    pub fn job_usage(&self, id: &str) -> Result<JobUsage, RuntimeError> {
+        let id = id.to_owned();
+        self.inner.store.read(move |db| {
+            db.query_row(
+                "SELECT cost,input_tokens+output_tokens+reasoning_tokens+cache_read_tokens+cache_write_tokens,unpriced_steps,children_cost,children_tokens,children_unpriced_steps,children_usage_complete FROM session WHERE id=?1",
+                [id],
+                |row| Ok(JobUsage {
+                    cost: row.get(0)?,
+                    tokens: row.get::<_, i64>(1)? as u64,
+                    unpriced_steps: row.get(2)?,
+                    children: Some(super::child_usage::read(row, 3)?),
+                }),
+            ).map_err(Into::into)
+        }).map_err(Into::into)
+    }
     pub fn jobs(&self, session_id: Option<&str>) -> Result<Vec<Job>, RuntimeError> {
         let session = session_id.map(str::to_string);
         let rows = self.inner.store.read(move |conn| {
@@ -430,14 +463,29 @@ impl Runtime {
             })
             .ok()
             .and_then(|data| serde_json::from_str::<JobUsage>(&data).ok());
-        match (self.state(&job.child_id).await, baseline) {
-            (Ok(state), Some(baseline)) => {
-                let current = JobUsage::of(&state);
+        match (self.job_usage(&job.child_id), baseline) {
+            (Ok(current), Some(baseline)) => {
                 job.cost = (current.cost - baseline.cost).max(0.0);
                 job.tokens = current.tokens.saturating_sub(baseline.tokens);
                 job.unpriced = current.unpriced_steps > baseline.unpriced_steps
                     || current.cost < baseline.cost
                     || current.tokens < baseline.tokens;
+                match (current.children, baseline.children) {
+                    (Some(current), Some(baseline)) => {
+                        job.cost += (current.children_cost - baseline.children_cost).max(0.0);
+                        job.tokens = job.tokens.saturating_add(
+                            current
+                                .children_tokens
+                                .saturating_sub(baseline.children_tokens),
+                        );
+                        job.unpriced |= !current.children_usage_complete
+                            || !baseline.children_usage_complete
+                            || current.children_unpriced_steps > baseline.children_unpriced_steps
+                            || current.children_cost < baseline.children_cost
+                            || current.children_tokens < baseline.children_tokens;
+                    }
+                    _ => job.unpriced = true,
+                }
             }
             _ => job.unpriced = true,
         }

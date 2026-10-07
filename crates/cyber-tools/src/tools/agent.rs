@@ -477,7 +477,9 @@ async fn reserve_child(
         {
             return Err(failed("Resumed child identity changed; retry"));
         }
-        spawn.usage = cyber_server::runtime::JobUsage::of(&state);
+        spawn.usage = runtime
+            .job_usage(&existing.id)
+            .map_err(|e| failed(e.to_string()))?;
         if ctx
             .inv
             .input

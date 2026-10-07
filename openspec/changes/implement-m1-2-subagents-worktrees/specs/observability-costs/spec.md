@@ -1,5 +1,18 @@
 ## MODIFIED Requirements
 
+### Requirement: Cost rollups
+(P0) The system SHALL aggregate usage and cost per session (including descendants), and (P2) per workflow run, goal, loop and routine run, per agent, per model and per plugin. Rollups SHALL be exposed at `GET /api/v1/usage?scope=<session|run|goal|loop|routine|project>&id=...`.
+
+#### Scenario: Workflow run cost
+- **WHEN** workflow run `run_7` spawned 12 agents
+- **THEN** `GET /api/v1/usage?scope=run&id=run_7` returns tokens and cost summed across all 12 agents plus the orchestrator
+
+#### Scenario: Background Job attempt subtree usage
+- **WHEN** a background subagent Job settles after nested provider usage
+- **THEN** its recorded tokens and known cost SHALL include the child and descendant charges since the attempt baseline, including charges retained after descendant deletion
+- **AND** resuming SHALL capture a durable subtree baseline so previous attempts are not billed again
+- **AND** incomplete historical baselines or unpriced nested calls SHALL disclose uncertainty rather than inventing a complete zero cost
+
 ### Requirement: Budgets
 (P0) A Budget SHALL be the object `{ max_turns?, max_tokens?, max_cost_usd?, max_wall_seconds?, enforcement?: "soft" | "reserved" }`. Every budgeted scope (Session, Workflow Run, Goal, Loop, Routine run, Team, `exec` run) SHALL accept exactly this object, extended only by scope-specific fields documented in the owning spec (for example workflow `max_agents`). Wherever a budget is accepted on the command line, the flags SHALL be `--max-turns <n>`, `--max-tokens <n>`, `--max-cost <usd>` and `--timeout <duration>`. Per-scope defaults SHALL come from `budgets.<scope>` in config with scopes `session`, `run`, `goal`, `loop`, `routine`, `team` and `daily` (a per-machine daily cap across all scopes). The system SHALL emit a warning at 80% and stop further provider Turns for the budgeted scope at 100%, publishing `budget.exceeded.1`.
 

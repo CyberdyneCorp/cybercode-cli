@@ -18,6 +18,129 @@ async fn child(h: &Harness, parent: &str) -> String {
         .id
 }
 
+fn bill(h: &Harness, session: &str, cost: Option<f64>) {
+    h.store.append(session, cyber_store::Expected::Any, vec![cyber_store::NewEvent::new(
+                "usage.recorded.1",
+                json!({"provider":"test","model":"test/main","purpose":"web_summary","call_id":"call_bill","duration_ms":1,"usage":{"input":1,"output":2,"reasoning":3,"cache_read":4,"cache_write":5},"cost":cost}),
+    )]).unwrap();
+}
+
+#[tokio::test]
+async fn stopped_job_retains_nested_usage_after_descendant_deletion() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let child = child(&h, &parent).await;
+    let nested = self::child(&h, &child).await;
+    let job = h
+        .runtime
+        .start_child_job(
+            &parent,
+            &child,
+            "nested".into(),
+            "nested work".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    bill(&h, &child, Some(1.0));
+    bill(&h, &nested, Some(2.0));
+    h.runtime.delete(&nested).await.unwrap();
+    h.runtime.cancel_job(&job.id).await.unwrap();
+    let settled = h.runtime.job(&job.id).unwrap();
+    assert_eq!(settled.tokens, 30);
+    assert_eq!(settled.cost, 3.0);
+    assert!(!settled.unpriced);
+}
+
+#[tokio::test]
+async fn nested_unpriced_usage_marks_the_job_unknown() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let child = child(&h, &parent).await;
+    let nested = self::child(&h, &child).await;
+    let job = h
+        .runtime
+        .start_child_job(
+            &parent,
+            &child,
+            "unknown".into(),
+            "nested work".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    bill(&h, &nested, None);
+    h.runtime.cancel_job(&job.id).await.unwrap();
+    let settled = h.runtime.job(&job.id).unwrap();
+    assert_eq!(settled.tokens, 15);
+    assert!(settled.unpriced);
+}
+
+#[tokio::test]
+async fn resumed_job_subtracts_prior_nested_usage_and_survives_restart() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let child = child(&h, &parent).await;
+    let nested = self::child(&h, &child).await;
+    bill(&h, &child, Some(1.0));
+    bill(&h, &nested, Some(2.0));
+    let baseline = h.runtime.job_usage(&child).unwrap();
+    let job = h
+        .runtime
+        .start_child_job_attempt(
+            &parent,
+            &child,
+            cyber_server::runtime::JobAttempt {
+                name: "resume".into(),
+                description: "new attempt".into(),
+                usage: baseline,
+            },
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    bill(&h, &nested, Some(4.0));
+    h.runtime.cancel_job(&job.id).await.unwrap();
+    let settled = h.runtime.job(&job.id).unwrap();
+    assert_eq!(settled.tokens, 15);
+    assert_eq!(settled.cost, 4.0);
+    assert!(!settled.unpriced);
+    assert_eq!(h.restart().job(&job.id).unwrap().tokens, 15);
+}
+
+#[tokio::test]
+async fn legacy_own_only_baselines_disclose_unknown_descendant_delta() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let child = child(&h, &parent).await;
+    let nested = self::child(&h, &child).await;
+    bill(&h, &nested, Some(2.0));
+    let job = h
+        .runtime
+        .start_child_job_attempt(
+            &parent,
+            &child,
+            cyber_server::runtime::JobAttempt {
+                name: "legacy".into(),
+                description: "old baseline".into(),
+                usage: serde_json::from_value(json!({"cost":0.0,"tokens":0,"unpriced_steps":0}))
+                    .unwrap(),
+            },
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    bill(&h, &nested, Some(4.0));
+    h.runtime.cancel_job(&job.id).await.unwrap();
+    let settled = h.runtime.job(&job.id).unwrap();
+    assert_eq!(settled.cost, 0.0);
+    assert!(settled.unpriced);
+}
+
 #[tokio::test]
 async fn shutdown_settles_ownership_and_restart_delivers_one_interrupted_notice() {
     let h = Harness::new(Setup {

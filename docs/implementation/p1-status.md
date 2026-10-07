@@ -10,6 +10,12 @@ Completed CI for d31821e fails Windows long-root Git status and the isolated-chi
 
 The child assertion searched Debug output, which escapes path backslashes. Its fixture now includes a backslash on every platform; that strengthened case fails on unchanged main 3e5e60b before the assertion correction. The assertion now checks actual provider message text, preserving the SQL/Session/context consistency requirement. All 41 isolated-child tests and workspace all-target Clippy pass locally, with formatting and diff checks passing. Native acceptance of this correction remains pending; mandatory long-root status and complete Windows enforcement remain open. The prior soft-budget push 1b8c7ff was still queued when checked. P0 artifacts are unchanged.
 
+## Background Job subtree accounting follow-up
+
+Job settlement now reads own and descendant counters together from SQL, preserving durable nested/hidden charges even when runtime Session caches have not observed external billing writes. Fresh attempts record a complete zero baseline; resumed children capture the durable subtree baseline so earlier spending is not charged again. Deleted descendants retain billed charges. Unpriced nested calls, incomplete historical attribution, decreasing counters and legacy own-only baselines disclose uncertainty; legacy baselines retain only the known own lower bound rather than guessing prior descendant spending.
+
+Two durable-billing regressions fail on unchanged main 75d7a6b. All 65 focused Job/resume/isolated-child tests and workspace all-target Clippy pass after the fix, including descendant deletion, nested unpriced usage, resumed attempt deltas/restart persistence and legacy baseline uncertainty. Strict validation passes all 57 specs; generated contracts and formatting pass, and cross-spec lint reports zero errors and 21 warnings. Existing native Job/resume CI includes these regressions; native acceptance remains pending. Spending after Job settlement from independently running descendants, complete subtree cancellation with admission-generation fences, reservations, daily caps and the full P1 goal remain open. P0 artifacts are unchanged.
+
 ## Delivery sequence
 
 - [ ] M1.1: Windows sandbox and network enforcement; classifier, permission ceilings, mode cycling and pending state.
