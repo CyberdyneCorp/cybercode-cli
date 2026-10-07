@@ -19,6 +19,10 @@ mod removal;
 #[path = "worktree_repository/setup.rs"]
 mod setup;
 
+#[cfg(windows)]
+#[path = "worktree_repository/windows_status.rs"]
+mod windows_status;
+
 #[derive(Clone, Copy)]
 enum Mode {
     Normal,
@@ -87,6 +91,10 @@ impl GitExecution for Execution {
                 std::fs::write(worktree.join(file), "user file during setup")?;
             }
             let mut output = self.invoke(directory, args)?;
+            #[cfg(windows)]
+            if !output.status.success() && args.iter().any(|arg| arg == "status") {
+                windows_status::diagnose(self, directory, args, &mut output);
+            }
             if let Mode::UnsafeUntrackedPath(path) = self.mode
                 && args
                     .windows(2)
