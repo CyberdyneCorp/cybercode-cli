@@ -10,6 +10,12 @@ use crate::model::{Choice, Item, Queued, Request, Session};
 /// Results the runner applies to the App.
 #[derive(Debug, Clone)]
 pub enum Msg {
+    AdmissionStarted(crate::admissions::Request),
+    AdmissionUpdated {
+        stop: bool,
+        request: crate::admissions::Request,
+        result: Result<Value, String>,
+    },
     Snapshot {
         session: Session,
         items: Vec<Item>,
@@ -101,10 +107,23 @@ fn err(e: cyber_client::ClientError) -> String {
     e.to_string()
 }
 
+#[cfg(test)]
 pub async fn perform(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    perform_owned(client, session, action, None).await
+}
+
+pub async fn perform_owned(
+    client: &Client,
+    session: &Session,
+    action: Action,
+    context: Option<&crate::admissions::Context<'_>>,
+) -> Result<Msg, String> {
     let scoped = client.at(&session.directory);
     let client = &scoped;
     match action {
+        Action::Admission { request, stop } => {
+            Ok(crate::admissions::perform(client, request, stop).await)
+        }
         Action::Refresh => snapshot(client, &session.id).await,
         Action::SwitchModel(_)
         | Action::SwitchMode(_)
@@ -147,12 +166,17 @@ pub async fn perform(client: &Client, session: &Session, action: Action) -> Resu
             ))
         }
         Action::SaveTheme(_) | Action::Editor(_) | Action::Quit => Ok(Msg::Done),
-        other => converse(client, session, other).await,
+        other => converse(client, session, other, context).await,
     }
 }
 
 /// Actions on the open Session's conversation.
-async fn converse(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+async fn converse(
+    client: &Client,
+    session: &Session,
+    action: Action,
+    context: Option<&crate::admissions::Context<'_>>,
+) -> Result<Msg, String> {
     let id = session.id.as_str();
     match action {
         Action::Prompt { text, delivery } => {
@@ -165,7 +189,14 @@ async fn converse(client: &Client, session: &Session, action: Action) -> Result<
                     if prompt.trim().is_empty() {
                         return Err(format!("Usage: @{agent} <prompt>"));
                     }
-                    return start_subtask(client, id, json!({"prompt":prompt,"agent":agent})).await;
+                    return crate::admissions::start(
+                        client,
+                        id,
+                        &session.directory,
+                        json!({"prompt":prompt,"agent":agent}),
+                        context,
+                    )
+                    .await;
                 }
             }
             let parts = parts(&text, &session.directory);
@@ -176,7 +207,16 @@ async fn converse(client: &Client, session: &Session, action: Action) -> Result<
             )
             .await
         }
-        Action::Subtask(prompt) => start_subtask(client, id, json!({"prompt":prompt})).await,
+        Action::Subtask(prompt) => {
+            crate::admissions::start(
+                client,
+                id,
+                &session.directory,
+                json!({"prompt":prompt}),
+                context,
+            )
+            .await
+        }
         Action::Shell(command) => {
             post(
                 client,
@@ -365,17 +405,6 @@ fn agent_choices(data: &Value) -> Vec<Choice> {
             })
         })
         .collect()
-}
-
-async fn start_subtask(client: &Client, id: &str, body: Value) -> Result<Msg, String> {
-    let result = client
-        .post(&format!("/sessions/{id}/subtask"), body)
-        .await
-        .map_err(err)?;
-    Ok(Msg::Toast(format!(
-        "Started {} · /tasks to view or stop",
-        result["data"]["name"].as_str().unwrap_or("subtask")
-    )))
 }
 
 /// The prompt text plus a part for each `@path` or `@path#L10-40` mention that exists.

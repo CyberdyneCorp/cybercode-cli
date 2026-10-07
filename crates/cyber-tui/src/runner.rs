@@ -168,6 +168,10 @@ async fn event_loop(
     let mut server = Box::pin(client.events(true).await.map_err(|e| e.to_string())?);
     let mut refresh = Refresh::default();
     let mut initial = vec![Action::Refresh];
+    for request in store.admissions() {
+        app.admissions.register(request.clone());
+        initial.push(request.action(false));
+    }
     if open_picker {
         initial.push(Action::LoadSessions);
     }
@@ -190,8 +194,19 @@ async fn event_loop(
             Some(ev) = server.next() => {
                 if event_is_visible(&app.session.id, &ev) { app.on_server_event(&ev) } else { Vec::new() }
             }
-            Some(msg) = rx.recv() => apply(app, msg, &mut refresh),
-            _ = tick.tick() => Vec::new(),
+            Some(msg) = rx.recv() => {
+                match msg {
+                    Ok(Msg::AdmissionStarted(request)) => {app.admissions.register(request); Vec::new()}
+                    Ok(Msg::AdmissionUpdated {request,result,stop}) => {
+                        let message=app.admissions.update(request,result,stop,store);
+                        app.refresh_admissions();
+                        app.toast(message);
+                        Vec::new()
+                    }
+                    other=>apply(app,other,&mut refresh),
+                }
+            },
+            _ = tick.tick() => {let actions=app.admissions.poll(); app.refresh_admissions(); actions},
         };
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
@@ -241,6 +256,7 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         }
     };
     match msg {
+        Msg::AdmissionStarted(_) | Msg::AdmissionUpdated { .. } => {}
         Msg::Snapshot {
             session,
             items,
@@ -363,10 +379,39 @@ fn dispatch(
                 if let Action::SwitchModel(model) = &action {
                     store.push_recent_model(model);
                 }
+                if let Action::Admission { request, stop } = &action {
+                    if *stop && let Err(error) = store.save_admission(request) {
+                        app.toast(format!("Cannot retain cancellation identity: {error}"));
+                        continue;
+                    }
+                    if let Some(entry) = app.admissions.0.get_mut(&request.id) {
+                        entry.busy = true;
+                        if *stop {
+                            if entry.status == "unknown" {
+                                entry.stop_at = Some(std::time::Instant::now());
+                            } else {
+                                entry.stop_at.get_or_insert_with(std::time::Instant::now);
+                            }
+                        }
+                        entry.stopping |= stop;
+                    }
+                }
+                let store = store.clone();
                 let (client, tx, session) = (client.clone(), tx.clone(), app.session.clone());
                 tokio::spawn(async move {
                     let _ = tx
-                        .send(perform::perform(&client, &session, action).await)
+                        .send(
+                            perform::perform_owned(
+                                &client,
+                                &session,
+                                action,
+                                Some(&crate::admissions::Context {
+                                    store: &store,
+                                    tx: &tx,
+                                }),
+                            )
+                            .await,
+                        )
                         .await;
                 });
             }

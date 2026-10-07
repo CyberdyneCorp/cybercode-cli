@@ -27,6 +27,10 @@ const LEADER_TIMEOUT_MS: u128 = 2000;
 /// Work for the runner.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
+    Admission {
+        request: crate::admissions::Request,
+        stop: bool,
+    },
     Refresh,
     Prompt {
         text: String,
@@ -76,6 +80,7 @@ pub enum Action {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PickerKind {
+    Admissions,
     Tasks,
     Sessions,
     Models,
@@ -167,6 +172,7 @@ pub struct Completion {
 }
 
 pub struct App {
+    pub admissions: crate::admissions::Admissions,
     pub session: Session,
     pub(crate) mode_selection: Option<String>,
     pub items: Vec<Item>,
@@ -196,6 +202,7 @@ pub struct App {
 impl App {
     pub fn new(session: Session, history: Vec<String>, theme_name: &str) -> Self {
         Self {
+            admissions: Default::default(),
             session,
             mode_selection: None,
             items: Vec::new(),
@@ -286,6 +293,26 @@ impl App {
         }
     }
 
+    pub(crate) fn refresh_admissions(&mut self) {
+        let items = self.admissions.choices(&self.session.id);
+        let Overlay::Picker(picker) = &mut self.overlay else {
+            return;
+        };
+        if picker.kind != PickerKind::Admissions {
+            return;
+        }
+        let selected = picker.current().map(|choice| choice.key.clone());
+        picker.items = items;
+        picker.filter();
+        if let Some(index) = picker
+            .filtered
+            .iter()
+            .position(|&index| Some(&picker.items[index].key) == selected.as_ref())
+        {
+            picker.selected = index;
+        }
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Action> {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
@@ -372,6 +399,15 @@ impl App {
             }
             KeyCode::BackTab => self.cycle_mode(),
             KeyCode::Up if alt && !self.queued.is_empty() => self.take_back(),
+            KeyCode::Esc if self.admissions.pending(&self.session.id).is_some() => {
+                vec![
+                    self.admissions
+                        .pending(&self.session.id)
+                        .expect("pending")
+                        .request
+                        .action(true),
+                ]
+            }
             KeyCode::Esc if self.session.running => vec![Action::Interrupt],
             _ => self.edit_key(key, ctrl),
         };
@@ -568,6 +604,15 @@ impl App {
             .split_once(' ')
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
+            "admissions" => {
+                let items = self.admissions.choices(&self.session.id);
+                self.open_picker(
+                    PickerKind::Admissions,
+                    "Admissions · Enter inspect · Ctrl+S cancel",
+                    items,
+                );
+                Vec::new()
+            }
             "tasks" | "ps" => vec![Action::LoadTasks],
             "stop" => {
                 self.overlay = Overlay::ConfirmStopTasks;
@@ -640,6 +685,16 @@ impl App {
         };
         if picker.pending.is_some() {
             return session_op_key(picker, key);
+        }
+        if picker.kind == PickerKind::Admissions
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('s')
+        {
+            return picker
+                .current()
+                .and_then(|choice| self.admissions.0.get(&choice.key))
+                .map(|entry| vec![entry.request.action(true)])
+                .unwrap_or_default();
         }
         if picker.kind == PickerKind::Tasks
             && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -714,6 +769,12 @@ impl App {
             return Vec::new();
         };
         match picker.kind {
+            PickerKind::Admissions => self
+                .admissions
+                .0
+                .get(&choice.key)
+                .map(|entry| vec![entry.request.action(false)])
+                .unwrap_or_default(),
             PickerKind::Tasks => vec![Action::OpenTask(choice.key)],
             PickerKind::Sessions => vec![Action::Open(choice.key)],
             PickerKind::Models => vec![Action::SwitchModel(choice.key)],

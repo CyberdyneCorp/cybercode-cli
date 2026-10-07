@@ -400,6 +400,14 @@
 - **AND** uncertain cancellation SHALL report the admission ID and preserve any validated Job identity for recovery
 - **AND** unknown/file mentions and `--command` SHALL preserve ordinary admission
 
+#### Scenario: TUI retains queued delegation ownership
+- **WHEN** the TUI submits a named agent mention or explicit `/subtask`
+- **THEN** it SHALL save source Session, Location and client-generated request identity before submission, refusing submission if persistence fails
+- **AND** it SHALL expose pending admissions separately from child Jobs and cancel only the selected source/request, with bounded acknowledgement and explicit uncertainty
+- **AND** reconnect and lost-response recovery SHALL look up the saved request without resubmitting its prompt
+- **AND** an acknowledged cancellation SHALL remain terminal when a delayed submission response arrives
+- **AND** cancellation of a recorded Job SHALL verify its ownership and terminal acknowledgement
+
 #### Scenario: Mention runs subagent
 - **WHEN** the user submits `@explore where is retry logic implemented?`
 - **THEN** an `explore` child Session is spawned with that question and its result is shown in the parent

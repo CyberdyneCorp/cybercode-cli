@@ -76,7 +76,7 @@ const admission = await client.session.delegation(session.id, requestID);
 await client.session.stopDelegation(session.id, requestID);
 ```
 
-Keep that ID across transport retries. Identical input replays the admission; changed input conflicts. A stop before submission creates a tombstone preventing delayed dispatch. Poll `session.delegation` until admission settles. `admitted` provides `job_id` for task status/output through `client.job`; `unknown` requires reconciliation and prevents automatic redispatch. Cancellation targets the recorded Job only. Existing `session.subtask` returns the Job after admission; exec uses the durable protocol with request-scoped cancellation before a Job is returned; TUI adoption remains open.
+Keep that ID across transport retries. Identical input replays the admission; changed input conflicts. A stop before submission creates a tombstone preventing delayed dispatch. Poll `session.delegation` until admission settles. `admitted` provides `job_id` for task status/output through `client.job`; `unknown` requires reconciliation and prevents automatic redispatch. Cancellation targets the recorded Job only. Existing `session.subtask` returns the Job after admission; exec uses the durable protocol with request-scoped cancellation before a Job is returned; the TUI also uses saved IDs with `/admissions` lookup/cancellation and reconnect recovery.
 
 ## Errors
 

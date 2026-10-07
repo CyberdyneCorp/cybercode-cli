@@ -100,6 +100,19 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Some((msg, at)) if at.elapsed().as_secs() < 6 => {
             Span::styled(format!(" {msg}"), Style::default().fg(t.warning))
         }
+        _ if app.admissions.pending(&app.session.id).is_some() => {
+            let entry = app
+                .admissions
+                .pending(&app.session.id)
+                .expect("pending admission");
+            Span::styled(
+                format!(
+                    " delegation {} · Esc cancels request · /admissions to inspect",
+                    entry.status
+                ),
+                Style::default().fg(t.muted),
+            )
+        }
         _ if app.session.running => Span::styled(
             " working… Esc to interrupt · Enter steers · Tab queues",
             Style::default().fg(t.muted),

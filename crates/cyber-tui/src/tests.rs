@@ -809,7 +809,22 @@ async fn leading_mentions_use_named_subtasks_while_file_and_embedded_text_use_pr
                 } else {
                     serde_json::from_slice(&request[boundary..boundary + length]).unwrap()
                 };
-                requests.push((header, body));
+                requests.push((header.clone(), body));
+                let response = if header.starts_with("POST /api/v1/sessions/ses_1/delegations/") {
+                    let id = header
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap()
+                        .rsplit('/')
+                        .next()
+                        .unwrap();
+                    json!({"data":{"id":id,"session_id":"ses_1","phase":"launching","status":"admitted","job_id":"job_test"}})
+                } else {
+                    response
+                };
                 let body = response.to_string();
                 socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).unwrap();
             }
@@ -841,11 +856,14 @@ async fn leading_mentions_use_named_subtasks_while_file_and_embedded_text_use_pr
         );
         if let Some(target) = target {
             assert!(
-                head.starts_with("POST /api/v1/sessions/ses_1/subtask "),
+                head.starts_with("POST /api/v1/sessions/ses_1/delegations/op_"),
                 "{head}"
             );
             assert_eq!(body, &json!({"agent":target,"prompt":"find retry logic"}));
-            assert!(matches!(result, Msg::Toast(_)));
+            assert!(matches!(
+                result,
+                Msg::AdmissionUpdated { result: Ok(_), .. }
+            ));
         } else {
             assert!(
                 head.starts_with("POST /api/v1/sessions/ses_1/prompt "),
@@ -855,4 +873,61 @@ async fn leading_mentions_use_named_subtasks_while_file_and_embedded_text_use_pr
             assert_eq!(body["delivery"], "steer");
         }
     }
+}
+
+#[test]
+fn pending_admission_escape_and_picker_actions_preserve_source_after_session_switch() {
+    let mut app = App::new(session(true), vec![], "cyber");
+    let request = crate::admissions::Request {
+        id: "op_queued".into(),
+        source: "ses_1".into(),
+        directory: "/repo".into(),
+    };
+    app.admissions.register(request.clone());
+    assert_eq!(app.on_key(key(KeyCode::Esc)), vec![request.action(true)]);
+    typed(&mut app, "/admissions");
+    app.on_key(key(KeyCode::Enter));
+    assert!(
+        matches!(&app.overlay,Overlay::Picker(picker) if picker.kind==crate::app::PickerKind::Admissions && picker.items.len()==1)
+    );
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+        vec![request.action(true)]
+    );
+    app.overlay = Overlay::None;
+    let mut other = session(false);
+    other.id = "ses_other".into();
+    other.directory = "/other".into();
+    app.set_session(other);
+    assert!(app.on_key(key(KeyCode::Esc)).is_empty());
+    assert_eq!(app.admissions.0["op_queued"].request, request);
+}
+
+#[test]
+fn admission_picker_updates_acknowledgement_without_changing_selected_request() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    for id in ["op_a", "op_b"] {
+        app.admissions.register(crate::admissions::Request {
+            id: id.into(),
+            source: "ses_1".into(),
+            directory: "/repo".into(),
+        });
+    }
+    typed(&mut app, "/admissions");
+    app.on_key(key(KeyCode::Enter));
+    app.on_key(key(KeyCode::Down));
+    let selected = app.admissions.0["op_b"].request.clone();
+    let dir = tempfile::tempdir().unwrap();
+    app.admissions.update(
+        selected,
+        Ok(json!({"id":"op_b","session_id":"ses_1","phase":"reserved","status":"cancelled"})),
+        true,
+        &crate::store::LocalStore::new(dir.path()),
+    );
+    app.refresh_admissions();
+    let Overlay::Picker(picker) = &app.overlay else {
+        panic!("Expected admissions picker")
+    };
+    assert_eq!(picker.current().unwrap().key, "op_b");
+    assert!(picker.current().unwrap().label.starts_with("cancelled"));
 }

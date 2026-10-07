@@ -171,7 +171,7 @@ jobs:
       - name: Native routed child request streams
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http child_requests_reach_parent_location_and_session_streams_without_changing_replay_cursor
-      - name: Native TUI child approval prompts
+      - name: Native TUI child approvals and durable admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tui --lib
       - name: Native historical context compatibility

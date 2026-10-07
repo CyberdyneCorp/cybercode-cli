@@ -1,5 +1,6 @@
 //! The terminal UI (`tui`). It talks to the server only through the public API.
 
+mod admissions;
 mod app;
 mod composer;
 mod fuzzy;

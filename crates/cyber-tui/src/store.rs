@@ -21,6 +21,60 @@ impl LocalStore {
         }
     }
 
+    pub fn save_admission(&self, request: &crate::admissions::Request) -> Result<(), String> {
+        if !request.valid() {
+            return Err("Invalid delegation identity".into());
+        }
+        let dir = self.dir.join("admissions");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join(format!("{}.json", request.id));
+        if let Ok(bytes) = std::fs::read(&path) {
+            let existing: crate::admissions::Request =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            if existing == *request {
+                return Ok(());
+            }
+            return Err("Stored admission identity changed".into());
+        }
+        let temporary = path.with_extension("tmp");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|e| e.to_string())?;
+        file.write_all(&serde_json::to_vec(request).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(temporary, path).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        std::fs::File::open(dir)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    pub fn admissions(&self) -> Vec<crate::admissions::Request> {
+        std::fs::read_dir(self.dir.join("admissions"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .filter_map(|bytes| serde_json::from_slice::<crate::admissions::Request>(&bytes).ok())
+            .filter(|request| request.valid())
+            .collect()
+    }
+    pub fn forget_admission(&self, id: &str) {
+        if !cyber_core::ids::has_prefix(id, "op")
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
+            return;
+        }
+        let _ = std::fs::remove_file(self.dir.join("admissions").join(format!("{id}.json")));
+    }
+
     /// The last 500 prompts for a project, oldest first.
     pub fn history(&self, project: &str) -> Vec<String> {
         let text = std::fs::read_to_string(self.dir.join("history.jsonl")).unwrap_or_default();

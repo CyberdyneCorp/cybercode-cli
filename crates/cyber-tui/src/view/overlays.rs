@@ -295,6 +295,7 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
 pub fn help(f: &mut Frame, app: &App, area: Rect) {
     let rows = [
         ("Enter", "send (steer while running)"),
+        ("/admissions", "inspect or cancel pending delegation"),
         ("Tab / Alt+Enter", "queue while running"),
         ("Shift+Enter, Ctrl+J", "newline"),
         ("Esc", "interrupt"),
