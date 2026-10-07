@@ -1,5 +1,25 @@
 ## MODIFIED Requirements
 
+### Requirement: Agent definition fields
+(P0) An agent definition SHALL accept `description`, `system`, `model` (`provider/model[#variant]`), `variant`, `mode` (`primary`, `subagent` or `all`), `permission_mode` (one of the six Modes), `tools` (`allow` and `deny` lists of tool names or globs), `permissions` (ordered rules), `request` (a provider request overlay of `headers` and `body`, for example `temperature` or `top_p`, layered as defined by `provider-catalog`), `steps` (positive integer), `color`, `hidden`, `isolation` (`none` or `worktree`), `background` (boolean default for spawns), `memory` (`none`, `project` or `user`), `skills` (names preloaded into context) and `mcp` (subset of configured MCP server names). Unknown fields SHALL be rejected by schema validation, naming the agent and field.
+
+#### Scenario: Unknown field rejected
+- **WHEN** an agent definition contains `temprature: 0.2`
+- **THEN** config validation fails with an error naming the agent and the field `temprature`
+
+#### Scenario: Tool deny list hides tools
+- **WHEN** an agent sets `tools.deny: ["bash", "web*"]`
+- **THEN** `bash`, `webfetch` and `websearch` are omitted from that agent's tool definitions for every Turn
+
+#### Scenario: Request overlay applied
+- **WHEN** an agent sets `request.body.temperature: 0.2`
+- **THEN** its Turns send `temperature: 0.2` after provider, model and variant defaults
+
+#### Scenario: Malformed agent profile values are rejected before materialization
+- **WHEN** a resolved agent definition contains an invalid field type, profile mode, permission mode, model reference, nonpositive step limit or malformed tool/request overlay
+- **THEN** configuration loading SHALL fail with an error naming the agent and field
+- **AND** arbitrary provider body members and valid permission shorthand SHALL remain accepted
+
 ### Requirement: Agent tool spawns subagents
 (P1) The system SHALL provide an `agent` tool with inputs `prompt` (required), `agent` (default `general`), `description` (3–8 words), `output_schema` (JSON Schema), `model`, `isolation` (`none`, `worktree` or, from P3, `remote`), `runner` (with `isolation: remote`: a pool, `rnr_` ID or peer name), `background` (boolean), `fork` (boolean) and `resume` (subagent name or `ses_` ID). Each spawn SHALL create a child Session whose `parent_id` is the caller, titled `<description> (@<agent>)`, and SHALL request the `agent` permission with the target agent name as resource.
 

@@ -14,6 +14,7 @@
 - [ ] Implement CLI flags/management, enter/exit tools, API/SDK endpoints and lifecycle events.
   - [x] Validate public management listing locally: `cyber worktree list`, GET and SDK now include verified Git status plus all associated Session pages; removal/prune, enter/exit and lifecycle events remain open.
 - [ ] Implement permission-gated foreground child sessions and agent catalogue/model selection.
+  - [x] Validate resolved agent profile fields and orchestration settings before materialization; retain existing layering/trust behavior and permission shorthand. The unknown-field regression fails on unchanged production main `9b07d81`; all 27 configuration tests, core suites and macOS/Windows cross-Clippy pass locally. Built-in/custom profile resolution, Markdown discovery, prompts, tool filtering and child-runtime integration remain open.
 - [ ] Implement schema-validating return_result, one retry and SchemaMismatch settlement.
 - [ ] Implement background handback, tasks listing and cancellation.
 - [ ] Implement forked context and resume by name/session ID.

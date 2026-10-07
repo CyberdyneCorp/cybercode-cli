@@ -98,6 +98,7 @@ pub fn validate(
         }
     }
     check_mode(map.get("mode"), "mode", &mut issues);
+    super::agents::check(map.get("agents"), &mut issues);
     for key in ["model", "small_model"] {
         check_model_ref(map.get(key), key, &mut issues);
     }
@@ -120,7 +121,7 @@ fn drop_tui_keys(map: &mut Map<String, Value>, sources: &mut Sources, warnings: 
     }
 }
 
-fn check_mode(value: Option<&Value>, path: &str, issues: &mut Vec<String>) {
+pub(super) fn check_mode(value: Option<&Value>, path: &str, issues: &mut Vec<String>) {
     match value {
         None => {}
         Some(Value::String(m)) if MODES.contains(&m.as_str()) => {}
@@ -131,7 +132,7 @@ fn check_mode(value: Option<&Value>, path: &str, issues: &mut Vec<String>) {
     }
 }
 
-fn check_model_ref(value: Option<&Value>, path: &str, issues: &mut Vec<String>) {
+pub(super) fn check_model_ref(value: Option<&Value>, path: &str, issues: &mut Vec<String>) {
     match value {
         None => {}
         Some(Value::String(r)) if is_model_ref(r) => {}

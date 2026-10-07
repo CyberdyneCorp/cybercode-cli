@@ -86,6 +86,105 @@ fn parse_error_names_file_line_and_column() {
 }
 
 #[test]
+fn unknown_agent_fields_name_the_agent_and_field() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.json",
+        r#"{"agents":{"review/security":{"description":"Review security","temprature":0.2}}}"#,
+    );
+    let error = f.load().unwrap_err().to_string();
+    assert!(
+        error.contains("agents.review/security.temprature"),
+        "{error}"
+    );
+    assert!(error.contains("unknown agent field"), "{error}");
+}
+
+#[test]
+fn agent_profile_fields_and_orchestration_limits_reject_invalid_values() {
+    for (field, value) in [
+        ("description", json!(true)),
+        ("model", json!("missing-provider")),
+        ("mode", json!("plan")),
+        ("permission_mode", json!("automatic")),
+        ("steps", json!(0)),
+        ("background", json!("true")),
+        ("isolation", json!("remote")),
+        ("memory", json!("global")),
+        ("skills", json!(["one", 2])),
+        ("tools", json!({"deny":[true]})),
+        ("tools", json!({"alow":[]})),
+        ("request", json!({"temperature":0.2})),
+        ("request", json!({"headers":{"x-test":12}})),
+    ] {
+        let f = Fixture::new();
+        let document = json!({"agents":{"review":{field:value}}});
+        f.write("global:cyber.json", &document.to_string());
+        let error = f.load().unwrap_err().to_string();
+        assert!(error.contains(&format!("agents.review.{field}")), "{error}");
+    }
+    for (field, value) in [
+        ("max_concurrent", json!(0)),
+        ("max_depth", json!(-1)),
+        ("result_max_bytes", json!(1.5)),
+    ] {
+        let f = Fixture::new();
+        f.write(
+            "global:cyber.json",
+            &json!({"agents":{field:value}}).to_string(),
+        );
+        let error = f.load().unwrap_err().to_string();
+        assert!(error.contains(&format!("agents.{field}")), "{error}");
+    }
+}
+
+#[test]
+fn complete_agent_profiles_and_explicit_zero_depth_or_preview_limits_are_valid() {
+    let f = Fixture::new();
+    let document = json!({"agents":{
+        "max_concurrent":8,"max_depth":0,"result_max_bytes":0,
+        "review/security":{
+            "description":"Review security","system":"Find exploitable defects.",
+            "model":"local/coder#fast","variant":"fast","mode":"subagent",
+            "permission_mode":"plan","tools":{"allow":["read","web*"],"deny":["bash"]},
+            "permissions":{"edit":"deny"},"request":{"headers":{"x-test":"value"},
+                "body":{"temperature":0.2,"provider_option":{"nested":true}}},
+            "steps":50,"color":"blue","hidden":false,"disabled":false,
+            "isolation":"worktree","background":true,"memory":"project",
+            "skills":["review"],"mcp":["docs"]
+        },
+        "shorthand":{"permissions":"ask"},
+        "ordered":{"permissions":[{"action":"bash","effect":"deny"}]}
+    }});
+    f.write("global:cyber.json", &document.to_string());
+    assert_eq!(f.load().unwrap().value["agents"], document["agents"]);
+}
+
+#[test]
+fn agent_validation_runs_after_layering_and_workspace_trust() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.json",
+        r#"{"agents":{"review":{"steps":"invalid"}}}"#,
+    );
+    f.write("cyber.json", r#"{"agents":{"review":{"steps":2}}}"#);
+    assert_eq!(f.load().unwrap().value["agents"]["review"]["steps"], 2);
+
+    let f = Fixture::new();
+    f.write(
+        "cyber.json",
+        r#"{"agents":{"review":{"description":"Review", "request":{"headers":{"x-test":12}}}}}"#,
+    );
+    let untrusted = f.load().unwrap();
+    assert!(!untrusted.trust.trusted);
+    assert_eq!(untrusted.value["agents"]["review"]["description"], "Review");
+    assert!(untrusted.value["agents"]["review"].get("request").is_none());
+    f.approve_current();
+    let error = f.load().unwrap_err().to_string();
+    assert!(error.contains("agents.review.request.headers"), "{error}");
+}
+
+#[test]
 fn nearest_project_document_wins_and_sources_are_attributed() {
     let f = Fixture::new();
     f.write(

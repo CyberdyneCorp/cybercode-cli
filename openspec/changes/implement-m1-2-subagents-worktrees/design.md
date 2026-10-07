@@ -5,6 +5,9 @@ Managed lifecycle operations will serialize per repository using the specified c
 
 Child-session orchestration will use existing durable admission and drain ownership rather than an independent model loop. Permissions are inherited ceilings; a concurrent permit is acquired before creating a child and released on every termination route. Structured output validates the supplied schema and allows exactly one reprompt. Background handback uses the durable parent inbox, and forks take committed parent context through the spawning point. Worktree cleanup and cost attribution remain owned through settlement.
 
+### Resolved agent configuration validation
+Validate named agent profiles after existing layer merge, substitution and trust gating, using the documented field whitelist and field types. Reject unknown profile/tool/request fields with their full agent-qualified path; retain arbitrary provider body contents and permission shorthand/rule representations. Validate the three orchestration settings separately from profile names: concurrency must be positive, while zero depth or preview bytes remain meaningful settings. This loader boundary supplies validated configuration to later profile resolution; it does not implement built-in/custom profile materialization, Markdown discovery, tool filtering or child orchestration. Those tasks remain required.
+
 ## Verification
 Shared configuration/naming tests are groundwork, not proof of worktree isolation. Integration gates require real temporary Git repositories, concurrent processes, dirty/ahead preservation, session ownership, sandboxed setup, and child-runtime tests with deterministic providers. Native platform execution is required for subprocess and file-lock behavior. Keep M1.2 open until all product surfaces and behavioral contracts pass.
 

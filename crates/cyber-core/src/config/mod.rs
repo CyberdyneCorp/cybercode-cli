@@ -1,6 +1,7 @@
 //! Configuration discovery, layering, substitution, trust gating and validation
 //! (`configuration`, `workspace-trust`).
 
+mod agents;
 mod gate;
 mod jsonc;
 mod load;
