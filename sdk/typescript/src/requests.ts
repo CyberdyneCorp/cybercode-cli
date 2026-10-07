@@ -83,7 +83,7 @@ function watch<R extends PendingRequest>(client: Client, options: OnRequestOptio
   return () => controller.abort();
 }
 
-/** Keep the requests whose Session belongs to the client's Location (the pending lists span all Locations). */
+/** Keep requests owned in this Location or routed here by an ancestor (lists span all Locations). */
 function locationFilter(client: Client): (requests: PendingRequest[]) => Promise<PendingRequest[]> {
   const directories = new Map<string, string>();
   const directoryOf = async (sessionID: string) => {
@@ -93,7 +93,9 @@ function locationFilter(client: Client): (requests: PendingRequest[]) => Promise
   return async (requests) => {
     if (requests.length === 0) return [];
     const { directory } = await client.location.get();
-    const keep = await Promise.all(requests.map(async (r) => (await directoryOf(r.session_id)) === directory));
+    const keep = await Promise.all(requests.map(async (r) =>
+      r.routed_to?.some((route) => route.directory === directory) || (await directoryOf(r.session_id)) === directory,
+    ));
     return requests.filter((_, i) => keep[i]);
   };
 }

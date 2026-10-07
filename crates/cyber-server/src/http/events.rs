@@ -20,7 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use super::AppState;
 use super::envelope::{location, query_value};
 use super::error::ApiError;
-use crate::runtime::{LiveEvent, Runtime};
+use crate::runtime::{LiveEvent, PendingKind, Runtime};
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 
@@ -99,6 +99,15 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
     {
         return durable(session_id, *seq, kind, data.clone());
     }
+    if let LiveEvent::RequestRouted { kind, data, .. } = event {
+        return EventEnvelope {
+            id: format!("live:{counter}"),
+            kind: kind.clone(),
+            data: data.clone(),
+            location: None,
+            durable: None,
+        };
+    }
     let mut data = serde_json::to_value(event).unwrap_or_default();
     let kind = data
         .as_object_mut()
@@ -117,6 +126,7 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
 fn session_of(event: &LiveEvent) -> &str {
     match event {
         LiveEvent::Durable { session_id, .. }
+        | LiveEvent::RequestRouted { session_id, .. }
         | LiveEvent::WorktreeSetup { session_id, .. }
         | LiveEvent::TextDelta { session_id, .. }
         | LiveEvent::ReasoningDelta { session_id, .. }
@@ -132,6 +142,14 @@ fn session_of(event: &LiveEvent) -> &str {
 fn sse_event(e: &EventEnvelope) -> Event {
     Event::default()
         .id(e.id.clone())
+        .event(e.kind.clone())
+        .json_data(e)
+        .unwrap_or_default()
+}
+
+/// Live child notifications must not replace the Session's durable SSE cursor.
+fn session_live_event(e: &EventEnvelope) -> Event {
+    Event::default()
         .event(e.kind.clone())
         .json_data(e)
         .unwrap_or_default()
@@ -280,7 +298,8 @@ async fn follow(
     mut live: broadcast::Receiver<LiveEvent>,
     tx: mpsc::Sender<Event>,
 ) {
-    if !replay(&state, &id, &directory, &mut last, &tx).await {
+    let mut counter = 0;
+    if !recover_session_stream(&state, &id, &directory, &mut last, &tx, &mut counter).await {
         return;
     }
     loop {
@@ -304,15 +323,67 @@ async fn follow(
                 }
             }
             Ok(LiveEvent::Deleted { session_id }) if session_id == id => return,
+            Ok(event @ LiveEvent::RequestRouted { .. }) if session_of(&event) == id => {
+                counter += 1;
+                let mut e = envelope(&event, counter);
+                e.location = Some(directory.clone());
+                if tx.send(session_live_event(&e)).await.is_err() {
+                    return;
+                }
+            }
             Ok(_) => {}
             Err(broadcast::error::RecvError::Lagged(_)) => {
-                if !replay(&state, &id, &directory, &mut last, &tx).await {
+                if !recover_session_stream(&state, &id, &directory, &mut last, &tx, &mut counter)
+                    .await
+                {
                     return;
                 }
             }
             Err(broadcast::error::RecvError::Closed) => return,
         }
     }
+}
+
+async fn recover_session_stream(
+    state: &AppState,
+    id: &str,
+    directory: &str,
+    last: &mut i64,
+    tx: &mpsc::Sender<Event>,
+    counter: &mut u64,
+) -> bool {
+    replay(state, id, directory, last, tx).await
+        && pending_children(state, id, directory, tx, counter).await
+}
+
+async fn pending_children(
+    state: &AppState,
+    id: &str,
+    directory: &str,
+    tx: &mpsc::Sender<Event>,
+    counter: &mut u64,
+) -> bool {
+    for request in state.runtime.pending_requests(Some(id)) {
+        if request.session_id == id {
+            continue;
+        }
+        let kind = match &request.kind {
+            PendingKind::Permission(_) => "permission.asked.1",
+            PendingKind::Question { .. } => "question.asked.1",
+        };
+        *counter += 1;
+        let e = EventEnvelope {
+            id: format!("live:{counter}"),
+            kind: kind.into(),
+            data: serde_json::to_value(request).unwrap_or_default(),
+            location: Some(directory.into()),
+            durable: None,
+        };
+        if tx.send(session_live_event(&e)).await.is_err() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Send stored events after `last`; false when the client went away.

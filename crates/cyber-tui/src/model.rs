@@ -213,6 +213,8 @@ pub enum Request {
     Permission {
         id: String,
         session_id: String,
+        origin: Option<String>,
+        routed_to: Vec<String>,
         action: String,
         resources: Vec<String>,
         patterns: Vec<String>,
@@ -221,6 +223,8 @@ pub enum Request {
     Question {
         id: String,
         session_id: String,
+        origin: Option<String>,
+        routed_to: Vec<String>,
         questions: Vec<QuestionSpec>,
     },
 }
@@ -243,6 +247,13 @@ impl Request {
     pub fn parse(v: &Value) -> Option<Self> {
         let id = v["id"].as_str()?.to_string();
         let session_id = v["session_id"].as_str()?.to_string();
+        let origin = v["origin"]["title"].as_str().map(str::to_string);
+        let routed_to = v["routed_to"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|route| route["session_id"].as_str().map(str::to_string))
+            .collect();
         let strings = |k: &str| {
             v[k].as_array()
                 .into_iter()
@@ -255,6 +266,8 @@ impl Request {
             "permission" => Some(Request::Permission {
                 id,
                 session_id,
+                origin,
+                routed_to,
                 action: v["action"].as_str().unwrap_or_default().into(),
                 resources: strings("resources"),
                 patterns: strings("always_patterns"),
@@ -263,6 +276,8 @@ impl Request {
             "question" => Some(Request::Question {
                 id,
                 session_id,
+                origin,
+                routed_to,
                 questions: v["questions"]
                     .as_array()
                     .into_iter()
@@ -271,6 +286,19 @@ impl Request {
                     .collect(),
             }),
             _ => None,
+        }
+    }
+
+    pub fn visible_in(&self, session_id: &str) -> bool {
+        let routes = match self {
+            Self::Permission { routed_to, .. } | Self::Question { routed_to, .. } => routed_to,
+        };
+        self.session() == session_id || routes.iter().any(|route| route == session_id)
+    }
+
+    pub fn origin_title(&self) -> Option<&str> {
+        match self {
+            Self::Permission { origin, .. } | Self::Question { origin, .. } => origin.as_deref(),
         }
     }
 }

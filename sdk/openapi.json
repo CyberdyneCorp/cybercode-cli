@@ -1765,6 +1765,22 @@
           },
           "message_id": {
             "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequestOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "routed_to": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestRoute"
+            }
           }
         },
         "required": [
@@ -1807,7 +1823,42 @@
             ]
           }
         ],
-        "description": "A request waiting for a client, as listed to clients."
+        "description": "A request waiting for a client. Its Session remains the owner of replies."
+      },
+      "RequestOrigin": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "agent",
+          "directory"
+        ],
+        "description": "Server-derived child identity for approval prompts."
+      },
+      "RequestRoute": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "directory"
+        ]
       },
       "PermissionAsk": {
         "type": "object",

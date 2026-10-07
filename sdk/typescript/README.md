@@ -99,6 +99,9 @@ Handlers return `"once" | "always" | "reject"` (or `{ reply, message }`) for per
 answer labels per question (or `undefined` to dismiss) for questions. On every (re)connect the
 SDK first fetches the pending requests and handles those of the client's Location it has not
 handled yet, so requests asked during a disconnect are not missed; each request is handled once.
+This includes child requests routed to an ancestor in the client's Location, even when the child
+runs in another worktree. `req.origin` identifies its title, agent and Location; `req.session_id`
+remains the child owner used for replies. Live notifications and reconnect catch-up are deduplicated.
 
 ## Application tools
 

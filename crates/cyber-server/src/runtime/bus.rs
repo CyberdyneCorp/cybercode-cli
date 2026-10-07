@@ -9,6 +9,12 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
+    /// A child request notification on an ancestor's live stream, never its history.
+    RequestRouted {
+        session_id: String,
+        kind: String,
+        data: Value,
+    },
     WorktreeSetup {
         session_id: String,
         worktree_id: String,

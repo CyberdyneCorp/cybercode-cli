@@ -115,6 +115,13 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     let t = &app.theme;
     let rect = centered(area, 90, 24);
     let mut lines = Vec::new();
+    if let Some(title) = app.active_request().and_then(Request::origin_title) {
+        lines.push(Line::from(Span::styled(
+            title.to_owned(),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::default());
+    }
     if let Some(warning) = metadata["warning"].as_str() {
         lines.push(Line::from(Span::styled(
             warning.to_owned(),
@@ -219,6 +226,16 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
         ));
     }
     let mut lines = vec![Line::from(tabs), Line::default()];
+    if let Some(title) = app.active_request().and_then(Request::origin_title) {
+        lines.insert(0, Line::default());
+        lines.insert(
+            0,
+            Line::from(Span::styled(
+                title.to_owned(),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            )),
+        );
+    }
     match questions.get(form.tab) {
         Some(q) => {
             lines.push(Line::from(Span::styled(

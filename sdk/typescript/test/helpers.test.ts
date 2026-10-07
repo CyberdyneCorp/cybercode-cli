@@ -76,7 +76,9 @@ function requestServer(options: { pending?: unknown[]; events?: (send: (chunk: s
 }
 
 async function until(condition: () => boolean): Promise<void> {
-  while (!condition()) await new Promise((r) => setTimeout(r, 1));
+  const deadline = Date.now() + 2_000;
+  while (!condition() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 1));
+  assert.ok(condition(), "expected request handler did not complete");
 }
 
 test("permissions.onRequest replies with the handler's decision", async () => {
@@ -127,4 +129,55 @@ test("questions.onRequest dismisses when the handler returns undefined", async (
   stop();
   assert.equal(replies[0]?.url.pathname, "/api/v1/sessions/ses_1/questions/que_1/reply");
   assert.deepEqual(JSON.parse(replies[0]?.body ?? ""), {});
+});
+
+test("onRequest recovers a child in another Location through trusted ancestor routes", async () => {
+  const child = {
+    ...permission("per_child", "ses_child"),
+    origin: { title: "Review changes (@general)", agent: "general", directory: "/repo/worktree" },
+    routed_to: [{ session_id: "ses_parent", directory: "/repo/a" }],
+  };
+  const other = { ...permission("per_other", "ses_other"), metadata: { routed_to: [{ session_id: "ses_parent", directory: "/repo/a" }] }, routed_to: [{ session_id: "ses_elsewhere", directory: "/repo/b" }] };
+  const { client, replies } = requestServer({
+    pending: [child, other], sessions: { ses_child: "/repo/worktree", ses_other: "/repo/b" },
+  });
+  const seen: string[] = [];
+  const stop = client.permissions.onRequest((request) => { seen.push(request.id); return "once"; });
+  try { await until(() => replies.length > 0); } finally { stop(); }
+  assert.deepEqual(seen, ["per_child"]);
+  assert.equal(replies[0]?.url.pathname, "/api/v1/sessions/ses_child/permissions/per_child/reply");
+});
+
+test("routed live and pending child requests are handled once with their origin name", async () => {
+  const child = {
+    ...permission("per_child", "ses_child"),
+    origin: { title: "Review changes (@general)", agent: "general", directory: "/worktree" },
+    routed_to: [{ session_id: "ses_parent", directory: "/repo/a" }],
+  };
+  const { client, replies } = requestServer({
+    pending: [child], sessions: { ses_child: "/worktree" },
+    events: (send) => {
+      send(frame({ id: "live:1", type: "permission.asked.1", data: child }));
+      send(frame({ id: "live:2", type: "permission.asked.1", data: child }));
+    },
+  });
+  const names: string[] = [];
+  const stop = client.permissions.onRequest((request) => { names.push(request.origin?.title ?? ""); return "once"; });
+  try { await until(() => replies.length > 0); } finally { stop(); }
+  assert.deepEqual(names, ["Review changes (@general)"]);
+  assert.equal(replies.length, 1);
+});
+
+test("questions recover across child worktree Locations with their original owner", async () => {
+  const child = {
+    id: "que_child", session_id: "ses_child", call_id: "c", message_id: "m", kind: "question", questions: [],
+    origin: { title: "Inspect storage (@explore)", agent: "explore", directory: "/worktree" },
+    routed_to: [{ session_id: "ses_parent", directory: "/repo/a" }],
+  };
+  const { client, replies } = requestServer({ pending: [child], sessions: { ses_child: "/worktree" } });
+  const names: string[] = [];
+  const stop = client.questions.onRequest((request) => { names.push(request.origin?.title ?? ""); return []; });
+  try { await until(() => replies.length > 0); } finally { stop(); }
+  assert.deepEqual(names, ["Inspect storage (@explore)"]);
+  assert.equal(replies[0]?.url.pathname, "/api/v1/sessions/ses_child/questions/que_child/reply");
 });

@@ -166,6 +166,7 @@ pub struct App {
     pub streaming: BTreeMap<String, String>,
     pub queued: Vec<Queued>,
     pub requests: Vec<Request>,
+    shown_request: Option<String>,
     pub composer: Composer,
     pub overlay: Overlay,
     pub completion: Option<Completion>,
@@ -192,6 +193,7 @@ impl App {
             streaming: BTreeMap::new(),
             queued: Vec::new(),
             requests: Vec::new(),
+            shown_request: None,
             composer: Composer::new(history),
             overlay: Overlay::None,
             completion: None,
@@ -236,17 +238,22 @@ impl App {
         self.toast = Some((text.into(), Instant::now()));
     }
 
-    /// The pending request shown now: the oldest one of this Session.
+    /// The oldest request owned by or routed to the viewed Session.
     pub fn active_request(&self) -> Option<&Request> {
         self.requests
             .iter()
-            .find(|r| r.session() == self.session.id)
+            .find(|r| r.visible_in(&self.session.id))
     }
 
     /// Show the prompt for a newly pending request.
     pub fn sync_overlay(&mut self) {
         let blocking = matches!(self.overlay, Overlay::Permission(_) | Overlay::Question(_));
-        match (self.active_request(), blocking) {
+        let request_id = self
+            .active_request()
+            .map(|request| request.id().to_string());
+        let same_request = self.shown_request == request_id;
+        self.shown_request = request_id;
+        match (self.active_request(), blocking && same_request) {
             (Some(Request::Permission { .. }), false) => {
                 self.overlay = Overlay::Permission(PermStep::Choose(0))
             }
@@ -260,7 +267,7 @@ impl App {
                     typing: false,
                 });
             }
-            (None, true) => self.overlay = Overlay::None,
+            (None, _) if blocking => self.overlay = Overlay::None,
             _ => {}
         }
     }
@@ -747,6 +754,7 @@ impl App {
     /// Apply a server event; returns actions such as a refresh.
     pub fn on_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
         match kind {
+            "server.connected" => vec![Action::Refresh],
             "session.text.delta" => {
                 let id = data["message_id"].as_str().unwrap_or_default().to_string();
                 self.streaming

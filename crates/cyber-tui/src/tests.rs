@@ -121,6 +121,8 @@ fn permission() -> Request {
     Request::Permission {
         id: "per_1".into(),
         session_id: "ses_1".into(),
+        origin: None,
+        routed_to: Vec::new(),
         action: "bash".into(),
         resources: vec!["rm -rf build".into()],
         patterns: vec!["rm *".into()],
@@ -179,6 +181,8 @@ fn questions_submit_on_selection_or_dismiss_with_esc() {
     let req = Request::Question {
         id: "que_1".into(),
         session_id: "ses_1".into(),
+        origin: None,
+        routed_to: Vec::new(),
         questions: vec![q],
     };
     let mut app = App::new(session(true), Vec::new(), "cyber");
@@ -491,4 +495,69 @@ fn critical_permission_warning_is_visible_in_the_error_color() {
         "danger warning must use the theme's error color"
     );
     assert!(screen(&app).contains("Allow once"));
+}
+
+#[test]
+fn routed_child_approval_shows_its_name_and_replies_from_the_parent() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    let request = Request::parse(&json!({
+        "id": "per_child", "session_id": "ses_child", "kind": "permission",
+        "action": "bash", "resources": ["npm test"], "always_patterns": [], "metadata": {},
+        "origin": { "title": "Review changes (@general)", "agent": "general", "directory": "/worktree" },
+        "routed_to": [{ "session_id": "ses_1", "directory": "/repo" }]
+    })).unwrap();
+    app.requests = vec![request];
+    app.sync_overlay();
+    assert!(matches!(app.overlay, Overlay::Permission(_)));
+    assert!(screen(&app).contains("Review changes (@general)"));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::Reply {
+            request: "per_child".into(),
+            body: json!({"reply": "once"})
+        }]
+    );
+}
+
+#[test]
+fn routed_child_question_shows_its_name_and_unrelated_requests_stay_hidden() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    let mut data = json!({
+        "id": "que_child", "session_id": "ses_child", "kind": "question",
+        "questions": [{ "question": "Which storage?", "header": "Storage", "options": [{ "label": "sqlite" }] }],
+        "origin": { "title": "Inspect storage (@explore)", "agent": "explore", "directory": "/worktree" },
+        "routed_to": [{ "session_id": "ses_other", "directory": "/elsewhere" }]
+    });
+    app.requests = vec![Request::parse(&data).unwrap()];
+    app.sync_overlay();
+    assert!(app.active_request().is_none());
+    data["routed_to"][0]["session_id"] = json!("ses_1");
+    app.requests = vec![Request::parse(&data).unwrap()];
+    app.sync_overlay();
+    assert!(matches!(app.overlay, Overlay::Question(_)));
+    assert!(screen(&app).contains("Inspect storage (@explore)"));
+}
+
+#[test]
+fn routed_child_prompt_refresh_replaces_a_settled_request_form() {
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    let permission = json!({
+        "id": "per_child", "session_id": "ses_child", "kind": "permission", "action": "bash",
+        "resources": ["npm test"], "always_patterns": [], "metadata": {},
+        "origin": { "title": "Review changes (@general)" },
+        "routed_to": [{ "session_id": "ses_1" }]
+    });
+    app.requests = vec![Request::parse(&permission).unwrap()];
+    app.sync_overlay();
+    let question = json!({
+        "id": "que_child", "session_id": "ses_child", "kind": "question",
+        "questions": [{ "question": "Which storage?", "header": "Storage", "options": [{ "label": "sqlite" }] }],
+        "origin": { "title": "Inspect storage (@explore)" },
+        "routed_to": [{ "session_id": "ses_1" }]
+    });
+    // A snapshot after another client answers the permission contains the next request.
+    app.requests = vec![Request::parse(&question).unwrap()];
+    app.sync_overlay();
+    assert!(matches!(app.overlay, Overlay::Question(_)));
+    assert!(screen(&app).contains("Which storage?"));
 }

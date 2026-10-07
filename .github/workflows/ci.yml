@@ -104,9 +104,16 @@ jobs:
         run: cargo test --locked -p cyber-tools --test parent_modes
       - name: Native ancestor request visibility and scoped replies
         if: ${{ !cancelled() }}
-        run: |
-          cargo test --locked -p cyber-server --test requests
-          cargo test --locked -p cyber-server --test http parent_endpoint_replies_to_child_requests_and_refuses_unrelated_sessions
+        run: cargo test --locked -p cyber-server --test requests
+      - name: Native ancestor request reply endpoints
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http parent_endpoint_replies_to_child_requests_and_refuses_unrelated_sessions
+      - name: Native routed child request streams
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http child_requests_reach_parent_location_and_session_streams_without_changing_replay_cursor
+      - name: Native TUI child approval prompts
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui --lib
       - name: Native historical context compatibility
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test context_compaction historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes

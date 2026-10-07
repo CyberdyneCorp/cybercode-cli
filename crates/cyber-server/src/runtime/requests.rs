@@ -72,13 +72,31 @@ pub enum QuestionReply {
     Unattended,
 }
 
-/// A request waiting for a client, as listed to clients.
+/// Server-derived child identity for approval prompts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RequestOrigin {
+    pub title: String,
+    pub agent: String,
+    pub directory: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RequestRoute {
+    pub session_id: String,
+    pub directory: String,
+}
+
+/// A request waiting for a client. Its Session remains the owner of replies.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PendingRequest {
     pub id: String,
     pub session_id: String,
     pub call_id: String,
     pub message_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<RequestOrigin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routed_to: Vec<RequestRoute>,
     #[serde(flatten)]
     pub kind: PendingKind,
 }
@@ -97,7 +115,6 @@ enum Reply {
 
 pub(crate) struct Waiter {
     request: PendingRequest,
-    ancestors: Vec<String>,
     reply: Reply,
 }
 
@@ -108,6 +125,7 @@ pub struct Asker {
     pub session_id: String,
     pub call_id: String,
     pub message_id: String,
+    agent: String,
 }
 
 impl std::fmt::Debug for Asker {
@@ -125,12 +143,14 @@ impl Asker {
         session_id: &str,
         call_id: &str,
         message_id: &str,
+        agent: &str,
     ) -> Self {
         Self {
             inner: Arc::downgrade(inner),
             session_id: session_id.into(),
             call_id: call_id.into(),
             message_id: message_id.into(),
+            agent: agent.into(),
         }
     }
 
@@ -141,6 +161,7 @@ impl Asker {
             session_id: String::new(),
             call_id: String::new(),
             message_id: String::new(),
+            agent: String::new(),
         }
     }
 
@@ -197,7 +218,7 @@ impl Inner {
         if !self.options.interactive {
             return false;
         }
-        let request = PendingRequest {
+        let mut request = PendingRequest {
             id: cyber_core::ids::new_id(if matches!(kind, PendingKind::Permission(_)) {
                 "per"
             } else {
@@ -206,6 +227,8 @@ impl Inner {
             session_id: asker.session_id.clone(),
             call_id: asker.call_id.clone(),
             message_id: asker.message_id.clone(),
+            origin: None,
+            routed_to: Vec::new(),
             kind,
         };
         let Ok(handle) = self.handle(&asker.session_id).await else {
@@ -215,8 +238,14 @@ impl Inner {
         let runtime = super::Runtime {
             inner: self.clone(),
         };
-        let ancestors = match runtime.ancestors(&info).await {
-            Ok(ancestors) => ancestors.into_iter().map(|info| info.id).collect(),
+        request.routed_to = match runtime.ancestors(&info).await {
+            Ok(ancestors) => ancestors
+                .into_iter()
+                .map(|info| RequestRoute {
+                    session_id: info.id,
+                    directory: request_directory(&info.directory),
+                })
+                .collect(),
             Err(e) => {
                 self.bus.publish(super::LiveEvent::Error {
                     session_id: asker.session_id.clone(),
@@ -226,28 +255,41 @@ impl Inner {
                 return false;
             }
         };
+        if !request.routed_to.is_empty() {
+            request.origin = Some(RequestOrigin {
+                title: info.title,
+                agent: asker.agent.clone(),
+                directory: request_directory(&info.directory),
+            });
+        }
         let kind_name = if matches!(request.kind, PendingKind::Permission(_)) {
             PERMISSION_ASKED
         } else {
             QUESTION_ASKED
         };
-        if let Err(e) = self.commit(&handle, vec![event(kind_name, &request)]).await {
-            // A request that cannot be recorded is never shown; say why instead of failing silently.
-            self.bus.publish(super::LiveEvent::Error {
-                session_id: asker.session_id.clone(),
-                kind: "storage".into(),
-                message: format!("could not record a {kind_name} request: {e}"),
-            });
-            return false;
-        }
+        let mut state = handle.state.lock().await;
+        let stored = match self.record_locked(&mut state, vec![event(kind_name, &request)]) {
+            Ok(stored) => stored,
+            Err(e) => {
+                // A request that cannot be recorded is never shown; say why instead of failing silently.
+                self.bus.publish(super::LiveEvent::Error {
+                    session_id: asker.session_id.clone(),
+                    kind: "storage".into(),
+                    message: format!("could not record a {kind_name} request: {e}"),
+                });
+                return false;
+            }
+        };
         self.waiters
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(Waiter {
-                request,
-                ancestors,
+                request: request.clone(),
                 reply,
             });
+        // Only publish after durable storage and reply registration both succeeded.
+        self.publish(&stored);
+        self.route_request_event(&request, kind_name, serde_json::to_value(&request).unwrap());
         true
     }
 
@@ -258,7 +300,11 @@ impl Inner {
             .iter()
             .filter(|w| {
                 session_id.is_none_or(|s| {
-                    w.request.session_id == s || w.ancestors.iter().any(|id| id == s)
+                    w.request.session_id == s
+                        || w.request
+                            .routed_to
+                            .iter()
+                            .any(|route| route.session_id == s)
                 })
             })
             .map(|w| w.request.clone())
@@ -345,9 +391,13 @@ impl Inner {
         let payload = serde_json::json!({ "request_id": request.id, "call_id": request.call_id, "reply": reply });
         self.commit(
             &handle,
-            vec![cyber_store::NewEvent::new(PERMISSION_REPLIED, payload)],
+            vec![cyber_store::NewEvent::new(
+                PERMISSION_REPLIED,
+                payload.clone(),
+            )],
         )
         .await?;
+        self.route_request_event(request, PERMISSION_REPLIED, payload);
         Ok(())
     }
 
@@ -360,10 +410,35 @@ impl Inner {
         let payload = serde_json::json!({ "request_id": request.id, "call_id": request.call_id, "reply": reply });
         self.commit(
             &handle,
-            vec![cyber_store::NewEvent::new(QUESTION_REPLIED, payload)],
+            vec![cyber_store::NewEvent::new(
+                QUESTION_REPLIED,
+                payload.clone(),
+            )],
         )
         .await?;
+        self.route_request_event(request, QUESTION_REPLIED, payload);
         Ok(())
+    }
+
+    fn route_request_event(&self, request: &PendingRequest, kind: &str, data: Value) {
+        let mut data = data;
+        if let Some(object) = data.as_object_mut() {
+            object.insert(
+                "session_id".into(),
+                Value::String(request.session_id.clone()),
+            );
+            object.insert(
+                "routed_to".into(),
+                serde_json::to_value(&request.routed_to).unwrap(),
+            );
+        }
+        for route in &request.routed_to {
+            self.bus.publish(super::LiveEvent::RequestRouted {
+                session_id: route.session_id.clone(),
+                kind: kind.into(),
+                data: data.clone(),
+            });
+        }
     }
 
     /// Any reject declines every other pending request of the Session.
@@ -440,4 +515,9 @@ impl Inner {
             handle.halt.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
+}
+
+fn request_directory(directory: &str) -> String {
+    std::fs::canonicalize(directory)
+        .map_or_else(|_| directory.into(), |path| path.display().to_string())
 }

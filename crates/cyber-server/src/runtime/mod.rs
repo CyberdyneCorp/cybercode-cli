@@ -50,7 +50,7 @@ pub use model::{
 };
 pub use requests::{
     Asker, PendingKind, PendingRequest, PermissionAsk, PermissionReply, Question, QuestionOption,
-    QuestionReply,
+    QuestionReply, RequestOrigin, RequestRoute,
 };
 pub use view::{INTERRUPTED, UNKNOWN};
 
@@ -280,7 +280,7 @@ impl Runtime {
         Self { inner }
     }
 
-    /// Requests waiting for a client, optionally for one Session.
+    /// Requests waiting for a client, optionally owned by or routed to one Session.
     pub fn pending_requests(&self, session_id: Option<&str>) -> Vec<PendingRequest> {
         self.inner.pending(session_id)
     }
@@ -1021,6 +1021,17 @@ impl Inner {
         state: &mut SessionState,
         events: Vec<NewEvent>,
     ) -> Result<Vec<StoredEvent>, RuntimeError> {
+        let stored = self.record_locked(state, events)?;
+        self.publish(&stored);
+        Ok(stored)
+    }
+
+    /// Record and fold events without exposing them before related state is ready.
+    pub(crate) fn record_locked(
+        &self,
+        state: &mut SessionState,
+        events: Vec<NewEvent>,
+    ) -> Result<Vec<StoredEvent>, RuntimeError> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
@@ -1030,7 +1041,6 @@ impl Inner {
         for e in &stored {
             state.apply(e).map_err(RuntimeError::Corrupt)?;
         }
-        self.publish(&stored);
         Ok(stored)
     }
 

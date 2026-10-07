@@ -584,3 +584,48 @@ async fn ancestors_can_list_and_answer_child_questions() {
     );
     assert!(h.runtime.pending_requests(Some(&parent)).is_empty());
 }
+
+#[tokio::test]
+async fn child_request_metadata_identifies_its_origin_and_trusted_ancestors() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "shell", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let parent = h.session().await;
+    let child = child_session(&h, &parent).await;
+    h.runtime.admit(&child, admit("test")).await.unwrap();
+    let request = wait_pending(&h, &child, 1).await.remove(0);
+    let data = serde_json::to_value(&request).unwrap();
+    assert_eq!(data["origin"]["title"], "Review changes (@general)");
+    assert_eq!(data["origin"]["agent"], "build");
+    assert_eq!(
+        data["origin"]["directory"],
+        h.repo.canonicalize().unwrap().display().to_string()
+    );
+    assert_eq!(data["routed_to"][0]["session_id"], parent);
+    assert_eq!(
+        data["routed_to"][0]["directory"],
+        h.repo.canonicalize().unwrap().display().to_string()
+    );
+    h.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    h.settle(&child).await;
+}
+
+#[test]
+fn historical_pending_requests_preserve_their_serialized_shape() {
+    let data = serde_json::json!({
+        "id": "per_old", "session_id": "ses_old", "call_id": "c", "message_id": "m",
+        "kind": "permission", "action": "bash", "resources": ["npm test"],
+        "always_patterns": [], "metadata": {}
+    });
+    let request: cyber_server::runtime::PendingRequest =
+        serde_json::from_value(data.clone()).unwrap();
+    assert_eq!(serde_json::to_value(request).unwrap(), data);
+}

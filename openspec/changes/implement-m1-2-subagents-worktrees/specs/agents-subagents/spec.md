@@ -163,6 +163,14 @@
 - **AND** the request and reply SHALL remain recorded on the child, without adding permission events to ancestor histories
 - **AND** reject and always-approval cascades SHALL affect only requests owned by the replied-to request's Session
 
+#### Scenario: Child request notifications survive client reconnects
+- **WHEN** a child in another Location requests permission or asks a question
+- **THEN** ancestor Location and Session streams SHALL forward live ask/reply notifications with server-derived child identity and validated ancestor routes
+- **AND** the TUI SHALL show the child name and only requests owned by or routed to its viewed Session
+- **AND** pending child requests SHALL be recovered on parent Session stream and SDK reconnects, without replacing the parent Session's durable replay cursor or adding child events to its history
+- **AND** a newly published request SHALL already have a registered reply waiter
+- **AND** historical request payloads without routing fields SHALL preserve their serialized shape
+
 ### Requirement: Subagent result summarization
 (P1) The tool result returned to the parent SHALL contain at most `agents.result_max_bytes` (default 16384) of the subagent's final text; longer text SHALL be written to a Managed Tool Output File and its path included. Intermediate tool output of the child SHALL never be copied into the parent's history.
 

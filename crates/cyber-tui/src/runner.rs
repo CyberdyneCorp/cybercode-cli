@@ -188,7 +188,7 @@ async fn event_loop(
         let actions = tokio::select! {
             Some(Ok(ev)) = keys.next() => terminal_event(app, ev),
             Some(ev) = server.next() => {
-                if ev.session_id.as_deref() == Some(app.session.id.as_str()) { app.on_event(&ev.kind, &ev.data) } else { Vec::new() }
+                if event_is_visible(&app.session.id, &ev) { app.on_event(&ev.kind, &ev.data) } else { Vec::new() }
             }
             Some(msg) = rx.recv() => apply(app, msg, &mut refresh),
             _ = tick.tick() => Vec::new(),
@@ -196,6 +196,20 @@ async fn event_loop(
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
     Ok(())
+}
+
+fn event_is_visible(session_id: &str, event: &cyber_client::Event) -> bool {
+    if event.kind == "server.connected" || event.session_id.as_deref() == Some(session_id) {
+        return true;
+    }
+    let request_event =
+        event.kind.starts_with("permission.") || event.kind.starts_with("question.");
+    request_event
+        && event.data["routed_to"].as_array().is_some_and(|routes| {
+            routes
+                .iter()
+                .any(|route| route["session_id"].as_str() == Some(session_id))
+        })
 }
 
 fn terminal_event(app: &mut App, ev: TermEvent) -> Vec<Action> {
@@ -394,6 +408,26 @@ fn set_title(app: &App) {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    #[test]
+    fn routed_child_request_events_are_visible_without_forwarding_child_text() {
+        let mut event = cyber_client::Event {
+            kind: "permission.replied.1".into(),
+            data: json!({ "routed_to": [{ "session_id": "ses_parent" }] }),
+            seq: None,
+            session_id: Some("ses_child".into()),
+        };
+        assert!(event_is_visible("ses_parent", &event));
+        assert!(!event_is_visible("ses_other", &event));
+        event.kind = "question.asked.1".into();
+        assert!(event_is_visible("ses_parent", &event));
+        event.kind = "session.text.delta".into();
+        assert!(!event_is_visible("ses_parent", &event));
+        assert!(event_is_visible("ses_child", &event));
+        event.kind = "server.connected".into();
+        event.session_id = None;
+        assert!(event_is_visible("ses_parent", &event));
+    }
     use crate::model::Session;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

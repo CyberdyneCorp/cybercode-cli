@@ -836,6 +836,7 @@ impl Inner {
             &turn.session_id,
             &call.id,
             message_id,
+            &turn.agent,
         );
         let ask = PermissionAsk {
             action: "doom_loop".into(),
@@ -929,7 +930,7 @@ impl Inner {
             input,
             attempt,
             operation_key,
-            asker: Asker::new(&inner, &turn.session_id, &call.id, message_id),
+            asker: Asker::new(&inner, &turn.session_id, &call.id, message_id, &turn.agent),
             rules: turn.rules.clone(),
         })
     }

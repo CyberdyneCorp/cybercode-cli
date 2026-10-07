@@ -966,3 +966,102 @@ async fn parent_endpoint_replies_to_child_requests_and_refuses_unrelated_session
             .any(|e| e.kind.starts_with("permission."))
     );
 }
+
+async fn read_sse_until(
+    stream: &mut (impl futures::Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Unpin),
+    needle: &str,
+) -> String {
+    use futures::StreamExt;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut buffer = String::new();
+        while !buffer.contains(needle) {
+            let chunk = stream
+                .next()
+                .await
+                .expect("stream ended")
+                .expect("stream failed");
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+        }
+        buffer
+    })
+    .await
+    .expect("expected event was not delivered")
+}
+
+#[tokio::test]
+async fn child_requests_reach_parent_location_and_session_streams_without_changing_replay_cursor() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "shell", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.dir.path().display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            title: Some("Review changes (@general)".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let cursor = h.state(&parent).await.last_seq;
+    let res = client
+        .get(format!("{base}/event"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut location = res.bytes_stream();
+    read_sse_until(&mut location, "server.connected").await;
+    let res = client
+        .get(format!("{base}/sessions/{parent}/events?after={cursor}"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut session = res.bytes_stream();
+    h.runtime
+        .admit(
+            &child,
+            cyber_server::runtime::Admission::text("test", cyber_server::runtime::Delivery::Steer),
+        )
+        .await
+        .unwrap();
+    let location_data = read_sse_until(&mut location, "permission.asked.1").await;
+    assert!(location_data.contains("Review changes (@general)") && location_data.contains(&child));
+    let session_data = read_sse_until(&mut session, "permission.asked.1").await;
+    assert!(
+        !session_data.lines().any(|line| line.starts_with("id:")),
+        "child relay must not replace the parent's durable cursor: {session_data}"
+    );
+    assert_eq!(h.state(&parent).await.last_seq, cursor);
+    let request = h.runtime.pending_requests(Some(&child)).remove(0);
+    // Reconnection recovers child requests without inventing parent durable events.
+    let res = client
+        .get(format!("{base}/sessions/{parent}/events"))
+        .header("Last-Event-ID", format!("{parent}:{cursor}"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let mut reconnected = res.bytes_stream();
+    read_sse_until(&mut reconnected, &request.id).await;
+    h.runtime
+        .reply_permission(&request.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    let replied = read_sse_until(&mut session, "permission.replied.1").await;
+    assert!(replied.contains(&request.id));
+    h.settle(&child).await;
+    assert_eq!(h.state(&parent).await.last_seq, cursor);
+}

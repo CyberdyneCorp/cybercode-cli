@@ -336,12 +336,14 @@ export type Page_SessionRow = {
   cursor: Cursor;
 };
 
-/** A request waiting for a client, as listed to clients. */
+/** A request waiting for a client. Its Session remains the owner of replies. */
 export type PendingRequest = {
   id: string;
   session_id: string;
   call_id: string;
   message_id: string;
+  origin?: RequestOrigin | null;
+  routed_to?: RequestRoute[];
 } & ((PermissionAsk & {
   kind: "permission";
 }) | {
@@ -410,6 +412,18 @@ export type ReleaseBody = {
 };
 
 export type ReplyKind = "once" | "always" | "reject";
+
+/** Server-derived child identity for approval prompts. */
+export type RequestOrigin = {
+  title: string;
+  agent: string;
+  directory: string;
+};
+
+export type RequestRoute = {
+  session_id: string;
+  directory: string;
+};
 
 export type RetrySafety = "read_only" | "idempotent" | "reconcile" | "never";
 
