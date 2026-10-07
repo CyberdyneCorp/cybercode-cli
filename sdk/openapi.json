@@ -1002,6 +1002,23 @@
               "status",
               "message"
             ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "not_dispatched"
+              }
+            },
+            "required": [
+              "status",
+              "message"
+            ],
+            "description": "Command preparation failed before entering the process launch boundary."
           }
         ]
       },

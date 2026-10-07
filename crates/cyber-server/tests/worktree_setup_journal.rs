@@ -353,3 +353,67 @@ fn racing_retry_reviews_authorize_only_one_new_attempt() {
     assert_eq!(journal.start(0).unwrap(), CommandDecision::Dispatch);
     assert!(journal.start(0).is_err());
 }
+
+#[test]
+fn reviewed_prelaunch_failure_retries_survive_restart_and_fence_old_acknowledgements() {
+    use cyber_server::worktrees::CommandStatus;
+    let temp = tempfile::tempdir().unwrap();
+    let location = DatabaseLocation::File(temp.path().join("preparation.db"));
+    let commands = vec!["setup".into()];
+    let original;
+    {
+        let journal =
+            SetupJournal::new(open(location.clone()), &managed(), &commands, "ses_owner").unwrap();
+        original = journal.start_attempt(0).unwrap().started_revision.unwrap();
+        journal
+            .finish_attempt(
+                0,
+                original,
+                CommandResult::NotDispatched {
+                    message: "Sandbox preparation refused launch".into(),
+                },
+            )
+            .unwrap();
+    }
+    let journal = SetupJournal::new(open(location), &managed(), &commands, "ses_owner").unwrap();
+    let reviewed = journal.snapshot().unwrap();
+    assert!(matches!(
+        reviewed.commands[0],
+        CommandStatus::Finished {
+            result: CommandResult::NotDispatched { .. },
+        }
+    ));
+    assert!(
+        journal
+            .retry_failed(reviewed.revision - 1, &reviewed.digest, 0, "stale")
+            .is_err()
+    );
+    assert_eq!(journal.snapshot().unwrap(), reviewed);
+    journal
+        .retry_failed(
+            reviewed.revision,
+            &reviewed.digest,
+            0,
+            "Preparation repaired and reviewed",
+        )
+        .unwrap();
+    let next = journal.start_attempt(0).unwrap().started_revision.unwrap();
+    assert!(
+        journal
+            .finish_attempt(
+                0,
+                original,
+                CommandResult::NotDispatched {
+                    message: "late".into()
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(
+        journal.snapshot().unwrap().commands[0],
+        CommandStatus::Pending
+    );
+    journal
+        .finish_attempt(0, next, CommandResult::Exited { code: Some(0) })
+        .unwrap();
+}

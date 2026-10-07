@@ -1086,3 +1086,184 @@ async fn explicit_start_preserves_denied_rules_and_read_only_admission() {
         );
     }
 }
+
+#[tokio::test]
+async fn reviewed_retry_after_preparation_failure_preserves_success_and_launches_once() {
+    use cyber_server::worktrees::SetupJournal;
+    struct ObstructPreparation(std::path::PathBuf);
+    impl SetupSink for ObstructPreparation {
+        fn emit(&self, event: SetupEvent<'_>) -> io::Result<()> {
+            if matches!(event, SetupEvent::Started { index: 1, .. }) {
+                // Git verification already prepared this directory. Block only the
+                // second setup command's preparation, before its launch boundary.
+                std::fs::remove_dir(&self.0)?;
+                std::fs::write(&self.0, "temporary obstruction")?;
+            }
+            Ok(())
+        }
+    }
+    let (mut fixture, repository, managed) = owned().await;
+    fixture.renew_host(Some("full-access".into()));
+    let commands = if cfg!(windows) {
+        vec![
+            "Add-Content -Path prefix.txt -Value once -NoNewline -Encoding ascii".to_string(),
+            "Add-Content -Path target.txt -Value target -NoNewline -Encoding ascii".to_string(),
+        ]
+    } else {
+        vec![
+            "printf once >> prefix.txt".to_string(),
+            "printf target >> target.txt".to_string(),
+        ]
+    };
+    fixture.set_config(json!({"permissions":{"worktree":"allow"},"worktrees":{"setup":commands}}));
+    let mut inv = fixture.invocation("bypass", "worktree", json!({}));
+    inv.directory = managed.path.display().to_string();
+    let obstruction = fixture.dir.path().join("tmp").join(&inv.session_id);
+    let error = fixture
+        .host
+        .setup_worktree(
+            &inv,
+            CancellationToken::new(),
+            &repository,
+            &managed,
+            &ObstructPreparation(obstruction.clone()),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("Could not create"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("prefix.txt")).unwrap(),
+        "once"
+    );
+    assert!(!managed.path.join("target.txt").exists());
+    let journal = SetupJournal::new(
+        Arc::clone(&fixture.store),
+        &managed,
+        &commands,
+        &inv.session_id,
+    )
+    .unwrap();
+    let snapshot = journal.snapshot().unwrap();
+    let result = serde_json::to_value(&snapshot.commands[1]).unwrap();
+    assert_eq!(result["result"]["status"], "not_dispatched");
+    // Repairing preparation alone does not grant redispatch.
+    std::fs::remove_file(obstruction).unwrap();
+    assert!(
+        fixture
+            .host
+            .setup_worktree(
+                &inv,
+                CancellationToken::new(),
+                &repository,
+                &managed,
+                &Sink::default(),
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(journal.snapshot().unwrap(), snapshot);
+    journal
+        .retry_failed(
+            snapshot.revision,
+            &snapshot.digest,
+            1,
+            "Private temporary directory repaired",
+        )
+        .unwrap();
+    assert_eq!(
+        fixture
+            .host
+            .setup_worktree(
+                &inv,
+                CancellationToken::new(),
+                &repository,
+                &managed,
+                &Sink::default(),
+            )
+            .await
+            .unwrap(),
+        cyber_core::worktrees::SetupOutcome::Completed
+    );
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("prefix.txt")).unwrap(),
+        "once"
+    );
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("target.txt")).unwrap(),
+        "target"
+    );
+    fixture
+        .host
+        .setup_worktree(
+            &inv,
+            CancellationToken::new(),
+            &repository,
+            &managed,
+            &Sink::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("target.txt")).unwrap(),
+        "target"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn process_launch_failure_remains_uncertain_and_cannot_authorize_retry() {
+    use cyber_server::worktrees::{CommandResult, CommandStatus, SetupJournal};
+    let (owner, repository, managed) = owned().await;
+    let shell = owner.dir.path().join("bash");
+    // An existing recognized shell is selected, but the non-executable file
+    // makes the actual process launch fail after preparation has succeeded.
+    std::fs::write(&shell, "not executable").unwrap();
+    let fixture = support::Fixture::with_policy(
+        shell.to_str().unwrap(),
+        cyber_sandbox::find_helper(),
+        Some("full-access".into()),
+    );
+    let commands = vec!["printf must-not-run > target.txt".to_string()];
+    fixture.set_config(json!({"permissions":{"worktree":"allow"},"worktrees":{"setup":commands}}));
+    let mut inv = fixture.invocation("bypass", "worktree", json!({}));
+    inv.directory = managed.path.display().to_string();
+    assert!(
+        fixture
+            .host
+            .setup_worktree(
+                &inv,
+                CancellationToken::new(),
+                &repository,
+                &managed,
+                &Sink::default(),
+            )
+            .await
+            .is_err()
+    );
+    let journal = SetupJournal::new(
+        Arc::clone(&fixture.store),
+        &managed,
+        &commands,
+        &inv.session_id,
+    )
+    .unwrap();
+    let snapshot = journal.snapshot().unwrap();
+    assert!(matches!(
+        snapshot.commands[0],
+        CommandStatus::Finished {
+            result: CommandResult::Failed { .. },
+        }
+    ));
+    assert!(
+        journal
+            .retry_failed(
+                snapshot.revision,
+                &snapshot.digest,
+                0,
+                "Launch failure is not proof of nondispatch"
+            )
+            .is_err()
+    );
+    assert_eq!(journal.snapshot().unwrap(), snapshot);
+    assert!(!managed.path.join("target.txt").exists());
+}

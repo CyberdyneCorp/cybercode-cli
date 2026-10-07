@@ -70,6 +70,9 @@ export type CommandResult = {
 } | {
   message: string;
   status: "failed";
+} | {
+  message: string;
+  status: "not_dispatched";
 };
 
 export type CommandStatus = {

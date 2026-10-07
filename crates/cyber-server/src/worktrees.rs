@@ -15,8 +15,16 @@ const SETTLED: &str = "worktree.setup.command_settled.1";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CommandResult {
-    Exited { code: Option<i32> },
-    Failed { message: String },
+    Exited {
+        code: Option<i32>,
+    },
+    Failed {
+        message: String,
+    },
+    /// Command preparation failed before entering the process launch boundary.
+    NotDispatched {
+        message: String,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -183,7 +191,7 @@ impl SetupJournal {
     }
 
     /// Trusted lifecycle callers must hold native activity and child ownership.
-    /// This authorizes retry only after a settled failure, never an unknown outcome.
+    /// Retry requires a failed exit or verified failure before launch, never an unknown outcome.
     pub fn retry_failed(
         &self,
         revision: i64,
@@ -416,7 +424,7 @@ fn check_retry(slots: &[Slot], index: usize) -> io::Result<()> {
             ..
         }) => return Err(invalid("Successful setup commands cannot be retried")),
         Some(Slot::Finished {
-            result: CommandResult::Exited { .. },
+            result: CommandResult::Exited { .. } | CommandResult::NotDispatched { .. },
             ..
         }) => {}
         _ => return Err(invalid("Setup retry requires a settled failed command")),

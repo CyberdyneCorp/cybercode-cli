@@ -132,6 +132,16 @@ Final local validation passes all 777 Rust workspace test executions (two ignore
 
 Native/live-provider acceptance, unknown activity/command settlement, durable cross-process child ownership/pool recovery, complete client lifecycle and public worktree management/enter/exit remain open. This increment does not accept an entire P1 requirement or milestone.
 
+## Setup preparation recovery increment
+
+Setup journals now distinguish `not_dispatched` preparation failures from generic failures at or after process launch. The existing parent-scoped reviewed retry protocol accepts the new result, preserves prior successful commands and immutable attempt history, and retains revision/recipe checks and late-acknowledgement fences. Historical generic errors, launch errors, missing acknowledgements and unknown checkout activity remain fenced; no process settlement is inferred from an unlocked lease.
+
+An actual-command regression fails against unchanged production main `90c6bd1`: obstructing private temporary-directory preparation after a successful first command records a generic failure. After correction, repairing the obstruction alone cannot redispatch; explicit reviewed retry runs the second command exactly once and preserves the first. Restart/journal coverage proves the diagnostic survives reopening and an old attempt cannot settle a new one. A non-executable shell fixture verifies that a process-launch failure remains generic and cannot authorize retry. The first version of that fixture selected the normal shell fallback, so it was corrected to an existing recognized shell with non-executable contents. The preparation test is included in the existing native Windows tools suite; native acceptance remains pending.
+
+Final local validation passes all 780 Rust workspace test executions (two ignored fixtures), workspace all-target Clippy, formatting, 43 SDK tests/type checking, OpenAPI/generation consistency and all 57 strict specification checks. Cross-spec lint reports zero errors and 21 warnings. The Windows cross-target check cannot compile C dependencies because `x86_64-w64-mingw32-gcc` is unavailable; it supplies no Windows compilation or native acceptance evidence. CI for `90c6bd1`, `27f448d` and `1921aaa` remains queued at the latest check.
+
+Unknown command/process/activity recovery resolution, full worktree/client lifecycle, durable cross-process child pool/ownership, full profile snapshots, complete Windows confinement and all remaining P1 requirements remain open. This increment does not accept a full requirement or milestone.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

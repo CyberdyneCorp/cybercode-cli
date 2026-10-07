@@ -228,3 +228,7 @@ GET/POST parent-scoped child setup recovery exposes a digest/revision snapshot a
 ### Location stream continuity
 
 Creation and rebound records define the Location timeline. A bounded database query finds the last binding at a cursor; replay advances that binding as each event is delivered. Instance streams cache sequence-qualified bindings, recover after gaps, and route rebound notices to both old and new Location subscribers. Session streams carry mutable Location through replay and live follow without resetting the durable cursor. History uses the same timeline, preserving event data. The TUI applies the rebound path immediately and scopes each action client to its current Session directory. This does not resolve unknown native execution or implement enter/exit.
+
+### Setup preparation recovery
+
+Separate failures before calling the process runner from failures at or after process launch. Persist the former as `not_dispatched` command results, eligible for the existing reviewed retry protocol; keep generic historical and process-runner errors fenced. Preparation includes sandbox wrapping and private temporary-directory initialization. No process launch failure is assumed to be side-effect-free, including native suspended-launch errors. A lost preparation acknowledgement remains pending and unknown. Retry still requires native checkout/child ownership, recipe/revision review, current trust and permission/sandbox ceilings.

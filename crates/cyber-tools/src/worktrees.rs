@@ -637,13 +637,17 @@ impl SetupExecution for Execution<'_> {
             if let CommandDecision::Recorded(result) = attempt.decision {
                 return match result {
                     CommandResult::Exited { code } => Ok(code),
-                    CommandResult::Failed { message } => Err(io::Error::other(message)),
+                    CommandResult::Failed { message }
+                    | CommandResult::NotDispatched { message } => Err(io::Error::other(message)),
                 };
             }
             let result = self.execute_setup(directory, command, sink).await;
             let saved = match &result {
                 Ok(code) => CommandResult::Exited { code: *code },
-                Err(error) => CommandResult::Failed {
+                Err(SetupFailure::Preparation(error)) => CommandResult::NotDispatched {
+                    message: error.to_string(),
+                },
+                Err(SetupFailure::Execution(error)) => CommandResult::Failed {
                     message: error.to_string(),
                 },
             };
@@ -654,9 +658,16 @@ impl SetupExecution for Execution<'_> {
                     .ok_or_else(|| io::Error::other("Missing setup dispatch revision"))?,
                 saved,
             )?;
-            result
+            result.map_err(|failure| match failure {
+                SetupFailure::Preparation(error) | SetupFailure::Execution(error) => error,
+            })
         })
     }
+}
+
+enum SetupFailure {
+    Preparation(io::Error),
+    Execution(io::Error),
 }
 
 impl Execution<'_> {
@@ -665,7 +676,18 @@ impl Execution<'_> {
         directory: &Path,
         command: &str,
         sink: &dyn SetupSink,
-    ) -> io::Result<Option<i32>> {
+    ) -> Result<Option<i32>, SetupFailure> {
+        let prepared = self
+            .prepare_setup(command)
+            .await
+            .map_err(SetupFailure::Preparation)?;
+        let status = run(self.ctx, prepared, directory, sink)
+            .await
+            .map_err(SetupFailure::Execution)?;
+        Ok(status.code())
+    }
+
+    async fn prepare_setup(&self, command: &str) -> io::Result<crate::sandboxing::Prepared> {
         #[cfg(not(windows))]
         let prepared = crate::sandboxing::prepare_worktree_command(
             self.ctx,
@@ -686,8 +708,7 @@ impl Execution<'_> {
             )
             .await
         };
-        let status = run(self.ctx, prepared.map_err(tool_error)?, directory, sink).await?;
-        Ok(status.code())
+        prepared.map_err(tool_error)
     }
 }
 
