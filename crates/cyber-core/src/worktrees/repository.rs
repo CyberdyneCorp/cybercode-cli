@@ -478,7 +478,10 @@ fn windows_git_launch(directory: &Path, args: &[OsString]) -> io::Result<(PathBu
             metadata.clone(),
         ];
         if needs_working_tree(args) {
-            prepared.extend(["--work-tree".into(), target.clone()]);
+            prepared.extend([
+                "--work-tree".into(),
+                windows_working_tree_argument(directory)?,
+            ]);
         }
         prepared.extend_from_slice(args);
         if args.first().is_some_and(|value| value == "checkout-index") {
@@ -506,6 +509,51 @@ fn windows_git_launch(directory: &Path, args: &[OsString]) -> io::Result<(PathBu
         }
     }
     Err(invalid("No supported short Git launch directory"))
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)] // The bounded, read-only Windows path query is isolated here.
+fn windows_working_tree_argument(directory: &Path) -> io::Result<OsString> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetShortPathNameW(path: *const u16, buffer: *mut u16, size: u32) -> u32;
+    }
+
+    // Git resolves the work tree before initializing core.longpaths. Use only
+    // an existing OS alias; never create a junction or alter checkout identity.
+    let canonical = directory.canonicalize()?;
+    let input: Vec<u16> = canonical.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: input is a live NUL-terminated UTF-16 path; a null output with
+    // length zero queries the required buffer size.
+    let required = unsafe { GetShortPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
+    if required == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if required > 32768 {
+        return Err(invalid("Windows worktree alias exceeds supported length"));
+    }
+    let mut output = vec![0u16; required as usize];
+    // SAFETY: both buffers remain live and output has the reported capacity.
+    let written = unsafe { GetShortPathNameW(input.as_ptr(), output.as_mut_ptr(), required) };
+    if written == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if written >= required {
+        return Err(invalid("Windows worktree alias changed during resolution"));
+    }
+    let alias = PathBuf::from(OsString::from_wide(&output[..written as usize]));
+    let argument = git_path_argument(&alias)?;
+    if argument.encode_wide().count() >= 240 {
+        return Err(invalid(
+            "Git working-tree initialization requires an existing short Windows path alias",
+        ));
+    }
+    if alias.canonicalize()? != canonical {
+        return Err(invalid("Windows worktree alias changed checkout identity"));
+    }
+    Ok(argument)
 }
 
 #[cfg(windows)]

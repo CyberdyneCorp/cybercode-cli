@@ -446,6 +446,18 @@ fn windows_long_paths_are_preserved_at_the_git_argument_boundary() {
     let status = block_on(repository.status(&fixture.execution, &managed)).unwrap();
     assert!(!status.dirty);
     assert_eq!((status.ahead, status.behind), (0, 0));
+    std::fs::write(managed.path.join("new-user-file.txt"), "preserve untracked").unwrap();
+    assert!(
+        block_on(repository.status(&fixture.execution, &managed))
+            .unwrap()
+            .dirty
+    );
+    std::fs::remove_file(managed.path.join("new-user-file.txt")).unwrap();
+    assert!(
+        !block_on(repository.status(&fixture.execution, &managed))
+            .unwrap()
+            .dirty
+    );
     std::fs::write(managed.path.join("tracked.txt"), "long target user edit").unwrap();
     assert!(
         block_on(repository.status(&fixture.execution, &managed))

@@ -20,6 +20,12 @@
 - **AND** pending and invalid records remain visible with their distinct recovery status
 - **AND** listing preserves user edits and ownership records
 
+#### Scenario: Windows working-tree alias preserves ownership
+- **WHEN** Git initialization needs a short path for a long owned Windows checkout and an existing OS short-path alias is used
+- **THEN** the alias is verified to resolve to that exact canonical checkout before Git execution
+- **AND** durable ownership and sandbox scope retain the canonical path, with no junction, drive mapping or Git configuration mutation
+- **AND** an absent, oversized or identity-mismatched alias refuses execution without changing user files
+
 #### Scenario: Listing refuses unsafe records and contention
 - **WHEN** the repository lifecycle lock is held or an ownership record is oversized, symlinked or inconsistent with its name and repository
 - **THEN** contention returns a retryable busy error and unsafe records receive invalid-record diagnostics
