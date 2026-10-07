@@ -1,7 +1,6 @@
-//! Capability-free less-privileged AppContainer process launch. Tool dispatch remains disabled.
+//! LPAC launch with fixed registry initialization authority. Tool dispatch remains disabled.
 #![allow(unsafe_code)]
 
-#[cfg(feature = "windows-test-controls")]
 mod capabilities;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -103,15 +102,23 @@ pub fn spawn_with_package_allowances_for_test(
     )
 }
 
-/// Fixed registry-read LPAC comparison; unavailable to production tool dispatch.
+#[derive(Clone, Copy)]
+enum LaunchPolicy {
+    Isolated,
+    #[cfg(feature = "windows-test-controls")]
+    PackageAllowance,
+    #[cfg(feature = "windows-test-controls")]
+    UnexpectedNetworkCapability,
+}
+
+/// Inject an extra capability into a suspended child to test mandatory refusal.
 #[cfg(feature = "windows-test-controls")]
-pub fn spawn_with_registry_read_for_test(
+pub fn spawn_with_unexpected_network_capability_for_test(
     profile: &Profile,
     program: &Path,
     args: &[OsString],
     environment: &BTreeMap<String, String>,
     directory: &Path,
-    streams: Option<StandardStreams<'_>>,
 ) -> io::Result<ContainerChild> {
     spawn_inner(
         profile,
@@ -119,18 +126,9 @@ pub fn spawn_with_registry_read_for_test(
         args,
         environment,
         directory,
-        streams,
-        LaunchPolicy::RegistryRead,
+        None,
+        LaunchPolicy::UnexpectedNetworkCapability,
     )
-}
-
-#[derive(Clone, Copy)]
-enum LaunchPolicy {
-    Isolated,
-    #[cfg(feature = "windows-test-controls")]
-    PackageAllowance,
-    #[cfg(feature = "windows-test-controls")]
-    RegistryRead,
 }
 
 fn spawn_inner(
@@ -156,18 +154,27 @@ fn spawn_inner(
     let temp = PrivateTemp::new(profile)?;
     let environment = temp.environment(environment)?;
     #[cfg(feature = "windows-test-controls")]
-    let capability_owner =
-        capabilities::CapabilitySet::new(matches!(policy, LaunchPolicy::RegistryRead))?;
+    let runtime_capabilities = !matches!(policy, LaunchPolicy::PackageAllowance);
+    #[cfg(not(feature = "windows-test-controls"))]
+    let runtime_capabilities = matches!(policy, LaunchPolicy::Isolated);
+    let capability_owner = capabilities::CapabilitySet::new(runtime_capabilities)?;
+    #[cfg(feature = "windows-test-controls")]
+    let extra = if matches!(policy, LaunchPolicy::UnexpectedNetworkCapability) {
+        capabilities::CapabilitySet::network_control()?
+    } else {
+        capabilities::CapabilitySet::default()
+    };
+    let mut requested = capability_owner.entries.clone();
+    #[cfg(feature = "windows-test-controls")]
+    requested.extend_from_slice(&extra.entries);
     let capabilities = SECURITY_CAPABILITIES {
         AppContainerSid: profile.sid(),
-        #[cfg(feature = "windows-test-controls")]
-        Capabilities: if capability_owner.entries.is_empty() {
+        Capabilities: if requested.is_empty() {
             null_mut()
         } else {
-            capability_owner.entries.as_ptr().cast_mut()
+            requested.as_mut_ptr()
         },
-        #[cfg(feature = "windows-test-controls")]
-        CapabilityCount: capability_owner.entries.len() as u32,
+        CapabilityCount: requested.len() as u32,
         ..Default::default()
     };
     let job = Job::new()?;
@@ -227,7 +234,7 @@ fn spawn_inner(
         .as_ref()
         .unwrap()
         .verify_handle(child.process.as_raw_handle())?;
-    verify_identity(child.process.as_raw_handle(), profile)?;
+    verify_identity(child.process.as_raw_handle(), profile, &capability_owner)?;
     // User code cannot run until both ownership and identity checks have succeeded.
     child._temp._reservation.resume(thread.as_handle())?;
     Ok(child)
@@ -539,7 +546,11 @@ impl Drop for Attributes<'_> {
     }
 }
 
-fn verify_identity(process: HANDLE, profile: &Profile) -> io::Result<()> {
+fn verify_identity(
+    process: HANDLE,
+    profile: &Profile,
+    capabilities: &capabilities::CapabilitySet,
+) -> io::Result<()> {
     let mut raw = null_mut();
     if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut raw) } == 0 {
         return Err(io::Error::last_os_error());
@@ -571,7 +582,7 @@ fn verify_identity(process: HANDLE, profile: &Profile) -> io::Result<()> {
             "Created process has the wrong AppContainer identity",
         ));
     }
-    Ok(())
+    capabilities.verify(&token)
 }
 
 fn token_sid(token: &OwnedHandle) -> io::Result<Vec<usize>> {

@@ -250,8 +250,49 @@ async fn existing_tree_grants_allow_nested_files_and_deny_outside_writes() {
 #[test]
 fn container_owner_and_normal_exit_terminate_live_descendants() {
     for normal_exit in [false, true] {
-        container_tree_case(normal_exit, false);
+        container_tree_case(normal_exit);
     }
+}
+
+#[cfg(feature = "windows-test-controls")]
+#[test]
+fn unexpected_network_capability_refuses_resume_without_running_worker() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let env = environment(directory.path(), "wait", &profile);
+    let result = cyber_sandbox::windows_launch::spawn_with_unexpected_network_capability_for_test(
+        &profile,
+        &program,
+        &arguments(),
+        &env,
+        directory.path(),
+    );
+    let error = match result {
+        Err(error) => error,
+        Ok(child) => {
+            drop(child);
+            panic!("Unexpected capability was accepted")
+        }
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("Unexpected runtime capability count"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("started.txt")).unwrap(),
+        "original"
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("write.txt")).unwrap(),
+        "original"
+    );
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
 }
 
 #[tokio::test]
@@ -372,7 +413,7 @@ fn assert_profile_grants_sealed(profile: &Profile, root: &Path) {
     assert!(grant.to_string().contains("single-use"));
 }
 
-fn container_tree_case(normal_exit: bool, registry_read: bool) {
+fn container_tree_case(normal_exit: bool) {
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
     let directory = tempfile::tempdir().unwrap();
     let mut profile = Profile::new().unwrap();
@@ -381,18 +422,17 @@ fn container_tree_case(normal_exit: bool, registry_read: bool) {
     let stdin = std::fs::File::open(directory.path().join("read.txt")).unwrap();
     let stdout = std::fs::File::create(directory.path().join("tree.stdout")).unwrap();
     let stderr = std::fs::File::create(directory.path().join("tree.stderr")).unwrap();
-    let mut child = fixture_launch(
-        registry_read,
+    let mut child = spawn_with_stdio(
         &profile,
         &program,
         &arguments(),
         &env,
         directory.path(),
-        Some(StandardStreams {
+        StandardStreams {
             stdin: stdin.as_handle(),
             stdout: stdout.as_handle(),
             stderr: stderr.as_handle(),
-        }),
+        },
     )
     .unwrap();
     let primary = child.as_handle().try_clone_to_owned().unwrap();
@@ -453,52 +493,6 @@ fn assert_process_terminated(process: &OwnedHandle) {
 
 #[test]
 fn verified_container_allows_scoped_files_and_denies_other_files_and_loopback() {
-    container_probe_case(false);
-}
-
-#[cfg(feature = "windows-test-controls")]
-#[test]
-fn registry_read_control_initializes_winsock_without_widening_files_or_loopback() {
-    container_probe_case(true);
-}
-
-#[cfg(feature = "windows-test-controls")]
-#[test]
-fn registry_read_control_creates_descendants_with_owned_cleanup() {
-    for normal_exit in [false, true] {
-        container_tree_case(normal_exit, true);
-    }
-}
-
-fn fixture_launch(
-    registry_read: bool,
-    profile: &Profile,
-    program: &Path,
-    args: &[OsString],
-    environment: &BTreeMap<String, String>,
-    directory: &Path,
-    streams: Option<StandardStreams<'_>>,
-) -> std::io::Result<cyber_sandbox::windows_launch::ContainerChild> {
-    #[cfg(feature = "windows-test-controls")]
-    if registry_read {
-        return cyber_sandbox::windows_launch::spawn_with_registry_read_for_test(
-            profile,
-            program,
-            args,
-            environment,
-            directory,
-            streams,
-        );
-    }
-    #[cfg(not(feature = "windows-test-controls"))]
-    assert!(!registry_read);
-    match streams {
-        Some(streams) => spawn_with_stdio(profile, program, args, environment, directory, streams),
-        None => spawn(profile, program, args, environment, directory),
-    }
-}
-
-fn container_probe_case(registry_read: bool) {
     let directory = tempfile::tempdir().unwrap();
     let mut profile = Profile::new().unwrap();
     let (program, grants) = setup(directory.path(), &profile);
@@ -510,16 +504,7 @@ fn container_probe_case(registry_read: bool) {
     // Caller-provided temporary paths cannot escape invocation-owned storage.
     env.insert("temp".into(), directory.path().to_str().unwrap().into());
     env.insert("Tmp".into(), directory.path().to_str().unwrap().into());
-    let mut child = fixture_launch(
-        registry_read,
-        &profile,
-        &program,
-        &arguments(),
-        &env,
-        directory.path(),
-        None,
-    )
-    .unwrap();
+    let mut child = spawn(&profile, &program, &arguments(), &env, directory.path()).unwrap();
     let scratch = child.temporary_directory().to_path_buf();
     assert_eq!(
         child.wait(Duration::from_secs(10)).unwrap(),

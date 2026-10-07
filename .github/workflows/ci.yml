@@ -69,6 +69,9 @@ jobs:
       - name: Native Windows AppContainer profile and ACL ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --lib windows_container::tests
+      - name: Native Windows runtime capability verification
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-sandbox --lib windows_launch::capabilities::tests
       - name: Native Windows AppContainer launch and direct-object isolation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch
