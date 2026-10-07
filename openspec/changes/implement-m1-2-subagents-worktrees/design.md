@@ -210,3 +210,7 @@ Completion reports branch/path, changed files and line counts before releasing t
 ### Child cleanup confirmation
 
 Cleanup `ask` creates a durable child-owned operation request, routed to ancestors with path/branch metadata and mandatory individual confirmation. It holds no repository lifecycle lock while awaiting the user. Reject/unattended preserves the checkout. Approval rechecks current configuration and source/ancestor authority before no-force native removal; dirtiness/activity changes still refuse deletion. Cancelling foreground/background ownership interrupts the child and abandons its pending operation requests, including when its inference Drain is already idle. Parent interruption does not abandon routed child-owned requests.
+
+### Explicit user isolated subtasks
+
+User-requested isolated spawning authorizes checkout creation and the trusted source setup recipe as host operations, independently of model-tool Mode checks. Configuration/profile/Session/ancestor deny rules and sandbox enforcement remain authoritative; child inference and tools retain their inherited effective Mode. Empty setup is a read-only verification operation. Automatic cleanup of the owned clean artifact uses the same deny ceiling and no-force removal fence, without granting model calls any additional authority.

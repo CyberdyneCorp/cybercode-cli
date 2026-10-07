@@ -54,6 +54,7 @@ struct SetupRecipe {
 
 struct SetupAdmission<'a> {
     explicit: bool,
+    user_requested: bool,
     recipe: Option<&'a SetupRecipe>,
 }
 
@@ -334,6 +335,7 @@ impl BuiltinHost {
                 &repository,
                 &managed,
                 SetupAdmission {
+                    user_requested: false,
                     explicit: true,
                     recipe: Some(&recipe),
                 },
@@ -440,6 +442,7 @@ impl BuiltinHost {
             repository,
             managed,
             SetupAdmission {
+                user_requested: false,
                 explicit: false,
                 recipe: None,
             },
@@ -500,6 +503,7 @@ impl BuiltinHost {
             managed,
             sink,
             SetupAdmission {
+                user_requested: false,
                 explicit: false,
                 recipe: None,
             },
@@ -535,19 +539,29 @@ impl BuiltinHost {
                 Settings::from_config(&config).map_err(io::Error::other)?
             }
         };
-        authorize_worktree(
-            &ctx,
-            admission.explicit,
-            Request {
-                action: "worktree".into(),
-                resources: vec![managed.name.clone()],
-                mutates: vec![managed.path.clone()],
-                ..Request::default()
+        let request = Request {
+            action: "worktree".into(),
+            resources: vec![managed.name.clone()],
+            read_only: settings.setup.is_empty(),
+            mutates: if settings.setup.is_empty() {
+                Vec::new()
+            } else {
+                vec![managed.path.clone()]
             },
-            serde_json::json!({"operation": "setup", "path": managed.path}),
-        )
-        .await
-        .map_err(tool_error)?;
+            ..Request::default()
+        };
+        if admission.user_requested {
+            authorize_owned_worktree(&ctx, &request).map_err(tool_error)?;
+        } else {
+            authorize_worktree(
+                &ctx,
+                admission.explicit,
+                request,
+                serde_json::json!({"operation": "setup", "path": managed.path}),
+            )
+            .await
+            .map_err(tool_error)?;
+        }
         let execution = Execution {
             ctx: &ctx,
             journal: SetupJournal::new(
@@ -907,5 +921,18 @@ where
             _ = cancel.cancelled() => return Err(io::Error::new(io::ErrorKind::Interrupted, "Worktree operation cancelled")),
             _ = tokio::time::sleep(Duration::from_millis(10)) => {}
         }
+    }
+}
+
+/// User-approved checkout lifecycle authority does not widen model-tool permissions.
+fn authorize_owned_worktree(
+    ctx: &Ctx<'_>,
+    request: &Request,
+) -> Result<(), crate::tools::ToolError> {
+    match ctx.policy.user_delegation(request) {
+        crate::permissions::Decision::Deny(reason) => Err(crate::tools::ToolError::Failed(
+            format!("Permission denied: {reason}"),
+        )),
+        _ => Ok(()),
     }
 }

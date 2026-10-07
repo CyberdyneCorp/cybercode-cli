@@ -609,7 +609,7 @@ async fn create_child(
     let worktree = if spawn.isolation {
         Some(
             ctx.host
-                .create_child_worktree(ctx.inv, ctx.cancel.clone(), request)
+                .create_child_worktree(ctx.inv, ctx.cancel.clone(), request, spawn.user_requested)
                 .await
                 .map_err(|e| failed(e.to_string()))?,
         )

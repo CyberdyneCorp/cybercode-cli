@@ -701,3 +701,301 @@ async fn waiting_cleanup_does_not_hold_the_repository_lifecycle_lock() {
         false
     );
 }
+
+fn isolated_user_profile(flow: &Flow) {
+    flow.f
+        .set_config(json!({"agents":{"build":{"isolation":"worktree"}}}));
+}
+
+#[tokio::test]
+async fn explicit_user_isolated_subtasks_work_in_all_modes_without_spawn_approval() {
+    for mode in [
+        "default",
+        "accept-edits",
+        "plan",
+        "auto",
+        "dont-ask",
+        "bypass",
+    ] {
+        let flow = flow(vec![text("child"), text("notice")], false);
+        isolated_user_profile(&flow);
+        let parent = flow.session(mode).await;
+        let job = flow
+            .runtime
+            .subtask(&parent, "inspect separately")
+            .await
+            .unwrap();
+        let child = flow.runtime.state(&job.child_id).await.unwrap();
+        assert_eq!(child.info.mode, mode);
+        assert_eq!(child.info.agent, "build");
+        assert!(child.child_worktree().is_some());
+        assert_ne!(child.info.directory, flow.f.repo.display().to_string());
+        let result = done(&flow, &job.id).await.result.unwrap();
+        assert_eq!(result["text"], "child");
+        assert_eq!(result["worktree"]["kept"], false, "{mode}: {result}");
+        assert!(flow.runtime.pending_requests(None).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn explicit_user_isolation_does_not_authorize_plan_child_model_writes() {
+    let flow = flow(
+        vec![
+            call(
+                "write",
+                "write",
+                json!({"path":"forbidden.txt","content":"must not write"}),
+            ),
+            text("read-only findings"),
+            text("notice"),
+        ],
+        false,
+    );
+    isolated_user_profile(&flow);
+    let parent = flow.session("plan").await;
+    let job = flow
+        .runtime
+        .subtask(&parent, "inspect separately")
+        .await
+        .unwrap();
+    let result = done(&flow, &job.id).await.result.unwrap();
+    let child = flow.runtime.state(&job.child_id).await.unwrap();
+    assert_eq!(child.info.mode, "plan");
+    assert!(
+        child.calls["write"]
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("Plan mode is read-only")
+    );
+    assert_eq!(result["worktree"]["changes"]["files"], json!([]));
+    assert!(!flow.f.repo.join("forbidden.txt").exists());
+}
+
+#[tokio::test]
+async fn explicit_user_isolation_retains_child_tool_approval_routing() {
+    let flow = flow(
+        vec![
+            call(
+                "write",
+                "write",
+                json!({"path":"approved.txt","content":"approved change\n"}),
+            ),
+            text("child"),
+            text("notice"),
+        ],
+        true,
+    );
+    isolated_user_profile(&flow);
+    let parent = flow.session("default").await;
+    let job = flow
+        .runtime
+        .subtask(&parent, "make a change separately")
+        .await
+        .unwrap();
+    let request = flow.pending(&parent).await;
+    assert_eq!(request.session_id, job.child_id);
+    assert!(
+        matches!(&request.kind, cyber_server::runtime::PendingKind::Permission(ask) if ask.action == "edit")
+    );
+    flow.runtime
+        .reply_permission(&request.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    let result = done(&flow, &job.id).await.result.unwrap();
+    assert_eq!(result["worktree"]["kept"], true);
+    assert_eq!(
+        result["worktree"]["changes"]["files"][0]["file"],
+        "approved.txt"
+    );
+    assert!(!flow.f.repo.join("approved.txt").exists());
+}
+
+#[tokio::test]
+async fn explicit_user_isolation_runs_trusted_setup_in_plan_without_widening_model_tools() {
+    let flow = flow(vec![text("child"), text("notice")], false);
+    flow.f.set_config(json!({"agents":{"build":{"isolation":"worktree"}},"worktrees":{"setup":["printf 'setup\\n' > initialized.txt"]}}));
+    let parent = flow.session("plan").await;
+    let job = flow
+        .runtime
+        .subtask(&parent, "inspect separately")
+        .await
+        .unwrap();
+    let result = done(&flow, &job.id).await.result.unwrap();
+    let path = std::path::Path::new(result["worktree"]["path"].as_str().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(path.join("initialized.txt")).unwrap(),
+        "setup\n"
+    );
+    assert_eq!(result["worktree"]["kept"], true);
+    assert!(!flow.f.repo.join("initialized.txt").exists());
+    assert_eq!(
+        flow.runtime.state(&job.child_id).await.unwrap().info.mode,
+        "plan"
+    );
+}
+
+#[tokio::test]
+async fn explicit_user_isolation_denies_before_any_native_checkout_or_model_request() {
+    for permissions in [json!({"worktree":"deny"}), json!({"agent":"deny"})] {
+        let flow = flow(vec![], false);
+        flow.f.set_config(json!({"agents":{"build":{"isolation":"worktree","permissions":{"worktree":"allow","agent":"allow"}}},"permissions":permissions}));
+        let parent = flow.session("bypass").await;
+        assert!(
+            flow.runtime
+                .subtask(&parent, "inspect")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("denied")
+        );
+        assert_eq!(
+            flow.runtime
+                .list(&Default::default())
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        assert!(!flow.f.repo.join(".git/cyber-worktrees").exists());
+        assert!(flow.main.requests().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn explicit_user_isolation_respects_read_only_sandbox_and_ancestor_denies() {
+    let original = flow(vec![], false);
+    original.runtime.shutdown().await;
+    let mut fixture = original.f;
+    fixture.renew_host(Some("read-only".into()));
+    let readonly = Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    isolated_user_profile(&readonly);
+    let parent = readonly.session("bypass").await;
+    assert!(
+        readonly
+            .runtime
+            .subtask(&parent, "inspect")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Read-only sandbox")
+    );
+    assert!(!readonly.f.repo.join(".git/cyber-worktrees").exists());
+    assert!(readonly.main.requests().is_empty());
+
+    let flow = flow(vec![], false);
+    isolated_user_profile(&flow);
+    let root = flow
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: flow.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            rules: Some(json!({"worktree":"deny"})),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let parent = flow
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: flow.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            parent_id: Some(root.id),
+            rules: Some(json!({"worktree":"allow"})),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        flow.runtime
+            .subtask(&parent.id, "inspect")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("denied")
+    );
+    assert!(!flow.f.repo.join(".git/cyber-worktrees").exists());
+    assert_eq!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .len(),
+        2
+    );
+    assert!(flow.main.requests().is_empty());
+}
+
+#[tokio::test]
+async fn model_selected_plan_child_can_verify_empty_setup_without_model_writes() {
+    let flow = flow(vec![text("findings")], false);
+    flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"agents":{"general":{"permission_mode":"plan"}}}));
+    let parent = flow.session("bypass").await;
+    let result = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        flow.runtime
+            .state(result["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .info
+            .mode,
+        "plan"
+    );
+    assert_eq!(result["worktree"]["kept"], false);
+    assert_eq!(result["text"], "findings");
+}
+
+#[tokio::test]
+async fn isolated_names_use_git_branch_validation_independently_of_storage_names() {
+    let flow = flow(vec![text("findings")], false);
+    flow.f.set_config(
+        json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"keep":"always"}}),
+    );
+    let parent = flow.session("bypass").await;
+    let name = format!("Review_{}", "x".repeat(90));
+    let result = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":name,"isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        result["worktree"]["branch"]
+            .as_str()
+            .unwrap()
+            .ends_with(&name)
+    );
+    let child = flow
+        .runtime
+        .state(result["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(child.info.subagent_name.as_deref(), Some(name.as_str()));
+    assert!(child.child_worktree().unwrap().name.starts_with("child-"));
+    let error = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"invalid..branch","isolation":"worktree"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("not a valid branch name"), "{error}");
+    assert_eq!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .len(),
+        2
+    );
+    assert_eq!(flow.main.requests().len(), 1);
+}

@@ -22,6 +22,7 @@ impl BuiltinHost {
         inv: &Invocation,
         cancel: CancellationToken,
         request: CreateSession,
+        user_requested: bool,
     ) -> io::Result<ChildWorktree> {
         let runtime = self
             .runtime()
@@ -39,7 +40,6 @@ impl BuiltinHost {
             .subagent_name
             .as_deref()
             .ok_or_else(|| io::Error::other("Isolated child requires a reserved name"))?;
-        Name::parse(child_name).map_err(io::Error::other)?;
         let name = Name::parse(&format!(
             "child-{}",
             id.strip_prefix("ses_").unwrap_or(id).to_ascii_lowercase()
@@ -72,7 +72,13 @@ impl BuiltinHost {
         let (repository, managed, recipe) = runtime
             .own_worktree_setup(
                 cancel.child_token(),
-                self.create_child_checkout(inv, cancel.child_token(), &worktree_request, &branch),
+                self.create_child_checkout(
+                    inv,
+                    cancel.child_token(),
+                    &worktree_request,
+                    &branch,
+                    user_requested,
+                ),
             )
             .await?;
         if cancel.is_cancelled() {
@@ -102,6 +108,7 @@ impl BuiltinHost {
                 &repository,
                 &managed,
                 SetupAdmission {
+                    user_requested,
                     explicit: true,
                     recipe: Some(&recipe),
                 },
@@ -129,6 +136,7 @@ impl BuiltinHost {
         cancel: CancellationToken,
         request: &WorktreeSessionRequest,
         branch: &str,
+        user_requested: bool,
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let ctx = Ctx {
             host: self,
@@ -150,18 +158,23 @@ impl BuiltinHost {
                 "Read-only sandbox refuses isolated creation",
             ));
         }
-        authorize_worktree(
-            &ctx,
-            false,
-            Request {
-                action: "worktree".into(),
-                resources: vec![request.name.as_str().into()],
-                ..Default::default()
-            },
-            json!({"operation":"create","branch":branch}),
-        )
-        .await
-        .map_err(tool_error)?;
+        let admission = Request {
+            action: "worktree".into(),
+            resources: vec![request.name.as_str().into()],
+            ..Default::default()
+        };
+        if user_requested {
+            authorize_owned_worktree(&ctx, &admission).map_err(tool_error)?;
+        } else {
+            authorize_worktree(
+                &ctx,
+                false,
+                admission,
+                json!({"operation":"create","branch":branch}),
+            )
+            .await
+            .map_err(tool_error)?;
+        }
         let current = self.policy(inv).await.map_err(io::Error::other)?;
         if let crate::permissions::Decision::Deny(reason) = current.user_delegation(&Request {
             action: "worktree".into(),
@@ -377,17 +390,14 @@ impl ChildWorktree {
             result["cleanup_reason"] = json!("Checkout changed while cleanup was pending");
             return Ok(());
         }
-        authorize_worktree(
+        authorize_owned_worktree(
             &ctx,
-            true,
-            Request {
+            &Request {
                 action: "worktree".into(),
                 resources: vec![self.managed.name.clone()],
                 ..Default::default()
             },
-            json!({"operation":"cleanup","path":self.managed.path}),
         )
-        .await
         .map_err(tool_error)?;
         retry_repository_busy(&ctx.cancel, || {
             self.repository

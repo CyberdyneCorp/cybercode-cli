@@ -226,6 +226,23 @@
 - **WHEN** an isolated subagent finishes without changing files
 - **THEN** its worktree and branch are deleted
 
+#### Scenario: Explicit user isolated profile
+- **GIVEN** the user's current profile selects worktree isolation
+- **WHEN** the user starts `/subtask` in any permission Mode
+- **THEN** checkout creation and trusted source setup use explicit user lifecycle authority, with no additional model-tool spawn approval
+- **AND** child tools retain the inherited effective Mode, ordinary approval routing and deny ceilings
+- **AND** source/ancestor denies and read-only sandbox policy reject creation
+
+#### Scenario: Empty setup for a Plan child
+- **WHEN** a model-selected isolated child starts in Plan Mode with no setup commands
+- **THEN** setup verifies ready ownership without requiring write authority
+- **AND** child model tools remain subject to Plan restrictions
+
+#### Scenario: Child names are independent of storage names
+- **WHEN** an isolated child has a Git-valid name within the Session naming limit
+- **THEN** its branch uses that name independently of its generated managed storage identity
+- **AND** invalid Git branch refs fail before child Session or model admission
+
 #### Scenario: Child cleanup confirmation
 - **GIVEN** a clean isolated child and `worktrees.cleanup: ask`
 - **WHEN** the child finishes
