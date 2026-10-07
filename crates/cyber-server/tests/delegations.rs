@@ -11,6 +11,8 @@ use tokio_util::sync::CancellationToken;
 struct Host {
     runtime: Mutex<Option<WeakRuntime>>,
     entered: CancellationToken,
+    finish: CancellationToken,
+    returned: CancellationToken,
     calls: AtomicUsize,
     launching: bool,
     panic: bool,
@@ -52,7 +54,8 @@ impl ToolHost for Host {
             }
             self.entered.cancel();
             assert!(!self.panic, "Controlled admission panic");
-            cancel.cancelled().await;
+            tokio::select! {_=cancel.cancelled()=>{},_=self.finish.cancelled()=>{}}
+            self.returned.cancel();
             Err("Host settled without a Job response".into())
         })
     }
@@ -61,6 +64,8 @@ fn runtime(h: &Harness, launching: bool, panic: bool) -> (Runtime, Arc<Host>) {
     let host = Arc::new(Host {
         runtime: Mutex::new(None),
         entered: CancellationToken::new(),
+        finish: CancellationToken::new(),
+        returned: CancellationToken::new(),
         calls: AtomicUsize::new(0),
         launching,
         panic,
@@ -186,7 +191,7 @@ async fn lost_actor_after_restart_preserves_uncertainty_and_does_not_retain_runt
             .await
             .unwrap()
             .status,
-        DelegationStatus::Unknown
+        DelegationStatus::Cancelled
     );
     second.shutdown().await;
 }
@@ -210,7 +215,7 @@ async fn panicked_admission_is_unknown_instead_of_a_permanent_live_owner() {
             .await
             .unwrap()
             .status,
-        DelegationStatus::Unknown
+        DelegationStatus::Cancelled
     );
     runtime.shutdown().await;
 }
@@ -299,4 +304,238 @@ async fn recorded_job_without_a_live_owner_cannot_acknowledge_cancellation() {
             .status,
         DelegationStatus::Unknown
     );
+}
+
+#[tokio::test]
+async fn recovered_cancellation_fences_a_live_foreign_actor_and_preserves_input_binding() {
+    let h = Harness::new(Setup::default());
+    let (first, host) = runtime(&h, false, false);
+    let parent = source(&first, &h).await;
+    first
+        .start_delegation(&parent, "op_fenced", request())
+        .await
+        .unwrap();
+    host.entered.cancelled().await;
+    let (second, replacement) = runtime(&h, false, false);
+    let stopped = second
+        .cancel_delegation(&parent, "op_fenced")
+        .await
+        .unwrap();
+    assert_eq!(stopped.status, DelegationStatus::Cancelled);
+    assert_eq!(stopped.phase, DelegationPhase::Reserved);
+    assert!(stopped.job_id.is_none());
+    assert!(
+        first
+            .mark_delegation_launching(&parent, "op_fenced")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        first
+            .start_delegation(&parent, "op_fenced", request())
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Cancelled
+    );
+    let mut changed = request();
+    changed.prompt = "different prompt".into();
+    assert!(matches!(
+        second.start_delegation(&parent, "op_fenced", changed).await,
+        Err(RuntimeError::Conflict(_))
+    ));
+    assert_eq!(host.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(replacement.calls.load(Ordering::Relaxed), 0);
+    host.finish.cancel();
+    host.returned.cancelled().await;
+    first.shutdown().await;
+    assert_eq!(
+        second
+            .delegation(&parent, "op_fenced")
+            .unwrap()
+            .unwrap()
+            .status,
+        DelegationStatus::Cancelled
+    );
+    second.shutdown().await;
+}
+
+#[tokio::test]
+async fn launching_foreign_actor_cannot_be_acknowledged_as_no_dispatch() {
+    let h = Harness::new(Setup::default());
+    let (first, host) = runtime(&h, true, false);
+    let parent = source(&first, &h).await;
+    first
+        .start_delegation(&parent, "op_foreign_launch", request())
+        .await
+        .unwrap();
+    host.entered.cancelled().await;
+    let (second, replacement) = runtime(&h, false, false);
+    let stopped = second
+        .cancel_delegation(&parent, "op_foreign_launch")
+        .await
+        .unwrap();
+    assert_eq!(stopped.status, DelegationStatus::Unknown);
+    assert_eq!(stopped.phase, DelegationPhase::Launching);
+    assert_eq!(
+        second
+            .start_delegation(&parent, "op_foreign_launch", request())
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Unknown
+    );
+    assert_eq!(replacement.calls.load(Ordering::Relaxed), 0);
+    first.shutdown().await;
+    second.shutdown().await;
+}
+
+#[tokio::test]
+async fn killed_admission_owner_worker() {
+    let Some(db) = std::env::var_os("CYBER_DELEGATION_KILL_DB") else {
+        return;
+    };
+    let mut h = Harness::new(Setup::default());
+    h.store = Arc::new(support::open_store(std::path::Path::new(&db)));
+    let (reserved, reserved_host) = runtime(&h, false, false);
+    let parent = source(&reserved, &h).await;
+    reserved
+        .start_delegation(&parent, "op_killed_reserved", request())
+        .await
+        .unwrap();
+    reserved_host.entered.cancelled().await;
+    let (launching, launching_host) = runtime(&h, true, false);
+    launching
+        .start_delegation(&parent, "op_killed_launch", request())
+        .await
+        .unwrap();
+    launching_host.entered.cancelled().await;
+    let ready = std::path::PathBuf::from(std::env::var_os("CYBER_DELEGATION_KILL_READY").unwrap());
+    let temporary = ready.with_extension("tmp");
+    std::fs::write(&temporary, parent).unwrap();
+    std::fs::rename(temporary, ready).unwrap();
+    std::future::pending::<()>().await;
+    drop((reserved, launching));
+}
+
+struct KilledOwner(std::process::Child);
+impl Drop for KilledOwner {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+fn kill_owner(
+    db: &std::path::Path,
+    ready: &std::path::Path,
+    temporary: &std::path::Path,
+) -> String {
+    use std::process::{Command, Stdio};
+    let mut owner = KilledOwner(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "killed_admission_owner_worker", "--nocapture"])
+            .env("CYBER_DELEGATION_KILL_DB", db)
+            .env("CYBER_DELEGATION_KILL_READY", ready)
+            .env("TMPDIR", temporary)
+            .env("TEMP", temporary)
+            .env("TMP", temporary)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let parent = loop {
+        if let Ok(parent) = std::fs::read_to_string(ready) {
+            break parent;
+        }
+        if let Some(status) = owner.0.try_wait().unwrap() {
+            use std::io::Read;
+            let mut error = String::new();
+            owner
+                .0
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut error)
+                .unwrap();
+            panic!("Admission worker exited before durable readiness: {status}: {error}");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Worker did not commit both admission phases"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    owner.0.kill().unwrap();
+    let status = owner.0.wait().unwrap();
+    assert!(!status.success());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(9));
+    }
+    parent
+}
+
+#[tokio::test]
+async fn abrupt_process_death_recovers_only_the_proven_pre_effect_reservation() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("owner.db");
+    let parent = kill_owner(&db, &dir.path().join("ready"), dir.path());
+    let mut h = Harness::new(Setup::default());
+    h.store = Arc::new(support::open_store(&db));
+    let (recovered, host) = runtime(&h, false, false);
+    for id in ["op_killed_reserved", "op_killed_launch"] {
+        assert_eq!(
+            recovered.delegation(&parent, id).unwrap().unwrap().status,
+            DelegationStatus::Unknown
+        );
+        assert_eq!(
+            recovered
+                .start_delegation(&parent, id, request())
+                .await
+                .unwrap()
+                .status,
+            DelegationStatus::Unknown
+        );
+    }
+    let cancelled = recovered
+        .cancel_delegation(&parent, "op_killed_reserved")
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status, DelegationStatus::Cancelled);
+    assert_eq!(cancelled.phase, DelegationPhase::Reserved);
+    assert!(cancelled.job_id.is_none());
+    assert!(
+        recovered
+            .mark_delegation_launching(&parent, "op_killed_reserved")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        recovered
+            .start_delegation(&parent, "op_killed_reserved", request())
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Cancelled
+    );
+    let mut different = request();
+    different.prompt = "changed after death".into();
+    assert!(matches!(
+        recovered
+            .start_delegation(&parent, "op_killed_reserved", different)
+            .await,
+        Err(RuntimeError::Conflict(_))
+    ));
+    let launching = recovered
+        .cancel_delegation(&parent, "op_killed_launch")
+        .await
+        .unwrap();
+    assert_eq!(launching.status, DelegationStatus::Unknown);
+    assert_eq!(launching.phase, DelegationPhase::Launching);
+    assert!(launching.job_id.is_none());
+    assert_eq!(host.calls.load(Ordering::Relaxed), 0);
+    recovered.shutdown().await;
 }

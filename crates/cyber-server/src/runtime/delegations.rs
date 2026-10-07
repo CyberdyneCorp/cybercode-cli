@@ -327,14 +327,16 @@ impl Runtime {
                     .unwrap_or_else(PoisonError::into_inner)
                     .get(id)
                     .cloned();
-                let Some(control) = control else {
-                    return Ok(self.delegation(parent, id)?.expect("existing admission"));
-                };
-                if control.done.is_cancelled() {
+                if let Some(control) = control.filter(|control| !control.done.is_cancelled()) {
+                    control.stop.cancel();
+                    record.data.status = DelegationStatus::Cancelling;
+                } else if record.data.phase == DelegationPhase::Reserved {
+                    // The expected-sequence write fences every later launch marker.
+                    record.data.status = DelegationStatus::Cancelled;
+                    record.data.error = None;
+                } else {
                     return Ok(self.delegation(parent, id)?.expect("existing admission"));
                 }
-                control.stop.cancel();
-                record.data.status = DelegationStatus::Cancelling;
             }
             match self.write_delegation(&record, seq) {
                 Err(RuntimeError::Store(StoreError::Concurrency { .. })) => continue,
@@ -376,6 +378,12 @@ impl Runtime {
             let (mut record, seq) = self
                 .delegation_record(parent, id)?
                 .ok_or_else(|| RuntimeError::Corrupt("Missing delegation reservation".into()))?;
+            if record.data.status == DelegationStatus::Cancelled
+                && record.data.phase == DelegationPhase::Reserved
+                && outcome.is_err()
+            {
+                return Ok(());
+            }
             match &outcome {
                 Ok((job, error)) => {
                     record.data.job_id = Some(job.clone());

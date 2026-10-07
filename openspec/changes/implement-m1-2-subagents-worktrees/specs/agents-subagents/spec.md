@@ -382,6 +382,14 @@
 - **AND** failure or lost ownership after that marker SHALL remain unknown unless Job settlement is recorded
 - **AND** restart or actor failure SHALL not automatically redispatch uncertain work
 
+#### Scenario: Explicit cancellation recovers an abandoned reservation
+- **WHEN** an admission actor is missing or finished and the durable request remains reserved without a Job
+- **THEN** explicit scoped cancellation SHALL atomically persist a cancelled tombstone, without dispatching work
+- **AND** a competing or delayed launch-marker write SHALL be refused if cancellation wins
+- **AND** a launch marker winning the race SHALL preserve unknown outcome until effect settlement is proven
+- **AND** late host errors SHALL not replace an acknowledged reserved cancellation
+- **AND** request input binding and conflict detection SHALL remain intact after recovery
+
 #### Scenario: Caller-owned delegation cancellation
 - **WHEN** an owned runtime delegation request is cancelled while waiting for child admission
 - **THEN** it SHALL settle that request without creating another child or stopping an existing child
