@@ -1,6 +1,7 @@
 //! Configuration discovery, layering, substitution, trust gating and validation
 //! (`configuration`, `workspace-trust`).
 
+mod agent_profiles;
 mod agents;
 mod gate;
 mod jsonc;
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use serde_json::Value;
 
+pub use agent_profiles::{AgentProfile, AgentTools, resolve_agents};
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
 pub use load::{LoadRequest, ensure_global_config, load, project_root, trust_report};

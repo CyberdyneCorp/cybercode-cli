@@ -164,12 +164,26 @@ impl Services for AppServices {
             .map(|(r, _)| r.to_string())
     }
 
-    fn agents(&self, _location: &Path) -> Vec<AgentInfo> {
-        vec![AgentInfo {
-            name: "build".into(),
-            description: "The default agent, with full tool access".into(),
-            mode: "primary".into(),
-        }]
+    fn agents(&self, location: &Path) -> Vec<AgentInfo> {
+        let Ok((config, _)) = (self.config)(location) else {
+            return Vec::new();
+        };
+        let Ok(profiles) = cyber_core::config::resolve_agents(&config) else {
+            return Vec::new();
+        };
+        let mut profiles: Vec<_> = profiles
+            .into_values()
+            .filter(|agent| !agent.hidden)
+            .collect();
+        profiles.sort_by(|a, b| (!a.builtin, &a.name).cmp(&(!b.builtin, &b.name)));
+        profiles
+            .into_iter()
+            .map(|agent| AgentInfo {
+                name: agent.name,
+                description: agent.description,
+                mode: agent.mode,
+            })
+            .collect()
     }
 
     /// The tools a Turn would offer: built-ins plus client-registered tools.

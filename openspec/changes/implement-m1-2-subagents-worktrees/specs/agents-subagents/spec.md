@@ -1,5 +1,27 @@
 ## MODIFIED Requirements
 
+### Requirement: Built-in agents
+(P0) The system SHALL ship the built-in agents `build` (primary, full tool access), `explore` (subagent, read-only: `read`, `glob`, `grep`, `webfetch`, `websearch` and read-only `bash`), `general` (subagent, full tool access except `todo`), and the hidden system agents `compaction`, `title`, `summary` and `evaluator`, which SHALL have every tool denied. Planning SHALL be the `plan` permission Mode (`permissions-modes`), not an agent; an agent definition MAY set `permission_mode: plan` to start Sessions in that Mode.
+
+#### Scenario: Default agent set
+- **WHEN** a user lists agents in a project with no agent configuration
+- **THEN** `build`, `explore` and `general` are listed and the hidden system agents are omitted
+
+#### Scenario: System agents cannot call tools
+- **WHEN** the `title` agent's model emits a tool call
+- **THEN** the call is settled as an error without executing and no permission request is created
+
+### Requirement: Custom agents from config
+(P0) The system SHALL read agents from the `agents` key of `cyber.jsonc`/`cyber.json`, keyed by name. An entry matching an existing agent SHALL patch only the fields it sets; a new name SHALL create an agent with `mode: "all"`; `disabled: true` SHALL remove the agent, including built-ins other than the hidden system agents.
+
+#### Scenario: Override built-in model
+- **WHEN** config sets `agents.explore.model` to `ollama/qwen3-coder`
+- **THEN** `explore` subagents use that model and keep their built-in read-only rules
+
+#### Scenario: Disable a built-in agent
+- **WHEN** config sets `agents.explore.disabled` to `true`
+- **THEN** `explore` is absent from listings, `@` autocomplete and the `agent` tool catalogue
+
 ### Requirement: Agent definition fields
 (P0) An agent definition SHALL accept `description`, `system`, `model` (`provider/model[#variant]`), `variant`, `mode` (`primary`, `subagent` or `all`), `permission_mode` (one of the six Modes), `tools` (`allow` and `deny` lists of tool names or globs), `permissions` (ordered rules), `request` (a provider request overlay of `headers` and `body`, for example `temperature` or `top_p`, layered as defined by `provider-catalog`), `steps` (positive integer), `color`, `hidden`, `isolation` (`none` or `worktree`), `background` (boolean default for spawns), `memory` (`none`, `project` or `user`), `skills` (names preloaded into context) and `mcp` (subset of configured MCP server names). Unknown fields SHALL be rejected by schema validation, naming the agent and field.
 

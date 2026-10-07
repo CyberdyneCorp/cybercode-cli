@@ -35,6 +35,44 @@ async fn app(root: &std::path::Path) -> App {
 }
 
 #[tokio::test]
+async fn agent_catalogue_resolves_builtins_and_live_configuration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let application = app(tmp.path()).await;
+    let names = |agents: Vec<cyber_server::http::AgentInfo>| {
+        agents
+            .into_iter()
+            .map(|agent| agent.name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names(application.state.services.agents(tmp.path())),
+        ["build", "explore", "general"]
+    );
+    std::fs::write(
+        application.paths.config.join("cyber.json"),
+        r#"{"agents":{
+        "explore":{"disabled":true},
+        "general":{"description":"Configured general agent"},
+        "docs":{"description":"Write documentation"},
+        "hidden":{"hidden":true},
+        "title":{"hidden":false,"disabled":true},
+        "max_concurrent":4
+    }}"#,
+    )
+    .unwrap();
+    let agents = application.state.services.agents(tmp.path());
+    assert_eq!(agents[1].description, "Configured general agent");
+    assert_eq!(agents[2].mode, "all");
+    assert_eq!(names(agents), ["build", "general", "docs"]);
+    std::fs::write(
+        application.paths.config.join("cyber.json"),
+        r#"{"agents":{"docs":{"unknown":true}}}"#,
+    )
+    .unwrap();
+    assert!(application.state.services.agents(tmp.path()).is_empty());
+}
+
+#[tokio::test]
 async fn dropping_an_idle_or_stopped_application_releases_its_host_and_database() {
     for stopped in [false, true] {
         let tmp = tempfile::tempdir().unwrap();
