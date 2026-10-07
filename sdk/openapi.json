@@ -257,7 +257,7 @@
               "string",
               "null"
             ],
-            "description": "`provider/model`; defaults to the configured `model`."
+            "description": "Explicit `provider/model[#variant]`; omitted model uses agent then Location defaults."
           },
           "agent": {
             "type": [

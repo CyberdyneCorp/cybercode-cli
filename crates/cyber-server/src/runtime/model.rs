@@ -246,6 +246,10 @@ pub struct StepSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
     pub info: SessionInfo,
+    #[serde(skip)]
+    pub(crate) model_selection: super::selection::ModelSelection,
+    #[serde(skip)]
+    pub(crate) selection_revision: i64,
     pub last_seq: i64,
     pub inbox: Vec<InboxRow>,
     pub entries: Vec<Entry>,
@@ -273,6 +277,8 @@ const MAX_INSTRUCTION_CHARS: usize = 2000;
 impl SessionState {
     pub fn new(info: SessionInfo) -> Self {
         Self {
+            model_selection: super::selection::ModelSelection::explicit(info.model.clone()),
+            selection_revision: -1,
             info,
             last_seq: -1,
             inbox: Vec::new(),
@@ -318,6 +324,9 @@ impl SessionState {
         let first = events.first().ok_or("session has no events")?;
         let created: Created = decode(first)?;
         let mut state = Self::new(created.info.clone());
+        if let Some(selection) = created.selection {
+            state.model_selection = selection;
+        }
         state.entries = created.history;
         state.calls = created
             .calls
@@ -470,6 +479,12 @@ impl SessionState {
     }
 
     fn apply_meta(&mut self, kind: &str, e: &StoredEvent) -> Result<(), String> {
+        if matches!(
+            kind,
+            "session.agent.switched" | "session.model.switched" | "session.mode.switched"
+        ) {
+            self.selection_revision = e.seq;
+        }
         match kind {
             "permission.auto_decided" => {
                 let decision: super::auto::AutoDecision = decode(e)?;
@@ -488,7 +503,13 @@ impl SessionState {
             }
             "session.archived" => self.info.archived = decode::<Archived>(e)?.archived,
             "session.agent.switched" => self.info.agent = decode::<Switched>(e)?.to,
-            "session.model.switched" => self.info.model = decode::<Switched>(e)?.to,
+            "session.model.switched" => {
+                let switched: Switched = decode(e)?;
+                self.info.model = switched.to.clone();
+                if !switched.automatic {
+                    self.model_selection = super::selection::ModelSelection::explicit(switched.to);
+                }
+            }
             "session.mode.switched" => self.info.mode = decode::<Switched>(e)?.to,
             // Started/failed compaction and other markers carry no state.
             _ => self.apply_snapshots(kind, e)?,

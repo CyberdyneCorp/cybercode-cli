@@ -64,7 +64,7 @@ pub struct ShellResult {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateBody {
     pub id: Option<String>,
-    /// `provider/model`; defaults to the configured `model`.
+    /// Explicit `provider/model[#variant]`; omitted model uses agent then Location defaults.
     pub model: Option<String>,
     pub agent: Option<String>,
     pub mode: Option<String>,
@@ -304,16 +304,16 @@ async fn create(
 ) -> Result<Response> {
     let directory = location(&parts, &state.options.default_directory)?;
     let body = body.map(|Json(b)| b).unwrap_or_default();
+    let model_is_default = body.model.is_none();
     let model = body
         .model
         .or_else(|| state.services.default_model(&directory))
-        .ok_or_else(|| {
-            ApiError::invalid("No model is configured; pass `model` or set `model` in config")
-        })?;
+        .unwrap_or_default();
     let req = CreateSession {
         id: body.id,
         directory: directory.display().to_string(),
         model,
+        model_is_default,
         agent: body.agent,
         mode: body.mode,
         parent_id: body.parent_id,

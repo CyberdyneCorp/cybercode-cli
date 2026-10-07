@@ -422,6 +422,13 @@ impl ToolHost for BuiltinHost {
         &self,
         turn: &TurnContext,
     ) -> Result<cyber_llm::catalog::RequestOverlay, String> {
+        self.agent_inference(turn).map(|options| options.request)
+    }
+
+    fn agent_inference(
+        &self,
+        turn: &TurnContext,
+    ) -> Result<cyber_server::runtime::AgentInference, String> {
         let profile = self.agent_profile(Path::new(&turn.directory), &turn.agent)?;
         if profile.hidden {
             return Err(format!(
@@ -429,9 +436,11 @@ impl ToolHost for BuiltinHost {
                 turn.agent
             ));
         }
-        Ok(cyber_llm::catalog::RequestOverlay::from_config(Some(
-            &profile.request,
-        )))
+        Ok(cyber_server::runtime::AgentInference {
+            model: profile.model,
+            variant: profile.variant,
+            request: cyber_llm::catalog::RequestOverlay::from_config(Some(&profile.request)),
+        })
     }
 
     fn claim_location<'a>(

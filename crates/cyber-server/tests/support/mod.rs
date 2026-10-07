@@ -144,6 +144,7 @@ pub enum Behavior {
 }
 
 pub struct Tools {
+    pub inference: Mutex<AgentInference>,
     pub defs: Mutex<Vec<ToolDef>>,
     pub behavior: Mutex<HashMap<String, Behavior>>,
     pub executed: Mutex<Vec<Invocation>>,
@@ -179,6 +180,7 @@ impl Tools {
             ("write".to_string(), Behavior::Return("written".into())),
         ]);
         Arc::new(Self {
+            inference: Mutex::new(AgentInference::default()),
             defs: Mutex::new(defs),
             behavior: Mutex::new(behavior),
             executed: Mutex::default(),
@@ -203,6 +205,9 @@ impl Tools {
 }
 
 impl ToolHost for Tools {
+    fn agent_inference(&self, _turn: &TurnContext) -> Result<AgentInference, String> {
+        Ok(self.inference.lock().unwrap().clone())
+    }
     fn definitions(&self, _turn: &TurnContext) -> Vec<ToolDef> {
         self.defs.lock().unwrap().clone()
     }

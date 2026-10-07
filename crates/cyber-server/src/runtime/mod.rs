@@ -17,6 +17,7 @@ mod location;
 mod model;
 mod requests;
 mod rewind;
+mod selection;
 mod shutdown;
 mod title;
 mod view;
@@ -40,9 +41,9 @@ pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use events::{CompactionTrigger, registry as event_registry};
 pub use host::{
-    CatalogResolver, FileDiff, Invocation, LocationGuard, LocationLease, ModelResolver,
-    NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, Snapshot, Snapshots,
-    ToolDef, ToolHost, ToolOutcome, TurnContext,
+    AgentInference, CatalogResolver, FileDiff, Invocation, LocationGuard, LocationLease,
+    ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, Snapshot,
+    Snapshots, ToolDef, ToolHost, ToolOutcome, TurnContext,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
@@ -113,6 +114,8 @@ pub struct CreateSession {
     /// Expected checkout identity for an internally provisioned managed Session.
     pub worktree_id: Option<String>,
     pub model: String,
+    /// The supplied model is a fallback; the selected agent may replace it.
+    pub model_is_default: bool,
     pub agent: Option<String>,
     pub mode: Option<String>,
     pub parent_id: Option<String>,
@@ -322,7 +325,11 @@ impl Runtime {
         if let Ok(existing) = self.inner.handle(&id).await {
             return Ok(existing.state.lock().await.info.clone());
         }
-        let info = SessionInfo {
+        let selection = selection::ModelSelection {
+            reference: req.model.clone(),
+            agent_default: req.model_is_default,
+        };
+        let mut info = SessionInfo {
             id: id.clone(),
             default_title: req.title.is_none(),
             title: req.title.unwrap_or_else(default_title),
@@ -338,7 +345,13 @@ impl Runtime {
             max_steps: req.max_steps,
         };
         self.ancestors(&info).await?;
-        self.inner.create(info, Vec::new(), Vec::new(), None).await
+        if selection.agent_default {
+            info.model = self.inner.resolve_selection(&info, &selection)?.0;
+        }
+        let selection = selection.persisted(&info.model);
+        self.inner
+            .create(info, Vec::new(), Vec::new(), None, selection)
+            .await
     }
 
     /// Durably admit input (`session-runtime` → Durable prompt admission, Exact-retry idempotency).
@@ -566,8 +579,19 @@ impl Runtime {
     pub async fn switch_model(&self, session_id: &str, model: &str) -> Result<(), RuntimeError> {
         cyber_llm::catalog::ModelRef::parse(model)
             .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
-        self.switch(session_id, MODEL_SWITCHED, model, |i| &i.model)
-            .await
+        let handle = self.inner.handle(session_id).await?;
+        let mut state = handle.state.lock().await;
+        if !state.model_selection.agent_default && state.model_selection.reference == model {
+            return Ok(());
+        }
+        let payload = Switched {
+            from: state.info.model.clone(),
+            to: model.into(),
+            automatic: false,
+        };
+        self.inner
+            .commit_locked(&mut state, vec![event(MODEL_SWITCHED, &payload)])?;
+        Ok(())
     }
 
     pub async fn switch_agent(&self, session_id: &str, agent: &str) -> Result<(), RuntimeError> {
@@ -610,6 +634,7 @@ impl Runtime {
             vec![event(
                 kind,
                 &Switched {
+                    automatic: false,
                     from,
                     to: to.into(),
                 },
@@ -726,7 +751,13 @@ impl Runtime {
             ..state.info.clone()
         };
         self.inner
-            .create(info, entries, calls, Some(session_id.to_string()))
+            .create(
+                info,
+                entries,
+                calls,
+                Some(session_id.to_string()),
+                state.model_selection.persisted(&state.info.model),
+            )
             .await
     }
 
@@ -982,6 +1013,7 @@ impl Inner {
         history: Vec<Entry>,
         calls: Vec<CallState>,
         forked_from: Option<String>,
+        selection: Option<selection::ModelSelection>,
     ) -> Result<SessionInfo, RuntimeError> {
         let lease = self
             .claim_location(&info, forked_from.is_none(), self.closed.child_token())
@@ -994,6 +1026,7 @@ impl Inner {
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
+            selection,
             info: info.clone(),
             history,
             calls,

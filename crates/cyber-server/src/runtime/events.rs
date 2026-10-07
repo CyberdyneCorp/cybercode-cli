@@ -80,6 +80,8 @@ const ALL: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Created {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<super::selection::ModelSelection>,
     pub info: SessionInfo,
     /// History copied from another Session by fork, with fresh IDs.
     #[serde(default)]
@@ -307,6 +309,8 @@ pub struct Archived {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Switched {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub automatic: bool,
     pub from: String,
     pub to: String,
 }

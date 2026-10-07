@@ -232,3 +232,159 @@ async fn agent_pinning_preserves_tool_identity_until_the_next_turn() {
         vec![("c0".into(), "build".into()), ("c1".into(), "docs".into())]
     );
 }
+
+struct ProfileHost(Arc<Tools>);
+
+impl ToolHost for ProfileHost {
+    fn request_overlay(
+        &self,
+        turn: &TurnContext,
+    ) -> Result<cyber_llm::catalog::RequestOverlay, String> {
+        Ok(cyber_llm::catalog::RequestOverlay::from_config(Some(
+            &serde_json::json!({
+                "body":{"profile":turn.agent,"mode":turn.mode}
+            }),
+        )))
+    }
+    fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
+        self.0.definitions(turn)
+    }
+    fn execute(
+        &self,
+        call: Invocation,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> BoxFuture<'_, ToolOutcome> {
+        self.0.execute(call, cancel)
+    }
+}
+
+struct PreparationSnapshots {
+    calls: std::sync::atomic::AtomicUsize,
+    first: AtomicBool,
+    started: Notify,
+    release: Notify,
+}
+
+impl Snapshots for PreparationSnapshots {
+    fn track(&self, _: &str) -> BoxFuture<'_, Result<Option<Snapshot>, String>> {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.first.swap(false, Ordering::SeqCst) {
+                self.started.notify_one();
+                self.release.notified().await;
+            }
+            Ok(None)
+        })
+    }
+    fn changed(&self, _: &str, _: &str, _: &str) -> BoxFuture<'_, Result<Vec<String>, String>> {
+        Box::pin(async { unreachable!("no snapshot") })
+    }
+    fn diff(&self, _: &str, _: &str, _: &str) -> BoxFuture<'_, Result<Vec<FileDiff>, String>> {
+        Box::pin(async { unreachable!("no snapshot") })
+    }
+    fn restore(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> BoxFuture<'_, Result<Vec<String>, RestoreError>> {
+        Box::pin(async { unreachable!("no rewind") })
+    }
+}
+
+#[tokio::test]
+async fn selection_change_during_snapshot_preparation_rebuilds_the_request() {
+    for change in ["agent", "model", "mode", "round_trip"] {
+        check_preparation_change(change).await;
+    }
+}
+
+async fn check_preparation_change(change: &str) {
+    let script = vec![tools(&[("c0", "clock", "{}")]), text("done")];
+    let mut h = Harness::new(Setup {
+        scripts: vec![("test/main", script.clone()), ("other/main", script)],
+        ..Setup::default()
+    });
+    let snapshots = Arc::new(PreparationSnapshots {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        first: AtomicBool::new(true),
+        started: Notify::new(),
+        release: Notify::new(),
+    });
+    h.runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: h.models.clone(),
+        tools: Arc::new(ProfileHost(h.tools.clone())),
+        global_config_dir: h.dir.path().join("global"),
+        shell: "bash".into(),
+        claude_compat: false,
+        compaction: CompactionConfig::default(),
+        retry: cyber_llm::RetryPolicy::default(),
+        max_steps: None,
+        today: None,
+        interactive: true,
+        snapshots: snapshots.clone(),
+    });
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, Admission::text("inspect", Delivery::Queue))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), snapshots.started.notified())
+        .await
+        .unwrap();
+    match change {
+        "agent" => h.runtime.switch_agent(&id, "docs").await.unwrap(),
+        "model" => h.runtime.switch_model(&id, "other/main").await.unwrap(),
+        "mode" => h.runtime.switch_mode(&id, "plan").await.unwrap(),
+        "round_trip" => {
+            h.runtime.switch_agent(&id, "docs").await.unwrap();
+            h.runtime.switch_agent(&id, "build").await.unwrap();
+        }
+        _ => unreachable!(),
+    }
+    snapshots.release.notify_one();
+    h.settle(&id).await;
+    assert_prepared_request(&h, &snapshots, change);
+    assert_preparation_events(&h, &id, change);
+}
+
+fn assert_prepared_request(h: &Harness, snapshots: &PreparationSnapshots, change: &str) {
+    let model = if change == "model" {
+        "other/main"
+    } else {
+        "test/main"
+    };
+    let agent = if change == "agent" { "docs" } else { "build" };
+    let mode = if change == "mode" { "plan" } else { "default" };
+    let requests = h.models.requests(model);
+    assert_eq!(requests.len(), 2, "{change}");
+    assert_eq!(requests[0].body["profile"], agent, "{change}");
+    assert_eq!(requests[0].body["mode"], mode, "{change}");
+    let executed = h.tools.executed.lock().unwrap();
+    assert_eq!(executed[0].agent, agent, "{change}");
+    assert_eq!(executed[0].mode, mode, "{change}");
+    assert_eq!(
+        snapshots.calls.load(Ordering::SeqCst),
+        5,
+        "discarded preparation has no post-Turn snapshot: {change}"
+    );
+}
+
+fn assert_preparation_events(h: &Harness, id: &str, change: &str) {
+    let rows = h.store.read_events(id, -1, 500).unwrap().events;
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.kind == "session.step.started.1")
+            .count(),
+        2,
+        "{change}"
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.kind == "session.prompt.promoted.1")
+            .count(),
+        1,
+        "{change}"
+    );
+}

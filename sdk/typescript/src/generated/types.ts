@@ -86,7 +86,7 @@ export type Content = {
 
 export type CreateBody = {
   id?: string | null;
-  /** `provider/model`; defaults to the configured `model`. */
+  /** Explicit `provider/model[#variant]`; omitted model uses agent then Location defaults. */
   model?: string | null;
   agent?: string | null;
   mode?: string | null;

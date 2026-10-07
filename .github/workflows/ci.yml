@@ -99,6 +99,15 @@ jobs:
       - name: Native agent request options
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_requests
+      - name: Native agent model selection
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test agent_models
+      - name: Native app-host inference delegation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --lib app_host_delegates_validated_agent_request_options
+      - name: Native model selection API
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http model
       - name: Native request option layering
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test catalog

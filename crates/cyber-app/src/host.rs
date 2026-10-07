@@ -27,6 +27,13 @@ impl ToolHost for AppHost {
         self.builtin.request_overlay(turn)
     }
 
+    fn agent_inference(
+        &self,
+        turn: &TurnContext,
+    ) -> Result<cyber_server::runtime::AgentInference, String> {
+        self.builtin.agent_inference(turn)
+    }
+
     fn claim_location<'a>(
         &'a self,
         info: &'a cyber_server::runtime::SessionInfo,

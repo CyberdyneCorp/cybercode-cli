@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use support::{Behavior, Harness, Setup, text, tools};
 
 struct FakeServices {
+    default: Option<String>,
     tools: Arc<support::Tools>,
 }
 
@@ -35,7 +36,7 @@ impl Services for FakeServices {
         })
     }
     fn default_model(&self, _location: &Path) -> Option<String> {
-        Some("test/main".into())
+        self.default.clone()
     }
     fn agents(&self, _location: &Path) -> Vec<AgentInfo> {
         vec![AgentInfo {
@@ -65,6 +66,7 @@ fn state(h: &Harness, password: Option<&str>) -> AppState {
         remote_tools: Arc::default(),
         store: Arc::clone(&h.store),
         services: Arc::new(FakeServices {
+            default: Some("test/main".into()),
             tools: Arc::clone(&h.tools),
         }),
         options: Arc::new(HttpOptions {
@@ -776,7 +778,10 @@ async fn clients_register_tools_that_the_model_can_call() {
         runtime: runtime.clone(),
         remote_tools: remote,
         store,
-        services: Arc::new(FakeServices { tools: builtin }),
+        services: Arc::new(FakeServices {
+            default: Some("test/main".into()),
+            tools: builtin,
+        }),
         options: Arc::new(HttpOptions {
             version: "t".into(),
             password: None,
@@ -1064,4 +1069,65 @@ async fn child_requests_reach_parent_location_and_session_streams_without_changi
     assert!(replied.contains(&request.id));
     h.settle(&child).await;
     assert_eq!(h.state(&parent).await.last_seq, cursor);
+}
+
+#[tokio::test]
+async fn omitted_and_explicit_models_keep_distinct_selection_sources() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            ("test/main", vec![text("explicit")]),
+            ("other/main", vec![text("inherited")]),
+        ],
+        ..Setup::default()
+    });
+    h.tools.inference.lock().unwrap().model = Some("other/main".into());
+    let api = Api::new(&h);
+    let (status, inherited) = api.post("/sessions", json!({"title":"inherited"})).await;
+    assert_eq!(status, StatusCode::CREATED, "{inherited}");
+    assert_eq!(inherited["data"]["model"], "other/main");
+    let (status, explicit) = api
+        .post("/sessions", json!({"model":"test/main","title":"explicit"}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(explicit["data"]["model"], "test/main");
+    for session in [&inherited, &explicit] {
+        let id = session["data"]["id"].as_str().unwrap();
+        let (status, _) = api
+            .post(&format!("/sessions/{id}/prompt"), prompt("go"))
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        h.settle(id).await;
+    }
+    assert_eq!(h.models.requests("other/main").len(), 1);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    assert!(
+        inherited["data"].get("selection").is_none(),
+        "private selection does not leak into API metadata"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_model_can_create_a_session_without_a_global_default() {
+    let h = Harness::new(Setup::default());
+    h.tools.inference.lock().unwrap().model = Some("other/main".into());
+    let mut state = state(&h, None);
+    state.services = Arc::new(FakeServices {
+        default: None,
+        tools: h.tools.clone(),
+    });
+    let api = Api {
+        client: EmbeddedClient::new(http::router(state)),
+    };
+    let (status, created) = api.post("/sessions", json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["data"]["model"], "other/main");
+    h.tools.inference.lock().unwrap().model = None;
+    let (status, error) = api.post("/sessions", json!({})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("No model is configured")
+    );
 }

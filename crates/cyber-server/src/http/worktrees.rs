@@ -173,16 +173,16 @@ async fn create(
             "call_id must be 1-128 ASCII letters, digits, underscores or hyphens",
         ));
     }
+    let model_is_default = body.session.model.is_none();
     let model = body
         .session
         .model
         .or_else(|| state.services.default_model(&directory))
-        .ok_or_else(|| {
-            ApiError::invalid("No model is configured; pass session.model or set model in config")
-        })?;
+        .unwrap_or_default();
     let request = CreateSession {
         directory: directory.display().to_string(),
         model,
+        model_is_default,
         agent: body.session.agent,
         mode: body.session.mode,
         parent_id: body.session.parent_id,

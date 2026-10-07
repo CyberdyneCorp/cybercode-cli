@@ -32,6 +32,22 @@
 - **AND** changes or removal SHALL apply at a later safe boundary, preserving the current request during provider retries
 - **AND** unavailable, invalid or hidden inference profiles SHALL refuse preparation before input promotion, retaining existing context and retryable input
 
+#### Scenario: Agent model and variant defaults preserve explicit selection
+- **WHEN** a Session omits its model
+- **THEN** its selected agent's model SHALL take precedence over the Location default
+- **AND** the agent's separate variant SHALL take precedence over variants embedded in inherited defaults
+- **WHEN** a caller explicitly selects a model
+- **THEN** that model SHALL remain authoritative and an explicit `#variant` SHALL override the agent variant
+- **AND** an explicit bare model SHALL use the agent variant when configured
+- **AND** profile changes and removal SHALL apply at later safe boundaries without turning automatic defaults into explicit choices
+- **AND** replay and forks SHALL retain the original explicit or inherited selection
+- **AND** unavailable selected models or variants SHALL refuse inference before Epoch creation or prompt promotion
+
+#### Scenario: Selection changes during preparation
+- **WHEN** an agent, model or Mode changes after safe-boundary resolution but before the Turn start event
+- **THEN** preparation SHALL repeat for the latest selection before inference or tool dispatch
+- **AND** input SHALL remain promoted exactly once, with no phantom Turn or post-Turn settlement for discarded preparation
+
 #### Scenario: Agent identity remains pinned through tool settlement
 - **WHEN** the user selects another agent after a Turn's request has been prepared
 - **THEN** tool invocation identity SHALL retain the agent recorded at Turn start through every tool group

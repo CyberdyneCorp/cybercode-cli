@@ -173,4 +173,13 @@ async fn app_host_delegates_validated_agent_request_options() {
     assert_eq!(overlay.headers["X-Agent"], "build");
     std::fs::write(&path, r#"{"agents":{"build":{"request":{"body":false}}}}"#).unwrap();
     assert!(host.request_overlay(&turn).is_err());
+    assert!(host.agent_inference(&turn).is_err());
+    std::fs::write(
+        &path,
+        r#"{"agents":{"build":{"model":"test/other#high","variant":"low"}}}"#,
+    )
+    .unwrap();
+    let options = host.agent_inference(&turn).unwrap();
+    assert_eq!(options.model.as_deref(), Some("test/other#high"));
+    assert_eq!(options.variant.as_deref(), Some("low"));
 }

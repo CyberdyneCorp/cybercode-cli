@@ -41,6 +41,14 @@ impl LocationLease {
     }
 }
 
+/// Trusted profile defaults and its final request layer, resolved from one snapshot.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AgentInference {
+    pub model: Option<String>,
+    pub variant: Option<String>,
+    pub request: cyber_llm::catalog::RequestOverlay,
+}
+
 /// A model ready to stream.
 pub struct ResolvedModel {
     pub adapter: Arc<dyn Adapter>,
@@ -183,6 +191,14 @@ pub trait ToolHost: Send + Sync {
         _turn: &TurnContext,
     ) -> Result<cyber_llm::catalog::RequestOverlay, String> {
         Ok(cyber_llm::catalog::RequestOverlay::default())
+    }
+
+    /// Hosts implementing only the existing request hook retain its behavior.
+    fn agent_inference(&self, turn: &TurnContext) -> Result<AgentInference, String> {
+        Ok(AgentInference {
+            request: self.request_overlay(turn)?,
+            ..Default::default()
+        })
     }
 
     /// Admit Location use before recovery, context, snapshots or tools. Only fresh

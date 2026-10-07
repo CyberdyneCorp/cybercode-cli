@@ -34,6 +34,12 @@ pub(crate) enum TurnEnd {
     Done,
     Overflow,
     Stopped,
+    SelectionChanged,
+}
+
+struct PreparedModel {
+    model: ResolvedModel,
+    revision: i64,
 }
 
 pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: CancellationToken) {
@@ -115,6 +121,7 @@ async fn pass_owned(
         };
         first = false;
         match inner.run_turn(handle, &resolved, cancel).await? {
+            TurnEnd::SelectionChanged => first = true,
             TurnEnd::Tools => continue_tools = true,
             TurnEnd::Done => continue_tools = false,
             TurnEnd::Overflow if inner.options.compaction.auto && !overflow_retried => {
@@ -122,7 +129,7 @@ async fn pass_owned(
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => return Ok(()),
-                    result = inner.compact_and_continue(handle, CompactionTrigger::Overflow, &resolved) => result?,
+                    result = inner.compact_and_continue(handle, CompactionTrigger::Overflow, &resolved.model) => result?,
                 }
                 continue_tools = true;
             }
@@ -143,7 +150,7 @@ async fn prepare_pass(
     continue_tools: bool,
     first: bool,
     cancel: &CancellationToken,
-) -> Result<Option<ResolvedModel>, RuntimeError> {
+) -> Result<Option<PreparedModel>, RuntimeError> {
     let (resolved, promoted) = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Ok(None),
@@ -152,11 +159,11 @@ async fn prepare_pass(
     if !(continue_tools || promoted || first) {
         return Ok(None);
     }
-    if inner.needs_compaction(handle, &resolved).await? {
+    if inner.needs_compaction(handle, &resolved.model).await? {
         tokio::select! {
             biased;
             _ = cancel.cancelled() => return Ok(None),
-            result = inner.compact_and_continue(handle, CompactionTrigger::Auto, &resolved) => result?,
+            result = inner.compact_and_continue(handle, CompactionTrigger::Auto, &resolved.model) => result?,
         }
     }
     Ok(Some(resolved))
@@ -189,17 +196,24 @@ async fn boundary(
     inner: &Arc<Inner>,
     handle: &Arc<Handle>,
     continue_tools: bool,
-) -> Result<(ResolvedModel, bool), RuntimeError> {
-    let (model, turn) = {
-        let state = handle.state.lock().await;
-        (state.info.model.clone(), turn_context_for(&state, false))
+) -> Result<(PreparedModel, bool), RuntimeError> {
+    let prepared = {
+        let mut state = handle.state.lock().await;
+        let (reference, model) = inner.resolve_selection(&state.info, &state.model_selection)?;
+        if state.info.model != reference {
+            let payload = Switched {
+                from: state.info.model.clone(),
+                to: reference,
+                automatic: true,
+            };
+            inner.commit_locked(&mut state, vec![event(MODEL_SWITCHED, &payload)])?;
+        }
+        PreparedModel {
+            model,
+            revision: state.selection_revision,
+        }
     };
-    let overlay = inner
-        .tools
-        .request_overlay(&turn)
-        .map_err(RuntimeError::Invalid)?;
-    let mut resolved = inner.resolve(&model)?;
-    overlay.apply_to(&mut resolved.template);
+    let resolved = &prepared.model;
     inner.ensure_epoch(handle, &resolved.provider).await?;
     let promoted = promote(inner, handle, continue_tools).await?;
     inner.reconcile_context(handle).await?;
@@ -214,7 +228,7 @@ async fn boundary(
             .await?;
         inner.ensure_epoch(handle, &resolved.provider).await?;
     }
-    Ok((resolved, promoted))
+    Ok((prepared, promoted))
 }
 
 /// Promote every pending `steer` row; when the Session would otherwise go idle, the next `queue` row.
@@ -378,7 +392,7 @@ impl Inner {
     async fn run_turn(
         &self,
         handle: &Handle,
-        resolved: &ResolvedModel,
+        resolved: &PreparedModel,
         cancel: &CancellationToken,
     ) -> Result<TurnEnd, RuntimeError> {
         let pre = tokio::select! {
@@ -387,6 +401,9 @@ impl Inner {
             pre = self.take_snapshot(handle) => pre,
         };
         let result = self.turn(handle, resolved, cancel, pre.clone()).await;
+        if matches!(result, Ok(TurnEnd::SelectionChanged)) {
+            return result;
+        }
         tokio::select! {
             biased;
             _ = cancel.cancelled() => {},
@@ -398,12 +415,16 @@ impl Inner {
     async fn turn(
         &self,
         handle: &Handle,
-        resolved: &ResolvedModel,
+        prepared: &PreparedModel,
         cancel: &CancellationToken,
         snapshot: Option<String>,
     ) -> Result<TurnEnd, RuntimeError> {
-        let (request, defs, limited, message_id) =
-            self.prepare_turn(handle, resolved, snapshot).await?;
+        let Some((request, defs, limited, message_id)) =
+            self.prepare_turn(handle, prepared, snapshot).await?
+        else {
+            return Ok(TurnEnd::SelectionChanged);
+        };
+        let resolved = &prepared.model;
         let session_id = request.cache_key.clone().unwrap_or_default();
         let bus = self.bus.clone();
         let opened = tokio::select! {
@@ -462,10 +483,14 @@ impl Inner {
     async fn prepare_turn(
         &self,
         handle: &Handle,
-        resolved: &ResolvedModel,
+        prepared: &PreparedModel,
         snapshot: Option<String>,
-    ) -> Result<(cyber_llm::LlmRequest, Vec<ToolDef>, bool, String), RuntimeError> {
+    ) -> Result<Option<(cyber_llm::LlmRequest, Vec<ToolDef>, bool, String)>, RuntimeError> {
         let mut state = handle.state.lock().await;
+        if state.selection_revision != prepared.revision {
+            return Ok(None);
+        }
+        let resolved = &prepared.model;
         let limit = match (self.options.max_steps, state.info.max_steps) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -510,7 +535,7 @@ impl Inner {
             snapshot,
         };
         self.commit_locked(&mut state, vec![event(STEP_STARTED, &payload)])?;
-        Ok((request, defs, limited, message_id))
+        Ok(Some((request, defs, limited, message_id)))
     }
 
     /// Drain the provider stream, recording each complete tool call as it arrives.
@@ -1180,12 +1205,19 @@ pub(crate) fn turn_context(state: &SessionState, resolved: &ResolvedModel) -> Tu
 }
 
 pub(crate) fn turn_context_for(state: &SessionState, prefers_apply_patch: bool) -> TurnContext {
+    turn_context_for_info(&state.info, prefers_apply_patch)
+}
+
+pub(crate) fn turn_context_for_info(
+    info: &super::SessionInfo,
+    prefers_apply_patch: bool,
+) -> TurnContext {
     TurnContext {
-        session_id: state.info.id.clone(),
-        directory: state.info.directory.clone(),
-        agent: state.info.agent.clone(),
-        mode: state.info.mode.clone(),
+        session_id: info.id.clone(),
+        directory: info.directory.clone(),
+        agent: info.agent.clone(),
+        mode: info.mode.clone(),
         prefers_apply_patch,
-        rules: state.info.rules.clone(),
+        rules: info.rules.clone(),
     }
 }
