@@ -14,6 +14,7 @@ mod drain;
 mod events;
 mod host;
 mod jobs;
+mod names;
 pub use jobs::{Job, JobAdmission, JobStatus};
 mod location;
 mod model;
@@ -124,6 +125,7 @@ pub struct CreateSession {
     pub agent: Option<String>,
     pub mode: Option<String>,
     pub parent_id: Option<String>,
+    pub subagent_name: Option<String>,
     pub title: Option<String>,
     /// Session ruleset in the `permissions` config shape.
     pub rules: Option<serde_json::Value>,
@@ -345,6 +347,13 @@ impl Runtime {
                 "output_schema requires a child Session".into(),
             ));
         }
+        if req.subagent_name.as_ref().is_some_and(|name| {
+            req.parent_id.is_none() || name.trim().is_empty() || name.len() > 128
+        }) {
+            return Err(RuntimeError::Invalid(
+                "subagent_name requires a parent and 1–128 bytes".into(),
+            ));
+        }
         let mode_is_default = req.mode.is_none();
         let selection = selection::ModelSelection {
             reference: req.model.clone(),
@@ -357,6 +366,7 @@ impl Runtime {
             directory: req.directory,
             worktree_id: req.worktree_id,
             parent_id: req.parent_id,
+            subagent_name: req.subagent_name,
             agent: req.agent.unwrap_or_else(|| "build".into()),
             model: req.model,
             mode: req.mode.unwrap_or_else(|| "default".into()),
@@ -786,6 +796,7 @@ impl Runtime {
         let info = SessionInfo {
             id: cyber_core::ids::new_id("ses"),
             title: format!("{} (fork #{})", state.info.title, forks.sessions.len() + 1),
+            subagent_name: None,
             default_title: false,
             created_ms: chrono::Utc::now().timestamp_millis(),
             archived: false,

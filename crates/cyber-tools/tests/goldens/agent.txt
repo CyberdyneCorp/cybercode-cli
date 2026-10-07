@@ -1,1 +1,1 @@
-{"id":"<session>","text":"parser findings"}
+{"id":"<session>","text":"parser findings","name":"general"}

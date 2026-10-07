@@ -294,3 +294,9 @@
 #### Scenario: Denied agent omitted
 - **WHEN** the caller's rules deny `agent` for resource `general`
 - **THEN** `general` does not appear in the `agent` tool description
+
+#### Scenario: Foreground and background names share one parent namespace
+- **WHEN** a parent creates foreground and background children with default or explicit names
+- **THEN** each new child SHALL have a unique durable parent-scoped name regardless of execution mode
+- **AND** a duplicate caller name SHALL fail before child creation or dispatch
+- **AND** the name SHALL survive restart and appear on tool results and routed approvals without changing the Session title

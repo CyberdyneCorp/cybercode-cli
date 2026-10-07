@@ -447,8 +447,8 @@ fn project_meta(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
 fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
     let info = &e.data["info"];
     tx.execute(
-        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
+        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq, subagent_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10)",
         params![
             e.aggregate_id,
             s(info, "title"),
@@ -458,7 +458,8 @@ fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()>
             s(info, "model"),
             s(info, "mode"),
             e.time_ms,
-            e.seq
+            e.seq,
+            info["subagent_name"].as_str()
         ],
     )?;
     Ok(())

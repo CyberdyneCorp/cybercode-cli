@@ -131,14 +131,9 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<(), ToolError
         .and_then(Value::as_str)
         .or(profile.isolation.as_deref())
         .unwrap_or("none");
-    let background = input
-        .get("background")
-        .and_then(Value::as_bool)
-        .unwrap_or(profile.background);
     if isolation != "none"
         || input.get("fork").and_then(Value::as_bool).unwrap_or(false)
         || input.get("resume").is_some()
-        || (!background && input.get("name").is_some())
     {
         return Err(failed(
             "This agent execution path currently supports fresh Sessions with isolation none; requested orchestration is not implemented yet",
@@ -237,7 +232,7 @@ async fn execute_child(
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<String, ToolError> {
     let mut spawn = spawn;
-    let reservation = reserve_background(ctx, &runtime, &parent, &mut spawn).await?;
+    let reservation = reserve_child(ctx, &runtime, &parent, &mut spawn).await?;
     let id = cyber_core::ids::new_id("ses");
     let guard = ChildGuard::new(runtime.clone(), id.clone(), permit);
     let result = tokio::select! {
@@ -263,6 +258,7 @@ async fn execute_child(
         };
         return handoff_background(&runtime, &parent, spawn, reservation, guard, run).await;
     }
+    drop(reservation);
     let result = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
@@ -280,24 +276,24 @@ struct ChildRun {
     dir: std::path::PathBuf,
 }
 
-async fn reserve_background(
+async fn reserve_child(
     ctx: &Ctx<'_>,
     runtime: &Runtime,
     parent: &SessionInfo,
     spawn: &mut Spawn,
 ) -> Result<Option<cyber_server::runtime::JobAdmission>, ToolError> {
-    if !spawn.background {
-        return Ok(None);
-    }
     let reservation = tokio::select! { biased; _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted), result=runtime.reserve_child_job(&parent.id) => result.map_err(|e| failed(e.to_string()))? };
     revalidate_spawn(ctx, spawn).await?;
-    if !spawn.background {
-        return Ok(None);
-    }
-    let jobs = runtime
-        .jobs(Some(&parent.id))
+    let used = runtime
+        .subagent_names(&parent.id)
         .map_err(|e| failed(e.to_string()))?;
     if let Some(name) = &spawn.name {
+        let jobs = runtime
+            .jobs(Some(&parent.id))
+            .map_err(|e| failed(e.to_string()))?;
+        if used.contains(name) && !jobs.iter().any(|job| job.name == *name) {
+            return Err(failed(format!("Subagent name already used: {name}")));
+        }
         if let Some(existing) = jobs.iter().find(|job| job.name == *name) {
             let status = if existing.status == cyber_server::runtime::JobStatus::Running {
                 "active"
@@ -307,10 +303,7 @@ async fn reserve_background(
             return Err(failed(format!("Background name already {status}: {name}")));
         }
     } else {
-        let used = jobs
-            .into_iter()
-            .map(|job| job.name)
-            .collect::<std::collections::BTreeSet<_>>();
+        let used = used.into_iter().collect::<std::collections::BTreeSet<_>>();
         let mut name = spawn.profile.name.clone();
         let mut suffix = 2;
         while used.contains(&name) {
@@ -365,16 +358,8 @@ async fn create_child(
             worktree_id: parent.worktree_id.clone(),
             parent_id: Some(parent.id.clone()),
             agent: Some(spawn.profile.name.clone()),
-            title: Some(if spawn.background {
-                format!(
-                    "{}: {} (@{})",
-                    spawn.name.as_deref().unwrap_or(&spawn.profile.name),
-                    spawn.description,
-                    spawn.profile.name
-                )
-            } else {
-                format!("{} (@{})", spawn.description, spawn.profile.name)
-            }),
+            subagent_name: spawn.name.clone(),
+            title: Some(format!("{} (@{})", spawn.description, spawn.profile.name)),
             model: model.unwrap_or(&parent.model).into(),
             model_is_default: model.is_none(),
             mode: Some(child_mode(
@@ -428,13 +413,20 @@ async fn finish_child(
     if !answer.finished || !answer.calls.is_empty() {
         return Err(failed("Subagent stopped without a completed answer"));
     }
-    render_result(bytes, dir, id, &answer.text)
+    render_result(
+        bytes,
+        dir,
+        id,
+        state.info.subagent_name.as_deref(),
+        &answer.text,
+    )
 }
 
 fn render_result(
     bytes: usize,
     dir: std::path::PathBuf,
     id: &str,
+    name: Option<&str>,
     answer: &str,
 ) -> Result<String, ToolError> {
     let budget = crate::Budget {
@@ -443,6 +435,9 @@ fn render_result(
         dir,
     };
     let mut result = json!({"id":id,"text":answer});
+    if let Some(name) = name {
+        result["name"] = json!(name);
+    }
     if answer.len() > bytes {
         let path = budget.store(answer).map_err(failed)?;
         let mut end = bytes;
@@ -463,7 +458,7 @@ async fn structured_result(weak: &WeakRuntime, id: &str) -> Result<String, ToolE
         .await
         .map_err(|e| failed(e.to_string()))?;
     if let Some(value) = state.structured_result() {
-        return Ok(json!({"id":id,"result":value}).to_string());
+        return Ok(json!({"id":id,"name":state.info.subagent_name,"result":value}).to_string());
     }
     ensure_child_finished(&state)?;
     let errors = state.structured_result_error();
@@ -489,7 +484,9 @@ async fn structured_result(weak: &WeakRuntime, id: &str) -> Result<String, ToolE
         .await
         .map_err(|e| failed(e.to_string()))?;
     match state.structured_result() {
-        Some(value) => Ok(json!({"id":id,"result":value}).to_string()),
+        Some(value) => {
+            Ok(json!({"id":id,"name":state.info.subagent_name,"result":value}).to_string())
+        }
         None => {
             ensure_child_finished(&state)?;
             Err(failed(format!(

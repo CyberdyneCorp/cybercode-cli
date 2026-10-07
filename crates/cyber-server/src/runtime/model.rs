@@ -51,6 +51,9 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_id: Option<String>,
     pub parent_id: Option<String>,
+    /// Durable child identity within its parent, independent of title and agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_name: Option<String>,
     pub agent: String,
     pub model: String,
     pub mode: String,

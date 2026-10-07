@@ -508,6 +508,13 @@
               "null"
             ]
           },
+          "subagent_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Durable child identity within its parent, independent of title and agent."
+          },
           "agent": {
             "type": "string"
           },

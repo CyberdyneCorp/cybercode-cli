@@ -489,6 +489,8 @@ export type Session = {
   /** Exact managed checkout incarnation admitted at creation. */
   worktree_id?: string | null;
   parent_id?: string | null;
+  /** Durable child identity within its parent, independent of title and agent. */
+  subagent_name?: string | null;
   agent: string;
   model: string;
   mode: string;

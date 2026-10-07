@@ -257,7 +257,10 @@ impl Inner {
         };
         if !request.routed_to.is_empty() {
             request.origin = Some(RequestOrigin {
-                title: info.title,
+                title: match info.subagent_name {
+                    Some(name) => format!("{name}: {}", info.title),
+                    None => info.title,
+                },
                 agent: asker.agent.clone(),
                 directory: request_directory(&info.directory),
             });
