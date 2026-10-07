@@ -102,7 +102,7 @@ async fn unavailable_initial_profile_keeps_the_prompt_retryable() {
 }
 
 #[tokio::test]
-async fn unavailable_existing_profile_retains_its_previous_context() {
+async fn unavailable_existing_profile_retains_context_and_pauses_until_repaired() {
     let flow = Flow::new(vec![text("first"), text("second")], false);
     flow.f
         .set_config(json!({"agents":{"build":{"system":"Keep these instructions."}}}));
@@ -112,12 +112,23 @@ async fn unavailable_existing_profile_retains_its_previous_context() {
     flow.f.set_config(json!({"agents":{"build":{"steps":0}}}));
     flow.prompt(&id, "two").await;
     flow.settle(&id).await;
-    let requests = flow.main.requests();
-    assert_eq!(requests[1].system, requests[0].system);
+    assert_eq!(flow.main.requests().len(), 1);
     let state = flow.runtime.state(&id).await.unwrap();
     assert_eq!(
         state.epoch.unwrap().snapshot["core/agent"],
         "Keep these instructions."
     );
-    assert!(requests[1].tools.is_empty());
+    assert_eq!(
+        state.inbox[1].status,
+        cyber_server::runtime::InputStatus::Pending
+    );
+    flow.f.set_config(json!({"agents":{"build":{
+        "system":"Keep these instructions.", "request":{"body":{"temperature":0.4}}
+    }}}));
+    flow.runtime.wake(&id).await.unwrap();
+    flow.settle(&id).await;
+    let requests = flow.main.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].system, requests[0].system);
+    assert_eq!(requests[1].body["temperature"], 0.4);
 }

@@ -20,6 +20,13 @@ pub struct AppHost {
 }
 
 impl ToolHost for AppHost {
+    fn request_overlay(
+        &self,
+        turn: &TurnContext,
+    ) -> Result<cyber_llm::catalog::RequestOverlay, String> {
+        self.builtin.request_overlay(turn)
+    }
+
     fn claim_location<'a>(
         &'a self,
         info: &'a cyber_server::runtime::SessionInfo,

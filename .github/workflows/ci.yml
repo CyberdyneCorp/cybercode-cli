@@ -96,6 +96,12 @@ jobs:
       - name: Native agent permission admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_permissions
+      - name: Native agent request options
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test agent_requests
+      - name: Native request option layering
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-llm --test catalog
       - name: Native parent deny inheritance
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test parent_permissions

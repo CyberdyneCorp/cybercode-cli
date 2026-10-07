@@ -74,11 +74,30 @@ impl RequestOverlay {
     }
 
     pub fn layer(&mut self, other: &RequestOverlay) {
-        self.headers.extend(other.headers.clone());
+        for (name, value) in &other.headers {
+            self.headers
+                .retain(|key, _| !key.eq_ignore_ascii_case(name));
+            self.headers.insert(name.clone(), value.clone());
+        }
         if self.body.is_null() {
             self.body = other.body.clone();
         } else {
             deep_merge(&mut self.body, &other.body);
+        }
+    }
+
+    /// Apply a later layer to an already resolved provider/model/variant template.
+    pub fn apply_to(&self, request: &mut LlmRequest) {
+        if self.headers.is_empty() && self.body.is_null() {
+            return;
+        }
+        deep_merge(&mut request.body, &self.body);
+        strip_credentials(&mut request.body);
+        for (name, value) in &self.headers {
+            request
+                .headers
+                .retain(|(key, _)| !key.eq_ignore_ascii_case(name));
+            request.headers.push((name.clone(), value.clone()));
         }
     }
 }

@@ -149,3 +149,28 @@ async fn app_host_preserves_typed_agent_context_observations() {
         cyber_server::runtime::ContextObservation::Unavailable(_)
     ));
 }
+
+#[tokio::test]
+async fn app_host_delegates_validated_agent_request_options() {
+    let scratch = tempfile::tempdir().unwrap();
+    let app = application(scratch.path()).await;
+    let host = AppHost {
+        builtin: app.host.clone(),
+        remote: app.state.remote_tools.clone(),
+    };
+    let turn = TurnContext {
+        session_id: "ses_test".into(),
+        directory: scratch.path().display().to_string(),
+        agent: "build".into(),
+        mode: "default".into(),
+        prefers_apply_patch: false,
+        rules: json!(null),
+    };
+    let path = app.paths.config.join("cyber.json");
+    std::fs::write(&path, r#"{"agents":{"build":{"request":{"headers":{"X-Agent":"build"},"body":{"temperature":0.2}}}}}"#).unwrap();
+    let overlay = host.request_overlay(&turn).unwrap();
+    assert_eq!(overlay.body["temperature"], 0.2);
+    assert_eq!(overlay.headers["X-Agent"], "build");
+    std::fs::write(&path, r#"{"agents":{"build":{"request":{"body":false}}}}"#).unwrap();
+    assert!(host.request_overlay(&turn).is_err());
+}

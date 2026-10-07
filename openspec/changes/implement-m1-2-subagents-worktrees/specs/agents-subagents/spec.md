@@ -25,6 +25,13 @@
 ### Requirement: Agent definition fields
 (P0) An agent definition SHALL accept `description`, `system`, `model` (`provider/model[#variant]`), `variant`, `mode` (`primary`, `subagent` or `all`), `permission_mode` (one of the six Modes), `tools` (`allow` and `deny` lists of tool names or globs), `permissions` (ordered rules), `request` (a provider request overlay of `headers` and `body`, for example `temperature` or `top_p`, layered as defined by `provider-catalog`), `steps` (positive integer), `color`, `hidden`, `isolation` (`none` or `worktree`), `background` (boolean default for spawns), `memory` (`none`, `project` or `user`), `skills` (names preloaded into context) and `mcp` (subset of configured MCP server names). Unknown fields SHALL be rejected by schema validation, naming the agent and field.
 
+#### Scenario: Agent request options reach runtime inference
+- **WHEN** a Turn is prepared for a selected agent with configured request options
+- **THEN** its body SHALL deep-merge after the resolved provider/model/variant template and its headers SHALL override earlier names case-insensitively
+- **AND** API-key fields (`apiKey`, `api_key` and `apikey`, case-insensitively) SHALL be removed from nested objects and arrays before adapter dispatch
+- **AND** changes or removal SHALL apply at a later safe boundary, preserving the current request during provider retries
+- **AND** unavailable, invalid or hidden inference profiles SHALL refuse preparation before input promotion, retaining existing context and retryable input
+
 #### Scenario: Unknown field rejected
 - **WHEN** an agent definition contains `temprature: 0.2`
 - **THEN** config validation fails with an error naming the agent and the field `temprature`

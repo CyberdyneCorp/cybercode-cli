@@ -177,6 +177,14 @@ pub enum Reconciliation {
 }
 
 pub trait ToolHost: Send + Sync {
+    /// Selected agent request options from trusted, validated Location configuration.
+    fn request_overlay(
+        &self,
+        _turn: &TurnContext,
+    ) -> Result<cyber_llm::catalog::RequestOverlay, String> {
+        Ok(cyber_llm::catalog::RequestOverlay::default())
+    }
+
     /// Admit Location use before recovery, context, snapshots or tools. Only fresh
     /// Session creation may establish a new checkout binding.
     fn claim_location<'a>(

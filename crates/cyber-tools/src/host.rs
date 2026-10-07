@@ -418,6 +418,22 @@ fn shortened(listed: &[&skills::Skill], budget: usize) -> Vec<String> {
 }
 
 impl ToolHost for BuiltinHost {
+    fn request_overlay(
+        &self,
+        turn: &TurnContext,
+    ) -> Result<cyber_llm::catalog::RequestOverlay, String> {
+        let profile = self.agent_profile(Path::new(&turn.directory), &turn.agent)?;
+        if profile.hidden {
+            return Err(format!(
+                "Agent {:?} is hidden and cannot drive a Session",
+                turn.agent
+            ));
+        }
+        Ok(cyber_llm::catalog::RequestOverlay::from_config(Some(
+            &profile.request,
+        )))
+    }
+
     fn claim_location<'a>(
         &'a self,
         info: &'a cyber_server::runtime::SessionInfo,

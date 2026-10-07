@@ -190,8 +190,16 @@ async fn boundary(
     handle: &Arc<Handle>,
     continue_tools: bool,
 ) -> Result<(ResolvedModel, bool), RuntimeError> {
-    let model = handle.state.lock().await.info.model.clone();
-    let resolved = inner.resolve(&model)?;
+    let (model, turn) = {
+        let state = handle.state.lock().await;
+        (state.info.model.clone(), turn_context_for(&state, false))
+    };
+    let overlay = inner
+        .tools
+        .request_overlay(&turn)
+        .map_err(RuntimeError::Invalid)?;
+    let mut resolved = inner.resolve(&model)?;
+    overlay.apply_to(&mut resolved.template);
     inner.ensure_epoch(handle, &resolved.provider).await?;
     let promoted = promote(inner, handle, continue_tools).await?;
     inner.reconcile_context(handle).await?;

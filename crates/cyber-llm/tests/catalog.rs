@@ -400,3 +400,62 @@ async fn pinned_path_is_used_without_network() {
     assert_eq!(loaded.origin, Origin::Path);
     assert!(loaded.data.get("openai").is_some());
 }
+
+#[test]
+fn agent_headers_override_prior_layers_case_insensitively() {
+    let config = json!({"providers":{"openai":{"request":{"headers":{"x-priority":"provider"}}}}});
+    let c = catalog(config, &env(&[("OPENAI_API_KEY", "k")]));
+    let agent = cyber_llm::catalog::RequestOverlay::from_config(Some(
+        &json!({"headers":{"X-Priority":"agent"}}),
+    ));
+    let request = c
+        .resolve(&model_ref("openai/gpt-6"), Some(&agent))
+        .unwrap()
+        .request;
+    let headers: Vec<_> = request
+        .headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case("x-priority"))
+        .collect();
+    assert_eq!(headers.len(), 1);
+    assert_eq!(headers[0].1, "agent");
+}
+
+#[test]
+fn request_credentials_are_removed_from_arrays_and_nested_objects() {
+    let c = catalog(json!({}), &env(&[("OPENAI_API_KEY", "k")]));
+    let agent = cyber_llm::catalog::RequestOverlay::from_config(Some(&json!({"body":{
+        "items":[{"apiKey":"secret", "nested":[{"api_key":"secret", "keep":true}]}]
+    }})));
+    let request = c
+        .resolve(&model_ref("openai/gpt-6"), Some(&agent))
+        .unwrap()
+        .request;
+    assert_eq!(request.body, json!({"items":[{"nested":[{"keep":true}]}]}));
+}
+
+#[test]
+fn later_agent_layer_matches_catalog_layering_and_empty_layers_preserve_templates() {
+    let config = json!({"providers":{"openai":{
+        "request":{"headers":{"x-priority":"provider"},"body":{"temperature":0.7,"vendor":{"provider":true,"choice":"provider"}}},
+        "models":{"gpt-6":{
+            "request":{"body":{"vendor":{"model":true,"choice":"model"}}},
+            "variants":{"custom":{"request":{"body":{"vendor":{"variant":true,"choice":"variant"}}}}}
+        }}
+    }}});
+    let c = catalog(config, &env(&[("OPENAI_API_KEY", "k")]));
+    let model = model_ref("openai/gpt-6#custom");
+    let mut template = c.resolve(&model, None).unwrap().request;
+    let original = serde_json::to_vec(&template).unwrap();
+    cyber_llm::catalog::RequestOverlay::default().apply_to(&mut template);
+    assert_eq!(serde_json::to_vec(&template).unwrap(), original);
+    let agent = cyber_llm::catalog::RequestOverlay::from_config(Some(&json!({
+        "headers":{"X-Priority":"agent"},"body":{"temperature":0.2,"vendor":{"agent":true,"choice":"agent"}}
+    })));
+    agent.apply_to(&mut template);
+    assert_eq!(template, c.resolve(&model, Some(&agent)).unwrap().request);
+    assert_eq!(
+        template.body["vendor"],
+        json!({"provider":true,"model":true,"variant":true,"agent":true,"choice":"agent"})
+    );
+}

@@ -22,11 +22,17 @@ pub fn deep_merge(base: &mut Value, overlay: &Value) {
 
 /// Remove credential-shaped keys from a request body; keys are never sent in bodies.
 pub fn strip_credentials(body: &mut Value) {
-    if let Some(map) = body.as_object_mut() {
-        map.retain(|k, _| !matches!(k.as_str(), "apiKey" | "api_key" | "apikey"));
-        for value in map.values_mut() {
-            strip_credentials(value);
+    match body {
+        Value::Object(map) => {
+            map.retain(|key, _| {
+                !key.eq_ignore_ascii_case("apikey") && !key.eq_ignore_ascii_case("api_key")
+            });
+            for value in map.values_mut() {
+                strip_credentials(value);
+            }
         }
+        Value::Array(values) => values.iter_mut().for_each(strip_credentials),
+        _ => {}
     }
 }
 
