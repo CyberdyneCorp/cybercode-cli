@@ -143,3 +143,92 @@ async fn switch_during_inference_preserves_the_current_turn_tool_mode() {
         ]
     );
 }
+
+#[tokio::test]
+async fn agent_pinning_preserves_tool_identity_until_the_next_turn() {
+    let mut h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c0", "clock", "{}")]),
+                tools(&[("c1", "read", "{}")]),
+                text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let gate = Arc::new(GatedAdapter {
+        base: h.models.adapter("test/main"),
+        first: AtomicBool::new(true),
+        started: Notify::new(),
+        release: Notify::new(),
+    });
+    h.runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: Arc::new(GatedModels {
+            base: h.models.clone(),
+            gate: gate.clone(),
+        }),
+        tools: h.tools.clone(),
+        global_config_dir: h.dir.path().join("global"),
+        shell: "bash".into(),
+        claude_compat: false,
+        compaction: CompactionConfig::default(),
+        retry: cyber_llm::RetryPolicy::default(),
+        max_steps: None,
+        today: None,
+        interactive: true,
+        snapshots: Arc::new(NoSnapshots),
+    });
+    h.tools.set("clock", Behavior::Gated);
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, Admission::text("inspect", Delivery::Steer))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), gate.started.notified())
+        .await
+        .unwrap();
+    h.runtime.switch_agent(&id, "docs").await.unwrap();
+    gate.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    let first_agent = h.tools.executed.lock().unwrap()[0].agent.clone();
+    let rows = h.store.read_events(&id, -1, 100).unwrap().events;
+    let replayed = SessionState::replay(&rows).unwrap();
+    assert!(
+        replayed.open_step.is_none(),
+        "identity survives inference ending before tool settlement"
+    );
+    assert_eq!(replayed.effective_agent(true), "build");
+    assert_eq!(replayed.effective_agent(false), "docs");
+    let mut legacy = rows.clone();
+    for row in &mut legacy {
+        if row.kind == "session.step.started.1" {
+            row.data.as_object_mut().unwrap().remove("agent");
+        }
+    }
+    assert_eq!(
+        SessionState::replay(&legacy).unwrap().effective_agent(true),
+        "build"
+    );
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    assert_eq!(
+        first_agent, "build",
+        "switching during inference cannot replace the tool's agent"
+    );
+    let agents: Vec<_> = h
+        .tools
+        .executed
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|call| (call.call_id.clone(), call.agent.clone()))
+        .collect();
+    assert_eq!(
+        agents,
+        vec![("c0".into(), "build".into()), ("c1".into(), "docs".into())]
+    );
+}

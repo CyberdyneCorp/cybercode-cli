@@ -260,6 +260,8 @@ pub struct SessionState {
     pub open_step: Option<String>,
     /// Last Turn mode, retained while its tool groups settle.
     pub turn_mode: Option<String>,
+    #[serde(skip)]
+    pub(crate) turn_agent: Option<String>,
     pub steps: Vec<StepSnapshot>,
     /// File diffs by user message.
     pub diffs: BTreeMap<String, Vec<super::host::FileDiff>>,
@@ -284,6 +286,7 @@ impl SessionState {
             steps_since_input: 0,
             open_step: None,
             turn_mode: None,
+            turn_agent: None,
             steps: Vec::new(),
             diffs: BTreeMap::new(),
             revert: None,
@@ -295,6 +298,14 @@ impl SessionState {
             self.turn_mode.as_deref().unwrap_or(&self.info.mode)
         } else {
             &self.info.mode
+        }
+    }
+
+    pub fn effective_agent(&self, running: bool) -> &str {
+        if running {
+            self.turn_agent.as_deref().unwrap_or(&self.info.agent)
+        } else {
+            &self.info.agent
         }
     }
 
@@ -589,6 +600,7 @@ impl SessionState {
 
     fn on_step_started(&mut self, s: StepStarted) {
         self.turn_mode = Some(s.mode.unwrap_or_else(|| self.info.mode.clone()));
+        self.turn_agent = Some(s.agent.unwrap_or_else(|| self.info.agent.clone()));
         self.open_step = Some(s.message_id.clone());
         self.steps.push(StepSnapshot {
             step_id: s.message_id.clone(),

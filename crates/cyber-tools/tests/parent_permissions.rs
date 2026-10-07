@@ -254,3 +254,51 @@ async fn restored_missing_parent_refuses_dispatch() {
         serde_json::to_string(&flow.runtime.state("ses_child").await.unwrap().calls).unwrap();
     assert!(result.contains("ses_missing"), "{result}");
 }
+
+#[tokio::test]
+async fn agent_pinning_preserves_an_active_parent_profile_deny() {
+    use cyber_server::runtime::PermissionReply;
+    let flow = Flow::new(
+        vec![
+            call("parent_read", "read", json!({"path":".env"})),
+            call(
+                "child_write",
+                "write",
+                json!({"path":"child.txt","content":"forbidden"}),
+            ),
+            text("child done"),
+            text("parent done"),
+        ],
+        true,
+    );
+    flow.f.set_config(json!({"agents": {
+        "build": {"permissions":{"edit":"deny"}},
+        "general": {"permissions":{"edit":"allow"}}
+    }}));
+    flow.f.write(".env", "secret");
+    let parent = session(&flow, None, "build", "default", Value::Null).await;
+    flow.prompt(&parent, "read .env").await;
+    let pending = flow.pending(&parent).await;
+    flow.runtime.switch_agent(&parent, "general").await.unwrap();
+    let child = session(
+        &flow,
+        Some(parent.clone()),
+        "general",
+        "bypass",
+        json!({"edit":"allow"}),
+    )
+    .await;
+    flow.prompt(&child, "write child.txt").await;
+    flow.settle(&child).await;
+    let result = serde_json::to_string(&flow.runtime.state(&child).await.unwrap().calls).unwrap();
+    flow.runtime
+        .reply_permission(&pending.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    flow.settle(&parent).await;
+    assert!(
+        !flow.f.repo.join("child.txt").exists(),
+        "pending parent agent selection widened child authority"
+    );
+    assert!(result.contains("denied"), "{result}");
+}

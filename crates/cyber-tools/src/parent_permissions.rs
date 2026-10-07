@@ -50,7 +50,7 @@ impl BuiltinHost {
             inherited.modes.push(mode);
             let rules = self.session_rules(
                 Path::new(&parent.directory),
-                Some(&parent.agent),
+                Some(&authority.effective_agent),
                 &parent.rules,
             )?;
             inherited.rules.extend(

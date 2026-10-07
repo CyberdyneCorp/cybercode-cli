@@ -7,6 +7,7 @@ use std::collections::HashSet;
 pub struct AncestorAuthority {
     pub info: SessionInfo,
     pub effective_mode: String,
+    pub effective_agent: String,
 }
 
 impl Runtime {
@@ -20,7 +21,7 @@ impl Runtime {
             .collect())
     }
 
-    /// Snapshot each ancestor’s metadata and effective (possibly Turn-pinned) Mode.
+    /// Snapshot each ancestor’s metadata and effective (possibly Turn-pinned) Mode and agent.
     pub async fn ancestor_authorities(
         &self,
         info: &SessionInfo,
@@ -37,9 +38,11 @@ impl Runtime {
             let handle = self.inner.handle(&id).await?;
             let authority = {
                 let state = handle.state.lock().await;
+                let running = self.is_running(&id);
                 AncestorAuthority {
                     info: state.info.clone(),
-                    effective_mode: state.effective_mode(self.is_running(&id)).into(),
+                    effective_mode: state.effective_mode(running).into(),
+                    effective_agent: state.effective_agent(running).into(),
                 }
             };
             parent = authority.info.parent_id.clone();

@@ -32,6 +32,13 @@
 - **AND** changes or removal SHALL apply at a later safe boundary, preserving the current request during provider retries
 - **AND** unavailable, invalid or hidden inference profiles SHALL refuse preparation before input promotion, retaining existing context and retryable input
 
+#### Scenario: Agent identity remains pinned through tool settlement
+- **WHEN** the user selects another agent after a Turn's request has been prepared
+- **THEN** tool invocation identity SHALL retain the agent recorded at Turn start through every tool group
+- **AND** ancestor profile deny ceilings SHALL use an active ancestor's Turn agent rather than its pending selection
+- **AND** the next prepared Turn SHALL use the new selection
+- **AND** replay SHALL preserve that identity, using historical start-time selection when legacy events omit it
+
 #### Scenario: Unknown field rejected
 - **WHEN** an agent definition contains `temprature: 0.2`
 - **THEN** config validation fails with an error naming the agent and the field `temprature`

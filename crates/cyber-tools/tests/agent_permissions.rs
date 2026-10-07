@@ -108,11 +108,30 @@ async fn a_profile_named_user_does_not_get_the_explicit_shell_exemption() {
 
 #[tokio::test]
 async fn explicit_user_shell_is_independent_of_model_agent_permissions() {
+    #[cfg(windows)]
+    let f = {
+        let bash = std::path::PathBuf::from(std::env::var_os("ProgramFiles").unwrap())
+            .join("Git/bin/bash.exe");
+        assert!(bash.is_file(), "native test requires installed Git Bash");
+        Fixture::with_shell(&bash.display().to_string(), cyber_sandbox::find_helper())
+    };
+    #[cfg(not(windows))]
     let f = Fixture::new();
-    f.set_config(json!({"agents":{
+    let mut config = json!({"agents":{
         "build":{"permissions":{"bash":"deny"}},
         "user":{"permissions":{"bash":"deny"}}
-    }}));
+    }});
+    f.set_config(config.clone());
+    if cfg!(windows) {
+        let error = f
+            .host
+            .shell(&f.repo.display().to_string(), "ses_test", "echo user-shell")
+            .await
+            .unwrap_err();
+        assert!(error.contains("SandboxUnavailableError"), "{error}");
+        config["sandbox"] = json!({"policy":"full-access"});
+        f.set_config(config);
+    }
     let output = f
         .host
         .shell(&f.repo.display().to_string(), "ses_test", "echo user-shell")
