@@ -120,7 +120,7 @@ jobs:
       - name: Native background task TUI controls
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tui --lib tasks
-      - name: Native exec named delegation and child Job ownership
+      - name: Native exec durable admission and child Job ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test exec_delegation
       - name: Native explicit user subtasks

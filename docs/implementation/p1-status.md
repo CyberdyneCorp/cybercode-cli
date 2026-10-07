@@ -188,6 +188,16 @@ The initial full workspace run exposed accepted-socket handling in the CLI mock 
 
 Exec/TUI adoption, pre-admission deadlines, explicit reconciliation of unknown native effects, full process-death/client lifecycle, cross-process child ownership and parent/descendant budgets remain open. This ledger increment accepts no entire requirement or milestone; P0 assets remain preserved.
 
+## Exec durable admission adoption increment
+
+Exec named delegation now generates an admission ID before submission, retains the source/request in JSON output and uses scoped start/lookup/stop rather than waiting for a legacy subtask response. Lost responses recover by lookup without another dispatch. Request/source/phase and Job ownership are validated before following or cancelling; foreign identity cannot redirect actions. Timeout and interruption cover submission, queued admission and child following. Earlier Session setup, agent discovery, attachment reads and capability negotiation remain outside this timer.
+
+Cancellation before Job handoff polls request acknowledgement within a bounded window. Reserved cancelled/failed records acknowledge no child dispatch; launching and unknown outcomes retain uncertainty. A validated Job discovered during cancellation remains in output even if its stop fails. Parent interrupt is never used. Twelve CLI tests pass locally, including queued timeout, real Unix Ctrl+C, malformed/lost submission response, foreign identity, unknown cancellation, unsupported legacy servers, full durable text/usage and owned Job stop. The Windows CI step runs the same suite with the Unix-only signal test excluded; native acceptance remains pending.
+
+TUI adoption, generic durable prompt admission, queued/held mention delivery, unknown native-effect recovery and parent/descendant aggregate budgets remain open. This increment does not accept a full P1 requirement or milestone, and P0 evaluation/measurement and local-model artifacts are unchanged.
+
+Final local validation passes 815 Rust workspace test executions (two ignored opt-in fixtures), workspace all-target Clippy, formatting, generated-SDK consistency and all 57 strict specification checks. Cross-spec lint reports zero errors and 21 warnings. The 46 SDK tests/type checking passed for the preceding ledger implementation; this increment changes SDK documentation only. Latest observed CI at `e2ffb87` remains queued; complete Windows confinement and the mandatory long-root Git status fix remain open. The full P1 goal remains active.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

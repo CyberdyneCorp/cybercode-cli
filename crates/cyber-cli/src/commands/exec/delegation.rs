@@ -1,4 +1,5 @@
-//! Exec owns one explicit child Job and reads its durable result before exiting.
+//! Exec owns durable admission before waiting for a child Job.
+mod admission;
 use super::{
     ExecArgs, api,
     report::{Out, Run},
@@ -114,14 +115,27 @@ pub(super) async fn execute(
         .map(|path| setup::file_part(path))
         .collect::<Result<Vec<_>, _>>()?;
     negotiate(client, !attachments.is_empty(), args.max_turns.is_some()).await?;
-    let response = client.post(&format!("/sessions/{parent_id}/subtask"),
-        json!({"agent":agent,"prompt":prompt,"attachments":attachments,"max_steps":args.max_turns})).await.map_err(api)?;
-    let scope = Scope::new(parent_id, &response["data"])?;
-    out.delegated(&scope.parent, &scope.job, &scope.child);
+    let admission = admission::Admission::new(parent_id)?;
+    out.admission(parent_id, &admission.id);
+    let body =
+        json!({"agent":agent,"prompt":prompt,"attachments":attachments,"max_steps":args.max_turns});
+    let mut scope = None;
     let mut run = Run::new(args, Instant::now());
     let mut cursor = -1;
     let end = {
-        let work = follow(client, &scope, &mut cursor, &mut run, &mut out);
+        let work = async {
+            let owned = admission.start(client, body).await?;
+            out.delegated(&owned.parent, &owned.job, &owned.child);
+            scope = Some(owned);
+            follow(
+                client,
+                scope.as_ref().expect("admitted scope"),
+                &mut cursor,
+                &mut run,
+                &mut out,
+            )
+            .await
+        };
         tokio::pin!(work);
         tokio::select! {
             result = &mut work => result,
@@ -135,23 +149,55 @@ pub(super) async fn execute(
         Ok(End::Settled(job)) => apply_job(&mut run, &job),
         Ok(End::Budget) => {
             run.stop_reason = Some("budget_exceeded".into());
-            cancel(client, &scope, &mut run).await;
+            stop_owned(client, &admission, &mut scope, &mut out, &mut run).await;
         }
         Ok(End::Stopped(reason)) => {
             run.stop_reason = Some(reason.into());
-            cancel(client, &scope, &mut run).await;
+            stop_owned(client, &admission, &mut scope, &mut out, &mut run).await;
         }
         Err(error) => {
             run.error = Some(error.message);
-            cancel(client, &scope, &mut run).await;
+            stop_owned(client, &admission, &mut scope, &mut out, &mut run).await;
         }
     }
-    catch_up(client, &scope, &mut cursor, &mut run, &mut out).await;
+    if let Some(scope) = &scope {
+        catch_up(client, scope, &mut cursor, &mut run, &mut out).await;
+    }
     if let Some(error) = &run.error {
         out.error(error);
     }
     Ok(out.finish(&run, args, parent))
 }
+async fn stop_owned(
+    client: &Client,
+    admission: &admission::Admission,
+    scope: &mut Option<Scope>,
+    out: &mut Out,
+    run: &mut Run,
+) {
+    if let Some(scope) = scope {
+        cancel(client, scope, run).await;
+        return;
+    }
+    let result = tokio::time::timeout(Duration::from_secs(3), admission.stop(client, scope)).await;
+    if let Some(owned) = scope {
+        out.delegated(&owned.parent, &owned.job, &owned.child);
+    }
+    let detail = match result {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error.message,
+        Err(_) => "Cancellation acknowledgement timed out".into(),
+    };
+    let prior = run
+        .error
+        .take()
+        .map_or(String::new(), |error| format!("{error}; "));
+    run.error = Some(format!(
+        "{prior}Delegation cancellation was not acknowledged; inspect {}: {detail}",
+        admission.id
+    ));
+}
+
 async fn catch_up(client: &Client, scope: &Scope, cursor: &mut i64, run: &mut Run, out: &mut Out) {
     // Terminal acknowledgement precedes the final catch-up: no early response can
     // hide a late tool denial, usage event or completed assistant result.
@@ -177,6 +223,16 @@ async fn catch_up(client: &Client, scope: &Scope, cursor: &mut i64, run: &mut Ru
 
 async fn negotiate(client: &Client, attachments: bool, steps: bool) -> Result<(), CliError> {
     let document = client.get("/openapi.json").await.map_err(api)?;
+    let path = "/api/v1/sessions/{sessionID}/delegations/{requestID}";
+    if document["paths"][path]["post"].is_null()
+        || document["paths"][path]["get"].is_null()
+        || document["paths"][format!("{path}/stop")]["post"].is_null()
+    {
+        return Err(
+            CliError::usage("Server does not support durable delegation admission")
+                .with_hint("Update the attached server before using named delegation"),
+        );
+    }
     let properties = &document["components"]["schemas"]["SubtaskBody"]["properties"];
     for (field, needed) in [
         ("agent", true),

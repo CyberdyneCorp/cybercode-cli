@@ -94,6 +94,7 @@ pub struct Out {
     thinking: bool,
     session_id: String,
     delegation: Option<(String, String)>,
+    admission: Option<(String, String)>,
 }
 
 fn now_ms() -> i64 {
@@ -128,7 +129,12 @@ impl Out {
             thinking: args.thinking,
             session_id: session["id"].as_str().unwrap_or_default().into(),
             delegation: None,
+            admission: None,
         }
+    }
+
+    pub fn admission(&mut self, parent: &str, request: &str) {
+        self.admission = Some((parent.into(), request.into()));
     }
 
     pub fn delegated(&mut self, parent: &str, job: &str, child: &str) {
@@ -268,6 +274,10 @@ impl Out {
         if let Some(usage) = &run.usage {
             result["usage"] = usage.clone();
             result["cost_unpriced"] = run.unpriced.into();
+        }
+        if let Some((parent, request)) = &self.admission {
+            result["parent_session_id"] = parent.clone().into();
+            result["delegation_id"] = request.clone().into();
         }
         if let Some((parent, job)) = &self.delegation {
             result["parent_session_id"] = parent.clone().into();

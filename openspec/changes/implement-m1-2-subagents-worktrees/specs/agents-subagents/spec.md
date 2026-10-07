@@ -394,7 +394,10 @@
 - **THEN** it SHALL start explicit named delegation with attached Content and an optional positive requested turn ceiling
 - **AND** it SHALL print the child's durable result and usage, including events committed before the delegation response
 - **AND** it SHALL wait for terminal Job settlement rather than an early child idle notification
-- **AND** after receiving the owned Job, timeout, interruption and local budget exhaustion SHALL cancel it without interrupting the parent or another child
+- **AND** it SHALL retain a client-generated admission ID before submission and recover a lost response by scoped lookup without redispatch
+- **AND** timeout and interruption SHALL cover submission and queued admission, cancelling only that request or its validated Job without interrupting the parent or another child
+- **AND** local budget exhaustion after Job admission SHALL cancel only that owned Job
+- **AND** uncertain cancellation SHALL report the admission ID and preserve any validated Job identity for recovery
 - **AND** unknown/file mentions and `--command` SHALL preserve ordinary admission
 
 #### Scenario: Mention runs subagent
