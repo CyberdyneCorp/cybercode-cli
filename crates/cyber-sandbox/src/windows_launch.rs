@@ -1,6 +1,9 @@
 //! Capability-free less-privileged AppContainer process launch. Tool dispatch remains disabled.
 #![allow(unsafe_code)]
 
+#[cfg(feature = "windows-test-controls")]
+mod capabilities;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -42,7 +45,15 @@ pub fn spawn(
     environment: &BTreeMap<String, String>,
     directory: &Path,
 ) -> io::Result<ContainerChild> {
-    spawn_inner(profile, program, args, environment, directory, None, true)
+    spawn_inner(
+        profile,
+        program,
+        args,
+        environment,
+        directory,
+        None,
+        LaunchPolicy::Isolated,
+    )
 }
 
 /// Explicit standard streams. Supplied handles must grant only intended stream access.
@@ -68,7 +79,7 @@ pub fn spawn_with_stdio(
         environment,
         directory,
         Some(streams),
-        true,
+        LaunchPolicy::Isolated,
     )
 }
 
@@ -81,7 +92,45 @@ pub fn spawn_with_package_allowances_for_test(
     environment: &BTreeMap<String, String>,
     directory: &Path,
 ) -> io::Result<ContainerChild> {
-    spawn_inner(profile, program, args, environment, directory, None, false)
+    spawn_inner(
+        profile,
+        program,
+        args,
+        environment,
+        directory,
+        None,
+        LaunchPolicy::PackageAllowance,
+    )
+}
+
+/// Fixed registry-read LPAC comparison; unavailable to production tool dispatch.
+#[cfg(feature = "windows-test-controls")]
+pub fn spawn_with_registry_read_for_test(
+    profile: &Profile,
+    program: &Path,
+    args: &[OsString],
+    environment: &BTreeMap<String, String>,
+    directory: &Path,
+    streams: Option<StandardStreams<'_>>,
+) -> io::Result<ContainerChild> {
+    spawn_inner(
+        profile,
+        program,
+        args,
+        environment,
+        directory,
+        streams,
+        LaunchPolicy::RegistryRead,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum LaunchPolicy {
+    Isolated,
+    #[cfg(feature = "windows-test-controls")]
+    PackageAllowance,
+    #[cfg(feature = "windows-test-controls")]
+    RegistryRead,
 }
 
 fn spawn_inner(
@@ -91,7 +140,7 @@ fn spawn_inner(
     environment: &BTreeMap<String, String>,
     directory: &Path,
     streams: Option<StandardStreams<'_>>,
-    opt_out: bool,
+    policy: LaunchPolicy,
 ) -> io::Result<ContainerChild> {
     profile.ensure_active()?;
     if !program.is_absolute() || !directory.is_absolute() {
@@ -106,14 +155,29 @@ fn spawn_inner(
     environment_block(environment)?;
     let temp = PrivateTemp::new(profile)?;
     let environment = temp.environment(environment)?;
+    #[cfg(feature = "windows-test-controls")]
+    let capability_owner =
+        capabilities::CapabilitySet::new(matches!(policy, LaunchPolicy::RegistryRead))?;
     let capabilities = SECURITY_CAPABILITIES {
         AppContainerSid: profile.sid(),
+        #[cfg(feature = "windows-test-controls")]
+        Capabilities: if capability_owner.entries.is_empty() {
+            null_mut()
+        } else {
+            capability_owner.entries.as_ptr().cast_mut()
+        },
+        #[cfg(feature = "windows-test-controls")]
+        CapabilityCount: capability_owner.entries.len() as u32,
         ..Default::default()
     };
     let job = Job::new()?;
     let jobs = [job.handle()];
     let streams = streams.map(InheritedStreams::new).transpose()?;
     let handles = streams.as_ref().map(InheritedStreams::handles);
+    #[cfg(feature = "windows-test-controls")]
+    let opt_out = !matches!(policy, LaunchPolicy::PackageAllowance);
+    #[cfg(not(feature = "windows-test-controls"))]
+    let opt_out = matches!(policy, LaunchPolicy::Isolated);
     let package_policy = opt_out.then_some(PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT);
     let mut attributes = Attributes::new(
         &capabilities,

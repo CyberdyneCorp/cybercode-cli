@@ -185,3 +185,10 @@
 - **WHEN** a native launch fixture cannot initialize Winsock or create its required descendant
 - **THEN** the original runtime assertion fails and reports its stage
 - **AND** read-only system registry and own-token access probes include successful host controls without granting additional runtime authority
+
+#### Scenario: Registry initialization control cannot enable production authority
+- **WHEN** native tests compare capability-free LPAC launch with a fixed `registryRead` capability control
+- **THEN** only the explicitly enabled test-control feature exposes that launch variant
+- **AND** the control retains package opt-out, suspended identity verification and process-tree ownership
+- **AND** Winsock initialization, direct-network denial and descendant cleanup are asserted independently of the original capability-free assertions
+- **AND** runtime modes and configuration cannot select the control
