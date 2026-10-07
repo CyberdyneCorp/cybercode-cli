@@ -40,6 +40,7 @@ pub(crate) enum TurnEnd {
 struct PreparedModel {
     model: ResolvedModel,
     revision: i64,
+    steps: Option<u64>,
 }
 
 pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: CancellationToken) {
@@ -199,17 +200,32 @@ async fn boundary(
 ) -> Result<(PreparedModel, bool), RuntimeError> {
     let prepared = {
         let mut state = handle.state.lock().await;
-        let (reference, model) = inner.resolve_selection(&state.info, &state.model_selection)?;
-        if state.info.model != reference {
+        let mut selected = inner.resolve_selection(&state.info, &state.model_selection)?;
+        if state.mode_default_pending {
+            let mode = selected
+                .permission_mode
+                .clone()
+                .unwrap_or_else(|| "default".into());
+            super::selection::validate_mode(&mode)?;
+            let payload = Switched {
+                from: state.info.mode.clone(),
+                to: mode,
+                automatic: true,
+            };
+            inner.commit_locked(&mut state, vec![event(MODE_SWITCHED, &payload)])?;
+            selected = inner.resolve_selection(&state.info, &state.model_selection)?;
+        }
+        if state.info.model != selected.reference {
             let payload = Switched {
                 from: state.info.model.clone(),
-                to: reference,
+                to: selected.reference,
                 automatic: true,
             };
             inner.commit_locked(&mut state, vec![event(MODEL_SWITCHED, &payload)])?;
         }
         PreparedModel {
-            model,
+            model: selected.model,
+            steps: selected.steps,
             revision: state.selection_revision,
         }
     };
@@ -495,7 +511,10 @@ impl Inner {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        let limited = limit.is_some_and(|m| state.steps_since_input >= m);
+        let limited = limit.is_some_and(|m| state.steps_since_input >= u64::from(m))
+            || prepared
+                .steps
+                .is_some_and(|m| state.steps_since_input >= m.saturating_sub(1));
         if limited {
             let payload = SystemAdded {
                 message_id: cyber_core::ids::new_id("msg"),
@@ -523,6 +542,7 @@ impl Inner {
         ];
         request.messages = view::messages(&state, &resolved.provider, &resolved.model);
         request.tools = defs.iter().map(|d| d.spec.clone()).collect();
+        request.tools_disabled |= limited;
         request.cache_key = Some(state.info.id.clone());
         let message_id = cyber_core::ids::new_id("msg");
         let payload = StepStarted {

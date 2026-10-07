@@ -46,3 +46,16 @@ pub fn str_at<'a>(value: &'a Value, pointer: &str) -> &'a str {
         .and_then(Value::as_str)
         .unwrap_or_default()
 }
+
+/// A runtime no-tools ceiling is final, including over injected request tools.
+pub fn force_no_tools(body: &mut Value, disabled: bool, choice: Value) {
+    if !disabled {
+        return;
+    }
+    if !body.is_object() {
+        *body = serde_json::json!({});
+    }
+    let map = body.as_object_mut().expect("object established");
+    map.remove("tools");
+    map.insert("tool_choice".into(), choice);
+}

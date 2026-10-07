@@ -99,6 +99,12 @@ jobs:
       - name: Native agent request options
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_requests
+      - name: Native agent starting Modes and step limits
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test agent_limits
+      - name: Native final no-tools wire choices
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-llm --test adapters runtime_no_tools_choice
       - name: Native agent model selection
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_models

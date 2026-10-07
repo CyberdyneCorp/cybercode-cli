@@ -250,6 +250,8 @@ pub struct SessionState {
     pub(crate) model_selection: super::selection::ModelSelection,
     #[serde(skip)]
     pub(crate) selection_revision: i64,
+    #[serde(skip)]
+    pub(crate) mode_default_pending: bool,
     pub last_seq: i64,
     pub inbox: Vec<InboxRow>,
     pub entries: Vec<Entry>,
@@ -260,7 +262,7 @@ pub struct SessionState {
     pub compacted: Option<Compacted>,
     pub task: TaskState,
     pub totals: Totals,
-    pub steps_since_input: u32,
+    pub steps_since_input: u64,
     pub open_step: Option<String>,
     /// Last Turn mode, retained while its tool groups settle.
     pub turn_mode: Option<String>,
@@ -279,6 +281,7 @@ impl SessionState {
         Self {
             model_selection: super::selection::ModelSelection::explicit(info.model.clone()),
             selection_revision: -1,
+            mode_default_pending: false,
             info,
             last_seq: -1,
             inbox: Vec::new(),
@@ -327,6 +330,7 @@ impl SessionState {
         if let Some(selection) = created.selection {
             state.model_selection = selection;
         }
+        state.mode_default_pending = created.mode_default_pending;
         state.entries = created.history;
         state.calls = created
             .calls
@@ -510,7 +514,10 @@ impl SessionState {
                     self.model_selection = super::selection::ModelSelection::explicit(switched.to);
                 }
             }
-            "session.mode.switched" => self.info.mode = decode::<Switched>(e)?.to,
+            "session.mode.switched" => {
+                self.info.mode = decode::<Switched>(e)?.to;
+                self.mode_default_pending = false;
+            }
             // Started/failed compaction and other markers carry no state.
             _ => self.apply_snapshots(kind, e)?,
         }
@@ -701,7 +708,7 @@ impl SessionState {
             Some(cost) => self.totals.cost += cost,
             None => self.totals.unpriced_steps += 1,
         }
-        self.steps_since_input += 1;
+        self.steps_since_input = self.steps_since_input.saturating_add(1);
     }
 
     fn on_step_failed(&mut self, f: StepFailed) {

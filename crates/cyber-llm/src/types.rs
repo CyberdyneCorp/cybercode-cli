@@ -83,6 +83,9 @@ pub struct LlmRequest {
     pub system: Vec<String>,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,
+    /// Force no-tools selection after all request overlays.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tools_disabled: bool,
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<f64>,
     pub reasoning: Option<Reasoning>,

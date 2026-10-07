@@ -80,6 +80,8 @@ const ALL: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Created {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mode_default_pending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<super::selection::ModelSelection>,
     pub info: SessionInfo,

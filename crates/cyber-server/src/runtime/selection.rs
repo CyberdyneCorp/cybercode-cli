@@ -44,20 +44,54 @@ impl ModelSelection {
     }
 }
 
+pub(crate) struct SelectedModel {
+    pub reference: String,
+    pub model: ResolvedModel,
+    pub steps: Option<u64>,
+    pub permission_mode: Option<String>,
+}
+
 impl Inner {
     pub(crate) fn resolve_selection(
         &self,
         info: &SessionInfo,
         selection: &ModelSelection,
-    ) -> Result<(String, ResolvedModel), RuntimeError> {
+    ) -> Result<SelectedModel, RuntimeError> {
         let turn = super::drain::turn_context_for_info(info, false);
         let options = self
             .tools
             .agent_inference(&turn)
             .map_err(RuntimeError::Invalid)?;
-        let reference = selection.resolve(&options)?;
-        let mut resolved = self.resolve(&reference)?;
-        options.request.apply_to(&mut resolved.template);
-        Ok((reference, resolved))
+        self.resolve_options(info, selection, &options)
+    }
+
+    pub(crate) fn resolve_options(
+        &self,
+        info: &SessionInfo,
+        selection: &ModelSelection,
+        options: &AgentInference,
+    ) -> Result<SelectedModel, RuntimeError> {
+        let reference = selection.resolve(options)?;
+        let mut model = self.resolve(&reference)?;
+        options.request.apply_to(&mut model.template);
+        Ok(SelectedModel {
+            reference,
+            model,
+            steps: options
+                .steps
+                .or_else(|| info.parent_id.as_ref().map(|_| 50)),
+            permission_mode: options.permission_mode.clone(),
+        })
+    }
+}
+
+pub(crate) fn validate_mode(mode: &str) -> Result<(), RuntimeError> {
+    if matches!(
+        mode,
+        "default" | "accept-edits" | "plan" | "auto" | "dont-ask" | "bypass"
+    ) {
+        Ok(())
+    } else {
+        Err(RuntimeError::Invalid(format!("unknown mode {mode}")))
     }
 }

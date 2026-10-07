@@ -588,3 +588,37 @@ async fn every_adapter_emits_the_same_event_types() {
     }
     assert_eq!(events[0], events[1]);
 }
+
+#[tokio::test]
+async fn runtime_no_tools_choice_overrides_injected_tools_on_every_adapter() {
+    for kind in [
+        ApiKind::OpenaiResponses,
+        ApiKind::OpenaiCompatible,
+        ApiKind::Anthropic,
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({"error":{"message":"recorded test request"}})),
+            )
+            .mount(&server)
+            .await;
+        let a = adapter(kind, Endpoint::new(server.uri(), Some("test-key".into())));
+        let mut req = request();
+        req.tools_disabled = true;
+        req.body = json!({"tools":[{"name":"injected"}],"tool_choice":"required"});
+        assert!(a.stream(req).await.is_err());
+        let body = server.received_requests().await.unwrap()[0]
+            .body_json::<Value>()
+            .unwrap();
+        assert!(body.get("tools").is_none(), "{kind:?}: {body}");
+        assert!(body.get("tools_disabled").is_none());
+        let expected = if kind == ApiKind::Anthropic {
+            json!({"type":"none"})
+        } else {
+            json!("none")
+        };
+        assert_eq!(body["tool_choice"], expected, "{kind:?}");
+    }
+}

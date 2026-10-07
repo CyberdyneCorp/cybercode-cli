@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Adapter, Decoder, Endpoint, EventStream, ToolCalls, data_url, decode_sse, parse_json};
 use crate::error::{LlmError, classify_stream_error};
-use crate::json::{deep_merge, str_at, strip_credentials, u64_at};
+use crate::json::{deep_merge, force_no_tools, str_at, strip_credentials, u64_at};
 use crate::sse::SseEvent;
 use crate::types::{Content, FinishReason, LlmEvent, LlmRequest, Message, Reasoning, Role, Usage};
 
@@ -66,6 +66,7 @@ pub(crate) fn build_body(request: &LlmRequest) -> Value {
     }
     optional_fields(request, map);
     deep_merge(&mut body, &request.body);
+    force_no_tools(&mut body, request.tools_disabled, json!("none"));
     strip_credentials(&mut body);
     body
 }

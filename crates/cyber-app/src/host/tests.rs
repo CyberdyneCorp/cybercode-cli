@@ -176,10 +176,12 @@ async fn app_host_delegates_validated_agent_request_options() {
     assert!(host.agent_inference(&turn).is_err());
     std::fs::write(
         &path,
-        r#"{"agents":{"build":{"model":"test/other#high","variant":"low"}}}"#,
+        r#"{"agents":{"build":{"model":"test/other#high","variant":"low","permission_mode":"plan","steps":4}}}"#,
     )
     .unwrap();
     let options = host.agent_inference(&turn).unwrap();
     assert_eq!(options.model.as_deref(), Some("test/other#high"));
     assert_eq!(options.variant.as_deref(), Some("low"));
+    assert_eq!(options.permission_mode.as_deref(), Some("plan"));
+    assert_eq!(options.steps, Some(4));
 }

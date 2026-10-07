@@ -44,6 +44,8 @@ impl LocationLease {
 /// Trusted profile defaults and its final request layer, resolved from one snapshot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentInference {
+    pub permission_mode: Option<String>,
+    pub steps: Option<u64>,
     pub model: Option<String>,
     pub variant: Option<String>,
     pub request: cyber_llm::catalog::RequestOverlay,

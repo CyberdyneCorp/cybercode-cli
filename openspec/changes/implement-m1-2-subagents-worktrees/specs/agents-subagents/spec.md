@@ -32,6 +32,14 @@
 - **AND** changes or removal SHALL apply at a later safe boundary, preserving the current request during provider retries
 - **AND** unavailable, invalid or hidden inference profiles SHALL refuse preparation before input promotion, retaining existing context and retryable input
 
+#### Scenario: Profile starting Mode preserves caller authority and retryable creation
+- **WHEN** a caller omits the Mode and the selected profile has `permission_mode`
+- **THEN** the Session SHALL start in that Mode
+- **AND** an explicit caller Mode SHALL override this starting default
+- **AND** if a profile is temporarily unavailable at explicit-model creation, its default SHALL remain pending until a valid profile is resolved before inference
+- **AND** explicit Mode switches SHALL settle that pending choice even when the visible Mode is unchanged
+- **AND** creation retry and replay SHALL preserve the selected or pending state
+
 #### Scenario: Agent model and variant defaults preserve explicit selection
 - **WHEN** a Session omits its model
 - **THEN** its selected agent's model SHALL take precedence over the Location default
@@ -90,6 +98,12 @@
 - **THEN** built-in tool admission SHALL evaluate them after config and before Session rules
 - **AND** a final effective deny SHALL refuse dispatch even in bypass Mode without side effects
 - **AND** user/global deny ceilings SHALL remain final despite profile or Session allows
+
+#### Scenario: Step-limit requests cannot restore tools through overlays
+- **WHEN** an agent reaches its final allowed Turn
+- **THEN** native and compatible adapters SHALL force no-tools selection after all request overlays
+- **AND** injected tool definitions or forced tool choices SHALL NOT override that limit
+- **AND** stricter runtime/Session budgets SHALL remain enforced and new user input SHALL reset the count
 
 ### Requirement: Agent tool spawns subagents
 (P1) The system SHALL provide an `agent` tool with inputs `prompt` (required), `agent` (default `general`), `description` (3–8 words), `output_schema` (JSON Schema), `model`, `isolation` (`none`, `worktree` or, from P3, `remote`), `runner` (with `isolation: remote`: a pool, `rnr_` ID or peer name), `background` (boolean), `fork` (boolean) and `resume` (subagent name or `ses_` ID). Each spawn SHALL create a child Session whose `parent_id` is the caller, titled `<description> (@<agent>)`, and SHALL request the `agent` permission with the target agent name as resource.

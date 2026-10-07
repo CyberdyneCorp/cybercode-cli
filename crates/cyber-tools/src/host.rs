@@ -437,6 +437,10 @@ impl ToolHost for BuiltinHost {
             ));
         }
         Ok(cyber_server::runtime::AgentInference {
+            permission_mode: profile.permission_mode,
+            steps: profile
+                .steps
+                .or_else(|| (profile.mode == "subagent").then_some(50)),
             model: profile.model,
             variant: profile.variant,
             request: cyber_llm::catalog::RequestOverlay::from_config(Some(&profile.request)),

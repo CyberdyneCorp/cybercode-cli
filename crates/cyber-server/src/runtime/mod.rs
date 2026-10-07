@@ -325,6 +325,7 @@ impl Runtime {
         if let Ok(existing) = self.inner.handle(&id).await {
             return Ok(existing.state.lock().await.info.clone());
         }
+        let mode_is_default = req.mode.is_none();
         let selection = selection::ModelSelection {
             reference: req.model.clone(),
             agent_default: req.model_is_default,
@@ -345,12 +346,38 @@ impl Runtime {
             max_steps: req.max_steps,
         };
         self.ancestors(&info).await?;
+        let defaults = if mode_is_default || selection.agent_default {
+            self.inner
+                .tools
+                .agent_inference(&drain::turn_context_for_info(&info, false))
+        } else {
+            Ok(AgentInference::default())
+        };
+        let mode_default_pending = mode_is_default && defaults.is_err();
+        if mode_is_default && let Ok(options) = &defaults {
+            info.mode = options
+                .permission_mode
+                .clone()
+                .unwrap_or_else(|| "default".into());
+            selection::validate_mode(&info.mode)?;
+        }
         if selection.agent_default {
-            info.model = self.inner.resolve_selection(&info, &selection)?.0;
+            let options = defaults.map_err(RuntimeError::Invalid)?;
+            info.model = self
+                .inner
+                .resolve_options(&info, &selection, &options)?
+                .reference;
         }
         let selection = selection.persisted(&info.model);
         self.inner
-            .create(info, Vec::new(), Vec::new(), None, selection)
+            .create(
+                info,
+                Vec::new(),
+                Vec::new(),
+                None,
+                selection,
+                mode_default_pending,
+            )
             .await
     }
 
@@ -600,17 +627,7 @@ impl Runtime {
     }
 
     pub async fn switch_mode(&self, session_id: &str, mode: &str) -> Result<(), RuntimeError> {
-        const MODES: [&str; 6] = [
-            "default",
-            "accept-edits",
-            "plan",
-            "auto",
-            "dont-ask",
-            "bypass",
-        ];
-        if !MODES.contains(&mode) {
-            return Err(RuntimeError::Invalid(format!("unknown mode {mode}")));
-        }
+        selection::validate_mode(mode)?;
         self.switch(session_id, MODE_SWITCHED, mode, |i| &i.mode)
             .await
     }
@@ -626,7 +643,7 @@ impl Runtime {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
         let from = current(&state.info).clone();
-        if from == to {
+        if from == to && !(kind == MODE_SWITCHED && state.mode_default_pending) {
             return Ok(());
         }
         self.inner.commit_locked(
@@ -757,6 +774,7 @@ impl Runtime {
                 calls,
                 Some(session_id.to_string()),
                 state.model_selection.persisted(&state.info.model),
+                state.mode_default_pending,
             )
             .await
     }
@@ -1014,6 +1032,7 @@ impl Inner {
         calls: Vec<CallState>,
         forked_from: Option<String>,
         selection: Option<selection::ModelSelection>,
+        mode_default_pending: bool,
     ) -> Result<SessionInfo, RuntimeError> {
         let lease = self
             .claim_location(&info, forked_from.is_none(), self.closed.child_token())
@@ -1026,6 +1045,7 @@ impl Inner {
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
+            mode_default_pending,
             selection,
             info: info.clone(),
             history,
