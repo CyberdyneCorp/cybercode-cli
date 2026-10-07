@@ -4,6 +4,7 @@
 pub mod bash_analysis;
 mod budget;
 mod host;
+mod parent_permissions;
 pub mod permissions;
 mod reconcile;
 mod sandboxing;

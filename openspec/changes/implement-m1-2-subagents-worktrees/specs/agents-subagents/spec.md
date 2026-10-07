@@ -144,6 +144,12 @@
 - **WHEN** the parent runs in `default` Mode and spawns an agent configured with `permission_mode: bypass`
 - **THEN** the child runs in `default` Mode
 
+#### Scenario: Durable ancestry cannot silently lose restrictions
+- **WHEN** a child dispatches a built-in tool with a durable parent chain
+- **THEN** every ancestor deny from config, profile and Session rules SHALL remain an execution ceiling
+- **AND** parent allows SHALL NOT preapprove that child
+- **AND** fresh Session creation SHALL reject missing parents and ancestry cycles before recording the Session
+
 ### Requirement: Subagent result summarization
 (P1) The tool result returned to the parent SHALL contain at most `agents.result_max_bytes` (default 16384) of the subagent's final text; longer text SHALL be written to a Managed Tool Output File and its path included. Intermediate tool output of the child SHALL never be copied into the parent's history.
 

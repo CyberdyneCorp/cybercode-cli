@@ -24,5 +24,6 @@
 - [ ] Implement forked context and resume by name/session ID.
 - [ ] Integrate worktree isolation into child sessions.
 - [ ] Enforce concurrency, nesting and permission inheritance.
+  - [x] Validate durable parent chains and enforce ancestor config/profile/Session deny rules during built-in dispatch; prove child allows/bypass and nested Sessions cannot widen them, and do not inherit parent allows. Five regressions fail on unchanged production main `da67fd1`; ten actual-runtime tests now pass, including a root write control, restored missing/cyclic ancestry and unavailable parent profiles. All 315 server/tools/app tests, all-target release Clippy, formatting and 57 strict specification checks pass locally. Native parent-inheritance coverage is added; native acceptance, Mode caps, client tools, routed approvals, concurrency/depth and precreation worktree authority remain open.
 - [ ] Implement result summarization, cost attribution, manual invocation and thread switching.
 - [ ] Verify full M1.2 contracts locally and on supported native platforms, preserve P0/M1.1 regressions and update roadmap evidence.

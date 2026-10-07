@@ -441,7 +441,7 @@ mod tests {
         let ctx = Ctx {
             host: &host,
             inv: &inv,
-            policy: host.policy(&inv).unwrap(),
+            policy: host.policy(&inv).await.unwrap(),
             location: source.clone(),
             cancel: Default::default(),
         };

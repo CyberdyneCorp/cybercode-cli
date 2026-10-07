@@ -4,6 +4,7 @@
 //! promotes input at Safe Boundaries and runs Turns until nothing is eligible. Every fact
 //! the model sees is committed before it is acted on, so a restart rebuilds state by replay.
 
+mod ancestry;
 mod auto;
 mod bus;
 mod compaction;
@@ -335,6 +336,7 @@ impl Runtime {
             rules: req.rules.unwrap_or_default(),
             max_steps: req.max_steps,
         };
+        self.ancestors(&info).await?;
         self.inner.create(info, Vec::new(), Vec::new(), None).await
     }
 

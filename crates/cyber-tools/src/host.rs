@@ -272,7 +272,7 @@ impl BuiltinHost {
     }
 
     /// Agent rules follow config; the Session ruleset is evaluated last.
-    fn session_rules(
+    pub(crate) fn session_rules(
         &self,
         location: &Path,
         agent: Option<&str>,
@@ -301,15 +301,19 @@ impl BuiltinHost {
         Ok(rules)
     }
 
-    pub(crate) fn policy(&self, inv: &Invocation) -> Result<Policy, String> {
-        self.policy_for(inv, Some(&inv.agent))
+    pub(crate) async fn policy(&self, inv: &Invocation) -> Result<Policy, String> {
+        self.policy_for(inv, Some(&inv.agent)).await
     }
 
-    fn policy_for(&self, inv: &Invocation, agent: Option<&str>) -> Result<Policy, String> {
+    async fn policy_for(&self, inv: &Invocation, agent: Option<&str>) -> Result<Policy, String> {
         let location = PathBuf::from(&inv.directory);
         let root = cyber_core::config::project_root(&location);
+        let mut rules = self.session_rules(&location, agent, &inv.rules)?;
+        if agent.is_some() {
+            rules.extend(self.inherited_denies(&inv.session_id).await?);
+        }
         Ok(Policy {
-            rules: self.session_rules(&location, agent, &inv.rules)?,
+            rules,
             saved: saved::rules(&self.opts.store, &root).unwrap_or_default(),
             mode: Mode::parse(&inv.mode),
             plan_file: location
@@ -490,7 +494,7 @@ impl ToolHost for BuiltinHost {
             {
                 return ToolOutcome::Failed(message);
             }
-            let policy = match self.policy(&inv) {
+            let policy = match self.policy(&inv).await {
                 Ok(policy) => policy,
                 Err(error) => return ToolOutcome::Failed(error),
             };
@@ -547,7 +551,7 @@ impl ToolHost for BuiltinHost {
         Box::pin(async move {
             let ctx = Ctx {
                 host: self,
-                policy: self.policy_for(&inv, None)?,
+                policy: self.policy_for(&inv, None).await?,
                 location: PathBuf::from(&inv.directory),
                 inv: &inv,
                 cancel,

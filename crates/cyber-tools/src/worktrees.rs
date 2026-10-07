@@ -95,7 +95,7 @@ impl BuiltinHost {
         let ctx = Ctx {
             host: self,
             inv: &inv,
-            policy: self.policy(&inv)?,
+            policy: self.policy(&inv).await?,
             location: PathBuf::from(&info.directory),
             cancel,
         };
@@ -153,7 +153,7 @@ impl BuiltinHost {
         let ctx = Ctx {
             host: self,
             inv,
-            policy: self.policy(inv).map_err(io::Error::other)?,
+            policy: self.policy(inv).await.map_err(io::Error::other)?,
             location: Path::new(&inv.directory).canonicalize()?,
             cancel,
         };
@@ -354,7 +354,7 @@ impl BuiltinHost {
         let ctx = Ctx {
             host: self,
             inv,
-            policy: self.policy(inv).map_err(io::Error::other)?,
+            policy: self.policy(inv).await.map_err(io::Error::other)?,
             location,
             cancel,
         };
@@ -520,7 +520,7 @@ impl BuiltinHost {
         let ctx = Ctx {
             host: self,
             inv,
-            policy: self.policy(inv).map_err(io::Error::other)?,
+            policy: self.policy(inv).await.map_err(io::Error::other)?,
             location: managed.path.clone(),
             cancel,
         };
