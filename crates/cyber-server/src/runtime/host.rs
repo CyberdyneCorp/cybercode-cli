@@ -9,7 +9,37 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::model::{CallState, RetrySafety};
+use super::model::{CallState, RetrySafety, SessionInfo};
+
+/// An owned Location admission. Disposal without settlement must retain recovery evidence.
+pub trait LocationGuard: Send {
+    fn settle(self: Box<Self>) -> Result<(), String>;
+}
+
+pub struct LocationLease {
+    pub worktree_id: Option<String>,
+    guard: Option<Box<dyn LocationGuard>>,
+}
+
+impl LocationLease {
+    pub fn unmanaged() -> Self {
+        Self {
+            worktree_id: None,
+            guard: None,
+        }
+    }
+
+    pub fn managed(id: String, guard: Box<dyn LocationGuard>) -> Self {
+        Self {
+            worktree_id: Some(id),
+            guard: Some(guard),
+        }
+    }
+
+    pub fn settle(self) -> Result<(), String> {
+        self.guard.map_or(Ok(()), |guard| guard.settle())
+    }
+}
 
 /// A model ready to stream.
 pub struct ResolvedModel {
@@ -147,6 +177,17 @@ pub enum Reconciliation {
 }
 
 pub trait ToolHost: Send + Sync {
+    /// Admit Location use before recovery, context, snapshots or tools. Only fresh
+    /// Session creation may establish a new checkout binding.
+    fn claim_location<'a>(
+        &'a self,
+        _info: &'a SessionInfo,
+        _creating: bool,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        Box::pin(async { Ok(LocationLease::unmanaged()) })
+    }
+
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef>;
 
     /// Run a call. Implementations stop within 2 s once `cancel` fires.

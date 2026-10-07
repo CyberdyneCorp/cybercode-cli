@@ -320,6 +320,7 @@ async fn create(
         title: body.title,
         rules: body.rules,
         max_steps: body.max_steps,
+        worktree_id: None,
     };
     let info = state.runtime.create_session(req).await?;
     let data = session(&state, state.runtime.state(&info.id).await?);

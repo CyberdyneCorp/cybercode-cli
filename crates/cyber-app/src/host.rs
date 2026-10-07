@@ -17,6 +17,15 @@ pub struct AppHost {
 }
 
 impl ToolHost for AppHost {
+    fn claim_location<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        creating: bool,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        self.builtin.claim_location(info, creating, cancel)
+    }
+
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let mut defs = self.builtin.definitions(turn);
         defs.extend(self.remote.definitions());

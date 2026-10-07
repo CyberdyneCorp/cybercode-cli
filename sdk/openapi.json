@@ -370,6 +370,13 @@
           "directory": {
             "type": "string"
           },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Exact managed checkout incarnation admitted at creation."
+          },
           "parent_id": {
             "type": [
               "string",

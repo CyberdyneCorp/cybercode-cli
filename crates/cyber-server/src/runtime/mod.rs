@@ -37,8 +37,9 @@ pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, base_prompt};
 pub use events::{CompactionTrigger, registry as event_registry};
 pub use host::{
-    CatalogResolver, FileDiff, Invocation, ModelResolver, NoSnapshots, NoTools, Reconciliation,
-    ResolvedModel, RestoreError, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, TurnContext,
+    CatalogResolver, FileDiff, Invocation, LocationGuard, LocationLease, ModelResolver,
+    NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, Snapshot, Snapshots,
+    ToolDef, ToolHost, ToolOutcome, TurnContext,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
@@ -106,6 +107,8 @@ pub struct RuntimeOptions {
 pub struct CreateSession {
     pub id: Option<String>,
     pub directory: String,
+    /// Expected checkout identity for an internally provisioned managed Session.
+    pub worktree_id: Option<String>,
     pub model: String,
     pub agent: Option<String>,
     pub mode: Option<String>,
@@ -196,6 +199,7 @@ pub(crate) struct Handle {
     pub title_requested: std::sync::atomic::AtomicBool,
     /// Set by a reject without feedback or a dismissed question: stop after the current tool group.
     pub halt: std::sync::atomic::AtomicBool,
+    pub location_uncertain: std::sync::atomic::AtomicBool,
     /// Fingerprints of calls since the last promoted input, for doom-loop detection.
     pub recent_calls: StdMutex<Vec<String>>,
     /// Serialized auto reviews and consecutive blocks, reset for each new Drain.
@@ -320,6 +324,7 @@ impl Runtime {
             default_title: req.title.is_none(),
             title: req.title.unwrap_or_else(default_title),
             directory: req.directory,
+            worktree_id: req.worktree_id,
             parent_id: req.parent_id,
             agent: req.agent.unwrap_or_else(|| "build".into()),
             model: req.model,
@@ -923,6 +928,7 @@ impl Inner {
             state: Mutex::new(state),
             pending_compaction: StdMutex::default(),
             halt: std::sync::atomic::AtomicBool::new(false),
+            location_uncertain: std::sync::atomic::AtomicBool::new(false),
             recent_calls: StdMutex::default(),
             auto_blocks: Mutex::new(0),
         });
@@ -947,11 +953,22 @@ impl Inner {
 
     async fn create(
         &self,
-        info: SessionInfo,
+        mut info: SessionInfo,
         history: Vec<Entry>,
         calls: Vec<CallState>,
         forked_from: Option<String>,
     ) -> Result<SessionInfo, RuntimeError> {
+        let lease = self
+            .tools
+            .claim_location(&info, forked_from.is_none(), self.closed.child_token())
+            .await
+            .map_err(RuntimeError::Invalid)?;
+        if info.worktree_id.is_some() && info.worktree_id != lease.worktree_id {
+            return Err(RuntimeError::Invalid(
+                "Managed checkout identity changed".into(),
+            ));
+        }
+        info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
             info: info.clone(),
@@ -966,8 +983,12 @@ impl Inner {
             Ok(stored) => self.publish(&stored),
             // Created concurrently: return the existing Session unchanged.
             Err(StoreError::Concurrency { .. }) => {}
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                lease.settle().map_err(RuntimeError::Invalid)?;
+                return Err(e.into());
+            }
         }
+        lease.settle().map_err(RuntimeError::Invalid)?;
         Ok(self.handle(&id).await?.state.lock().await.info.clone())
     }
 

@@ -47,6 +47,9 @@ pub struct SessionInfo {
     pub id: String,
     pub title: String,
     pub directory: String,
+    /// Exact managed checkout incarnation admitted at creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<String>,
     pub parent_id: Option<String>,
     pub agent: String,
     pub model: String,

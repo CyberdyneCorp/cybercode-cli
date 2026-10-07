@@ -29,6 +29,14 @@ impl CheckoutLease {
     }
 }
 
+impl Drop for CheckoutLease {
+    fn drop(&mut self) {
+        // Closing alone can leave a transient inherited descriptor holding the lock.
+        // An unsettled record still refuses admission after this explicit release.
+        let _ = self.file.unlock();
+    }
+}
+
 /// Real removal admission. The repository lock must remain held for this guard's
 /// lifetime; `Repository::remove` supplies it and prevents new lease creation.
 #[derive(Default)]
@@ -36,6 +44,14 @@ pub struct CheckoutActivity;
 
 struct RemovalFence {
     _files: Vec<File>,
+}
+
+impl Drop for RemovalFence {
+    fn drop(&mut self) {
+        for file in &self._files {
+            let _ = file.unlock();
+        }
+    }
 }
 
 impl RemovalActivity for CheckoutActivity {
@@ -231,4 +247,37 @@ fn unknown(session: &str) -> io::Error {
 }
 fn invalid(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_release_does_not_depend_on_closing_duplicate_descriptors() {
+        for settle in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("lease.lock");
+            let mut file = open_record(&path, true).unwrap();
+            assert!(try_lock(&file).unwrap());
+            let duplicate = file.try_clone().unwrap();
+            let record = UseRecord {
+                worktree_id: "wt_test".into(),
+                session_id: "ses_test".into(),
+                settled: false,
+            };
+            write_record(&mut file, &record).unwrap();
+            let lease = CheckoutLease { file, record };
+            if settle {
+                lease.settle().unwrap();
+            } else {
+                drop(lease);
+            }
+            let mut probe = open_record(&path, false).unwrap();
+            assert!(try_lock(&probe).unwrap());
+            assert_eq!(read_record(&mut probe).unwrap().settled, settle);
+            probe.unlock().unwrap();
+            drop(duplicate);
+        }
+    }
 }

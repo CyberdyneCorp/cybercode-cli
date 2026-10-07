@@ -2,6 +2,7 @@
 
 mod activity;
 mod includes;
+mod location;
 mod removal;
 mod repository;
 mod setup;

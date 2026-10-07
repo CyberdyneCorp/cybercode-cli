@@ -216,6 +216,21 @@
 - **WHEN** `cyber worktree remove spike` runs while a Session works in `spike`
 - **THEN** it fails with `Worktree in use by ses_<id>`
 
+#### Scenario: Session bound to an earlier checkout incarnation
+- **WHEN** a managed checkout is removed and recreated at the same path
+- **AND** a Session bound to the earlier creation attempts to run
+- **THEN** admission SHALL fail before recovery, context, snapshots, model or tool filesystem access
+- **AND** a historical managed Session without a creation binding SHALL require recovery rather than silently adopting the new checkout
+
+#### Scenario: Unknown checkout activity after owner termination
+- **WHEN** a checkout activity owner exits without explicitly settling its work
+- **THEN** release of its OS lock alone SHALL NOT permit removal, including forced removal
+- **AND** persisted unknown activity SHALL remain available for recovery
+
+#### Scenario: A Session uses a nested checkout
+- **WHEN** a Session runs inside a nested Git repository or managed checkout
+- **THEN** activity admission SHALL fence every enclosing managed checkout against removal
+
 #### Scenario: Lock owner exits unexpectedly
 - **WHEN** a process holding the repository worktree lock terminates unexpectedly
 - **THEN** another process can acquire the same lock without deleting or replacing its file

@@ -1,6 +1,76 @@
 use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
+#[test]
+fn location_lookup_identifies_owned_subdirectories_without_adopting_primary_or_unmanaged_roots() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("location").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let nested = managed.path.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let (found, ownership) = Repository::managed_at(&nested).unwrap().unwrap();
+    assert_eq!(ownership, managed);
+    assert_eq!(found.common_dir, repository.common_dir);
+    // An inner repository is still deleted along with its enclosing checkout.
+    std::fs::create_dir(nested.join(".git")).unwrap();
+    assert_eq!(Repository::managed_at(&nested).unwrap().unwrap().1, managed);
+    let inner = fixture
+        .create(
+            &repository,
+            &Name::parse("inner").unwrap(),
+            &Settings {
+                root: Some(nested.join("checkouts")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let enclosing = Repository::managed_locations_at(&inner.path).unwrap();
+    assert_eq!(enclosing.len(), 2);
+    assert_eq!(enclosing[0].1, inner);
+    assert_eq!(enclosing[1].1, managed);
+    assert!(Repository::managed_at(&fixture.repo).unwrap().is_none());
+    assert!(
+        Repository::managed_at(fixture._temp.path())
+            .unwrap()
+            .is_none()
+    );
+    let unrelated = fixture._temp.path().join("unmanaged/location");
+    fixture.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        unrelated.to_str().unwrap(),
+        "HEAD",
+    ]);
+    assert!(Repository::managed_at(&unrelated).unwrap().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn location_lookup_refuses_symlinked_ownership_directory() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("lookup").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let records = repository.common_dir.join("cyber-worktrees");
+    let moved = repository.common_dir.join("saved-records");
+    std::fs::rename(&records, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, &records).unwrap();
+    assert!(Repository::managed_at(&managed.path).is_err());
+    assert!(managed.path.join("tracked.txt").exists());
+}
+
 struct Worker(std::process::Child);
 
 impl Drop for Worker {
@@ -161,7 +231,7 @@ fn live_leases_refuse_removal_until_every_session_explicitly_settles() {
     first.settle().unwrap();
     let error = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
         .unwrap_err();
-    assert!(error.to_string().contains("ses_second"));
+    assert!(error.to_string().contains("ses_second"), "{error}");
     second.settle().unwrap();
     block_on(repository.claim(&fixture.execution, &managed, "ses_first"))
         .unwrap()
@@ -188,8 +258,13 @@ fn abandoned_lease_requires_recovery_even_after_kernel_lock_release() {
         .join("cyber-worktree-activity")
         .join(&managed.id)
         .join("ses_abandoned.lock");
-    let before = std::fs::read(&path).unwrap();
     drop(lease);
+    // Windows locks also prohibit reads through a separately opened handle.
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&before).unwrap()["settled"],
+        false
+    );
     let probe = std::fs::File::open(&path).unwrap();
     probe.try_lock().unwrap();
     drop(probe);

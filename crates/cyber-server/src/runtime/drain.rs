@@ -86,20 +86,53 @@ async fn pass(
     cancel: &CancellationToken,
 ) -> Result<(), RuntimeError> {
     let handle = inner.handle(id).await?;
-    inner.recover(&handle).await?;
+    let info = handle.state.lock().await.info.clone();
+    let lease = inner
+        .tools
+        .claim_location(&info, false, cancel.child_token())
+        .await
+        .map_err(RuntimeError::Invalid)?;
+    if lease.worktree_id != info.worktree_id {
+        return Err(RuntimeError::Invalid(
+            "Managed checkout identity changed".into(),
+        ));
+    }
+    let result = pass_owned(inner, &handle, forced, cancel).await;
+    let unsettled = handle
+        .location_uncertain
+        .load(std::sync::atomic::Ordering::SeqCst)
+        || handle.state.lock().await.calls.values().any(|call| {
+            matches!(
+                call.status,
+                CallStatus::Dispatched | CallStatus::OutcomeUnknown
+            )
+        });
+    if !unsettled {
+        lease.settle().map_err(RuntimeError::Invalid)?;
+    }
+    result
+}
+
+async fn pass_owned(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    forced: bool,
+    cancel: &CancellationToken,
+) -> Result<(), RuntimeError> {
+    inner.recover(handle).await?;
     let mut continue_tools = false;
     let mut first = forced;
     let mut overflow_retried = false;
     loop {
-        if !eligible(&handle, continue_tools, first, cancel).await {
+        if !eligible(handle, continue_tools, first, cancel).await {
             return Ok(());
         }
-        let Some(resolved) = prepare_pass(inner, &handle, continue_tools, first, cancel).await?
+        let Some(resolved) = prepare_pass(inner, handle, continue_tools, first, cancel).await?
         else {
             return Ok(());
         };
         first = false;
-        match inner.run_turn(&handle, &resolved, cancel).await? {
+        match inner.run_turn(handle, &resolved, cancel).await? {
             TurnEnd::Tools => continue_tools = true,
             TurnEnd::Done => continue_tools = false,
             TurnEnd::Overflow if inner.options.compaction.auto && !overflow_retried => {
@@ -107,7 +140,7 @@ async fn pass(
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => return Ok(()),
-                    result = inner.compact_and_continue(&handle, CompactionTrigger::Overflow, &resolved) => result?,
+                    result = inner.compact_and_continue(handle, CompactionTrigger::Overflow, &resolved) => result?,
                 }
                 continue_tools = true;
             }
@@ -755,7 +788,7 @@ impl Inner {
                         let invocation = self
                             .dispatch(handle, &turn, message_id, call, &def, input)
                             .await?;
-                        runs.push(self.run_tool(def, invocation, cancel.child_token()));
+                        runs.push(self.run_tool(handle, def, invocation, cancel.child_token()));
                     }
                 }
             }
@@ -907,6 +940,7 @@ impl Inner {
     /// Run one call; after cancellation the tool has 2 seconds to stop.
     async fn run_tool(
         &self,
+        handle: &Handle,
         def: ToolDef,
         invocation: Invocation,
         cancel: CancellationToken,
@@ -916,7 +950,13 @@ impl Inner {
         tokio::pin!(run);
         let outcome = tokio::select! {
             out = &mut run => out,
-            _ = cancel.cancelled() => tokio::time::timeout(Duration::from_secs(2), &mut run).await.unwrap_or(ToolOutcome::Aborted),
+            _ = cancel.cancelled() => match tokio::time::timeout(Duration::from_secs(2), &mut run).await {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    handle.location_uncertain.store(true, std::sync::atomic::Ordering::SeqCst);
+                    ToolOutcome::Aborted
+                }
+            },
         };
         (call_id, def, outcome)
     }

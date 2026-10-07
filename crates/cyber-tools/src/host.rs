@@ -321,6 +321,15 @@ fn shortened(listed: &[&skills::Skill], budget: usize) -> Vec<String> {
 }
 
 impl ToolHost for BuiltinHost {
+    fn claim_location<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        creating: bool,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        Box::pin(self.claim_worktree_location(info, creating, cancel))
+    }
+
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let rules = self.session_rules(Path::new(&turn.directory), &turn.rules);
         let mode = Mode::parse(&turn.mode);

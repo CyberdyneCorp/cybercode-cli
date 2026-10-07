@@ -481,6 +481,163 @@ async fn creation_source(flow: &support::flow::Flow) -> cyber_server::runtime::I
     inv
 }
 
+#[tokio::test]
+async fn drain_lease_is_held_during_tools_and_settled_after_completion() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, NoSnapshots};
+    use support::flow::{call, text};
+    let (fixture, repository, managed) = owned().await;
+    let nested = repository
+        .create(
+            &Git,
+            &Settings {
+                root: Some(managed.path.join("checkouts")),
+                ..Default::default()
+            },
+            fixture.dir.path(),
+            "prj_test",
+            &Name::parse("nested").unwrap(),
+        )
+        .await
+        .unwrap();
+    let request = json!({"questions": [{"question": "Hold checkout", "header": "Lease", "options": [{"label": "done"}, {"label": "keep waiting"}]}]});
+    let flow = support::flow::Flow::with(
+        fixture,
+        vec![call("lease_question", "question", request), text("done")],
+        true,
+        Arc::new(NoSnapshots),
+    );
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: nested.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(info.worktree_id.as_deref(), Some(nested.id.as_str()));
+    flow.prompt(&info.id, "wait").await;
+    let pending = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Some(request) = flow
+                .runtime
+                .pending_requests(Some(&info.id))
+                .into_iter()
+                .next()
+            {
+                break request;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let error = repository
+        .remove(&Git, &CheckoutActivity, &managed, true)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("in use by {}", info.id))
+    );
+    assert!(
+        repository
+            .remove(&Git, &CheckoutActivity, &nested, true)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains(&info.id)
+    );
+    flow.runtime
+        .answer_question(
+            &pending.id,
+            cyber_server::runtime::QuestionReply::Answers {
+                answers: vec![vec!["done".into()]],
+            },
+        )
+        .await
+        .unwrap();
+    flow.settle(&info.id).await;
+    assert_eq!(
+        flow.runtime.state(&info.id).await.unwrap().info.worktree_id,
+        info.worktree_id
+    );
+    repository
+        .remove(&Git, &CheckoutActivity, &nested, false)
+        .await
+        .unwrap();
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn old_session_refuses_recreated_checkout_at_the_same_path_before_model_access() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, LiveEvent, NoSnapshots};
+    let (fixture, repository, managed) = owned().await;
+    let flow = support::flow::Flow::with(
+        fixture,
+        vec![support::flow::text("must not run")],
+        false,
+        Arc::new(NoSnapshots),
+    );
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut historical = info.clone();
+    historical.worktree_id = None;
+    use cyber_server::runtime::ToolHost;
+    assert!(
+        flow.f
+            .host
+            .claim_location(&historical, false, CancellationToken::new())
+            .await
+            .is_err()
+    );
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+    let replacement = repository
+        .create(
+            &Git,
+            &Settings::default(),
+            flow.f.dir.path(),
+            "prj_test",
+            &Name::parse("setup").unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(replacement.id, managed.id);
+    let mut events = flow.runtime.subscribe();
+    flow.prompt(&info.id, "run").await;
+    flow.settle(&info.id).await;
+    assert!(flow.main.requests().is_empty());
+    let message = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let LiveEvent::Error { message, .. } = events.recv().await.unwrap() {
+                break message;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(message.contains("creation identity changed"));
+    assert!(replacement.path.join("tracked.txt").exists());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn creation_automatically_attaches_setup_and_preserves_failed_session() {

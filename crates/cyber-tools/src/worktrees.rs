@@ -55,6 +55,68 @@ struct SetupAdmission<'a> {
 }
 
 impl BuiltinHost {
+    pub(crate) async fn claim_worktree_location(
+        &self,
+        info: &SessionInfo,
+        creating: bool,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        use cyber_server::runtime::LocationLease;
+        let locations = Repository::managed_locations_at(Path::new(&info.directory))
+            .map_err(|error| error.to_string())?;
+        let Some((_, managed)) = locations.first() else {
+            if info.worktree_id.is_some() {
+                return Err("Managed checkout ownership is missing; recovery is required".into());
+            }
+            return Ok(LocationLease::unmanaged());
+        };
+        match info.worktree_id.as_deref() {
+            Some(id) if id == managed.id => {}
+            None if creating => {}
+            _ => return Err(
+                "Managed checkout creation identity changed or is unbound; recovery is required"
+                    .into(),
+            ),
+        }
+        let inv = Invocation {
+            session_id: info.id.clone(),
+            directory: info.directory.clone(),
+            agent: info.agent.clone(),
+            mode: info.mode.clone(),
+            rules: info.rules.clone(),
+            message_id: String::new(),
+            call_id: cyber_core::ids::new_id("call"),
+            operation_key: String::new(),
+            name: "worktree".into(),
+            input: serde_json::Value::Null,
+            attempt: 1,
+            asker: Asker::detached(),
+        };
+        let ctx = Ctx {
+            host: self,
+            inv: &inv,
+            policy: self.policy(&inv),
+            location: PathBuf::from(&info.directory),
+            cancel,
+        };
+        let execution = GitPort {
+            ctx: &ctx,
+            writable: Some(Vec::new()),
+            credentials: &[],
+        };
+        let id = managed.id.clone();
+        let mut leases = Vec::with_capacity(locations.len());
+        for (repository, managed) in locations {
+            leases.push(
+                repository
+                    .claim(&execution, &managed, &info.id)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        Ok(LocationLease::managed(id, Box::new(WorktreeLease(leases))))
+    }
+
     pub async fn list_worktrees(
         &self,
         directory: &Path,
@@ -247,6 +309,7 @@ impl BuiltinHost {
         }
         let mut session_request = request.session;
         session_request.directory = managed.path.display().to_string();
+        session_request.worktree_id = Some(managed.id.clone());
         if explicit {
             session_request.id = Some(inv.session_id.clone());
         }
@@ -586,6 +649,17 @@ struct GitPort<'a> {
     ctx: &'a Ctx<'a>,
     writable: Option<Vec<PathBuf>>,
     credentials: &'a [String],
+}
+
+struct WorktreeLease(Vec<cyber_core::worktrees::CheckoutLease>);
+
+impl cyber_server::runtime::LocationGuard for WorktreeLease {
+    fn settle(self: Box<Self>) -> Result<(), String> {
+        for lease in self.0 {
+            lease.settle().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 impl GitExecution for GitPort<'_> {

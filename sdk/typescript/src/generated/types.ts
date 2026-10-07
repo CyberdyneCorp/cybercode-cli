@@ -439,6 +439,8 @@ export type Session = {
   id: string;
   title: string;
   directory: string;
+  /** Exact managed checkout incarnation admitted at creation. */
+  worktree_id?: string | null;
   parent_id?: string | null;
   agent: string;
   model: string;
