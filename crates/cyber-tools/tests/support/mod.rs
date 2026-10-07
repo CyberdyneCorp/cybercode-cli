@@ -86,6 +86,14 @@ impl Fixture {
     }
 
     pub fn renew_host(&mut self, policy: Option<String>) {
+        self.renew_host_with_models(policy, None);
+    }
+
+    pub fn renew_host_with_models(
+        &mut self,
+        policy: Option<String>,
+        models: Option<Arc<dyn cyber_server::runtime::ModelResolver>>,
+    ) {
         let root = std::fs::canonicalize(self.dir.path()).unwrap();
         let shared = Arc::clone(&self.config);
         self.host = BuiltinHost::new(HostOptions {
@@ -97,7 +105,7 @@ impl Fixture {
             config: Arc::new(move |_| Ok((shared.lock().unwrap().clone(), BTreeMap::new()))),
             global_config_dir: root.join("home/.config/cyber"),
             env: Arc::clone(&self.env) as Arc<dyn cyber_core::env::EnvSource + Send + Sync>,
-            models: None,
+            models,
             temp_dir: root.join("tmp"),
             sandbox_policy: policy,
             sandbox_helper: cyber_sandbox::find_helper(),

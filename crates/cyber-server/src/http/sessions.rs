@@ -65,6 +65,7 @@ pub struct ShellResult {
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateBody {
+    pub budget: Option<cyber_core::budget::Budget>,
     pub id: Option<String>,
     /// Explicit `provider/model[#variant]`; omitted model uses agent then Location defaults.
     pub model: Option<String>,
@@ -336,6 +337,7 @@ async fn create(
         .or_else(|| state.services.default_model(&directory))
         .unwrap_or_default();
     let req = CreateSession {
+        budget: body.budget,
         child_worktree_setup_pending: false,
         child_worktree: None,
         subagent_name: None,

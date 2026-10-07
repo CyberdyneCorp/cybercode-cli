@@ -108,6 +108,7 @@ pub fn validate(
     if let Err(error) = crate::worktrees::Settings::from_config(value) {
         issues.push(error);
     }
+    issues.extend(crate::budget::validate_config(value));
     issues
 }
 

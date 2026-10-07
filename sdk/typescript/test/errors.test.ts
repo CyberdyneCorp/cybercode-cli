@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CyberApiError, CyberClientError, isSessionBusyError, isSessionNotFoundError, isRewindConflictError } from "../src/index.js";
+import { CyberApiError, CyberClientError, isBudgetExceededError, isSessionBusyError, isSessionNotFoundError, isRewindConflictError } from "../src/index.js";
 import { json, mockClient } from "./support.js";
 
 test("tagged error bodies reject with CyberApiError", async () => {
@@ -65,4 +65,14 @@ test("a hung request times out with reason Timeout", async () => {
   assert.ok(err instanceof CyberClientError);
   assert.equal(err.reason, "Timeout");
   assert.equal(calls.length, 2);
+});
+
+
+test("BudgetExceededError retains its scope message and typed guard", async () => {
+  const { client } = mockClient(() => json(409, { _tag: "BudgetExceededError", message: "scope ses_parent: max_tokens" }));
+  const err = await client.session.compact("ses_parent").catch((e: unknown) => e);
+  assert.ok(isBudgetExceededError(err));
+  assert.ok(!isSessionBusyError(err));
+  assert.equal(err.status, 409);
+  assert.match(err.body.message, /ses_parent/);
 });

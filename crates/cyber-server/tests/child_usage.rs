@@ -251,12 +251,12 @@ async fn older_database_backfills_surviving_usage_without_claiming_deleted_histo
     {
         let conn = rusqlite::Connection::open(&backup).unwrap();
         conn.execute_batch(
-            "DROP TABLE session_children_charge;
+            "DROP TABLE session_budget_signal; DROP TABLE session_budget; DROP TABLE session_children_charge;
             ALTER TABLE session DROP COLUMN children_cost;
             ALTER TABLE session DROP COLUMN children_tokens;
             ALTER TABLE session DROP COLUMN children_unpriced_steps;
             ALTER TABLE session DROP COLUMN children_usage_complete;
-            DELETE FROM migration WHERE id='20261007030000_children_usage';",
+            DELETE FROM migration WHERE id IN ('20261007030000_children_usage','20261007040000_session_budgets');",
         )
         .unwrap();
         conn.execute(

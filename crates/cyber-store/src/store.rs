@@ -153,6 +153,34 @@ impl Store {
         Ok(stored)
     }
 
+    /// Decide and append events in one writer transaction. The callback must not perform
+    /// external effects; projection and the decision either commit together or roll back.
+    pub fn append_checked<T, F>(
+        &self,
+        aggregate_id: &str,
+        expected: Expected,
+        decide: F,
+    ) -> Result<(Vec<StoredEvent>, T), StoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<(Vec<NewEvent>, T), StoreError>
+            + Send
+            + 'static,
+    {
+        let registry = Arc::clone(&self.registry);
+        let aggregate = aggregate_id.to_owned();
+        let (stored, result) = self.transaction(move |tx| {
+            let (events, result) = decide(tx)?;
+            for event in &events {
+                registry.check(event)?;
+            }
+            let stored = append_in_tx(tx, &registry, &aggregate, expected, events)?;
+            Ok((stored, result))
+        })?;
+        self.notify(&stored);
+        Ok((stored, result))
+    }
+
     /// Events of `aggregate_id` with `seq > after` (use `-1` for all), upcast to current versions.
     pub fn read_events(
         &self,

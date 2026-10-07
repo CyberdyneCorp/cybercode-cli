@@ -123,6 +123,15 @@ jobs:
       - name: Native exec durable admission and child Job ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test exec_delegation --bin cyber
+      - name: Native Session subtree budgets and config validation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test budgets -p cyber-core --test config -p cyber-store --test store
+      - name: Native Session budget API
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http session_api_persists_budget_and_refuses_invalid_or_reserved_objects
+      - name: Native auxiliary web model usage
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test web_skills
       - name: Native descendant billing and migration
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test child_usage

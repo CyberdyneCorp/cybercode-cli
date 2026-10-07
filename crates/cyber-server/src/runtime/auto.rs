@@ -125,6 +125,7 @@ impl Inner {
         }
         self.commit(&handle, vec![event(AUTO_DECIDED, &decision)])
             .await?;
+        self.observe_budget(&handle).await?;
         match decision.decision {
             AutoEffect::Allow => *blocks = 0,
             AutoEffect::Block => *blocks += 1,
@@ -180,6 +181,10 @@ impl Inner {
             .any(|part| matches!(part, cyber_llm::Content::Text { text } if text.len() > 1_048_576))
         {
             decision.reason = "Evaluator context exceeds the review limit".into();
+            return;
+        }
+        if let Err(error) = self.check_budget(handle).await {
+            decision.reason = error.to_string();
             return;
         }
         let mut usage = Usage::default();

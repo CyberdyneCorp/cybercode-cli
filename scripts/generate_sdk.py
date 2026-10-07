@@ -39,6 +39,7 @@ ERROR_TAGS = [
     "RequestNotFoundError",
     "RewindConflictError",
     "ServiceUnavailableError",
+    "BudgetExceededError",
     "SessionBusyError",
     "SessionNotFoundError",
     "UnauthorizedError",

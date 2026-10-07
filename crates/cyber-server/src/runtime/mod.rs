@@ -7,6 +7,7 @@
 mod ancestry;
 pub use ancestry::AncestorAuthority;
 mod auto;
+mod budget;
 mod bus;
 mod child_usage;
 mod compaction;
@@ -52,7 +53,7 @@ pub use auto::{AutoDecision, AutoEffect, AutoReview};
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
-pub use events::{CompactionTrigger, registry as event_registry};
+pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, FileDiff, Invocation, LocationGuard, LocationLease,
     ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, Snapshot,
@@ -85,6 +86,8 @@ pub enum RuntimeError {
     ShuttingDown,
     #[error("InvalidRequestError: {0}")]
     Invalid(String),
+    #[error("BudgetExceededError: scope {scope}: {limit}")]
+    BudgetExceeded { scope: String, limit: String },
     #[error("ConflictError: {0}")]
     Conflict(String),
     #[error("ContextInitializationBlocked: {}", .0.join(", "))]
@@ -124,6 +127,7 @@ pub struct RuntimeOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct CreateSession {
+    pub budget: Option<cyber_core::budget::Budget>,
     pub child_worktree_setup_pending: bool,
     /// Internal binding for a child-created isolated checkout.
     pub child_worktree: Option<cyber_core::worktrees::Managed>,
@@ -413,7 +417,16 @@ impl Runtime {
             archived: false,
             rules: req.rules.unwrap_or_default(),
             max_steps: req.max_steps,
+            budget: req.budget,
         };
+        if info.budget.is_none() {
+            info.budget = self
+                .inner
+                .tools
+                .session_budget(&info.directory)
+                .map_err(RuntimeError::Invalid)?;
+        }
+        budget::validate(info.budget.as_ref())?;
         self.ancestors(&info).await?;
         let defaults = if mode_is_default || selection.agent_default {
             self.inner

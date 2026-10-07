@@ -1584,3 +1584,71 @@ async fn session_detail_and_listing_expose_separate_descendant_billing() {
     assert_eq!(listed["children_cost"], cost);
     assert_eq!(listed["children_tokens"], 110);
 }
+
+#[tokio::test]
+async fn session_api_persists_budget_and_refuses_invalid_or_reserved_objects() {
+    use cyber_server::runtime::{Admission, Delivery};
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("should not dispatch")])],
+        ..Default::default()
+    });
+    let api = Api::new(&h);
+    for budget in [
+        json!({"max_cost_usd":-1}),
+        json!({"max_cost":1}),
+        json!({"enforcement":"reserved","max_tokens":10}),
+    ] {
+        let (status, _, _) = api
+            .call(
+                Method::POST,
+                "/sessions",
+                Some(json!({"budget":budget})),
+                &[],
+            )
+            .await;
+        assert!(status.is_client_error(), "{budget}: {status}");
+    }
+    assert!(
+        h.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .is_empty()
+    );
+    let (status, created, _) = api
+        .call(
+            Method::POST,
+            "/sessions",
+            Some(json!({"title":"Budget API","budget":{"max_tokens":0}})),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["data"]["budget"]["max_tokens"], 0);
+    assert_eq!(created["data"]["budget"]["enforcement"], "soft");
+    let id = created["data"]["id"].as_str().unwrap();
+    h.runtime
+        .admit(
+            id,
+            Admission::text("history ".repeat(10000), Delivery::Steer),
+        )
+        .await
+        .unwrap();
+    h.runtime.wait_idle(id).await;
+    let (status, detail, _) = api
+        .call(Method::GET, &format!("/sessions/{id}"), None, &[])
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["data"]["budget"], created["data"]["budget"]);
+    assert!(h.models.requests("test/main").is_empty());
+    let (status, refused, _) = api
+        .call(
+            Method::POST,
+            &format!("/sessions/{id}/compact"),
+            Some(json!({})),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(refused["_tag"], "BudgetExceededError");
+}

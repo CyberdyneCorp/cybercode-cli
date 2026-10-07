@@ -393,6 +393,16 @@
       "CreateBody": {
         "type": "object",
         "properties": {
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": [
               "string",
@@ -442,6 +452,53 @@
             "minimum": 0
           }
         }
+      },
+      "Budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "max_turns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "max_wall_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "enforcement": {
+            "$ref": "#/components/schemas/Enforcement",
+            "default": "soft"
+          }
+        }
+      },
+      "Enforcement": {
+        "type": "string",
+        "enum": [
+          "soft",
+          "reserved"
+        ]
       },
       "Located_CreatedWorktree": {
         "type": "object",
@@ -570,6 +627,16 @@
             "format": "uint32",
             "minimum": 0,
             "description": "Step limit for this Session's Drains, on top of the runtime-wide limit."
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "type": "string",

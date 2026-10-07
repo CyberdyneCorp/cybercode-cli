@@ -10,6 +10,7 @@ P1 M1.2 requires isolated subagent sessions, validated structured results, backg
 ### Modified Capabilities
 - `worktrees`: shared configuration, names and managed lifecycle.
 - `agents-subagents`: full P1 child-session execution contract.
+- `observability-costs`: shared Budget validation and durable Session/descendant enforcement supporting child attribution.
 
 ## Impact
 Core configuration, durable store, runtime/tool host, CLI/API/SDK and TUI. Existing P0 recovery and active M1.1 Windows enforcement work remain required and separate.

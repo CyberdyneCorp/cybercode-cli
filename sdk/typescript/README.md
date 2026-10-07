@@ -63,6 +63,18 @@ What a method resolves with:
 So `client.session.get(id)` gives a `Session`, while `client.session.create()` gives
 `{ location, data: Session }` and `client.session.list()` gives `{ location, data: { data, cursor } }`.
 
+## Session budgets
+
+`client.session.create({ budget: { max_tokens: 100000, max_cost_usd: 2, enforcement: "soft" } })`
+persists a Session cap. All canonical fields are optional: `max_turns`, `max_tokens`,
+`max_cost_usd`, `max_wall_seconds`, `enforcement` (default `soft`). Trusted `budgets.session`
+provides creation defaults. Limits cover descendants and hidden model calls and survive restart;
+wall time starts on the first gated dispatch and includes idle time. Soft limits allow in-flight
+overshoot and prevent subsequent provider dispatch. Session responses retain the Budget;
+`budget.warned.1` and `budget.exceeded.1` events identify `scope_id` and the limiting dimension.
+Independent forks copy caps with fresh spending. Reserved enforcement is refused until reservations
+are implemented; daily caps, explicit subtree cancellation and full client displays remain open.
+
 ## Descendant usage
 
 Session detail and list responses expose `children_cost`, `children_tokens`, `children_unpriced_steps` and `children_usage_complete` separately from own usage. Descendant totals include nested children and hidden title, compaction and evaluator calls, and persist across restart and child deletion. Retained billing receipts contain IDs and usage only, without prompt content; deleting an ancestor removes its receipts. Older databases are backfilled from surviving history and report `children_usage_complete: false` because previously deleted child billing cannot be reconstructed. New Sessions start with complete attribution. Subtree budget enforcement and live client counters remain open.

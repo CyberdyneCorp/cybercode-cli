@@ -244,3 +244,82 @@ async fn skills_listing_excludes_denied_and_user_only_skills() {
         "Skills you can load with the skill tool:\n<available_skills>\n- alpha: first skill\n</available_skills>"
     );
 }
+
+#[tokio::test]
+async fn webfetch_summary_is_billed_and_blocks_the_next_session_provider_turn() {
+    use cyber_llm::adapters::ScriptedAdapter;
+    use cyber_llm::catalog::ModelRole;
+    use cyber_server::runtime::*;
+    use std::sync::Arc;
+    use support::flow::{Flow, call, text};
+    struct Models(Arc<ScriptedAdapter>);
+    impl ModelResolver for Models {
+        fn resolve(&self, _: &str) -> Result<ResolvedModel, String> {
+            Ok(ResolvedModel {
+                adapter: self.0.clone(),
+                template: cyber_llm::LlmRequest {
+                    model: "summary".into(),
+                    ..Default::default()
+                },
+                provider: "test".into(),
+                model: "summary".into(),
+                context_limit: 200000,
+                cost: None,
+                prefers_apply_patch: false,
+            })
+        }
+        fn role(&self, _: ModelRole) -> Option<String> {
+            Some("test/summary".into())
+        }
+    }
+    let mut fixture = Fixture::new();
+    let summary = Arc::new(ScriptedAdapter::new(vec![text("page summary")]));
+    fixture.renew_host_with_models(None, Some(Arc::new(Models(summary.clone()))));
+    fixture.set_config(
+        json!({"permissions":{"webfetch":"allow"},"budgets":{"session":{"max_tokens":205}}}),
+    );
+    let base = serve(|_, _| html("<p>Page evidence</p>")).await;
+    let flow = Flow::with(
+        fixture,
+        vec![
+            call(
+                "call_webfetch",
+                "webfetch",
+                json!({"url":base,"prompt":"summarize"}),
+            ),
+            text("unbudgeted extra turn"),
+        ],
+        false,
+        Arc::new(NoSnapshots),
+    );
+    let id = flow.session("default").await;
+    flow.runtime
+        .admit(&id, Admission::text("read the page", Delivery::Steer))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        flow.runtime.wait_idle(&id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(summary.requests().len(), 1);
+    assert_eq!(flow.main.requests().len(), 1);
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.totals.usage.input, 200);
+    assert_eq!(state.totals.usage.output, 15);
+    assert!(
+        state.calls["call_webfetch"]
+            .output
+            .as_ref()
+            .unwrap()
+            .contains("page summary")
+    );
+    let events = flow.f.store.read_events(&id, -1, 100).unwrap().events;
+    assert!(
+        events
+            .iter()
+            .any(|e| e.kind == "usage.recorded.1" && e.data["purpose"] == "webfetch_summary")
+    );
+    assert!(events.iter().any(|e| e.kind == "budget.exceeded.1"));
+}

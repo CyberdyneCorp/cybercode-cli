@@ -31,6 +31,7 @@ pub const STEP_FAILED: &str = "session.step.failed.1";
 pub const COMPACTION_STARTED: &str = "session.compaction.started.1";
 pub const COMPACTION_COMPLETED: &str = "session.compaction.completed.1";
 pub const COMPACTION_FAILED: &str = "session.compaction.failed.1";
+pub const AUXILIARY_USAGE: &str = "usage.recorded.1";
 pub const TITLE_GENERATED: &str = "session.title.generated.1";
 pub const RENAMED: &str = "session.renamed.1";
 pub const ARCHIVED: &str = "session.archived.1";
@@ -68,6 +69,7 @@ const ALL: &[&str] = &[
     COMPACTION_STARTED,
     COMPACTION_COMPLETED,
     COMPACTION_FAILED,
+    AUXILIARY_USAGE,
     TITLE_GENERATED,
     RENAMED,
     ARCHIVED,
@@ -331,6 +333,17 @@ pub struct Titled {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuxiliaryUsage {
+    pub provider: String,
+    pub model: String,
+    pub purpose: String,
+    pub call_id: Option<String>,
+    pub duration_ms: u64,
+    pub usage: Usage,
+    pub cost: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Archived {
     pub archived: bool,
 }
@@ -356,6 +369,7 @@ pub fn registry() -> EventRegistry {
     for kind in ALL {
         registry.register(kind).expect("valid event types");
     }
+    super::budget::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
     registry.projector(project);
@@ -370,6 +384,7 @@ fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
 fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
     let id = &e.aggregate_id;
     let d = &e.data;
+    super::budget::project(tx, e)?;
     super::jobs::project(tx, e)?;
     match e.kind.as_str() {
         CREATED => insert_session(tx, e)?,
@@ -435,7 +450,7 @@ fn project_runtime(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()
                 params![id, s(d, "call_id"), s(d, "status")],
             )?;
         }
-        STEP_ENDED | COMPACTION_COMPLETED => project_usage(tx, e)?,
+        STEP_ENDED | COMPACTION_COMPLETED | AUXILIARY_USAGE => project_usage(tx, e)?,
         AUTO_DECIDED if d["usage"].is_object() => project_usage(tx, e)?,
         _ => {
             if e.kind == TITLE_GENERATED && d["usage"].is_object() {
@@ -492,6 +507,12 @@ fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()>
             info["subagent_name"].as_str()
         ],
     )?;
+    if let Some(budget) = info.get("budget").filter(|v| !v.is_null()) {
+        tx.execute(
+            "INSERT INTO session_budget(session_id,spec) VALUES (?1,?2)",
+            params![e.aggregate_id, budget.to_string()],
+        )?;
+    }
     Ok(())
 }
 

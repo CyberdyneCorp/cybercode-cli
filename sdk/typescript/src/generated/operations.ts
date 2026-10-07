@@ -1292,6 +1292,7 @@ export const errorTags = [
   "RequestNotFoundError",
   "RewindConflictError",
   "ServiceUnavailableError",
+  "BudgetExceededError",
   "SessionBusyError",
   "SessionNotFoundError",
   "UnauthorizedError",
@@ -1345,6 +1346,10 @@ export function isRewindConflictError(err: unknown): err is TaggedError<"RewindC
 
 export function isServiceUnavailableError(err: unknown): err is TaggedError<"ServiceUnavailableError"> {
   return hasTag(err, "ServiceUnavailableError");
+}
+
+export function isBudgetExceededError(err: unknown): err is TaggedError<"BudgetExceededError"> {
+  return hasTag(err, "BudgetExceededError");
 }
 
 export function isSessionBusyError(err: unknown): err is TaggedError<"SessionBusyError"> {

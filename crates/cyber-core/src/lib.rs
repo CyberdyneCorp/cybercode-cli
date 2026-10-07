@@ -2,6 +2,7 @@
 //! configuration loading with workspace trust, and evaluation manifests.
 
 pub mod agent_mentions;
+pub mod budget;
 pub mod config;
 pub mod env;
 pub mod eval;

@@ -89,6 +89,9 @@ impl From<RuntimeError> for ApiError {
         match e {
             RuntimeError::SessionNotFound(_) => Self::not_found("SessionNotFoundError", message),
             RuntimeError::PromptConflict(_) => Self::conflict(message),
+            RuntimeError::BudgetExceeded { .. } => {
+                Self::new(StatusCode::CONFLICT, "BudgetExceededError", message)
+            }
             RuntimeError::Busy(_) => Self::new(StatusCode::CONFLICT, "SessionBusyError", message),
             RuntimeError::Invalid(m) => Self::invalid(m),
             RuntimeError::Conflict(m) => Self::conflict(m),

@@ -77,6 +77,7 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
 
 fn error_kind(e: &RuntimeError) -> &'static str {
     match e {
+        RuntimeError::BudgetExceeded { .. } => "budget_exceeded",
         RuntimeError::ContextBlocked(_) => "context_initialization_blocked",
         RuntimeError::Model(_) => "model",
         RuntimeError::Compaction(_) => "compaction_failed",
@@ -436,6 +437,7 @@ impl Inner {
         cancel: &CancellationToken,
         snapshot: Option<String>,
     ) -> Result<TurnEnd, RuntimeError> {
+        self.check_budget(handle).await?;
         let Some((request, defs, limited, message_id)) =
             self.prepare_turn(handle, prepared, snapshot).await?
         else {
@@ -444,9 +446,14 @@ impl Inner {
         let resolved = &prepared.model;
         let session_id = request.cache_key.clone().unwrap_or_default();
         let bus = self.bus.clone();
+        let gated = super::budget::GatedAdapter {
+            inner: self,
+            handle,
+            adapter: resolved.adapter.as_ref(),
+        };
         let opened = tokio::select! {
             _ = cancel.cancelled() => None,
-            r = open_with_retry(resolved.adapter.as_ref(), &request, &self.options.retry, |attempt, delay, e| {
+            r = open_with_retry(&gated, &request, &self.options.retry, |attempt, delay, e| {
                 bus.publish(LiveEvent::Retry {
                     session_id: session_id.clone(), attempt, delay_ms: delay.as_millis() as u64, error: e.to_string(),
                 });
@@ -716,6 +723,7 @@ impl Inner {
             self.commit_locked(&mut state, events)?;
             state.info.id.clone()
         };
+        self.observe_budget(handle).await?;
         let context_tokens = acc.usage.context_tokens() + acc.usage.output + acc.usage.reasoning;
         let limit = resolved.context_limit;
         self.bus.publish(LiveEvent::Usage {

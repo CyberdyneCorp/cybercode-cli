@@ -209,6 +209,10 @@ async fn handle(run: &mut Run, out: &mut Out, client: &Client, id: &str, event: 
     match event.kind.as_str() {
         "session.idle" => return true,
         "session.error" => {
+            if event.data["kind"] == "budget_exceeded" {
+                run.stop_reason
+                    .get_or_insert_with(|| "budget_exceeded".into());
+            }
             let message = event.data["message"]
                 .as_str()
                 .unwrap_or("error")

@@ -25,6 +25,14 @@ export type AssistantEntry = {
   error?: string | null;
 };
 
+export type Budget = {
+  max_turns?: number | null;
+  max_tokens?: number | null;
+  max_cost_usd?: number | null;
+  max_wall_seconds?: number | null;
+  enforcement?: Enforcement;
+};
+
 export type CallState = {
   structured_output?: unknown;
   call_id: string;
@@ -113,6 +121,7 @@ export type Content = {
 };
 
 export type CreateBody = {
+  budget?: Budget | null;
   id?: string | null;
   /** Explicit `provider/model[#variant]`; omitted model uses agent then Location defaults. */
   model?: string | null;
@@ -221,6 +230,8 @@ export type DurableRef = {
   seq: number;
   version: number;
 };
+
+export type Enforcement = "soft" | "reserved";
 
 /** The JSON body of every declared failure. */
 export type ErrorBody = {
@@ -554,6 +565,7 @@ export type Session = {
   rules?: unknown;
   /** Step limit for this Session's Drains, on top of the runtime-wide limit. */
   max_steps?: number | null;
+  budget?: Budget | null;
   /** `idle` or `running`. */
   status: string;
   /** Mode of the running Turn, or the selected mode while idle. */

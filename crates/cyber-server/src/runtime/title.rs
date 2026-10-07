@@ -49,6 +49,8 @@ impl Inner {
         request.tools = Vec::new();
         request.reasoning = None;
         request.max_output_tokens = Some(80);
+        self.check_budget(handle).await.map_err(|e| e.to_string())?;
+        let started = std::time::Instant::now();
         let stream = resolved
             .adapter
             .stream(request)
@@ -56,19 +58,36 @@ impl Inner {
             .map_err(|e| e.to_string())?;
         let out = collect(stream, |_| {}).await.map_err(|e| e.to_string())?;
         let title = clean(&out.text);
-        if title.is_empty() {
-            return Err("empty title".into());
-        }
+        let cost = compute_cost(resolved.cost.as_ref(), &out.usage);
         let mut state = handle.state.lock().await;
-        if !state.info.default_title {
-            return Ok(());
-        }
-        let payload = Titled {
-            title,
-            usage: Some(out.usage),
-            cost: compute_cost(resolved.cost.as_ref(), &out.usage),
+        let billing = if title.is_empty() || !state.info.default_title {
+            event(
+                AUXILIARY_USAGE,
+                &AuxiliaryUsage {
+                    provider: resolved.provider.clone(),
+                    model,
+                    purpose: "discarded_title".into(),
+                    call_id: None,
+                    duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                    usage: out.usage,
+                    cost,
+                },
+            )
+        } else {
+            event(
+                TITLE_GENERATED,
+                &Titled {
+                    title,
+                    usage: Some(out.usage),
+                    cost,
+                },
+            )
         };
-        self.commit_locked(&mut state, vec![event(TITLE_GENERATED, &payload)])
+        self.commit_locked(&mut state, vec![billing])
+            .map_err(|e| e.to_string())?;
+        drop(state);
+        self.observe_budget(handle)
+            .await
             .map_err(|e| e.to_string())?;
         Ok(())
     }

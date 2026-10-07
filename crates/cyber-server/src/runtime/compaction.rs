@@ -215,6 +215,7 @@ impl Inner {
         let Some(tail) = tail_start(&state, config.keep_tokens, config.keep_turns) else {
             return Ok(());
         };
+        self.check_budget(handle).await?;
         self.commit(
             handle,
             vec![event(COMPACTION_STARTED, &CompactionStarted { trigger })],
@@ -253,6 +254,7 @@ impl Inner {
                 };
                 self.commit(handle, vec![event(COMPACTION_COMPLETED, &payload)])
                     .await?;
+                self.observe_budget(handle).await?;
                 Ok(())
             }
             Err(error) => {
@@ -295,14 +297,21 @@ impl Inner {
         ))];
         request.tools = Vec::new();
         request.max_output_tokens = Some(request.max_output_tokens.unwrap_or(4096).min(8192));
-        let stream = open_with_retry(
-            resolved.adapter.as_ref(),
-            &request,
-            &self.options.retry,
-            |_, _, _| {},
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let handle = self
+            .handle(&state.info.id)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.check_budget(&handle)
+            .await
+            .map_err(|e| e.to_string())?;
+        let gated = super::budget::GatedAdapter {
+            inner: self,
+            handle: &handle,
+            adapter: resolved.adapter.as_ref(),
+        };
+        let stream = open_with_retry(&gated, &request, &self.options.retry, |_, _, _| {})
+            .await
+            .map_err(|e| e.to_string())?;
         let out = collect(stream, |_| {}).await.map_err(|e| e.to_string())?;
         if out.text.trim().is_empty() {
             return Err("the summary was empty".into());

@@ -453,6 +453,14 @@ fn shortened(listed: &[&skills::Skill], budget: usize) -> Vec<String> {
 }
 
 impl ToolHost for BuiltinHost {
+    fn session_budget(
+        &self,
+        directory: &str,
+    ) -> Result<Option<cyber_core::budget::Budget>, String> {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        cyber_core::budget::Budget::from_config(&config, "session")
+    }
+
     fn request_overlay(
         &self,
         turn: &TurnContext,

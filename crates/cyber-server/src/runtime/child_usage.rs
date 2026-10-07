@@ -47,15 +47,16 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Re
         .collect::<Result<Vec<_>, _>>()?;
     for parent in ancestors {
         let inserted = tx.execute(
-            "INSERT INTO session_children_charge(parent_id,source_id,event_id,cost,tokens,unpriced)
-            VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(parent_id,event_id) DO NOTHING",
+            "INSERT INTO session_children_charge(parent_id,source_id,event_id,cost,tokens,unpriced,turns)
+            VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(parent_id,event_id) DO NOTHING",
             params![
                 parent,
                 event.aggregate_id,
                 event.id,
                 cost.unwrap_or(0.0),
                 tokens,
-                i64::from(cost.is_none())
+                i64::from(cost.is_none()),
+                i64::from(event.kind == super::events::STEP_ENDED)
             ],
         )?;
         if inserted == 1 {

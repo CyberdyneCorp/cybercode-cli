@@ -69,6 +69,8 @@ pub struct SessionInfo {
     /// Step limit for this Session's Drains, on top of the runtime-wide limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_steps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<cyber_core::budget::Budget>,
 }
 
 /// One entry of model-visible history.
@@ -455,6 +457,10 @@ impl SessionState {
             "session.tool.dispatched" => self.on_dispatched(decode(e)?),
             "session.tool.settled" => self.on_settled(decode(e)?),
             "session.step.ended" => self.on_step_ended(decode(e)?),
+            "usage.recorded" => {
+                let usage: super::events::AuxiliaryUsage = decode(e)?;
+                self.add_hidden(&usage.usage, usage.cost);
+            }
             "session.step.failed" => self.on_step_failed(decode(e)?),
             _ => self.apply_meta(kind, e)?,
         }

@@ -192,6 +192,13 @@ pub enum Reconciliation {
 }
 
 pub trait ToolHost: Send + Sync {
+    fn session_budget(
+        &self,
+        _directory: &str,
+    ) -> Result<Option<cyber_core::budget::Budget>, String> {
+        Ok(None)
+    }
+
     /// Selected agent request options from trusted, validated Location configuration.
     fn request_overlay(
         &self,

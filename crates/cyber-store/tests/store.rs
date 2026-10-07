@@ -391,3 +391,39 @@ fn online_backup_is_consistent_while_writing() {
         "never overwrites"
     );
 }
+
+#[test]
+fn checked_append_rolls_back_decision_mutations_when_events_are_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path(), registry());
+    store
+        .transaction(|tx| {
+            tx.execute("CREATE TABLE decision(value INTEGER NOT NULL)", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let error = store
+        .append_checked("ses_decision", Expected::Seq(-1), |tx| {
+            tx.execute("INSERT INTO decision VALUES (1)", [])?;
+            Ok((vec![NewEvent::new("unknown.event.1", json!({}))], ()))
+        })
+        .unwrap_err();
+    assert!(matches!(error, StoreError::UnregisteredEvent(_)));
+    let count: i64 = store
+        .read(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM decision", [], |r| r.get(0))?))
+        .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(store.aggregate_seq("ses_decision").unwrap(), None);
+    let (stored, value) = store
+        .append_checked("ses_decision", Expected::Seq(-1), |tx| {
+            tx.execute("INSERT INTO decision VALUES (2)", [])?;
+            Ok((vec![event(2)], "committed"))
+        })
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(value, "committed");
+    let stored_value: i64 = store
+        .read(|conn| Ok(conn.query_row("SELECT value FROM decision", [], |r| r.get(0))?))
+        .unwrap();
+    assert_eq!(stored_value, 2);
+}

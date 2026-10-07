@@ -20,6 +20,13 @@ pub struct AppHost {
 }
 
 impl ToolHost for AppHost {
+    fn session_budget(
+        &self,
+        directory: &str,
+    ) -> Result<Option<cyber_core::budget::Budget>, String> {
+        self.builtin.session_budget(directory)
+    }
+
     fn request_overlay(
         &self,
         turn: &TurnContext,

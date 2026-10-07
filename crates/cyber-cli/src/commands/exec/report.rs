@@ -269,6 +269,12 @@ impl Out {
             }
             // A failed step also publishes `session.error`, which reports it once; an
             // overflow that compaction recovers from is not an error of the run.
+            "budget.exceeded" => {
+                run.stop_reason
+                    .get_or_insert_with(|| "budget_exceeded".into());
+                self.line("budget", data.clone());
+            }
+            "budget.warned" => self.line("budget", data.clone()),
             "session.step.failed" => {}
             _ => {}
         }
@@ -462,5 +468,22 @@ mod tests {
             .unwrap();
         assert!(run.children_usage.is_none());
         assert_eq!(run.combined_cost(), 0.1);
+    }
+    #[test]
+    fn server_budget_events_preserve_soft_inflight_work_and_report_budget_exit() {
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut out = Out::new(Format::Json, &args, &json!({"id":"ses_1"}));
+        let mut run = Run::new(&args, Instant::now());
+        out.durable(&mut run, "budget.warned.1", &json!({"scope_id":"ses_1"}));
+        assert!(run.stop_reason.is_none());
+        out.durable(&mut run, "budget.exceeded.1", &json!({"scope_id":"ses_1"}));
+        out.durable(
+            &mut run,
+            "session.text.ended.1",
+            &json!({"text":"inflight answer"}),
+        );
+        assert_eq!(run.text, "inflight answer");
+        assert_eq!(run.stop_reason.as_deref(), Some("budget_exceeded"));
+        assert_eq!(run.exit_code(false), EXIT_BUDGET);
     }
 }

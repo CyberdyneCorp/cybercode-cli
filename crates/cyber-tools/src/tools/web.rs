@@ -187,6 +187,12 @@ async fn summarize(
         messages: vec![Message::user_text(format!("URL: {url}\n\n<content>\n{clipped}\n</content>\n\nRequest: {prompt}"))],
         ..resolved.template.clone()
     };
+    ctx.inv
+        .asker
+        .check_budget()
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    let started = std::time::Instant::now();
     let stream = resolved
         .adapter
         .stream(request)
@@ -195,5 +201,18 @@ async fn summarize(
     let out = cyber_llm::collect(stream, |_| {})
         .await
         .map_err(|e| failed(format!("Summary failed: {e}")))?;
+    ctx.inv
+        .asker
+        .record_model_usage(cyber_server::runtime::AuxiliaryUsage {
+            provider: resolved.provider.clone(),
+            model: reference,
+            purpose: "webfetch_summary".into(),
+            call_id: Some(ctx.inv.call_id.clone()),
+            duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            usage: out.usage,
+            cost: cyber_llm::catalog::compute_cost(resolved.cost.as_ref(), &out.usage),
+        })
+        .await
+        .map_err(|e| failed(e.to_string()))?;
     Ok(out.text)
 }

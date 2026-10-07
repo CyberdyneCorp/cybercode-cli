@@ -516,3 +516,60 @@ fn invalid_worktree_cleanup_is_rejected_during_config_loading() {
     let error = fixture.load().unwrap_err().to_string();
     assert!(error.contains("worktrees:"), "{error}");
 }
+
+#[test]
+fn malformed_budget_caps_are_rejected_after_layering() {
+    let f = Fixture::new();
+    for budget in [
+        json!({"session":{"max_cost_usd":-1}}),
+        json!({"session":{"max_tokens":"many"}}),
+        json!({"session":{"max_turns":1.5}}),
+        json!({"session":{"max_wall_seconds":-2}}),
+        json!({"session":{"enforcement":"unlimited"}}),
+        json!({"session":{"max_cost":1}}),
+        json!({"sesion":{"max_tokens":1}}),
+    ] {
+        f.write("global:cyber.jsonc", &json!({"budgets":budget}).to_string());
+        assert!(
+            matches!(f.load(), Err(ConfigError::Invalid { .. })),
+            "Accepted malformed budget: {budget}"
+        );
+    }
+}
+
+#[test]
+fn budget_overrides_require_workspace_trust_before_widening_host_caps() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"budgets":{"session":{"max_cost_usd":1}}}).to_string(),
+    );
+    f.write(
+        "cyber.jsonc",
+        &json!({"budgets":{"session":{"max_cost_usd":10}}}).to_string(),
+    );
+    assert_eq!(
+        f.load().unwrap().value["budgets"]["session"]["max_cost_usd"],
+        1
+    );
+    f.approve_current();
+    assert_eq!(
+        f.load().unwrap().value["budgets"]["session"]["max_cost_usd"],
+        10
+    );
+}
+
+#[test]
+fn canonical_budget_defaults_accept_all_scopes_and_workflow_agent_extension() {
+    let f = Fixture::new();
+    f.write("global:cyber.jsonc", &json!({"budgets":{
+        "session":{"max_tokens":0,"max_cost_usd":0,"max_wall_seconds":0.5,"max_turns":1},
+        "run":{"max_agents":20,"enforcement":"reserved"}, "goal":{},"loop":null,"routine":{},"team":{},"daily":{}
+    }}).to_string());
+    let config = f.load().unwrap();
+    let budget = cyber_core::budget::Budget::from_config(&config.value, "session")
+        .unwrap()
+        .unwrap();
+    assert_eq!(budget.enforcement, cyber_core::budget::Enforcement::Soft);
+    assert_eq!(budget.max_tokens, Some(0));
+}
