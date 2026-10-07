@@ -114,7 +114,13 @@ pub(super) async fn execute(
         .iter()
         .map(|path| setup::file_part(path))
         .collect::<Result<Vec<_>, _>>()?;
-    negotiate(client, !attachments.is_empty(), args.max_turns.is_some()).await?;
+    negotiate(
+        client,
+        !attachments.is_empty(),
+        args.max_turns.is_some(),
+        args.max_tokens.is_some() || args.max_cost.is_some(),
+    )
+    .await?;
     let admission = admission::Admission::new(parent_id)?;
     out.admission(parent_id, &admission.id);
     let body =
@@ -204,7 +210,7 @@ async fn catch_up(client: &Client, scope: &Scope, cursor: &mut i64, run: &mut Ru
     let final_read = tokio::time::timeout(Duration::from_secs(3), async {
         history(client, scope, cursor, run, out).await?;
         let snapshot = scope.snapshot(client).await?;
-        run.totals(&snapshot["totals"]);
+        run.delegated_snapshot(&snapshot)?;
         Ok::<_, CliError>(())
     })
     .await;
@@ -221,7 +227,12 @@ async fn catch_up(client: &Client, scope: &Scope, cursor: &mut i64, run: &mut Ru
     }
 }
 
-async fn negotiate(client: &Client, attachments: bool, steps: bool) -> Result<(), CliError> {
+async fn negotiate(
+    client: &Client,
+    attachments: bool,
+    steps: bool,
+    budgeted: bool,
+) -> Result<(), CliError> {
     let document = client.get("/openapi.json").await.map_err(api)?;
     let path = "/api/v1/sessions/{sessionID}/delegations/{requestID}";
     if document["paths"][path]["post"].is_null()
@@ -232,6 +243,23 @@ async fn negotiate(client: &Client, attachments: bool, steps: bool) -> Result<()
             CliError::usage("Server does not support durable delegation admission")
                 .with_hint("Update the attached server before using named delegation"),
         );
+    }
+    if budgeted {
+        let fields = &document["components"]["schemas"]["Session"]["properties"];
+        if [
+            "children_cost",
+            "children_tokens",
+            "children_unpriced_steps",
+            "children_usage_complete",
+        ]
+        .iter()
+        .any(|field| fields.get(*field).is_none())
+        {
+            return Err(CliError::usage(
+                "Server does not support descendant billing for delegated budgets",
+            )
+            .with_hint("Update the attached server before using delegated budgets"));
+        }
     }
     let properties = &document["components"]["schemas"]["SubtaskBody"]["properties"];
     for (field, needed) in [
@@ -267,7 +295,7 @@ async fn follow(
         scope.check(job)?;
         history(client, scope, cursor, run, out).await?;
         let snapshot = scope.snapshot(client).await?;
-        run.totals(&snapshot["totals"]);
+        run.delegated_snapshot(&snapshot)?;
         if run.over_budget() {
             return Ok(End::Budget);
         }

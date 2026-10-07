@@ -20,6 +20,8 @@ enum AdmissionMode {
     LostResponse,
     Foreign,
     Legacy,
+    LegacyUsage,
+    IncompleteUsage,
 }
 
 struct Server {
@@ -70,7 +72,7 @@ impl Server {
                 let response = match path.strip_prefix("/api/v1").unwrap() {
                     "/agents" => json!({"data":[{"name":"explore", "mode":"subagent"}]}),
                     "/openapi.json" => {
-                        json!({"paths":if supported && mode!=AdmissionMode::Legacy {json!({"/api/v1/sessions/{sessionID}/delegations/{requestID}":{"post":{},"get":{}},"/api/v1/sessions/{sessionID}/delegations/{requestID}/stop":{"post":{}}})} else {json!({})},"components":{"schemas":{"SubtaskBody":{"properties": if supported {json!({"agent":{}, "attachments":{}, "max_steps":{}})} else {json!({"prompt":{}})}}}}})
+                        json!({"paths":if supported && mode!=AdmissionMode::Legacy {json!({"/api/v1/sessions/{sessionID}/delegations/{requestID}":{"post":{},"get":{}},"/api/v1/sessions/{sessionID}/delegations/{requestID}/stop":{"post":{}}})} else {json!({})},"components":{"schemas":{"Session":{"properties":if mode==AdmissionMode::LegacyUsage {json!({})} else {json!({"children_cost":{},"children_tokens":{},"children_unpriced_steps":{},"children_usage_complete":{}})}},"SubtaskBody":{"properties": if supported {json!({"agent":{}, "attachments":{}, "max_steps":{}})} else {json!({"prompt":{}})}}}}})
                     }
                     "/sessions/ses_parent" => {
                         json!({"data":{"id":"ses_parent", "directory":"/workspace"}})
@@ -79,7 +81,7 @@ impl Server {
                         admission_response(mode, &method, path, &mut submitted, &mut stopped)
                     }
                     "/sessions/ses_child" => {
-                        json!({"data":{"id":"ses_child", "parent_id":"ses_parent", "status":"idle", "agent":"explore", "mode":"dont-ask", "totals":{"usage":{"input":2,"output":3,"reasoning":20,"cache_read":4,"cache_write":5},"steps":1,"cost":0.25,"unpriced_steps":1}}})
+                        json!({"data":{"id":"ses_child", "parent_id":"ses_parent", "status":"idle", "agent":"explore", "mode":"dont-ask", "children_cost":0.75,"children_tokens":64,"children_unpriced_steps":2,"children_usage_complete":mode!=AdmissionMode::IncompleteUsage, "totals":{"usage":{"input":2,"output":3,"reasoning":20,"cache_read":4,"cache_write":5},"steps":1,"cost":0.25,"unpriced_steps":1}}})
                     }
                     "/jobs/job_named" => {
                         polls += 1;
@@ -567,5 +569,76 @@ fn interrupt_cancels_queued_admission_without_interrupting_parent() {
             .any(|(url, _)| url.starts_with("/api/v1/jobs/")
                 || url.contains("interrupt")
                 || url.contains("ses_child"))
+    );
+}
+
+#[test]
+fn descendant_tokens_reaching_budget_stop_the_owned_delegation() {
+    let server = Server::new(true, true, true);
+    let (output, result) = server.run(&["--max-tokens", "98", "--timeout", "2s"]);
+    assert_eq!(output.status.code(), Some(4), "{result}");
+    assert_eq!(result["stop_reason"], "budget_exceeded");
+    assert_eq!(result["children_tokens"], 64);
+    assert_eq!(result["total_tokens"], 98);
+    assert_eq!(result["usage"]["reasoning"], 20);
+    assert_eq!(result["own_cost_usd"], 0.25);
+    assert_eq!(result["cost_usd"], 1.0);
+    assert_eq!(result["children_unpriced_steps"], 2);
+    assert_eq!(result["children_usage_complete"], true);
+    let requests = server.requests.lock().unwrap();
+    assert!(
+        requests
+            .iter()
+            .any(|(path, _)| path == "/api/v1/jobs/job_named/stop")
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|(path, _)| path == "/api/v1/sessions/ses_parent/interrupt")
+    );
+}
+
+#[test]
+fn descendant_cost_reaching_budget_stops_delegation() {
+    let server = Server::new(true, true, true);
+    let (output, result) = server.run(&["--max-cost", "1", "--timeout", "2s"]);
+    assert_eq!(output.status.code(), Some(4), "{result}");
+    assert_eq!(result["stop_reason"], "budget_exceeded");
+    assert_eq!(result["cost_usd"], 1.0);
+}
+
+#[test]
+fn budgeted_delegation_refuses_legacy_usage_before_submission() {
+    let server = Server::with_admission(false, true, true, AdmissionMode::LegacyUsage);
+    let (output, _) = server.run(&["--max-tokens", "100"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        !server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(path, _)| path.contains("/delegations/"))
+    );
+}
+
+#[test]
+fn incomplete_billing_cancels_owned_job_and_reports_error() {
+    let server = Server::with_admission(false, true, true, AdmissionMode::IncompleteUsage);
+    let (output, result) = server.run(&["--max-tokens", "100"]);
+    assert_eq!(output.status.code(), Some(1), "{result}");
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap()
+            .contains("incomplete descendant billing")
+    );
+    assert!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(path, _)| path == "/api/v1/jobs/job_named/stop")
     );
 }

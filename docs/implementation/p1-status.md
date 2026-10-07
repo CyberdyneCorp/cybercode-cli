@@ -226,6 +226,14 @@ Migration backfills surviving history, repairs own SQL totals for hidden title/c
 
 All 843 local Rust workspace test executions pass (two ignored fixtures), workspace all-target Clippy passes, and all 46 SDK tests/type checking, generated contracts and 57 strict specs pass. Cross-spec lint reports zero errors and 21 warnings. Native billing/migration and HTTP coverage is added; acceptance remains pending. Parent/subtree budget enforcement, live client counters, Job/tool subtree result accounting, unknown native-effect recovery, Windows confinement and all remaining P1 contracts remain open. This foundation does not accept a full requirement or milestone. P0 evaluation, measurement and local-model artifacts remain unchanged.
 
+## Delegated exec descendant budget monitoring increment
+
+Named exec now checks the delegated child's own plus descendant tokens/cost at the recorded limit, replacing cumulative snapshots on each poll and final catch-up. JSON retains own token classes, adds own_cost_usd and total_tokens, exposes all four descendant fields and reports combined cost_usd. Descendant unknown pricing contributes to cost_unpriced. Budgeted delegation requires advertised descendant billing fields before submission and rejects missing, malformed, negative-cost or historically incomplete billing snapshots with owned-Job cancellation. Unbudgeted older servers retain explicit incomplete attribution.
+
+The two descendant token/cost binary regressions fail against unchanged production main 55a241d: the run times out instead of detecting the recorded budget limit. Four new binary cases cover exact token/cost limits, legacy capability refusal before submission and incomplete billing cancellation; three report tests cover cumulative snapshot replacement, all token classes, unknown pricing, malformed fields and unbudgeted legacy uncertainty. All 52 CLI all-target test executions, workspace all-target Clippy, formatting, generated contracts and all 57 strict specs pass locally; cross-spec lint remains zero errors and 21 warnings. Native CI runs delegation plus report unit coverage. Billing CI 37650077328 is running with native acceptance pending.
+
+This is client-side delegated monitoring: polling can overshoot while calls remain in flight, and cancelling the owned Job does not prove descendant background cancellation. Durable server-wide scope budgets, all provider call sites, reservations, subtree scheduling/cancellation, ordinary exec, live TUI monitoring and goal/workflow ownership remain open. No milestone or full cost-attribution requirement is accepted. P0 artifacts remain unchanged.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

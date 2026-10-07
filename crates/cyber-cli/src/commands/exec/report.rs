@@ -27,6 +27,7 @@ pub struct Run {
     pub usage: Option<Value>,
     pub unpriced: bool,
     extra_tokens: u64,
+    children_usage: Option<cyber_server::runtime::ChildrenUsage>,
     calls: HashMap<String, (String, Value)>,
     max_tokens: Option<u64>,
     max_cost: Option<f64>,
@@ -47,6 +48,7 @@ impl Run {
             usage: None,
             unpriced: false,
             extra_tokens: 0,
+            children_usage: None,
             calls: HashMap::new(),
             max_tokens: args.max_tokens,
             max_cost: args.max_cost,
@@ -54,12 +56,64 @@ impl Run {
     }
 
     pub fn over_budget(&self) -> bool {
-        self.max_tokens.is_some_and(|m| {
-            self.input_tokens
-                .saturating_add(self.output_tokens)
-                .saturating_add(self.extra_tokens)
-                > m
-        }) || self.max_cost.is_some_and(|m| self.cost > m)
+        self.max_tokens.is_some_and(|m| self.combined_tokens() >= m)
+            || self.max_cost.is_some_and(|m| self.combined_cost() >= m)
+    }
+
+    fn combined_tokens(&self) -> u64 {
+        self.input_tokens
+            .saturating_add(self.output_tokens)
+            .saturating_add(self.extra_tokens)
+            .saturating_add(
+                self.children_usage
+                    .as_ref()
+                    .map_or(0, |u| u.children_tokens),
+            )
+    }
+
+    fn combined_cost(&self) -> f64 {
+        self.cost
+            + self
+                .children_usage
+                .as_ref()
+                .map_or(0.0, |u| u.children_cost)
+    }
+
+    pub fn delegated_snapshot(&mut self, snapshot: &Value) -> Result<(), crate::error::CliError> {
+        let budgeted = self.max_tokens.is_some() || self.max_cost.is_some();
+        let has_usage = [
+            "children_cost",
+            "children_tokens",
+            "children_unpriced_steps",
+            "children_usage_complete",
+        ]
+        .iter()
+        .any(|key| snapshot.get(*key).is_some());
+        let children = if has_usage {
+            let children: cyber_server::runtime::ChildrenUsage =
+                serde_json::from_value(snapshot.clone()).map_err(|_| {
+                    crate::error::CliError::runtime("Invalid descendant billing snapshot")
+                })?;
+            if !children.children_cost.is_finite() || children.children_cost < 0.0 {
+                return Err(crate::error::CliError::runtime(
+                    "Invalid descendant billing cost",
+                ));
+            }
+            Some(children)
+        } else {
+            None
+        };
+        if budgeted && !children.as_ref().is_some_and(|u| u.children_usage_complete) {
+            return Err(crate::error::CliError::runtime(
+                "Budgeted delegation has incomplete descendant billing",
+            ));
+        }
+        self.totals(&snapshot["totals"]);
+        self.unpriced |= children
+            .as_ref()
+            .is_some_and(|u| u.children_unpriced_steps > 0);
+        self.children_usage = children;
+        Ok(())
     }
 
     pub fn totals(&mut self, totals: &Value) {
@@ -263,7 +317,7 @@ impl Out {
             "result": run.text,
             "session_id": self.session_id,
             "usage": { "input": run.input_tokens, "output": run.output_tokens },
-            "cost_usd": run.cost,
+            "cost_usd": run.combined_cost(),
             "duration_ms": run.started.elapsed().as_millis() as u64,
             "num_turns": run.turns,
             "denials": run.denials,
@@ -274,6 +328,20 @@ impl Out {
         if let Some(usage) = &run.usage {
             result["usage"] = usage.clone();
             result["cost_unpriced"] = run.unpriced.into();
+        }
+        if self.delegation.is_some() {
+            result["own_cost_usd"] = run.cost.into();
+            result["total_tokens"] = run.combined_tokens().into();
+            result["children_usage_complete"] = run
+                .children_usage
+                .as_ref()
+                .is_some_and(|u| u.children_usage_complete)
+                .into();
+            if let Some(children) = &run.children_usage {
+                result["children_cost"] = children.children_cost.into();
+                result["children_tokens"] = children.children_tokens.into();
+                result["children_unpriced_steps"] = children.children_unpriced_steps.into();
+            }
         }
         if let Some((parent, request)) = &self.admission {
             result["parent_session_id"] = parent.clone().into();
@@ -334,5 +402,65 @@ mod tests {
         );
         assert!(run.error.is_none());
         assert_eq!(run.exit_code(false), 0);
+    }
+
+    #[test]
+    fn cumulative_descendant_snapshots_replace_usage_and_preserve_unpriced_charges() {
+        let args = Wrapper::parse_from(["exec", "--max-tokens", "20", "hi"]).args;
+        let mut run = Run::new(&args, Instant::now());
+        let snapshot = json!({"totals":{"usage":{"input":2,"output":3,"reasoning":4,"cache_read":1,"cache_write":0},"steps":1,"cost":0.25,"unpriced_steps":0},
+            "children_cost":0.5,"children_tokens":10,"children_unpriced_steps":1,"children_usage_complete":true});
+        run.delegated_snapshot(&snapshot).unwrap();
+        run.delegated_snapshot(&snapshot).unwrap();
+        assert_eq!(run.combined_tokens(), 20);
+        assert_eq!(run.combined_cost(), 0.75);
+        assert_eq!(run.turns, 1);
+        assert!(run.over_budget());
+        assert!(run.unpriced);
+        assert_eq!(run.usage.as_ref().unwrap()["input"], 2);
+    }
+
+    #[test]
+    fn budgeted_snapshots_reject_missing_malformed_or_incomplete_descendant_usage() {
+        let args = Wrapper::parse_from(["exec", "--max-cost", "2", "hi"]).args;
+        let mut run = Run::new(&args, Instant::now());
+        let good = json!({"totals":{"usage":{"input":1},"cost":0.1},
+            "children_cost":0.5,"children_tokens":10,"children_unpriced_steps":0,"children_usage_complete":true});
+        run.delegated_snapshot(&good).unwrap();
+        for key in [
+            "children_cost",
+            "children_tokens",
+            "children_unpriced_steps",
+            "children_usage_complete",
+        ] {
+            let mut missing = good.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(run.delegated_snapshot(&missing).is_err(), "{key}");
+            let mut malformed = good.clone();
+            malformed[key] = json!("invalid");
+            assert!(run.delegated_snapshot(&malformed).is_err(), "{key}");
+        }
+        let mut negative = good.clone();
+        negative["children_cost"] = json!(-1);
+        assert!(run.delegated_snapshot(&negative).is_err());
+        let mut incomplete = good.clone();
+        incomplete["children_usage_complete"] = json!(false);
+        assert!(run.delegated_snapshot(&incomplete).is_err());
+        assert!(run.delegated_snapshot(&json!({"totals":{}})).is_err());
+        assert_eq!(
+            run.combined_cost(),
+            0.6,
+            "invalid snapshots do not clear known billing"
+        );
+    }
+
+    #[test]
+    fn unbudgeted_legacy_snapshot_preserves_unknown_descendant_attribution() {
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut run = Run::new(&args, Instant::now());
+        run.delegated_snapshot(&json!({"totals":{"usage":{"input":1},"cost":0.1}}))
+            .unwrap();
+        assert!(run.children_usage.is_none());
+        assert_eq!(run.combined_cost(), 0.1);
     }
 }

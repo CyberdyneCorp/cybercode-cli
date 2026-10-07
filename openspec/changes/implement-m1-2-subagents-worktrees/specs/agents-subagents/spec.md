@@ -363,6 +363,13 @@
 - **AND** reopening the database SHALL preserve the rollup without redispatch or duplicate charges
 - **AND** an older database SHALL reconstruct surviving usage and disclose incomplete historical child accounting when previously deleted usage cannot be proven
 
+#### Scenario: Delegated exec descendant budget accounting
+- **WHEN** a named delegated exec child creates nested children and their combined recorded cost or tokens reach its exec limit
+- **THEN** exec SHALL request cancellation of its owned Job and report budget_exceeded with own and descendant billing separately disclosed
+- **AND** budgeted delegation SHALL refuse a server lacking descendant billing capability before submission, or reject an incomplete/malformed billing snapshot with explicit owned cancellation
+- **AND** repeated polling SHALL replace cumulative billing snapshots without double-counting, and final catch-up SHALL retain descendant billing
+- **AND** client polling SHALL disclose possible in-flight overshoot; complete server-side subtree budget and cancellation enforcement remains required
+
 ### Requirement: Manual invocation by mention
 (P1) An `@<agent>` mention of a subagent-capable agent in a user prompt SHALL spawn that agent through the `agent` tool flow with the rest of the prompt, without requiring the `agent` permission. In the TUI, `@` autocomplete SHALL offer visible agents with `mode` `subagent` or `all`.
 
