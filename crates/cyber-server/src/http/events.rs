@@ -17,9 +17,9 @@ use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
-use super::AppState;
 use super::envelope::{location, query_value};
 use super::error::ApiError;
+use super::{AppState, event_location};
 use crate::runtime::{LiveEvent, PendingKind, Runtime};
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
@@ -211,37 +211,31 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
         if tx.send(sse_event(&hello)).await.is_err() {
             return;
         }
-        let mut directories: HashMap<String, String> = HashMap::new();
+        let mut directories = HashMap::new();
         let mut counter = 0u64;
         loop {
             let event = match live.recv().await {
                 Ok(e) => e,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    directories.clear();
+                    continue;
+                }
                 Err(broadcast::error::RecvError::Closed) => return,
             };
             counter += 1;
             let session = session_of(&event).to_string();
-            let dir = match directories.get(&session) {
-                Some(d) => d.clone(),
-                None => {
-                    let d = state
-                        .runtime
-                        .state(&session)
-                        .await
-                        .map(|s| {
-                            std::fs::canonicalize(&s.info.directory)
-                                .map_or(s.info.directory, |path| path.display().to_string())
-                        })
-                        .unwrap_or_default();
-                    directories.insert(session.clone(), d.clone());
-                    d
-                }
+            let Ok(dir) = event_location::live(&state, &mut directories, &session, &event).await
+            else {
+                return;
             };
-            if !all && dir != directory {
+            if !all
+                && dir != directory
+                && event_location::previous(&event) != Some(directory.as_str())
+            {
                 continue;
             }
             let mut e = envelope(&event, counter);
-            e.location = Some(dir);
+            e.location = (!dir.is_empty()).then_some(dir);
             if tx.send(sse_event(&e)).await.is_err() {
                 return;
             }
@@ -293,13 +287,13 @@ async fn session_events(
 async fn follow(
     state: AppState,
     id: String,
-    directory: String,
+    mut directory: String,
     mut last: i64,
     mut live: broadcast::Receiver<LiveEvent>,
     tx: mpsc::Sender<Event>,
 ) {
     let mut counter = 0;
-    if !recover_session_stream(&state, &id, &directory, &mut last, &tx, &mut counter).await {
+    if !recover_session_stream(&state, &id, &mut directory, &mut last, &tx, &mut counter).await {
         return;
     }
     loop {
@@ -310,11 +304,14 @@ async fn follow(
                 kind,
                 data,
             }) if session_id == id && seq > last => {
-                if seq > last + 1 && !replay(&state, &id, &directory, &mut last, &tx).await {
+                if seq > last + 1 && !replay(&state, &id, &mut directory, &mut last, &tx).await {
                     return;
                 }
                 if seq > last {
                     last = seq;
+                    if let Some(updated) = event_location::changed(&kind, &data) {
+                        directory = updated;
+                    }
                     let mut e = durable(&id, seq, &kind, data);
                     e.location = Some(directory.clone());
                     if tx.send(sse_event(&e)).await.is_err() {
@@ -323,7 +320,10 @@ async fn follow(
                 }
             }
             Ok(LiveEvent::Deleted { session_id }) if session_id == id => return,
-            Ok(event @ LiveEvent::RequestRouted { .. }) if session_of(&event) == id => {
+            Ok(event @ LiveEvent::RequestRouted { .. })
+            | Ok(event @ LiveEvent::WorktreeSetup { .. })
+                if session_of(&event) == id =>
+            {
                 counter += 1;
                 let mut e = envelope(&event, counter);
                 e.location = Some(directory.clone());
@@ -333,8 +333,15 @@ async fn follow(
             }
             Ok(_) => {}
             Err(broadcast::error::RecvError::Lagged(_)) => {
-                if !recover_session_stream(&state, &id, &directory, &mut last, &tx, &mut counter)
-                    .await
+                if !recover_session_stream(
+                    &state,
+                    &id,
+                    &mut directory,
+                    &mut last,
+                    &tx,
+                    &mut counter,
+                )
+                .await
                 {
                     return;
                 }
@@ -347,7 +354,7 @@ async fn follow(
 async fn recover_session_stream(
     state: &AppState,
     id: &str,
-    directory: &str,
+    directory: &mut String,
     last: &mut i64,
     tx: &mpsc::Sender<Event>,
     counter: &mut u64,
@@ -390,16 +397,24 @@ async fn pending_children(
 async fn replay(
     state: &AppState,
     id: &str,
-    directory: &str,
+    directory: &mut String,
     last: &mut i64,
     tx: &mpsc::Sender<Event>,
 ) -> bool {
+    match event_location::at(state, id, *last).await {
+        Ok(Some(binding)) => *directory = binding,
+        Ok(None) => {}
+        Err(_) => return false,
+    }
     loop {
         let Ok(page) = read_page(state, id, *last, 500).await else {
             return false;
         };
         for stored in page.events {
             *last = stored.seq;
+            if let Some(updated) = event_location::changed(&stored.kind, &stored.data) {
+                *directory = updated;
+            }
             let mut e = durable(id, stored.seq, &stored.kind, stored.data);
             e.location = Some(directory.to_string());
             if tx.send(sse_event(&e)).await.is_err() {
@@ -430,7 +445,10 @@ async fn history(
     Path(id): Path<String>,
     Query(q): Query<HistoryQuery>,
 ) -> Result<Json<HistoryPage>, ApiError> {
-    state.runtime.state(&id).await?;
+    let current = state.runtime.state(&id).await?.info.directory;
+    let mut directory = event_location::at(&state, &id, q.after.unwrap_or(-1))
+        .await?
+        .unwrap_or(current);
     let limit = q.limit.unwrap_or(100);
     if !(1..=500).contains(&limit) {
         return Err(ApiError::invalid("limit must be between 1 and 500"));
@@ -439,7 +457,14 @@ async fn history(
     let data = page
         .events
         .into_iter()
-        .map(|e| durable(&id, e.seq, &e.kind, e.data))
+        .map(|e| {
+            if let Some(updated) = event_location::changed(&e.kind, &e.data) {
+                directory = updated;
+            }
+            let mut envelope = durable(&id, e.seq, &e.kind, e.data);
+            envelope.location = Some(directory.clone());
+            envelope
+        })
         .collect();
     Ok(Json(HistoryPage {
         data,

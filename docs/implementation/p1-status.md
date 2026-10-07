@@ -120,6 +120,18 @@ Validation passes all 769 Rust workspace test executions (2 opt-in measurements 
 
 Native/live-provider acceptance, unknown activity/command settlement, durable cross-process child ownership/pool recovery, client reattachment and public worktree lifecycle/enter/exit remain open. This increment does not accept an entire P1 requirement or milestone.
 
+## Location stream continuity increment
+
+Session SSE replay/live follow and history now derive Location from the last creation/rebound binding at each cursor, then advance it through events without changing aggregate sequence or historical payloads. Instance streams use sequence-qualified caches, recover binding after a sequence gap/cache reset and deliver rebound notices at both previous and new Locations. Later events route to the new Location. Live child setup output now reaches Session SSE without assigning a durable cursor.
+
+The TUI applies a valid rebound path immediately, advances its observed sequence and rejects stale rebound events or pre-rebound snapshots. Each action scopes the client to the current Session directory, including located file/command/model requests and local attachment paths. No unversioned or malformed rebound can advance its observed sequence.
+
+One HTTP timeline regression and two TUI regressions fail against unchanged production main `27f448d`, covering historical mislabeling, old request headers and delayed directory updates. Focused tests cover attachment before relocation, old/new notification identity, new-only followup routing, setup output without cursor replacement, reconnect at three cursor positions, historical Locations, immediate TUI scope and stale/malformed events/snapshots. Additional HTTP regressions prove that deleting an uncached Session keeps unrelated instance listeners open and that a cached canonical Location continues routing after its directory alias disappears. Both regressions failed against intermediate implementations before correction. Stream tests use an identity-only fake Location port; native binding/recreation is tested separately and no native confinement evidence is inferred from these cases. Instance streams remain live-only: cache recovery repairs later event labels after lag, but does not replay missed rebound notifications.
+
+Final local validation passes all 777 Rust workspace test executions (two ignored fixtures), workspace all-target Clippy, formatting, 43 SDK tests/type checking, OpenAPI/generation consistency and all 57 strict specification checks. Cross-spec lint reports zero errors and 21 warnings; the roadmap inventory remains current at 225 P1 requirements. CI for `27f448d` and `1921aaa` is still queued at the latest check; no new native acceptance is claimed.
+
+Native/live-provider acceptance, unknown activity/command settlement, durable cross-process child ownership/pool recovery, complete client lifecycle and public worktree management/enter/exit remain open. This increment does not accept an entire P1 requirement or milestone.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

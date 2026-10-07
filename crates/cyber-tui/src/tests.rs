@@ -618,3 +618,81 @@ fn subtask_requires_a_prompt_and_keeps_the_parent_open() {
         assert!(app.toast.as_ref().unwrap().0.contains("Usage: /subtask"));
     }
 }
+
+#[tokio::test]
+async fn located_actions_use_current_session_directory_instead_of_initial_client_scope() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut head = Vec::new();
+        let mut bytes = [0; 1024];
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = socket.read(&mut bytes).unwrap();
+            assert!(count > 0);
+            head.extend_from_slice(&bytes[..count]);
+        }
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":[]}",
+            )
+            .unwrap();
+        String::from_utf8(head).unwrap()
+    });
+    let client = cyber_client::Client::http(&base, None).at("/repo/old");
+    let mut active = session(false);
+    active.directory = "/repo/new".into();
+    crate::perform::perform(&client, &active, Action::FindFiles("config".into()))
+        .await
+        .unwrap();
+    let request = server.join().unwrap().to_ascii_lowercase();
+    assert!(
+        request.contains("x-cyber-directory: /repo/new"),
+        "{request}"
+    );
+    assert!(!request.contains("/repo/old"));
+}
+
+#[test]
+fn worktree_rebound_updates_active_directory_before_a_snapshot_refresh() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    assert_eq!(
+        app.on_event(
+            "session.worktree.rebound.1",
+            &json!({"from":{"path":"/repo"},"to":{"path":"/repo/new"}})
+        ),
+        vec![Action::Refresh]
+    );
+    assert_eq!(app.session.directory, "/repo/new");
+}
+
+#[test]
+fn rebound_cursor_rejects_stale_or_malformed_directory_changes() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.session.seq = 3;
+    let mut event = cyber_client::Event {
+        kind: "session.worktree.rebound.1".into(),
+        data: json!({"to":{"path":"/repo/new"}}),
+        seq: Some(9),
+        session_id: Some(app.session.id.clone()),
+    };
+    assert_eq!(app.on_server_event(&event), vec![Action::Refresh]);
+    assert_eq!(app.session.directory, "/repo/new");
+    assert_eq!(app.session.seq, 9);
+    event.seq = Some(8);
+    event.data = json!({"to":{"path":"/repo/old"}});
+    assert!(app.on_server_event(&event).is_empty());
+    assert_eq!(app.session.directory, "/repo/new");
+    event.seq = None;
+    assert_eq!(app.on_server_event(&event), vec![Action::Refresh]);
+    assert_eq!(app.session.directory, "/repo/new");
+    event.seq = Some(10);
+    event.data = json!({"to":{"path":null}});
+    assert_eq!(app.on_server_event(&event), vec![Action::Refresh]);
+    assert_eq!(app.session.directory, "/repo/new");
+    assert_eq!(app.session.seq, 9);
+}

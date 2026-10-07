@@ -1223,3 +1223,307 @@ async fn background_job_routes_list_scope_and_stop_a_child() {
     assert_eq!(h.runtime.job(&job.id).unwrap().status, JobStatus::Cancelled);
     assert_eq!(api.get("/jobs/missing").await.0, StatusCode::NOT_FOUND);
 }
+
+async fn stream_binding_fixture(
+    h: &Harness,
+) -> (
+    String,
+    String,
+    cyber_core::worktrees::Managed,
+    cyber_core::worktrees::Managed,
+) {
+    let parent = h.session().await;
+    let old_path = h.dir.path().join("old-checkout");
+    let new_path = h.dir.path().join("new-checkout");
+    std::fs::create_dir(&old_path).unwrap();
+    std::fs::create_dir(&new_path).unwrap();
+    let old = cyber_core::worktrees::Managed {
+        id: "wt_old".into(),
+        name: "stream-child".into(),
+        path: old_path.canonicalize().unwrap(),
+        common_dir: h.repo.join(".git"),
+        branch: "cyber/stream-child".into(),
+        base: "original".into(),
+        ready: true,
+        included: vec![],
+    };
+    let mut new = old.clone();
+    new.id = "wt_new".into();
+    new.path = new_path.canonicalize().unwrap();
+    let child = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: old.path.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            worktree_id: Some(old.id.clone()),
+            child_worktree: Some(old.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    (parent, child, old, new)
+}
+
+fn sse_envelope(buffer: &str, kind: &str) -> Value {
+    buffer
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .find(|event| event["type"] == kind)
+        .unwrap_or_else(|| panic!("Missing {kind}: {buffer}"))
+}
+
+#[tokio::test]
+async fn session_stream_replays_location_timeline_across_rebinding_and_cursors() {
+    let h = Harness::new(Setup::default());
+    let (parent, child, old, new) = stream_binding_fixture(&h).await;
+    h.runtime.rename(&child, "before relocation").await.unwrap();
+    let before = h.state(&child).await.last_seq;
+    let owner = h.runtime.claim_child_execution(&parent, &child).unwrap();
+    h.runtime
+        .rebind_child_worktree(&owner, &old, &new)
+        .await
+        .unwrap();
+    let rebound = h.state(&child).await.last_seq;
+    h.runtime
+        .complete_child_worktree_setup(&child, &new)
+        .await
+        .unwrap();
+    h.runtime.rename(&child, "after relocation").await.unwrap();
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    for after in [-1, before, rebound] {
+        let response = client
+            .get(format!("{base}/sessions/{child}/events?after={after}"))
+            .basic_auth("cyber", Some("pw"))
+            .send()
+            .await
+            .unwrap();
+        let mut stream = response.bytes_stream();
+        let buffer = read_sse_until(&mut stream, "after relocation").await;
+        let rename = sse_envelope(&buffer, "session.renamed.1");
+        let expected = if after == -1 { &old.path } else { &new.path };
+        assert_eq!(rename["location"], expected.display().to_string());
+        if after < rebound {
+            let binding = sse_envelope(&buffer, "session.worktree.rebound.1");
+            assert_eq!(binding["location"], new.path.display().to_string());
+            assert_eq!(binding["durable"]["seq"], rebound);
+        }
+    }
+    let api = Api::new(&h);
+    let (_, history) = api.get(&format!("/sessions/{child}/history")).await;
+    let events = history["data"].as_array().unwrap();
+    assert_eq!(events[0]["location"], old.path.display().to_string());
+    assert_eq!(
+        events.last().unwrap()["location"],
+        new.path.display().to_string()
+    );
+}
+
+#[tokio::test]
+async fn location_streams_receive_rebinding_then_route_followups_only_to_new_location() {
+    let h = Harness::new(Setup::default());
+    let (parent, child, old, new) = stream_binding_fixture(&h).await;
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let old_response = client
+        .get(format!("{base}/event"))
+        .header("x-cyber-directory", old.path.display().to_string())
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let new_response = client
+        .get(format!("{base}/event"))
+        .header("x-cyber-directory", new.path.display().to_string())
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let session_response = client
+        .get(format!("{base}/sessions/{child}/events"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut old_stream = old_response.bytes_stream();
+    let mut new_stream = new_response.bytes_stream();
+    let mut session_stream = session_response.bytes_stream();
+    read_sse_until(&mut old_stream, "server.connected").await;
+    read_sse_until(&mut new_stream, "server.connected").await;
+    h.runtime
+        .rename(&child, "prime old directory")
+        .await
+        .unwrap();
+    read_sse_until(&mut old_stream, "prime old directory").await;
+    read_sse_until(&mut session_stream, "prime old directory").await;
+    let owner = h.runtime.claim_child_execution(&parent, &child).unwrap();
+    h.runtime
+        .rebind_child_worktree(&owner, &old, &new)
+        .await
+        .unwrap();
+    let old_notice = read_sse_until(&mut old_stream, "session.worktree.rebound.1").await;
+    let new_notice = read_sse_until(&mut new_stream, "session.worktree.rebound.1").await;
+    assert_eq!(
+        sse_envelope(&old_notice, "session.worktree.rebound.1"),
+        sse_envelope(&new_notice, "session.worktree.rebound.1")
+    );
+    assert_eq!(
+        sse_envelope(&old_notice, "session.worktree.rebound.1")["location"],
+        new.path.display().to_string()
+    );
+    let session_notice = read_sse_until(&mut session_stream, "session.worktree.rebound.1").await;
+    assert_eq!(
+        sse_envelope(&session_notice, "session.worktree.rebound.1")["location"],
+        new.path.display().to_string()
+    );
+    use cyber_core::worktrees::{SetupEvent, SetupSink, SetupStream};
+    let sink = h
+        .runtime
+        .worktree_setup_sink(&child, "call_stream_setup", &new)
+        .await
+        .unwrap();
+    sink.emit(SetupEvent::Started {
+        index: 0,
+        command: "trusted setup",
+    })
+    .unwrap();
+    sink.emit(SetupEvent::Output {
+        stream: SetupStream::Stdout,
+        bytes: b"setup progress",
+    })
+    .unwrap();
+    let new_output = read_sse_until(&mut new_stream, "\"phase\":\"output\"").await;
+    let session_output = read_sse_until(&mut session_stream, "\"phase\":\"output\"").await;
+    assert_eq!(
+        sse_envelope(&new_output, "session.worktree.setup")["location"],
+        new.path.display().to_string()
+    );
+    assert_eq!(
+        sse_envelope(&session_output, "session.worktree.setup")["location"],
+        new.path.display().to_string()
+    );
+    assert!(
+        !session_output.lines().any(|line| line.starts_with("id:")),
+        "Setup output must preserve the durable cursor: {session_output}"
+    );
+    sink.emit(SetupEvent::Finished {
+        index: 0,
+        code: Some(0),
+    })
+    .unwrap();
+    h.runtime
+        .complete_child_worktree_setup(&child, &new)
+        .await
+        .unwrap();
+    h.runtime
+        .rename(&child, "new location followup")
+        .await
+        .unwrap();
+    let buffer = read_sse_until(&mut new_stream, "new location followup").await;
+    assert_eq!(
+        sse_envelope(&buffer, "session.renamed.1")["location"],
+        new.path.display().to_string()
+    );
+    let buffer = read_sse_until(&mut session_stream, "new location followup").await;
+    assert_eq!(
+        sse_envelope(&buffer, "session.worktree.setup_ready.1")["location"],
+        new.path.display().to_string()
+    );
+    // An old-scope sentinel bounds observation without relying on a negative timeout.
+    let sentinel = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: old.path.display().to_string(),
+            model: "test/main".into(),
+            title: Some("old scope sentinel".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    h.runtime
+        .rename(&sentinel.id, "old scope barrier")
+        .await
+        .unwrap();
+    let buffer = read_sse_until(&mut old_stream, "old scope barrier").await;
+    assert!(
+        !buffer.contains("new location followup")
+            && !buffer.contains("session.worktree.setup_ready.1"),
+        "{buffer}"
+    );
+}
+
+#[tokio::test]
+async fn deleting_an_uncached_session_keeps_unrelated_instance_listeners_open() {
+    let h = Harness::new(Setup::default());
+    let deleted = h.session().await;
+    let other = h.session().await;
+    let base = tcp(&h, "pw").await;
+    let response = reqwest::Client::new()
+        .get(format!("{base}/event?scope=all"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = response.bytes_stream();
+    read_sse_until(&mut stream, "server.connected").await;
+    h.runtime.delete(&deleted).await.unwrap();
+    let notice = read_sse_until(&mut stream, "session.deleted").await;
+    assert_eq!(
+        sse_envelope(&notice, "session.deleted")["data"]["session_id"],
+        deleted
+    );
+    assert!(sse_envelope(&notice, "session.deleted")["location"].is_null());
+    h.runtime
+        .rename(&other, "unrelated stream remains open")
+        .await
+        .unwrap();
+    read_sse_until(&mut stream, "unrelated stream remains open").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cached_location_preserves_canonical_routing_after_a_directory_alias_disappears() {
+    let h = Harness::new(Setup::default());
+    let alias = h.dir.path().join("directory-alias");
+    std::os::unix::fs::symlink(&h.repo, &alias).unwrap();
+    let id = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: alias.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let base = tcp(&h, "pw").await;
+    let response = reqwest::Client::new()
+        .get(format!("{base}/event"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = response.bytes_stream();
+    read_sse_until(&mut stream, "server.connected").await;
+    h.runtime.rename(&id, "alias cache primed").await.unwrap();
+    read_sse_until(&mut stream, "alias cache primed").await;
+    std::fs::remove_file(&alias).unwrap();
+    h.runtime
+        .rename(&id, "alias disappearance followup")
+        .await
+        .unwrap();
+    let sentinel = h.session().await;
+    h.runtime
+        .rename(&sentinel, "alias scope barrier")
+        .await
+        .unwrap();
+    let buffer = read_sse_until(&mut stream, "alias scope barrier").await;
+    assert!(buffer.contains("alias disappearance followup"), "{buffer}");
+    assert_eq!(
+        sse_envelope(&buffer, "session.renamed.1")["location"],
+        h.repo.canonicalize().unwrap().display().to_string()
+    );
+}

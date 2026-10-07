@@ -323,3 +323,32 @@
 - **WHEN** the reviewed recipe or revision changes, the child is not owned by the parent, a command outcome is unknown, or native ownership/activity is uncertain
 - **THEN** recovery refuses before command dispatch or readiness acknowledgement
 - **AND** user files, earlier results and setup-pending state remain intact
+
+### Requirement: Worktree Location stream continuity
+(P1) When a durable worktree rebound changes a Session's Location, its Session stream SHALL continue using the same aggregate cursor and SHALL label replay/live envelopes with the Location at each event's sequence. Instance streams SHALL deliver the rebound to subscribers at both previous and new Locations, then route subsequent events to the new Location. Stream gaps and reconnects SHALL recover Location from durable history. TUI actions SHALL use the current Session Location, including immediately after an observed rebound.
+
+#### Scenario: Attached client observes relocation
+- **WHEN** an isolated child rebounds to a recreated checkout at a different path
+- **THEN** old and new Location subscribers each receive the same rebound identity and its new Location
+- **AND** subsequent events use the new Location and do not leak to the old Location stream
+- **AND** the Session stream keeps its aggregate sequence without duplicate durable events
+
+#### Scenario: Reconnect across a Location change
+- **WHEN** a client reconnects before or after a rebound event using its last durable cursor
+- **THEN** replay labels earlier events with their original Location and later events with the rebound Location
+- **AND** historical payloads remain unchanged
+
+#### Scenario: TUI acts after rebinding
+- **WHEN** the active Session receives a valid worktree rebound
+- **THEN** its directory updates immediately and a server refresh is requested
+- **AND** subsequent located requests and local attachment paths use the new directory
+
+#### Scenario: Uncached deletion preserves other subscriptions
+- **WHEN** an all-scope instance stream first observes a Session through its deletion notification
+- **THEN** it delivers deletion with an unknown Location omitted
+- **AND** unrelated Session events continue on that connection
+
+#### Scenario: Cached canonical Location remains stable
+- **WHEN** a Session's source directory alias disappears after its instance stream has resolved that Location
+- **THEN** cached routing remains at the resolved canonical Location until a durable binding change
+- **AND** ordinary notifications do not recanonicalize the path on every event

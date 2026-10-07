@@ -97,6 +97,8 @@ fn err(e: cyber_client::ClientError) -> String {
 }
 
 pub async fn perform(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    let scoped = client.at(&session.directory);
+    let client = &scoped;
     match action {
         Action::Refresh => snapshot(client, &session.id).await,
         Action::SwitchModel(_)

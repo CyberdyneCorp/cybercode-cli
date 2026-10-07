@@ -6,6 +6,7 @@
 mod catalog;
 mod envelope;
 mod error;
+mod event_location;
 mod events;
 mod guard;
 mod idempotency;

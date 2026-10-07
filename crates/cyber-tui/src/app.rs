@@ -786,10 +786,37 @@ impl App {
         Vec::new()
     }
 
+    pub fn on_server_event(&mut self, event: &cyber_client::Event) -> Vec<Action> {
+        if event.kind == "session.worktree.rebound.1" {
+            if event.seq.is_none() {
+                return vec![Action::Refresh];
+            }
+            if event.seq.is_some_and(|seq| seq <= self.session.seq) {
+                return Vec::new();
+            }
+            let actions = self.on_event(&event.kind, &event.data);
+            if let Some(seq) = event.seq
+                && event.data["to"]["path"]
+                    .as_str()
+                    .is_some_and(|path| !path.is_empty())
+            {
+                self.session.seq = seq;
+            }
+            return actions;
+        }
+        self.on_event(&event.kind, &event.data)
+    }
+
     /// Apply a server event; returns actions such as a refresh.
     pub fn on_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
         match kind {
             "server.connected" => vec![Action::Refresh],
+            "session.worktree.rebound.1" => {
+                if let Some(path) = data["to"]["path"].as_str().filter(|path| !path.is_empty()) {
+                    self.session.directory = path.into();
+                }
+                vec![Action::Refresh]
+            }
             "session.text.delta" => {
                 let id = data["message_id"].as_str().unwrap_or_default().to_string();
                 self.streaming

@@ -188,7 +188,7 @@ async fn event_loop(
         let actions = tokio::select! {
             Some(Ok(ev)) = keys.next() => terminal_event(app, ev),
             Some(ev) = server.next() => {
-                if event_is_visible(&app.session.id, &ev) { app.on_event(&ev.kind, &ev.data) } else { Vec::new() }
+                if event_is_visible(&app.session.id, &ev) { app.on_server_event(&ev) } else { Vec::new() }
             }
             Some(msg) = rx.recv() => apply(app, msg, &mut refresh),
             _ = tick.tick() => Vec::new(),
@@ -533,5 +533,35 @@ mod mode_tests {
             assert_eq!(app.session.id, "current");
             assert_eq!(app.session.mode, "auto");
         }
+    }
+    #[test]
+    fn a_pre_rebound_snapshot_cannot_restore_the_previous_directory() {
+        let mut app = app();
+        app.session.directory = "/repo/old".into();
+        app.session.seq = 4;
+        let event = cyber_client::Event {
+            kind: "session.worktree.rebound.1".into(),
+            data: json!({"to":{"path":"/repo/new"}}),
+            seq: Some(8),
+            session_id: Some(app.session.id.clone()),
+        };
+        app.on_server_event(&event);
+        let snapshot = Msg::Snapshot {
+            session: Session {
+                id: app.session.id.clone(),
+                seq: 7,
+                directory: "/repo/old".into(),
+                ..Session::default()
+            },
+            items: Vec::new(),
+            queued: Vec::new(),
+            requests: Vec::new(),
+        };
+        assert_eq!(
+            apply(&mut app, Ok(snapshot), &mut Refresh::default()),
+            vec![Action::Refresh]
+        );
+        assert_eq!(app.session.directory, "/repo/new");
+        assert_eq!(app.session.seq, 8);
     }
 }

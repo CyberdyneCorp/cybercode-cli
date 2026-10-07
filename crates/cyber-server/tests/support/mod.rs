@@ -204,7 +204,28 @@ impl Tools {
     }
 }
 
+// Identity-only leases exercise stream binding; native ownership is tested separately.
+struct TestLocationGuard;
+impl LocationGuard for TestLocationGuard {
+    fn settle(self: Box<Self>) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 impl ToolHost for Tools {
+    fn claim_location<'a>(
+        &'a self,
+        info: &'a SessionInfo,
+        _: bool,
+        _: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        Box::pin(async move {
+            Ok(match &info.worktree_id {
+                Some(id) => LocationLease::managed(id.clone(), Box::new(TestLocationGuard)),
+                None => LocationLease::unmanaged(),
+            })
+        })
+    }
     fn agent_inference(&self, _turn: &TurnContext) -> Result<AgentInference, String> {
         Ok(self.inference.lock().unwrap().clone())
     }
