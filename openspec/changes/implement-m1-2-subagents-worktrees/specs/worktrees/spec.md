@@ -14,6 +14,11 @@
 - **AND** status inspection verifies durable ownership under the repository lock and does not refresh the Git index
 - **AND** listing is informational and does not grant removal admission
 
+#### Scenario: Recreated checkout does not adopt historical Session ownership
+- **WHEN** persisted Sessions share a listed checkout path but have an older creation ID or no managed creation binding
+- **THEN** they are excluded from that checkout's owning Session summary without altering their stored history
+- **AND** Sessions bound to the current creation remain included across pagination, including children and archived Sessions
+
 #### Scenario: Listing preserves recovery evidence
 - **WHEN** a repository contains ready, pending or malformed ownership records
 - **THEN** listing returns ready records only after verifying their repository, branch and registration

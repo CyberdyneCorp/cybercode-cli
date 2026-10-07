@@ -519,6 +519,22 @@ impl Runtime {
             .clone())
     }
 
+    pub(crate) async fn worktree_binding(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        Ok(self
+            .inner
+            .handle(session_id)
+            .await?
+            .state
+            .lock()
+            .await
+            .info
+            .worktree_id
+            .clone())
+    }
+
     /// Compact now when idle, or at the next Safe Boundary when running.
     pub async fn compact(
         &self,

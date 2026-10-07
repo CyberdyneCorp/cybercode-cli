@@ -74,6 +74,8 @@ The core repository listing holds the common-directory lifecycle lock and enumer
 
 ### Public management listing
 
+Management listing matches both the canonical Location path and the Session's current managed creation binding before reporting ownership. It reads the binding from runtime state without cloning conversation history; replay preserves the durable identity. Older incarnations and historical unbound Sessions are excluded without editing their stored events. All pages, archived rows and children are still inspected. This is an informational ownership summary and cannot replace persistent activity admission for removal.
+
 `GET /api/v1/worktrees` and `cyber worktree list` use a lifecycle-owned sandboxed Git port with no repository write grant. Ready status inspection reacquires the repository lock, verifies the persisted creation identity and Git registration, disables optional Git locks for porcelain status, and counts divergence against the original commit base. These are informational snapshots, not safe removal admission. HTTP enrichment paginates all stored Sessions, including children and archived rows, groups their canonical Locations and attaches matching rows. Pending and invalid records are represented separately without fabricated Git counts. Listing creates no Session. The SDK exposes `v1.worktree.list`; CLI JSON emits its data array. Removal, prune, active Session admission and exit cleanup remain open.
 
 ### Transactional removal foundation
@@ -97,6 +99,8 @@ Session-backed setup now acquires the same checkout lease before taking its repo
 Idle client attachment, process-death recovery and unknown-activity resolution still need integration. Public removal and automatic cleanup remain disabled until the removal filesystem adapter and all relevant Location users are fenced.
 
 ### Native long-target status regression
+
+The alias attempt at `cbbe5d8` remains unaccepted: native path resolution advances, but Git status fails with `this operation must be run in a work tree`. Existing short-path and other repository cases pass. A complete initialization strategy must preserve both Git working-directory semantics and the original long-target assertions; neither alias availability alone nor cross-compilation closes this gate.
 
 The clean/dirty long-target assertion fails in native CI on committed main `3c93bc7`: status reports a clean target dirty. Existing long-target creation/inclusion/reuse assertions remain unchanged. A portable Git probe reproduces explicit `--git-dir` without a working-tree option treating the metadata launch directory as the work tree. The Windows long-target argument adapter now adds `--work-tree` only for working-tree reads (`status` and untracked `ls-files`); index-only checkout keeps its explicit prefix and avoids the earlier long-directory-change boundary. Metadata pointers and sandbox scopes remain verified, process launch stays short, and the native assertion remains mandatory. Native acceptance of the correction is pending.
 

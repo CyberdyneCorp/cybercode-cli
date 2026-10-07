@@ -793,6 +793,7 @@ async fn verify_worktree_listing(
     };
     let source = std::path::Path::new(created["data"]["worktree"]["path"].as_str().unwrap());
     let target_header = source.display().to_string();
+    add_stale_listing_sessions(application, created).await;
     let session_count = if dirty {
         1
     } else {
@@ -825,6 +826,32 @@ async fn verify_worktree_listing(
         let entries = listed["data"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_listing_entry(&entries[0], created, dirty, session_count);
+    }
+}
+
+#[cfg(unix)]
+async fn add_stale_listing_sessions(application: &App, created: &serde_json::Value) {
+    let current = application
+        .runtime
+        .state(created["data"]["session"]["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    for binding in [None, Some("wt_old_creation".to_owned())] {
+        let mut info = current.info.clone();
+        info.id = cyber_core::ids::new_id("ses");
+        info.worktree_id = binding;
+        let id = info.id.clone();
+        application
+            .store
+            .append(
+                &id,
+                cyber_store::Expected::Seq(-1),
+                vec![cyber_store::NewEvent::new(
+                    "session.created.1",
+                    serde_json::json!({"info": info}),
+                )],
+            )
+            .unwrap();
     }
 }
 

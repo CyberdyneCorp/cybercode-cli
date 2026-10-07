@@ -94,21 +94,26 @@ async fn list(
 ) -> Result<Json<Located<Vec<WorktreeEntry>>>, ApiError> {
     let directory = location(&parts, &state.options.default_directory)?;
     let mut entries = state.services.list_worktrees(directory.clone()).await?;
-    attach_sessions(&state, &mut entries)?;
+    attach_sessions(&state, &mut entries).await?;
     Ok(Json(Located {
         location: LocationInfo::of(&directory),
         data: entries,
     }))
 }
 
-fn attach_sessions(state: &AppState, entries: &mut [WorktreeEntry]) -> Result<(), ApiError> {
+async fn attach_sessions(state: &AppState, entries: &mut [WorktreeEntry]) -> Result<(), ApiError> {
     let mut by_directory = session_locations(state)?;
     for entry in entries {
         if let WorktreeEntry::Ready {
             worktree, sessions, ..
         } = entry
         {
-            *sessions = by_directory.remove(&worktree.path).unwrap_or_default();
+            sessions.clear();
+            for row in by_directory.remove(&worktree.path).unwrap_or_default() {
+                if state.runtime.worktree_binding(&row.id).await?.as_deref() == Some(&worktree.id) {
+                    sessions.push(row);
+                }
+            }
         }
     }
     Ok(())
