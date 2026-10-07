@@ -895,3 +895,74 @@ async fn worktree_request_validation_precedes_host_dispatch() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["_tag"], "ServiceUnavailableError");
 }
+
+#[tokio::test]
+async fn parent_endpoint_replies_to_child_requests_and_refuses_unrelated_sessions() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "shell", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let api = Api::new(&h);
+    let parent = h.session().await;
+    let unrelated = h.session().await;
+    let child = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    api.post(&format!("/sessions/{child}/prompt"), prompt("test"))
+        .await;
+    let pending = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some(request) = h.runtime.pending_requests(Some(&child)).first().cloned() {
+                break request;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (status, list) = api
+        .get(&format!("/permissions/requests?session_id={parent}"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["data"][0]["session_id"], child);
+    let (status, _) = api
+        .post(
+            &format!("/sessions/{unrelated}/permissions/{}/reply", pending.id),
+            json!({"reply": "once"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(h.runtime.pending_requests(Some(&child)).len(), 1);
+    let (status, _) = api
+        .post(
+            &format!("/sessions/{parent}/permissions/{}/reply", pending.id),
+            json!({"reply": "once"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    h.settle(&child).await;
+    assert_eq!(
+        h.state(&child).await.calls["c1"].output.as_deref(),
+        Some("ran npm test")
+    );
+    assert!(
+        !h.store
+            .read_events(&parent, -1, 500)
+            .unwrap()
+            .events
+            .iter()
+            .any(|e| e.kind.starts_with("permission."))
+    );
+}

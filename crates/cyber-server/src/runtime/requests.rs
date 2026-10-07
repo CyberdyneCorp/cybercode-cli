@@ -97,6 +97,7 @@ enum Reply {
 
 pub(crate) struct Waiter {
     request: PendingRequest,
+    ancestors: Vec<String>,
     reply: Reply,
 }
 
@@ -187,7 +188,12 @@ impl Asker {
 
 impl Inner {
     /// Record and register a request. Returns false when nobody can answer it.
-    async fn open_request(&self, asker: &Asker, kind: PendingKind, reply: Reply) -> bool {
+    async fn open_request(
+        self: &Arc<Self>,
+        asker: &Asker,
+        kind: PendingKind,
+        reply: Reply,
+    ) -> bool {
         if !self.options.interactive {
             return false;
         }
@@ -204,6 +210,21 @@ impl Inner {
         };
         let Ok(handle) = self.handle(&asker.session_id).await else {
             return false;
+        };
+        let info = handle.state.lock().await.info.clone();
+        let runtime = super::Runtime {
+            inner: self.clone(),
+        };
+        let ancestors = match runtime.ancestors(&info).await {
+            Ok(ancestors) => ancestors.into_iter().map(|info| info.id).collect(),
+            Err(e) => {
+                self.bus.publish(super::LiveEvent::Error {
+                    session_id: asker.session_id.clone(),
+                    kind: "ancestry".into(),
+                    message: format!("could not route a child request: {e}"),
+                });
+                return false;
+            }
         };
         let kind_name = if matches!(request.kind, PendingKind::Permission(_)) {
             PERMISSION_ASKED
@@ -222,7 +243,11 @@ impl Inner {
         self.waiters
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(Waiter { request, reply });
+            .push(Waiter {
+                request,
+                ancestors,
+                reply,
+            });
         true
     }
 
@@ -231,7 +256,22 @@ impl Inner {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .filter(|w| session_id.is_none_or(|s| w.request.session_id == s))
+            .filter(|w| {
+                session_id.is_none_or(|s| {
+                    w.request.session_id == s || w.ancestors.iter().any(|id| id == s)
+                })
+            })
+            .map(|w| w.request.clone())
+            .collect()
+    }
+
+    /// Cascades apply to the request owner, independently of ancestor visibility.
+    fn owned_pending(&self, session_id: &str) -> Vec<PendingRequest> {
+        self.waiters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|w| w.request.session_id == session_id)
             .map(|w| w.request.clone())
             .collect()
     }
@@ -329,7 +369,7 @@ impl Inner {
     /// Any reject declines every other pending request of the Session.
     async fn decline_all(&self, session_id: &str) -> Result<(), RuntimeError> {
         let ids: Vec<String> = self
-            .pending(Some(session_id))
+            .owned_pending(session_id)
             .into_iter()
             .map(|r| r.id)
             .collect();
@@ -362,7 +402,7 @@ impl Inner {
         approved: &PermissionAsk,
     ) -> Result<(), RuntimeError> {
         let covered: Vec<String> = self
-            .pending(Some(session_id))
+            .owned_pending(session_id)
             .into_iter()
             .filter(|r| match &r.kind {
                 PendingKind::Permission(ask) => {

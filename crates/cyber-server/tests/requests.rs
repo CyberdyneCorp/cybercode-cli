@@ -353,3 +353,234 @@ async fn always_approval_does_not_cascade_into_confirmation_only_requests() {
         1
     );
 }
+
+async fn child_session(h: &Harness, parent: &str) -> String {
+    h.runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.into()),
+            title: Some("Review changes (@general)".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn ancestors_see_child_requests_but_unrelated_sessions_do_not() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "shell", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let parent = h.session().await;
+    let unrelated = h.session().await;
+    let child = child_session(&h, &parent).await;
+    let grandchild = child_session(&h, &child).await;
+    h.runtime.admit(&grandchild, admit("test")).await.unwrap();
+    let pending = wait_pending(&h, &grandchild, 1).await;
+    assert_eq!(h.runtime.pending_requests(Some(&parent)), pending);
+    assert_eq!(h.runtime.pending_requests(Some(&child)), pending);
+    assert!(h.runtime.pending_requests(Some(&unrelated)).is_empty());
+    assert_eq!(pending[0].session_id, grandchild);
+    h.runtime
+        .reply_permission(&pending[0].id, PermissionReply::Once)
+        .await
+        .unwrap();
+    h.settle(&grandchild).await;
+    assert!(h.runtime.pending_requests(Some(&parent)).is_empty());
+    for id in [&parent, &child] {
+        assert!(
+            !h.store
+                .read_events(id, -1, 500)
+                .unwrap()
+                .events
+                .iter()
+                .any(|e| e.kind.starts_with("permission."))
+        );
+    }
+    assert!(
+        h.store
+            .read_events(&grandchild, -1, 500)
+            .unwrap()
+            .events
+            .iter()
+            .any(|e| e.kind == "permission.replied.1")
+    );
+}
+
+#[tokio::test]
+async fn parent_rejection_does_not_decline_a_child_request() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("p1", "shell", "{}")]),
+                tools(&[("c1", "shell", "{}")]),
+                text("child done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let parent = h.session().await;
+    let child = child_session(&h, &parent).await;
+    h.runtime
+        .admit(&parent, admit("test parent"))
+        .await
+        .unwrap();
+    let parent_request = wait_pending(&h, &parent, 1).await.remove(0);
+    h.runtime.admit(&child, admit("test child")).await.unwrap();
+    let child_request = wait_pending(&h, &child, 1).await.remove(0);
+    assert_eq!(h.runtime.pending_requests(Some(&parent)).len(), 2);
+    h.runtime
+        .reply_permission(
+            &parent_request.id,
+            PermissionReply::Reject { message: None },
+        )
+        .await
+        .unwrap();
+    h.settle(&parent).await;
+    assert_eq!(
+        h.runtime.pending_requests(Some(&child)),
+        vec![child_request.clone()]
+    );
+    h.runtime
+        .reply_permission(&child_request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    h.settle(&child).await;
+    assert_eq!(h.state(&child).await.calls["c1"].status, CallStatus::Ok);
+}
+
+#[tokio::test]
+async fn parent_always_does_not_preapprove_a_child_request() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("p1", "shell", "{}")]),
+                tools(&[("c1", "shell", "{}")]),
+                text("parent done"),
+                text("child done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let parent = h.session().await;
+    let child = child_session(&h, &parent).await;
+    h.runtime
+        .admit(&parent, admit("test parent"))
+        .await
+        .unwrap();
+    let parent_request = wait_pending(&h, &parent, 1).await.remove(0);
+    h.runtime.admit(&child, admit("test child")).await.unwrap();
+    let child_request = wait_pending(&h, &child, 1).await.remove(0);
+    assert_eq!(h.runtime.pending_requests(Some(&parent)).len(), 2);
+    h.runtime
+        .reply_permission(&parent_request.id, PermissionReply::Always)
+        .await
+        .unwrap();
+    h.settle(&parent).await;
+    assert_eq!(
+        h.runtime.pending_requests(Some(&child)),
+        vec![child_request.clone()]
+    );
+    h.runtime
+        .reply_permission(&child_request.id, PermissionReply::Reject { message: None })
+        .await
+        .unwrap();
+    h.settle(&child).await;
+}
+
+#[tokio::test]
+async fn child_rejection_preserves_parent_and_sibling_requests() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("p1", "shell", "{}")]),
+                tools(&[("c1", "shell", "{}")]),
+                tools(&[("s1", "shell", "{}")]),
+                text("parent done"),
+                text("sibling done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let parent = h.session().await;
+    let child = child_session(&h, &parent).await;
+    let sibling = child_session(&h, &parent).await;
+    h.runtime
+        .admit(&parent, admit("test parent"))
+        .await
+        .unwrap();
+    let parent_request = wait_pending(&h, &parent, 1).await.remove(0);
+    h.runtime.admit(&child, admit("test child")).await.unwrap();
+    let child_request = wait_pending(&h, &child, 1).await.remove(0);
+    h.runtime
+        .admit(&sibling, admit("test sibling"))
+        .await
+        .unwrap();
+    let sibling_request = wait_pending(&h, &sibling, 1).await.remove(0);
+    h.runtime
+        .reply_permission(&child_request.id, PermissionReply::Reject { message: None })
+        .await
+        .unwrap();
+    h.settle(&child).await;
+    let remaining = h.runtime.pending_requests(Some(&parent));
+    assert_eq!(remaining.len(), 2);
+    assert!(remaining.contains(&parent_request));
+    assert!(remaining.contains(&sibling_request));
+    h.runtime
+        .reply_permission(&parent_request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    h.settle(&parent).await;
+    h.runtime
+        .reply_permission(&sibling_request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    h.settle(&sibling).await;
+    assert_eq!(h.state(&parent).await.calls["p1"].status, CallStatus::Ok);
+    assert_eq!(h.state(&sibling).await.calls["s1"].status, CallStatus::Ok);
+}
+
+#[tokio::test]
+async fn ancestors_can_list_and_answer_child_questions() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("q1", "ask", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("ask", Behavior::AskQuestion);
+    let parent = h.session().await;
+    let child = child_session(&h, &parent).await;
+    h.runtime.admit(&child, admit("choose")).await.unwrap();
+    let pending = wait_pending(&h, &child, 1).await;
+    assert_eq!(h.runtime.pending_requests(Some(&parent)), pending);
+    h.runtime
+        .answer_question(
+            &pending[0].id,
+            QuestionReply::Answers {
+                answers: vec![vec!["sqlite".into()]],
+            },
+        )
+        .await
+        .unwrap();
+    h.settle(&child).await;
+    assert_eq!(
+        h.state(&child).await.calls["q1"].output.as_deref(),
+        Some("sqlite")
+    );
+    assert!(h.runtime.pending_requests(Some(&parent)).is_empty());
+}

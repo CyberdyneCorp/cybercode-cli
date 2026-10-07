@@ -157,6 +157,12 @@
 - **AND** a plan-file allowance or an earlier ask SHALL NOT mask a later ancestor denial
 - **AND** an unknown ancestor Mode SHALL refuse dispatch
 
+#### Scenario: Ancestor request listing preserves child ownership
+- **WHEN** a child has a pending permission or question request
+- **THEN** its ancestors SHALL be able to list and reply to that request through their Session endpoints, while unrelated Sessions SHALL NOT gain reply authority
+- **AND** the request and reply SHALL remain recorded on the child, without adding permission events to ancestor histories
+- **AND** reject and always-approval cascades SHALL affect only requests owned by the replied-to request's Session
+
 ### Requirement: Subagent result summarization
 (P1) The tool result returned to the parent SHALL contain at most `agents.result_max_bytes` (default 16384) of the subagent's final text; longer text SHALL be written to a Managed Tool Output File and its path included. Intermediate tool output of the child SHALL never be copied into the parent's history.
 
@@ -205,4 +211,3 @@
 #### Scenario: Denied agent omitted
 - **WHEN** the caller's rules deny `agent` for resource `general`
 - **THEN** `general` does not appear in the `agent` tool description
-

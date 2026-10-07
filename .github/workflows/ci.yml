@@ -102,6 +102,11 @@ jobs:
       - name: Native parent Mode ceilings
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test parent_modes
+      - name: Native ancestor request visibility and scoped replies
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-server --test requests
+          cargo test --locked -p cyber-server --test http parent_endpoint_replies_to_child_requests_and_refuses_unrelated_sessions
       - name: Native historical context compatibility
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test context_compaction historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes
