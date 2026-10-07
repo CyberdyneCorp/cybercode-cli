@@ -93,6 +93,9 @@ jobs:
       - name: Native ordered permission rules
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test ordered_permissions
+      - name: Native agent permission admission
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test agent_permissions
       - name: Native historical context compatibility
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test context_compaction historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes

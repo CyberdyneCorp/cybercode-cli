@@ -289,6 +289,7 @@ impl Policy {
                     && !r.source.starts_with("project:")
                     && r.source != "default"
                     && r.source != "session"
+                    && !r.source.starts_with("agent:")
             })
             .cloned()
             .collect();

@@ -85,7 +85,14 @@ impl BuiltinHost {
         agent: &str,
     ) -> Result<cyber_core::config::AgentProfile, String> {
         let (config, _) = (self.opts.config)(directory)?;
-        let mut profiles = cyber_core::config::resolve_agents(&config)?;
+        Self::profile_from(&config, agent)
+    }
+
+    fn profile_from(
+        config: &Value,
+        agent: &str,
+    ) -> Result<cyber_core::config::AgentProfile, String> {
+        let mut profiles = cyber_core::config::resolve_agents(config)?;
         let available = profiles
             .values()
             .filter(|profile| !profile.hidden)
@@ -121,13 +128,27 @@ impl BuiltinHost {
     }
 
     fn rules(&self, location: &Path) -> Vec<permissions::Rule> {
+        let (config, sources) = (self.opts.config)(location).unwrap_or_default();
+        self.rules_for(location, true, &config, &sources)
+    }
+
+    fn rules_for(
+        &self,
+        location: &Path,
+        primary_agent: bool,
+        config: &Value,
+        sources: &BTreeMap<String, String>,
+    ) -> Vec<permissions::Rule> {
         // Skill directories are readable without prompting (`skills-commands`).
         let mut allowed = self.opts.allowed_dirs.clone();
-        allowed.extend(self.skills(location).skills.into_values().map(|s| s.base));
-        let mut rules = permissions::defaults(&allowed, true);
-        if let Ok((config, sources)) = (self.opts.config)(location) {
-            rules.extend(permissions::parse_rules(&config["permissions"], &sources));
-        }
+        allowed.extend(
+            self.skills_for(location, config)
+                .skills
+                .into_values()
+                .map(|s| s.base),
+        );
+        let mut rules = permissions::defaults(&allowed, primary_agent);
+        rules.extend(permissions::parse_rules(&config["permissions"], sources));
         rules
     }
 
@@ -198,6 +219,10 @@ impl BuiltinHost {
     /// Skills visible from a Location, honoring `skills.compat` and `skills.paths`.
     pub(crate) fn skills(&self, location: &Path) -> Discovery {
         let config = self.config_for(location);
+        self.skills_for(location, &config)
+    }
+
+    fn skills_for(&self, location: &Path, config: &Value) -> Discovery {
         let settings = &config["skills"];
         let entries = if settings.is_array() {
             settings
@@ -246,22 +271,45 @@ impl BuiltinHost {
             .unwrap_or(Value::Null)
     }
 
-    /// Config rules followed by the Session ruleset, which is evaluated last.
-    fn session_rules(&self, location: &Path, session: &Value) -> Vec<permissions::Rule> {
-        let mut rules = self.rules(location);
+    /// Agent rules follow config; the Session ruleset is evaluated last.
+    fn session_rules(
+        &self,
+        location: &Path,
+        agent: Option<&str>,
+        session: &Value,
+    ) -> Result<Vec<permissions::Rule>, String> {
+        let (config, sources) = (self.opts.config)(location)?;
+        let profile = agent
+            .map(|name| Self::profile_from(&config, name))
+            .transpose()?;
+        let primary = profile
+            .as_ref()
+            .is_none_or(|profile| profile.primary_capable());
+        let mut rules = self.rules_for(location, primary, &config, &sources);
+        if let Some(profile) = profile {
+            let mut extra = permissions::parse_rules(&profile.permissions, &BTreeMap::new());
+            for rule in &mut extra {
+                rule.source = format!("agent:{}", profile.name);
+            }
+            rules.extend(extra);
+        }
         let mut extra = permissions::parse_rules(session, &BTreeMap::new());
         for rule in &mut extra {
             rule.source = "session".into();
         }
         rules.extend(extra);
-        rules
+        Ok(rules)
     }
 
-    pub(crate) fn policy(&self, inv: &Invocation) -> Policy {
+    pub(crate) fn policy(&self, inv: &Invocation) -> Result<Policy, String> {
+        self.policy_for(inv, Some(&inv.agent))
+    }
+
+    fn policy_for(&self, inv: &Invocation, agent: Option<&str>) -> Result<Policy, String> {
         let location = PathBuf::from(&inv.directory);
         let root = cyber_core::config::project_root(&location);
-        Policy {
-            rules: self.session_rules(&location, &inv.rules),
+        Ok(Policy {
+            rules: self.session_rules(&location, agent, &inv.rules)?,
             saved: saved::rules(&self.opts.store, &root).unwrap_or_default(),
             mode: Mode::parse(&inv.mode),
             plan_file: location
@@ -269,7 +317,7 @@ impl BuiltinHost {
                 .join(format!("{}.md", inv.session_id)),
             location,
             home: self.opts.home.clone(),
-        }
+        })
     }
 
     pub(crate) fn budget(&self, location: &Path) -> Budget {
@@ -372,7 +420,11 @@ impl ToolHost for BuiltinHost {
     }
 
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
-        let rules = self.session_rules(Path::new(&turn.directory), &turn.rules);
+        let Ok(rules) =
+            self.session_rules(Path::new(&turn.directory), Some(&turn.agent), &turn.rules)
+        else {
+            return Vec::new();
+        };
         let mode = Mode::parse(&turn.mode);
         let tools = self
             .tools
@@ -438,9 +490,13 @@ impl ToolHost for BuiltinHost {
             {
                 return ToolOutcome::Failed(message);
             }
+            let policy = match self.policy(&inv) {
+                Ok(policy) => policy,
+                Err(error) => return ToolOutcome::Failed(error),
+            };
             let ctx = Ctx {
                 host: self,
-                policy: self.policy(&inv),
+                policy,
                 location: PathBuf::from(&inv.directory),
                 inv: &inv,
                 cancel,
@@ -491,7 +547,7 @@ impl ToolHost for BuiltinHost {
         Box::pin(async move {
             let ctx = Ctx {
                 host: self,
-                policy: self.policy(&inv),
+                policy: self.policy_for(&inv, None)?,
                 location: PathBuf::from(&inv.directory),
                 inv: &inv,
                 cancel,

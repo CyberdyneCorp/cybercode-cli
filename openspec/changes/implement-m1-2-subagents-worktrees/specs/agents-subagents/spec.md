@@ -55,6 +55,12 @@
 - **THEN** configuration loading SHALL fail with an error naming the agent and field
 - **AND** arbitrary provider body members and valid permission shorthand SHALL remain accepted
 
+#### Scenario: Agent rules reach built-in permission admission
+- **WHEN** a selected profile provides permission rules
+- **THEN** built-in tool admission SHALL evaluate them after config and before Session rules
+- **AND** a final effective deny SHALL refuse dispatch even in bypass Mode without side effects
+- **AND** user/global deny ceilings SHALL remain final despite profile or Session allows
+
 ### Requirement: Agent tool spawns subagents
 (P1) The system SHALL provide an `agent` tool with inputs `prompt` (required), `agent` (default `general`), `description` (3–8 words), `output_schema` (JSON Schema), `model`, `isolation` (`none`, `worktree` or, from P3, `remote`), `runner` (with `isolation: remote`: a pool, `rnr_` ID or peer name), `background` (boolean), `fork` (boolean) and `resume` (subagent name or `ses_` ID). Each spawn SHALL create a child Session whose `parent_id` is the caller, titled `<description> (@<agent>)`, and SHALL request the `agent` permission with the target agent name as resource.
 
