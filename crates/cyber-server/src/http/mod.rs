@@ -81,6 +81,35 @@ pub struct AgentInfo {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn inspect_child_setup(
+        &self,
+        parent: String,
+        child: String,
+    ) -> BoxFuture<'_, Result<crate::worktrees::ChildSetupInspection, ApiError>> {
+        let _ = (parent, child);
+        Box::pin(async {
+            Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "Child setup recovery is unavailable in this host",
+            ))
+        })
+    }
+    fn recover_child_setup(
+        &self,
+        parent: String,
+        child: String,
+        review: crate::worktrees::SetupRecoveryRequest,
+    ) -> BoxFuture<'_, Result<worktrees::StartedWorktree, ApiError>> {
+        let _ = (parent, child, review);
+        Box::pin(async {
+            Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "Child setup recovery is unavailable in this host",
+            ))
+        })
+    }
     fn list_worktrees(
         &self,
         directory: PathBuf,

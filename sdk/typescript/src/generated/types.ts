@@ -40,6 +40,13 @@ export type CallState = {
 
 export type CallStatus = "ok" | "error" | "called" | "dispatched" | "interrupted" | "outcome_unknown";
 
+export type ChildSetupInspection = {
+  session_id: string;
+  worktree_id: string;
+  setup_pending: boolean;
+  journal: SetupSnapshot;
+};
+
 export type CommandBody = {
   /** A skill or custom command name, without the slash. */
   name: string;
@@ -55,6 +62,23 @@ export type CommandInfo = {
   /** `builtin`, `skill` or `command`. */
   source: string;
   argument_hint?: string | null;
+};
+
+export type CommandResult = {
+  code?: number | null;
+  status: "exited";
+} | {
+  message: string;
+  status: "failed";
+};
+
+export type CommandStatus = {
+  status: "not_started";
+} | {
+  status: "pending";
+} | {
+  result: CommandResult;
+  status: "finished";
 };
 
 export type CompactBody = {
@@ -127,6 +151,14 @@ export type Data_Array_of_InboxRow = {
 
 export type Data_Array_of_PendingRequest = {
   data: PendingRequest[];
+};
+
+export type Data_ChildSetupInspection = {
+  data: ChildSetupInspection;
+};
+
+export type Data_CreatedWorktree = {
+  data: CreatedWorktree;
 };
 
 export type Data_Job = {
@@ -531,6 +563,20 @@ export type SessionRow = {
   created_at: number;
   updated_at: number;
   cost: number;
+};
+
+export type SetupRecoveryRequest = {
+  revision: number;
+  digest: string;
+  /** Omit to continue only undispatched commands or acknowledge already completed setup. */
+  retry_index?: number | null;
+  reason: string;
+};
+
+export type SetupSnapshot = {
+  revision: number;
+  digest: string;
+  commands: CommandStatus[];
 };
 
 export type SetupStatus = {

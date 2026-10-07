@@ -279,3 +279,53 @@ impl Runtime {
         Ok(())
     }
 }
+
+impl Runtime {
+    pub async fn validate_child_setup_recovery(
+        &self,
+        owner: &ChildExecution,
+        managed: &cyber_core::worktrees::Managed,
+    ) -> Result<(), RuntimeError> {
+        if !std::sync::Weak::ptr_eq(&owner.runtime.inner, &self.downgrade().inner) {
+            return Err(RuntimeError::Invalid(
+                "Child owner belongs to another runtime".into(),
+            ));
+        }
+        let handle = self.inner.handle(&owner.id).await?;
+        if handle
+            .location_uncertain
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(RuntimeError::Invalid(
+                "Location outcome unknown; recovery is required".into(),
+            ));
+        }
+        let state = handle.state.lock().await.clone();
+        if state.info.parent_id.as_deref() != Some(&owner.parent)
+            || state.child_worktree.as_ref() != Some(managed)
+            || state.info.worktree_id.as_deref() != Some(&managed.id)
+            || !state.child_worktree_setup_pending()
+        {
+            return Err(RuntimeError::Invalid(
+                "Recovery requires the owned pending child binding".into(),
+            ));
+        }
+        if self.is_running(&owner.id)
+            || self
+                .jobs(Some(&owner.parent))?
+                .iter()
+                .any(|job| job.child_id == owner.id && job.status == super::JobStatus::Running)
+            || state.calls.values().any(|call| {
+                matches!(
+                    call.status,
+                    super::CallStatus::Dispatched | super::CallStatus::OutcomeUnknown
+                )
+            })
+        {
+            return Err(RuntimeError::Invalid(
+                "Subagent busy or execution outcome unknown".into(),
+            ));
+        }
+        Ok(())
+    }
+}

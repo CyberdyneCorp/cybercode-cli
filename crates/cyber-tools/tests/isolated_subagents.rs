@@ -1479,3 +1479,511 @@ async fn trusted_source_setup_initializes_a_plan_child_without_widening_its_mode
     assert!(!managed.path.join("forbidden.txt").exists());
     assert!(!flow.f.repo.join("setup.txt").exists());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn explicit_setup_retry_survives_restart_preserves_success_and_does_not_start_inference() {
+    use cyber_server::worktrees::SetupRecoveryRequest;
+    let flow = flow(vec![], false);
+    let setup = json!([
+        "printf once >> prefix.txt",
+        "printf attempt >> attempts.txt; test -f allow-retry",
+        "printf later > later.txt"
+    ]);
+    flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":setup,"cleanup":"keep"}}));
+    let parent = flow.session("bypass").await;
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"retry-setup","isolation":"worktree"})
+        )
+        .await
+        .is_err()
+    );
+    let child = flow
+        .runtime
+        .resolve_subagent(&parent, "retry-setup")
+        .await
+        .unwrap();
+    let original = flow.runtime.state(&child.id).await.unwrap();
+    assert!(flow.main.requests().is_empty());
+    flow.runtime.shutdown().await;
+    let mut fixture = flow.f;
+    fixture.renew_host(Some("full-access".into()));
+    let restored = Flow::with(
+        fixture,
+        vec![text("after recovery")],
+        false,
+        Arc::new(NoSnapshots),
+    );
+    let snapshot = restored
+        .f
+        .host
+        .inspect_child_worktree_setup(&parent, &child.id, CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(snapshot.setup_pending);
+    let continued = restored
+        .f
+        .host
+        .recover_child_worktree_setup(
+            &parent,
+            &child.id,
+            SetupRecoveryRequest {
+                revision: snapshot.journal.revision,
+                digest: snapshot.journal.digest.clone(),
+                retry_index: None,
+                reason: "Inspect acknowledged results without authorizing retry".into(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        continued.setup,
+        Ok(cyber_core::worktrees::SetupOutcome::Failed {
+            index: 1,
+            code: Some(1)
+        })
+    );
+    assert!(
+        restored
+            .runtime
+            .state(&child.id)
+            .await
+            .unwrap()
+            .child_worktree_setup_pending()
+    );
+    assert_eq!(
+        restored
+            .f
+            .host
+            .inspect_child_worktree_setup(&parent, &child.id, CancellationToken::new())
+            .await
+            .unwrap()
+            .journal,
+        snapshot.journal
+    );
+    std::fs::write(
+        std::path::Path::new(&child.directory).join("allow-retry"),
+        "approved",
+    )
+    .unwrap();
+    let review = SetupRecoveryRequest {
+        revision: snapshot.journal.revision,
+        digest: snapshot.journal.digest,
+        retry_index: Some(1),
+        reason: "Prerequisite restored; retry acknowledged failed exit".into(),
+    };
+    let result = restored
+        .f
+        .host
+        .recover_child_worktree_setup(
+            &parent,
+            "retry-setup",
+            review.clone(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.setup,
+        Ok(cyber_core::worktrees::SetupOutcome::Completed)
+    );
+    assert!(restored.main.requests().is_empty());
+    let recovered = restored.runtime.state(&child.id).await.unwrap();
+    assert!(!recovered.child_worktree_setup_pending());
+    assert_eq!(recovered.child_worktree(), original.child_worktree());
+    assert_eq!(recovered.entries, original.entries);
+    for (name, content) in [
+        ("prefix.txt", "once"),
+        ("attempts.txt", "attemptattempt"),
+        ("later.txt", "later"),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(std::path::Path::new(&child.directory).join(name)).unwrap(),
+            content
+        );
+        assert!(!restored.f.repo.join(name).exists());
+    }
+    assert!(
+        restored
+            .f
+            .host
+            .recover_child_worktree_setup(&parent, &child.id, review, CancellationToken::new())
+            .await
+            .is_err()
+    );
+    let resumed = invoke(
+        &restored,
+        &parent,
+        json!({"prompt":"continue","resume":"retry-setup"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumed["id"], child.id);
+    assert_eq!(resumed["text"], "after recovery");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn setup_recovery_refuses_foreign_stale_denied_replaced_and_unknown_attempts() {
+    use cyber_server::worktrees::{SetupJournal, SetupRecoveryRequest};
+    let flow = flow(vec![], false);
+    let config = json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["printf once >> attempts.txt; exit 7"]}});
+    flow.f.set_config(config.clone());
+    let parent = flow.session("bypass").await;
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"refuse-recovery","isolation":"worktree"})
+        )
+        .await
+        .is_err()
+    );
+    let child = flow
+        .runtime
+        .resolve_subagent(&parent, "refuse-recovery")
+        .await
+        .unwrap();
+    let snapshot = flow
+        .f
+        .host
+        .inspect_child_worktree_setup(&parent, &child.id, CancellationToken::new())
+        .await
+        .unwrap();
+    let review = SetupRecoveryRequest {
+        revision: snapshot.journal.revision,
+        digest: snapshot.journal.digest,
+        retry_index: Some(0),
+        reason: "reviewed".into(),
+    };
+    let foreign = flow.session("bypass").await;
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &foreign,
+                &child.id,
+                review.clone(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    let owner = flow
+        .runtime
+        .claim_child_execution(&parent, &child.id)
+        .unwrap();
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &parent,
+                &child.id,
+                review.clone(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    drop(owner);
+    let mut stale = review.clone();
+    stale.revision -= 1;
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(&parent, &child.id, stale, CancellationToken::new())
+            .await
+            .is_err()
+    );
+    let mut changed = config.clone();
+    changed["worktrees"]["setup"] = json!([]);
+    flow.f.set_config(changed);
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &parent,
+                &child.id,
+                review.clone(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    let mut denied = config.clone();
+    denied["permissions"]["worktree"] = json!("deny");
+    flow.f.set_config(denied);
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &parent,
+                &child.id,
+                review.clone(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    let mut child_denied = config.clone();
+    child_denied["agents"] = json!({"general":{"permissions":{"worktree":"deny"}}});
+    flow.f.set_config(child_denied);
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &parent,
+                &child.id,
+                review.clone(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    flow.f.set_config(config);
+    let state = flow.runtime.state(&child.id).await.unwrap();
+    let managed = state.child_worktree().unwrap();
+    let record = managed
+        .common_dir
+        .join("cyber-worktrees")
+        .join(format!("{}.json", managed.name));
+    let original_record = std::fs::read(&record).unwrap();
+    let mut replaced = managed.clone();
+    replaced.id = "wt_replaced".into();
+    std::fs::write(&record, serde_json::to_vec(&replaced).unwrap()).unwrap();
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &parent,
+                &child.id,
+                review.clone(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(&record).unwrap(),
+        serde_json::to_vec(&replaced).unwrap()
+    );
+    std::fs::write(&record, original_record).unwrap();
+    let journal = SetupJournal::new(
+        Arc::clone(&flow.f.store),
+        managed,
+        &["printf once >> attempts.txt; exit 7".into()],
+        &child.id,
+    )
+    .unwrap();
+    assert_eq!(journal.snapshot().unwrap().revision, review.revision);
+    // An authorized retry whose dispatch acknowledgement is lost remains unknown.
+    journal
+        .retry_failed(review.revision, &review.digest, 0, "Explicit retry")
+        .unwrap();
+    journal.start(0).unwrap();
+    let unknown = journal.snapshot().unwrap();
+    let unknown_review = SetupRecoveryRequest {
+        revision: unknown.revision,
+        digest: unknown.digest,
+        retry_index: Some(0),
+        reason: "must refuse unknown".into(),
+    };
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &parent,
+                &child.id,
+                unknown_review.clone(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    let mut continuation = unknown_review;
+    continuation.retry_index = None;
+    assert!(
+        flow.f
+            .host
+            .recover_child_worktree_setup(
+                &parent,
+                &child.id,
+                continuation,
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        flow.runtime
+            .state(&child.id)
+            .await
+            .unwrap()
+            .child_worktree_setup_pending()
+    );
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("attempts.txt")).unwrap(),
+        "once"
+    );
+    assert!(flow.main.requests().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn read_only_sandbox_refuses_setup_retry_without_changing_its_journal() {
+    use cyber_server::worktrees::SetupRecoveryRequest;
+    let flow = flow(vec![], false);
+    flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["printf once > attempts.txt; exit 7"]}}));
+    let parent = flow.session("bypass").await;
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"readonly-recovery","isolation":"worktree"})
+        )
+        .await
+        .is_err()
+    );
+    let child = flow
+        .runtime
+        .resolve_subagent(&parent, "readonly-recovery")
+        .await
+        .unwrap();
+    let original = flow
+        .f
+        .host
+        .inspect_child_worktree_setup(&parent, &child.id, CancellationToken::new())
+        .await
+        .unwrap();
+    flow.runtime.shutdown().await;
+    let mut fixture = flow.f;
+    fixture.renew_host(Some("read-only".into()));
+    let restored = Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let result = restored
+        .f
+        .host
+        .recover_child_worktree_setup(
+            &parent,
+            &child.id,
+            SetupRecoveryRequest {
+                revision: original.journal.revision,
+                digest: original.journal.digest.clone(),
+                retry_index: Some(0),
+                reason: "Explicit retry cannot widen sandbox".into(),
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(result.err().unwrap().to_string().contains("Read-only"));
+    assert_eq!(
+        restored
+            .f
+            .host
+            .inspect_child_worktree_setup(&parent, &child.id, CancellationToken::new())
+            .await
+            .unwrap()
+            .journal,
+        original.journal
+    );
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&child.directory).join("attempts.txt"))
+            .unwrap(),
+        "once"
+    );
+    assert!(
+        restored
+            .runtime
+            .state(&child.id)
+            .await
+            .unwrap()
+            .child_worktree_setup_pending()
+    );
+    assert!(restored.main.requests().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn completed_setup_journal_recovers_a_lost_readiness_acknowledgement_without_redispatch() {
+    use cyber_server::worktrees::{CommandResult, SetupJournal, SetupRecoveryRequest};
+    let flow = flow(vec![], false);
+    let command = "printf once > attempts.txt; exit 7";
+    flow.f.set_config(
+        json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":[command]}}),
+    );
+    let parent = flow.session("bypass").await;
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"lost-ready","isolation":"worktree"})
+        )
+        .await
+        .is_err()
+    );
+    let child = flow
+        .runtime
+        .resolve_subagent(&parent, "lost-ready")
+        .await
+        .unwrap();
+    let state = flow.runtime.state(&child.id).await.unwrap();
+    let managed = state.child_worktree().unwrap();
+    // Simulate the durable state after an acknowledged retry but before Session readiness.
+    let journal = SetupJournal::new(
+        Arc::clone(&flow.f.store),
+        managed,
+        &[command.into()],
+        &child.id,
+    )
+    .unwrap();
+    let failed = journal.snapshot().unwrap();
+    journal
+        .retry_failed(failed.revision, &failed.digest, 0, "Prior explicit retry")
+        .unwrap();
+    let attempt = journal.start_attempt(0).unwrap();
+    journal
+        .finish_attempt(
+            0,
+            attempt.started_revision.unwrap(),
+            CommandResult::Exited { code: Some(0) },
+        )
+        .unwrap();
+    let complete = journal.snapshot().unwrap();
+    let result = flow
+        .f
+        .host
+        .recover_child_worktree_setup(
+            &parent,
+            &child.id,
+            SetupRecoveryRequest {
+                revision: complete.revision,
+                digest: complete.digest.clone(),
+                retry_index: None,
+                reason: "Reconcile completed setup with missing readiness".into(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.setup,
+        Ok(cyber_core::worktrees::SetupOutcome::Completed)
+    );
+    assert_eq!(journal.snapshot().unwrap(), complete);
+    assert!(
+        !flow
+            .runtime
+            .state(&child.id)
+            .await
+            .unwrap()
+            .child_worktree_setup_pending()
+    );
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("attempts.txt")).unwrap(),
+        "once"
+    );
+    assert!(flow.main.requests().is_empty());
+}

@@ -110,6 +110,7 @@ impl BuiltinHost {
                     user_requested,
                     explicit: true,
                     recipe: Some(&recipe),
+                    recovery: None,
                 },
             )
             .await?;
@@ -317,6 +318,7 @@ impl BuiltinHost {
                     user_requested: false,
                     explicit: true,
                     recipe: Some(&recipe),
+                    recovery: None,
                 },
             )
             .await?;

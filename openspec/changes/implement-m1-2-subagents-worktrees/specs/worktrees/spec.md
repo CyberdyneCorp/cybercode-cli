@@ -308,3 +308,18 @@
 - **THEN** only shared repository metadata, the reserved target, managed temporary/output directories and explicitly configured writable roots are writable
 - **AND** ordinary source checkout files and unrelated sibling worktrees are not implicitly writable
 - **AND** setup receives its normal protected-path policy without the Git metadata provisioning grants
+
+### Requirement: Explicit child setup recovery
+(P1) Clients SHALL inspect a pending isolated child's setup journal through its direct parent and explicitly authorize retry of a command with an acknowledged nonzero or signal exit against the reviewed recipe digest and journal revision. Successful commands SHALL not rerun. Recovery SHALL verify current native ownership, hold child execution and checkout leases, retain source trust and current deny/sandbox ceilings, and clear setup-pending only after complete setup. Pending unknown outcomes and recorded execution errors without an acknowledged exit SHALL not authorize retry or settlement by this operation. A dispatch revision SHALL prevent a stale acknowledgement from settling a newer attempt.
+
+#### Scenario: Retry a reviewed settled failure
+- **GIVEN** an isolated child is setup-pending after an acknowledged failed exit
+- **WHEN** its parent client submits the reviewed recipe digest, journal revision, failed index and a nonempty reason
+- **THEN** a durable retry authorization preserves the prior result and permits one fresh attempt at that failed step
+- **AND** prior successful commands replay without side effects and subsequent commands run in order
+- **AND** completion clears the exact child's setup gate without starting inference
+
+#### Scenario: Refuse stale or unsafe recovery
+- **WHEN** the reviewed recipe or revision changes, the child is not owned by the parent, a command outcome is unknown, or native ownership/activity is uncertain
+- **THEN** recovery refuses before command dispatch or readiness acknowledgement
+- **AND** user files, earlier results and setup-pending state remain intact

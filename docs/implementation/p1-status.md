@@ -106,7 +106,19 @@ Two public-port regressions fail against unchanged production main `ca2527d`: cl
 
 Validation passes all 761 Rust workspace test executions (2 opt-in measurements ignored), workspace all-target Clippy, all 41 SDK tests/type checking, generation consistency, formatting and all 57 strict specification checks. Specification lint has 0 errors and 21 inventory warnings. The latest observed CI runs for `ca2527d` and `33bf939` remain queued, so this increment has no new native acceptance evidence.
 
-Native/live-provider acceptance, cross-process child-owner recovery, client attachment/reattachment, public lifecycle/enter/exit and explicit unknown-outcome/setup recovery remain open. This increment does not accept a complete P1 requirement or milestone.
+Native/live-provider acceptance, cross-process child-owner recovery, client attachment/reattachment, public lifecycle/enter/exit and explicit unknown-outcome recovery remain open. Settled setup recovery is covered by the subsequent increment below. This increment does not accept a complete P1 requirement or milestone.
+
+## Explicit child setup recovery increment
+
+Parent-scoped GET/POST `/sessions/{parent}/children/{child}/setup` and SDK `worktree.inspectChildSetup`/`recoverChildSetup` expose a hashed recipe, journal revision and per-command state. A reviewed revision/digest and nonempty reason authorize a single retry only for an acknowledged nonzero or signal exit. Retry authorization is immutable and preserves the prior result; each dispatch carries its journal revision so a late acknowledgement cannot settle a newer attempt. Successful commands remain recorded and do not rerun. Continue-only requests preserve failures, execute only undispatched steps after proven success, or reconcile fully completed setup with a missing readiness acknowledgement.
+
+Recovery resolves a direct child, retains exclusive child ownership, requires its pending exact managed binding and native Location admission, and uses the current trusted source recipe. Source/child/ancestor denies and read-only sandbox ceilings remain effective. Completion acknowledges only that child's bound incarnation and starts no inference. Changed recipes, stale reviews, busy owners, replaced ownership and pending unknown command/activity outcomes refuse recovery; execution errors without an acknowledged exit also remain fenced. This operation neither kills an unknown process nor assumes that an error proves process settlement.
+
+Tests cover journal retry races and late acknowledgements, restart recovery preserving successful steps and history, continue-only behavior, missing readiness, source/child denies, read-only sandbox refusal, replaced ownership, stale/foreign reviews and unknown attempts. An actual application API test verifies inspection, explicit recovery and idempotent replay; SDK tests verify parent/child scoping and reviewed requests.
+
+Validation passes all 769 Rust workspace test executions (2 opt-in measurements ignored), workspace all-target Clippy, all 43 SDK tests/type checking, OpenAPI/generated SDK consistency, formatting and all 57 strict specification checks. Specification lint has 0 errors and 21 inventory warnings. The latest observed CI runs for `1921aaa` and `ca2527d` remain queued; no new native acceptance is claimed.
+
+Native/live-provider acceptance, unknown activity/command settlement, durable cross-process child ownership/pool recovery, client reattachment and public worktree lifecycle/enter/exit remain open. This increment does not accept an entire P1 requirement or milestone.
 
 ## Requirement inventory
 

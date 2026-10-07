@@ -177,3 +177,179 @@ fn recreated_worktree_has_independent_setup_while_legacy_ownership_requires_reco
     owned.id.clear();
     assert!(SetupJournal::new(store, &owned, &commands, "ses_owner").is_err());
 }
+
+#[test]
+fn explicit_retry_preserves_success_and_rejects_stale_attempt_acknowledgements() {
+    use cyber_server::worktrees::CommandStatus;
+    let store = open(DatabaseLocation::Memory);
+    let commands = vec!["once".into(), "retry".into(), "later".into()];
+    let journal =
+        SetupJournal::new(Arc::clone(&store), &managed(), &commands, "ses_owner").unwrap();
+    let first = journal.start_attempt(0).unwrap().started_revision.unwrap();
+    journal
+        .finish_attempt(0, first, CommandResult::Exited { code: Some(0) })
+        .unwrap();
+    let original = journal.start_attempt(1).unwrap().started_revision.unwrap();
+    journal
+        .finish_attempt(1, original, CommandResult::Exited { code: Some(7) })
+        .unwrap();
+    let snapshot = journal.snapshot().unwrap();
+    journal
+        .retry_failed(
+            snapshot.revision,
+            &snapshot.digest,
+            1,
+            "Dependency service restored",
+        )
+        .unwrap();
+    assert!(
+        journal
+            .retry_failed(snapshot.revision, &snapshot.digest, 1, "Duplicate request")
+            .is_err()
+    );
+    assert_eq!(
+        journal.start(0).unwrap(),
+        CommandDecision::Recorded(CommandResult::Exited { code: Some(0) })
+    );
+    let retry = journal.start_attempt(1).unwrap();
+    assert_eq!(retry.decision, CommandDecision::Dispatch);
+    let revision = retry.started_revision.unwrap();
+    assert!(revision > original);
+    assert!(
+        journal
+            .finish_attempt(1, original, CommandResult::Exited { code: Some(0) })
+            .is_err()
+    );
+    assert!(
+        journal
+            .finish(1, CommandResult::Exited { code: Some(0) })
+            .is_err()
+    );
+    assert_eq!(
+        journal.snapshot().unwrap().commands[1],
+        CommandStatus::Pending
+    );
+    journal
+        .finish_attempt(1, revision, CommandResult::Exited { code: Some(0) })
+        .unwrap();
+    assert_eq!(journal.start(2).unwrap(), CommandDecision::Dispatch);
+    let replay = SetupJournal::new(store, &managed(), &commands, "ses_other").unwrap();
+    assert_eq!(
+        replay.start(1).unwrap(),
+        CommandDecision::Recorded(CommandResult::Exited { code: Some(0) })
+    );
+}
+
+#[test]
+fn recovery_refuses_unknown_successful_error_unstarted_and_changed_recipe_states() {
+    for result in [
+        None,
+        Some(CommandResult::Exited { code: Some(0) }),
+        Some(CommandResult::Failed {
+            message: "unproven settlement".into(),
+        }),
+    ] {
+        let store = open(DatabaseLocation::Memory);
+        let journal = SetupJournal::new(
+            Arc::clone(&store),
+            &managed(),
+            &["step".into()],
+            "ses_owner",
+        )
+        .unwrap();
+        let unstarted = journal.snapshot().unwrap();
+        assert!(
+            journal
+                .retry_failed(unstarted.revision, &unstarted.digest, 0, "reviewed")
+                .is_err()
+        );
+        journal.start(0).unwrap();
+        if let Some(result) = result {
+            journal.finish(0, result).unwrap();
+        }
+        let current = journal.snapshot().unwrap();
+        assert!(
+            journal
+                .retry_failed(current.revision, &current.digest, 0, "reviewed")
+                .is_err()
+        );
+        assert_eq!(journal.snapshot().unwrap(), current);
+    }
+    let store = open(DatabaseLocation::Memory);
+    let journal = SetupJournal::new(
+        Arc::clone(&store),
+        &managed(),
+        &["step".into()],
+        "ses_owner",
+    )
+    .unwrap();
+    journal.start(0).unwrap();
+    journal
+        .finish(0, CommandResult::Exited { code: None })
+        .unwrap();
+    let snapshot = journal.snapshot().unwrap();
+    for (revision, digest, reason) in [
+        (snapshot.revision - 1, snapshot.digest.as_str(), "reviewed"),
+        (snapshot.revision, "foreign", "reviewed"),
+        (snapshot.revision, snapshot.digest.as_str(), " "),
+    ] {
+        assert!(journal.retry_failed(revision, digest, 0, reason).is_err());
+        assert_eq!(journal.snapshot().unwrap(), snapshot);
+    }
+    let changed =
+        SetupJournal::new(store, &managed(), &["replacement".into()], "ses_owner").unwrap();
+    assert!(changed.snapshot().is_err());
+    journal
+        .retry_failed(
+            snapshot.revision,
+            &snapshot.digest,
+            0,
+            "Signal acknowledged; retry explicitly approved",
+        )
+        .unwrap();
+}
+
+#[test]
+fn racing_retry_reviews_authorize_only_one_new_attempt() {
+    let store = open(DatabaseLocation::Memory);
+    let journal = SetupJournal::new(
+        Arc::clone(&store),
+        &managed(),
+        &["step".into()],
+        "ses_owner",
+    )
+    .unwrap();
+    journal.start(0).unwrap();
+    journal
+        .finish(0, CommandResult::Exited { code: Some(1) })
+        .unwrap();
+    let review = journal.snapshot().unwrap();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let threads: Vec<_> = (0..2)
+        .map(|_| {
+            let journal = SetupJournal::new(
+                Arc::clone(&store),
+                &managed(),
+                &["step".into()],
+                "ses_owner",
+            )
+            .unwrap();
+            let review = review.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                journal.retry_failed(review.revision, &review.digest, 0, "Explicit review")
+            })
+        })
+        .collect();
+    assert_eq!(
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .filter(Result::is_ok)
+            .count(),
+        1
+    );
+    assert_eq!(journal.start(0).unwrap(), CommandDecision::Dispatch);
+    assert!(journal.start(0).is_err());
+}

@@ -59,3 +59,23 @@ test("session.subtask posts an explicit prompt and returns the background Job", 
   assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fparent/subtask");
   assert.deepEqual(JSON.parse(calls[0]!.body!), { prompt: "try another approach" });
 });
+
+test("child setup inspection scopes both identities without a Location header", async () => {
+  const state = { session_id: "ses_child", worktree_id: "wt_child", setup_pending: true,
+    journal: { revision: 3, digest: "recipe", commands: [{ status: "finished", result: { status: "exited", code: 7 } }] } };
+  const { client, calls } = mockClient(() => json(200, { data: state }), { directory: "/other" });
+  const inspected = await client.worktree.inspectChildSetup("ses/parent", "child/name");
+  assert.equal(inspected.journal.revision, 3);
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fparent/children/child%2Fname/setup");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
+});
+
+test("explicit child setup recovery sends the reviewed revision and reuses an idempotency key", async () => {
+  const { client, calls } = mockClient(() => json(200, { data: { setup: { status: "completed" } } }));
+  const review = { revision: 3, digest: "recipe", retry_index: 1, reason: "Prerequisite repaired" };
+  await client.worktree.recoverChildSetup("ses_parent", "ses_child", review, { idempotencyKey: "retry-review" });
+  assert.equal(calls[0]?.method, "POST");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses_parent/children/ses_child/setup");
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "retry-review");
+  assert.deepEqual(JSON.parse(calls[0]!.body!), review);
+});

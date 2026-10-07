@@ -865,6 +865,187 @@
           }
         ]
       },
+      "Data_ChildSetupInspection": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ChildSetupInspection"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ChildSetupInspection": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "worktree_id": {
+            "type": "string"
+          },
+          "setup_pending": {
+            "type": "boolean"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/SetupSnapshot"
+          }
+        },
+        "required": [
+          "session_id",
+          "worktree_id",
+          "setup_pending",
+          "journal"
+        ]
+      },
+      "SetupSnapshot": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommandStatus"
+            }
+          }
+        },
+        "required": [
+          "revision",
+          "digest",
+          "commands"
+        ]
+      },
+      "CommandStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "not_started"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "pending"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/CommandResult"
+              },
+              "status": {
+                "type": "string",
+                "const": "finished"
+              }
+            },
+            "required": [
+              "status",
+              "result"
+            ]
+          }
+        ]
+      },
+      "CommandResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
+              },
+              "status": {
+                "type": "string",
+                "const": "exited"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "failed"
+              }
+            },
+            "required": [
+              "status",
+              "message"
+            ]
+          }
+        ]
+      },
+      "SetupRecoveryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "retry_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0,
+            "description": "Omit to continue only undispatched commands or acknowledge already completed setup."
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "digest",
+          "reason"
+        ]
+      },
+      "Data_CreatedWorktree": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CreatedWorktree"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "Located_Session": {
         "type": "object",
         "properties": {
@@ -2972,6 +3153,120 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/children/{child}/setup": {
+      "get": {
+        "operationId": "v1.worktree.inspectChildSetup",
+        "summary": "Inspect a direct child's setup journal",
+        "tags": [
+          "worktree"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "child",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ChildSetupInspection"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "v1.worktree.recoverChildSetup",
+        "summary": "Explicitly retry a settled child setup failure or continue undispatched steps",
+        "tags": [
+          "worktree"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "child",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_CreatedWorktree"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRecoveryRequest"
               }
             }
           }

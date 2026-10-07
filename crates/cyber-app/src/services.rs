@@ -59,6 +59,59 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn inspect_child_setup(
+        &self,
+        parent: String,
+        child: String,
+    ) -> BoxFuture<
+        '_,
+        Result<cyber_server::worktrees::ChildSetupInspection, cyber_server::http::ApiError>,
+    > {
+        Box::pin(async move {
+            self.host
+                .inspect_child_worktree_setup(
+                    &parent,
+                    &child,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+                .map_err(worktree_error)
+        })
+    }
+    fn recover_child_setup(
+        &self,
+        parent: String,
+        child: String,
+        review: cyber_server::worktrees::SetupRecoveryRequest,
+    ) -> BoxFuture<
+        '_,
+        Result<cyber_server::http::worktrees::StartedWorktree, cyber_server::http::ApiError>,
+    > {
+        Box::pin(async move {
+            use cyber_core::worktrees::SetupOutcome;
+            use cyber_server::http::worktrees::{SetupStatus, StartedWorktree};
+            let result = self
+                .host
+                .recover_child_worktree_setup(
+                    &parent,
+                    &child,
+                    review,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+                .map_err(worktree_error)?;
+            let setup = match result.setup {
+                Ok(SetupOutcome::Completed) => SetupStatus::Completed,
+                Ok(SetupOutcome::Failed { index, code }) => SetupStatus::Failed { index, code },
+                Err(message) => SetupStatus::Error { message },
+            };
+            Ok(StartedWorktree {
+                worktree: result.managed.into(),
+                session: result.session,
+                setup,
+            })
+        })
+    }
     fn list_worktrees(
         &self,
         directory: PathBuf,

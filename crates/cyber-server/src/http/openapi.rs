@@ -175,6 +175,21 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .located()
         .ok::<Located<Vec<super::worktrees::WorktreeEntry>>>(g),
+        op(
+            "get",
+            "/sessions/{id}/children/{child}/setup",
+            "v1.worktree.inspectChildSetup",
+            "Inspect a direct child's setup journal",
+        )
+        .ok::<Data<crate::worktrees::ChildSetupInspection>>(g),
+        op(
+            "post",
+            "/sessions/{id}/children/{child}/setup",
+            "v1.worktree.recoverChildSetup",
+            "Explicitly retry a settled child setup failure or continue undispatched steps",
+        )
+        .body::<crate::worktrees::SetupRecoveryRequest>(g)
+        .ok::<Data<super::worktrees::CreatedWorktree>>(g),
         op("post", "/sessions", "v1.session.create", "Create a Session")
             .located()
             .status(201)

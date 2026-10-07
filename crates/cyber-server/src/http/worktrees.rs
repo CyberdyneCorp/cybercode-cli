@@ -1,6 +1,6 @@
 //! Explicit user creation of a fresh managed worktree Session.
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, request::Parts};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -85,7 +85,12 @@ pub enum WorktreeEntry {
 }
 
 pub(super) fn routes() -> Router<AppState> {
-    Router::new().route("/worktrees", get(list).post(create))
+    Router::new()
+        .route("/worktrees", get(list).post(create))
+        .route(
+            "/sessions/{id}/children/{child}/setup",
+            get(inspect_setup).post(recover_setup),
+        )
 }
 
 async fn list(
@@ -207,4 +212,36 @@ async fn create(
             data,
         }),
     ))
+}
+
+async fn inspect_setup(
+    State(state): State<AppState>,
+    Path((parent, child)): Path<(String, String)>,
+) -> Result<Json<super::envelope::Data<crate::worktrees::ChildSetupInspection>>, ApiError> {
+    Ok(Json(super::envelope::Data {
+        data: state.services.inspect_child_setup(parent, child).await?,
+    }))
+}
+
+async fn recover_setup(
+    State(state): State<AppState>,
+    Path((parent, child)): Path<(String, String)>,
+    Json(review): Json<crate::worktrees::SetupRecoveryRequest>,
+) -> Result<Json<super::envelope::Data<CreatedWorktree>>, ApiError> {
+    if review.reason.trim().is_empty() || review.reason.len() > 1024 {
+        return Err(ApiError::invalid(
+            "Recovery reason must contain 1-1024 bytes",
+        ));
+    }
+    let result = state
+        .services
+        .recover_child_setup(parent, child, review)
+        .await?;
+    Ok(Json(super::envelope::Data {
+        data: CreatedWorktree {
+            session: session(&state, state.runtime.state(&result.session.id).await?),
+            worktree: result.worktree,
+            setup: result.setup,
+        },
+    }))
 }

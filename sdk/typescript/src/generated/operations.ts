@@ -378,11 +378,23 @@ export interface Operations {
     body: S.CreateWorktreeBody;
     response: S.Located_CreatedWorktree;
   };
+  "v1.worktree.inspectChildSetup": {
+    path: { id: string; child: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ChildSetupInspection;
+  };
   "v1.worktree.list": {
     path: Record<string, never>;
     query: Record<string, never>;
     body: undefined;
     response: S.Located_Array_of_WorktreeEntry;
+  };
+  "v1.worktree.recoverChildSetup": {
+    path: { id: string; child: string };
+    query: Record<string, never>;
+    body: S.SetupRecoveryRequest;
+    response: S.CreatedWorktree;
   };
 }
 
@@ -975,6 +987,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.worktree.inspectChildSetup": {
+    tag: "worktree",
+    name: "inspectChildSetup",
+    method: "GET",
+    path: "/api/v1/sessions/{id}/children/{child}/setup",
+    pathParams: ["id", "child"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.worktree.list": {
     tag: "worktree",
     name: "list",
@@ -985,6 +1009,18 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: false,
+    stream: false,
+  },
+  "v1.worktree.recoverChildSetup": {
+    tag: "worktree",
+    name: "recoverChildSetup",
+    method: "POST",
+    path: "/api/v1/sessions/{id}/children/{child}/setup",
+    pathParams: ["id", "child"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
     stream: false,
   },
 } as const satisfies Record<string, OperationSpec>;
@@ -1168,9 +1204,15 @@ export function createGroups(caller: Caller) {
       /** Create a managed worktree Session and run setup (`POST /api/v1/worktrees`) */
       create: (body: Operations["v1.worktree.create"]["body"], options?: RequestOptions): Promise<Operations["v1.worktree.create"]["response"]> =>
         caller.call("v1.worktree.create", { body }, options),
+      /** Inspect a direct child's setup journal (`GET /api/v1/sessions/{id}/children/{child}/setup`) */
+      inspectChildSetup: (id: string, child: string, options?: RequestOptions): Promise<Operations["v1.worktree.inspectChildSetup"]["response"]> =>
+        caller.call("v1.worktree.inspectChildSetup", { path: { id, child } }, options),
       /** List managed worktrees, Git status and owning Sessions (`GET /api/v1/worktrees`) */
       list: (options?: RequestOptions): Promise<Operations["v1.worktree.list"]["response"]> =>
         caller.call("v1.worktree.list", {}, options),
+      /** Explicitly retry a settled child setup failure or continue undispatched steps (`POST /api/v1/sessions/{id}/children/{child}/setup`) */
+      recoverChildSetup: (id: string, child: string, body: Operations["v1.worktree.recoverChildSetup"]["body"], options?: RequestOptions): Promise<Operations["v1.worktree.recoverChildSetup"]["response"]> =>
+        caller.call("v1.worktree.recoverChildSetup", { path: { id, child }, body }, options),
     },
   };
 }

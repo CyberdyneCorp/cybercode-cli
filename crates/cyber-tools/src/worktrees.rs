@@ -1,6 +1,7 @@
 //! Owned sandboxed Git creation and journaled setup for managed worktree Sessions.
 
 mod child;
+mod recovery;
 pub(crate) use child::ChildWorktree;
 
 use std::ffi::OsString;
@@ -56,6 +57,7 @@ struct SetupAdmission<'a> {
     explicit: bool,
     user_requested: bool,
     recipe: Option<&'a SetupRecipe>,
+    recovery: Option<&'a cyber_server::worktrees::SetupRecoveryRequest>,
 }
 
 impl BuiltinHost {
@@ -338,6 +340,7 @@ impl BuiltinHost {
                     user_requested: false,
                     explicit: true,
                     recipe: Some(&recipe),
+                    recovery: None,
                 },
             )
             .await
@@ -445,6 +448,7 @@ impl BuiltinHost {
                 user_requested: false,
                 explicit: false,
                 recipe: None,
+                recovery: None,
             },
         )
         .await
@@ -506,6 +510,7 @@ impl BuiltinHost {
                 user_requested: false,
                 explicit: false,
                 recipe: None,
+                recovery: None,
             },
         )
         .await
@@ -562,6 +567,21 @@ impl BuiltinHost {
             .await
             .map_err(tool_error)?;
         }
+        if admission.recovery.is_some() && !settings.setup.is_empty() {
+            let (config, sources) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;
+            let sandbox = cyber_sandbox::SandboxConfig::resolve(
+                &config,
+                &sources,
+                self.opts.sandbox_policy.as_deref(),
+                &self.opts.home,
+            );
+            if sandbox.policy == cyber_sandbox::Policy::ReadOnly {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Read-only sandbox refuses setup recovery",
+                ));
+            }
+        }
         let execution = Execution {
             ctx: &ctx,
             journal: SetupJournal::new(
@@ -577,6 +597,19 @@ impl BuiltinHost {
                 .unwrap_or_default(),
         };
         execution.journal.validate()?;
+        if let Some(review) = admission.recovery {
+            execution
+                .journal
+                .check_review(review.revision, &review.digest)?;
+            if let Some(index) = review.retry_index {
+                execution.journal.retry_failed(
+                    review.revision,
+                    &review.digest,
+                    index,
+                    &review.reason,
+                )?;
+            }
+        }
         retry_repository_busy(&ctx.cancel, || {
             repository.setup(&execution, &execution, managed, &settings, sink)
         })
@@ -600,7 +633,8 @@ impl SetupExecution for Execution<'_> {
     ) -> SetupFuture<'a> {
         Box::pin(async move {
             let index = self.next_command.fetch_add(1, Ordering::Relaxed);
-            if let CommandDecision::Recorded(result) = self.journal.start(index)? {
+            let attempt = self.journal.start_attempt(index)?;
+            if let CommandDecision::Recorded(result) = attempt.decision {
                 return match result {
                     CommandResult::Exited { code } => Ok(code),
                     CommandResult::Failed { message } => Err(io::Error::other(message)),
@@ -613,7 +647,13 @@ impl SetupExecution for Execution<'_> {
                     message: error.to_string(),
                 },
             };
-            self.journal.finish(index, saved)?;
+            self.journal.finish_attempt(
+                index,
+                attempt
+                    .started_revision
+                    .ok_or_else(|| io::Error::other("Missing setup dispatch revision"))?,
+                saved,
+            )?;
             result
         })
     }

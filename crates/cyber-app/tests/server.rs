@@ -988,3 +988,137 @@ async fn verify_worktree_replay(
     .unwrap();
     assert_eq!(&replayed, body);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode},
+    };
+    use cyber_server::runtime::{Asker, CreateSession, Invocation, ToolHost, ToolOutcome};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let (repo, p) = worktree_start_fixture(&root, false, false);
+    std::fs::write(p.config.join("cyber.jsonc"), serde_json::json!({"shell":"bash","providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{}}}},"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["printf once >> prefix.txt","printf attempt >> attempts.txt; test -f allow-retry"],"cleanup":"keep"}}).to_string()).unwrap();
+    let application = App::build(AppOptions {
+        paths: p,
+        home: root.join("home"),
+        database: DatabaseLocation::Memory,
+        default_directory: repo.clone(),
+        sandbox_policy: Some("full-access".into()),
+        snapshots: false,
+        interactive: false,
+        password: Some("test-password-123456".into()),
+    })
+    .await
+    .unwrap();
+    let parent = application
+        .runtime
+        .create_session(CreateSession {
+            directory: repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let result = application.host.execute(Invocation {
+        session_id:parent.id.clone(),directory:parent.directory.clone(),agent:parent.agent.clone(),mode:parent.mode.clone(),rules:parent.rules.clone(),
+        message_id:"msg_setup".into(),call_id:"call_setup".into(),operation_key:"call_setup".into(),name:"agent".into(),
+        input:serde_json::json!({"prompt":"inspect","name":"api-retry","isolation":"worktree"}),attempt:1,asker:Asker::detached(),
+    },tokio_util::sync::CancellationToken::new()).await;
+    assert!(
+        matches!(&result, ToolOutcome::Failed(message) if message.contains("setup")),
+        "{result:?}"
+    );
+    let child = application
+        .runtime
+        .resolve_subagent(&parent.id, "api-retry")
+        .await
+        .unwrap();
+    let url = format!(
+        "http://cyber.internal/api/v1/sessions/{}/children/{}/setup",
+        parent.id, child.id
+    );
+    let inspect = application
+        .embedded()
+        .request(Request::builder().uri(&url).body(Body::empty()).unwrap())
+        .await;
+    assert_eq!(inspect.status(), StatusCode::OK);
+    let snapshot: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(inspect.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot["data"]["setup_pending"], true);
+    assert_eq!(
+        snapshot["data"]["journal"]["commands"][1]["result"]["code"],
+        1
+    );
+    std::fs::write(
+        std::path::Path::new(&child.directory).join("allow-retry"),
+        "ready",
+    )
+    .unwrap();
+    let review = serde_json::json!({"revision":snapshot["data"]["journal"]["revision"],"digest":snapshot["data"]["journal"]["digest"],"retry_index":1,"reason":"Prerequisite repaired; retry explicitly approved"});
+    let mut responses = Vec::new();
+    for _ in 0..2 {
+        let response = application
+            .embedded()
+            .request(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(&url)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "setup-recovery-review")
+                    .body(Body::from(review.to_string()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        responses.push(
+            serde_json::from_slice::<serde_json::Value>(
+                &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap(),
+        );
+    }
+    assert_eq!(responses[0], responses[1]);
+    assert_eq!(responses[0]["data"]["setup"]["status"], "completed");
+    assert_eq!(responses[0]["data"]["session"]["id"], child.id);
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&child.directory).join("prefix.txt")).unwrap(),
+        "once"
+    );
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(&child.directory).join("attempts.txt"))
+            .unwrap(),
+        "attemptattempt"
+    );
+    assert!(
+        !application
+            .runtime
+            .state(&child.id)
+            .await
+            .unwrap()
+            .child_worktree_setup_pending()
+    );
+    assert!(!application.runtime.is_running(&child.id));
+    let repeated = application
+        .embedded()
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri(&url)
+                .header("content-type", "application/json")
+                .body(Body::from(review.to_string()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(repeated.status(), StatusCode::CONFLICT);
+    application.runtime.shutdown().await;
+}
