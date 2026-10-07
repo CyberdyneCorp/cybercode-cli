@@ -55,14 +55,55 @@ impl Runtime {
         work: impl std::future::Future<Output = io::Result<T>>,
     ) -> io::Result<T> {
         let _admission = self.inner.open().await.map_err(io::Error::other)?;
+        self.settle_worktree_setup(cancel, work)
+            .await
+            .unwrap_or_else(setup_unacknowledged)
+    }
+
+    /// Fence Session setup before its repository lock, retaining unknown activity
+    /// if the owner dies or shutdown disposes an unacknowledged attempt.
+    pub async fn own_session_worktree_setup<T>(
+        &self,
+        session_id: &str,
+        cancel: tokio_util::sync::CancellationToken,
+        work: impl std::future::Future<Output = io::Result<T>>,
+    ) -> io::Result<T> {
+        let _admission = self.inner.open().await.map_err(io::Error::other)?;
+        let handle = self
+            .inner
+            .handle(session_id)
+            .await
+            .map_err(io::Error::other)?;
+        let owned_cancel = cancel.clone();
+        let result = self
+            .settle_worktree_setup(cancel, async {
+                self.inner
+                    .with_location(&handle, owned_cancel, async { Ok(work.await) })
+                    .await
+                    .map_err(io::Error::other)?
+            })
+            .await;
+        if result.is_none() {
+            handle
+                .location_uncertain
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        result.unwrap_or_else(setup_unacknowledged)
+    }
+
+    async fn settle_worktree_setup<T>(
+        &self,
+        cancel: tokio_util::sync::CancellationToken,
+        work: impl std::future::Future<Output = io::Result<T>>,
+    ) -> Option<io::Result<T>> {
         tokio::pin!(work);
         tokio::select! {
-            result = &mut work => result,
+            result = &mut work => Some(result),
             _ = self.shutting_down() => {
                 cancel.cancel();
                 tokio::time::timeout(std::time::Duration::from_secs(2), &mut work)
                     .await
-                    .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::Interrupted, "Runtime closed before setup acknowledged settlement")))
+                    .ok()
             }
         }
     }
@@ -97,6 +138,13 @@ impl Runtime {
             active: Mutex::new(None),
         })
     }
+}
+
+fn setup_unacknowledged<T>() -> io::Result<T> {
+    Err(io::Error::new(
+        io::ErrorKind::Interrupted,
+        "Runtime closed before setup acknowledged settlement",
+    ))
 }
 
 impl SessionSetupSink {

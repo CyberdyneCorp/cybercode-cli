@@ -426,6 +426,12 @@ async fn attached_session_receives_live_output_and_shutdown_stops_setup() {
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Interrupted);
         assert_stopped(&managed, &repository).await;
+        repository
+            .claim(&Git, &managed, &info.id)
+            .await
+            .unwrap()
+            .settle()
+            .unwrap();
         if shutdown {
             let journal = cyber_server::worktrees::SetupJournal::new(
                 Arc::clone(&flow.f.store),
@@ -487,6 +493,8 @@ async fn drain_lease_is_held_during_tools_and_settled_after_completion() {
     use cyber_server::runtime::{CreateSession, NoSnapshots};
     use support::flow::{call, text};
     let (fixture, repository, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
     let nested = repository
         .create(
             &Git,
@@ -580,6 +588,8 @@ async fn old_session_refuses_recreated_checkout_at_the_same_path_before_model_ac
     use cyber_core::worktrees::CheckoutActivity;
     use cyber_server::runtime::{CreateSession, LiveEvent, NoSnapshots};
     let (fixture, repository, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
     let flow = support::flow::Flow::with(
         fixture,
         vec![support::flow::text("must not run")],
@@ -638,6 +648,38 @@ async fn old_session_refuses_recreated_checkout_at_the_same_path_before_model_ac
     assert!(replacement.path.join("tracked.txt").exists());
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn managed_session_refuses_unavailable_windows_enforcement_without_explicit_opt_out() {
+    use cyber_server::runtime::{CreateSession, NoSnapshots};
+    if cyber_sandbox::available() {
+        return;
+    }
+    let (fixture, _, managed) = owned().await;
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let error = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("SandboxUnavailableError"));
+    assert!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .is_empty()
+    );
+    assert!(flow.main.requests().is_empty());
+    assert!(managed.path.join("tracked.txt").exists());
+    assert!(!managed.common_dir.join("cyber-worktree-activity").exists());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn idle_user_shell_fences_checkout_and_acknowledges_shutdown_after_descendant_cleanup() {
@@ -685,6 +727,63 @@ async fn idle_user_shell_fences_checkout_and_acknowledges_shutdown_after_descend
         .remove(&Git, &CheckoutActivity, &managed, true)
         .await
         .unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn disposed_session_setup_retains_activity_after_stopping_descendants() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, NoSnapshots};
+    let (fixture, repository, managed) = owned().await;
+    fixture.set_config(json!({"permissions":{"worktree":"allow"},"worktrees":{"setup":[format!("{TREE}sleep 30")]}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut inv = flow.f.invocation("bypass", "worktree", json!({}));
+    inv.session_id = info.id.clone();
+    inv.directory = info.directory.clone();
+    let host = Arc::clone(&flow.f.host);
+    let owned_repository = repository.clone();
+    let owned_managed = managed.clone();
+    let job = tokio::spawn(async move {
+        host.setup_worktree_session(
+            &inv,
+            CancellationToken::new(),
+            &owned_repository,
+            &owned_managed,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !std::fs::metadata(managed.path.join("heartbeat"))
+            .is_ok_and(|metadata| metadata.len() > 0)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    job.abort();
+    assert!(job.await.unwrap_err().is_cancelled());
+    assert_stopped(&managed, &repository).await;
+    let error = repository
+        .remove(&Git, &CheckoutActivity, &managed, true)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("outcome unknown for {}", info.id))
+    );
+    assert!(managed.path.join("tracked.txt").exists());
 }
 
 #[cfg(unix)]

@@ -460,7 +460,8 @@ impl BuiltinHost {
             .map_err(io::Error::other)?;
         let owned_cancel = cancel.child_token();
         let result = runtime
-            .own_worktree_setup(
+            .own_session_worktree_setup(
+                &inv.session_id,
                 owned_cancel.clone(),
                 self.setup_worktree_authorized(
                     inv,

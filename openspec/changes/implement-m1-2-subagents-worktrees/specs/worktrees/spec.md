@@ -160,6 +160,12 @@
 - **THEN** shutdown cancels its owned token and waits for settlement or bounded future disposal, stopping its process tree without removing the worktree
 - **AND** an intent without acknowledged settlement remains outcome unknown for recovery
 
+#### Scenario: Session setup owner is disposed
+- **WHEN** a Session-backed setup owner is disposed or cannot acknowledge shutdown
+- **THEN** its cross-process checkout activity SHALL remain unknown even after its OS locks are released
+- **AND** forced removal SHALL refuse that unknown activity until recovery resolves it
+- **AND** acknowledged cancellation SHALL permit activity settlement after owned process cleanup
+
 #### Scenario: Setup ownership mismatch
 - **WHEN** supplied managed ownership differs from the persisted ready record
 - **THEN** setup fails before any command is dispatched

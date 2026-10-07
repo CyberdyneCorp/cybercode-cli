@@ -164,6 +164,83 @@ async fn idle_operations_refuse_location_admission_before_any_work() {
 }
 
 #[tokio::test]
+async fn setup_shutdown_settles_only_acknowledged_activity() {
+    for unresponsive in [false, true] {
+        let h = Harness::new(Setup::default());
+        let (runtime, activity) = owned_runtime(&h);
+        let info = create(&runtime, &h, "test/main").await;
+        let worker = runtime.clone();
+        let tools = Arc::clone(&h.tools);
+        let cancel = CancellationToken::new();
+        let job = tokio::spawn(async move {
+            worker
+                .own_session_worktree_setup(&info.id, cancel.clone(), async move {
+                    tools.started.notify_one();
+                    if unresponsive {
+                        return std::future::pending::<std::io::Result<()>>().await;
+                    }
+                    cancel.cancelled().await;
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "setup acknowledged cancellation",
+                    ))
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+            .await
+            .unwrap();
+        assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+        tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
+            .await
+            .unwrap();
+        assert_eq!(
+            job.await.unwrap().unwrap_err().kind(),
+            std::io::ErrorKind::Interrupted
+        );
+        assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+        assert_eq!(activity.unknown.load(Ordering::SeqCst), unresponsive);
+    }
+}
+
+#[tokio::test]
+async fn setup_caller_disposal_and_pending_claim_shutdown_preserve_unknown_activity() {
+    for pending_claim in [false, true] {
+        let h = Harness::new(Setup::default());
+        let (runtime, activity) = owned_runtime(&h);
+        let info = create(&runtime, &h, "test/main").await;
+        activity
+            .claim_unresponsive
+            .store(pending_claim, Ordering::SeqCst);
+        let worker = runtime.clone();
+        let tools = Arc::clone(&h.tools);
+        let job = tokio::spawn(async move {
+            worker
+                .own_session_worktree_setup(&info.id, CancellationToken::new(), async move {
+                    tools.started.notify_one();
+                    std::future::pending::<std::io::Result<()>>().await
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+            .await
+            .unwrap();
+        assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+        if pending_claim {
+            tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
+                .await
+                .unwrap();
+            assert!(job.await.unwrap().is_err());
+        } else {
+            job.abort();
+            assert!(job.await.unwrap_err().is_cancelled());
+        }
+        assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+        assert!(activity.unknown.load(Ordering::SeqCst));
+    }
+}
+
+#[tokio::test]
 async fn idle_shell_holds_location_until_acknowledged_completion() {
     let h = Harness::new(Setup::default());
     let (runtime, activity) = owned_runtime(&h);

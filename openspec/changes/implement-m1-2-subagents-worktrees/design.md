@@ -92,7 +92,9 @@ The tool-host Location port acquires a concrete cross-process checkout lease bef
 
 Shell, manual rewind stage/clear, idle compaction and context repair now use the same Location admission and settlement helper as Drains. Idle operations retain runtime lifecycle admission until completion or bounded shutdown settlement. Built-in and application shell hosts receive an owned cancellation token; legacy hosts remain bounded by future disposal. Shell commands have two seconds to acknowledge shutdown. Compaction, rewind and context futures retain immediate shutdown disposal so their existing deadline is preserved. Disposed work retains unknown activity; ordinary acknowledged errors can settle, while panic and caller future disposal leave recovery evidence. Location claim futures are also bounded to two seconds after cancellation, including creation/fork admission. Recorded diff reads and conversation-only commit operations need no filesystem admission.
 
-Idle client attachment, setup orphan recovery and unknown-activity resolution still need integration. Public removal and automatic cleanup remain disabled until the removal filesystem adapter and all relevant Location users are fenced.
+Session-backed setup now acquires the same checkout lease before taking its repository lock. One lifecycle owner bounds shutdown across both admission and setup, avoiding nested read-lock acquisition or successive grace periods. Acknowledged IO failures preserve their error kind and can settle activity after owned process cleanup. Owner disposal or missing acknowledgement releases OS locks but retains unknown activity, independently of the setup command journal. Real-process disposal tests must prove descendants stop while forced removal still refuses the unknown marker.
+
+Idle client attachment, process-death recovery and unknown-activity resolution still need integration. Public removal and automatic cleanup remain disabled until the removal filesystem adapter and all relevant Location users are fenced.
 
 ### Native long-target status regression
 
