@@ -33,6 +33,13 @@
 - **WHEN** an agent sets `tools.deny: ["bash", "web*"]`
 - **THEN** `bash`, `webfetch` and `websearch` are omitted from that agent's tool definitions for every Turn
 
+#### Scenario: Tool profile restrictions cover direct and client-registered dispatch
+- **GIVEN** an agent's tools deny list matches a tool name, or its allow list excludes that name
+- **WHEN** built-in or client-registered tool definitions are materialized or a call is dispatched
+- **THEN** the tool SHALL be omitted from definitions and rejected before execution
+- **AND** bypass Mode SHALL NOT override profile visibility restrictions
+- **AND** hidden, disabled or unknown profiles SHALL NOT dispatch tools
+
 #### Scenario: Request overlay applied
 - **WHEN** an agent sets `request.body.temperature: 0.2`
 - **THEN** its Turns send `temperature: 0.2` after provider, model and variant defaults

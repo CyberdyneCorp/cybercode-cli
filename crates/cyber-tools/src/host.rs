@@ -79,6 +79,47 @@ impl BuiltinHost {
         self.runtime.get().and_then(WeakRuntime::upgrade)
     }
 
+    fn agent_profile(
+        &self,
+        directory: &Path,
+        agent: &str,
+    ) -> Result<cyber_core::config::AgentProfile, String> {
+        let (config, _) = (self.opts.config)(directory)?;
+        let mut profiles = cyber_core::config::resolve_agents(&config)?;
+        let available = profiles
+            .values()
+            .filter(|profile| !profile.hidden)
+            .map(|profile| profile.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        profiles
+            .remove(agent)
+            .ok_or_else(|| format!("Unknown agent {agent:?}. Available: {available}"))
+    }
+
+    /// Apply profile visibility to built-in or client-provided Turn definitions.
+    pub fn filter_agent_tools(&self, turn: &TurnContext, tools: Vec<ToolDef>) -> Vec<ToolDef> {
+        let Ok(profile) = self.agent_profile(Path::new(&turn.directory), &turn.agent) else {
+            return Vec::new();
+        };
+        tools
+            .into_iter()
+            .filter(|tool| profile_allows_tool(&profile, &tool.spec.name))
+            .collect()
+    }
+
+    /// Recheck visibility before a call can reach either execution host.
+    pub fn check_agent_tool(&self, call: &Invocation) -> Result<(), String> {
+        let profile = self.agent_profile(Path::new(&call.directory), &call.agent)?;
+        if !profile_allows_tool(&profile, &call.name) {
+            return Err(format!(
+                "Tool {:?} is unavailable for agent {:?}",
+                call.name, call.agent
+            ));
+        }
+        Ok(())
+    }
+
     fn rules(&self, location: &Path) -> Vec<permissions::Rule> {
         // Skill directories are readable without prompting (`skills-commands`).
         let mut allowed = self.opts.allowed_dirs.clone();
@@ -333,7 +374,8 @@ impl ToolHost for BuiltinHost {
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let rules = self.session_rules(Path::new(&turn.directory), &turn.rules);
         let mode = Mode::parse(&turn.mode);
-        self.tools
+        let tools = self
+            .tools
             .iter()
             .map(|t| t.def())
             .filter(|d| offered(&d.spec.name, turn.prefers_apply_patch, mode, d.retry_safety))
@@ -345,7 +387,8 @@ impl ToolHost for BuiltinHost {
                 d.spec.name != "powershell"
                     || tools::powershell::installed(Path::new(&turn.directory)).is_some()
             })
-            .collect()
+            .collect();
+        self.filter_agent_tools(turn, tools)
     }
 
     fn reconcile(&self, directory: &str, call: &CallState) -> BoxFuture<'_, Reconciliation> {
@@ -367,6 +410,9 @@ impl ToolHost for BuiltinHost {
             let Some(tool) = self.tools.iter().find(|t| t.def().spec.name == inv.name) else {
                 return ToolOutcome::Failed(format!("Unknown tool: {}", inv.name));
             };
+            if let Err(error) = self.check_agent_tool(&inv) {
+                return ToolOutcome::Failed(error);
+            }
             if let Err(message) = crate::schema::validate(&tool.def().spec.input_schema, &inv.input)
             {
                 return ToolOutcome::Failed(message);
@@ -462,6 +508,21 @@ fn offered(
         _ => true,
     };
     by_model && by_mode
+}
+
+fn profile_allows_tool(profile: &cyber_core::config::AgentProfile, name: &str) -> bool {
+    let matches = |patterns: &[String]| {
+        patterns
+            .iter()
+            .any(|pattern| cyber_core::wildcard::matches(pattern, name))
+    };
+    !profile.hidden
+        && !matches(&profile.tools.deny)
+        && profile
+            .tools
+            .allow
+            .as_ref()
+            .is_none_or(|allow| matches(allow))
 }
 
 /// Hidden when the last rule matching the action with resource `*` denies it.

@@ -11,6 +11,9 @@ use cyber_tools::BuiltinHost;
 use futures::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(test)]
+mod tests;
+
 pub struct AppHost {
     pub builtin: Arc<BuiltinHost>,
     pub remote: Arc<RemoteTools>,
@@ -28,12 +31,18 @@ impl ToolHost for AppHost {
 
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let mut defs = self.builtin.definitions(turn);
-        defs.extend(self.remote.definitions());
+        defs.extend(
+            self.builtin
+                .filter_agent_tools(turn, self.remote.definitions()),
+        );
         defs
     }
 
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         if self.remote.has(&call.name) {
+            if let Err(error) = self.builtin.check_agent_tool(&call) {
+                return Box::pin(async move { ToolOutcome::Failed(error) });
+            }
             return Box::pin(self.remote.execute(call, cancel));
         }
         self.builtin.execute(call, cancel)

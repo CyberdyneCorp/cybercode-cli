@@ -1,0 +1,113 @@
+use super::*;
+use crate::{App, AppOptions};
+use cyber_core::paths::{DatabaseLocation, Paths};
+use cyber_server::runtime::Asker;
+use serde_json::json;
+use tokio::sync::mpsc;
+
+async fn application(root: &std::path::Path) -> App {
+    let paths = Paths {
+        data: root.join("data"),
+        config: root.join("config"),
+        state: root.join("state"),
+        cache: root.join("cache"),
+        tmp: root.join("tmp"),
+    };
+    paths.ensure().unwrap();
+    App::build(AppOptions {
+        paths,
+        home: root.join("home"),
+        database: DatabaseLocation::Memory,
+        default_directory: root.to_path_buf(),
+        sandbox_policy: None,
+        snapshots: false,
+        interactive: false,
+        password: None,
+    })
+    .await
+    .unwrap()
+}
+
+fn invocation(turn: &TurnContext) -> Invocation {
+    Invocation {
+        session_id: turn.session_id.clone(),
+        directory: turn.directory.clone(),
+        agent: turn.agent.clone(),
+        mode: turn.mode.clone(),
+        message_id: "msg_test".into(),
+        call_id: "call_test".into(),
+        name: "client_write".into(),
+        input: json!({}),
+        attempt: 1,
+        operation_key: "op_test".into(),
+        asker: Asker::detached(),
+        rules: json!(null),
+    }
+}
+
+#[tokio::test]
+async fn agent_tool_restrictions_refuse_client_dispatch_without_sending_a_request() {
+    let scratch = tempfile::tempdir().unwrap();
+    let app = application(scratch.path()).await;
+    let host = AppHost {
+        builtin: app.host.clone(),
+        remote: app.state.remote_tools.clone(),
+    };
+    let turn = TurnContext {
+        session_id: "ses_test".into(),
+        directory: scratch.path().display().to_string(),
+        agent: "build".into(),
+        mode: "bypass".into(),
+        prefers_apply_patch: false,
+        rules: json!(null),
+    };
+    let (out, mut frames) = mpsc::channel(4);
+    host.remote
+        .register(
+            host.remote.owner(),
+            out,
+            &json!({"name":"client_write","input":{"type":"object"}}),
+            &[],
+        )
+        .unwrap();
+    assert!(
+        host.definitions(&turn)
+            .iter()
+            .any(|def| def.spec.name == "client_write")
+    );
+    // A real client request/reply first proves the registered dispatch route works.
+    let mut running = host.execute(invocation(&turn), CancellationToken::new());
+    let frame = tokio::select! {
+        outcome = &mut running => panic!("client dispatch ended before its reply: {outcome:?}"),
+        frame = tokio::time::timeout(std::time::Duration::from_secs(2), frames.recv()) => frame.unwrap().unwrap(),
+    };
+    host.remote
+        .resolve(&json!({"id":frame["id"],"result":"client result"}));
+    assert_eq!(running.await, ToolOutcome::Ok("client result".into()));
+    std::fs::write(
+        app.paths.config.join("cyber.json"),
+        r#"{"agents":{"build":{"tools":{"deny":["client_*"]}}}}"#,
+    )
+    .unwrap();
+    assert!(
+        !host
+            .definitions(&turn)
+            .iter()
+            .any(|def| def.spec.name == "client_write")
+    );
+    assert!(
+        !app.state
+            .services
+            .tools(&turn)
+            .iter()
+            .any(|def| def.spec.name == "client_write")
+    );
+    let outcome = host
+        .execute(invocation(&turn), CancellationToken::new())
+        .await;
+    assert!(
+        matches!(outcome, ToolOutcome::Failed(error) if error.contains("client_write") && error.contains("build"))
+    );
+    assert_eq!(frames.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    assert!(host.remote.has("client_write"));
+}

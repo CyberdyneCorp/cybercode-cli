@@ -189,7 +189,10 @@ impl Services for AppServices {
     /// The tools a Turn would offer: built-ins plus client-registered tools.
     fn tools(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let mut defs = self.host.definitions(turn);
-        defs.extend(self.remote.definitions());
+        defs.extend(
+            self.host
+                .filter_agent_tools(turn, self.remote.definitions()),
+        );
         defs
     }
 
