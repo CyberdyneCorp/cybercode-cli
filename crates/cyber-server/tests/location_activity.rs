@@ -15,6 +15,8 @@ struct Activity {
     active: AtomicUsize,
     unknown: AtomicBool,
     deny: AtomicBool,
+    shell_unresponsive: AtomicBool,
+    claim_unresponsive: AtomicBool,
 }
 
 struct Guard {
@@ -58,13 +60,18 @@ impl ToolHost for Host {
             }
             assert!(creating || info.worktree_id.as_deref() == Some("wt_test"));
             self.activity.active.fetch_add(1, Ordering::SeqCst);
-            Ok(LocationLease::managed(
+            let lease = LocationLease::managed(
                 "wt_test".into(),
                 Box::new(Guard {
                     activity: Arc::clone(&self.activity),
                     settled: false,
                 }),
-            ))
+            );
+            if self.activity.claim_unresponsive.load(Ordering::SeqCst) {
+                self.tools.started.notify_one();
+                std::future::pending::<()>().await;
+            }
+            Ok(lease)
         })
     }
 
@@ -73,6 +80,25 @@ impl ToolHost for Host {
     }
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         self.tools.execute(call, cancel)
+    }
+
+    fn shell_owned(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
+            self.tools.started.notify_one();
+            if self.activity.shell_unresponsive.load(Ordering::SeqCst) {
+                return std::future::pending().await;
+            }
+            tokio::select! {
+                _ = self.tools.release.notified() => Ok("shell completed".into()),
+                _ = cancel.cancelled() => Err("shell cancelled and settled".into()),
+            }
+        })
     }
 }
 
@@ -107,6 +133,108 @@ async fn create(runtime: &Runtime, h: &Harness, model: &str) -> SessionInfo {
         })
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn idle_operations_refuse_location_admission_before_any_work() {
+    let h = Harness::new(Setup::default());
+    let (runtime, activity) = owned_runtime(&h);
+    let info = create(&runtime, &h, "test/main").await;
+    activity.deny.store(true, Ordering::SeqCst);
+    let results = [
+        runtime.shell(&info.id, "command").await.map(|_| ()),
+        runtime.compact(&info.id, None).await,
+        runtime.repair_context(&info.id).await,
+        runtime
+            .revert_stage(&info.id, "msg_missing", RevertTarget::Code)
+            .await
+            .map(|_| ()),
+        runtime.revert_clear(&info.id).await,
+    ];
+    for result in results {
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("checkout admission refused")
+        );
+    }
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert!(h.models.requests("test/main").is_empty());
+}
+
+#[tokio::test]
+async fn idle_shell_holds_location_until_acknowledged_completion() {
+    let h = Harness::new(Setup::default());
+    let (runtime, activity) = owned_runtime(&h);
+    let info = create(&runtime, &h, "test/main").await;
+    let worker = runtime.clone();
+    let id = info.id.clone();
+    let job = tokio::spawn(async move { worker.shell(&id, "command").await });
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+    h.tools.release.notify_one();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), job)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        "shell completed"
+    );
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert!(!activity.unknown.load(Ordering::SeqCst));
+    assert_eq!(runtime.state(&info.id).await.unwrap().entries.len(), 1);
+}
+
+#[tokio::test]
+async fn shutdown_settles_cooperative_shell_and_preserves_unacknowledged_activity() {
+    for unresponsive in [false, true] {
+        let h = Harness::new(Setup::default());
+        let (runtime, activity) = owned_runtime(&h);
+        let info = create(&runtime, &h, "test/main").await;
+        activity
+            .shell_unresponsive
+            .store(unresponsive, Ordering::SeqCst);
+        let worker = runtime.clone();
+        let id = info.id.clone();
+        let job = tokio::spawn(async move { worker.shell(&id, "command").await });
+        tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
+            .await
+            .unwrap();
+        assert!(job.await.unwrap().is_err());
+        assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+        assert_eq!(activity.unknown.load(Ordering::SeqCst), unresponsive);
+    }
+}
+
+#[tokio::test]
+async fn shutdown_disposes_pending_location_admission_without_losing_its_guard() {
+    let h = Harness::new(Setup::default());
+    let (runtime, activity) = owned_runtime(&h);
+    let info = create(&runtime, &h, "test/main").await;
+    activity.claim_unresponsive.store(true, Ordering::SeqCst);
+    let worker = runtime.clone();
+    let id = info.id.clone();
+    let job = tokio::spawn(async move { worker.shell(&id, "command").await });
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
+        .await
+        .unwrap();
+    assert!(matches!(
+        job.await.unwrap(),
+        Err(RuntimeError::ShuttingDown)
+    ));
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert!(activity.unknown.load(Ordering::SeqCst));
 }
 
 #[tokio::test]

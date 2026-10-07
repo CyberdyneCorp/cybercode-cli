@@ -53,7 +53,7 @@ jobs:
           cargo test --locked -p cyber-cli --bin cyber listing_renders_status_sessions_and_recovery_diagnostics
           cargo test --locked -p cyber-server --test http worktree_request_validation_precedes_host_dispatch
       - name: Native worktree configuration, repository creation and lock ownership
-        run: cargo test --locked -p cyber-core --test worktrees --test worktree_lock --test worktree_repository --test config
+        run: cargo test --locked -p cyber-core --lib --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Unsupported Unix bridge refuses execution
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --test bridge

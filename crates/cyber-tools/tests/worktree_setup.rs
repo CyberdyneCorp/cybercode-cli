@@ -640,6 +640,55 @@ async fn old_session_refuses_recreated_checkout_at_the_same_path_before_model_ac
 
 #[cfg(unix)]
 #[tokio::test]
+async fn idle_user_shell_fences_checkout_and_acknowledges_shutdown_after_descendant_cleanup() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, NoSnapshots};
+    let (fixture, repository, managed) = owned().await;
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let runtime = flow.runtime.clone();
+    let id = info.id.clone();
+    let job = tokio::spawn(async move { runtime.shell(&id, &format!("{TREE}sleep 30")).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !std::fs::metadata(managed.path.join("heartbeat"))
+            .is_ok_and(|metadata| metadata.len() > 0)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let error = repository
+        .remove(&Git, &CheckoutActivity, &managed, true)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("in use by {}", info.id))
+    );
+    tokio::time::timeout(Duration::from_secs(5), flow.runtime.shutdown())
+        .await
+        .unwrap();
+    assert!(job.await.unwrap().is_err());
+    assert_stopped(&managed, &repository).await;
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, true)
+        .await
+        .unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn creation_automatically_attaches_setup_and_preserves_failed_session() {
     use cyber_server::runtime::{LiveEvent, NoSnapshots, SetupUpdate};
     for fail in [false, true] {

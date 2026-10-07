@@ -396,6 +396,16 @@ impl ToolHost for BuiltinHost {
         session_id: &str,
         command: &str,
     ) -> BoxFuture<'_, Result<String, String>> {
+        self.shell_owned(directory, session_id, command, CancellationToken::new())
+    }
+
+    fn shell_owned(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<String, String>> {
         let inv = Invocation {
             session_id: session_id.into(),
             directory: directory.into(),
@@ -417,7 +427,7 @@ impl ToolHost for BuiltinHost {
                 policy: self.policy(&inv),
                 location: PathBuf::from(&inv.directory),
                 inv: &inv,
-                cancel: CancellationToken::new(),
+                cancel,
             };
             let output = tools::bash::run_user(&ctx, &command)
                 .await

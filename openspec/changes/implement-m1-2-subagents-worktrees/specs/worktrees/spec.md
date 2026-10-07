@@ -231,6 +231,16 @@
 - **WHEN** a Session runs inside a nested Git repository or managed checkout
 - **THEN** activity admission SHALL fence every enclosing managed checkout against removal
 
+#### Scenario: Location use while no Drain is running
+- **WHEN** a Session runs a user shell command, stages or clears a code rewind, compacts manually, or repairs its context
+- **THEN** activity admission SHALL verify and fence its managed checkout before filesystem access
+- **AND** acknowledged completion SHALL explicitly settle its activity lease
+
+#### Scenario: Idle operation does not acknowledge shutdown
+- **WHEN** an admitted idle operation fails to acknowledge shutdown within two seconds
+- **THEN** the runtime SHALL dispose its future without treating the checkout as safely idle
+- **AND** unknown activity SHALL remain available for recovery
+
 #### Scenario: Lock owner exits unexpectedly
 - **WHEN** a process holding the repository worktree lock terminates unexpectedly
 - **THEN** another process can acquire the same lock without deleting or replacing its file

@@ -203,6 +203,17 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Err("shell commands are not supported by this host".to_string()) })
     }
 
+    /// Cancellation-owned shell execution. Legacy hosts remain bounded by runtime disposal.
+    fn shell_owned(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        self.shell(directory, session_id, command)
+    }
+
     /// Extra Context Sources this host contributes for a Session, such as `core/skills`.
     fn context_sources(&self, _turn: &TurnContext) -> std::collections::BTreeMap<String, String> {
         std::collections::BTreeMap::new()

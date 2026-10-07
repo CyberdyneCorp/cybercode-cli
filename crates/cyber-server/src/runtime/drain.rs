@@ -86,31 +86,13 @@ async fn pass(
     cancel: &CancellationToken,
 ) -> Result<(), RuntimeError> {
     let handle = inner.handle(id).await?;
-    let info = handle.state.lock().await.info.clone();
-    let lease = inner
-        .tools
-        .claim_location(&info, false, cancel.child_token())
+    inner
+        .with_location(
+            &handle,
+            cancel.child_token(),
+            pass_owned(inner, &handle, forced, cancel),
+        )
         .await
-        .map_err(RuntimeError::Invalid)?;
-    if lease.worktree_id != info.worktree_id {
-        return Err(RuntimeError::Invalid(
-            "Managed checkout identity changed".into(),
-        ));
-    }
-    let result = pass_owned(inner, &handle, forced, cancel).await;
-    let unsettled = handle
-        .location_uncertain
-        .load(std::sync::atomic::Ordering::SeqCst)
-        || handle.state.lock().await.calls.values().any(|call| {
-            matches!(
-                call.status,
-                CallStatus::Dispatched | CallStatus::OutcomeUnknown
-            )
-        });
-    if !unsettled {
-        lease.settle().map_err(RuntimeError::Invalid)?;
-    }
-    result
 }
 
 async fn pass_owned(

@@ -11,6 +11,7 @@ mod context;
 mod drain;
 mod events;
 mod host;
+mod location;
 mod model;
 mod requests;
 mod rewind;
@@ -533,11 +534,14 @@ impl Runtime {
                 .unwrap_or_else(PoisonError::into_inner) = Some(instructions);
             return Ok(());
         }
-        tokio::select! {
-            biased;
-            _ = self.inner.closed.cancelled() => Err(RuntimeError::ShuttingDown),
-            result = self.inner.compact(&handle, CompactionTrigger::Manual, instructions) => result,
-        }
+        drop(_admission);
+        self.inner
+            .with_idle_location(
+                &handle,
+                self.inner
+                    .compact(&handle, CompactionTrigger::Manual, instructions),
+            )
+            .await
     }
 
     pub async fn switch_model(&self, session_id: &str, model: &str) -> Result<(), RuntimeError> {
@@ -666,7 +670,9 @@ impl Runtime {
         let handle = self.inner.handle(session_id).await?;
         let model = handle.state.lock().await.info.model.clone();
         let resolved = self.inner.resolve(&model)?;
-        self.inner.start_epoch(&handle, &resolved.provider).await
+        self.inner
+            .with_idle_location(&handle, self.inner.start_epoch(&handle, &resolved.provider))
+            .await
     }
 
     /// Copy history before `before_message` (all of it when `None`) into a new Session.
@@ -959,10 +965,8 @@ impl Inner {
         forked_from: Option<String>,
     ) -> Result<SessionInfo, RuntimeError> {
         let lease = self
-            .tools
             .claim_location(&info, forked_from.is_none(), self.closed.child_token())
-            .await
-            .map_err(RuntimeError::Invalid)?;
+            .await?;
         if info.worktree_id.is_some() && info.worktree_id != lease.worktree_id {
             return Err(RuntimeError::Invalid(
                 "Managed checkout identity changed".into(),

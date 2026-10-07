@@ -231,41 +231,50 @@ impl Runtime {
     pub async fn shell(&self, session_id: &str, command: &str) -> Result<String, RuntimeError> {
         self.inner.ensure_idle(session_id)?;
         let handle = self.inner.handle(session_id).await?;
-        self.inner.commit_staged_revert(&handle).await?;
-        let directory = handle.state.lock().await.info.directory.clone();
-        let output = self
-            .inner
-            .tools
-            .shell(&directory, session_id, command)
-            .await
-            .map_err(RuntimeError::Invalid)?;
-        let message_id = cyber_core::ids::new_id("msg");
-        let parts = vec![
-            cyber_llm::Content::Text {
-                text: format!("!{command}"),
-            },
-            cyber_llm::Content::Text {
-                text: format!(
-                    "<shell-output command=\"{}\">\n{output}\n</shell-output>",
-                    command.replace('"', "'")
-                ),
-            },
-        ];
-        let admitted = Admitted {
-            message_id: message_id.clone(),
-            digest: format!("shell:{message_id}"),
-            parts,
-            delivery: super::model::Delivery::Queue,
-            source: "shell".into(),
-        };
-        let promoted = Promoted { message_id };
         self.inner
-            .commit(
-                &handle,
-                vec![event(ADMITTED, &admitted), event(PROMOTED, &promoted)],
-            )
-            .await?;
-        Ok(output)
+            .with_shell_location(&handle, async {
+                self.inner.commit_staged_revert(&handle).await?;
+                let directory = handle.state.lock().await.info.directory.clone();
+                let output = self
+                    .inner
+                    .tools
+                    .shell_owned(
+                        &directory,
+                        session_id,
+                        command,
+                        self.inner.closed.child_token(),
+                    )
+                    .await
+                    .map_err(RuntimeError::Invalid)?;
+                let message_id = cyber_core::ids::new_id("msg");
+                let parts = vec![
+                    cyber_llm::Content::Text {
+                        text: format!("!{command}"),
+                    },
+                    cyber_llm::Content::Text {
+                        text: format!(
+                            "<shell-output command=\"{}\">\n{output}\n</shell-output>",
+                            command.replace('"', "'")
+                        ),
+                    },
+                ];
+                let admitted = Admitted {
+                    message_id: message_id.clone(),
+                    digest: format!("shell:{message_id}"),
+                    parts,
+                    delivery: super::model::Delivery::Queue,
+                    source: "shell".into(),
+                };
+                let promoted = Promoted { message_id };
+                self.inner
+                    .commit(
+                        &handle,
+                        vec![event(ADMITTED, &admitted), event(PROMOTED, &promoted)],
+                    )
+                    .await?;
+                Ok(output)
+            })
+            .await
     }
 
     /// File diffs recorded for a user message (`snapshots-checkpoints` → Per-turn diff summary).
@@ -289,61 +298,69 @@ impl Runtime {
     ) -> Result<RevertState, RuntimeError> {
         self.inner.ensure_idle(session_id)?;
         let handle = self.inner.handle(session_id).await?;
-        let state = handle.state.lock().await.clone();
-        if !state
-            .entries
-            .iter()
-            .any(|e| matches!(e, Entry::User { id, .. } if id == message_id))
-        {
-            return Err(RuntimeError::Invalid(format!(
-                "No user message {message_id} in this session"
-            )));
-        }
-        let previous = state.revert.clone();
-        let (baseline, applied, diff) = if target.code() {
-            self.inner.stage_code(&handle, &state, message_id).await?
-        } else {
-            previous
-                .map(|r| (r.baseline, r.applied, r.diff))
-                .unwrap_or_default()
-        };
-        let revert = RevertState {
-            message_id: message_id.into(),
-            target,
-            baseline,
-            applied,
-            diff,
-        };
         self.inner
-            .commit(
-                &handle,
-                vec![revert_event(session_id, &revert, RevertPhase::Stage)],
-            )
-            .await?;
-        Ok(revert)
+            .with_idle_location(&handle, async {
+                let state = handle.state.lock().await.clone();
+                if !state
+                    .entries
+                    .iter()
+                    .any(|e| matches!(e, Entry::User { id, .. } if id == message_id))
+                {
+                    return Err(RuntimeError::Invalid(format!(
+                        "No user message {message_id} in this session"
+                    )));
+                }
+                let previous = state.revert.clone();
+                let (baseline, applied, diff) = if target.code() {
+                    self.inner.stage_code(&handle, &state, message_id).await?
+                } else {
+                    previous
+                        .map(|r| (r.baseline, r.applied, r.diff))
+                        .unwrap_or_default()
+                };
+                let revert = RevertState {
+                    message_id: message_id.into(),
+                    target,
+                    baseline,
+                    applied,
+                    diff,
+                };
+                self.inner
+                    .commit(
+                        &handle,
+                        vec![revert_event(session_id, &revert, RevertPhase::Stage)],
+                    )
+                    .await?;
+                Ok(revert)
+            })
+            .await
     }
 
     /// Undo a staged revert: restore the pre-stage working tree and keep the conversation.
     pub async fn revert_clear(&self, session_id: &str) -> Result<(), RuntimeError> {
         self.inner.ensure_idle(session_id)?;
         let handle = self.inner.handle(session_id).await?;
-        let state = handle.state.lock().await.clone();
-        let revert = state
-            .revert
-            .clone()
-            .ok_or_else(|| RuntimeError::Invalid("No revert is staged".into()))?;
-        if let (Some(baseline), Some(applied)) = (&revert.baseline, &revert.applied) {
-            self.inner
-                .restore(&state.info.directory, baseline, applied)
-                .await?;
-        }
         self.inner
-            .commit(
-                &handle,
-                vec![revert_event(session_id, &revert, RevertPhase::Clear)],
-            )
-            .await?;
-        Ok(())
+            .with_idle_location(&handle, async {
+                let state = handle.state.lock().await.clone();
+                let revert = state
+                    .revert
+                    .clone()
+                    .ok_or_else(|| RuntimeError::Invalid("No revert is staged".into()))?;
+                if let (Some(baseline), Some(applied)) = (&revert.baseline, &revert.applied) {
+                    self.inner
+                        .restore(&state.info.directory, baseline, applied)
+                        .await?;
+                }
+                self.inner
+                    .commit(
+                        &handle,
+                        vec![revert_event(session_id, &revert, RevertPhase::Clear)],
+                    )
+                    .await?;
+                Ok(())
+            })
+            .await
     }
 
     /// Make a staged revert final: the boundary message and everything after it are removed.

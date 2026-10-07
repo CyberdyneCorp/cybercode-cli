@@ -55,4 +55,15 @@ impl ToolHost for AppHost {
     fn context_sources(&self, turn: &TurnContext) -> BTreeMap<String, String> {
         self.builtin.context_sources(turn)
     }
+
+    fn shell_owned(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<String, String>> {
+        self.builtin
+            .shell_owned(directory, session_id, command, cancel)
+    }
 }
