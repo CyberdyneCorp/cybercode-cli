@@ -338,7 +338,6 @@ async fn unsupported_spawn_options_fail_before_creating_sessions() {
         json!({"fork":true}),
         json!({"resume":"general"}),
         json!({"isolation":"worktree"}),
-        json!({"output_schema":{"type":"object"}}),
     ] {
         let mut input = json!({"prompt":"inspect"});
         input

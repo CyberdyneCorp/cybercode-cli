@@ -26,6 +26,7 @@ export type AssistantEntry = {
 };
 
 export type CallState = {
+  structured_output?: unknown;
   call_id: string;
   message_id: string;
   name: string;

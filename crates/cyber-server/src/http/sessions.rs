@@ -310,6 +310,7 @@ async fn create(
         .or_else(|| state.services.default_model(&directory))
         .unwrap_or_default();
     let req = CreateSession {
+        output_schema: None,
         id: body.id,
         directory: directory.display().to_string(),
         model,

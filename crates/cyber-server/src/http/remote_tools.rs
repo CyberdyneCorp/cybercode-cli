@@ -53,6 +53,9 @@ impl RemoteTools {
                 "invalid tool name {name:?}: use ^[A-Za-z][A-Za-z0-9_-]{{0,63}}$"
             ));
         }
+        if name == "return_result" {
+            return Err("return_result is a runtime-owned tool".into());
+        }
         if reserved.iter().any(|r| r == name) {
             return Err(format!("{name} is a built-in tool"));
         }

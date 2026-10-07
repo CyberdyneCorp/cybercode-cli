@@ -170,6 +170,11 @@ pub struct Invocation {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolOutcome {
     Ok(String),
+    /// Human/model-visible text plus the authoritative typed value.
+    Structured {
+        output: String,
+        value: Value,
+    },
     /// An expected failure; the message is shown to the model.
     Failed(String),
     /// Stopped by the abort signal before finishing.

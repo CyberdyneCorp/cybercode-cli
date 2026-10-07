@@ -28,6 +28,7 @@ schemars = "1"
 base64 = "0.22"
 getrandom = "0.3"
 http-body-util = "0.1"
+jsonschema = { version = "0.58.6", default-features = false }
 hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
 
 [dev-dependencies]

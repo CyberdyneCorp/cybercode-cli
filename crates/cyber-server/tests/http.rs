@@ -1131,3 +1131,45 @@ async fn an_agent_model_can_create_a_session_without_a_global_default() {
             .contains("No model is configured")
     );
 }
+
+#[tokio::test]
+async fn typed_child_results_are_available_in_message_history() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery, StructuredSchema};
+    for value in [json!({"ok":true}), Value::Null] {
+        let encoded = value.to_string();
+        let h = Harness::new(Setup {
+            scripts: vec![(
+                "test/main",
+                vec![tools(&[("result", "return_result", &encoded)])],
+            )],
+            ..Setup::default()
+        });
+        let parent = h.session().await;
+        let id = h
+            .runtime
+            .create_session(CreateSession {
+                directory: h.repo.display().to_string(),
+                model: "test/main".into(),
+                parent_id: Some(parent),
+                title: Some("Structured child".into()),
+                output_schema: Some(StructuredSchema::new(json!({})).unwrap()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        h.runtime
+            .admit(&id, Admission::text("inspect", Delivery::Queue))
+            .await
+            .unwrap();
+        h.settle(&id).await;
+        let api = Api::new(&h);
+        let (status, page) = api.get(&format!("/sessions/{id}/messages?order=asc")).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(
+            page["data"][1]["tools"][0].get("structured_output"),
+            Some(&value),
+            "{page}"
+        );
+    }
+}

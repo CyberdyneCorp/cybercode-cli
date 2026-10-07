@@ -105,6 +105,12 @@ jobs:
       - name: Native final no-tools wire choices
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test adapters runtime_no_tools_choice
+      - name: Native structured child results and durable projection
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test structured_subagents -p cyber-server --test structured_results
+      - name: Native structured result HTTP history
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http typed_child_results_are_available_in_message_history
       - name: Native foreground subagent ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subagents

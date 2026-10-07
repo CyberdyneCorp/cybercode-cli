@@ -80,6 +80,8 @@ const ALL: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Created {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mode_default_pending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,6 +238,12 @@ pub struct ToolDispatched {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSettled {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub structured_output: Option<Value>,
     pub call_id: String,
     pub status: CallStatus,
     /// Model-visible result.
@@ -243,6 +251,12 @@ pub struct ToolSettled {
     /// Operator-only detail (crash reports, reconciliation evidence).
     #[serde(default)]
     pub detail: Option<String>,
+}
+
+pub(crate) fn present_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

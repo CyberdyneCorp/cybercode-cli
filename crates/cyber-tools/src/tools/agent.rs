@@ -2,7 +2,8 @@
 
 use cyber_core::config::AgentProfile;
 use cyber_server::runtime::{
-    Admission, CreateSession, Delivery, Entry, RetrySafety, Runtime, SessionInfo, ToolDef,
+    Admission, CallStatus, CreateSession, Delivery, Entry, RetrySafety, Runtime, SessionInfo,
+    SessionState, StructuredSchema, ToolDef,
 };
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
@@ -21,7 +22,7 @@ impl Tool for Agent {
             "Delegate a focused task to a foreground subagent and return its final answer and Session ID.",
             json!({"type":"object", "required":["prompt"], "additionalProperties":false, "properties":{
                 "prompt":{"type":"string"}, "agent":{"type":"string"}, "description":{"type":"string"},
-                "model":{"type":"string"}, "output_schema":{"type":"object"}, "isolation":{"type":"string", "enum":["none","worktree"]},
+                "model":{"type":"string"}, "output_schema":{}, "isolation":{"type":"string", "enum":["none","worktree"]},
                 "background":{"type":"boolean"}, "fork":{"type":"boolean"}, "resume":{"type":"string"}, "name":{"type":"string"}
             }}),
             RetrySafety::Never,
@@ -35,6 +36,7 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    output_schema: Option<StructuredSchema>,
     profile: AgentProfile,
     description: String,
     result_bytes: usize,
@@ -75,7 +77,14 @@ fn configured(ctx: &Ctx<'_>) -> Result<Spawn, ToolError> {
     if !(3..=8).contains(&description.split_whitespace().count()) {
         return Err(failed("description must contain 3–8 words"));
     }
+    let output_schema = input
+        .get("output_schema")
+        .cloned()
+        .map(StructuredSchema::new)
+        .transpose()
+        .map_err(failed)?;
     Ok(Spawn {
+        output_schema,
         profile,
         description: description.into(),
         result_bytes: setting(&config, "result_max_bytes", 16384)? as usize,
@@ -112,7 +121,6 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<(), ToolError
         || background
         || input.get("fork").and_then(Value::as_bool).unwrap_or(false)
         || input.get("resume").is_some()
-        || input.get("output_schema").is_some()
         || input.get("name").is_some()
     {
         return Err(failed(
@@ -224,6 +232,7 @@ async fn create_and_wait(
     let model = ctx.inv.input.get("model").and_then(Value::as_str);
     runtime
         .create_session(CreateSession {
+            output_schema: spawn.output_schema.clone(),
             id: Some(id.into()),
             directory: parent.directory.clone(),
             worktree_id: parent.worktree_id.clone(),
@@ -247,6 +256,9 @@ async fn create_and_wait(
         .await
         .map_err(|e| failed(e.to_string()))?;
     runtime.wait_idle(id).await;
+    if spawn.output_schema.is_some() {
+        return structured_result(runtime, id).await;
+    }
     let state = runtime.state(id).await.map_err(|e| failed(e.to_string()))?;
     let answer = state
         .entries
@@ -288,4 +300,69 @@ fn render_result(
         result["output_file"] = json!(path);
     }
     Ok(result.to_string())
+}
+
+async fn structured_result(runtime: &Runtime, id: &str) -> Result<String, ToolError> {
+    let state = runtime.state(id).await.map_err(|e| failed(e.to_string()))?;
+    if let Some(value) = state.structured_result() {
+        return Ok(json!({"id":id,"result":value}).to_string());
+    }
+    ensure_child_finished(&state)?;
+    let errors = state.structured_result_error();
+    let mut admission = Admission::text(
+        format!(
+            "Your structured result is missing or invalid: {errors}. Call return_result with a value matching its schema. This is your single result retry."
+        ),
+        Delivery::Queue,
+    );
+    admission.source = "session".into();
+    runtime
+        .admit(id, admission)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    runtime.wait_idle(id).await;
+    let state = runtime.state(id).await.map_err(|e| failed(e.to_string()))?;
+    match state.structured_result() {
+        Some(value) => Ok(json!({"id":id,"result":value}).to_string()),
+        None => {
+            ensure_child_finished(&state)?;
+            Err(failed(format!(
+                "SchemaMismatch: {}",
+                state.structured_result_error()
+            )))
+        }
+    }
+}
+
+fn ensure_child_finished(state: &SessionState) -> Result<(), ToolError> {
+    let answer = state
+        .entries
+        .iter()
+        .rev()
+        .find_map(|entry| match entry {
+            Entry::Assistant(answer) => Some(answer),
+            _ => None,
+        })
+        .ok_or_else(|| failed("Subagent stopped before completing a result attempt"))?;
+    if !answer.finished || answer.error.is_some() || state.structured_attempt_rejected() {
+        return Err(failed(
+            "Subagent stopped before completing a result attempt",
+        ));
+    }
+    let stopped = answer
+        .calls
+        .iter()
+        .filter_map(|id| state.calls.get(id))
+        .any(|call| {
+            matches!(
+                call.status,
+                CallStatus::Interrupted | CallStatus::OutcomeUnknown
+            )
+        });
+    if stopped {
+        return Err(failed(
+            "Subagent stopped before completing a result attempt",
+        ));
+    }
+    Ok(())
 }

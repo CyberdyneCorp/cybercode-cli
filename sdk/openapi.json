@@ -1289,6 +1289,7 @@
       "CallState": {
         "type": "object",
         "properties": {
+          "structured_output": true,
           "call_id": {
             "type": "string"
           },

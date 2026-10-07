@@ -185,11 +185,12 @@ async fn eligible(
         .unwrap_or_else(PoisonError::into_inner)
         .is_some();
     let state = handle.state.lock().await;
-    continue_tools
-        || first
-        || compaction
-        || state.pending(Delivery::Steer).next().is_some()
-        || state.pending(Delivery::Queue).next().is_some()
+    state.result.returned.is_none()
+        && (continue_tools
+            || first
+            || compaction
+            || state.pending(Delivery::Steer).next().is_some()
+            || state.pending(Delivery::Queue).next().is_some())
 }
 
 /// The Safe Boundary: epoch, promoted input, context updates, then requested compaction.
@@ -488,6 +489,9 @@ impl Inner {
                 cancel,
             )
             .await?;
+        if handle.state.lock().await.result.returned.is_some() {
+            return Ok(TurnEnd::Stopped);
+        }
         Ok(match (cancelled, limited) {
             (true, _) => TurnEnd::Stopped,
             // The step-limit Turn is final: its tool calls were refused and the Drain ends.
@@ -523,11 +527,15 @@ impl Inner {
             };
             self.commit_locked(&mut state, vec![event(SYSTEM_ADDED, &payload)])?;
         }
-        let defs = if limited {
+        let mut defs = if limited {
             Vec::new()
         } else {
             self.tools.definitions(&turn_context(&state, resolved))
         };
+        defs.retain(|def| def.spec.name != "return_result");
+        if !limited && let Some(schema) = &state.result.schema {
+            defs.push(schema.definition());
+        }
         let epoch = state
             .epoch
             .as_ref()
@@ -601,6 +609,19 @@ impl Inner {
                     return Ok(Err(end));
                 }
                 Some(Some(Ok(event))) => {
+                    if matches!(&event, LlmEvent::ToolCallDone(call) if acc.calls.iter().any(|previous| previous.id == call.id))
+                    {
+                        let end = self
+                            .stop_step(
+                                handle,
+                                message_id,
+                                acc,
+                                "invalid_tool_call",
+                                "Duplicate tool call id in provider response",
+                            )
+                            .await?;
+                        return Ok(Err(end));
+                    }
                     self.on_stream_event(handle, &session_id, message_id, defs, &mut acc, event)
                         .await?
                 }
@@ -803,6 +824,22 @@ impl Inner {
         };
         let groups = groups(calls, defs);
         for (index, group) in groups.iter().enumerate() {
+            if handle.state.lock().await.result.returned.is_some() {
+                let events = groups[index..]
+                    .iter()
+                    .flatten()
+                    .map(|call| {
+                        settled(
+                            &call.id,
+                            CallStatus::Interrupted,
+                            "Subagent already returned its result",
+                            Some("not dispatched after return_result"),
+                        )
+                    })
+                    .collect();
+                self.commit(handle, events).await?;
+                return Ok(false);
+            }
             if cancel.is_cancelled() || handle.halt.swap(false, std::sync::atomic::Ordering::SeqCst)
             {
                 // Nothing from here on was dispatched, so it is safe to report as interrupted.
@@ -940,7 +977,8 @@ impl Inner {
         }
         // The registration may have been removed or replaced since it was advertised.
         let current = self.tools.definitions(turn);
-        if !current.iter().any(|d| d.spec.name == def.spec.name) {
+        if def.spec.name != "return_result" && !current.iter().any(|d| d.spec.name == def.spec.name)
+        {
             return Err((CallStatus::Error, format!("Stale tool call: {}", call.name)));
         }
         Ok((def.clone(), input))
@@ -999,6 +1037,14 @@ impl Inner {
         cancel: CancellationToken,
     ) -> (String, ToolDef, ToolOutcome) {
         let call_id = invocation.call_id.clone();
+        if invocation.name == "return_result" {
+            let state = handle.state.lock().await;
+            let outcome = state.result.schema.as_ref().map_or_else(
+                || ToolOutcome::Failed("return_result requires an output schema".into()),
+                |schema| schema.outcome(invocation.input),
+            );
+            return (call_id, def, outcome);
+        }
         let run = self.tools.execute(invocation, cancel.clone());
         tokio::pin!(run);
         let outcome = tokio::select! {
@@ -1131,6 +1177,7 @@ fn settled(
     detail: Option<&str>,
 ) -> cyber_store::NewEvent {
     let payload = ToolSettled {
+        structured_output: None,
         call_id: call_id.into(),
         status,
         output: output.into(),
@@ -1144,6 +1191,16 @@ fn settlement(call_id: &str, def: &ToolDef, outcome: ToolOutcome) -> cyber_store
     let read_only = def.retry_safety == RetrySafety::ReadOnly;
     match outcome {
         ToolOutcome::Ok(output) => settled(call_id, CallStatus::Ok, &output, None),
+        ToolOutcome::Structured { output, value } => event(
+            TOOL_SETTLED,
+            &ToolSettled {
+                structured_output: Some(value),
+                call_id: call_id.into(),
+                status: CallStatus::Ok,
+                output,
+                detail: None,
+            },
+        ),
         ToolOutcome::Failed(message) => settled(call_id, CallStatus::Error, &message, None),
         ToolOutcome::Aborted if read_only => settled(
             call_id,

@@ -19,6 +19,8 @@ mod requests;
 mod rewind;
 mod selection;
 mod shutdown;
+mod structured;
+pub use structured::StructuredSchema;
 mod title;
 mod view;
 mod worktree_output;
@@ -109,6 +111,7 @@ pub struct RuntimeOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct CreateSession {
+    pub output_schema: Option<StructuredSchema>,
     pub id: Option<String>,
     pub directory: String,
     /// Expected checkout identity for an internally provisioned managed Session.
@@ -325,6 +328,11 @@ impl Runtime {
         if let Ok(existing) = self.inner.handle(&id).await {
             return Ok(existing.state.lock().await.info.clone());
         }
+        if req.output_schema.is_some() && req.parent_id.is_none() {
+            return Err(RuntimeError::Invalid(
+                "output_schema requires a child Session".into(),
+            ));
+        }
         let mode_is_default = req.mode.is_none();
         let selection = selection::ModelSelection {
             reference: req.model.clone(),
@@ -375,8 +383,11 @@ impl Runtime {
                 Vec::new(),
                 Vec::new(),
                 None,
-                selection,
-                mode_default_pending,
+                CreationOptions {
+                    selection,
+                    mode_default_pending,
+                    output_schema: req.output_schema.map(|s| s.schema().clone()),
+                },
             )
             .await
     }
@@ -716,6 +727,7 @@ impl Runtime {
             ),
         };
         let payload = ToolSettled {
+            structured_output: None,
             call_id: call_id.into(),
             status,
             output,
@@ -773,8 +785,11 @@ impl Runtime {
                 entries,
                 calls,
                 Some(session_id.to_string()),
-                state.model_selection.persisted(&state.info.model),
-                state.mode_default_pending,
+                CreationOptions {
+                    selection: state.model_selection.persisted(&state.info.model),
+                    mode_default_pending: state.mode_default_pending,
+                    output_schema: state.result.schema.as_ref().map(|s| s.schema().clone()),
+                },
             )
             .await
     }
@@ -982,6 +997,12 @@ fn query_sessions(
     Ok(rows)
 }
 
+struct CreationOptions {
+    selection: Option<selection::ModelSelection>,
+    mode_default_pending: bool,
+    output_schema: Option<serde_json::Value>,
+}
+
 impl Inner {
     pub(crate) async fn handle(&self, id: &str) -> Result<Arc<Handle>, RuntimeError> {
         if let Some(h) = self
@@ -1031,8 +1052,7 @@ impl Inner {
         history: Vec<Entry>,
         calls: Vec<CallState>,
         forked_from: Option<String>,
-        selection: Option<selection::ModelSelection>,
-        mode_default_pending: bool,
+        defaults: CreationOptions,
     ) -> Result<SessionInfo, RuntimeError> {
         let lease = self
             .claim_location(&info, forked_from.is_none(), self.closed.child_token())
@@ -1045,8 +1065,9 @@ impl Inner {
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
-            mode_default_pending,
-            selection,
+            mode_default_pending: defaults.mode_default_pending,
+            selection: defaults.selection,
+            output_schema: defaults.output_schema,
             info: info.clone(),
             history,
             calls,

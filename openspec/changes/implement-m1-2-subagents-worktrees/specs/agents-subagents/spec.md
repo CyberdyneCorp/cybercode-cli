@@ -137,6 +137,22 @@
 - **WHEN** a subagent ends with text only and the single re-prompt also yields no valid result
 - **THEN** the `agent` call fails with `SchemaMismatch` and the validation errors
 
+#### Scenario: Typed results survive replay and output limits
+- **WHEN** a foreground child returns a valid value, including JSON null or a value larger than the ordinary tool-output preview limit
+- **THEN** durable call settlement, replay and HTTP history SHALL retain the complete typed value
+- **AND** historical calls without structured output SHALL preserve their serialized shape
+- **AND** rewind removing the result SHALL retain the child schema for a new attempt
+
+#### Scenario: Result completion cannot dispatch later side effects
+- **WHEN** a provider response includes a valid return_result followed by another tool call
+- **THEN** later calls SHALL settle without dispatch
+- **AND** duplicate call IDs within a response SHALL stop that response before tool dispatch
+
+#### Scenario: Result correction preserves cancellation and refusal
+- **WHEN** a structured child is interrupted or its permission request is rejected without feedback
+- **THEN** the parent SHALL fail that attempt without admitting a result correction
+- **AND** interruption during the single correction SHALL stop the child through the foreground owner
+
 ### Requirement: Background subagents and handback
 (P1) A spawn with `background: true` (or an agent with `background: true` by default) SHALL return immediately with `{ id, name, state: "running" }`. On completion or failure, the system SHALL admit a handback message into the parent Session with `delivery: queue` containing the subagent name, status, final text or structured result, and cost. Background subagents SHALL be listed in `/tasks` and stoppable.
 

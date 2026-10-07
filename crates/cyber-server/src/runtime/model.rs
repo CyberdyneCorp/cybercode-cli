@@ -140,6 +140,12 @@ impl CallStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CallState {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::events::present_value"
+    )]
+    pub structured_output: Option<Value>,
     pub call_id: String,
     pub message_id: String,
     pub name: String,
@@ -245,6 +251,8 @@ pub struct StepSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
+    #[serde(skip)]
+    pub(crate) result: super::structured::ResultState,
     pub info: SessionInfo,
     #[serde(skip)]
     pub(crate) model_selection: super::selection::ModelSelection,
@@ -277,8 +285,23 @@ pub struct SessionState {
 const MAX_INSTRUCTION_CHARS: usize = 2000;
 
 impl SessionState {
+    pub fn structured_result(&self) -> Option<&Value> {
+        self.result.returned.as_ref().map(|(_, value)| value)
+    }
+
+    pub fn structured_attempt_rejected(&self) -> bool {
+        self.result.rejected
+    }
+
+    pub fn structured_result_error(&self) -> &str {
+        self.result.error.as_ref().map_or(
+            "return_result was not called with a valid result",
+            |(_, error)| error.as_str(),
+        )
+    }
     pub fn new(info: SessionInfo) -> Self {
         Self {
+            result: super::structured::ResultState::default(),
             model_selection: super::selection::ModelSelection::explicit(info.model.clone()),
             selection_revision: -1,
             mode_default_pending: false,
@@ -331,6 +354,10 @@ impl SessionState {
             state.model_selection = selection;
         }
         state.mode_default_pending = created.mode_default_pending;
+        state.result.schema = created
+            .output_schema
+            .map(super::StructuredSchema::new)
+            .transpose()?;
         state.entries = created.history;
         state.calls = created
             .calls
@@ -456,6 +483,7 @@ impl SessionState {
                     CallStatus::OutcomeUnknown | CallStatus::Dispatched
                 )
         });
+        self.result.rewind(&self.calls);
         self.steps.retain(|s| !removed.contains(&s.step_id));
         self.diffs.retain(|id, _| !removed.contains(id));
         self.task
@@ -490,6 +518,14 @@ impl SessionState {
             self.selection_revision = e.seq;
         }
         match kind {
+            "permission.replied" if self.result.schema.is_some() => {
+                if matches!(
+                    serde_json::from_value::<super::PermissionReply>(e.data["reply"].clone()),
+                    Ok(super::PermissionReply::Reject { message: None })
+                ) {
+                    self.result.rejected = true;
+                }
+            }
             "permission.auto_decided" => {
                 let decision: super::auto::AutoDecision = decode(e)?;
                 if let Some(usage) = decision.usage {
@@ -592,6 +628,7 @@ impl SessionState {
             self.task.version += 1;
         }
         self.entries.push(entry);
+        self.result.rejected = false;
         self.steps_since_input = 0;
     }
 
@@ -670,6 +707,7 @@ impl SessionState {
         self.calls.insert(
             c.call_id.clone(),
             CallState {
+                structured_output: None,
                 call_id: c.call_id,
                 message_id: c.message_id,
                 name: c.name,
@@ -694,6 +732,8 @@ impl SessionState {
         if let Some(call) = self.calls.get_mut(&s.call_id) {
             call.status = s.status;
             call.output = Some(s.output);
+            call.structured_output = s.structured_output;
+            self.result.settle(call);
         }
     }
 

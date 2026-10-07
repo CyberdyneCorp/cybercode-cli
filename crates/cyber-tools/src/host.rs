@@ -72,6 +72,31 @@ impl BuiltinHost {
         })
     }
 
+    fn settle_output(&self, ctx: &Ctx<'_>, output: String, keep_tail: bool) -> ToolOutcome {
+        let value = if ctx.inv.name == "agent" && ctx.inv.input.get("output_schema").is_some() {
+            match serde_json::from_str::<Value>(&output)
+                .ok()
+                .and_then(|result| result.get("result").cloned())
+            {
+                Some(value) => Some(value),
+                None => {
+                    return ToolOutcome::Crashed(
+                        "Structured agent result was not preserved".into(),
+                    );
+                }
+            }
+        } else {
+            None
+        };
+        match self.budget(&ctx.location).apply(output, keep_tail) {
+            Ok(output) => match value {
+                Some(value) => ToolOutcome::Structured { output, value },
+                None => ToolOutcome::Ok(output),
+            },
+            Err(error) => ToolOutcome::Crashed(error),
+        }
+    }
+
     /// Late-bind the runtime for tools that act on the Session (plan mode switches).
     pub fn attach(&self, runtime: Runtime) {
         let _ = self.runtime.set(runtime.downgrade());
@@ -542,10 +567,7 @@ impl ToolHost for BuiltinHost {
             };
             let keep_tail = matches!(inv.name.as_str(), "bash" | "powershell");
             match tool.run(&ctx).await {
-                Ok(text) => match self.budget(&ctx.location).apply(text, keep_tail) {
-                    Ok(text) => ToolOutcome::Ok(text),
-                    Err(e) => ToolOutcome::Crashed(e),
-                },
+                Ok(output) => self.settle_output(&ctx, output, keep_tail),
                 Err(ToolError::Failed(message)) => ToolOutcome::Failed(message),
                 Err(ToolError::Aborted) => ToolOutcome::Aborted,
             }
