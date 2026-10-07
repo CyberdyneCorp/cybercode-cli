@@ -24,6 +24,9 @@ pub struct Run {
     pub denials: Vec<Value>,
     pub error: Option<String>,
     pub stop_reason: Option<String>,
+    pub usage: Option<Value>,
+    pub unpriced: bool,
+    extra_tokens: u64,
     calls: HashMap<String, (String, Value)>,
     max_tokens: Option<u64>,
     max_cost: Option<f64>,
@@ -41,6 +44,9 @@ impl Run {
             denials: Vec::new(),
             error: None,
             stop_reason: None,
+            usage: None,
+            unpriced: false,
+            extra_tokens: 0,
             calls: HashMap::new(),
             max_tokens: args.max_tokens,
             max_cost: args.max_cost,
@@ -48,9 +54,26 @@ impl Run {
     }
 
     pub fn over_budget(&self) -> bool {
-        self.max_tokens
-            .is_some_and(|m| self.input_tokens + self.output_tokens > m)
-            || self.max_cost.is_some_and(|m| self.cost > m)
+        self.max_tokens.is_some_and(|m| {
+            self.input_tokens
+                .saturating_add(self.output_tokens)
+                .saturating_add(self.extra_tokens)
+                > m
+        }) || self.max_cost.is_some_and(|m| self.cost > m)
+    }
+
+    pub fn totals(&mut self, totals: &Value) {
+        let usage = &totals["usage"];
+        self.input_tokens = usage["input"].as_u64().unwrap_or(0);
+        self.output_tokens = usage["output"].as_u64().unwrap_or(0);
+        self.extra_tokens = ["reasoning", "cache_read", "cache_write"]
+            .iter()
+            .map(|field| usage[*field].as_u64().unwrap_or(0))
+            .fold(0u64, u64::saturating_add);
+        self.cost = totals["cost"].as_f64().unwrap_or(0.0);
+        self.turns = totals["steps"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+        self.unpriced = totals["unpriced_steps"].as_u64().unwrap_or(0) > 0;
+        self.usage = Some(usage.clone());
     }
 
     fn exit_code(&self, fail_on_deny: bool) -> u8 {
@@ -70,6 +93,7 @@ pub struct Out {
     quiet: bool,
     thinking: bool,
     session_id: String,
+    delegation: Option<(String, String)>,
 }
 
 fn now_ms() -> i64 {
@@ -103,7 +127,13 @@ impl Out {
             quiet: args.quiet,
             thinking: args.thinking,
             session_id: session["id"].as_str().unwrap_or_default().into(),
+            delegation: None,
         }
+    }
+
+    pub fn delegated(&mut self, parent: &str, job: &str, child: &str) {
+        self.session_id = child.into();
+        self.delegation = Some((parent.into(), job.into()));
     }
 
     fn line(&self, kind: &str, mut payload: Value) {
@@ -223,7 +253,7 @@ impl Out {
     /// Print the result and return the exit code.
     pub fn finish(self, run: &Run, args: &ExecArgs, session: &Value) -> u8 {
         let code = run.exit_code(args.fail_on_deny);
-        let result = json!({
+        let mut result = json!({
             "result": run.text,
             "session_id": self.session_id,
             "usage": { "input": run.input_tokens, "output": run.output_tokens },
@@ -235,6 +265,14 @@ impl Out {
             "error": run.error,
             "exit_code": code,
         });
+        if let Some(usage) = &run.usage {
+            result["usage"] = usage.clone();
+            result["cost_unpriced"] = run.unpriced.into();
+        }
+        if let Some((parent, job)) = &self.delegation {
+            result["parent_session_id"] = parent.clone().into();
+            result["job_id"] = job.clone().into();
+        }
         match self.format {
             Format::StreamJson => self.line("result", result),
             Format::Json => println!("{result}"),

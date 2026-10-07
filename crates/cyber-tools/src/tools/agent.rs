@@ -36,6 +36,8 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    attachments: Vec<cyber_llm::Content>,
+    max_steps: Option<u32>,
     isolation: bool,
     user_requested: bool,
     fork: bool,
@@ -130,6 +132,8 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         return Err(failed("name must contain 1–128 bytes"));
     }
     Ok(Spawn {
+        attachments: Vec::new(),
+        max_steps: None,
         isolation,
         user_requested: false,
         fork,
@@ -173,6 +177,30 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<bool, ToolErr
     }
 }
 
+fn user_options(spawn: &mut Spawn, input: &Value) -> Result<(), ToolError> {
+    if spawn.user_requested {
+        spawn.attachments = input
+            .get("attachments")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| failed(error.to_string()))?
+            .unwrap_or_default();
+        spawn.max_steps = input
+            .get("max_steps")
+            .filter(|value| !value.is_null())
+            .map(|value| {
+                value
+                    .as_u64()
+                    .and_then(|limit| u32::try_from(limit).ok())
+                    .filter(|limit| *limit > 0)
+                    .ok_or_else(|| failed("Subtask max_steps must be a positive integer"))
+            })
+            .transpose()?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, ToolError> {
     let runtime = ctx
         .host
@@ -189,6 +217,7 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
     };
     let mut spawn = configured(ctx, resume.as_ref())?;
     spawn.user_requested = user_requested;
+    user_options(&mut spawn, &ctx.inv.input)?;
     if let Some(existing) = &resume {
         let state = runtime
             .state(&existing.id)
@@ -584,6 +613,7 @@ async fn create_child(
         };
         let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
         admission.source = "session".into();
+        admission.parts.extend(spawn.attachments.clone());
         let receipt = runtime
             .resume_child(
                 execution,
@@ -604,6 +634,9 @@ async fn create_child(
         worktree_id: parent.worktree_id.clone(),
         parent_id: Some(parent.id.clone()),
         agent: Some(spawn.profile.name.clone()),
+        max_steps: spawn.max_steps.map(|limit| {
+            limit.min(u32::try_from(spawn.profile.steps.unwrap_or(50)).unwrap_or(u32::MAX))
+        }),
         subagent_name: spawn.name.clone(),
         title: Some(format!("{} (@{})", spawn.description, spawn.profile.name)),
         model: model.unwrap_or(&parent.model).into(),
@@ -630,6 +663,7 @@ async fn create_child(
     };
     let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
     admission.source = "session".into();
+    admission.parts.extend(spawn.attachments.clone());
     let receipt = runtime
         .admit(id, admission)
         .await

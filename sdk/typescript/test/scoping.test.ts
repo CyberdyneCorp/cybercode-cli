@@ -90,3 +90,16 @@ test("named user delegation sends the selected profile through the Session endpo
   assert.deepEqual(JSON.parse(calls[0]!.body!), { prompt: "find retry logic", agent: "explore" });
   assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses_parent/subtask");
 });
+
+test("typed delegation retains image attachments and the reviewed turn ceiling", async () => {
+  const { client, calls } = mockClient(() => json(202, { data: {
+    id: "job_named", child_id: "ses_child", session_id: "ses_parent", status: "running",
+  } }));
+  const body = {
+    prompt: "inspect image", agent: "explore", max_steps: 2,
+    attachments: [{ type: "image" as const, media_type: "image/png", data: "aW1hZ2U=" }],
+  };
+  await client.session.subtask("ses_parent", body, { idempotencyKey: "typed-child" });
+  assert.deepEqual(JSON.parse(calls[0]!.body!), body);
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "typed-child");
+});

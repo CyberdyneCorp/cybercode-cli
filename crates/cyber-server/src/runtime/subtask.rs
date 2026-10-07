@@ -1,6 +1,14 @@
 //! Explicit user delegation shares child ownership without creating a parent Turn.
 use super::{Job, Runtime, RuntimeError, TurnContext};
 
+#[derive(Debug, Clone)]
+pub struct UserSubtask {
+    pub prompt: String,
+    pub agent: Option<String>,
+    pub attachments: Vec<cyber_llm::Content>,
+    pub max_steps: Option<u32>,
+}
+
 impl Runtime {
     pub async fn subtask(&self, session_id: &str, prompt: &str) -> Result<Job, RuntimeError> {
         self.subtask_with_agent(session_id, prompt, None).await
@@ -12,7 +20,29 @@ impl Runtime {
         prompt: &str,
         agent: Option<String>,
     ) -> Result<Job, RuntimeError> {
-        if prompt.trim().is_empty() {
+        self.subtask_request(
+            session_id,
+            UserSubtask {
+                prompt: prompt.into(),
+                agent,
+                attachments: Vec::new(),
+                max_steps: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn subtask_request(
+        &self,
+        session_id: &str,
+        request: UserSubtask,
+    ) -> Result<Job, RuntimeError> {
+        if request.max_steps == Some(0) {
+            return Err(RuntimeError::Invalid(
+                "Subtask max_steps must be positive".into(),
+            ));
+        }
+        if request.prompt.trim().is_empty() {
             return Err(RuntimeError::Invalid(
                 "subtask prompt must not be empty".into(),
             ));
@@ -32,7 +62,7 @@ impl Runtime {
         };
         self.inner
             .tools
-            .subtask_with_agent(turn, prompt.into(), agent, self.inner.closed.child_token())
+            .subtask_request(turn, request, self.inner.closed.child_token())
             .await
             .map_err(RuntimeError::Invalid)
     }

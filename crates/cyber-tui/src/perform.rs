@@ -1,6 +1,7 @@
 //! Performing [`Action`]s through the API and turning results into messages.
 
 use cyber_client::Client;
+use cyber_core::agent_mentions::parse as leading_agent_mention;
 use serde_json::{Value, json};
 
 use crate::app::Action;
@@ -345,21 +346,6 @@ pub async fn commands(client: &Client) -> Result<Msg, String> {
         })
         .collect();
     Ok(Msg::Commands(items))
-}
-
-fn leading_agent_mention(text: &str) -> Option<(String, &str)> {
-    let rest = text.trim_start().strip_prefix('@')?;
-    if rest.starts_with('"') {
-        let mut quoted = serde_json::Deserializer::from_str(rest).into_iter::<String>();
-        let name = quoted.next()?.ok()?;
-        let prompt = &rest[quoted.byte_offset()..];
-        if !prompt.is_empty() && !prompt.starts_with(char::is_whitespace) {
-            return None;
-        }
-        return Some((name, prompt.trim_start()));
-    }
-    let (name, prompt) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-    Some((name.to_owned(), prompt.trim_start()))
 }
 
 fn agent_choices(data: &Value) -> Vec<Choice> {

@@ -5,6 +5,108 @@ use serde_json::json;
 use support::flow::{Flow, call, text};
 
 #[tokio::test]
+async fn typed_user_delegation_preserves_images_and_caps_requested_steps() {
+    use cyber_llm::Content;
+    use cyber_server::runtime::UserSubtask;
+    let flow = Flow::new(vec![text("child answer"), text("notice handled")], false);
+    flow.f.set_config(json!({"agents":{"general":{"steps":2}}}));
+    let parent = flow.session("dont-ask").await;
+    let attachments = vec![
+        Content::Text {
+            text: "attachment".into(),
+        },
+        Content::Image {
+            media_type: "image/png".into(),
+            data: "aW1hZ2U=".into(),
+        },
+    ];
+    let job = flow
+        .runtime
+        .subtask_request(
+            &parent,
+            UserSubtask {
+                prompt: "inspect attachments".into(),
+                agent: Some("general".into()),
+                attachments: attachments.clone(),
+                max_steps: Some(10),
+            },
+        )
+        .await
+        .unwrap();
+    wait_notice(&flow, &job.id).await;
+    let child = flow.runtime.state(&job.child_id).await.unwrap();
+    assert_eq!(child.info.max_steps, Some(2));
+    let requests = flow.main.requests();
+    let message = requests[0]
+        .messages
+        .iter()
+        .find(|message| {
+            message
+                .content
+                .iter()
+                .any(|part| matches!(part, Content::Image { .. }))
+        })
+        .unwrap();
+    assert_eq!(&message.content[1..], attachments.as_slice());
+    assert_eq!(
+        flow.runtime.job(&job.id).unwrap().status,
+        JobStatus::Completed
+    );
+}
+
+#[tokio::test]
+async fn one_step_user_ceiling_removes_tools_and_zero_creates_no_child() {
+    use cyber_server::runtime::UserSubtask;
+    let flow = Flow::new(
+        vec![
+            call("read", "read", json!({"path":"public.txt"})),
+            text("child answer"),
+            text("notice handled"),
+        ],
+        false,
+    );
+    flow.f.write("public.txt", "public");
+    let parent = flow.session("dont-ask").await;
+    let request = |steps| UserSubtask {
+        prompt: "one step".into(),
+        agent: Some("general".into()),
+        attachments: vec![],
+        max_steps: Some(steps),
+    };
+    assert!(
+        flow.runtime
+            .subtask_request(&parent, request(0))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .len(),
+        1
+    );
+    let job = flow
+        .runtime
+        .subtask_request(&parent, request(1))
+        .await
+        .unwrap();
+    wait_notice(&flow, &job.id).await;
+    assert!(!flow.main.requests()[0].tools.is_empty());
+    assert!(flow.main.requests()[1].tools.is_empty());
+    assert_eq!(
+        flow.runtime
+            .state(&job.child_id)
+            .await
+            .unwrap()
+            .info
+            .max_steps,
+        Some(1)
+    );
+}
+
+#[tokio::test]
 async fn user_subtask_forks_without_spawn_approval_and_preserves_child_approvals() {
     let flow = Flow::new(
         vec![
@@ -285,7 +387,7 @@ async fn authenticated_http_subtask_returns_a_job_and_replays_its_idempotency_ke
             .status(),
         reqwest::StatusCode::BAD_REQUEST
     );
-    let body = json!({"prompt":"try another approach", "agent":"explore"});
+    let body = json!({"prompt":"try another approach", "agent":"explore", "max_steps":2, "attachments":[{"type":"image","media_type":"image/png","data":"aW1hZ2U="}]});
     let response = client
         .post(&url)
         .basic_auth("cyber", Some("secret"))
@@ -307,6 +409,24 @@ async fn authenticated_http_subtask_returns_a_job_and_replays_its_idempotency_ke
             .agent,
         "explore"
     );
+    let child = flow.runtime.state(&request.session_id).await.unwrap();
+    assert_eq!(child.info.max_steps, Some(2));
+    assert!(flow.main.requests()[0].messages.iter().any(|message| {
+        message.content.iter().any(
+            |part| matches!(part, cyber_llm::Content::Image { data, .. } if data == "aW1hZ2U="),
+        )
+    }));
+    let mut changed = body.clone();
+    changed["max_steps"] = json!(3);
+    let conflict = client
+        .post(&url)
+        .basic_auth("cyber", Some("secret"))
+        .header("Idempotency-Key", "subtask-test")
+        .json(&changed)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), reqwest::StatusCode::CONFLICT);
     let replay = client
         .post(&url)
         .basic_auth("cyber", Some("secret"))

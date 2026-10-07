@@ -248,7 +248,7 @@ pub async fn send(
     Ok(())
 }
 
-fn file_part(path: &std::path::Path) -> Result<Value, CliError> {
+pub(super) fn file_part(path: &std::path::Path) -> Result<Value, CliError> {
     let bytes = std::fs::read(path)
         .map_err(|_| CliError::usage(format!("--file {}: no such file", path.display())))?;
     let ext = path

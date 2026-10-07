@@ -1121,6 +1121,7 @@
       },
       "SubtaskBody": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "prompt": {
             "type": "string",
@@ -1132,45 +1133,27 @@
               "null"
             ],
             "description": "A visible subagent-capable profile. Omit to fork the current agent/context."
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Content"
+            },
+            "description": "Additional model-visible Content, retained without text conversion.",
+            "default": []
+          },
+          "max_steps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Positive ceiling capped by the selected profile's subagent step limit."
           }
         },
         "required": [
           "prompt"
-        ]
-      },
-      "PromptBody": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "parts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Content"
-            }
-          },
-          "delivery": {
-            "$ref": "#/components/schemas/Delivery",
-            "default": "steer"
-          },
-          "resume": {
-            "type": "boolean",
-            "default": true
-          },
-          "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`user` unless a client relays another source."
-          }
-        },
-        "required": [
-          "parts"
         ]
       },
       "Content": {
@@ -1283,6 +1266,41 @@
           }
         ],
         "description": "One part of a message. Tool results travel in user messages."
+      },
+      "PromptBody": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Content"
+            }
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/Delivery",
+            "default": "steer"
+          },
+          "resume": {
+            "type": "boolean",
+            "default": true
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`user` unless a client relays another source."
+          }
+        },
+        "required": [
+          "parts"
+        ]
       },
       "Delivery": {
         "oneOf": [

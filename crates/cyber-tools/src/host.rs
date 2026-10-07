@@ -598,7 +598,34 @@ impl ToolHost for BuiltinHost {
         agent: Option<String>,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
+        self.subtask_request(
+            turn,
+            cyber_server::runtime::UserSubtask {
+                prompt,
+                agent,
+                attachments: Vec::new(),
+                max_steps: None,
+            },
+            cancel,
+        )
+    }
+
+    fn subtask_request(
+        &self,
+        turn: TurnContext,
+        request: cyber_server::runtime::UserSubtask,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
         Box::pin(async move {
+            let cyber_server::runtime::UserSubtask {
+                prompt,
+                agent,
+                attachments,
+                max_steps,
+            } = request;
+            if max_steps == Some(0) {
+                return Err("Subtask max_steps must be positive".into());
+            }
             if let Some(name) = &agent {
                 let (config, _) = (self.opts.config)(Path::new(&turn.directory))?;
                 let profiles = cyber_core::config::resolve_agents(&config)?;
@@ -609,8 +636,7 @@ impl ToolHost for BuiltinHost {
                     return Err(format!("Agent {name:?} cannot run a user subagent"));
                 }
             }
-            let mut input =
-                serde_json::json!({"prompt":prompt,"fork":agent.is_none(),"background":true});
+            let mut input = serde_json::json!({"prompt":prompt,"fork":agent.is_none(),"background":true,"attachments":attachments,"max_steps":max_steps});
             if let Some(agent) = agent {
                 input["agent"] = agent.into();
             }

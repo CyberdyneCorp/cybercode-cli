@@ -88,11 +88,17 @@ pub struct ForkBody {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SubtaskBody {
     /// Explicit user request for a background child.
     pub prompt: String,
     /// A visible subagent-capable profile. Omit to fork the current agent/context.
     pub agent: Option<String>,
+    /// Additional model-visible Content, retained without text conversion.
+    #[serde(default)]
+    pub attachments: Vec<Content>,
+    /// Positive ceiling capped by the selected profile's subagent step limit.
+    pub max_steps: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -394,7 +400,15 @@ async fn subtask(
 ) -> Result<Response> {
     let job = state
         .runtime
-        .subtask_with_agent(&id, &body.prompt, body.agent)
+        .subtask_request(
+            &id,
+            crate::runtime::UserSubtask {
+                prompt: body.prompt,
+                agent: body.agent,
+                attachments: body.attachments,
+                max_steps: body.max_steps,
+            },
+        )
         .await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: job })).into_response())
 }

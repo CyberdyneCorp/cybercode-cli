@@ -371,6 +371,14 @@
 - **AND** names containing whitespace SHALL complete with a JSON-quoted name after `@` and resolve to the exact configured profile
 - **AND** ordinary file mentions and agent-like text quoted before the `@` marker or embedded in prose SHALL retain ordinary prompt admission
 
+#### Scenario: Exec follows an explicitly mentioned child
+- **WHEN** `cyber exec` submits a leading eligible agent mention
+- **THEN** it SHALL start explicit named delegation with attached Content and an optional positive requested turn ceiling
+- **AND** it SHALL print the child's durable result and usage, including events committed before the delegation response
+- **AND** it SHALL wait for terminal Job settlement rather than an early child idle notification
+- **AND** after receiving the owned Job, timeout, interruption and local budget exhaustion SHALL cancel it without interrupting the parent or another child
+- **AND** unknown/file mentions and `--command` SHALL preserve ordinary admission
+
 #### Scenario: Mention runs subagent
 - **WHEN** the user submits `@explore where is retry logic implemented?`
 - **THEN** an `explore` child Session is spawned with that question and its result is shown in the parent

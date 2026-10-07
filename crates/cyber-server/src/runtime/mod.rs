@@ -19,6 +19,7 @@ mod names;
 mod subtask;
 pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
 pub use names::ChildExecution;
+pub use subtask::UserSubtask;
 mod location;
 mod model;
 mod requests;

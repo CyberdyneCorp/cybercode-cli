@@ -621,6 +621,10 @@ export type SubtaskBody = {
   prompt: string;
   /** A visible subagent-capable profile. Omit to fork the current agent/context. */
   agent?: string | null;
+  /** Additional model-visible Content, retained without text conversion. */
+  attachments?: Content[];
+  /** Positive ceiling capped by the selected profile's subagent step limit. */
+  max_steps?: number | null;
 };
 
 /** Durable task state (`compaction` → Durable task state), derived from promoted input. */

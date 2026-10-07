@@ -1,5 +1,6 @@
 //! `cyber exec` (`exec-mode`): one non-interactive run against a Session.
 
+mod delegation;
 mod report;
 pub(crate) mod setup;
 
@@ -135,6 +136,20 @@ pub fn run(args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), Cli
 
 /// Send the prompt and follow the Session until its Drain goes idle.
 async fn execute(
+    client: &Client,
+    session: &Value,
+    args: &ExecArgs,
+    prompt: String,
+    timeout: Option<Duration>,
+    out: Out,
+) -> Result<u8, CliError> {
+    if let Some((agent, prompt)) = delegation::target(client, args, &prompt).await? {
+        return delegation::execute(client, session, args, agent, prompt, timeout, out).await;
+    }
+    execute_session(client, session, args, prompt, timeout, out).await
+}
+
+async fn execute_session(
     client: &Client,
     session: &Value,
     args: &ExecArgs,
