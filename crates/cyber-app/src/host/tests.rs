@@ -185,3 +185,30 @@ async fn app_host_delegates_validated_agent_request_options() {
     assert_eq!(options.permission_mode.as_deref(), Some("plan"));
     assert_eq!(options.steps, Some(4));
 }
+
+#[tokio::test]
+async fn app_host_subtask_delegation_preserves_user_deny_rules() {
+    let scratch = tempfile::tempdir().unwrap();
+    let app = application(scratch.path()).await;
+    let parent = app
+        .state
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: scratch.path().display().to_string(),
+            model: "test/unavailable".into(),
+            mode: Some("bypass".into()),
+            rules: Some(json!({"agent":"deny"})),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let error = app
+        .state
+        .runtime
+        .subtask(&parent.id, "try another approach")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Permission denied"), "{error}");
+    assert!(app.state.runtime.jobs(Some(&parent.id)).unwrap().is_empty());
+}

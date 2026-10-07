@@ -306,6 +306,7 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
             "model · sessions · new · theme · fork",
         ),
         ("/model /resume /new /mode /compact /theme", "commands"),
+        ("/subtask <prompt> · /tasks · /stop", "background tasks"),
         ("@path  !cmd", "mention a file · run a shell command"),
         ("Alt+Up", "take back the last queued message"),
         ("PageUp / PageDown", "scroll"),

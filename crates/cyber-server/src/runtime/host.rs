@@ -224,6 +224,16 @@ pub trait ToolHost: Send + Sync {
     /// Run a call. Implementations stop within 2 s once `cancel` fires.
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome>;
 
+    /// An explicit user request for a forked background child. Deny rules still apply.
+    fn subtask(
+        &self,
+        _turn: TurnContext,
+        _prompt: String,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<super::Job, String>> {
+        Box::pin(async { Err("subtasks are not supported by this host".into()) })
+    }
+
     /// Run a user shell command (`!`) in a Location under the sandbox, without prompts.
     fn shell(
         &self,

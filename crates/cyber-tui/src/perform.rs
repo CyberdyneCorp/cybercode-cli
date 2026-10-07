@@ -150,6 +150,16 @@ async fn converse(client: &Client, session: &Session, action: Action) -> Result<
             )
             .await
         }
+        Action::Subtask(prompt) => {
+            let result = client
+                .post(&format!("/sessions/{id}/subtask"), json!({"prompt":prompt}))
+                .await
+                .map_err(err)?;
+            Ok(Msg::Toast(format!(
+                "Started {} · /tasks to view or stop",
+                result["data"]["name"].as_str().unwrap_or("subtask")
+            )))
+        }
         Action::Shell(command) => {
             post(
                 client,

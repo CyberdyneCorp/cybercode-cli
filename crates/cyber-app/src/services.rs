@@ -47,6 +47,10 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
     ("resume", "Open another Session"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),
+    (
+        "subtask",
+        "Fork a background child with the current context",
+    ),
     ("tasks", "List background tasks and open or stop a child"),
     ("ps", "List background tasks"),
     ("stop", "Confirm stopping this Session's background tasks"),

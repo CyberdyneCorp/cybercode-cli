@@ -213,6 +213,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<Session>>(g),
         op(
             "post",
+            "/sessions/{sessionID}/subtask",
+            "v1.session.subtask",
+            "Start an explicitly requested forked background child",
+        )
+        .status(202)
+        .body::<SubtaskBody>(g)
+        .ok::<Data<crate::runtime::Job>>(g),
+        op(
+            "post",
             "/sessions/{sessionID}/prompt",
             "v1.session.prompt",
             "Durably admit a prompt",

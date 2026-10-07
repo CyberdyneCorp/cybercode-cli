@@ -66,6 +66,15 @@ impl ToolHost for AppHost {
         self.builtin.reconcile(directory, call)
     }
 
+    fn subtask(
+        &self,
+        turn: TurnContext,
+        prompt: String,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
+        self.builtin.subtask(turn, prompt, cancel)
+    }
+
     fn shell(
         &self,
         directory: &str,

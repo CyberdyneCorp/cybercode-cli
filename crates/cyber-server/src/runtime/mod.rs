@@ -16,6 +16,7 @@ mod fork;
 mod host;
 mod jobs;
 mod names;
+mod subtask;
 pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
 pub use names::ChildExecution;
 mod location;

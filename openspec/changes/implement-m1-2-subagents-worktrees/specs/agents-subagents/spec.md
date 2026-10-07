@@ -176,6 +176,12 @@
 - **WHEN** the user runs `/subtask try the alternative parser approach`
 - **THEN** the child Session's first Turn includes the parent's history and the prompt, and the parent continues independently
 
+#### Scenario: Explicit user subtask admission
+- **WHEN** the user submits `/subtask <prompt>` or POSTs its prompt to `/api/v1/sessions/{sessionID}/subtask`
+- **THEN** the system SHALL start a forked background child and return its durable Job identity without switching the parent or adding a parent Turn
+- **AND** explicit user initiation SHALL not require another agent-spawn approval, in every Mode, while profile restrictions, deny rules and child permission ceilings remain enforced
+- **AND** blank prompts SHALL fail before child creation
+
 #### Scenario: Fork identity and durable context
 - **WHEN** a Session is copied or an agent forks its caller
 - **THEN** the copy SHALL preserve the projected history, Context Epoch and durable task sources with fresh local message/call identities

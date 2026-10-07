@@ -57,6 +57,7 @@ pub enum Action {
     SwitchModel(String),
     SwitchMode(String),
     Fork,
+    Subtask(String),
     Compact(Option<String>),
     FindFiles(String),
     RemoveQueued(String),
@@ -534,6 +535,11 @@ impl App {
             "resume" | "sessions" => vec![Action::LoadSessions],
             "new" | "clear" => vec![Action::NewSession],
             "fork" => vec![Action::Fork],
+            "subtask" if !args.is_empty() => vec![Action::Subtask(args.into())],
+            "subtask" => {
+                self.toast("Usage: /subtask <prompt>");
+                Vec::new()
+            }
             "compact" => vec![Action::Compact(
                 (!args.is_empty()).then(|| args.to_string()),
             )],

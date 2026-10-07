@@ -48,3 +48,14 @@ test("connect() does no I/O; embedded mode reports a missing binary", async () =
   assert.equal(fetched, false);
   await assert.rejects(Cyber.start({ mode: "embedded", binary: "/nonexistent/cyber" }), /cannot start `\/nonexistent\/cyber serve --stdio`/);
 });
+
+test("session.subtask posts an explicit prompt and returns the background Job", async () => {
+  const job = { id: "job_1", child_id: "ses_child", session_id: "ses/parent", name: "build", status: "running" };
+  const { client, calls } = mockClient(() => json(202, { data: job }));
+  const result = await client.session.subtask("ses/parent", { prompt: "try another approach" });
+  assert.equal(result.id, "job_1");
+  assert.equal(result.child_id, "ses_child");
+  assert.equal(calls[0]?.method, "POST");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fparent/subtask");
+  assert.deepEqual(JSON.parse(calls[0]!.body!), { prompt: "try another approach" });
+});

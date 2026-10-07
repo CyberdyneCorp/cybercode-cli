@@ -567,6 +567,11 @@ export type StopService = {
   id: string;
 };
 
+export type SubtaskBody = {
+  /** Explicit user request for a forked background child. */
+  prompt: string;
+};
+
 /** Durable task state (`compaction` → Durable task state), derived from promoted input. */
 export type TaskState = {
   version: number;

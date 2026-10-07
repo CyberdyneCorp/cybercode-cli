@@ -248,11 +248,8 @@ const PLAN_DENY: &str = "Plan mode is read-only. Present the plan with plan_exit
 impl Policy {
     pub fn decide(&self, req: &Request) -> Decision {
         let ruled = evaluate_all(&self.rules, &req.action, &req.resources);
-        if ruled == Effect::Deny {
-            return Decision::Deny(format!("denied by rule for {}", req.action));
-        }
-        if self.ceiling_denies(req) {
-            return Decision::Deny("denied by a user rule".into());
+        if let Some(denied) = self.rule_denial(req, ruled) {
+            return denied;
         }
         let effect = if ruled == Effect::Ask && self.saved_allows(req) {
             Effect::Allow
@@ -264,6 +261,20 @@ impl Policy {
             decision = intersect(decision, self.decide_in_mode(req, effect, *mode));
         }
         decision
+    }
+
+    /// Explicit user delegation approves only spawn admission; child tools still use decide.
+    pub(crate) fn user_delegation(&self, req: &Request) -> Decision {
+        let ruled = evaluate_all(&self.rules, &req.action, &req.resources);
+        self.rule_denial(req, ruled).unwrap_or(Decision::Allow)
+    }
+
+    fn rule_denial(&self, req: &Request, effect: Effect) -> Option<Decision> {
+        if effect == Effect::Deny {
+            return Some(Decision::Deny(format!("denied by rule for {}", req.action)));
+        }
+        self.ceiling_denies(req)
+            .then(|| Decision::Deny("denied by a user rule".into()))
     }
 
     fn decide_in_mode(&self, req: &Request, effect: Effect, mode: Mode) -> Decision {

@@ -31,11 +31,12 @@ impl Tool for Agent {
     }
 
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
-        Box::pin(run(ctx))
+        Box::pin(run(ctx, false))
     }
 }
 
 struct Spawn {
+    user_requested: bool,
     fork: bool,
     resume: Option<SessionInfo>,
     usage: cyber_server::runtime::JobUsage,
@@ -127,6 +128,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         return Err(failed("name must contain 1–128 bytes"));
     }
     Ok(Spawn {
+        user_requested: false,
         fork,
         resume: resume.cloned(),
         usage: Default::default(),
@@ -169,7 +171,7 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<(), ToolError
     Ok(())
 }
 
-async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
+pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, ToolError> {
     let runtime = ctx
         .host
         .runtime()
@@ -184,6 +186,7 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
         None => None,
     };
     let mut spawn = configured(ctx, resume.as_ref())?;
+    spawn.user_requested = user_requested;
     let parent = runtime
         .state(&ctx.inv.session_id)
         .await
@@ -207,16 +210,23 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
             spawn.max_depth
         )));
     }
-    ctx.authorize(
-        Request {
-            action: "agent".into(),
-            resources: vec![spawn.profile.name.clone()],
-            ..Request::default()
-        },
-        vec![spawn.profile.name.clone()],
-        json!({"agent":spawn.profile.name, "description":spawn.description}),
-    )
-    .await?;
+    let request = Request {
+        action: "agent".into(),
+        resources: vec![spawn.profile.name.clone()],
+        ..Request::default()
+    };
+    if user_requested {
+        if let Decision::Deny(reason) = ctx.policy.user_delegation(&request) {
+            return Err(failed(format!("Permission denied: {reason}")));
+        }
+    } else {
+        ctx.authorize(
+            request,
+            vec![spawn.profile.name.clone()],
+            json!({"agent":spawn.profile.name, "description":spawn.description}),
+        )
+        .await?;
+    }
     let execution = if let Some(child) = &spawn.resume {
         let owner = runtime
             .claim_child_execution(&parent.id, &child.id)
@@ -253,6 +263,7 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
 
 async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolError> {
     // Queued or approved calls may outlive a profile/configuration reload.
+    ctx.host.check_agent_tool(ctx.inv).map_err(failed)?;
     let latest = configured(ctx, spawn.resume.as_ref())?;
     spawn.profile = latest.profile;
     spawn.background = latest.background;
@@ -263,7 +274,12 @@ async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolEr
         resources: vec![spawn.profile.name.clone()],
         ..Request::default()
     };
-    if let Decision::Deny(reason) = policy.decide(&request) {
+    let decision = if spawn.user_requested {
+        policy.user_delegation(&request)
+    } else {
+        policy.decide(&request)
+    };
+    if let Decision::Deny(reason) = decision {
         return Err(failed(format!("Permission denied: {reason}")));
     }
     Ok(())

@@ -602,3 +602,19 @@ fn stop_all_tasks_requires_confirmation() {
         [Action::StopTasks]
     ));
 }
+
+#[test]
+fn subtask_requires_a_prompt_and_keeps_the_parent_open() {
+    for running in [false, true] {
+        let mut app = App::new(session(running), Vec::new(), "cyber");
+        typed(&mut app, "/subtask try another approach");
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            vec![Action::Subtask("try another approach".into())]
+        );
+        assert_eq!(app.session.id, "ses_1");
+        typed(&mut app, "/subtask");
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(app.toast.as_ref().unwrap().0.contains("Usage: /subtask"));
+    }
+}

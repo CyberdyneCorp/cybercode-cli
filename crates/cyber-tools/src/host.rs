@@ -573,6 +573,50 @@ impl ToolHost for BuiltinHost {
         })
     }
 
+    fn subtask(
+        &self,
+        turn: TurnContext,
+        prompt: String,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
+        Box::pin(async move {
+            let inv = Invocation {
+                session_id: turn.session_id,
+                directory: turn.directory,
+                agent: turn.agent,
+                mode: turn.mode,
+                message_id: String::new(),
+                call_id: cyber_core::ids::new_id("call"),
+                name: "agent".into(),
+                input: serde_json::json!({"prompt":prompt,"fork":true,"background":true}),
+                attempt: 1,
+                operation_key: cyber_core::ids::new_id("op"),
+                asker: cyber_server::runtime::Asker::detached(),
+                rules: turn.rules,
+            };
+            self.check_agent_tool(&inv)?;
+            let ctx = Ctx {
+                host: self,
+                policy: self.policy(&inv).await?,
+                location: PathBuf::from(&inv.directory),
+                inv: &inv,
+                cancel,
+            };
+            let output = tools::agent::run(&ctx, true).await.map_err(|e| match e {
+                ToolError::Failed(message) => message,
+                ToolError::Aborted => "Subtask interrupted".into(),
+            })?;
+            let result: Value = serde_json::from_str(&output).map_err(|e| e.to_string())?;
+            let job = result["job_id"]
+                .as_str()
+                .ok_or("Subtask did not return a Job")?;
+            self.runtime()
+                .ok_or("Subtask requires the runtime")?
+                .job(job)
+                .map_err(|e| e.to_string())
+        })
+    }
+
     fn shell(
         &self,
         directory: &str,

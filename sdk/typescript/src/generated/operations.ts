@@ -345,6 +345,12 @@ export interface Operations {
     body: S.ShellBody;
     response: S.ShellResult;
   };
+  "v1.session.subtask": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.SubtaskBody;
+    response: S.Job;
+  };
   "v1.session.update": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -909,6 +915,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.subtask": {
+    tag: "session",
+    name: "subtask",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/subtask",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.update": {
     tag: "session",
     name: "update",
@@ -1131,6 +1149,9 @@ export function createGroups(caller: Caller) {
       /** Run a user shell command (`POST /api/v1/sessions/{sessionID}/shell`) */
       shell: (sessionID: string, body: Operations["v1.session.shell"]["body"], options?: RequestOptions): Promise<Operations["v1.session.shell"]["response"]> =>
         caller.call("v1.session.shell", { path: { sessionID }, body }, options),
+      /** Start an explicitly requested forked background child (`POST /api/v1/sessions/{sessionID}/subtask`) */
+      subtask: (sessionID: string, body: Operations["v1.session.subtask"]["body"], options?: RequestOptions): Promise<Operations["v1.session.subtask"]["response"]> =>
+        caller.call("v1.session.subtask", { path: { sessionID }, body }, options),
       /** Rename or archive a Session (`PATCH /api/v1/sessions/{sessionID}`) */
       update: (sessionID: string, body: Operations["v1.session.update"]["body"], options?: RequestOptions): Promise<Operations["v1.session.update"]["response"]> =>
         caller.call("v1.session.update", { path: { sessionID }, body }, options),

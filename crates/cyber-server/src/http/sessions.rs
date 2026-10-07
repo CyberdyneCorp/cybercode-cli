@@ -88,6 +88,12 @@ pub struct ForkBody {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SubtaskBody {
+    /// Explicit user request for a forked background child.
+    pub prompt: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct PromptBody {
     pub id: Option<String>,
     pub parts: Vec<Content>,
@@ -209,6 +215,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions", get(list).post(create))
         .route(s, get(show).patch(update).delete(remove))
         .route(&format!("{s}/fork"), post(fork))
+        .route(&format!("{s}/subtask"), post(subtask))
         .route(&format!("{s}/prompt"), post(prompt))
         .route(&format!("{s}/interrupt"), post(interrupt))
         .route(&format!("{s}/command"), post(command))
@@ -374,6 +381,15 @@ async fn fork(
     let info = state.runtime.fork(&id, body.message_id.as_deref()).await?;
     let data = session(&state, state.runtime.state(&info.id).await?);
     Ok((StatusCode::CREATED, Json(Data { data })).into_response())
+}
+
+async fn subtask(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SubtaskBody>,
+) -> Result<Response> {
+    let job = state.runtime.subtask(&id, &body.prompt).await?;
+    Ok((StatusCode::ACCEPTED, Json(Data { data: job })).into_response())
 }
 
 async fn prompt(

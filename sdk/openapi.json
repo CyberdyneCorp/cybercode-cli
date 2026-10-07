@@ -921,6 +921,18 @@
           }
         }
       },
+      "SubtaskBody": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Explicit user request for a forked background child."
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
       "PromptBody": {
         "type": "object",
         "properties": {
@@ -3157,6 +3169,65 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ForkBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/subtask": {
+      "post": {
+        "operationId": "v1.session.subtask",
+        "summary": "Start an explicitly requested forked background child",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubtaskBody"
               }
             }
           }
