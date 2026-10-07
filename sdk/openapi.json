@@ -333,6 +333,24 @@
           "cost": {
             "type": "number",
             "format": "double"
+          },
+          "children_cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "children_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "children_unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "children_usage_complete": {
+            "type": "boolean",
+            "description": "False when older purged child history cannot be reconstructed."
           }
         },
         "required": [
@@ -343,7 +361,11 @@
           "archived",
           "created_at",
           "updated_at",
-          "cost"
+          "cost",
+          "children_cost",
+          "children_tokens",
+          "children_unpriced_steps",
+          "children_usage_complete"
         ]
       },
       "CreateWorktreeBody": {
@@ -573,6 +595,24 @@
           "totals": {
             "$ref": "#/components/schemas/Totals"
           },
+          "children_cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "children_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "children_unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "children_usage_complete": {
+            "type": "boolean",
+            "description": "False when older purged child history cannot be reconstructed."
+          },
           "revert": {
             "anyOf": [
               {
@@ -594,7 +634,11 @@
           "created_ms",
           "status",
           "seq",
-          "totals"
+          "totals",
+          "children_cost",
+          "children_tokens",
+          "children_unpriced_steps",
+          "children_usage_complete"
         ],
         "description": "A Session with its live status."
       },

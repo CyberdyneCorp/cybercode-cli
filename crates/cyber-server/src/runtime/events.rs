@@ -435,9 +435,14 @@ fn project_runtime(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()
                 params![id, s(d, "call_id"), s(d, "status")],
             )?;
         }
-        STEP_ENDED => project_usage(tx, id, d)?,
-        AUTO_DECIDED if d["usage"].is_object() => project_usage(tx, id, d)?,
-        _ => project_meta(tx, e)?,
+        STEP_ENDED | COMPACTION_COMPLETED => project_usage(tx, e)?,
+        AUTO_DECIDED if d["usage"].is_object() => project_usage(tx, e)?,
+        _ => {
+            if e.kind == TITLE_GENERATED && d["usage"].is_object() {
+                project_usage(tx, e)?;
+            }
+            project_meta(tx, e)?;
+        }
     }
     Ok(())
 }
@@ -472,8 +477,8 @@ fn project_meta(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
 fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
     let info = &e.data["info"];
     tx.execute(
-        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq, subagent_name)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10)",
+        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq, subagent_name, children_usage_complete)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1)",
         params![
             e.aggregate_id,
             s(info, "title"),
@@ -516,7 +521,8 @@ fn project_inbox(tx: &Transaction<'_>, d: &Value) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn project_usage(tx: &Transaction<'_>, id: &str, d: &Value) -> rusqlite::Result<()> {
+fn project_usage(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
+    let (id, d) = (&e.aggregate_id, &e.data);
     let u = &d["usage"];
     let n = |k: &str| u[k].as_i64().unwrap_or(0);
     let cost = d["cost"].as_f64();
@@ -537,7 +543,7 @@ fn project_usage(tx: &Transaction<'_>, id: &str, d: &Value) -> rusqlite::Result<
             n("cache_write")
         ],
     )?;
-    Ok(())
+    super::child_usage::project(tx, e)
 }
 
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {

@@ -37,6 +37,8 @@ pub struct Session {
     /// Sequence of the last durable event; stream from here to follow new activity.
     pub seq: i64,
     pub totals: Totals,
+    #[serde(flatten)]
+    pub children_usage: crate::runtime::ChildrenUsage,
     pub revert: Option<RevertState>,
 }
 
@@ -283,6 +285,7 @@ pub(super) fn session(state: &AppState, s: SessionState) -> Session {
         status: status.into(),
         seq: s.last_seq,
         totals: s.totals,
+        children_usage: s.children_usage,
         revert: s.revert,
         info: s.info,
     }

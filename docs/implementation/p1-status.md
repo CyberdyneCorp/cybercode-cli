@@ -218,6 +218,14 @@ Native child effects are not reconciled by this test. Complete launching/native-
 
 Final local validation passes 835 Rust workspace test executions (two ignored opt-in fixtures), workspace all-target Clippy, formatting, generated-SDK consistency and all 57 strict specification checks. After making subprocess readiness atomic, all eight server delegation tests and workspace Clippy pass again. Cross-spec lint reports zero errors and 21 warnings; P1 remains 225 requirements. SDK code is unchanged from the prior 46-test ledger validation. Latest observed CI for `d4ad1ee` and `fe6d2f4` remains queued. Complete Windows confinement, long-root Git status, native child effects and the full P1 goal remain open.
 
+## Durable descendant billing increment
+
+Descendant billing receipts and projected counters are committed in the same database transaction as own usage. Every surviving ancestor receives each billed event once, including all five token categories, unpriced calls and hidden title, compaction and evaluator usage. Session detail/list and generated SDK types expose children_cost, children_tokens, children_unpriced_steps and children_usage_complete separately from own totals. Copied fork history carries no new charges. Surviving ancestor bills remain after child history deletion; receipts retain only IDs and billing, with ancestor deletion removing its receipts.
+
+Migration backfills surviving history, repairs own SQL totals for hidden title/compaction usage and marks older Sessions incomplete because already-deleted billing cannot be reconstructed. New Sessions start complete. The hidden-usage regression fails on unchanged production main 85e728f: replay records 0.25 cost while SQL reports zero. Seven billing tests cover nested attribution, restart, deletion, transaction rollback, real priced fork history, hidden/unpriced usage and legacy migration. An authenticated HTTP test checks separate own/descendant totals in detail and listing.
+
+All 843 local Rust workspace test executions pass (two ignored fixtures), workspace all-target Clippy passes, and all 46 SDK tests/type checking, generated contracts and 57 strict specs pass. Cross-spec lint reports zero errors and 21 warnings. Native billing/migration and HTTP coverage is added; acceptance remains pending. Parent/subtree budget enforcement, live client counters, Job/tool subtree result accounting, unknown native-effect recovery, Windows confinement and all remaining P1 contracts remain open. This foundation does not accept a full requirement or milestone. P0 evaluation, measurement and local-model artifacts remain unchanged.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

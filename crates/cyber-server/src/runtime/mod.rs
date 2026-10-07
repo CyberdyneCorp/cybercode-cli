@@ -8,7 +8,9 @@ mod ancestry;
 pub use ancestry::AncestorAuthority;
 mod auto;
 mod bus;
+mod child_usage;
 mod compaction;
+pub use child_usage::ChildrenUsage;
 mod context;
 mod delegations;
 mod drain;
@@ -211,6 +213,8 @@ pub struct SessionRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub cost: f64,
+    #[serde(flatten)]
+    pub children_usage: ChildrenUsage,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -670,14 +674,16 @@ impl Runtime {
 
     /// A copy of the Session's current state.
     pub async fn state(&self, session_id: &str) -> Result<SessionState, RuntimeError> {
-        Ok(self
+        let mut state = self
             .inner
             .handle(session_id)
             .await?
             .state
             .lock()
             .await
-            .clone())
+            .clone();
+        state.children_usage = self.children_usage(session_id)?;
+        Ok(state)
     }
 
     pub(crate) async fn worktree_binding(
@@ -924,6 +930,10 @@ impl Runtime {
             for id in &doomed {
                 tx.execute("DELETE FROM event WHERE aggregate_id = ?1", [id])?;
                 tx.execute("DELETE FROM event_sequence WHERE aggregate_id = ?1", [id])?;
+                tx.execute(
+                    "DELETE FROM session_children_charge WHERE parent_id = ?1",
+                    [id],
+                )?;
                 tx.execute("DELETE FROM session WHERE id = ?1", [id])?;
             }
             Ok(())
@@ -1037,7 +1047,7 @@ fn query_sessions(
 ) -> Result<Vec<SessionRow>, StoreError> {
     let (cursor_at, cursor_id) = cursor.unwrap_or((i64::MAX, String::new()));
     let mut stmt = conn.prepare(
-        "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost FROM session
+        "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost, children_cost, children_tokens, children_unpriced_steps, children_usage_complete FROM session
          WHERE (?1 IS NULL OR directory = ?1)
            AND (?2 IS NULL OR parent_id = ?2)
            AND (?3 = 0 OR parent_id IS NULL)
@@ -1069,6 +1079,7 @@ fn query_sessions(
                     created_at: r.get(6)?,
                     updated_at: r.get(7)?,
                     cost: r.get(8)?,
+                    children_usage: child_usage::read(r, 9)?,
                 })
             },
         )?

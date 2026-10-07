@@ -1527,3 +1527,60 @@ async fn cached_location_preserves_canonical_routing_after_a_directory_alias_dis
         h.repo.canonicalize().unwrap().display().to_string()
     );
 }
+
+#[tokio::test]
+async fn session_detail_and_listing_expose_separate_descendant_billing() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery};
+    let mut h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![text("parent result"), text("child result")],
+        )],
+        ..Default::default()
+    });
+    h.repo = std::fs::canonicalize(&h.repo).unwrap();
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    for id in [&parent, &child.id] {
+        h.runtime
+            .admit(id, Admission::text("bill this task", Delivery::Steer))
+            .await
+            .unwrap();
+        h.runtime.wait_idle(id).await;
+    }
+    let own = h.state(&parent).await.totals.cost;
+    let cost = h.state(&child.id).await.totals.cost;
+    assert!(own > 0.0 && cost > 0.0);
+    let api = Api::new(&h);
+    let (status, response, _) = api
+        .call(Method::GET, &format!("/sessions/{parent}"), None, &[])
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["data"]["totals"]["cost"], own);
+    assert_eq!(response["data"]["children_cost"], cost);
+    assert_eq!(response["data"]["children_tokens"], 110);
+    assert_eq!(response["data"]["children_unpriced_steps"], 0);
+    assert_eq!(response["data"]["children_usage_complete"], true);
+    let (status, response, _) = api
+        .call(Method::GET, "/sessions?children=true", None, &[])
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = response["data"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == parent)
+        .unwrap();
+    assert_eq!(listed["cost"], own);
+    assert_eq!(listed["children_cost"], cost);
+    assert_eq!(listed["children_tokens"], 110);
+}

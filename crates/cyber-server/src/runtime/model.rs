@@ -277,6 +277,8 @@ pub struct SessionState {
     pub compacted: Option<Compacted>,
     pub task: TaskState,
     pub totals: Totals,
+    #[serde(skip)]
+    pub children_usage: super::ChildrenUsage,
     pub steps_since_input: u64,
     pub open_step: Option<String>,
     /// Last Turn mode, retained while its tool groups settle.
@@ -345,6 +347,7 @@ impl SessionState {
             compacted: None,
             task: TaskState::default(),
             totals: Totals::default(),
+            children_usage: Default::default(),
             steps_since_input: 0,
             open_step: None,
             turn_mode: None,

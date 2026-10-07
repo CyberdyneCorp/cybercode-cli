@@ -123,6 +123,12 @@ jobs:
       - name: Native exec durable admission and child Job ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test exec_delegation
+      - name: Native descendant billing and migration
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test child_usage
+      - name: Native descendant billing API
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http session_detail_and_listing_expose_separate_descendant_billing
       - name: Native explicit user subtasks
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subtasks --test delegations -p cyber-server --test subtask_cancellation

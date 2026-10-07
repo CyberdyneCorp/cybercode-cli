@@ -563,6 +563,11 @@ export type Session = {
   /** Sequence of the last durable event; stream from here to follow new activity. */
   seq: number;
   totals: Totals;
+  children_cost: number;
+  children_tokens: number;
+  children_unpriced_steps: number;
+  /** False when older purged child history cannot be reconstructed. */
+  children_usage_complete: boolean;
   revert?: RevertState | null;
 };
 
@@ -583,6 +588,11 @@ export type SessionRow = {
   created_at: number;
   updated_at: number;
   cost: number;
+  children_cost: number;
+  children_tokens: number;
+  children_unpriced_steps: number;
+  /** False when older purged child history cannot be reconstructed. */
+  children_usage_complete: boolean;
 };
 
 export type SetupRecoveryRequest = {

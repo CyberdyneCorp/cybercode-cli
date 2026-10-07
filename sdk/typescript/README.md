@@ -63,6 +63,10 @@ What a method resolves with:
 So `client.session.get(id)` gives a `Session`, while `client.session.create()` gives
 `{ location, data: Session }` and `client.session.list()` gives `{ location, data: { data, cursor } }`.
 
+## Descendant usage
+
+Session detail and list responses expose `children_cost`, `children_tokens`, `children_unpriced_steps` and `children_usage_complete` separately from own usage. Descendant totals include nested children and hidden title, compaction and evaluator calls, and persist across restart and child deletion. Retained billing receipts contain IDs and usage only, without prompt content; deleting an ancestor removes its receipts. Older databases are backfilled from surviving history and report `children_usage_complete: false` because previously deleted child billing cannot be reconstructed. New Sessions start with complete attribution. Subtree budget enforcement and live client counters remain open.
+
 ## Durable delegation admission
 
 Choose a unique `op_` request ID before sending the request:

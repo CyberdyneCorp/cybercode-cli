@@ -355,6 +355,14 @@
 - **WHEN** a parent with own cost $0.10 spawned subagents costing $0.25 in total
 - **THEN** the Session info reports `cost: 0.10` and `children_cost: 0.25`
 
+#### Scenario: Durable descendant billing attribution
+- **WHEN** a child or nested descendant commits visible or hidden model usage
+- **THEN** each ancestor's children cost, total tokens and unknown-price count SHALL update in the same database transaction as that usage
+- **AND** own usage SHALL remain separate and copied fork history SHALL not create new charges
+- **AND** deleting a child conversation SHALL retain its already-attributed charges on surviving ancestors
+- **AND** reopening the database SHALL preserve the rollup without redispatch or duplicate charges
+- **AND** an older database SHALL reconstruct surviving usage and disclose incomplete historical child accounting when previously deleted usage cannot be proven
+
 ### Requirement: Manual invocation by mention
 (P1) An `@<agent>` mention of a subagent-capable agent in a user prompt SHALL spawn that agent through the `agent` tool flow with the rest of the prompt, without requiring the `agent` permission. In the TUI, `@` autocomplete SHALL offer visible agents with `mode` `subagent` or `all`.
 
