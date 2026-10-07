@@ -29,7 +29,7 @@ impl Server {
         let stopping = stop.clone();
         let thread = thread::spawn(move || {
             let mut polls = 0;
-            while !stopping.load(Ordering::Relaxed) {
+            'connections: while !stopping.load(Ordering::Relaxed) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(pair) => pair,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -38,14 +38,17 @@ impl Server {
                     }
                     Err(error) => panic!("{error}"),
                 };
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
                 let mut bytes = Vec::new();
                 let mut chunk = [0; 4096];
                 let header_end = loop {
-                    let n = stream.read(&mut chunk).unwrap();
-                    assert!(n > 0);
+                    let n = match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => continue 'connections,
+                        Ok(n) => n,
+                    };
                     bytes.extend_from_slice(&chunk[..n]);
                     if let Some(index) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
                         break index + 4;
@@ -69,8 +72,10 @@ impl Server {
                     })
                     .unwrap_or(0);
                 while bytes.len() < header_end + length {
-                    let n = stream.read(&mut chunk).unwrap();
-                    assert!(n > 0);
+                    let n = match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => continue 'connections,
+                        Ok(n) => n,
+                    };
                     bytes.extend_from_slice(&chunk[..n]);
                 }
                 let body = serde_json::from_slice(&bytes[header_end..]).unwrap_or(Value::Null);
@@ -107,7 +112,12 @@ impl Server {
                     unexpected => panic!("Unexpected request: {unexpected}"),
                 };
                 let response = response.to_string();
-                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                );
             }
         });
         Self {
@@ -151,11 +161,33 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        self.thread.take().unwrap().join().unwrap();
+        if let Err(panic) = self.thread.take().unwrap().join()
+            && !thread::panicking()
+        {
+            std::panic::resume_unwind(panic);
+        }
     }
 }
 fn event(seq: i64, kind: &str, data: Value) -> Value {
     json!({"type":kind,"data":data,"durable":{"aggregateID":"ses_child","seq":seq}})
+}
+
+#[test]
+fn fixture_waits_for_request_bytes_delivered_after_connection_acceptance() {
+    let server = Server::new(false, true, true);
+    let mut stream =
+        std::net::TcpStream::connect(server.url.trim_start_matches("http://")).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    stream
+        .write_all(b"GET /api/v1/agents HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(response.contains("explore"));
 }
 
 #[test]

@@ -601,6 +601,7 @@ impl ToolHost for BuiltinHost {
         self.subtask_request(
             turn,
             cyber_server::runtime::UserSubtask {
+                admission_id: None,
                 prompt,
                 agent,
                 attachments: Vec::new(),
@@ -608,6 +609,10 @@ impl ToolHost for BuiltinHost {
             },
             cancel,
         )
+    }
+
+    fn durable_user_delegation(&self) -> bool {
+        true
     }
 
     fn subtask_request(
@@ -618,6 +623,7 @@ impl ToolHost for BuiltinHost {
     ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
         Box::pin(async move {
             let cyber_server::runtime::UserSubtask {
+                admission_id,
                 prompt,
                 agent,
                 attachments,
@@ -650,7 +656,7 @@ impl ToolHost for BuiltinHost {
                 name: "agent".into(),
                 input,
                 attempt: 1,
-                operation_key: cyber_core::ids::new_id("op"),
+                operation_key: admission_id.unwrap_or_else(|| cyber_core::ids::new_id("op")),
                 asker: cyber_server::runtime::Asker::detached(),
                 rules: turn.rules,
             };

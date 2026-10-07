@@ -85,6 +85,10 @@ impl ToolHost for AppHost {
         self.builtin.subtask_with_agent(turn, prompt, agent, cancel)
     }
 
+    fn durable_user_delegation(&self) -> bool {
+        self.builtin.durable_user_delegation()
+    }
+
     fn subtask_request(
         &self,
         turn: TurnContext,

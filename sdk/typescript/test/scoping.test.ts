@@ -103,3 +103,22 @@ test("typed delegation retains image attachments and the reviewed turn ceiling",
   assert.deepEqual(JSON.parse(calls[0]!.body!), body);
   assert.equal(calls[0]?.headers.get("idempotency-key"), "typed-child");
 });
+
+test("durable delegation start, lookup and stop share a scoped client-selected identity", async () => {
+  const { client, calls } = mockClient(() => json(202, { data: {
+    id: "op_owned", session_id: "ses/parent", status: "pending", phase: "reserved",
+    job_id: null, error: null,
+  } }));
+  const body = { prompt: "inspect project", agent: "explore", max_steps: 2 };
+  const started = await client.session.startDelegation("ses/parent", "op_owned", body);
+  assert.equal(started.id, "op_owned");
+  await client.session.delegation("ses/parent", "op_owned");
+  await client.session.stopDelegation("ses/parent", "op_owned", { idempotencyKey: "stop-owned" });
+  assert.deepEqual(calls.map(call => [call.method, call.url.pathname]), [
+    ["POST", "/api/v1/sessions/ses%2Fparent/delegations/op_owned"],
+    ["GET", "/api/v1/sessions/ses%2Fparent/delegations/op_owned"],
+    ["POST", "/api/v1/sessions/ses%2Fparent/delegations/op_owned/stop"],
+  ]);
+  assert.deepEqual(JSON.parse(calls[0]!.body!), body);
+  assert.equal(calls[2]?.headers.get("idempotency-key"), "stop-owned");
+});

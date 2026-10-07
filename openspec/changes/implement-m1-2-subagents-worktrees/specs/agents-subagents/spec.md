@@ -371,6 +371,17 @@
 - **AND** names containing whitespace SHALL complete with a JSON-quoted name after `@` and resolve to the exact configured profile
 - **AND** ordinary file mentions and agent-like text quoted before the `@` marker or embedded in prose SHALL retain ordinary prompt admission
 
+#### Scenario: Durable client admission identity
+- **WHEN** a client starts delegation with a client-selected `op_` request ID scoped to the source Session
+- **THEN** the runtime SHALL persist the request identity and exact-input digest before queue admission and return a queryable admission record
+- **AND** repeating identical input SHALL return the same admission or recorded Job without redispatch
+- **AND** different input under the same identity SHALL fail with a conflict
+- **AND** scoped lookup and stop SHALL not grant authority over another Session's admission or Job
+- **AND** cancellation received before a delayed submission SHALL persist a tombstone that prevents dispatch
+- **AND** a durable launch marker SHALL precede child creation or setup effects
+- **AND** failure or lost ownership after that marker SHALL remain unknown unless Job settlement is recorded
+- **AND** restart or actor failure SHALL not automatically redispatch uncertain work
+
 #### Scenario: Caller-owned delegation cancellation
 - **WHEN** an owned runtime delegation request is cancelled while waiting for child admission
 - **THEN** it SHALL settle that request without creating another child or stopping an existing child

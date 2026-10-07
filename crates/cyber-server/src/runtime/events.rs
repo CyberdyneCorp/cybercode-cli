@@ -357,6 +357,7 @@ pub fn registry() -> EventRegistry {
         registry.register(kind).expect("valid event types");
     }
     super::jobs::register(&mut registry);
+    super::delegations::register(&mut registry);
     registry.projector(project);
     crate::worktrees::register(&mut registry);
     registry

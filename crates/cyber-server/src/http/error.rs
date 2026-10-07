@@ -91,6 +91,7 @@ impl From<RuntimeError> for ApiError {
             RuntimeError::PromptConflict(_) => Self::conflict(message),
             RuntimeError::Busy(_) => Self::new(StatusCode::CONFLICT, "SessionBusyError", message),
             RuntimeError::Invalid(m) => Self::invalid(m),
+            RuntimeError::Conflict(m) => Self::conflict(m),
             RuntimeError::ShuttingDown => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "ServerShuttingDownError",

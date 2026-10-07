@@ -10,6 +10,7 @@ mod auto;
 mod bus;
 mod compaction;
 mod context;
+mod delegations;
 mod drain;
 mod events;
 mod fork;
@@ -17,6 +18,7 @@ mod host;
 mod jobs;
 mod names;
 mod subtask;
+pub use delegations::{Delegation, DelegationPhase, DelegationStatus};
 pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
 pub use names::ChildExecution;
 pub use subtask::UserSubtask;
@@ -81,6 +83,8 @@ pub enum RuntimeError {
     ShuttingDown,
     #[error("InvalidRequestError: {0}")]
     Invalid(String),
+    #[error("ConflictError: {0}")]
+    Conflict(String),
     #[error("ContextInitializationBlocked: {}", .0.join(", "))]
     ContextBlocked(Vec<String>),
     #[error("{0}")]
@@ -248,6 +252,7 @@ pub(crate) struct Inner {
     background: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
     jobs: StdMutex<HashMap<String, Arc<jobs::Control>>>,
     job_admission: Arc<Mutex<()>>,
+    delegations: StdMutex<HashMap<String, Arc<delegations::Control>>>,
     child_executions: StdMutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
@@ -304,6 +309,7 @@ impl Runtime {
             background: StdMutex::default(),
             jobs: StdMutex::default(),
             job_admission: Arc::new(Mutex::new(())),
+            delegations: StdMutex::default(),
             child_executions: StdMutex::default(),
             waiters: StdMutex::default(),
             me: me.clone(),

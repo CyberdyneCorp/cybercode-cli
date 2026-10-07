@@ -224,6 +224,14 @@ pub fn routes() -> Router<AppState> {
         .route(s, get(show).patch(update).delete(remove))
         .route(&format!("{s}/fork"), post(fork))
         .route(&format!("{s}/subtask"), post(subtask))
+        .route(
+            &format!("{s}/delegations/{{request_id}}"),
+            get(delegation).post(start_delegation),
+        )
+        .route(
+            &format!("{s}/delegations/{{request_id}}/stop"),
+            post(stop_delegation),
+        )
         .route(&format!("{s}/prompt"), post(prompt))
         .route(&format!("{s}/interrupt"), post(interrupt))
         .route(&format!("{s}/command"), post(command))
@@ -393,24 +401,54 @@ async fn fork(
     Ok((StatusCode::CREATED, Json(Data { data })).into_response())
 }
 
+impl SubtaskBody {
+    fn request(self) -> crate::runtime::UserSubtask {
+        crate::runtime::UserSubtask {
+            admission_id: None,
+            prompt: self.prompt,
+            agent: self.agent,
+            attachments: self.attachments,
+            max_steps: self.max_steps,
+        }
+    }
+}
 async fn subtask(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<SubtaskBody>,
 ) -> Result<Response> {
-    let job = state
-        .runtime
-        .subtask_request(
-            &id,
-            crate::runtime::UserSubtask {
-                prompt: body.prompt,
-                agent: body.agent,
-                attachments: body.attachments,
-                max_steps: body.max_steps,
-            },
-        )
-        .await?;
+    let job = state.runtime.subtask_request(&id, body.request()).await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: job })).into_response())
+}
+async fn start_delegation(
+    State(state): State<AppState>,
+    Path((id, request)): Path<(String, String)>,
+    Json(body): Json<SubtaskBody>,
+) -> Result<Response> {
+    let data = state
+        .runtime
+        .start_delegation(&id, &request, body.request())
+        .await?;
+    Ok((StatusCode::ACCEPTED, Json(Data { data })).into_response())
+}
+async fn delegation(
+    State(state): State<AppState>,
+    Path((id, request)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::Delegation>>> {
+    state.runtime.state(&id).await?;
+    let data = state
+        .runtime
+        .delegation(&id, &request)?
+        .ok_or_else(|| ApiError::not_found("RequestNotFoundError", "No delegation request"))?;
+    Ok(Json(Data { data }))
+}
+async fn stop_delegation(
+    State(state): State<AppState>,
+    Path((id, request)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::Delegation>>> {
+    Ok(Json(Data {
+        data: state.runtime.cancel_delegation(&id, &request).await?,
+    }))
 }
 
 async fn prompt(

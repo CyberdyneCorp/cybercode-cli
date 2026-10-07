@@ -1267,6 +1267,70 @@
         ],
         "description": "One part of a message. Tool results travel in user messages."
       },
+      "Data_Delegation": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Delegation"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Delegation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DelegationStatus"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/DelegationPhase"
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "status",
+          "phase"
+        ]
+      },
+      "DelegationStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "cancelling",
+          "admitted",
+          "cancelled",
+          "failed",
+          "unknown"
+        ]
+      },
+      "DelegationPhase": {
+        "type": "string",
+        "enum": [
+          "reserved",
+          "launching"
+        ]
+      },
       "PromptBody": {
         "type": "object",
         "properties": {
@@ -3565,6 +3629,177 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SubtaskBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/delegations/{requestID}": {
+      "post": {
+        "operationId": "v1.session.startDelegation",
+        "summary": "Durably reserve a named user delegation request",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Delegation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubtaskBody"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "v1.session.delegation",
+        "summary": "Inspect owned delegation admission or recovery uncertainty",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Delegation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/delegations/{requestID}/stop": {
+      "post": {
+        "operationId": "v1.session.stopDelegation",
+        "summary": "Cancel one admission request or its recorded Job",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Delegation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

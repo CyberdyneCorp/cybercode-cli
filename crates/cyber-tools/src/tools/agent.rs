@@ -305,8 +305,23 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
         _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted),
         permit = pool.acquire_owned() => permit.map_err(|e| failed(e.to_string()))?,
     };
-    revalidate_spawn(ctx, &mut spawn).await?;
+    prepare_child_admission(ctx, &runtime, &mut spawn).await?;
     execute_child(ctx, runtime, parent, spawn, permit, execution).await
+}
+
+async fn prepare_child_admission(
+    ctx: &Ctx<'_>,
+    runtime: &Runtime,
+    spawn: &mut Spawn,
+) -> Result<(), ToolError> {
+    revalidate_spawn(ctx, spawn).await?;
+    if spawn.user_requested {
+        runtime
+            .mark_delegation_launching(&ctx.inv.session_id, &ctx.inv.operation_key)
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+    }
+    Ok(())
 }
 
 async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolError> {

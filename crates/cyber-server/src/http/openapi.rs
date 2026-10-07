@@ -237,6 +237,29 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<crate::runtime::Job>>(g),
         op(
             "post",
+            "/sessions/{sessionID}/delegations/{requestID}",
+            "v1.session.startDelegation",
+            "Durably reserve a named user delegation request",
+        )
+        .status(202)
+        .body::<SubtaskBody>(g)
+        .ok::<Data<crate::runtime::Delegation>>(g),
+        op(
+            "get",
+            "/sessions/{sessionID}/delegations/{requestID}",
+            "v1.session.delegation",
+            "Inspect owned delegation admission or recovery uncertainty",
+        )
+        .ok::<Data<crate::runtime::Delegation>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/delegations/{requestID}/stop",
+            "v1.session.stopDelegation",
+            "Cancel one admission request or its recorded Job",
+        )
+        .ok::<Data<crate::runtime::Delegation>>(g),
+        op(
+            "post",
             "/sessions/{sessionID}/prompt",
             "v1.session.prompt",
             "Durably admit a prompt",

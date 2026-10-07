@@ -63,6 +63,21 @@ What a method resolves with:
 So `client.session.get(id)` gives a `Session`, while `client.session.create()` gives
 `{ location, data: Session }` and `client.session.list()` gives `{ location, data: { data, cursor } }`.
 
+## Durable delegation admission
+
+Choose a unique `op_` request ID before sending the request:
+
+```ts
+const requestID = "op_" + crypto.randomUUID();
+await client.session.startDelegation(session.id, requestID, {
+  prompt: "find retry logic", agent: "explore", max_steps: 4,
+});
+const admission = await client.session.delegation(session.id, requestID);
+await client.session.stopDelegation(session.id, requestID);
+```
+
+Keep that ID across transport retries. Identical input replays the admission; changed input conflicts. A stop before submission creates a tombstone preventing delayed dispatch. Poll `session.delegation` until admission settles. `admitted` provides `job_id` for task status/output through `client.job`; `unknown` requires reconciliation and prevents automatic redispatch. Cancellation targets the recorded Job only. Existing `session.subtask` returns the Job after admission; exec/TUI adoption of the durable protocol is still open.
+
 ## Errors
 
 Tagged server errors reject with `CyberApiError` (`tag`, `status`, `body`). Generated guards

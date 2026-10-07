@@ -206,6 +206,12 @@ export interface Operations {
     body: S.CreateBody;
     response: S.Located_Session;
   };
+  "v1.session.delegation": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Delegation;
+  };
   "v1.session.delete": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -344,6 +350,18 @@ export interface Operations {
     query: Record<string, never>;
     body: S.ShellBody;
     response: S.ShellResult;
+  };
+  "v1.session.startDelegation": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: S.SubtaskBody;
+    response: S.Delegation;
+  };
+  "v1.session.stopDelegation": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Delegation;
   };
   "v1.session.subtask": {
     path: { sessionID: string };
@@ -675,6 +693,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.delegation": {
+    tag: "session",
+    name: "delegation",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/delegations/{requestID}",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.delete": {
     tag: "session",
     name: "delete",
@@ -927,6 +957,30 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.startDelegation": {
+    tag: "session",
+    name: "startDelegation",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/delegations/{requestID}",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.stopDelegation": {
+    tag: "session",
+    name: "stopDelegation",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/delegations/{requestID}/stop",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.subtask": {
     tag: "session",
     name: "subtask",
@@ -1122,6 +1176,9 @@ export function createGroups(caller: Caller) {
       /** Create a Session (`POST /api/v1/sessions`) */
       create: (body?: Operations["v1.session.create"]["body"], options?: RequestOptions): Promise<Operations["v1.session.create"]["response"]> =>
         caller.call("v1.session.create", { body }, options),
+      /** Inspect owned delegation admission or recovery uncertainty (`GET /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
+      delegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.delegation"]["response"]> =>
+        caller.call("v1.session.delegation", { path: { sessionID, requestID } }, options),
       /** Delete a Session and its children (`DELETE /api/v1/sessions/{sessionID}`) */
       delete: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.delete"]["response"]> =>
         caller.call("v1.session.delete", { path: { sessionID } }, options),
@@ -1185,6 +1242,12 @@ export function createGroups(caller: Caller) {
       /** Run a user shell command (`POST /api/v1/sessions/{sessionID}/shell`) */
       shell: (sessionID: string, body: Operations["v1.session.shell"]["body"], options?: RequestOptions): Promise<Operations["v1.session.shell"]["response"]> =>
         caller.call("v1.session.shell", { path: { sessionID }, body }, options),
+      /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
+      startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
+        caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),
+      /** Cancel one admission request or its recorded Job (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}/stop`) */
+      stopDelegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.stopDelegation"]["response"]> =>
+        caller.call("v1.session.stopDelegation", { path: { sessionID, requestID } }, options),
       /** Start an explicit named background child or fork the current context (`POST /api/v1/sessions/{sessionID}/subtask`) */
       subtask: (sessionID: string, body: Operations["v1.session.subtask"]["body"], options?: RequestOptions): Promise<Operations["v1.session.subtask"]["response"]> =>
         caller.call("v1.session.subtask", { path: { sessionID }, body }, options),

@@ -5,6 +5,140 @@ use serde_json::json;
 use support::flow::{Flow, call, text};
 
 #[tokio::test]
+async fn durable_http_admission_replays_identity_and_scopes_lookup_and_stop() {
+    use cyber_server::http::{self, AppState, HttpOptions};
+    use std::sync::Arc;
+    let flow = Flow::new(vec![call("read", "read", json!({"path":".env"}))], true);
+    flow.f.write(".env", "private");
+    let parent = flow.session("default").await;
+    let state = AppState {
+        service: None,
+        runtime: flow.runtime.clone(),
+        remote_tools: Arc::default(),
+        store: flow.f.store.clone(),
+        services: Arc::new(Catalog),
+        options: Arc::new(HttpOptions {
+            version: "test".into(),
+            password: Some("secret".into()),
+            cors_origins: vec![],
+            default_directory: flow.f.repo.clone(),
+            features: vec![],
+        }),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let closing = tokio_util::sync::CancellationToken::new();
+    let _on_drop = closing.clone().drop_guard();
+    let server = tokio::spawn(http::serve_tcp(
+        http::router(state),
+        listener,
+        closing.clone().cancelled_owned(),
+    ));
+    let client = reqwest::Client::new();
+    let url = format!("http://{address}/api/v1/sessions/{parent}/delegations/op_http");
+    let body = json!({"prompt":"inspect project","agent":"explore","max_steps":2,"attachments":[{"type":"image","media_type":"image/png","data":"aW1hZ2U="}]});
+    assert_eq!(
+        client.post(&url).json(&body).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    assert!(
+        flow.runtime
+            .delegation(&parent, "op_http")
+            .unwrap()
+            .is_none()
+    );
+    let post = || {
+        client
+            .post(&url)
+            .basic_auth("cyber", Some("secret"))
+            .json(&body)
+    };
+    let response = post().send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let record = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let response = client
+                .get(&url)
+                .basic_auth("cyber", Some("secret"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            let data: serde_json::Value = response.json().await.unwrap();
+            if data["data"]["status"] == "admitted" {
+                break data["data"].clone();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let job = record["job_id"].as_str().unwrap();
+    flow.pending(&parent).await;
+    let replay: serde_json::Value = post().send().await.unwrap().json().await.unwrap();
+    assert_eq!(replay["data"]["job_id"], job);
+    assert_eq!(flow.runtime.jobs(Some(&parent)).unwrap().len(), 1);
+    let changed = json!({"prompt":"different task","agent":"explore"});
+    assert_eq!(
+        client
+            .post(&url)
+            .basic_auth("cyber", Some("secret"))
+            .json(&changed)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    let unknown = format!("http://{address}/api/v1/sessions/{parent}/delegations/op_not_started");
+    assert_eq!(
+        client
+            .get(&unknown)
+            .basic_auth("cyber", Some("secret"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    let response: serde_json::Value = client
+        .post(format!("{unknown}/stop"))
+        .basic_auth("cyber", Some("secret"))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["data"]["status"], "cancelled");
+    let response: serde_json::Value = client
+        .post(&unknown)
+        .basic_auth("cyber", Some("secret"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["data"]["status"], "cancelled");
+    client
+        .post(format!("{url}/stop"))
+        .basic_auth("cyber", Some("secret"))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(flow.runtime.job(job).unwrap().status, JobStatus::Cancelled);
+    closing.cancel();
+    server.await.unwrap().unwrap();
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn typed_user_delegation_preserves_images_and_caps_requested_steps() {
     use cyber_llm::Content;
     use cyber_server::runtime::UserSubtask;
@@ -25,6 +159,7 @@ async fn typed_user_delegation_preserves_images_and_caps_requested_steps() {
         .subtask_request(
             &parent,
             UserSubtask {
+                admission_id: None,
                 prompt: "inspect attachments".into(),
                 agent: Some("general".into()),
                 attachments: attachments.clone(),
@@ -68,6 +203,7 @@ async fn one_step_user_ceiling_removes_tools_and_zero_creates_no_child() {
     flow.f.write("public.txt", "public");
     let parent = flow.session("dont-ask").await;
     let request = |steps| UserSubtask {
+        admission_id: None,
         prompt: "one step".into(),
         agent: Some("general".into()),
         attachments: vec![],
@@ -779,6 +915,7 @@ async fn caller_cancellation_removes_only_its_queued_admission_and_releases_capa
     let first = flow.runtime.subtask(&parent, "first task").await.unwrap();
     flow.pending(&parent).await;
     let request = |prompt: &str| UserSubtask {
+        admission_id: None,
         prompt: prompt.into(),
         agent: Some("general".into()),
         attachments: vec![],
@@ -844,6 +981,7 @@ async fn pre_cancelled_user_admission_creates_no_session_or_model_request() {
             .subtask_request_owned(
                 &parent,
                 UserSubtask {
+                    admission_id: None,
                     prompt: "never start".into(),
                     agent: Some("general".into()),
                     attachments: vec![],

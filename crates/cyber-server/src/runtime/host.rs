@@ -249,6 +249,11 @@ pub trait ToolHost: Send + Sync {
         }
     }
 
+    /// Opt in only when user dispatch records the durable launch marker before effects.
+    fn durable_user_delegation(&self) -> bool {
+        false
+    }
+
     fn subtask_request(
         &self,
         turn: TurnContext,

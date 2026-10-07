@@ -164,6 +164,10 @@ export type Data_CreatedWorktree = {
   data: CreatedWorktree;
 };
 
+export type Data_Delegation = {
+  data: Delegation;
+};
+
 export type Data_Job = {
   data: Job;
 };
@@ -195,6 +199,19 @@ export type Data_SessionContext = {
 export type Data_ShellResult = {
   data: ShellResult;
 };
+
+export type Delegation = {
+  id: string;
+  session_id: string;
+  status: DelegationStatus;
+  phase: DelegationPhase;
+  job_id?: string | null;
+  error?: string | null;
+};
+
+export type DelegationPhase = "reserved" | "launching";
+
+export type DelegationStatus = "pending" | "cancelling" | "admitted" | "cancelled" | "failed" | "unknown";
 
 export type Delivery = "steer" | "queue" | "hold";
 
