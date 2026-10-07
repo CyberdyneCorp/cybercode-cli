@@ -192,3 +192,9 @@
 - **AND** missing, unexpected, disabled or oversized capability information refuses resume and cleans up the owned process
 - **AND** runtime modes and configuration cannot widen the capability set
 - **AND** native assertions require working Winsock initialization and descendant creation alongside protected-file and direct-loopback denial
+
+#### Scenario: Correct capability count does not substitute for identity or enabled state
+- **GIVEN** the fixed runtime policy expects one enabled registryRead capability SID
+- **WHEN** capability verification receives one valid enabled internetClient SID or the expected SID with its enabled flag cleared
+- **THEN** both cases SHALL fail verification despite their matching capability count
+- **AND** an enabled Windows-derived registryRead SID SHALL pass the same verifier as a positive control

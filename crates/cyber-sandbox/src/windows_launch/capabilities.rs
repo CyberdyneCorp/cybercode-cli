@@ -96,6 +96,13 @@ impl CapabilitySet {
                 count,
             )
         };
+        self.verify_entries(actual)
+    }
+
+    fn verify_entries(&self, actual: &[SID_AND_ATTRIBUTES]) -> io::Result<()> {
+        if actual.len() != self.entries.len() {
+            return Err(io::Error::other("Unexpected runtime capability count"));
+        }
         for (actual, expected) in actual.iter().zip(&self.entries) {
             if actual.Sid.is_null()
                 || actual.Attributes & SE_GROUP_ENABLED as u32 == 0
@@ -175,6 +182,28 @@ mod tests {
     use std::os::windows::io::FromRawHandle;
     use windows_sys::Win32::Security::TOKEN_QUERY;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    #[test]
+    fn same_count_unexpected_capability_sid_is_refused() {
+        let expected = CapabilitySet::new(true).unwrap();
+        expected.verify_entries(&expected.entries).unwrap();
+        // Both sets contain one valid, enabled, Windows-derived capability.
+        let other = CapabilitySet::derive("internetClient").unwrap();
+        let error = expected.verify_entries(&other.entries).unwrap_err();
+        assert!(error.to_string().contains("capability SID"));
+    }
+
+    #[test]
+    fn expected_capability_must_be_enabled() {
+        let expected = CapabilitySet::new(true).unwrap();
+        expected.verify_entries(&expected.entries).unwrap();
+        let disabled = SID_AND_ATTRIBUTES {
+            Sid: expected.entries[0].Sid,
+            Attributes: 0,
+        };
+        let error = expected.verify_entries(&[disabled]).unwrap_err();
+        assert!(error.to_string().contains("disabled runtime capability"));
+    }
 
     #[test]
     fn host_token_does_not_satisfy_runtime_capability_policy() {
