@@ -47,7 +47,8 @@ impl Rule {
 }
 
 /// Parse the `permissions` config value, preserving written order:
-/// `"ask"` ≡ `{"*": "ask"}`; a map `action → effect | { pattern → effect }`.
+/// `"ask"` ≡ `{"*": "ask"}`; a map `action → effect | { pattern → effect }`,
+/// or an array of `{ action, resource, effect }` rules.
 /// `sources` maps JSON pointers to config layer labels.
 pub fn parse_rules(value: &Value, sources: &BTreeMap<String, String>) -> Vec<Rule> {
     let source_of = |pointer: &str| {
@@ -64,8 +65,28 @@ pub fn parse_rules(value: &Value, sources: &BTreeMap<String, String>) -> Vec<Rul
             .iter()
             .flat_map(|(action, spec)| action_rules(action, spec, &source_of))
             .collect(),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| ordered_rule(index, item, sources))
+            .collect(),
         _ => Vec::new(),
     }
+}
+
+fn ordered_rule(index: usize, item: &Value, sources: &BTreeMap<String, String>) -> Option<Rule> {
+    let base = format!("/permissions/{index}");
+    let source = sources
+        .get(&format!("{base}/effect"))
+        .or_else(|| sources.get(&base))
+        .or_else(|| sources.get("/permissions"))
+        .map_or("config", String::as_str);
+    Some(Rule::new(
+        item.get("action")?.as_str()?,
+        item.get("resource")?.as_str()?,
+        Effect::parse(item.get("effect")?.as_str()?)?,
+        source,
+    ))
 }
 
 fn action_rules(action: &str, spec: &Value, source_of: &dyn Fn(&str) -> String) -> Vec<Rule> {
@@ -267,6 +288,7 @@ impl Policy {
                 r.effect == Effect::Deny
                     && !r.source.starts_with("project:")
                     && r.source != "default"
+                    && r.source != "session"
             })
             .cloned()
             .collect();

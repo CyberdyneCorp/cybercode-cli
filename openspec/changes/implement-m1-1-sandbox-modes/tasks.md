@@ -72,3 +72,5 @@
 
 - [x] Gate Unix transport exports and represent Windows TCP listener registration without a Unix socket; local Unix lifecycle regressions pass.
 - [x] Prove Windows listener lifecycle and unsupported-flag rejection in the native CI job. The Windows job passes at `a54aeb9`; this does not implement authenticated service shutdown or sandbox enforcement.
+
+- [x] Parse ordered permission arrays for actual tool admission, retain source attribution and Session last-match semantics, and verify that bypass cannot widen final denies or user/global ceilings. Parser/dispatch regressions fail on unchanged production main `99d9db0`; all 295 server/tools/app tests, all-target release Clippy, formatting and 57 strict specification checks pass locally. A native ordered-rule CI step is added; native acceptance, agent-profile integration, parent inheritance and the full Session ruleset API remain open.

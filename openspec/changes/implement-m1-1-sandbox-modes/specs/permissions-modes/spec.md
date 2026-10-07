@@ -1,5 +1,22 @@
 ## MODIFIED Requirements
 
+### Requirement: Session ruleset API
+(P0) The Session ruleset layer SHALL be settable by clients: `PUT /api/v1/sessions/:id/permissions/rules` with `{ rules: [{ action, resource, effect }] }` SHALL replace the Session's rules, `GET` SHALL return them with the effective merged ruleset, and the SDK SHALL expose `session.permissions.set(rules)` and `.get()`. `cyber exec --allow <action[:resource]>` and `--deny <action[:resource]>` SHALL populate this layer for the new Session. Session rules SHALL be recorded as a durable `session.permissions.updated.1` event and apply at the next Safe Boundary. They SHALL NOT widen explicit user/global denies, plan-mode restrictions, protected paths, workspace trust, sandbox boundaries or org policy, which remain ceilings.
+
+#### Scenario: Script narrows a session
+- **WHEN** an SDK client calls `session.permissions.set([{ action: "bash", resource: "*", effect: "deny" }])` on a running Session
+- **THEN** from the next Safe Boundary every `bash` call is denied and the event is recorded
+
+#### Scenario: Session rule cannot beat an org deny
+- **WHEN** a Session rule allows `webfetch` for `*` and org policy denies `webfetch` for `*.internal.example.com`
+- **THEN** fetching an internal host is still denied with reason `org policy`
+
+#### Scenario: Ordered Session rules reach tool evaluation
+- **WHEN** a Session ruleset contains ordered `{ action, resource, effect }` rules
+- **THEN** tool admission SHALL parse every rule in written order and evaluate the last matching rule
+- **AND** an explicit final deny SHALL refuse the action even in bypass Mode without executing it
+- **AND** a later Session allow SHALL NOT widen a user/global deny ceiling
+
 ### Requirement: Permission modes
 (P0) The system SHALL support Modes `default` and `plan` in P0, adding `accept-edits`, `auto`, `dont-ask` and `bypass` in P1, selectable per Session (`--mode`, `mode` config, agent `permission_mode`, `/mode <name>`, `POST /api/v1/sessions/:id/mode`). The TUI SHALL cycle Modes with Shift+Tab through `default → accept-edits → plan → auto → default` on P1 builds (`default → plan → default` on P0 builds); `bypass` and `dont-ask` SHALL be reachable only through `/mode`, flags or config. A Mode change SHALL apply at the next Turn and publish `session.mode.switched.1`, as specified by session-runtime. The UI SHALL show a requested change as pending until effective; interrupt SHALL be offered when immediate cancellation is needed.
 
