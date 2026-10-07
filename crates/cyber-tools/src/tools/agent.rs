@@ -568,7 +568,7 @@ async fn create_child(
             .map_err(|e| failed(e.to_string()))?;
         let worktree = match state.child_worktree().cloned() {
             Some(managed) => Some(
-                crate::worktrees::ChildWorktree::retained(ctx.host, ctx.inv, managed)
+                crate::worktrees::ChildWorktree::retained(ctx.host, ctx.inv, &existing.id, managed)
                     .await
                     .map_err(|e| failed(e.to_string()))?,
             ),

@@ -226,6 +226,14 @@
 - **WHEN** an isolated subagent finishes without changing files
 - **THEN** its worktree and branch are deleted
 
+#### Scenario: Child cleanup confirmation
+- **GIVEN** a clean isolated child and `worktrees.cleanup: ask`
+- **WHEN** the child finishes
+- **THEN** cleanup requests individual child-owned approval through its ancestor routes without holding the repository lifecycle lock
+- **AND** rejection, unattended operation or cancellation preserves the checkout
+- **AND** approval rechecks current deny/keep rules and native dirty/activity removal admission
+- **AND** cancellation removes the idle child's pending cleanup request without abandoning unrelated routed requests
+
 #### Scenario: Retained isolated child restart
 - **GIVEN** an isolated child's checkout was retained
 - **WHEN** the application restarts and resumes that child

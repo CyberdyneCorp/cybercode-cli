@@ -473,3 +473,231 @@ async fn stopping_a_child_awaiting_permission_keeps_its_checkout() {
     assert!(binding.path.exists());
     assert!(flow.runtime.pending_requests(Some(&parent)).is_empty());
 }
+
+async fn cleanup_job(flow: &Flow, parent: &str) -> (String, cyber_server::runtime::PendingRequest) {
+    let started = invoke(
+        flow,
+        parent,
+        json!({"prompt":"inspect","isolation":"worktree","background":true}),
+    )
+    .await
+    .unwrap();
+    let request = flow.pending(parent).await;
+    assert!(!flow.runtime.is_running(&request.session_id));
+    assert!(
+        matches!(&request.kind, cyber_server::runtime::PendingKind::Permission(ask) if ask.action == "worktree" && ask.metadata["operation"] == "cleanup" && ask.metadata["requires_confirmation"] == true && ask.always_patterns.is_empty())
+    );
+    if let cyber_server::runtime::PendingKind::Permission(ask) = &request.kind {
+        assert!(ask.resources[0].contains(ask.metadata["path"].as_str().unwrap()));
+        assert!(ask.resources[1].contains(ask.metadata["branch"].as_str().unwrap()));
+    }
+    (started["job_id"].as_str().unwrap().into(), request)
+}
+fn ask_cleanup(flow: &Flow) {
+    flow.f.set_config(
+        json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"cleanup":"ask"}}),
+    );
+}
+
+#[tokio::test]
+async fn cleanup_approval_removes_only_the_child_checkout() {
+    let flow = flow(vec![text("child"), text("notice")], true);
+    ask_cleanup(&flow);
+    let parent = flow.session("bypass").await;
+    let (job, request) = cleanup_job(&flow, &parent).await;
+    flow.runtime
+        .reply_permission(&request.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    let result = done(&flow, &job).await.result.unwrap();
+    assert_eq!(result["worktree"]["kept"], false, "{result}");
+    assert!(!std::path::Path::new(result["worktree"]["path"].as_str().unwrap()).exists());
+    assert!(flow.f.repo.join("tracked.txt").exists());
+}
+
+#[tokio::test]
+async fn declining_cleanup_keeps_checkout_and_completes_the_child() {
+    let flow = flow(vec![text("child"), text("notice")], true);
+    ask_cleanup(&flow);
+    let parent = flow.session("bypass").await;
+    let (job, request) = cleanup_job(&flow, &parent).await;
+    flow.runtime
+        .reply_permission(
+            &request.id,
+            cyber_server::runtime::PermissionReply::Reject { message: None },
+        )
+        .await
+        .unwrap();
+    let result = done(&flow, &job).await.result.unwrap();
+    assert_eq!(result["worktree"]["kept"], true);
+    assert!(std::path::Path::new(result["worktree"]["path"].as_str().unwrap()).exists());
+    assert_eq!(result["text"], "child");
+}
+
+#[tokio::test]
+async fn stopping_background_cleanup_clears_idle_child_requests_and_keeps_checkout() {
+    let flow = flow(vec![text("child"), text("notice")], true);
+    ask_cleanup(&flow);
+    let parent = flow.session("bypass").await;
+    let (job, request) = cleanup_job(&flow, &parent).await;
+    let binding = flow
+        .runtime
+        .state(&request.session_id)
+        .await
+        .unwrap()
+        .child_worktree()
+        .unwrap()
+        .clone();
+    flow.runtime.cancel_job(&job).await.unwrap();
+    assert_eq!(
+        done(&flow, &job).await.status,
+        cyber_server::runtime::JobStatus::Cancelled
+    );
+    assert!(flow.runtime.pending_requests(Some(&parent)).is_empty());
+    assert!(binding.path.exists());
+}
+
+#[tokio::test]
+async fn cleanup_approval_rechecks_new_edits_policy_and_denies() {
+    use cyber_server::runtime::PermissionReply;
+    for change in ["edits", "keep", "deny"] {
+        let flow = flow(vec![text("child"), text("notice")], true);
+        ask_cleanup(&flow);
+        let parent = flow.session("bypass").await;
+        let (job, request) = cleanup_job(&flow, &parent).await;
+        let binding = flow
+            .runtime
+            .state(&request.session_id)
+            .await
+            .unwrap()
+            .child_worktree()
+            .unwrap()
+            .clone();
+        match change {
+            "edits" => std::fs::write(binding.path.join("user.txt"), "user edit\n").unwrap(),
+            "keep" => flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"cleanup":"keep"}})),
+            "deny" => flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"deny"},"worktrees":{"cleanup":"ask"}})),
+            _ => unreachable!(),
+        }
+        flow.runtime
+            .reply_permission(&request.id, PermissionReply::Once)
+            .await
+            .unwrap();
+        let result = done(&flow, &job).await.result.unwrap();
+        assert!(binding.path.exists(), "{change}: {result}");
+        if change == "deny" {
+            assert!(
+                result["worktree"]["cleanup_error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("denied")
+            );
+        } else {
+            assert_eq!(result["worktree"]["kept"], true);
+        }
+        if change == "edits" {
+            assert_eq!(
+                result["worktree"]["changes"]["files"][0]["file"],
+                "user.txt"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn foreground_interrupt_clears_cleanup_request_and_preserves_checkout() {
+    let flow = flow(
+        vec![
+            call(
+                "spawn",
+                "agent",
+                json!({"prompt":"inspect","isolation":"worktree"}),
+            ),
+            text("child"),
+        ],
+        true,
+    );
+    ask_cleanup(&flow);
+    let parent = flow.session("bypass").await;
+    flow.prompt(&parent, "delegate").await;
+    let request = flow.pending(&parent).await;
+    assert!(
+        matches!(&request.kind, cyber_server::runtime::PendingKind::Permission(ask) if ask.metadata["operation"] == "cleanup")
+    );
+    let binding = flow
+        .runtime
+        .state(&request.session_id)
+        .await
+        .unwrap()
+        .child_worktree()
+        .unwrap()
+        .clone();
+    flow.runtime.interrupt(&parent).await.unwrap();
+    assert!(flow.runtime.pending_requests(Some(&parent)).is_empty());
+    assert!(binding.path.exists());
+    assert!(!flow.runtime.is_running(&request.session_id));
+}
+
+#[tokio::test]
+async fn waiting_cleanup_does_not_hold_the_repository_lifecycle_lock() {
+    let flow = flow(
+        vec![
+            text("first"),
+            text("second"),
+            text("notice"),
+            text("notice"),
+        ],
+        true,
+    );
+    ask_cleanup(&flow);
+    let parent = flow.session("bypass").await;
+    let (first, first_request) = cleanup_job(&flow, &parent).await;
+    let second = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect too","isolation":"worktree","background":true}),
+    )
+    .await
+    .unwrap();
+    let second_request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = flow
+                .runtime
+                .pending_requests(Some(&parent))
+                .into_iter()
+                .find(|request| request.id != first_request.id)
+            {
+                break request;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cleanup prompt blocked another child checkout");
+    assert_ne!(first_request.session_id, second_request.session_id);
+    flow.runtime
+        .reply_permission(
+            &first_request.id,
+            cyber_server::runtime::PermissionReply::Once,
+        )
+        .await
+        .unwrap();
+    flow.runtime
+        .reply_permission(
+            &second_request.id,
+            cyber_server::runtime::PermissionReply::Once,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        done(&flow, &first).await.result.unwrap()["worktree"]["kept"],
+        false
+    );
+    assert_eq!(
+        done(&flow, second["job_id"].as_str().unwrap())
+            .await
+            .result
+            .unwrap()["worktree"]["kept"],
+        false
+    );
+}

@@ -629,3 +629,48 @@ fn historical_pending_requests_preserve_their_serialized_shape() {
         serde_json::from_value(data.clone()).unwrap();
     assert_eq!(serde_json::to_value(request).unwrap(), data);
 }
+
+#[tokio::test]
+async fn interrupt_abandons_idle_owned_operations_but_preserves_routed_child_requests() {
+    use cyber_server::runtime::{CreateSession, PermissionAsk};
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let asker = h.runtime.operation_asker(&child.id).await.unwrap();
+    let waiting = tokio::spawn(async move {
+        asker
+            .permission(PermissionAsk {
+                action: "worktree".into(),
+                resources: vec!["checkout".into()],
+                always_patterns: Vec::new(),
+                metadata: serde_json::json!({"requires_confirmation":true}),
+            })
+            .await
+    });
+    wait_pending(&h, &parent, 1).await;
+    h.runtime.interrupt(&parent).await.unwrap();
+    assert_eq!(h.runtime.pending_requests(Some(&parent)).len(), 1);
+    h.runtime.interrupt(&child.id).await.unwrap();
+    assert!(matches!(
+        waiting.await.unwrap(),
+        PermissionReply::Reject { .. }
+    ));
+    assert!(h.runtime.pending_requests(Some(&parent)).is_empty());
+    assert!(
+        h.store
+            .read_events(&child.id, -1, 500)
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| event.kind == "permission.replied.1")
+    );
+}

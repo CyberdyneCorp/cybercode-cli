@@ -601,7 +601,7 @@ impl Runtime {
         Ok(())
     }
 
-    /// Stop the Drain and settle in-flight work; inbox rows are kept. No-op when idle.
+    /// Stop the Drain and abandon owned requests, including idle host operations; inbox rows are kept.
     pub async fn interrupt(&self, session_id: &str) -> Result<(), RuntimeError> {
         {
             let mut drains = self
@@ -615,6 +615,7 @@ impl Runtime {
             }
         }
         self.wait_idle(session_id).await;
+        self.inner.abandon_requests(session_id).await?;
         Ok(())
     }
 

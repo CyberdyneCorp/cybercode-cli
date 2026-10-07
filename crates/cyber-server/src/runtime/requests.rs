@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use super::events::*;
-use super::{Inner, RuntimeError};
+use super::{Inner, Runtime, RuntimeError};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PermissionAsk {
@@ -543,4 +543,22 @@ impl Inner {
 fn request_directory(directory: &str) -> String {
     std::fs::canonicalize(directory)
         .map_or_else(|_| directory.into(), |path| path.display().to_string())
+}
+
+impl Runtime {
+    /// A trusted host operation can ask after inference settles, retaining Session routing.
+    pub async fn operation_asker(&self, session_id: &str) -> Result<Asker, RuntimeError> {
+        if self.inner.closed.is_cancelled() {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        let handle = self.inner.handle(session_id).await?;
+        let info = handle.state.lock().await.info.clone();
+        Ok(Asker::new(
+            &self.inner,
+            session_id,
+            &cyber_core::ids::new_id("call"),
+            "",
+            &info.agent,
+        ))
+    }
 }

@@ -8,6 +8,7 @@ use std::sync::Weak;
 
 #[derive(Clone)]
 pub(crate) struct ChildWorktree {
+    child_id: String,
     host: Weak<BuiltinHost>,
     invocation: Invocation,
     repository: Repository,
@@ -89,7 +90,7 @@ impl BuiltinHost {
             .await
             .map_err(io::Error::other)?;
         let mut setup_inv = inv.clone();
-        setup_inv.session_id = session.id;
+        setup_inv.session_id = session.id.clone();
         setup_inv.directory = session.directory;
         setup_inv.agent = session.agent;
         setup_inv.mode = session.mode;
@@ -113,6 +114,7 @@ impl BuiltinHost {
             )));
         }
         Ok(ChildWorktree {
+            child_id: session.id,
             host: self.weak.clone(),
             invocation: inv.clone(),
             repository,
@@ -210,6 +212,7 @@ impl ChildWorktree {
     pub(crate) async fn retained(
         host: &BuiltinHost,
         inv: &Invocation,
+        child_id: &str,
         managed: Managed,
     ) -> io::Result<Self> {
         if !managed.path.exists() {
@@ -227,6 +230,7 @@ impl ChildWorktree {
         let (config, _) =
             (host.opts.config)(Path::new(&inv.directory)).map_err(io::Error::other)?;
         Ok(Self {
+            child_id: child_id.into(),
             host: host.weak.clone(),
             invocation: inv.clone(),
             repository,
@@ -254,6 +258,30 @@ impl ChildWorktree {
             result["kept"] = Value::Null;
         }
         result
+    }
+
+    async fn confirm_cleanup(&self, host: &BuiltinHost, cleanup: Cleanup) -> io::Result<bool> {
+        if cleanup != Cleanup::Ask {
+            return Ok(true);
+        }
+        let runtime = host
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime stopped"))?;
+        let asker = runtime
+            .operation_asker(&self.child_id)
+            .await
+            .map_err(io::Error::other)?;
+        let reply = asker.permission(cyber_server::runtime::PermissionAsk {
+                action: "worktree".into(),
+                resources: vec![format!("Remove clean worktree: {}", self.managed.path.display()), format!("Branch: {}", self.managed.branch)],
+                always_patterns: Vec::new(),
+                metadata: json!({"operation":"cleanup", "requires_confirmation":true, "path":self.managed.path, "branch":self.managed.branch}),
+            }).await;
+        Ok(matches!(
+            reply,
+            cyber_server::runtime::PermissionReply::Once
+                | cyber_server::runtime::PermissionReply::Always
+        ))
     }
 
     async fn report_owned(&self, cancel: CancellationToken, result: &mut Value) -> io::Result<()> {
@@ -303,8 +331,50 @@ impl ChildWorktree {
         if changes.dirty
             || changes.ahead != 0
             || self.cleanup == Cleanup::Keep
-            || cleanup != Cleanup::Auto
+            || cleanup == Cleanup::Keep
         {
+            return Ok(());
+        }
+        drop(_lifecycle);
+        if !self.confirm_cleanup(&host, cleanup).await? {
+            result["cleanup_reason"] = json!("Cleanup was not approved");
+            return Ok(());
+        }
+        let _lifecycle = tokio::select! {
+            biased;
+            _ = ctx.cancel.cancelled() => return Err(io::Error::new(io::ErrorKind::Interrupted, "Cleanup cancelled")),
+            guard = lock.lock() => guard,
+        };
+        let (config, _) = (host.opts.config)(&ctx.location).map_err(io::Error::other)?;
+        let current = Settings::from_config(&config)
+            .map_err(io::Error::other)?
+            .cleanup;
+        if current == Cleanup::Keep || (current == Cleanup::Ask && cleanup != Cleanup::Ask) {
+            result["cleanup_reason"] = json!("Cleanup policy changed");
+            return Ok(());
+        }
+        let ctx = Ctx {
+            policy: host
+                .policy(&self.invocation)
+                .await
+                .map_err(io::Error::other)?,
+            ..ctx
+        };
+        let execution = GitPort {
+            ctx: &ctx,
+            writable: Some(vec![
+                self.repository.common_dir.clone(),
+                self.managed.path.clone(),
+            ]),
+            credentials: &[],
+        };
+        let changes = retry_repository_busy(&ctx.cancel, || {
+            self.repository.changes(&execution, &self.managed)
+        })
+        .await?;
+        result["changes"] = json!(changes);
+        if changes.dirty || changes.ahead != 0 {
+            result["cleanup_reason"] = json!("Checkout changed while cleanup was pending");
             return Ok(());
         }
         authorize_worktree(
