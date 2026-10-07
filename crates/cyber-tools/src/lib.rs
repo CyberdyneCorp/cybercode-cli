@@ -9,6 +9,7 @@ pub mod permissions;
 mod reconcile;
 mod sandboxing;
 mod schema;
+mod subagents;
 mod tools;
 mod worktrees;
 

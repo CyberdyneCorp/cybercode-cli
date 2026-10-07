@@ -105,6 +105,9 @@ jobs:
       - name: Native final no-tools wire choices
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test adapters runtime_no_tools_choice
+      - name: Native foreground subagent ownership
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test subagents
       - name: Native agent model selection
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_models

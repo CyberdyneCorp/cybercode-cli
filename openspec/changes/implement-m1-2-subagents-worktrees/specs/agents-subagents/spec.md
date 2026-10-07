@@ -112,6 +112,16 @@
 - **WHEN** the model calls `agent` with `agent: "explore"` and `background: false`
 - **THEN** a child Session runs to completion and the tool result contains the subagent's final text and its `ses_` ID
 
+#### Scenario: Foreground ownership survives cancellation and disposal
+- **WHEN** a foreground caller is interrupted or its tool future is dropped
+- **THEN** its child SHALL be interrupted and joined before its concurrency permit is released
+- **AND** canceled queued calls SHALL NOT create child Sessions
+- **AND** uncertain spawn settlement SHALL NOT automatically create another child during recovery
+
+#### Scenario: Configuration changes while a spawn waits
+- **WHEN** a queued or approved spawn resumes after its target profile is disabled, hidden or unavailable, or its effective permission becomes denied
+- **THEN** the spawn SHALL fail before creating its child Session
+
 #### Scenario: Unknown agent
 - **WHEN** the model calls `agent` with `agent: "nonexistent"`
 - **THEN** the call fails with `Unknown agent "nonexistent". Available: <names>` without creating a Session

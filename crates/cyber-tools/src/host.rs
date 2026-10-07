@@ -55,6 +55,7 @@ pub struct BuiltinHost {
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
+    pub(crate) subagents: crate::subagents::Slots,
 }
 
 impl BuiltinHost {
@@ -67,6 +68,7 @@ impl BuiltinHost {
             runtime: OnceLock::new(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
+            subagents: crate::subagents::Slots::default(),
         })
     }
 

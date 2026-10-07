@@ -1,5 +1,6 @@
 //! Built-in tool implementations (`builtin-tools`).
 
+mod agent;
 pub(crate) mod bash;
 mod fs;
 pub(crate) mod patch;
@@ -49,6 +50,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(session::HistorySearch),
         Box::new(session::PlanEnter),
         Box::new(session::PlanExit),
+        Box::new(agent::Agent),
     ];
     #[cfg(windows)]
     let tools = {

@@ -34,7 +34,7 @@ impl Budget {
         ))
     }
 
-    fn store(&self, text: &str) -> Result<PathBuf, String> {
+    pub(crate) fn store(&self, text: &str) -> Result<PathBuf, String> {
         std::fs::create_dir_all(&self.dir)
             .map_err(|e| format!("could not store the full output: {e}"))?;
         let path = self.dir.join(format!(
