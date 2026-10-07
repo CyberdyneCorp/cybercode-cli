@@ -4,6 +4,12 @@ The active goal covers all P1-tagged product contracts, not only the five milest
 
 Current work connects agent model/variant defaults, starting Mode, step limits, request options, Turn identity, child permission inheritance and parent-client approval routing, and adds fresh foreground/background child execution with owned cancellation, in-process FIFO admission, schema-governed typed results, durable task handback/controls and local resume by child name/ID with exclusive result ownership and forked child context, including explicit user /subtask command/API/SDK admission. Fresh isolated foreground/background children now use managed native creation/setup, durable checkout bindings and branch/file/diff result metadata. Clean checkout removal uses activity fencing; retained-child resume verifies the same identity after restart. Acknowledged clean-removed children recreate with a fresh durable binding and setup-readiness gate before inference. No P1 milestone is fully accepted. Windows long-root Git status remains a CI failure; complete Windows confinement, public worktree lifecycle, child orchestration and the later P1 milestones remain required by the goal.
 
+## Latest CI follow-up
+
+Completed CI for d31821e fails Windows long-root Git status and the isolated-child context assertion ([Windows job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37650767280/job/112893185933)). The x64 macOS build fails while downloading the stable Rust channel metadata from static.rust-lang.org, before project compilation ([macOS build job](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37650767280/job/112893185982)). These are distinct failures, not one Windows blocker.
+
+The child assertion searched Debug output, which escapes path backslashes. Its fixture now includes a backslash on every platform; that strengthened case fails on unchanged main 3e5e60b before the assertion correction. The assertion now checks actual provider message text, preserving the SQL/Session/context consistency requirement. All 41 isolated-child tests and workspace all-target Clippy pass locally, with formatting and diff checks passing. Native acceptance of this correction remains pending; mandatory long-root status and complete Windows enforcement remain open. The prior soft-budget push 1b8c7ff was still queued when checked. P0 artifacts are unchanged.
+
 ## Delivery sequence
 
 - [ ] M1.1: Windows sandbox and network enforcement; classifier, permission ceilings, mode cycling and pending state.

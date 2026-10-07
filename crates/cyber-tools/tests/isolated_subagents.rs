@@ -1268,7 +1268,7 @@ async fn rebound_location_updates_sql_and_context_before_inference() {
     )
     .await
     .unwrap();
-    let target = flow.f.dir.path().join("relocated-checkouts");
+    let target = flow.f.dir.path().join(r"relocated\checkouts");
     flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"root":target,"keep":"always"}}));
     let second = invoke(
         &flow,
@@ -1297,7 +1297,13 @@ async fn rebound_location_updates_sql_and_context_before_inference() {
         })
         .unwrap();
     assert_eq!(recorded, state.info.directory);
-    assert!(format!("{:?}", flow.main.requests()[1].messages).contains(&state.info.directory));
+    assert!(
+        flow.main.requests()[1]
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .any(|content| matches!(content, cyber_llm::Content::Text { text } if text.contains(&state.info.directory)))
+    );
     assert_eq!(second["worktree"]["kept"], true);
 }
 
