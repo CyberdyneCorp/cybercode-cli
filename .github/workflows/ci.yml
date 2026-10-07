@@ -120,6 +120,9 @@ jobs:
       - name: Native background task TUI controls
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tui --lib tasks
+      - name: Native subagent resume and attempt replay
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children
       - name: Native durable subagent names
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test subagent_names -p cyber-tools --test subagent_names

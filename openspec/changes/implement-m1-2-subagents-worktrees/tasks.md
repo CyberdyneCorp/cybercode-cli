@@ -29,6 +29,7 @@
 - [ ] Implement background handback, tasks listing and cancellation across all child modes and native platforms.
   - [x] Connect fresh background children to runtime-owned subagent Jobs, profile defaults/explicit overrides, retained root-pool permits, queued text/structured handback and durable terminal status. Add restart interruption, idempotent notification acknowledgement, panic settlement, permission/question cleanup and deletion/admission fencing. API/SDK paginated listing/get/stop, TUI tasks/ps/open/stop-all confirmation and scoped model task_stop are connected. Native coverage is added; full child modes, generic bash/monitor/PTY/workflow Jobs, durable pool recovery and native/live-provider acceptance remain open.
 - [ ] Implement forked context and resume by name/session ID.
+  - [x] Connect local foreground/background resume by name/ID, direct-parent/profile/permission checks, exclusive owners through settlement, atomic attempt reset/admission, retained/replaced schemas, per-attempt Jobs/usage and replay. Fork, isolated spawning, durable cross-process pool ownership and native/live-provider acceptance remain open.
   - [x] Persist parent-scoped child names for fresh foreground/background execution, database uniqueness, unchanged Session titles, named results/approvals and replay. Resume admission/ownership and forked context remain open.
 - [ ] Integrate worktree isolation into child sessions.
 - [ ] Enforce concurrency, nesting and permission inheritance.

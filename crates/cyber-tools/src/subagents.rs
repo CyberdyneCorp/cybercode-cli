@@ -36,10 +36,18 @@ pub(crate) struct ChildGuard {
     stop: CancellationToken,
     finished: CancellationToken,
     owner: Option<JoinHandle<()>>,
+    execution: Arc<cyber_server::runtime::ChildExecution>,
 }
 
 impl ChildGuard {
-    pub fn new(runtime: Runtime, id: String, permit: OwnedSemaphorePermit) -> Self {
+    pub fn new(
+        runtime: Runtime,
+        id: String,
+        permit: OwnedSemaphorePermit,
+        execution: cyber_server::runtime::ChildExecution,
+    ) -> Self {
+        let execution = Arc::new(execution);
+        let held = execution.clone();
         let stop = CancellationToken::new();
         let finished = CancellationToken::new();
         let (cancel, done) = (stop.clone(), finished.clone());
@@ -50,13 +58,19 @@ impl ChildGuard {
                 _ = cancel.cancelled() => { if let Some(runtime) = weak.upgrade() { let _ = runtime.interrupt(&id).await; } }
                 _ = done.cancelled() => {}
             }
+            drop(held);
             drop(permit);
         });
         Self {
             stop,
             finished,
             owner: Some(owner),
+            execution,
         }
+    }
+
+    pub fn execution(&self) -> &cyber_server::runtime::ChildExecution {
+        &self.execution
     }
 
     pub async fn settle(mut self, canceled: bool) {

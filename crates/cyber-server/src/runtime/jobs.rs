@@ -48,6 +48,33 @@ pub struct Job {
     pub notified: bool,
 }
 
+/// Usage accumulated before an attempt, kept independently of its public Job snapshot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct JobUsage {
+    #[serde(default)]
+    cost: f64,
+    #[serde(default)]
+    tokens: u64,
+    #[serde(default)]
+    unpriced_steps: u32,
+}
+impl JobUsage {
+    pub fn of(state: &super::SessionState) -> Self {
+        Self {
+            cost: state.totals.cost,
+            tokens: state.totals.usage.context_tokens()
+                + state.totals.usage.output
+                + state.totals.usage.reasoning,
+            unpriced_steps: state.totals.unpriced_steps,
+        }
+    }
+}
+pub struct JobAttempt {
+    pub name: String,
+    pub description: String,
+    pub usage: JobUsage,
+}
+
 /// Fences child creation/registration against Session deletion.
 pub struct JobAdmission {
     runtime: WeakRuntime,
@@ -74,14 +101,15 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Re
     let data = &event.data;
     if event.kind == STARTED {
         tx.execute(
-            "INSERT INTO job (id,session_id,child_id,name,status,data) VALUES (?1,?2,?3,?4,?5,?6)",
+            "INSERT INTO job (id,session_id,child_id,name,status,data,usage_baseline) VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![
                 data["id"].as_str(),
                 event.aggregate_id,
                 data["child_id"].as_str(),
                 data["name"].as_str(),
                 data["status"].as_str(),
-                data.to_string()
+                data.to_string(),
+                data.get("usage_baseline").cloned().unwrap_or_else(|| serde_json::json!({})).to_string()
             ],
         )?;
     } else {
@@ -212,6 +240,33 @@ impl Runtime {
         reservation: Option<JobAdmission>,
         work: BoxFuture<'static, Result<Value, String>>,
     ) -> Result<Job, RuntimeError> {
+        self.start_child_job_attempt(
+            parent,
+            child,
+            JobAttempt {
+                name,
+                description,
+                usage: JobUsage::default(),
+            },
+            reservation,
+            work,
+        )
+        .await
+    }
+
+    pub async fn start_child_job_attempt(
+        &self,
+        parent: &str,
+        child: &str,
+        attempt: JobAttempt,
+        reservation: Option<JobAdmission>,
+        work: BoxFuture<'static, Result<Value, String>>,
+    ) -> Result<Job, RuntimeError> {
+        let JobAttempt {
+            name,
+            description,
+            usage,
+        } = attempt;
         let _reservation = match reservation {
             Some(reservation) => {
                 if reservation.parent != parent
@@ -251,7 +306,12 @@ impl Runtime {
             tokens: 0,
             notified: false,
         };
-        self.record_job(STARTED, &job).await?;
+        let mut started = serde_json::to_value(&job).expect("job serializes");
+        started["usage_baseline"] = serde_json::to_value(usage).expect("usage serializes");
+        let handle = self.inner.handle(parent).await?;
+        self.inner
+            .commit(&handle, vec![super::events::event(STARTED, &started)])
+            .await?;
         let control = Arc::new(Control {
             stop: CancellationToken::new(),
             done: CancellationToken::new(),
@@ -357,15 +417,29 @@ impl Runtime {
     }
 
     async fn refresh_job_usage(&self, job: &mut Job) {
-        match self.state(&job.child_id).await {
-            Ok(state) => {
-                job.cost = state.totals.cost;
-                job.unpriced = state.totals.unpriced_steps > 0;
-                job.tokens = state.totals.usage.context_tokens()
-                    + state.totals.usage.output
-                    + state.totals.usage.reasoning;
+        let id = job.id.clone();
+        let baseline = self
+            .inner
+            .store
+            .read(move |db| {
+                Ok(
+                    db.query_row("SELECT usage_baseline FROM job WHERE id=?1", [id], |row| {
+                        row.get::<_, String>(0)
+                    })?,
+                )
+            })
+            .ok()
+            .and_then(|data| serde_json::from_str::<JobUsage>(&data).ok());
+        match (self.state(&job.child_id).await, baseline) {
+            (Ok(state), Some(baseline)) => {
+                let current = JobUsage::of(&state);
+                job.cost = (current.cost - baseline.cost).max(0.0);
+                job.tokens = current.tokens.saturating_sub(baseline.tokens);
+                job.unpriced = current.unpriced_steps > baseline.unpriced_steps
+                    || current.cost < baseline.cost
+                    || current.tokens < baseline.tokens;
             }
-            Err(_) => job.unpriced = true,
+            _ => job.unpriced = true,
         }
     }
 

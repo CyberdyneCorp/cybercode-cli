@@ -183,6 +183,25 @@
 - **WHEN** the model calls `agent` with `resume: "explore"` and a follow-up prompt
 - **THEN** the prompt is admitted to the existing `explore` child Session, which keeps its earlier context
 
+#### Scenario: Foreground and background names share one parent namespace
+- **WHEN** a parent creates foreground and background children with default or explicit names
+- **THEN** each new child SHALL have a unique durable parent-scoped name regardless of execution mode
+- **AND** a duplicate caller name SHALL fail before child creation or dispatch
+- **AND** the name SHALL survive restart and appear on tool results and routed approvals without changing the Session title
+
+#### Scenario: Resume ownership and structured attempts
+- **WHEN** an agent call resumes a named child or a direct child Session ID
+- **THEN** it SHALL admit into that same child after target permission checks, preserving history and its name
+- **AND** an active execution owner SHALL cause Subagent busy before admission, including the interval after Drain idleness and before result settlement
+- **AND** a resumed structured attempt SHALL durably clear its earlier terminal result and validate the new result against the retained or explicitly replaced schema
+- **AND** a background resume SHALL create a new Job for the same child/name, with one distinct handback for each attempt
+
+#### Scenario: Failed follow-up preparation never returns a previous answer
+- **WHEN** a resumed prompt cannot be promoted because preparation fails
+- **THEN** foreground result collection SHALL fail and a background Job SHALL settle as error
+- **AND** neither result SHALL reuse an assistant answer from before that prompt
+- **AND** the pending prompt SHALL remain available for recovery
+
 ### Requirement: Worktree isolation for subagents
 (P1) A spawn with `isolation: "worktree"` SHALL create a managed git worktree (see worktrees) on a branch `cyber/<parent-short-id>/<subagent-name>` and bind the child Session's Location to it. On completion the tool result SHALL report the branch, changed files and diff stats; the worktree SHALL be kept when it has changes and removed when clean, unless `worktrees.keep` is `always`.
 
@@ -294,9 +313,3 @@
 #### Scenario: Denied agent omitted
 - **WHEN** the caller's rules deny `agent` for resource `general`
 - **THEN** `general` does not appear in the `agent` tool description
-
-#### Scenario: Foreground and background names share one parent namespace
-- **WHEN** a parent creates foreground and background children with default or explicit names
-- **THEN** each new child SHALL have a unique durable parent-scoped name regardless of execution mode
-- **AND** a duplicate caller name SHALL fail before child creation or dispatch
-- **AND** the name SHALL survive restart and appear on tool results and routed approvals without changing the Session title

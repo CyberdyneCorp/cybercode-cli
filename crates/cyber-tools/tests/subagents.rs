@@ -333,11 +333,7 @@ async fn concurrency_waits_fifo_without_creating_queued_children() {
 
 #[tokio::test]
 async fn unsupported_spawn_options_fail_before_creating_sessions() {
-    for option in [
-        json!({"fork":true}),
-        json!({"resume":"general"}),
-        json!({"isolation":"worktree"}),
-    ] {
+    for option in [json!({"fork":true}), json!({"isolation":"worktree"})] {
         let mut input = json!({"prompt":"inspect"});
         input
             .as_object_mut()

@@ -19,7 +19,7 @@ impl Tool for Agent {
     fn def(&self) -> ToolDef {
         def(
             "agent",
-            "Delegate a focused task to a subagent; wait for its final result or start a background task with completion handback.",
+            "Delegate a focused task to a subagent; wait for its final result or start a background task with completion handback. Resume an existing child by name or Session ID.",
             json!({"type":"object", "required":["prompt"], "additionalProperties":false, "properties":{
                 "prompt":{"type":"string"}, "agent":{"type":"string"}, "description":{"type":"string"},
                 "model":{"type":"string"}, "output_schema":{}, "isolation":{"type":"string", "enum":["none","worktree"]},
@@ -36,6 +36,8 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    resume: Option<SessionInfo>,
+    usage: cyber_server::runtime::JobUsage,
     background: bool,
     name: Option<String>,
     output_schema: Option<StructuredSchema>,
@@ -46,7 +48,7 @@ struct Spawn {
     max_concurrent: usize,
 }
 
-fn configured(ctx: &Ctx<'_>) -> Result<Spawn, ToolError> {
+fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, ToolError> {
     let input = &ctx.inv.input;
     if text(input, "prompt").trim().is_empty() {
         return Err(failed("prompt is required"));
@@ -54,7 +56,7 @@ fn configured(ctx: &Ctx<'_>) -> Result<Spawn, ToolError> {
     let name = input
         .get("agent")
         .and_then(Value::as_str)
-        .unwrap_or("general");
+        .unwrap_or_else(|| resume.map_or("general", |info| info.agent.as_str()));
     let (config, _) = (ctx.host.opts.config)(&ctx.location).map_err(failed)?;
     let profiles = cyber_core::config::resolve_agents(&config).map_err(failed)?;
     let available = profiles
@@ -70,6 +72,20 @@ fn configured(ctx: &Ctx<'_>) -> Result<Spawn, ToolError> {
         .ok_or_else(|| failed(format!("Unknown agent {name:?}. Available: {available}")))?;
     if !profile.subagent_capable() {
         return Err(failed(format!("Agent {name:?} cannot run a subagent")));
+    }
+    if let Some(existing) = resume {
+        if profile.name != existing.agent {
+            return Err(failed("Resume cannot change the child agent"));
+        }
+        if input
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(|model| model != existing.model)
+        {
+            return Err(failed(
+                "Resume cannot change the child model; select it on the child Session first",
+            ));
+        }
     }
     check_features(input, &profile)?;
     let description = input
@@ -100,6 +116,8 @@ fn configured(ctx: &Ctx<'_>) -> Result<Spawn, ToolError> {
         return Err(failed("name must contain 1–128 bytes"));
     }
     Ok(Spawn {
+        resume: resume.cloned(),
+        usage: Default::default(),
         background,
         name,
         output_schema,
@@ -131,23 +149,29 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<(), ToolError
         .and_then(Value::as_str)
         .or(profile.isolation.as_deref())
         .unwrap_or("none");
-    if isolation != "none"
-        || input.get("fork").and_then(Value::as_bool).unwrap_or(false)
-        || input.get("resume").is_some()
-    {
+    if isolation != "none" || input.get("fork").and_then(Value::as_bool).unwrap_or(false) {
         return Err(failed(
-            "This agent execution path currently supports fresh Sessions with isolation none; requested orchestration is not implemented yet",
+            "This agent execution path supports local Sessions with isolation none; requested fork or isolation is not implemented yet",
         ));
     }
     Ok(())
 }
 
 async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
-    let mut spawn = configured(ctx)?;
     let runtime = ctx
         .host
         .runtime()
         .ok_or_else(|| failed("Agent tool requires the runtime"))?;
+    let resume = match ctx.inv.input.get("resume").and_then(Value::as_str) {
+        Some(reference) => Some(
+            runtime
+                .resolve_subagent(&ctx.inv.session_id, reference)
+                .await
+                .map_err(|e| failed(e.to_string()))?,
+        ),
+        None => None,
+    };
+    let mut spawn = configured(ctx, resume.as_ref())?;
     let parent = runtime
         .state(&ctx.inv.session_id)
         .await
@@ -181,6 +205,26 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
         json!({"agent":spawn.profile.name, "description":spawn.description}),
     )
     .await?;
+    let execution = if let Some(child) = &spawn.resume {
+        let owner = runtime
+            .claim_child_execution(&parent.id, &child.id)
+            .map_err(|e| failed(e.to_string()))?;
+        if runtime.is_running(&child.id)
+            || runtime
+                .jobs(Some(&parent.id))
+                .map_err(|e| failed(e.to_string()))?
+                .iter()
+                .any(|job| {
+                    job.child_id == child.id
+                        && job.status == cyber_server::runtime::JobStatus::Running
+                })
+        {
+            return Err(failed("Subagent busy"));
+        }
+        Some(owner)
+    } else {
+        None
+    };
     let pool = ctx
         .host
         .subagents
@@ -192,12 +236,12 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
         permit = pool.acquire_owned() => permit.map_err(|e| failed(e.to_string()))?,
     };
     revalidate_spawn(ctx, &mut spawn).await?;
-    execute_child(ctx, runtime, parent, spawn, permit).await
+    execute_child(ctx, runtime, parent, spawn, permit, execution).await
 }
 
 async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolError> {
     // Queued or approved calls may outlive a profile/configuration reload.
-    let latest = configured(ctx)?;
+    let latest = configured(ctx, spawn.resume.as_ref())?;
     spawn.profile = latest.profile;
     spawn.background = latest.background;
     spawn.name = latest.name;
@@ -230,20 +274,34 @@ async fn execute_child(
     parent: SessionInfo,
     spawn: Spawn,
     permit: tokio::sync::OwnedSemaphorePermit,
+    execution: Option<cyber_server::runtime::ChildExecution>,
 ) -> Result<String, ToolError> {
     let mut spawn = spawn;
     let reservation = reserve_child(ctx, &runtime, &parent, &mut spawn).await?;
-    let id = cyber_core::ids::new_id("ses");
-    let guard = ChildGuard::new(runtime.clone(), id.clone(), permit);
+    let id = spawn
+        .resume
+        .as_ref()
+        .map(|info| info.id.clone())
+        .unwrap_or_else(|| cyber_core::ids::new_id("ses"));
+    let execution = match execution {
+        Some(execution) => execution,
+        None => runtime
+            .claim_child_execution(&parent.id, &id)
+            .map_err(|e| failed(e.to_string()))?,
+    };
+    let guard = ChildGuard::new(runtime.clone(), id.clone(), permit, execution);
     let result = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
-        result = create_child(ctx, &runtime, &parent, &spawn, &id) => result,
+        result = create_child(ctx, &runtime, &parent, &spawn, &id, guard.execution()) => result,
     };
-    if let Err(error) = result {
-        guard.settle(true).await;
-        return Err(error);
-    }
+    let prompt = match result {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            guard.settle(spawn.resume.is_none()).await;
+            return Err(error);
+        }
+    };
     let weak = runtime.downgrade();
     let bytes = spawn.result_bytes;
     let dir = ctx.host.opts.tool_output_dir.clone();
@@ -252,6 +310,7 @@ async fn execute_child(
         let run = ChildRun {
             weak,
             id,
+            prompt,
             structured,
             bytes,
             dir,
@@ -262,7 +321,7 @@ async fn execute_child(
     let result = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
-        result = finish_child(&weak, &id, structured, bytes, dir) => result,
+        result = finish_child(&weak, &id, &prompt, structured, bytes, dir) => result,
     };
     guard.settle(result.is_err()).await;
     result
@@ -271,6 +330,7 @@ async fn execute_child(
 struct ChildRun {
     weak: WeakRuntime,
     id: String,
+    prompt: String,
     structured: bool,
     bytes: usize,
     dir: std::path::PathBuf,
@@ -284,6 +344,55 @@ async fn reserve_child(
 ) -> Result<Option<cyber_server::runtime::JobAdmission>, ToolError> {
     let reservation = tokio::select! { biased; _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted), result=runtime.reserve_child_job(&parent.id) => result.map_err(|e| failed(e.to_string()))? };
     revalidate_spawn(ctx, spawn).await?;
+    if let Some(existing) = &spawn.resume {
+        let state = runtime
+            .state(&existing.id)
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        if state.info.parent_id.as_deref() != Some(&parent.id)
+            || state.info.agent != spawn.profile.name
+        {
+            return Err(failed("Resumed child identity changed; retry"));
+        }
+        spawn.usage = cyber_server::runtime::JobUsage::of(&state);
+        if ctx
+            .inv
+            .input
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(|model| model != state.info.model)
+        {
+            return Err(failed(
+                "Resume cannot change the child model; select it on the child Session first",
+            ));
+        }
+        let old_name = match state.info.subagent_name.clone() {
+            Some(name) => Some(name),
+            None => runtime
+                .jobs(Some(&parent.id))
+                .map_err(|e| failed(e.to_string()))?
+                .into_iter()
+                .find(|job| job.child_id == existing.id)
+                .map(|job| job.name),
+        };
+        if let Some(name) = old_name {
+            if spawn
+                .name
+                .as_ref()
+                .is_some_and(|requested| requested != &name)
+            {
+                return Err(failed("Resume cannot change the child name"));
+            }
+            spawn.name = Some(name);
+            if spawn.output_schema.is_none() {
+                spawn.output_schema = state.output_schema().cloned();
+            }
+            return Ok(Some(reservation));
+        }
+        if spawn.output_schema.is_none() {
+            spawn.output_schema = state.output_schema().cloned();
+        }
+    }
     let used = runtime
         .subagent_names(&parent.id)
         .map_err(|e| failed(e.to_string()))?;
@@ -325,7 +434,15 @@ async fn handoff_background(
 ) -> Result<String, ToolError> {
     let id = run.id.clone();
     let work = Box::pin(async move {
-        let result = finish_child(&run.weak, &run.id, run.structured, run.bytes, run.dir).await;
+        let result = finish_child(
+            &run.weak,
+            &run.id,
+            &run.prompt,
+            run.structured,
+            run.bytes,
+            run.dir,
+        )
+        .await;
         guard.settle(result.is_err()).await;
         result
             .and_then(|text| serde_json::from_str(&text).map_err(|e| failed(e.to_string())))
@@ -336,7 +453,17 @@ async fn handoff_background(
     });
     let name = spawn.name.unwrap_or(spawn.profile.name);
     let job = runtime
-        .start_child_job(&parent.id, &id, name, spawn.description, reservation, work)
+        .start_child_job_attempt(
+            &parent.id,
+            &id,
+            cyber_server::runtime::JobAttempt {
+                name,
+                description: spawn.description,
+                usage: spawn.usage,
+            },
+            reservation,
+            work,
+        )
         .await
         .map_err(|e| failed(e.to_string()))?;
     Ok(json!({"id":id,"job_id":job.id,"name":job.name,"state":"running"}).to_string())
@@ -348,7 +475,22 @@ async fn create_child(
     parent: &SessionInfo,
     spawn: &Spawn,
     id: &str,
-) -> Result<(), ToolError> {
+    execution: &cyber_server::runtime::ChildExecution,
+) -> Result<String, ToolError> {
+    if spawn.resume.is_some() {
+        let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
+        admission.source = "session".into();
+        let receipt = runtime
+            .resume_child(
+                execution,
+                admission,
+                spawn.name.clone().expect("reserved name"),
+                spawn.output_schema.clone(),
+            )
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        return Ok(receipt.message_id);
+    }
     let model = ctx.inv.input.get("model").and_then(Value::as_str);
     runtime
         .create_session(CreateSession {
@@ -372,16 +514,17 @@ async fn create_child(
         .map_err(|e| failed(e.to_string()))?;
     let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
     admission.source = "session".into();
-    runtime
+    let receipt = runtime
         .admit(id, admission)
         .await
         .map_err(|e| failed(e.to_string()))?;
-    Ok(())
+    Ok(receipt.message_id)
 }
 
 async fn finish_child(
     weak: &WeakRuntime,
     id: &str,
+    prompt: &str,
     structured: bool,
     bytes: usize,
     dir: std::path::PathBuf,
@@ -389,24 +532,30 @@ async fn finish_child(
     weak.wait_idle(id)
         .await
         .map_err(|e| failed(e.to_string()))?;
-    if structured {
-        return structured_result(weak, id).await;
-    }
     let state = weak
         .upgrade()
         .ok_or_else(|| failed("Server stopped"))?
         .state(id)
         .await
         .map_err(|e| failed(e.to_string()))?;
+    let start = state
+        .entries
+        .iter()
+        .position(|entry| matches!(entry, Entry::User { id, .. } if id == prompt))
+        .ok_or_else(|| failed("Subagent prompt was not promoted; preparation failed"))?;
     let answer = state
         .entries
         .iter()
+        .skip(start + 1)
         .rev()
         .find_map(|entry| match entry {
             Entry::Assistant(answer) => Some(answer),
             _ => None,
         })
         .ok_or_else(|| failed("Subagent stopped without a completed answer"))?;
+    if structured {
+        return structured_result(weak, id).await;
+    }
     if let Some(error) = &answer.error {
         return Err(failed(format!("Subagent failed: {error}")));
     }

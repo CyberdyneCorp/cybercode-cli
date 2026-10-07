@@ -288,6 +288,10 @@ pub struct SessionState {
 const MAX_INSTRUCTION_CHARS: usize = 2000;
 
 impl SessionState {
+    pub fn output_schema(&self) -> Option<&super::StructuredSchema> {
+        self.result.schema.as_ref()
+    }
+
     pub fn structured_result(&self) -> Option<&Value> {
         self.result.returned.as_ref().map(|(_, value)| value)
     }
@@ -521,6 +525,16 @@ impl SessionState {
             self.selection_revision = e.seq;
         }
         match kind {
+            "session.subagent.resumed" => {
+                let resumed: super::names::Resumed = decode(e)?;
+                self.info.subagent_name = Some(resumed.name);
+                if let Some(schema) = resumed.output_schema {
+                    self.result.schema = Some(super::StructuredSchema::new(schema)?);
+                }
+                self.result.returned = None;
+                self.result.error = None;
+                self.result.rejected = false;
+            }
             "permission.replied" if self.result.schema.is_some() => {
                 if matches!(
                     serde_json::from_value::<super::PermissionReply>(e.data["reply"].clone()),

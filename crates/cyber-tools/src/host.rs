@@ -73,15 +73,16 @@ impl BuiltinHost {
     }
 
     fn settle_output(&self, ctx: &Ctx<'_>, output: String, keep_tail: bool) -> ToolOutcome {
-        let value = if ctx.inv.name == "agent" && ctx.inv.input.get("output_schema").is_some() {
+        let value = if ctx.inv.name == "agent" {
             match serde_json::from_str::<Value>(&output) {
                 Ok(result) if result.get("result").is_some() => result.get("result").cloned(),
                 Ok(result) if result["state"] == "running" => None,
-                _ => {
+                _ if ctx.inv.input.get("output_schema").is_some() => {
                     return ToolOutcome::Crashed(
                         "Structured agent result was not preserved".into(),
                     );
                 }
+                _ => None,
             }
         } else {
             None

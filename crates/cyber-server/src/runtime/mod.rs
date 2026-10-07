@@ -15,7 +15,8 @@ mod events;
 mod host;
 mod jobs;
 mod names;
-pub use jobs::{Job, JobAdmission, JobStatus};
+pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
+pub use names::ChildExecution;
 mod location;
 mod model;
 mod requests;
@@ -239,6 +240,7 @@ pub(crate) struct Inner {
     background: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
     jobs: StdMutex<HashMap<String, Arc<jobs::Control>>>,
     job_admission: Arc<Mutex<()>>,
+    child_executions: StdMutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
@@ -294,6 +296,7 @@ impl Runtime {
             background: StdMutex::default(),
             jobs: StdMutex::default(),
             job_admission: Arc::new(Mutex::new(())),
+            child_executions: StdMutex::default(),
             waiters: StdMutex::default(),
             me: me.clone(),
         });
@@ -420,6 +423,15 @@ impl Runtime {
         session_id: &str,
         admission: Admission,
     ) -> Result<Receipt, RuntimeError> {
+        self.admit_attempt(session_id, admission, None).await
+    }
+
+    async fn admit_attempt(
+        &self,
+        session_id: &str,
+        admission: Admission,
+        attempt: Option<names::Resumed>,
+    ) -> Result<Receipt, RuntimeError> {
         let _admission = self.inner.open().await?;
         let handle = self.inner.handle(session_id).await?;
         self.inner.commit_staged_revert(&handle).await?;
@@ -440,10 +452,17 @@ impl Runtime {
                 source: admission.source,
                 digest,
             };
-            let stored = self
-                .inner
-                .commit_locked(&mut state, vec![event(ADMITTED, &payload)])?;
-            receipt_for(&state, &message_id, stored[0].seq)
+            let mut events = Vec::new();
+            if let Some(attempt) = attempt {
+                events.push(event(events::RESUMED, &attempt));
+            }
+            events.push(event(ADMITTED, &payload));
+            let stored = self.inner.commit_locked(&mut state, events)?;
+            receipt_for(
+                &state,
+                &message_id,
+                stored.last().expect("admission event").seq,
+            )
         };
         if admission.resume && admission.delivery != Delivery::Hold {
             self.inner.start_drain(session_id, false);

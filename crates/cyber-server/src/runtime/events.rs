@@ -11,6 +11,7 @@ use serde_json::Value;
 use super::model::{CallState, CallStatus, Delivery, Entry, RetrySafety, SessionInfo};
 
 pub const CREATED: &str = "session.created.1";
+pub const RESUMED: &str = "session.subagent.resumed.1";
 pub const ADMITTED: &str = "session.prompt.admitted.1";
 pub const INBOX_UPDATED: &str = "session.inbox.updated.1";
 pub const PROMOTED: &str = "session.prompt.promoted.1";
@@ -46,6 +47,7 @@ pub const REVERTED: &str = "session.reverted.1";
 const ALL: &[&str] = &[
     CREATED,
     ADMITTED,
+    RESUMED,
     INBOX_UPDATED,
     PROMOTED,
     EPOCH_STARTED,
@@ -360,6 +362,12 @@ fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
     super::jobs::project(tx, e)?;
     match e.kind.as_str() {
         CREATED => insert_session(tx, e)?,
+        RESUMED => {
+            tx.execute(
+                "UPDATE session SET subagent_name=?2 WHERE id=?1",
+                params![id, d["name"].as_str()],
+            )?;
+        }
         ADMITTED => {
             let status = if d["delivery"] == "hold" {
                 "held"
