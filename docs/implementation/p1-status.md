@@ -166,6 +166,16 @@ Full local workspace validation passes 795 Rust test executions with two ignored
 
 Generic durable prompt admission, queued/held mentions, cancellation while awaiting queued admission, dispatch reconciliation before receiving a Job, parent/descendant budget rollup and native/live-provider acceptance remain open. Full worktree/recovery/client lifecycle, cross-process child ownership and the later P1 milestones remain required. This increment does not accept an entire P1 requirement or milestone, and P0 assets remain preserved.
 
+## Caller-owned admission cancellation foundation
+
+The runtime now accepts a caller-owned cancellation token for explicit user delegation. The token links to shutdown cancellation while the host admission future is awaited through settlement. Pre-cancelled requests refuse before Session/child work. Cancellation while queued does not interrupt the active child, alter its pending approval or create another Session, and releases admission capacity. If the caller cancels during successful Job handoff, the runtime verifies the recorded source/child identity and awaits only that Job's terminal cancellation acknowledgement. The returned terminal Job preserves identity for the future admission ledger. Successful return transfers ownership to Job controls; later cancellation of the admission token leaves the background Job running. Temporary token watchers terminate at request return/drop and hold no runtime reference.
+
+Two actual tools/runtime tests cover pre-cancelled and queued admission, existing-child noninterference and replacement capacity. Three controlled-host tests cover late handoff cancellation, foreign-Job refusal and transfer of ownership. These host tests prove the runtime boundary and do not claim native child/setup confinement. The native Windows explicit-subtask step includes both test binaries; native acceptance remains pending.
+
+Full local workspace validation passes 800 Rust test executions (two ignored opt-in fixtures), workspace all-target Clippy, formatting, generated SDK consistency and 57 strict specification checks. Cross-spec lint reports zero errors and 21 inventory warnings. The latest observed CI for `3dc163c`, `6383d40` and `df51ba7` remains queued; no new Windows acceptance is claimed.
+
+HTTP/exec have not yet adopted caller-owned request identities. Durable client-selected admission identity, scoped lookup/cancel routes, cancellation before a Job response, lost-response and restart reconciliation, pre-admission deadlines and parent/descendant budgets remain open. Dropping a request is not terminal acknowledgement; an unknown side-effect outcome cannot authorize redispatch. This runtime foundation accepts no complete P1 requirement or milestone.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

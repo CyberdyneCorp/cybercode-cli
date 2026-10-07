@@ -371,6 +371,13 @@
 - **AND** names containing whitespace SHALL complete with a JSON-quoted name after `@` and resolve to the exact configured profile
 - **AND** ordinary file mentions and agent-like text quoted before the `@` marker or embedded in prose SHALL retain ordinary prompt admission
 
+#### Scenario: Caller-owned delegation cancellation
+- **WHEN** an owned runtime delegation request is cancelled while waiting for child admission
+- **THEN** it SHALL settle that request without creating another child or stopping an existing child
+- **AND** its queued admission SHALL release capacity for later requests
+- **AND** cancellation racing with successful Job handoff SHALL settle only the recorded Job belonging to the source Session and return its terminal identity
+- **AND** a returned Job SHALL transfer cancellation ownership to its Job controls
+
 #### Scenario: Exec follows an explicitly mentioned child
 - **WHEN** `cyber exec` submits a leading eligible agent mention
 - **THEN** it SHALL start explicit named delegation with attached Content and an optional positive requested turn ceiling

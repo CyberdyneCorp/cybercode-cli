@@ -125,7 +125,7 @@ jobs:
         run: cargo test --locked -p cyber-cli --test exec_delegation
       - name: Native explicit user subtasks
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-tools --test subtasks
+        run: cargo test --locked -p cyber-tools --test subtasks -p cyber-server --test subtask_cancellation
       - name: Native forked child context and ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test forked_subagents -p cyber-server --test fork_context

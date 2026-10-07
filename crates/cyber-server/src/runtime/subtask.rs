@@ -1,5 +1,6 @@
 //! Explicit user delegation shares child ownership without creating a parent Turn.
-use super::{Job, Runtime, RuntimeError, TurnContext};
+use super::{Job, JobStatus, Runtime, RuntimeError, TurnContext};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub struct UserSubtask {
@@ -37,6 +38,21 @@ impl Runtime {
         session_id: &str,
         request: UserSubtask,
     ) -> Result<Job, RuntimeError> {
+        self.subtask_request_owned(session_id, request, CancellationToken::new())
+            .await
+    }
+
+    /// Keep awaiting this operation after cancelling its owner so creation/setup
+    /// settlement is acknowledged. A returned Job transfers ownership to the caller.
+    pub async fn subtask_request_owned(
+        &self,
+        session_id: &str,
+        request: UserSubtask,
+        owner: CancellationToken,
+    ) -> Result<Job, RuntimeError> {
+        if owner.is_cancelled() {
+            return Err(RuntimeError::Invalid("Subtask interrupted".into()));
+        }
         if request.max_steps == Some(0) {
             return Err(RuntimeError::Invalid(
                 "Subtask max_steps must be positive".into(),
@@ -60,10 +76,40 @@ impl Runtime {
             prefers_apply_patch: false,
             rules: state.info.rules.clone(),
         };
-        self.inner
+        let stop = self.inner.closed.child_token();
+        let _on_return = stop.clone().drop_guard();
+        let watch = stop.clone();
+        let caller = owner.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = caller.cancelled() => watch.cancel(),
+                _ = watch.cancelled() => {},
+            }
+        });
+        let result = self
+            .inner
             .tools
-            .subtask_request(turn, request, self.inner.closed.child_token())
+            .subtask_request(turn, request, stop)
             .await
-            .map_err(RuntimeError::Invalid)
+            .map_err(RuntimeError::Invalid);
+        match result {
+            Ok(job) if owner.is_cancelled() => {
+                let recorded = self.job(&job.id)?;
+                if recorded.session_id != session_id || recorded.child_id != job.child_id {
+                    return Err(RuntimeError::Corrupt(
+                        "Delegated Job ownership changed".into(),
+                    ));
+                }
+                let settled = self.cancel_job(&job.id).await?;
+                if settled.status == JobStatus::Running {
+                    return Err(RuntimeError::Invalid(format!(
+                        "Subtask cancellation was not acknowledged; inspect {}",
+                        job.id
+                    )));
+                }
+                Ok(settled)
+            }
+            result => result,
+        }
     }
 }

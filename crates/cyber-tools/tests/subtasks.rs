@@ -759,3 +759,109 @@ async fn named_delegation_keeps_all_six_modes_and_refuses_plan_child_writes() {
             .any(|call| matches!(&call.status, cyber_server::runtime::CallStatus::Error))
     );
 }
+
+#[tokio::test]
+async fn caller_cancellation_removes_only_its_queued_admission_and_releases_capacity() {
+    use cyber_server::runtime::UserSubtask;
+    use tokio_util::sync::CancellationToken;
+    let flow = Flow::new(
+        vec![
+            call("read", "read", json!({"path":".env"})),
+            text("replacement answer"),
+            text("notice handled"),
+            text("notice handled"),
+        ],
+        true,
+    );
+    flow.f.write(".env", "private");
+    flow.f.set_config(json!({"agents":{"max_concurrent":1}}));
+    let parent = flow.session("default").await;
+    let first = flow.runtime.subtask(&parent, "first task").await.unwrap();
+    flow.pending(&parent).await;
+    let request = |prompt: &str| UserSubtask {
+        prompt: prompt.into(),
+        agent: Some("general".into()),
+        attachments: vec![],
+        max_steps: None,
+    };
+    let owner = CancellationToken::new();
+    let runtime = flow.runtime.clone();
+    let source = parent.clone();
+    let token = owner.clone();
+    let queued = tokio::spawn(async move {
+        runtime
+            .subtask_request_owned(&source, request("cancel this queued task"), token)
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(!queued.is_finished());
+    owner.cancel();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), queued)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.unwrap_err().to_string().contains("interrupted"));
+    assert_eq!(flow.runtime.jobs(Some(&parent)).unwrap().len(), 1);
+    assert_eq!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .len(),
+        2
+    );
+    assert_eq!(
+        flow.runtime.job(&first.id).unwrap().status,
+        JobStatus::Running
+    );
+    assert!(flow.runtime.is_running(&first.child_id));
+    assert!(!flow.runtime.pending_requests(Some(&parent)).is_empty());
+    flow.runtime.cancel_job(&first.id).await.unwrap();
+    let replacement = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        flow.runtime
+            .subtask_request(&parent, request("replacement task")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    wait_notice(&flow, &replacement.id).await;
+    assert_eq!(
+        flow.runtime.job(&replacement.id).unwrap().status,
+        JobStatus::Completed
+    );
+}
+
+#[tokio::test]
+async fn pre_cancelled_user_admission_creates_no_session_or_model_request() {
+    use cyber_server::runtime::UserSubtask;
+    let flow = Flow::new(vec![], false);
+    let parent = flow.session("default").await;
+    let owner = tokio_util::sync::CancellationToken::new();
+    owner.cancel();
+    assert!(
+        flow.runtime
+            .subtask_request_owned(
+                &parent,
+                UserSubtask {
+                    prompt: "never start".into(),
+                    agent: Some("general".into()),
+                    attachments: vec![],
+                    max_steps: None
+                },
+                owner
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .len(),
+        1
+    );
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert!(flow.main.requests().is_empty());
+}
