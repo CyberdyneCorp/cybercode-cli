@@ -77,3 +77,20 @@ fn generated_names_have_documented_shape() {
     assert!(parts[2].bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert_eq!(Name::parse(name.as_str()).unwrap(), name);
 }
+
+#[test]
+fn always_keep_alias_resolves_to_keep_and_invalid_values_are_refused() {
+    assert_eq!(
+        Settings::from_config(&json!({"worktrees":{"keep":"always"}}))
+            .unwrap()
+            .cleanup,
+        Cleanup::Keep
+    );
+    for keep in [json!(false), json!("never"), json!(null)] {
+        assert!(
+            Settings::from_config(&json!({"worktrees":{"keep":keep}}))
+                .unwrap_err()
+                .contains("worktrees.keep")
+        );
+    }
+}

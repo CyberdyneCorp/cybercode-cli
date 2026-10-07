@@ -117,6 +117,8 @@ pub struct RuntimeOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct CreateSession {
+    /// Internal binding for a child-created isolated checkout.
+    pub child_worktree: Option<cyber_core::worktrees::Managed>,
     pub output_schema: Option<StructuredSchema>,
     /// Copy this source into a child whose declared parent is the source.
     pub fork_from: Option<String>,
@@ -361,6 +363,19 @@ impl Runtime {
                 "subagent_name requires a parent and 1–128 bytes".into(),
             ));
         }
+        if let Some(managed) = &req.child_worktree
+            && (!managed.ready
+                || req.parent_id.is_none()
+                || req.worktree_id.as_deref() != Some(managed.id.as_str())
+                || std::path::Path::new(&req.directory)
+                    .canonicalize()
+                    .map_err(|e| RuntimeError::Invalid(e.to_string()))?
+                    != managed.path)
+        {
+            return Err(RuntimeError::Invalid(
+                "Isolated child binding differs from its owned checkout".into(),
+            ));
+        }
         let mode_is_default = req.mode.is_none();
         let selection = selection::ModelSelection {
             reference: req.model.clone(),
@@ -429,6 +444,7 @@ impl Runtime {
                 calls,
                 req.fork_from,
                 CreationOptions {
+                    child_worktree: req.child_worktree,
                     fork_context,
                     selection,
                     mode_default_pending,
@@ -851,6 +867,7 @@ impl Runtime {
                 copied.calls,
                 Some(session_id.to_string()),
                 CreationOptions {
+                    child_worktree: None,
                     fork_context: Some(copied.context),
                     selection: state.model_selection.persisted(&state.info.model),
                     mode_default_pending: state.mode_default_pending,
@@ -1030,6 +1047,7 @@ fn query_sessions(
 }
 
 struct CreationOptions {
+    child_worktree: Option<cyber_core::worktrees::Managed>,
     fork_context: Option<fork::ForkContext>,
     selection: Option<selection::ModelSelection>,
     mode_default_pending: bool,
@@ -1098,6 +1116,7 @@ impl Inner {
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
+            child_worktree: defaults.child_worktree,
             fork_context: defaults.fork_context,
             mode_default_pending: defaults.mode_default_pending,
             selection: defaults.selection,

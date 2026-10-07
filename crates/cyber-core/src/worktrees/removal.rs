@@ -310,6 +310,13 @@ async fn repository_git(
 }
 
 async fn ignored_changes(execution: &dyn GitExecution, managed: &Managed) -> io::Result<bool> {
+    Ok(!changed_ignored_files(execution, managed).await?.is_empty())
+}
+
+pub(super) async fn changed_ignored_files(
+    execution: &dyn GitExecution,
+    managed: &Managed,
+) -> io::Result<Vec<PathBuf>> {
     let paths = git(
         execution,
         &managed.path,
@@ -323,16 +330,19 @@ async fn ignored_changes(execution: &dyn GitExecution, managed: &Managed) -> io:
     )
     .await?;
     let root = Dir::open_ambient_dir(&managed.path, cap_std::ambient_authority())?;
+    let mut changed = Vec::new();
     for path in paths
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
     {
         let path = Path::new(std::str::from_utf8(path).map_err(invalid)?);
         let Some(included) = managed.included.iter().find(|file| file.path == path) else {
-            return Ok(true);
+            changed.push(path.to_owned());
+            continue;
         };
         if !root.symlink_metadata(path)?.is_file() {
-            return Ok(true);
+            changed.push(path.to_owned());
+            continue;
         }
         let mut file = root.open(path)?;
         let mut digest = Sha256::new();
@@ -345,10 +355,10 @@ async fn ignored_changes(execution: &dyn GitExecution, managed: &Managed) -> io:
             digest.update(&buffer[..count]);
         }
         if format!("{:x}", digest.finalize()) != included.sha256 {
-            return Ok(true);
+            changed.push(path.to_owned());
         }
     }
-    Ok(false)
+    Ok(changed)
 }
 
 fn ownership_path(repo: &Repository, name: &str) -> PathBuf {

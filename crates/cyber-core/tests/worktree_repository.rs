@@ -633,3 +633,157 @@ fn metadata_checkout_targets_worktree_without_entering_its_directory() {
         "preserve collision"
     );
 }
+
+#[test]
+fn explicit_child_branches_have_independent_storage_and_exact_reuse_identity() {
+    let f = Fixture::new();
+    let repository = f.repository();
+    let name = Name::parse("child-storage").unwrap();
+    let managed = block_on(repository.create_on_branch(
+        &f.execution,
+        &Settings::default(),
+        &f.data,
+        "prj_test",
+        cyber_core::worktrees::Branch {
+            name: &name,
+            reference: "cyber/parent/task",
+        },
+    ))
+    .unwrap();
+    assert_eq!(managed.name, "child-storage");
+    assert_eq!(managed.branch, "cyber/parent/task");
+    let reused = block_on(repository.create_on_branch(
+        &f.execution,
+        &Settings::default(),
+        &f.data,
+        "prj_test",
+        cyber_core::worktrees::Branch {
+            name: &name,
+            reference: "cyber/parent/task",
+        },
+    ))
+    .unwrap();
+    assert_eq!(reused.id, managed.id);
+    assert!(
+        block_on(repository.create_on_branch(
+            &f.execution,
+            &Settings::default(),
+            &f.data,
+            "prj_test",
+            cyber_core::worktrees::Branch {
+                name: &name,
+                reference: "cyber/other/task"
+            }
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("ownership does not match")
+    );
+    assert!(
+        block_on(repository.create_on_branch(
+            &f.execution,
+            &Settings::default(),
+            &f.data,
+            "prj_test",
+            cyber_core::worktrees::Branch {
+                name: &Name::parse("invalid").unwrap(),
+                reference: "cyber/invalid branch"
+            }
+        ))
+        .is_err()
+    );
+    assert!(
+        !repository
+            .common_dir
+            .join("cyber-worktrees/invalid.json")
+            .exists()
+    );
+}
+
+#[test]
+fn completion_summary_counts_tracked_untracked_and_binary_changes() {
+    let f = Fixture::new();
+    let repository = f.repository();
+    let managed = f
+        .create(
+            &repository,
+            &Name::parse("summary").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    std::fs::write(managed.path.join("tracked.txt"), "one\ntwo\n").unwrap();
+    std::fs::write(managed.path.join("new.txt"), "new\n").unwrap();
+    std::fs::write(managed.path.join("binary.dat"), [0, 1, 2]).unwrap();
+    let changes = block_on(repository.changes(&f.execution, &managed)).unwrap();
+    assert!(changes.dirty);
+    assert_eq!((changes.additions, changes.deletions), (3, 1));
+    assert!(changes.unknown_stats);
+    assert_eq!(changes.files.len(), 3);
+    assert_eq!(changes.files[0].file, "binary.dat");
+    assert_eq!(changes.files[0].additions, None);
+    assert_eq!(changes.files[2].file, "tracked.txt");
+    assert_eq!(changes.files[2].deletions, Some(1));
+}
+
+#[test]
+fn summaries_exclude_unchanged_included_ignored_files_and_detect_their_edits() {
+    let f = Fixture::new();
+    std::fs::write(f.repo.join(".gitignore"), ".env\n").unwrap();
+    std::fs::write(f.repo.join(".worktreeinclude"), ".env\n").unwrap();
+    std::fs::write(f.repo.join(".env"), "original\n").unwrap();
+    f.git(&["add", ".gitignore", ".worktreeinclude"]);
+    f.git(&["commit", "--quiet", "-m", "include policy"]);
+    let repository = f.repository();
+    let managed = f
+        .create(
+            &repository,
+            &Name::parse("ignored-summary").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let clean = block_on(repository.changes(&f.execution, &managed)).unwrap();
+    assert!(!clean.dirty);
+    assert!(clean.files.is_empty());
+    std::fs::write(managed.path.join(".env"), "changed\n").unwrap();
+    let changed = block_on(repository.changes(&f.execution, &managed)).unwrap();
+    assert!(changed.dirty);
+    assert_eq!(changed.files[0].file, ".env");
+    assert_eq!(changed.files[0].additions, Some(1));
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join(".env")).unwrap(),
+        "original\n"
+    );
+    assert!(
+        block_on(repository.remove(
+            &f.execution,
+            &cyber_core::worktrees::CheckoutActivity,
+            &managed,
+            false
+        ))
+        .is_err()
+    );
+    assert!(managed.path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn summary_handles_literal_tab_newline_paths_without_following_untracked_symlinks() {
+    let f = Fixture::new();
+    let repository = f.repository();
+    let managed = f
+        .create(
+            &repository,
+            &Name::parse("unusual-paths").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    std::fs::write(managed.path.join("a\tb\nc.txt"), "one\n").unwrap();
+    let outside = f._temp.path().join("outside.txt");
+    std::fs::write(&outside, "secret\nsecret\n").unwrap();
+    std::os::unix::fs::symlink(&outside, managed.path.join("outside-link")).unwrap();
+    let changes = block_on(repository.changes(&f.execution, &managed)).unwrap();
+    assert_eq!(changes.files[0].file, "a\tb\nc.txt");
+    assert_eq!(changes.files[0].additions, Some(1));
+    assert_eq!(changes.files[1].file, "outside-link");
+    assert_eq!(changes.files[1].additions, None);
+}

@@ -1,5 +1,8 @@
 //! Owned sandboxed Git creation and journaled setup for managed worktree Sessions.
 
+mod child;
+pub(crate) use child::ChildWorktree;
+
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -108,10 +111,11 @@ impl BuiltinHost {
         let mut leases = Vec::with_capacity(locations.len());
         for (repository, managed) in locations {
             leases.push(
-                repository
-                    .claim(&execution, &managed, &info.id)
-                    .await
-                    .map_err(|error| error.to_string())?,
+                retry_repository_busy(&ctx.cancel, || {
+                    repository.claim(&execution, &managed, &info.id)
+                })
+                .await
+                .map_err(|error| error.to_string())?,
             );
         }
         Ok(LocationLease::managed(id, Box::new(WorktreeLease(leases))))
@@ -559,9 +563,10 @@ impl BuiltinHost {
                 .unwrap_or_default(),
         };
         execution.journal.validate()?;
-        repository
-            .setup(&execution, &execution, managed, &settings, sink)
-            .await
+        retry_repository_busy(&ctx.cancel, || {
+            repository.setup(&execution, &execution, managed, &settings, sink)
+        })
+        .await
     }
 }
 
@@ -870,4 +875,37 @@ async fn authorize_worktree(
     }
     let resources = request.resources.clone();
     ctx.authorize(request, resources, metadata).await
+}
+
+// Only the manager's lock-entry refusal is retryable; later/unknown outcomes are not.
+async fn retry_repository_busy<T, F, Fut>(
+    cancel: &CancellationToken,
+    mut operation: F,
+) -> io::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = io::Result<T>>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if cancel.is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Worktree operation cancelled",
+            ));
+        }
+        let result = operation().await;
+        match result {
+            Err(error)
+                if error.kind() == io::ErrorKind::WouldBlock
+                    && error.to_string() == "Worktree repository is busy"
+                    && tokio::time::Instant::now() < deadline => {}
+            result => return result,
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(io::Error::new(io::ErrorKind::Interrupted, "Worktree operation cancelled")),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+    }
 }

@@ -43,6 +43,8 @@ pub fn call(id: &str, name: &str, input: serde_json::Value) -> Vec<ScriptStep> {
     ]
 }
 
+pub type Scripts = Vec<Vec<ScriptStep>>;
+
 struct Models(HashMap<&'static str, Arc<ScriptedAdapter>>);
 
 impl ModelResolver for Models {
@@ -96,12 +98,27 @@ impl Flow {
         interactive: bool,
         snapshots: Arc<dyn Snapshots>,
     ) -> Self {
+        Self::with_models(f, script, interactive, snapshots, Vec::new())
+    }
+
+    pub fn with_models(
+        f: Fixture,
+        script: Vec<Vec<ScriptStep>>,
+        interactive: bool,
+        snapshots: Arc<dyn Snapshots>,
+        extra: Vec<(&'static str, Scripts)>,
+    ) -> Self {
         let main = Arc::new(ScriptedAdapter::new(script));
-        let models = Models(HashMap::from([
+        let mut models = Models(HashMap::from([
             ("test/main", Arc::clone(&main)),
             ("test/title", Arc::new(ScriptedAdapter::new(Vec::new()))),
             ("test/summary", Arc::new(ScriptedAdapter::new(Vec::new()))),
         ]));
+        for (reference, script) in extra {
+            models
+                .0
+                .insert(reference, Arc::new(ScriptedAdapter::new(script)));
+        }
         let runtime = Runtime::new(RuntimeOptions {
             store: Arc::clone(&f.store),
             resolver: Arc::new(models),

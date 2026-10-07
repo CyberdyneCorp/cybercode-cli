@@ -25,6 +25,12 @@ pub struct Repository {
     pub common_dir: PathBuf,
 }
 
+/// A managed storage identity and independently chosen Git branch.
+pub struct Branch<'a> {
+    pub name: &'a Name,
+    pub reference: &'a str,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Managed {
     /// Creation identity; older records require recovery before journaled setup.
@@ -65,6 +71,15 @@ impl Repository {
         let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
+        self.verify_owned(execution, managed).await?;
+        self.git_status(execution, managed).await
+    }
+
+    pub(super) async fn verify_owned(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+    ) -> io::Result<()> {
         let record = self.common_dir.join("cyber-worktrees").join(format!(
             "{}.json",
             Name::parse(&managed.name).map_err(invalid)?.as_str()
@@ -80,7 +95,7 @@ impl Repository {
         if stored != *managed {
             return Err(invalid("Managed worktree ownership changed"));
         }
-        self.git_status(execution, managed).await
+        Ok(())
     }
 
     pub(super) async fn git_status(
@@ -234,6 +249,31 @@ impl Repository {
         project_id: &str,
         name: &Name,
     ) -> io::Result<Managed> {
+        let branch = format!("{}{}", settings.branch_prefix, name.as_str());
+        self.create_on_branch(
+            execution,
+            settings,
+            data,
+            project_id,
+            Branch {
+                name,
+                reference: &branch,
+            },
+        )
+        .await
+    }
+
+    /// Reserve a storage identity while choosing a child-specific branch.
+    pub async fn create_on_branch(
+        &self,
+        execution: &dyn GitExecution,
+        settings: &Settings,
+        data: &Path,
+        project_id: &str,
+        branch: Branch<'_>,
+    ) -> io::Result<Managed> {
+        let name = branch.name;
+        let branch = branch.reference.to_owned();
         let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
@@ -243,9 +283,7 @@ impl Repository {
         let record = records.join(format!("{}.json", name.as_str()));
         super::removal::check_admission(self, name)?;
         if record.try_exists()? {
-            return self
-                .reuse(execution, &record, &target, settings, name)
-                .await;
+            return self.reuse(execution, &record, &target, &branch, name).await;
         }
         match std::fs::symlink_metadata(&target) {
             Ok(_) => {
@@ -257,7 +295,6 @@ impl Repository {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        let branch = format!("{}{}", settings.branch_prefix, name.as_str());
         git(
             execution,
             &self.root,
@@ -352,7 +389,7 @@ impl Repository {
         execution: &dyn GitExecution,
         record: &Path,
         target: &Path,
-        settings: &Settings,
+        branch: &str,
         name: &Name,
     ) -> io::Result<Managed> {
         let managed: Managed =
@@ -361,7 +398,7 @@ impl Repository {
         if managed.path != target
             || managed.common_dir != self.common_dir
             || managed.name != name.as_str()
-            || managed.branch != format!("{}{}", settings.branch_prefix, name.as_str())
+            || managed.branch != branch
         {
             return Err(invalid("Managed worktree ownership does not match request"));
         }

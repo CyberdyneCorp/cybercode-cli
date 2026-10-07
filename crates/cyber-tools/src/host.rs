@@ -47,6 +47,7 @@ pub struct HostOptions {
 }
 
 pub struct BuiltinHost {
+    pub(crate) weak: std::sync::Weak<Self>,
     pub(crate) opts: HostOptions,
     tools: Vec<Box<dyn Tool>>,
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
@@ -60,7 +61,8 @@ pub struct BuiltinHost {
 
 impl BuiltinHost {
     pub fn new(opts: HostOptions) -> Arc<Self> {
-        Arc::new(Self {
+        Arc::new_cyclic(|weak| Self {
+            weak: weak.clone(),
             opts,
             tools: tools::all(),
             reads: Mutex::default(),

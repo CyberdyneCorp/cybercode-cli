@@ -36,6 +36,7 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    isolation: bool,
     user_requested: bool,
     fork: bool,
     resume: Option<SessionInfo>,
@@ -99,7 +100,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
             ));
         }
     }
-    check_features(input, &profile)?;
+    let isolation = check_features(input, &profile)?;
     let description = input
         .get("description")
         .and_then(Value::as_str)
@@ -128,6 +129,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         return Err(failed("name must contain 1–128 bytes"));
     }
     Ok(Spawn {
+        isolation,
         user_requested: false,
         fork,
         resume: resume.cloned(),
@@ -157,18 +159,17 @@ fn setting(config: &Value, key: &str, fallback: u64) -> Result<u64, ToolError> {
     Ok(value)
 }
 
-fn check_features(input: &Value, profile: &AgentProfile) -> Result<(), ToolError> {
+fn check_features(input: &Value, profile: &AgentProfile) -> Result<bool, ToolError> {
     let isolation = input
         .get("isolation")
         .and_then(Value::as_str)
         .or(profile.isolation.as_deref())
         .unwrap_or("none");
-    if isolation != "none" {
-        return Err(failed(
-            "This agent execution path supports local Sessions with isolation none; requested isolation is not implemented yet",
-        ));
+    match isolation {
+        "none" => Ok(false),
+        "worktree" => Ok(true),
+        _ => Err(failed("Unsupported subagent isolation")),
     }
-    Ok(())
 }
 
 pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, ToolError> {
@@ -187,6 +188,23 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
     };
     let mut spawn = configured(ctx, resume.as_ref())?;
     spawn.user_requested = user_requested;
+    if let Some(existing) = &resume {
+        let state = runtime
+            .state(&existing.id)
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        let isolated = state.child_worktree().is_some();
+        if ctx
+            .inv
+            .input
+            .get("isolation")
+            .and_then(Value::as_str)
+            .is_some_and(|choice| (choice == "worktree") != isolated)
+        {
+            return Err(failed("Resume cannot change child isolation"));
+        }
+        spawn.isolation = isolated;
+    }
     let parent = runtime
         .state(&ctx.inv.session_id)
         .await
@@ -266,6 +284,9 @@ async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolEr
     ctx.host.check_agent_tool(ctx.inv).map_err(failed)?;
     let latest = configured(ctx, spawn.resume.as_ref())?;
     spawn.profile = latest.profile;
+    if spawn.resume.is_none() {
+        spawn.isolation = latest.isolation;
+    }
     spawn.background = latest.background;
     spawn.name = latest.name;
     let policy = ctx.host.policy(ctx.inv).await.map_err(failed)?;
@@ -323,8 +344,8 @@ async fn execute_child(
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
         result = create_child(ctx, &runtime, &parent, &spawn, &id, guard.execution()) => result,
     };
-    let prompt = match result {
-        Ok(prompt) => prompt,
+    let (prompt, worktree) = match result {
+        Ok(created) => created,
         Err(error) => {
             guard.settle(spawn.resume.is_none()).await;
             return Err(error);
@@ -336,6 +357,7 @@ async fn execute_child(
     let structured = spawn.output_schema.is_some();
     if spawn.background {
         let run = ChildRun {
+            worktree,
             weak,
             id,
             prompt,
@@ -351,11 +373,31 @@ async fn execute_child(
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
         result = finish_child(&weak, &id, &prompt, structured, bytes, dir) => result,
     };
+    let result = attach_worktree_result(result, worktree.as_ref(), ctx.cancel.clone()).await;
     guard.settle(result.is_err()).await;
     result
 }
 
+async fn attach_worktree_result(
+    result: Result<String, ToolError>,
+    worktree: Option<&crate::worktrees::ChildWorktree>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<String, ToolError> {
+    let Some(worktree) = worktree else {
+        return result;
+    };
+    let text = result?;
+    let mut output: Value = serde_json::from_str(&text).map_err(|e| failed(e.to_string()))?;
+    output["worktree"] = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(ToolError::Aborted),
+        report = worktree.report(cancel.clone()) => report,
+    };
+    Ok(output.to_string())
+}
+
 struct ChildRun {
+    worktree: Option<crate::worktrees::ChildWorktree>,
     weak: WeakRuntime,
     id: String,
     prompt: String,
@@ -479,6 +521,12 @@ async fn handoff_background(
             run.dir,
         )
         .await;
+        let result = attach_worktree_result(
+            result,
+            run.worktree.as_ref(),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
         guard.settle(result.is_err()).await;
         result
             .and_then(|text| serde_json::from_str(&text).map_err(|e| failed(e.to_string())))
@@ -512,8 +560,20 @@ async fn create_child(
     spawn: &Spawn,
     id: &str,
     execution: &cyber_server::runtime::ChildExecution,
-) -> Result<String, ToolError> {
-    if spawn.resume.is_some() {
+) -> Result<(String, Option<crate::worktrees::ChildWorktree>), ToolError> {
+    if let Some(existing) = &spawn.resume {
+        let state = runtime
+            .state(&existing.id)
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        let worktree = match state.child_worktree().cloned() {
+            Some(managed) => Some(
+                crate::worktrees::ChildWorktree::retained(ctx.host, ctx.inv, managed)
+                    .await
+                    .map_err(|e| failed(e.to_string()))?,
+            ),
+            None => None,
+        };
         let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
         admission.source = "session".into();
         let receipt = runtime
@@ -525,37 +585,48 @@ async fn create_child(
             )
             .await
             .map_err(|e| failed(e.to_string()))?;
-        return Ok(receipt.message_id);
+        return Ok((receipt.message_id, worktree));
     }
     let model = ctx.inv.input.get("model").and_then(Value::as_str);
-    runtime
-        .create_session(CreateSession {
-            output_schema: spawn.output_schema.clone(),
-            fork_from: spawn.fork.then(|| parent.id.clone()),
-            id: Some(id.into()),
-            directory: parent.directory.clone(),
-            worktree_id: parent.worktree_id.clone(),
-            parent_id: Some(parent.id.clone()),
-            agent: Some(spawn.profile.name.clone()),
-            subagent_name: spawn.name.clone(),
-            title: Some(format!("{} (@{})", spawn.description, spawn.profile.name)),
-            model: model.unwrap_or(&parent.model).into(),
-            model_is_default: model.is_none() && !spawn.fork,
-            mode: Some(child_mode(
-                &ctx.inv.mode,
-                spawn.profile.permission_mode.as_deref(),
-            )),
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| failed(e.to_string()))?;
+    let request = CreateSession {
+        output_schema: spawn.output_schema.clone(),
+        fork_from: spawn.fork.then(|| parent.id.clone()),
+        id: Some(id.into()),
+        directory: parent.directory.clone(),
+        worktree_id: parent.worktree_id.clone(),
+        parent_id: Some(parent.id.clone()),
+        agent: Some(spawn.profile.name.clone()),
+        subagent_name: spawn.name.clone(),
+        title: Some(format!("{} (@{})", spawn.description, spawn.profile.name)),
+        model: model.unwrap_or(&parent.model).into(),
+        model_is_default: model.is_none() && !spawn.fork,
+        mode: Some(child_mode(
+            &ctx.inv.mode,
+            spawn.profile.permission_mode.as_deref(),
+        )),
+        ..Default::default()
+    };
+    let worktree = if spawn.isolation {
+        Some(
+            ctx.host
+                .create_child_worktree(ctx.inv, ctx.cancel.clone(), request)
+                .await
+                .map_err(|e| failed(e.to_string()))?,
+        )
+    } else {
+        runtime
+            .create_session(request)
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        None
+    };
     let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
     admission.source = "session".into();
     let receipt = runtime
         .admit(id, admission)
         .await
         .map_err(|e| failed(e.to_string()))?;
-    Ok(receipt.message_id)
+    Ok((receipt.message_id, worktree))
 }
 
 async fn finish_child(

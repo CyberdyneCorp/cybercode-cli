@@ -43,6 +43,10 @@ impl Fixture {
     }
 
     pub fn with_shell(shell: &str, helper: Option<PathBuf>) -> Self {
+        Self::with_policy(shell, helper, None)
+    }
+
+    pub fn with_policy(shell: &str, helper: Option<PathBuf>, policy: Option<String>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let repo = root.join("repo");
@@ -68,7 +72,7 @@ impl Fixture {
             env: Arc::clone(&env) as Arc<dyn cyber_core::env::EnvSource + Send + Sync>,
             models: None,
             temp_dir: root.join("tmp"),
-            sandbox_policy: None,
+            sandbox_policy: policy,
             sandbox_helper: helper,
         });
         Self {
@@ -79,6 +83,25 @@ impl Fixture {
             config,
             env,
         }
+    }
+
+    pub fn renew_host(&mut self, policy: Option<String>) {
+        let root = std::fs::canonicalize(self.dir.path()).unwrap();
+        let shared = Arc::clone(&self.config);
+        self.host = BuiltinHost::new(HostOptions {
+            store: Arc::clone(&self.store),
+            tool_output_dir: root.join("tool-output"),
+            allowed_dirs: Vec::new(),
+            home: root.join("home"),
+            shell: "bash".into(),
+            config: Arc::new(move |_| Ok((shared.lock().unwrap().clone(), BTreeMap::new()))),
+            global_config_dir: root.join("home/.config/cyber"),
+            env: Arc::clone(&self.env) as Arc<dyn cyber_core::env::EnvSource + Send + Sync>,
+            models: None,
+            temp_dir: root.join("tmp"),
+            sandbox_policy: policy,
+            sandbox_helper: cyber_sandbox::find_helper(),
+        });
     }
 
     pub fn set_config(&self, value: Value) {

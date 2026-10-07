@@ -83,6 +83,8 @@ const ALL: &[&str] = &[
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Created {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_worktree: Option<cyber_core::worktrees::Managed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_context: Option<super::fork::ForkContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,

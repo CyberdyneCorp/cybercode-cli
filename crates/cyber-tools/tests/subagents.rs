@@ -332,18 +332,14 @@ async fn concurrency_waits_fifo_without_creating_queued_children() {
 }
 
 #[tokio::test]
-async fn unsupported_spawn_options_fail_before_creating_sessions() {
-    let input = json!({"prompt":"inspect","isolation":"worktree"});
+async fn unsupported_isolation_fails_before_creating_sessions() {
+    let input = json!({"prompt":"inspect","isolation":"remote"});
     let flow = Flow::new(vec![call("spawn", "agent", input), text("done")], false);
     flow.f.set_config(json!({"permissions":{"agent":"allow"}}));
     let parent = flow.session("default").await;
     flow.prompt(&parent, "delegate").await;
     flow.settle(&parent).await;
-    assert!(
-        flow.output(&parent, "spawn")
-            .await
-            .contains("not implemented yet")
-    );
+    assert!(flow.output(&parent, "spawn").await.contains("isolation"));
     let count = flow
         .f
         .store

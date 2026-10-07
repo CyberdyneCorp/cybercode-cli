@@ -226,6 +226,20 @@
 - **WHEN** an isolated subagent finishes without changing files
 - **THEN** its worktree and branch are deleted
 
+#### Scenario: Retained isolated child restart
+- **GIVEN** an isolated child's checkout was retained
+- **WHEN** the application restarts and resumes that child
+- **THEN** it verifies the durable creation identity, branch and path before admitting the new prompt
+- **AND** changed or missing ownership cannot silently redirect execution
+
+#### Scenario: Setup failure prevents isolated inference
+- **WHEN** an isolated child's trusted setup command fails
+- **THEN** no child prompt is admitted and the owned checkout remains available for recovery
+
+#### Scenario: Approval cannot override a newly added deny
+- **WHEN** a worktree deny is added while isolated creation awaits approval
+- **THEN** replying once cannot create the checkout or child Session
+
 ### Requirement: Concurrency cap
 (P1) The system SHALL cap concurrently running subagents per top-level Session at `agents.max_concurrent` (default 8). Spawns beyond the cap SHALL wait in FIFO order, and a waiting foreground spawn SHALL report `queued` progress. Workflow agents SHALL be governed by `workflows.max_concurrent` instead.
 

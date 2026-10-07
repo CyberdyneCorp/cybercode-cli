@@ -255,6 +255,8 @@ pub struct StepSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
     #[serde(skip)]
+    pub(super) child_worktree: Option<cyber_core::worktrees::Managed>,
+    #[serde(skip)]
     pub(crate) result: super::structured::ResultState,
     pub info: SessionInfo,
     #[serde(skip)]
@@ -288,6 +290,10 @@ pub struct SessionState {
 const MAX_INSTRUCTION_CHARS: usize = 2000;
 
 impl SessionState {
+    pub fn child_worktree(&self) -> Option<&cyber_core::worktrees::Managed> {
+        self.child_worktree.as_ref()
+    }
+
     pub fn output_schema(&self) -> Option<&super::StructuredSchema> {
         self.result.schema.as_ref()
     }
@@ -308,6 +314,7 @@ impl SessionState {
     }
     pub fn new(info: SessionInfo) -> Self {
         Self {
+            child_worktree: None,
             result: super::structured::ResultState::default(),
             model_selection: super::selection::ModelSelection::explicit(info.model.clone()),
             selection_revision: -1,
@@ -371,6 +378,7 @@ impl SessionState {
             state.compacted = context.compacted;
             state.task = context.task;
         }
+        state.child_worktree = created.child_worktree;
         state.entries = created.history;
         state.calls = created
             .calls

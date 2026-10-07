@@ -1,16 +1,18 @@
 //! Shared configuration and names for managed worktrees.
 
 mod activity;
+mod changes;
 mod includes;
 mod location;
 mod removal;
 mod repository;
 mod setup;
 pub use activity::{CheckoutActivity, CheckoutLease};
+pub use changes::{ChangedFile, Changes};
 pub use includes::IncludedFile;
 pub use removal::{RemovalActivity, RemovalPhase, RemovalRecord};
 pub use repository::{
-    GitExecution, GitFuture, ListedWorktree, Managed, Repository, WorktreeStatus,
+    Branch, GitExecution, GitFuture, ListedWorktree, Managed, Repository, WorktreeStatus,
 };
 pub use setup::{SetupEvent, SetupExecution, SetupFuture, SetupOutcome, SetupSink, SetupStream};
 
@@ -56,8 +58,14 @@ impl Settings {
         let Some(value) = config.get("worktrees") else {
             return Ok(Self::default());
         };
-        let settings: Self =
+        let mut settings: Self =
             serde_json::from_value(value.clone()).map_err(|error| format!("worktrees: {error}"))?;
+        if let Some(keep) = value.get("keep") {
+            if keep != "always" {
+                return Err("worktrees.keep: expected always".into());
+            }
+            settings.cleanup = Cleanup::Keep;
+        }
         if settings
             .root
             .as_ref()
