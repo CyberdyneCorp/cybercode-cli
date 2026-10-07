@@ -99,6 +99,9 @@ jobs:
       - name: Native parent deny inheritance
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test parent_permissions
+      - name: Native parent Mode ceilings
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test parent_modes
       - name: Native historical context compatibility
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test context_compaction historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes

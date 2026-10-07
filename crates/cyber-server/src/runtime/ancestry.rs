@@ -3,9 +3,28 @@
 use super::{Runtime, RuntimeError, SessionInfo};
 use std::collections::HashSet;
 
+#[derive(Debug, Clone)]
+pub struct AncestorAuthority {
+    pub info: SessionInfo,
+    pub effective_mode: String,
+}
+
 impl Runtime {
     /// Return immediate parent first, refusing missing parents and ancestry cycles.
     pub async fn ancestors(&self, info: &SessionInfo) -> Result<Vec<SessionInfo>, RuntimeError> {
+        Ok(self
+            .ancestor_authorities(info)
+            .await?
+            .into_iter()
+            .map(|authority| authority.info)
+            .collect())
+    }
+
+    /// Snapshot each ancestor’s metadata and effective (possibly Turn-pinned) Mode.
+    pub async fn ancestor_authorities(
+        &self,
+        info: &SessionInfo,
+    ) -> Result<Vec<AncestorAuthority>, RuntimeError> {
         let mut seen = HashSet::from([info.id.clone()]);
         let mut parent = info.parent_id.clone();
         let mut ancestors = Vec::new();
@@ -16,9 +35,15 @@ impl Runtime {
                 )));
             }
             let handle = self.inner.handle(&id).await?;
-            let info = handle.state.lock().await.info.clone();
-            parent = info.parent_id.clone();
-            ancestors.push(info);
+            let authority = {
+                let state = handle.state.lock().await;
+                AncestorAuthority {
+                    info: state.info.clone(),
+                    effective_mode: state.effective_mode(self.is_running(&id)).into(),
+                }
+            };
+            parent = authority.info.parent_id.clone();
+            ancestors.push(authority);
         }
         Ok(ancestors)
     }

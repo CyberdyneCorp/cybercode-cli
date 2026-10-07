@@ -2,13 +2,22 @@
 
 use crate::{
     BuiltinHost,
-    permissions::{Effect, Rule},
+    permissions::{Effect, Mode, Rule},
 };
 use cyber_server::runtime::SessionState;
 use std::path::Path;
 
+#[derive(Default)]
+pub(crate) struct ParentPermissions {
+    pub rules: Vec<Rule>,
+    pub modes: Vec<Mode>,
+}
+
 impl BuiltinHost {
-    pub(crate) async fn inherited_denies(&self, session_id: &str) -> Result<Vec<Rule>, String> {
+    pub(crate) async fn inherited_permissions(
+        &self,
+        session_id: &str,
+    ) -> Result<ParentPermissions, String> {
         let page = self
             .opts
             .store
@@ -16,27 +25,35 @@ impl BuiltinHost {
             .map_err(|error| error.to_string())?;
         if page.events.is_empty() {
             // Standalone tool invocations and precreation worktree operations have no Session yet.
-            return Ok(Vec::new());
+            return Ok(ParentPermissions::default());
         }
         let info = SessionState::replay(&page.events)?.info;
         if info.parent_id.is_none() {
-            return Ok(Vec::new());
+            return Ok(ParentPermissions::default());
         }
         let runtime = self
             .runtime()
             .ok_or("Parent permission resolution requires the runtime")?;
         let ancestors = runtime
-            .ancestors(&info)
+            .ancestor_authorities(&info)
             .await
             .map_err(|error| error.to_string())?;
-        let mut inherited = Vec::new();
-        for parent in ancestors {
+        let mut inherited = ParentPermissions::default();
+        for authority in ancestors {
+            let parent = authority.info;
+            let mode = Mode::checked_parse(&authority.effective_mode).ok_or_else(|| {
+                format!(
+                    "Unknown parent Mode {:?} in Session {}",
+                    authority.effective_mode, parent.id
+                )
+            })?;
+            inherited.modes.push(mode);
             let rules = self.session_rules(
                 Path::new(&parent.directory),
                 Some(&parent.agent),
                 &parent.rules,
             )?;
-            inherited.extend(
+            inherited.rules.extend(
                 rules
                     .into_iter()
                     .filter(|rule| rule.effect == Effect::Deny)

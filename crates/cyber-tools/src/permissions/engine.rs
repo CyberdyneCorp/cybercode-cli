@@ -189,13 +189,18 @@ pub enum Mode {
 
 impl Mode {
     pub fn parse(value: &str) -> Self {
+        Self::checked_parse(value).unwrap_or(Self::Default)
+    }
+
+    pub fn checked_parse(value: &str) -> Option<Self> {
         match value {
-            "accept-edits" => Self::AcceptEdits,
-            "plan" => Self::Plan,
-            "auto" => Self::Auto,
-            "dont-ask" => Self::DontAsk,
-            "bypass" => Self::Bypass,
-            _ => Self::Default,
+            "default" => Some(Self::Default),
+            "accept-edits" => Some(Self::AcceptEdits),
+            "plan" => Some(Self::Plan),
+            "auto" => Some(Self::Auto),
+            "dont-ask" => Some(Self::DontAsk),
+            "bypass" => Some(Self::Bypass),
+            _ => None,
         }
     }
 }
@@ -230,6 +235,8 @@ pub struct Policy {
     /// Saved approvals for this checkout; they only turn `ask` into `allow`.
     pub saved: Vec<Rule>,
     pub mode: Mode,
+    /// Ancestor Turn Modes are intersected with this Session's own decision.
+    pub parent_modes: Vec<Mode>,
     pub location: PathBuf,
     pub home: PathBuf,
     /// The plan file this Session may write in `plan` mode.
@@ -247,19 +254,31 @@ impl Policy {
         if self.ceiling_denies(req) {
             return Decision::Deny("denied by a user rule".into());
         }
-        if let Some(decision) = self.mode_ceiling(req) {
-            return decision;
-        }
         let effect = if ruled == Effect::Ask && self.saved_allows(req) {
             Effect::Allow
         } else {
             ruled
         };
-        self.apply_mode(req, effect)
+        let mut decision = self.decide_in_mode(req, effect, self.mode);
+        for mode in &self.parent_modes {
+            decision = intersect(decision, self.decide_in_mode(req, effect, *mode));
+        }
+        decision
     }
 
-    fn mode_ceiling(&self, req: &Request) -> Option<Decision> {
-        if self.mode == Mode::Plan && (!req.read_only || req.removal_risk.is_some()) {
+    fn decide_in_mode(&self, req: &Request, effect: Effect, mode: Mode) -> Decision {
+        let decision = self
+            .mode_ceiling(req, mode)
+            .unwrap_or_else(|| self.apply_mode(req, effect, mode));
+        if mode == Mode::DontAsk && decision == Decision::Ask {
+            Decision::Deny("Not pre-approved (dont-ask mode)".into())
+        } else {
+            decision
+        }
+    }
+
+    fn mode_ceiling(&self, req: &Request, mode: Mode) -> Option<Decision> {
+        if mode == Mode::Plan && (!req.read_only || req.removal_risk.is_some()) {
             // The plan file is the one write plan mode allows outright.
             return Some(if self.only_plan_file(req) && req.removal_risk.is_none() {
                 Decision::Allow
@@ -268,7 +287,7 @@ impl Policy {
             });
         }
         if let Some(risk) = &req.removal_risk {
-            return Some(match self.mode {
+            return Some(match mode {
                 Mode::Auto | Mode::DontAsk | Mode::Bypass => Decision::Deny(risk.refusal()),
                 _ => Decision::Ask,
             });
@@ -306,8 +325,8 @@ impl Policy {
         })
     }
 
-    fn apply_mode(&self, req: &Request, effect: Effect) -> Decision {
-        match (self.mode, effect) {
+    fn apply_mode(&self, req: &Request, effect: Effect, mode: Mode) -> Decision {
+        match (mode, effect) {
             (_, Effect::Deny) => Decision::Deny(format!("denied by rule for {}", req.action)),
             (_, Effect::Allow) => Decision::Allow,
             (Mode::Bypass, Effect::Ask) => Decision::Allow,
@@ -343,6 +362,14 @@ impl Policy {
                 .iter()
                 .any(|r| r.effect == Effect::Allow && r.source != "default" && r.resource == path)
         })
+    }
+}
+
+fn intersect(child: Decision, parent: Decision) -> Decision {
+    match (child, parent) {
+        (denied @ Decision::Deny(_), _) | (_, denied @ Decision::Deny(_)) => denied,
+        (Decision::Ask, _) | (_, Decision::Ask) => Decision::Ask,
+        _ => Decision::Allow,
     }
 }
 
@@ -405,6 +432,7 @@ mod tests {
             rules,
             saved: Vec::new(),
             mode,
+            parent_modes: Vec::new(),
             location: "/repo".into(),
             home: "/home/u".into(),
             plan_file: "/repo/.cyber/plans/ses_1.md".into(),

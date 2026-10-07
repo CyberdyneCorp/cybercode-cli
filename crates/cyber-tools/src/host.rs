@@ -309,13 +309,17 @@ impl BuiltinHost {
         let location = PathBuf::from(&inv.directory);
         let root = cyber_core::config::project_root(&location);
         let mut rules = self.session_rules(&location, agent, &inv.rules)?;
-        if agent.is_some() {
-            rules.extend(self.inherited_denies(&inv.session_id).await?);
-        }
+        let inherited = if agent.is_some() {
+            self.inherited_permissions(&inv.session_id).await?
+        } else {
+            Default::default()
+        };
+        rules.extend(inherited.rules);
         Ok(Policy {
             rules,
             saved: saved::rules(&self.opts.store, &root).unwrap_or_default(),
             mode: Mode::parse(&inv.mode),
+            parent_modes: inherited.modes,
             plan_file: location
                 .join(".cyber/plans")
                 .join(format!("{}.md", inv.session_id)),

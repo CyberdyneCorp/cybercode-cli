@@ -150,6 +150,13 @@
 - **AND** parent allows SHALL NOT preapprove that child
 - **AND** fresh Session creation SHALL reject missing parents and ancestry cycles before recording the Session
 
+#### Scenario: Parent Mode is pinned and composed with child restrictions
+- **WHEN** a built-in child request is evaluated while an ancestor has an active Turn
+- **THEN** permission decisions SHALL intersect the child Mode with every ancestor’s effective Turn Mode, preserving deny over ask over allow
+- **AND** a pending ancestor Mode selection SHALL NOT replace the active Turn’s Mode
+- **AND** a plan-file allowance or an earlier ask SHALL NOT mask a later ancestor denial
+- **AND** an unknown ancestor Mode SHALL refuse dispatch
+
 ### Requirement: Subagent result summarization
 (P1) The tool result returned to the parent SHALL contain at most `agents.result_max_bytes` (default 16384) of the subagent's final text; longer text SHALL be written to a Managed Tool Output File and its path included. Intermediate tool output of the child SHALL never be copied into the parent's history.
 

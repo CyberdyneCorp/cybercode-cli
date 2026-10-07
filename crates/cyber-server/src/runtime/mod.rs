@@ -5,6 +5,7 @@
 //! the model sees is committed before it is acted on, so a restart rebuilds state by replay.
 
 mod ancestry;
+pub use ancestry::AncestorAuthority;
 mod auto;
 mod bus;
 mod compaction;
