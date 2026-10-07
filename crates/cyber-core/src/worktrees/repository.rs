@@ -272,11 +272,23 @@ impl Repository {
         project_id: &str,
         branch: Branch<'_>,
     ) -> io::Result<Managed> {
-        let name = branch.name;
-        let branch = branch.reference.to_owned();
         let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
+        self.create_locked(execution, settings, data, project_id, branch)
+            .await
+    }
+
+    pub(super) async fn create_locked(
+        &self,
+        execution: &dyn GitExecution,
+        settings: &Settings,
+        data: &Path,
+        project_id: &str,
+        branch: Branch<'_>,
+    ) -> io::Result<Managed> {
+        let name = branch.name;
+        let branch = branch.reference.to_owned();
         let target = self.target(settings, data, project_id, name)?;
         let git_target = git_path_argument(&target)?;
         let records = self.common_dir.join("cyber-worktrees");

@@ -92,6 +92,56 @@ impl Repository {
         self.resume_removal(execution, &mut record).await
     }
 
+    /// Recreate only an acknowledged clean removal, with original base and new incarnation.
+    pub async fn recreate_removed(
+        &self,
+        execution: &dyn GitExecution,
+        activity: &dyn RemovalActivity,
+        settings: &super::Settings,
+        data: &Path,
+        project_id: &str,
+        managed: &Managed,
+    ) -> io::Result<Managed> {
+        let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(busy)?;
+        validate_identity(self, managed)?;
+        let _activity = activity.reserve(managed)?;
+        let name = Name::parse(&managed.name).map_err(invalid)?;
+        let removed = read_removal(self, &name)?
+            .ok_or_else(|| invalid("Clean removal evidence is missing; recovery is required"))?;
+        if removed.managed != *managed
+            || removed.force
+            || removed.phase != RemovalPhase::Completed
+            || removed.head != managed.base
+        {
+            return Err(invalid(
+                "Clean removal evidence does not match the original checkout; recovery is required",
+            ));
+        }
+        confirm_tree_removed(self, execution, managed).await?;
+        if branch_head(self, execution, &managed.branch)
+            .await?
+            .is_some()
+            || ownership_path(self, &managed.name).try_exists()?
+        {
+            return Err(invalid(
+                "Removed branch or ownership was replaced; recovery is required",
+            ));
+        }
+        let mut settings = settings.clone();
+        settings.base = managed.base.clone();
+        self.create_locked(
+            execution,
+            &settings,
+            data,
+            project_id,
+            super::Branch {
+                name: &name,
+                reference: &managed.branch,
+            },
+        )
+        .await
+    }
+
     async fn resume_removal(
         &self,
         execution: &dyn GitExecution,

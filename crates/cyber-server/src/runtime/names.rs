@@ -144,3 +144,138 @@ impl Runtime {
         .await
     }
 }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(super) struct Rebound {
+    pub from: cyber_core::worktrees::Managed,
+    pub to: cyber_core::worktrees::Managed,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(super) struct SetupReady {
+    pub worktree_id: String,
+}
+
+impl Runtime {
+    /// Bind a verified new incarnation before source-authorized setup and prompt admission.
+    pub async fn rebind_child_worktree(
+        &self,
+        owner: &ChildExecution,
+        from: &cyber_core::worktrees::Managed,
+        to: &cyber_core::worktrees::Managed,
+    ) -> Result<(), RuntimeError> {
+        use super::events::*;
+        let _admission = self.inner.open().await?;
+        if !std::sync::Weak::ptr_eq(&owner.runtime.inner, &self.downgrade().inner) {
+            return Err(RuntimeError::Invalid(
+                "Child owner belongs to another runtime".into(),
+            ));
+        }
+        let handle = self.inner.handle(&owner.id).await?;
+        if handle
+            .location_uncertain
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(RuntimeError::Invalid(
+                "Location outcome unknown; recovery is required".into(),
+            ));
+        }
+        let old = handle.state.lock().await.clone();
+        self.check_rebind(owner, &old, from, to)?;
+        let mut info = old.info.clone();
+        info.directory = to.path.display().to_string();
+        info.worktree_id = Some(to.id.clone());
+        let lease = self
+            .inner
+            .claim_location(&info, false, self.inner.closed.child_token())
+            .await?;
+        let result = {
+            let mut state = handle.state.lock().await;
+            self.check_rebind(owner, &state, from, to).and_then(|()| {
+                self.inner
+                    .commit_locked(
+                        &mut state,
+                        vec![event(
+                            WORKTREE_REBOUND,
+                            &Rebound {
+                                from: from.clone(),
+                                to: to.clone(),
+                            },
+                        )],
+                    )
+                    .map(|_| ())
+            })
+        };
+        lease.settle().map_err(RuntimeError::Invalid)?;
+        result
+    }
+
+    fn check_rebind(
+        &self,
+        owner: &ChildExecution,
+        state: &super::SessionState,
+        from: &cyber_core::worktrees::Managed,
+        to: &cyber_core::worktrees::Managed,
+    ) -> Result<(), RuntimeError> {
+        state.ensure_worktree_ready()?;
+        if state.info.parent_id.as_deref() != Some(&owner.parent)
+            || state.child_worktree.as_ref() != Some(from)
+            || state.info.worktree_id.as_deref() != Some(&from.id)
+            || from.id == to.id
+            || !to.ready
+            || from.common_dir != to.common_dir
+            || from.branch != to.branch
+            || from.base != to.base
+            || from.name != to.name
+        {
+            return Err(RuntimeError::Invalid(
+                "Rebind differs from the owned child checkout".into(),
+            ));
+        }
+        if self.is_running(&owner.id)
+            || self
+                .jobs(Some(&owner.parent))?
+                .iter()
+                .any(|job| job.child_id == owner.id && job.status == super::JobStatus::Running)
+            || state.calls.values().any(|call| {
+                matches!(
+                    call.status,
+                    super::CallStatus::Dispatched | super::CallStatus::OutcomeUnknown
+                )
+            })
+        {
+            return Err(RuntimeError::Invalid(
+                "Subagent busy or execution outcome unknown".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Trusted setup owner acknowledges completion for the exact bound incarnation.
+    pub async fn complete_child_worktree_setup(
+        &self,
+        id: &str,
+        managed: &cyber_core::worktrees::Managed,
+    ) -> Result<(), RuntimeError> {
+        use super::events::*;
+        let _admission = self.inner.open().await?;
+        let handle = self.inner.handle(id).await?;
+        let mut state = handle.state.lock().await;
+        if state.child_worktree.as_ref() != Some(managed)
+            || state.info.worktree_id.as_deref() != Some(&managed.id)
+        {
+            return Err(RuntimeError::Invalid(
+                "Setup acknowledgement differs from the owned child checkout".into(),
+            ));
+        }
+        self.inner.commit_locked(
+            &mut state,
+            vec![event(
+                WORKTREE_SETUP_READY,
+                &SetupReady {
+                    worktree_id: managed.id.clone(),
+                },
+            )],
+        )?;
+        Ok(())
+    }
+}

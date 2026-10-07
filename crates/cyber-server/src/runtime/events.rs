@@ -11,6 +11,8 @@ use serde_json::Value;
 use super::model::{CallState, CallStatus, Delivery, Entry, RetrySafety, SessionInfo};
 
 pub const CREATED: &str = "session.created.1";
+pub const WORKTREE_REBOUND: &str = "session.worktree.rebound.1";
+pub const WORKTREE_SETUP_READY: &str = "session.worktree.setup_ready.1";
 pub const RESUMED: &str = "session.subagent.resumed.1";
 pub const ADMITTED: &str = "session.prompt.admitted.1";
 pub const INBOX_UPDATED: &str = "session.inbox.updated.1";
@@ -48,6 +50,8 @@ const ALL: &[&str] = &[
     CREATED,
     ADMITTED,
     RESUMED,
+    WORKTREE_REBOUND,
+    WORKTREE_SETUP_READY,
     INBOX_UPDATED,
     PROMOTED,
     EPOCH_STARTED,
@@ -82,6 +86,8 @@ const ALL: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Created {
+    #[serde(default)]
+    pub child_worktree_setup_pending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_worktree: Option<cyber_core::worktrees::Managed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,6 +372,12 @@ fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
     super::jobs::project(tx, e)?;
     match e.kind.as_str() {
         CREATED => insert_session(tx, e)?,
+        WORKTREE_REBOUND => {
+            tx.execute(
+                "UPDATE session SET directory=?2 WHERE id=?1",
+                params![id, d["to"]["path"].as_str()],
+            )?;
+        }
         RESUMED => {
             tx.execute(
                 "UPDATE session SET subagent_name=?2 WHERE id=?1",

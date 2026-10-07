@@ -103,6 +103,13 @@ impl BuiltinHost {
         let _ = self.runtime.set(runtime.downgrade());
     }
 
+    pub(crate) fn clear_session_reads(&self, session: &str) {
+        self.reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(session);
+    }
+
     pub(crate) fn runtime(&self) -> Option<Runtime> {
         self.runtime.get().and_then(WeakRuntime::upgrade)
     }

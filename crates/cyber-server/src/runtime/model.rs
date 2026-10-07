@@ -255,6 +255,8 @@ pub struct StepSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
     #[serde(skip)]
+    pub(super) child_worktree_setup_pending: bool,
+    #[serde(skip)]
     pub(super) child_worktree: Option<cyber_core::worktrees::Managed>,
     #[serde(skip)]
     pub(crate) result: super::structured::ResultState,
@@ -290,6 +292,19 @@ pub struct SessionState {
 const MAX_INSTRUCTION_CHARS: usize = 2000;
 
 impl SessionState {
+    pub(super) fn ensure_worktree_ready(&self) -> Result<(), super::RuntimeError> {
+        if self.child_worktree_setup_pending {
+            return Err(super::RuntimeError::Invalid(
+                "Isolated child setup is incomplete; recovery is required".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn child_worktree_setup_pending(&self) -> bool {
+        self.child_worktree_setup_pending
+    }
+
     pub fn child_worktree(&self) -> Option<&cyber_core::worktrees::Managed> {
         self.child_worktree.as_ref()
     }
@@ -314,6 +329,7 @@ impl SessionState {
     }
     pub fn new(info: SessionInfo) -> Self {
         Self {
+            child_worktree_setup_pending: false,
             child_worktree: None,
             result: super::structured::ResultState::default(),
             model_selection: super::selection::ModelSelection::explicit(info.model.clone()),
@@ -378,6 +394,7 @@ impl SessionState {
             state.compacted = context.compacted;
             state.task = context.task;
         }
+        state.child_worktree_setup_pending = created.child_worktree_setup_pending;
         state.child_worktree = created.child_worktree;
         state.entries = created.history;
         state.calls = created
@@ -409,6 +426,23 @@ impl SessionState {
 
     fn apply_runtime(&mut self, kind: &str, e: &StoredEvent) -> Result<(), String> {
         match kind {
+            "session.worktree.rebound" => {
+                let binding: super::names::Rebound = decode(e)?;
+                if self.child_worktree.as_ref() != Some(&binding.from) {
+                    return Err("Worktree rebound differs from the previous binding".into());
+                }
+                self.info.directory = binding.to.path.display().to_string();
+                self.info.worktree_id = Some(binding.to.id.clone());
+                self.child_worktree = Some(binding.to);
+                self.child_worktree_setup_pending = true;
+            }
+            "session.worktree.setup_ready" => {
+                let ready: super::names::SetupReady = decode(e)?;
+                if self.info.worktree_id.as_deref() != Some(&ready.worktree_id) {
+                    return Err("Setup acknowledgement differs from the current checkout".into());
+                }
+                self.child_worktree_setup_pending = false;
+            }
             "session.context.epoch_started" => self.on_epoch(decode(e)?),
             "session.context.updated" => self.on_context_updated(decode(e)?),
             "session.system.added" => self.on_system(decode(e)?),

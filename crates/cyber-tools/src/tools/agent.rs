@@ -82,6 +82,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         .cloned()
         .ok_or_else(|| failed(format!("Unknown agent {name:?}. Available: {available}")))?;
     if !profile.subagent_capable()
+        && !(resume.is_some() && profile.primary_capable())
         && !(fork && profile.name == ctx.inv.agent && profile.primary_capable())
     {
         return Err(failed(format!("Agent {name:?} cannot run a subagent")));
@@ -568,7 +569,14 @@ async fn create_child(
             .map_err(|e| failed(e.to_string()))?;
         let worktree = match state.child_worktree().cloned() {
             Some(managed) => Some(
-                crate::worktrees::ChildWorktree::retained(ctx.host, ctx.inv, &existing.id, managed)
+                ctx.host
+                    .resume_child_worktree(
+                        ctx.inv,
+                        ctx.cancel.clone(),
+                        execution,
+                        existing,
+                        managed,
+                    )
                     .await
                     .map_err(|e| failed(e.to_string()))?,
             ),

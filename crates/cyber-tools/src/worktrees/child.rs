@@ -78,6 +78,7 @@ impl BuiltinHost {
                     &worktree_request,
                     &branch,
                     user_requested,
+                    None,
                 ),
             )
             .await?;
@@ -91,6 +92,7 @@ impl BuiltinHost {
         request.directory = managed.path.display().to_string();
         request.worktree_id = Some(managed.id.clone());
         request.child_worktree = Some(managed.clone());
+        request.child_worktree_setup_pending = true;
         let session = runtime
             .create_session(request)
             .await
@@ -98,9 +100,6 @@ impl BuiltinHost {
         let mut setup_inv = inv.clone();
         setup_inv.session_id = session.id.clone();
         setup_inv.directory = session.directory;
-        setup_inv.agent = session.agent;
-        setup_inv.mode = session.mode;
-        setup_inv.rules = session.rules;
         let setup = self
             .setup_worktree_session_authorized(
                 &setup_inv,
@@ -120,6 +119,10 @@ impl BuiltinHost {
                 managed.path.display()
             )));
         }
+        runtime
+            .complete_child_worktree_setup(&session.id, &managed)
+            .await
+            .map_err(io::Error::other)?;
         Ok(ChildWorktree {
             child_id: session.id,
             host: self.weak.clone(),
@@ -137,6 +140,7 @@ impl BuiltinHost {
         request: &WorktreeSessionRequest,
         branch: &str,
         user_requested: bool,
+        removed: Option<&Managed>,
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let ctx = Ctx {
             host: self,
@@ -197,17 +201,32 @@ impl BuiltinHost {
             writable: Some(vec![repository.common_dir.clone(), target]),
             credentials: &[],
         };
-        let managed = retry_repository_busy(&ctx.cancel, || {
-            repository.create_on_branch(
-                &execution,
-                &settings,
-                &request.data,
-                &request.project_id,
-                Branch {
-                    name: &request.name,
-                    reference: branch,
-                },
-            )
+        let managed = retry_repository_busy(&ctx.cancel, || async {
+            if let Some(removed) = removed {
+                repository
+                    .recreate_removed(
+                        &execution,
+                        &CheckoutActivity,
+                        &settings,
+                        &request.data,
+                        &request.project_id,
+                        removed,
+                    )
+                    .await
+            } else {
+                repository
+                    .create_on_branch(
+                        &execution,
+                        &settings,
+                        &request.data,
+                        &request.project_id,
+                        Branch {
+                            name: &request.name,
+                            reference: branch,
+                        },
+                    )
+                    .await
+            }
         })
         .await?;
         Ok((
@@ -218,6 +237,107 @@ impl BuiltinHost {
                 credentials: crate::sandboxing::credential_env_names(&config),
             },
         ))
+    }
+}
+
+impl BuiltinHost {
+    pub(crate) async fn resume_child_worktree(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        owner: &cyber_server::runtime::ChildExecution,
+        child: &cyber_server::runtime::SessionInfo,
+        removed: Managed,
+    ) -> io::Result<ChildWorktree> {
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime stopped"))?;
+        if runtime
+            .state(&child.id)
+            .await
+            .map_err(io::Error::other)?
+            .child_worktree_setup_pending()
+        {
+            return Err(io::Error::other(
+                "Isolated child setup is incomplete; recovery is required",
+            ));
+        }
+        if removed.path.try_exists()? {
+            return ChildWorktree::retained(self, inv, &child.id, removed).await;
+        }
+        let request = WorktreeSessionRequest {
+            project_id: cyber_core::project::identify(Path::new(&inv.directory)).id,
+            data: self
+                .opts
+                .tool_output_dir
+                .parent()
+                .ok_or_else(|| io::Error::other("Missing data directory"))?
+                .to_owned(),
+            name: Name::parse(&removed.name).map_err(io::Error::other)?,
+            session: CreateSession::default(),
+        };
+        let lock = self.path_lock(
+            &request
+                .data
+                .join("child-lifecycle")
+                .join(&request.project_id),
+        );
+        let _lifecycle = tokio::select! { biased;
+            _ = cancel.cancelled() => return Err(io::Error::new(io::ErrorKind::Interrupted, "Isolated recreation cancelled")),
+            guard = lock.lock() => guard,
+        };
+        let (repository, managed, recipe) = runtime
+            .own_worktree_setup(
+                cancel.clone(),
+                self.create_child_checkout(
+                    inv,
+                    cancel.clone(),
+                    &request,
+                    &removed.branch,
+                    false,
+                    Some(&removed),
+                ),
+            )
+            .await?;
+        runtime
+            .rebind_child_worktree(owner, &removed, &managed)
+            .await
+            .map_err(io::Error::other)?;
+        self.clear_session_reads(&child.id);
+        let mut setup_inv = inv.clone();
+        setup_inv.session_id = child.id.clone();
+        setup_inv.directory = managed.path.display().to_string();
+        let setup = self
+            .setup_worktree_session_authorized(
+                &setup_inv,
+                cancel,
+                &repository,
+                &managed,
+                SetupAdmission {
+                    user_requested: false,
+                    explicit: true,
+                    recipe: Some(&recipe),
+                },
+            )
+            .await?;
+        if let SetupOutcome::Failed { index, code } = setup {
+            return Err(io::Error::other(format!(
+                "Isolated child setup command {index} failed with exit code {code:?}; checkout retained at {}",
+                managed.path.display()
+            )));
+        }
+        runtime
+            .complete_child_worktree_setup(&child.id, &managed)
+            .await
+            .map_err(io::Error::other)?;
+        Ok(ChildWorktree {
+            child_id: child.id.clone(),
+            host: self.weak.clone(),
+            invocation: inv.clone(),
+            repository,
+            managed,
+            cleanup: recipe.settings.cleanup,
+        })
     }
 }
 
@@ -342,6 +462,7 @@ impl ChildWorktree {
             .map_err(io::Error::other)?
             .cleanup;
         if changes.dirty
+            || !changes.files.is_empty()
             || changes.ahead != 0
             || self.cleanup == Cleanup::Keep
             || cleanup == Cleanup::Keep
@@ -386,7 +507,7 @@ impl ChildWorktree {
         })
         .await?;
         result["changes"] = json!(changes);
-        if changes.dirty || changes.ahead != 0 {
+        if changes.dirty || !changes.files.is_empty() || changes.ahead != 0 {
             result["cleanup_reason"] = json!("Checkout changed while cleanup was pending");
             return Ok(());
         }

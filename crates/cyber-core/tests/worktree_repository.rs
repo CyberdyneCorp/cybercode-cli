@@ -787,3 +787,129 @@ fn summary_handles_literal_tab_newline_paths_without_following_untracked_symlink
     assert_eq!(changes.files[1].file, "outside-link");
     assert_eq!(changes.files[1].additions, None);
 }
+
+#[test]
+fn acknowledged_clean_recreation_pins_base_and_can_relocate_without_reusing_identity() {
+    let f = Fixture::new();
+    let repository = f.repository();
+    let old = f
+        .create(
+            &repository,
+            &Name::parse("resume").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    block_on(repository.remove(
+        &f.execution,
+        &cyber_core::worktrees::CheckoutActivity,
+        &old,
+        false,
+    ))
+    .unwrap();
+    std::fs::write(f.repo.join("tracked.txt"), "later source").unwrap();
+    f.git(&["add", "tracked.txt"]);
+    f.git(&["commit", "--quiet", "-m", "later"]);
+    let settings = Settings {
+        root: Some(f.data.join("relocated")),
+        ..Default::default()
+    };
+    let new = block_on(repository.recreate_removed(
+        &f.execution,
+        &cyber_core::worktrees::CheckoutActivity,
+        &settings,
+        &f.data,
+        "prj_test",
+        &old,
+    ))
+    .unwrap();
+    assert_ne!(new.id, old.id);
+    assert_ne!(new.path, old.path);
+    assert_eq!(new.base, old.base);
+    assert_eq!(new.branch, old.branch);
+    assert_eq!(
+        std::fs::read_to_string(new.path.join("tracked.txt")).unwrap(),
+        "base"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("tracked.txt")).unwrap(),
+        "later source"
+    );
+    assert!(
+        !block_on(repository.status(&f.execution, &new))
+            .unwrap()
+            .dirty
+    );
+}
+
+#[test]
+fn recreation_refuses_missing_force_incomplete_or_replaced_evidence_and_artifacts() {
+    use cyber_core::worktrees::{CheckoutActivity, RemovalPhase};
+    for scenario in [
+        "missing",
+        "force",
+        "pending",
+        "path",
+        "branch",
+        "ownership",
+        "identity",
+    ] {
+        let f = Fixture::new();
+        let repository = f.repository();
+        let old = f
+            .create(
+                &repository,
+                &Name::parse("resume").unwrap(),
+                &Settings::default(),
+            )
+            .unwrap();
+        let mut record =
+            block_on(repository.remove(&f.execution, &CheckoutActivity, &old, scenario == "force"))
+                .unwrap();
+        let record_path = old.common_dir.join("cyber-worktree-removals/resume.json");
+        match scenario {
+            "missing" => std::fs::remove_file(&record_path).unwrap(),
+            "pending" => {
+                record.phase = RemovalPhase::BranchRemoved;
+                std::fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+            "path" => {
+                std::fs::create_dir_all(&old.path).unwrap();
+                std::fs::write(old.path.join("user.txt"), "preserve").unwrap();
+            }
+            "branch" => {
+                f.git(&["branch", &old.branch, &old.base]);
+            }
+            "ownership" => std::fs::write(
+                old.common_dir.join("cyber-worktrees/resume.json"),
+                serde_json::to_vec(&old).unwrap(),
+            )
+            .unwrap(),
+            "identity" => {
+                record.managed.id = cyber_core::ids::new_id("wt");
+                std::fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+            _ => {}
+        }
+        assert!(
+            block_on(repository.recreate_removed(
+                &f.execution,
+                &CheckoutActivity,
+                &Settings::default(),
+                &f.data,
+                "prj_test",
+                &old
+            ))
+            .is_err(),
+            "{scenario}"
+        );
+        if scenario == "path" {
+            assert_eq!(
+                std::fs::read_to_string(old.path.join("user.txt")).unwrap(),
+                "preserve"
+            );
+        }
+        if scenario == "branch" {
+            assert_eq!(f.git(&["rev-parse", &old.branch]), old.base);
+        }
+    }
+}

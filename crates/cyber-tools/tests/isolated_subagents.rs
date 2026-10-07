@@ -361,8 +361,8 @@ async fn setup_failure_preserves_owned_checkout_without_child_inference() {
 }
 
 #[tokio::test]
-async fn completed_clean_checkout_requires_fresh_child_instead_of_reusing_missing_identity() {
-    let flow = flow(vec![text("first")], false);
+async fn completed_clean_checkout_recreates_for_resume_with_new_binding() {
+    let flow = flow(vec![text("first"), text("second")], false);
     let parent = flow.session("bypass").await;
     let first = invoke(
         &flow,
@@ -372,15 +372,30 @@ async fn completed_clean_checkout_requires_fresh_child_instead_of_reusing_missin
     .await
     .unwrap();
     assert_eq!(first["worktree"]["kept"], false);
-    let error = invoke(
+    let resumed = invoke(
         &flow,
         &parent,
         json!({"prompt":"continue","resume":"removed"}),
     )
     .await
-    .unwrap_err();
-    assert!(error.contains("was removed"), "{error}");
-    assert_eq!(flow.main.requests().len(), 1);
+    .unwrap();
+    assert_eq!(resumed["id"], first["id"]);
+    assert_ne!(resumed["worktree"]["id"], first["worktree"]["id"]);
+    assert_eq!(resumed["worktree"]["branch"], first["worktree"]["branch"]);
+    assert_eq!(resumed["worktree"]["path"], first["worktree"]["path"]);
+    assert_eq!(resumed["text"], "second");
+    assert_eq!(resumed["worktree"]["kept"], false);
+    let state = flow
+        .runtime
+        .state(resumed["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert!(!state.child_worktree_setup_pending());
+    assert_eq!(
+        state.info.worktree_id.as_deref(),
+        resumed["worktree"]["id"].as_str()
+    );
+    assert!(format!("{:?}", flow.main.requests()[1].messages).contains("first"));
 }
 
 #[tokio::test]
@@ -998,4 +1013,469 @@ async fn isolated_names_use_git_branch_validation_independently_of_storage_names
         2
     );
     assert_eq!(flow.main.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn recreated_binding_replays_and_repeated_resume_keeps_original_base_and_history() {
+    let flow = flow(
+        vec![
+            text("first"),
+            call("read", "read", json!({"path":"tracked.txt"})),
+            text("second"),
+        ],
+        false,
+    );
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"durable-clean","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let old = flow
+        .runtime
+        .state(first["id"].as_str().unwrap())
+        .await
+        .unwrap()
+        .child_worktree()
+        .unwrap()
+        .clone();
+    flow.f.write("tracked.txt", "new source\n");
+    git(&flow.f.repo, &["add", "tracked.txt"]);
+    git(&flow.f.repo, &["commit", "--quiet", "-m", "new source"]);
+    let second = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect again","resume":"durable-clean"}),
+    )
+    .await
+    .unwrap();
+    let state = flow
+        .runtime
+        .state(second["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(state.child_worktree().unwrap().base, old.base);
+    assert!(
+        state.calls["read"]
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("original")
+    );
+    assert_eq!(
+        std::fs::read_to_string(flow.f.repo.join("tracked.txt")).unwrap(),
+        "new source\n"
+    );
+    flow.runtime.shutdown().await;
+    let mut fixture = flow.f;
+    fixture.renew_host(Some("full-access".into()));
+    let restored = Flow::with(fixture, vec![text("third")], false, Arc::new(NoSnapshots));
+    assert_eq!(
+        restored
+            .runtime
+            .state(&state.info.id)
+            .await
+            .unwrap()
+            .child_worktree(),
+        state.child_worktree()
+    );
+    let third = invoke(
+        &restored,
+        &parent,
+        json!({"prompt":"continue","resume":"durable-clean"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(third["id"], first["id"]);
+    assert_ne!(third["worktree"]["id"], second["worktree"]["id"]);
+    assert_eq!(third["text"], "third");
+    assert!(format!("{:?}", restored.main.requests()[0].messages).contains("second"));
+}
+
+#[tokio::test]
+async fn recreation_clears_read_proofs_from_the_removed_checkout() {
+    let flow = flow(
+        vec![
+            call("read", "read", json!({"path":"tracked.txt"})),
+            text("first"),
+            call(
+                "write",
+                "write",
+                json!({"path":"tracked.txt","content":"not allowed without a fresh read"}),
+            ),
+            text("second"),
+        ],
+        false,
+    );
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"read-cache","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let resumed = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":"read-cache"}),
+    )
+    .await
+    .unwrap();
+    let state = flow
+        .runtime
+        .state(first["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        state.calls["write"].status,
+        cyber_server::runtime::CallStatus::Error
+    );
+    assert_eq!(resumed["worktree"]["kept"], false);
+}
+
+#[tokio::test]
+async fn rebound_setup_failure_is_durable_and_blocks_all_inference_and_idle_work() {
+    let flow = flow(vec![text("first")], false);
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"setup-gate","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["exit 17"]}}));
+    let error = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":"setup-gate"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("17"), "{error}");
+    let id = first["id"].as_str().unwrap();
+    let state = flow.runtime.state(id).await.unwrap();
+    assert!(state.child_worktree_setup_pending());
+    assert!(state.child_worktree().unwrap().path.exists());
+    assert_ne!(
+        state.info.worktree_id.as_deref(),
+        first["worktree"]["id"].as_str()
+    );
+    assert!(flow.runtime.resume(id).await.is_err());
+    assert!(flow.runtime.wake(id).await.is_err());
+    assert!(
+        flow.runtime
+            .admit(
+                id,
+                cyber_server::runtime::Admission::text(
+                    "bypass setup",
+                    cyber_server::runtime::Delivery::Queue
+                )
+            )
+            .await
+            .is_err()
+    );
+    assert!(flow.runtime.shell(id, "echo must-not-run").await.is_err());
+    assert!(flow.runtime.repair_context(id).await.is_err());
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"continue","resume":"setup-gate"})
+        )
+        .await
+        .unwrap_err()
+        .contains("setup is incomplete")
+    );
+    assert_eq!(flow.main.requests().len(), 1);
+    flow.runtime.shutdown().await;
+    let mut fixture = flow.f;
+    fixture.renew_host(Some("full-access".into()));
+    let restored = Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    assert!(
+        restored
+            .runtime
+            .state(id)
+            .await
+            .unwrap()
+            .child_worktree_setup_pending()
+    );
+    assert!(restored.runtime.resume(id).await.is_err());
+}
+
+#[tokio::test]
+async fn recreation_refuses_replaced_path_and_missing_removal_record_before_model_access() {
+    for replaced in [false, true] {
+        let flow = flow(vec![text("first")], false);
+        let parent = flow.session("bypass").await;
+        let first = invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"proof","isolation":"worktree"}),
+        )
+        .await
+        .unwrap();
+        let managed = flow
+            .runtime
+            .state(first["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .child_worktree()
+            .unwrap()
+            .clone();
+        if replaced {
+            std::fs::create_dir_all(&managed.path).unwrap();
+            std::fs::write(managed.path.join("user.txt"), "preserve").unwrap();
+        } else {
+            std::fs::remove_file(
+                managed
+                    .common_dir
+                    .join("cyber-worktree-removals")
+                    .join(format!("{}.json", managed.name)),
+            )
+            .unwrap();
+        }
+        assert!(
+            invoke(
+                &flow,
+                &parent,
+                json!({"prompt":"continue","resume":"proof"})
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(flow.main.requests().len(), 1);
+        if replaced {
+            assert_eq!(
+                std::fs::read_to_string(managed.path.join("user.txt")).unwrap(),
+                "preserve"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn rebound_location_updates_sql_and_context_before_inference() {
+    let flow = flow(vec![text("first"), text("second")], false);
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"relocated","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let target = flow.f.dir.path().join("relocated-checkouts");
+    flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"root":target,"keep":"always"}}));
+    let second = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":"relocated"}),
+    )
+    .await
+    .unwrap();
+    assert_ne!(second["worktree"]["path"], first["worktree"]["path"]);
+    let id = second["id"].as_str().unwrap();
+    let state = flow.runtime.state(id).await.unwrap();
+    assert_eq!(
+        state.info.directory,
+        second["worktree"]["path"].as_str().unwrap()
+    );
+    let record_id = id.to_owned();
+    let recorded: String = flow
+        .f
+        .store
+        .read(move |db| {
+            Ok(db.query_row(
+                "SELECT directory FROM session WHERE id=?1",
+                [record_id],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(recorded, state.info.directory);
+    assert!(format!("{:?}", flow.main.requests()[1].messages).contains(&state.info.directory));
+    assert_eq!(second["worktree"]["kept"], true);
+}
+
+#[tokio::test]
+async fn structured_background_resume_recreates_clean_child_before_a_fresh_attempt() {
+    let flow = flow(
+        vec![
+            call("result1", "return_result", json!({"answer":1})),
+            call("result2", "return_result", json!({"answer":2})),
+            text("notice"),
+        ],
+        false,
+    );
+    let parent = flow.session("bypass").await;
+    let first = invoke(&flow, &parent, json!({"prompt":"inspect","name":"typed-recreate","isolation":"worktree","output_schema":{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"]}})).await.unwrap();
+    let started = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":"typed-recreate","background":true}),
+    )
+    .await
+    .unwrap();
+    let job = done(&flow, started["job_id"].as_str().unwrap()).await;
+    let result = job.result.unwrap();
+    assert_eq!(result["result"], json!({"answer":2}));
+    assert_eq!(result["id"], first["id"]);
+    assert_ne!(result["worktree"]["id"], first["worktree"]["id"]);
+    assert_eq!(result["worktree"]["kept"], false);
+    assert_eq!(job.tokens, 105);
+}
+
+#[tokio::test]
+async fn fresh_setup_failure_also_fences_resume_and_prompt_admission() {
+    let flow = flow(vec![], false);
+    flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["exit 17"]}}));
+    let parent = flow.session("bypass").await;
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"fresh-failure","isolation":"worktree"})
+        )
+        .await
+        .is_err()
+    );
+    let child = flow
+        .runtime
+        .resolve_subagent(&parent, "fresh-failure")
+        .await
+        .unwrap();
+    assert!(
+        flow.runtime
+            .state(&child.id)
+            .await
+            .unwrap()
+            .child_worktree_setup_pending()
+    );
+    assert!(
+        flow.runtime
+            .admit(
+                &child.id,
+                cyber_server::runtime::Admission::text(
+                    "skip setup",
+                    cyber_server::runtime::Delivery::Queue
+                )
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"continue","resume":"fresh-failure"})
+        )
+        .await
+        .unwrap_err()
+        .contains("setup is incomplete")
+    );
+    assert!(flow.main.requests().is_empty());
+}
+
+#[tokio::test]
+async fn primary_profile_fork_resumes_as_existing_child_without_authorizing_new_primary_spawns() {
+    let flow = flow(vec![text("first"), text("second")], false);
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"primary-fork","fork":true,"isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let second = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":"primary-fork"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(second["id"], first["id"]);
+    assert_ne!(second["worktree"]["id"], first["worktree"]["id"]);
+    assert_eq!(
+        flow.runtime
+            .state(second["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .info
+            .agent,
+        "build"
+    );
+    assert!(invoke(&flow, &parent, json!({"prompt":"new unauthorized primary spawn","agent":"build","isolation":"worktree"})).await.unwrap_err().contains("cannot run a subagent"));
+    assert_eq!(flow.main.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn explicit_user_primary_subtask_can_resume_after_clean_removal() {
+    let flow = flow(vec![text("first"), text("notice"), text("second")], false);
+    isolated_user_profile(&flow);
+    let parent = flow.session("bypass").await;
+    let job = flow
+        .runtime
+        .subtask(&parent, "inspect separately")
+        .await
+        .unwrap();
+    let result = done(&flow, &job.id).await.result.unwrap();
+    let resumed = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":job.name}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumed["id"], result["id"]);
+    assert_ne!(resumed["worktree"]["id"], result["worktree"]["id"]);
+    assert_eq!(resumed["text"], "second");
+}
+
+#[tokio::test]
+async fn trusted_source_setup_initializes_a_plan_child_without_widening_its_model_tools() {
+    let flow = flow(
+        vec![
+            call(
+                "write",
+                "write",
+                json!({"path":"forbidden.txt","content":"must not write"}),
+            ),
+            text("findings"),
+        ],
+        false,
+    );
+    flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"agents":{"general":{"permission_mode":"plan"}},"worktrees":{"setup":["printf 'initialized\\n' > setup.txt"]}}));
+    let parent = flow.session("bypass").await;
+    let result = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let state = flow
+        .runtime
+        .state(result["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(state.info.mode, "plan");
+    assert!(
+        state.calls["write"]
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("Plan mode is read-only")
+    );
+    let managed = state.child_worktree().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("setup.txt")).unwrap(),
+        "initialized\n"
+    );
+    assert!(!managed.path.join("forbidden.txt").exists());
+    assert!(!flow.f.repo.join("setup.txt").exists());
 }

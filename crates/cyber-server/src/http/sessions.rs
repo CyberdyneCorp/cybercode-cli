@@ -317,6 +317,7 @@ async fn create(
         .or_else(|| state.services.default_model(&directory))
         .unwrap_or_default();
     let req = CreateSession {
+        child_worktree_setup_pending: false,
         child_worktree: None,
         subagent_name: None,
         fork_from: None,

@@ -78,7 +78,7 @@ impl Runtime {
         let result = self
             .settle_worktree_setup(cancel, async {
                 self.inner
-                    .with_location(&handle, owned_cancel, async { Ok(work.await) })
+                    .with_setup_location(&handle, owned_cancel, async { Ok(work.await) }, true)
                     .await
                     .map_err(io::Error::other)?
             })

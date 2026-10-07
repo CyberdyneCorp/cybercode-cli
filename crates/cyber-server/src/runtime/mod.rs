@@ -117,6 +117,7 @@ pub struct RuntimeOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct CreateSession {
+    pub child_worktree_setup_pending: bool,
     /// Internal binding for a child-created isolated checkout.
     pub child_worktree: Option<cyber_core::worktrees::Managed>,
     pub output_schema: Option<StructuredSchema>,
@@ -363,6 +364,11 @@ impl Runtime {
                 "subagent_name requires a parent and 1–128 bytes".into(),
             ));
         }
+        if req.child_worktree_setup_pending && req.child_worktree.is_none() {
+            return Err(RuntimeError::Invalid(
+                "Pending isolated setup requires a checkout binding".into(),
+            ));
+        }
         if let Some(managed) = &req.child_worktree
             && (!managed.ready
                 || req.parent_id.is_none()
@@ -444,6 +450,7 @@ impl Runtime {
                 calls,
                 req.fork_from,
                 CreationOptions {
+                    child_worktree_setup_pending: req.child_worktree_setup_pending,
                     child_worktree: req.child_worktree,
                     fork_context,
                     selection,
@@ -471,6 +478,7 @@ impl Runtime {
     ) -> Result<Receipt, RuntimeError> {
         let _admission = self.inner.open().await?;
         let handle = self.inner.handle(session_id).await?;
+        handle.state.lock().await.ensure_worktree_ready()?;
         self.inner.commit_staged_revert(&handle).await?;
         let message_id = admission
             .message_id
@@ -479,6 +487,7 @@ impl Runtime {
         let digest = digest(&admission.parts, admission.delivery);
         let receipt = {
             let mut state = handle.state.lock().await;
+            state.ensure_worktree_ready()?;
             if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
                 return Ok(receipt);
             }
@@ -588,7 +597,13 @@ impl Runtime {
     /// Start a Drain when idle, or record one coalesced follow-up when one is running.
     pub async fn wake(&self, session_id: &str) -> Result<(), RuntimeError> {
         let _admission = self.inner.open().await?;
-        self.inner.handle(session_id).await?;
+        self.inner
+            .handle(session_id)
+            .await?
+            .state
+            .lock()
+            .await
+            .ensure_worktree_ready()?;
         self.inner.start_drain(session_id, false);
         Ok(())
     }
@@ -596,7 +611,13 @@ impl Runtime {
     /// Join an active Drain, or start one that performs at least one Turn.
     pub async fn resume(&self, session_id: &str) -> Result<(), RuntimeError> {
         let _admission = self.inner.open().await?;
-        self.inner.handle(session_id).await?;
+        self.inner
+            .handle(session_id)
+            .await?
+            .state
+            .lock()
+            .await
+            .ensure_worktree_ready()?;
         self.inner.start_drain(session_id, true);
         Ok(())
     }
@@ -868,6 +889,7 @@ impl Runtime {
                 copied.calls,
                 Some(session_id.to_string()),
                 CreationOptions {
+                    child_worktree_setup_pending: false,
                     child_worktree: None,
                     fork_context: Some(copied.context),
                     selection: state.model_selection.persisted(&state.info.model),
@@ -1048,6 +1070,7 @@ fn query_sessions(
 }
 
 struct CreationOptions {
+    child_worktree_setup_pending: bool,
     child_worktree: Option<cyber_core::worktrees::Managed>,
     fork_context: Option<fork::ForkContext>,
     selection: Option<selection::ModelSelection>,
@@ -1117,6 +1140,7 @@ impl Inner {
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
+            child_worktree_setup_pending: defaults.child_worktree_setup_pending,
             child_worktree: defaults.child_worktree,
             fork_context: defaults.fork_context,
             mode_default_pending: defaults.mode_default_pending,

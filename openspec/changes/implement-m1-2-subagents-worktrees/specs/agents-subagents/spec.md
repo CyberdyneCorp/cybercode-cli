@@ -251,6 +251,30 @@
 - **AND** approval rechecks current deny/keep rules and native dirty/activity removal admission
 - **AND** cancellation removes the idle child's pending cleanup request without abandoning unrelated routed requests
 
+#### Scenario: Clean-removed isolated child resume
+- **GIVEN** a completed non-force clean removal matching the child's original incarnation and base
+- **WHEN** its parent resumes that child
+- **THEN** native recreation retains the original branch/base and assigns a new creation identity
+- **AND** a durable child-owner-checked rebound updates Location before trusted setup and prompt admission
+- **AND** existing history, Epoch and result-schema continuity are preserved
+- **AND** missing, force, incomplete, foreign or replaced evidence requires recovery rather than silent recreation
+
+#### Scenario: Source-authorized initialization of a Plan child
+- **GIVEN** the source invocation authorizes a trusted setup recipe
+- **WHEN** it creates or recreates a child whose inference Mode is Plan
+- **THEN** setup uses source invocation authority within the child checkout
+- **AND** child model tools retain Plan restrictions
+
+#### Scenario: Setup readiness survives interruption
+- **WHEN** a newly created or rebound isolated child has not acknowledged completed setup
+- **THEN** prompt admission, wake/resume and ordinary Location operations are rejected
+- **AND** failed setup remains gated after restart without blind command redispatch
+
+#### Scenario: Existing primary-profile child resume
+- **WHEN** the parent resumes its existing primary-profile fork or explicit user subtask
+- **THEN** the child retains its assigned identity and ordinary permissions
+- **AND** resumption does not authorize a fresh primary-profile subagent spawn
+
 #### Scenario: Retained isolated child restart
 - **GIVEN** an isolated child's checkout was retained
 - **WHEN** the application restarts and resumes that child

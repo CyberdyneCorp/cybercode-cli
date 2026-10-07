@@ -214,3 +214,9 @@ Cleanup `ask` creates a durable child-owned operation request, routed to ancesto
 ### Explicit user isolated subtasks
 
 User-requested isolated spawning authorizes checkout creation and the trusted source setup recipe as host operations, independently of model-tool Mode checks. Configuration/profile/Session/ancestor deny rules and sandbox enforcement remain authoritative; child inference and tools retain their inherited effective Mode. Empty setup is a read-only verification operation. Automatic cleanup of the owned clean artifact uses the same deny ceiling and no-force removal fence, without granting model calls any additional authority.
+
+### Resume after acknowledged clean removal
+
+Recreation requires a completed non-force removal record matching the old managed incarnation and original base, with no remaining/replaced path, ownership or branch and no active/unknown old lease. Under the repository lock, native creation uses the original base and branch with a new creation ID; current source settings/includes/setup remain source-authorized. A child-owner-checked durable rebound event changes Location/binding before setup or new prompt admission. New creation/rebinding persists setup-pending state, and only a completed setup acknowledgement permits inference/idle Location operations. Failed/unknown setup remains fenced. History, schemas and Epochs remain durable; subsequent preparation observes the current Location, and host read proofs are cleared on recreation. Missing/foreign/replaced/incomplete/force-removed evidence cannot silently recreate a checkout.
+
+Trusted initialization retains the authorizing source invocation profile/Mode/rules, while the setup lease, output and working directory belong to the child. This also permits source-authorized initialization of a model-selected Plan child without widening that child’s model-tool authority.

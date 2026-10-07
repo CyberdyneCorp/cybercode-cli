@@ -33,7 +33,23 @@ impl Inner {
         cancel: CancellationToken,
         operation: impl Future<Output = Result<T, RuntimeError>>,
     ) -> Result<T, RuntimeError> {
-        let info = handle.state.lock().await.info.clone();
+        self.with_setup_location(handle, cancel, operation, false)
+            .await
+    }
+
+    pub(crate) async fn with_setup_location<T>(
+        &self,
+        handle: &Handle,
+        cancel: CancellationToken,
+        operation: impl Future<Output = Result<T, RuntimeError>>,
+        setup: bool,
+    ) -> Result<T, RuntimeError> {
+        let state = handle.state.lock().await;
+        if !setup {
+            state.ensure_worktree_ready()?;
+        }
+        let info = state.info.clone();
+        drop(state);
         let lease = self.claim_location(&info, false, cancel).await?;
         if lease.worktree_id != info.worktree_id {
             return Err(RuntimeError::Invalid(
