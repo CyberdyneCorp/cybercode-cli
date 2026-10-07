@@ -120,6 +120,9 @@ jobs:
       - name: Native background task TUI controls
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tui --lib tasks
+      - name: Native forked child context and ownership
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test forked_subagents -p cyber-server --test fork_context
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children

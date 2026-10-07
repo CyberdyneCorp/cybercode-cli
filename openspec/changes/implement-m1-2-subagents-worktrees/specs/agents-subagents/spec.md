@@ -176,6 +176,13 @@
 - **WHEN** the user runs `/subtask try the alternative parser approach`
 - **THEN** the child Session's first Turn includes the parent's history and the prompt, and the parent continues independently
 
+#### Scenario: Fork identity and durable context
+- **WHEN** a Session is copied or an agent forks its caller
+- **THEN** the copy SHALL preserve the projected history, Context Epoch and durable task sources with fresh local message/call identities
+- **AND** copied source calls SHALL never be redispatched by the copy or cancel their source owner
+- **AND** /fork SHALL clear parent/name bindings while an agent fork SHALL retain its caller as parent
+- **AND** historical copied usage SHALL not be billed again
+
 ### Requirement: Resume subagents by name
 (P1) Each subagent SHALL get a unique name within its parent (the agent name, suffixed `-2`, `-3`… on collision, or a caller-supplied `name`). A spawn with `resume` SHALL admit the new prompt into the existing child Session instead of creating one, failing with `Subagent not found` for unknown names and `Subagent busy` when it is running in the foreground of another caller.
 

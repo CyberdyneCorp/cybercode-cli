@@ -19,7 +19,7 @@ impl Tool for Agent {
     fn def(&self) -> ToolDef {
         def(
             "agent",
-            "Delegate a focused task to a subagent; wait for its final result or start a background task with completion handback. Resume an existing child by name or Session ID.",
+            "Delegate a focused task to a subagent; wait for its final result or start a background task with completion handback. Resume an existing child by name or Session ID. Set fork true to inherit the caller history, agent and model unless overridden.",
             json!({"type":"object", "required":["prompt"], "additionalProperties":false, "properties":{
                 "prompt":{"type":"string"}, "agent":{"type":"string"}, "description":{"type":"string"},
                 "model":{"type":"string"}, "output_schema":{}, "isolation":{"type":"string", "enum":["none","worktree"]},
@@ -36,6 +36,7 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    fork: bool,
     resume: Option<SessionInfo>,
     usage: cyber_server::runtime::JobUsage,
     background: bool,
@@ -53,10 +54,18 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
     if text(input, "prompt").trim().is_empty() {
         return Err(failed("prompt is required"));
     }
+    let fork = input.get("fork").and_then(Value::as_bool).unwrap_or(false);
+    if fork && resume.is_some() {
+        return Err(failed("fork and resume cannot be combined"));
+    }
     let name = input
         .get("agent")
         .and_then(Value::as_str)
-        .unwrap_or_else(|| resume.map_or("general", |info| info.agent.as_str()));
+        .unwrap_or_else(|| {
+            resume.map_or(if fork { &ctx.inv.agent } else { "general" }, |info| {
+                info.agent.as_str()
+            })
+        });
     let (config, _) = (ctx.host.opts.config)(&ctx.location).map_err(failed)?;
     let profiles = cyber_core::config::resolve_agents(&config).map_err(failed)?;
     let available = profiles
@@ -70,7 +79,9 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         .filter(|p| !p.hidden)
         .cloned()
         .ok_or_else(|| failed(format!("Unknown agent {name:?}. Available: {available}")))?;
-    if !profile.subagent_capable() {
+    if !profile.subagent_capable()
+        && !(fork && profile.name == ctx.inv.agent && profile.primary_capable())
+    {
         return Err(failed(format!("Agent {name:?} cannot run a subagent")));
     }
     if let Some(existing) = resume {
@@ -116,6 +127,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         return Err(failed("name must contain 1–128 bytes"));
     }
     Ok(Spawn {
+        fork,
         resume: resume.cloned(),
         usage: Default::default(),
         background,
@@ -149,9 +161,9 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<(), ToolError
         .and_then(Value::as_str)
         .or(profile.isolation.as_deref())
         .unwrap_or("none");
-    if isolation != "none" || input.get("fork").and_then(Value::as_bool).unwrap_or(false) {
+    if isolation != "none" {
         return Err(failed(
-            "This agent execution path supports local Sessions with isolation none; requested fork or isolation is not implemented yet",
+            "This agent execution path supports local Sessions with isolation none; requested isolation is not implemented yet",
         ));
     }
     Ok(())
@@ -344,6 +356,14 @@ async fn reserve_child(
 ) -> Result<Option<cyber_server::runtime::JobAdmission>, ToolError> {
     let reservation = tokio::select! { biased; _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted), result=runtime.reserve_child_job(&parent.id) => result.map_err(|e| failed(e.to_string()))? };
     revalidate_spawn(ctx, spawn).await?;
+    if spawn.fork && spawn.output_schema.is_none() {
+        spawn.output_schema = runtime
+            .state(&parent.id)
+            .await
+            .map_err(|e| failed(e.to_string()))?
+            .output_schema()
+            .cloned();
+    }
     if let Some(existing) = &spawn.resume {
         let state = runtime
             .state(&existing.id)
@@ -495,6 +515,7 @@ async fn create_child(
     runtime
         .create_session(CreateSession {
             output_schema: spawn.output_schema.clone(),
+            fork_from: spawn.fork.then(|| parent.id.clone()),
             id: Some(id.into()),
             directory: parent.directory.clone(),
             worktree_id: parent.worktree_id.clone(),
@@ -503,7 +524,7 @@ async fn create_child(
             subagent_name: spawn.name.clone(),
             title: Some(format!("{} (@{})", spawn.description, spawn.profile.name)),
             model: model.unwrap_or(&parent.model).into(),
-            model_is_default: model.is_none(),
+            model_is_default: model.is_none() && !spawn.fork,
             mode: Some(child_mode(
                 &ctx.inv.mode,
                 spawn.profile.permission_mode.as_deref(),

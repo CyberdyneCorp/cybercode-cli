@@ -365,6 +365,12 @@ impl SessionState {
             .output_schema
             .map(super::StructuredSchema::new)
             .transpose()?;
+        if let Some(context) = created.fork_context {
+            state.epoch = context.epoch;
+            state.epoch_stale = context.epoch_stale;
+            state.compacted = context.compacted;
+            state.task = context.task;
+        }
         state.entries = created.history;
         state.calls = created
             .calls

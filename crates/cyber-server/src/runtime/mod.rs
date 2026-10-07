@@ -12,6 +12,7 @@ mod compaction;
 mod context;
 mod drain;
 mod events;
+mod fork;
 mod host;
 mod jobs;
 mod names;
@@ -116,6 +117,8 @@ pub struct RuntimeOptions {
 #[derive(Debug, Clone, Default)]
 pub struct CreateSession {
     pub output_schema: Option<StructuredSchema>,
+    /// Copy this source into a child whose declared parent is the source.
+    pub fork_from: Option<String>,
     pub id: Option<String>,
     pub directory: String,
     /// Expected checkout identity for an internally provisioned managed Session.
@@ -402,13 +405,30 @@ impl Runtime {
                 .reference;
         }
         let selection = selection.persisted(&info.model);
+        let copied = match &req.fork_from {
+            Some(source) => {
+                if info.parent_id.as_deref() != Some(source) {
+                    return Err(RuntimeError::Invalid(
+                        "Fork source must be the child parent".into(),
+                    ));
+                }
+                let state = self.state(source).await?;
+                Some(fork::history(&state, state.entries.len(), &state))
+            }
+            None => None,
+        };
+        let (history, calls, fork_context) = match copied {
+            Some(copy) => (copy.entries, copy.calls, Some(copy.context)),
+            None => (Vec::new(), Vec::new(), None),
+        };
         self.inner
             .create(
                 info,
-                Vec::new(),
-                Vec::new(),
-                None,
+                history,
+                calls,
+                req.fork_from,
                 CreationOptions {
+                    fork_context,
                     selection,
                     mode_default_pending,
                     output_schema: req.output_schema.map(|s| s.schema().clone()),
@@ -806,7 +826,8 @@ impl Runtime {
                 .ok_or_else(|| RuntimeError::Invalid(format!("no message {id}")))?,
             None => state.entries.len(),
         };
-        let (entries, calls) = fork_history(&state, cut);
+        let context = self.fork_boundary(&state, before_message)?;
+        let copied = fork::history(&state, cut, &context);
         let forks = self.list(&ListFilter {
             search: Some(format!("{} (fork #", state.info.title)),
             limit: Some(200),
@@ -816,6 +837,7 @@ impl Runtime {
             id: cyber_core::ids::new_id("ses"),
             title: format!("{} (fork #{})", state.info.title, forks.sessions.len() + 1),
             subagent_name: None,
+            parent_id: None,
             default_title: false,
             created_ms: chrono::Utc::now().timestamp_millis(),
             archived: false,
@@ -824,10 +846,11 @@ impl Runtime {
         self.inner
             .create(
                 info,
-                entries,
-                calls,
+                copied.entries,
+                copied.calls,
                 Some(session_id.to_string()),
                 CreationOptions {
+                    fork_context: Some(copied.context),
                     selection: state.model_selection.persisted(&state.info.model),
                     mode_default_pending: state.mode_default_pending,
                     output_schema: state.result.schema.as_ref().map(|s| s.schema().clone()),
@@ -952,45 +975,6 @@ fn check_inbox_action(row: &InboxRow, action: InboxAction) -> Result<(), Runtime
     }
 }
 
-/// Copies of entries and their settled calls with fresh message IDs.
-fn fork_history(state: &SessionState, cut: usize) -> (Vec<Entry>, Vec<CallState>) {
-    let mut entries = Vec::new();
-    let mut calls = Vec::new();
-    for entry in &state.entries[..cut] {
-        let fresh = cyber_core::ids::new_id("msg");
-        let copy = match entry {
-            Entry::User { parts, source, .. } => Entry::User {
-                id: fresh,
-                parts: parts.clone(),
-                source: source.clone(),
-            },
-            Entry::System { text, .. } => Entry::System {
-                id: fresh,
-                text: text.clone(),
-                epoch: None,
-            },
-            Entry::Assistant(a) => {
-                for id in &a.calls {
-                    if let Some(c) = state.calls.get(id) {
-                        let mut c = c.clone();
-                        c.message_id = fresh.clone();
-                        if !c.status.is_settled() {
-                            c.status = CallStatus::Interrupted;
-                        }
-                        calls.push(c);
-                    }
-                }
-                Entry::Assistant(AssistantEntry {
-                    id: fresh,
-                    ..a.clone()
-                })
-            }
-        };
-        entries.push(copy);
-    }
-    (entries, calls)
-}
-
 fn parse_cursor(cursor: &str) -> Result<(i64, String), RuntimeError> {
     let invalid = || RuntimeError::Invalid("InvalidCursorError: malformed cursor".into());
     let (at, id) = cursor.split_once(':').ok_or_else(invalid)?;
@@ -1045,6 +1029,7 @@ fn query_sessions(
 }
 
 struct CreationOptions {
+    fork_context: Option<fork::ForkContext>,
     selection: Option<selection::ModelSelection>,
     mode_default_pending: bool,
     output_schema: Option<serde_json::Value>,
@@ -1112,6 +1097,7 @@ impl Inner {
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
+            fork_context: defaults.fork_context,
             mode_default_pending: defaults.mode_default_pending,
             selection: defaults.selection,
             output_schema: defaults.output_schema,

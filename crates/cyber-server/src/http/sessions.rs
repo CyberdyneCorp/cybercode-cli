@@ -311,6 +311,7 @@ async fn create(
         .unwrap_or_default();
     let req = CreateSession {
         subagent_name: None,
+        fork_from: None,
         output_schema: None,
         id: body.id,
         directory: directory.display().to_string(),

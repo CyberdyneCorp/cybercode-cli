@@ -333,35 +333,29 @@ async fn concurrency_waits_fifo_without_creating_queued_children() {
 
 #[tokio::test]
 async fn unsupported_spawn_options_fail_before_creating_sessions() {
-    for option in [json!({"fork":true}), json!({"isolation":"worktree"})] {
-        let mut input = json!({"prompt":"inspect"});
-        input
-            .as_object_mut()
-            .unwrap()
-            .extend(option.as_object().unwrap().clone());
-        let flow = Flow::new(vec![call("spawn", "agent", input), text("done")], false);
-        flow.f.set_config(json!({"permissions":{"agent":"allow"}}));
-        let parent = flow.session("default").await;
-        flow.prompt(&parent, "delegate").await;
-        flow.settle(&parent).await;
-        assert!(
-            flow.output(&parent, "spawn")
-                .await
-                .contains("not implemented yet")
-        );
-        let count = flow
-            .f
-            .store
-            .read(|conn| {
-                Ok(conn.query_row(
-                    "SELECT count(*) FROM session WHERE parent_id IS NOT NULL",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )?)
-            })
-            .unwrap();
-        assert_eq!(count, 0);
-    }
+    let input = json!({"prompt":"inspect","isolation":"worktree"});
+    let flow = Flow::new(vec![call("spawn", "agent", input), text("done")], false);
+    flow.f.set_config(json!({"permissions":{"agent":"allow"}}));
+    let parent = flow.session("default").await;
+    flow.prompt(&parent, "delegate").await;
+    flow.settle(&parent).await;
+    assert!(
+        flow.output(&parent, "spawn")
+            .await
+            .contains("not implemented yet")
+    );
+    let count = flow
+        .f
+        .store
+        .read(|conn| {
+            Ok(conn.query_row(
+                "SELECT count(*) FROM session WHERE parent_id IS NOT NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[tokio::test]
