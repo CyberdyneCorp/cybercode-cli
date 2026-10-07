@@ -23,6 +23,10 @@ pub enum Msg {
     Models(Vec<Choice>),
     Commands(Vec<Choice>),
     Files(Vec<String>),
+    Agents {
+        directory: String,
+        items: Vec<Choice>,
+    },
     /// Another Session is now open.
     Switched(Session),
     ModeChanged {
@@ -119,6 +123,13 @@ pub async fn perform(client: &Client, session: &Session, action: Action) -> Resu
                 .await,
         ),
         Action::LoadModels => models(client).await,
+        Action::LoadAgents => {
+            let items = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
+            Ok(Msg::Agents {
+                directory: session.directory.clone(),
+                items,
+            })
+        }
         Action::FindFiles(query) => {
             let found = client
                 .get(&format!("/fs/find?limit=20&query={}", encode(&query)))
@@ -144,6 +155,18 @@ async fn converse(client: &Client, session: &Session, action: Action) -> Result<
     let id = session.id.as_str();
     match action {
         Action::Prompt { text, delivery } => {
+            if let Some((agent, prompt)) = leading_agent_mention(&text) {
+                let agents = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
+                if agents.iter().any(|profile| profile.key == agent) {
+                    if delivery != "steer" {
+                        return Err("Submit an agent mention with Enter to start the child".into());
+                    }
+                    if prompt.trim().is_empty() {
+                        return Err(format!("Usage: @{agent} <prompt>"));
+                    }
+                    return start_subtask(client, id, json!({"prompt":prompt,"agent":agent})).await;
+                }
+            }
             let parts = parts(&text, &session.directory);
             post(
                 client,
@@ -152,16 +175,7 @@ async fn converse(client: &Client, session: &Session, action: Action) -> Result<
             )
             .await
         }
-        Action::Subtask(prompt) => {
-            let result = client
-                .post(&format!("/sessions/{id}/subtask"), json!({"prompt":prompt}))
-                .await
-                .map_err(err)?;
-            Ok(Msg::Toast(format!(
-                "Started {} · /tasks to view or stop",
-                result["data"]["name"].as_str().unwrap_or("subtask")
-            )))
-        }
+        Action::Subtask(prompt) => start_subtask(client, id, json!({"prompt":prompt})).await,
         Action::Shell(command) => {
             post(
                 client,
@@ -333,6 +347,51 @@ pub async fn commands(client: &Client) -> Result<Msg, String> {
     Ok(Msg::Commands(items))
 }
 
+fn leading_agent_mention(text: &str) -> Option<(String, &str)> {
+    let rest = text.trim_start().strip_prefix('@')?;
+    if rest.starts_with('"') {
+        let mut quoted = serde_json::Deserializer::from_str(rest).into_iter::<String>();
+        let name = quoted.next()?.ok()?;
+        let prompt = &rest[quoted.byte_offset()..];
+        if !prompt.is_empty() && !prompt.starts_with(char::is_whitespace) {
+            return None;
+        }
+        return Some((name, prompt.trim_start()));
+    }
+    let (name, prompt) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    Some((name.to_owned(), prompt.trim_start()))
+}
+
+fn agent_choices(data: &Value) -> Vec<Choice> {
+    data.as_array()
+        .into_iter()
+        .flatten()
+        .filter(|profile| matches!(profile["mode"].as_str(), Some("subagent" | "all")))
+        .filter_map(|profile| {
+            let name = profile["name"].as_str()?;
+            Some(Choice {
+                key: name.into(),
+                label: name.into(),
+                detail: format!(
+                    "agent · {}",
+                    profile["description"].as_str().unwrap_or_default()
+                ),
+            })
+        })
+        .collect()
+}
+
+async fn start_subtask(client: &Client, id: &str, body: Value) -> Result<Msg, String> {
+    let result = client
+        .post(&format!("/sessions/{id}/subtask"), body)
+        .await
+        .map_err(err)?;
+    Ok(Msg::Toast(format!(
+        "Started {} · /tasks to view or stop",
+        result["data"]["name"].as_str().unwrap_or("subtask")
+    )))
+}
+
 /// The prompt text plus a part for each `@path` or `@path#L10-40` mention that exists.
 pub fn parts(text: &str, directory: &str) -> Vec<Value> {
     let mut parts = vec![json!({ "type": "text", "text": text })];
@@ -478,6 +537,45 @@ async fn fetch_jobs(client: &Client, session: &str) -> Result<Vec<Value>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leading_agent_mentions_require_eligible_catalogue_entries() {
+        let choices = agent_choices(&json!([
+            {"name":"build","mode":"primary"},
+            {"name":"explore","mode":"subagent","description":"read only"},
+            {"name":"review/security","mode":"all"},
+            {"name":"invalid","mode":"other"}
+        ]));
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| choice.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["explore", "review/security"]
+        );
+        assert_eq!(
+            leading_agent_mention(" @review/security\ninspect"),
+            Some(("review/security".into(), "inspect"))
+        );
+        assert_eq!(
+            leading_agent_mention("@explore"),
+            Some(("explore".into(), ""))
+        );
+        assert_eq!(
+            leading_agent_mention("@\"review team\" inspect"),
+            Some(("review team".into(), "inspect"))
+        );
+        assert_eq!(
+            leading_agent_mention("@\"review team\"suffix inspect"),
+            None
+        );
+        assert_eq!(leading_agent_mention("look at @explore"), None);
+        assert_eq!(leading_agent_mention("\"@explore\" inspect"), None);
+        assert_eq!(
+            leading_agent_mention("@./explore inspect"),
+            Some(("./explore".into(), "inspect"))
+        );
+    }
 
     #[test]
     fn mentions_attach_files_and_line_ranges() {

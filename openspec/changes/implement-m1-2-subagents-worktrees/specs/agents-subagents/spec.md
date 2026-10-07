@@ -358,6 +358,19 @@
 ### Requirement: Manual invocation by mention
 (P1) An `@<agent>` mention of a subagent-capable agent in a user prompt SHALL spawn that agent through the `agent` tool flow with the rest of the prompt, without requiring the `agent` permission. In the TUI, `@` autocomplete SHALL offer visible agents with `mode` `subagent` or `all`.
 
+#### Scenario: Explicit named client delegation
+- **WHEN** a client submits the optional `agent` field on the Session subtask endpoint
+- **THEN** the host SHALL start a fresh background child with that visible subagent-capable profile, without copying the parent history
+- **AND** user initiation SHALL authorize spawning without an ask, while current/ancestor denies, child Mode ceilings, profile tool restrictions and ordinary child approvals remain enforced
+- **AND** a hidden, unknown or primary-only explicit target SHALL fail before child creation
+
+#### Scenario: TUI agent mentions and files coexist
+- **WHEN** the user enters a leading `@` token
+- **THEN** autocomplete SHALL offer visible subagent-capable profiles along with files
+- **AND** submitting a leading known agent mention SHALL send the remaining prompt through explicit named delegation
+- **AND** names containing whitespace SHALL complete with a JSON-quoted name after `@` and resolve to the exact configured profile
+- **AND** ordinary file mentions and agent-like text quoted before the `@` marker or embedded in prose SHALL retain ordinary prompt admission
+
 #### Scenario: Mention runs subagent
 - **WHEN** the user submits `@explore where is retry logic implemented?`
 - **THEN** an `explore` child Session is spawned with that question and its result is shown in the parent

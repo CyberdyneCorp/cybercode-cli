@@ -588,7 +588,32 @@ impl ToolHost for BuiltinHost {
         prompt: String,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
+        self.subtask_with_agent(turn, prompt, None, cancel)
+    }
+
+    fn subtask_with_agent(
+        &self,
+        turn: TurnContext,
+        prompt: String,
+        agent: Option<String>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
         Box::pin(async move {
+            if let Some(name) = &agent {
+                let (config, _) = (self.opts.config)(Path::new(&turn.directory))?;
+                let profiles = cyber_core::config::resolve_agents(&config)?;
+                if !profiles
+                    .get(name)
+                    .is_some_and(|profile| profile.subagent_capable())
+                {
+                    return Err(format!("Agent {name:?} cannot run a user subagent"));
+                }
+            }
+            let mut input =
+                serde_json::json!({"prompt":prompt,"fork":agent.is_none(),"background":true});
+            if let Some(agent) = agent {
+                input["agent"] = agent.into();
+            }
             let inv = Invocation {
                 session_id: turn.session_id,
                 directory: turn.directory,
@@ -597,7 +622,7 @@ impl ToolHost for BuiltinHost {
                 message_id: String::new(),
                 call_id: cyber_core::ids::new_id("call"),
                 name: "agent".into(),
-                input: serde_json::json!({"prompt":prompt,"fork":true,"background":true}),
+                input,
                 attempt: 1,
                 operation_key: cyber_core::ids::new_id("op"),
                 asker: cyber_server::runtime::Asker::detached(),

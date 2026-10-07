@@ -232,3 +232,7 @@ Creation and rebound records define the Location timeline. A bounded database qu
 ### Setup preparation recovery
 
 Separate failures before calling the process runner from failures at or after process launch. Persist the former as `not_dispatched` command results, eligible for the existing reviewed retry protocol; keep generic historical and process-runner errors fenced. Preparation includes sandbox wrapping and private temporary-directory initialization. No process launch failure is assumed to be side-effect-free, including native suspended-launch errors. A lost preparation acknowledgement remains pending and unknown. Retry still requires native checkout/child ownership, recipe/revision review, current trust and permission/sandbox ceilings.
+
+### Explicit named user delegation
+
+Extend the existing Session subtask endpoint with an optional agent target. Omitting it preserves forked current-profile background work. Supplying it creates a fresh named-profile background child through shared agent admission and handback; hidden/primary-only targets fail before creation. The host revalidates current configuration and permission ceilings rather than accepting client catalogue data as authority. TUI leading agent mentions use this explicit endpoint and offer visible eligible profiles beside file completions; nonleading/file text remains data. Generic durable prompt admission, CLI mention handling and delayed/held-input delegation still require a dedicated idempotent dispatch design and are not accepted by this client increment.

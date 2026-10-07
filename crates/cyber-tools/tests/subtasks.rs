@@ -285,7 +285,7 @@ async fn authenticated_http_subtask_returns_a_job_and_replays_its_idempotency_ke
             .status(),
         reqwest::StatusCode::BAD_REQUEST
     );
-    let body = json!({"prompt":"try another approach"});
+    let body = json!({"prompt":"try another approach", "agent":"explore"});
     let response = client
         .post(&url)
         .basic_auth("cyber", Some("secret"))
@@ -298,6 +298,15 @@ async fn authenticated_http_subtask_returns_a_job_and_replays_its_idempotency_ke
     let result: serde_json::Value = response.json().await.unwrap();
     let request = flow.pending(&parent).await;
     assert_eq!(result["data"]["child_id"], request.session_id);
+    assert_eq!(
+        flow.runtime
+            .state(&request.session_id)
+            .await
+            .unwrap()
+            .info
+            .agent,
+        "explore"
+    );
     let replay = client
         .post(&url)
         .basic_auth("cyber", Some("secret"))
@@ -497,4 +506,136 @@ async fn queued_subtask_rechecks_profile_tool_restrictions_before_creation() {
     );
     assert_eq!(flow.runtime.jobs(Some(&parent)).unwrap().len(), 1);
     flow.runtime.wait_idle(&parent).await;
+}
+
+#[tokio::test]
+async fn named_user_delegation_is_fresh_and_keeps_child_approvals_and_handback() {
+    let flow = Flow::new(
+        vec![
+            text("old parent answer"),
+            call("read", "read", json!({"path":".env"})),
+            text("target findings"),
+            text("notice handled"),
+        ],
+        true,
+    );
+    flow.f.write(".env", "private");
+    let parent = flow.session("default").await;
+    flow.prompt(&parent, "original parent objective").await;
+    flow.settle(&parent).await;
+    let previous = flow.runtime.state(&parent).await.unwrap().entries;
+    let job = flow
+        .runtime
+        .subtask_with_agent(&parent, "where is retry logic?", Some("explore".into()))
+        .await
+        .unwrap();
+    let request = flow.pending(&parent).await;
+    assert_eq!(request.session_id, job.child_id);
+    assert!(
+        matches!(&request.kind, cyber_server::runtime::PendingKind::Permission(ask) if ask.action == "read")
+    );
+    let child = flow.runtime.state(&job.child_id).await.unwrap();
+    assert_eq!(child.info.agent, "explore");
+    assert_eq!(child.info.mode, "default");
+    let history = serde_json::to_string(&child.entries).unwrap();
+    assert!(
+        !history.contains("original parent objective") && !history.contains("old parent answer")
+    );
+    assert_eq!(flow.runtime.state(&parent).await.unwrap().entries, previous);
+    flow.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    wait_notice(&flow, &job.id).await;
+    let completed = flow.runtime.job(&job.id).unwrap();
+    assert_eq!(completed.status, JobStatus::Completed);
+    assert_eq!(completed.result.unwrap()["text"], "target findings");
+}
+
+#[tokio::test]
+async fn explicit_targets_refuse_unknown_hidden_primary_and_denied_agents_without_children() {
+    let flow = Flow::new(vec![], false);
+    let parent = flow.session("default").await;
+    flow.f
+        .set_config(json!({"agents":{"secret":{"hidden":true},"primary":{"mode":"primary"}}}));
+    for name in ["missing", "secret", "primary", "build", "evaluator"] {
+        assert!(
+            flow.runtime
+                .subtask_with_agent(&parent, "do work", Some(name.into()))
+                .await
+                .is_err()
+        );
+    }
+    flow.f
+        .set_config(json!({"permissions":{"agent":{"explore":"deny"}}}));
+    let error = flow
+        .runtime
+        .subtask_with_agent(&parent, "do work", Some("explore".into()))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("Permission denied"), "{error}");
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert_eq!(
+        flow.runtime
+            .list(&Default::default())
+            .unwrap()
+            .sessions
+            .len(),
+        1
+    );
+    assert!(flow.main.requests().is_empty());
+}
+
+#[tokio::test]
+async fn named_delegation_keeps_all_six_modes_and_refuses_plan_child_writes() {
+    for mode in [
+        "default",
+        "plan",
+        "accept-edits",
+        "auto",
+        "dont-ask",
+        "bypass",
+    ] {
+        let flow = Flow::new(vec![text("child answer"), text("notice handled")], false);
+        flow.f
+            .set_config(json!({"agents":{"general":{"permission_mode":"bypass"}}}));
+        let parent = flow.session(mode).await;
+        let job = flow
+            .runtime
+            .subtask_with_agent(&parent, "inspect", Some("general".into()))
+            .await
+            .unwrap();
+        wait_notice(&flow, &job.id).await;
+        assert_eq!(
+            flow.runtime.state(&job.child_id).await.unwrap().info.mode,
+            mode
+        );
+    }
+    let flow = Flow::new(
+        vec![
+            call(
+                "write",
+                "write",
+                json!({"path":"forbidden.txt","content":"write"}),
+            ),
+            text("write refused"),
+            text("notice handled"),
+        ],
+        false,
+    );
+    let parent = flow.session("plan").await;
+    let job = flow
+        .runtime
+        .subtask_with_agent(&parent, "try a write", Some("general".into()))
+        .await
+        .unwrap();
+    wait_notice(&flow, &job.id).await;
+    assert!(!flow.f.repo.join("forbidden.txt").exists());
+    let child = flow.runtime.state(&job.child_id).await.unwrap();
+    assert!(
+        child
+            .calls
+            .values()
+            .any(|call| matches!(&call.status, cyber_server::runtime::CallStatus::Error))
+    );
 }

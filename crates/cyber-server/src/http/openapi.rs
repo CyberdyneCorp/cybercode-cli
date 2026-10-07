@@ -230,7 +230,7 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "post",
             "/sessions/{sessionID}/subtask",
             "v1.session.subtask",
-            "Start an explicitly requested forked background child",
+            "Start an explicit named background child or fork the current context",
         )
         .status(202)
         .body::<SubtaskBody>(g)

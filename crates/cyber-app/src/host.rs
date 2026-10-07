@@ -75,6 +75,16 @@ impl ToolHost for AppHost {
         self.builtin.subtask(turn, prompt, cancel)
     }
 
+    fn subtask_with_agent(
+        &self,
+        turn: TurnContext,
+        prompt: String,
+        agent: Option<String>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
+        self.builtin.subtask_with_agent(turn, prompt, agent, cancel)
+    }
+
     fn shell(
         &self,
         directory: &str,

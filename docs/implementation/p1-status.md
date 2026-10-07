@@ -142,6 +142,18 @@ Final local validation passes all 780 Rust workspace test executions (two ignore
 
 Unknown command/process/activity recovery resolution, full worktree/client lifecycle, durable cross-process child pool/ownership, full profile snapshots, complete Windows confinement and all remaining P1 requirements remain open. This increment does not accept a full requirement or milestone.
 
+## Explicit named user delegation increment
+
+The Session subtask endpoint and SDK now accept an optional `agent`. Omission preserves forked background work using the current profile; an explicit visible subagent-capable target starts a fresh background child through shared agent admission, ownership, current configuration revalidation, permissions, Mode ceilings and handback. AppHost forwards the new operation. Invalid/hidden/primary-only targets fail before child creation; explicit user spawn approval does not approve child tools or override denies.
+
+The TUI offers eligible profiles beside files for a leading `@` token and resolves submitted/pasted leading mentions against the current Location catalogue before using named delegation. Ordinary file, quoted and embedded text keeps ordinary prompt admission. Directory changes invalidate agent choices and open completion menus, and catalogue replies from another directory are ignored. Completion quotes agent names containing whitespace or escapes; a leading JSON-quoted agent name resolves exactly, while text quoted before the `@` marker remains ordinary data. Bare known mentions require a prompt; queue/hold delivery refuses immediate delegation instead of silently discarding its timing. Catalogue data does not supply dispatch authority.
+
+Actual-runtime tests cover fresh context versus fork compatibility, routed child read approval, final handback, all six Mode ceilings, denied plan writes, invalid/hidden/primary targets and denied agents without side effects. The real authenticated HTTP test submits a named target and verifies response replay without duplicate children. AppHost deny delegation and TUI autocomplete/parser/transport coverage are included. Native acceptance remains pending.
+
+Local validation passes all 788 Rust workspace test executions (two ignored fixtures), workspace all-target Clippy, 44 SDK tests/type checking, OpenAPI/generation consistency, formatting and all 57 strict specification checks. Cross-spec lint reports zero errors and 21 warnings. After the final completion-menu invalidation and quoted-name handling, all 41 TUI tests and TUI all-target Clippy pass again. CI for `df51ba7`, `90c6bd1` and `27f448d` remains queued at the latest check; no new native acceptance is claimed.
+
+Generic durable prompt/CLI mention admission, held/queued-input delegation and its dispatch idempotency remain open. This explicit client increment does not accept the full Manual invocation requirement or a milestone. All other P1 recovery, lifecycle, cross-process child ownership and later milestone work remains required; P0 assets are preserved.
+
 ## Requirement inventory
 
 Unchecked means not yet audited and accepted under this goal; some functionality may already exist. Each milestone will link requirements to implementation and scenario evidence before marking them complete.

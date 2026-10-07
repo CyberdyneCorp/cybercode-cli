@@ -1124,7 +1124,14 @@
         "properties": {
           "prompt": {
             "type": "string",
-            "description": "Explicit user request for a forked background child."
+            "description": "Explicit user request for a background child."
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A visible subagent-capable profile. Omit to fork the current agent/context."
           }
         },
         "required": [
@@ -3490,7 +3497,7 @@
     "/api/v1/sessions/{sessionID}/subtask": {
       "post": {
         "operationId": "v1.session.subtask",
-        "summary": "Start an explicitly requested forked background child",
+        "summary": "Start an explicit named background child or fork the current context",
         "tags": [
           "session"
         ],

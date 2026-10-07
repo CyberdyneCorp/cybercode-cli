@@ -60,6 +60,7 @@ pub enum Action {
     Subtask(String),
     Compact(Option<String>),
     FindFiles(String),
+    LoadAgents,
     RemoveQueued(String),
     SaveTheme(&'static str),
     Rename {
@@ -179,6 +180,7 @@ pub struct App {
     pub completion: Option<Completion>,
     pub commands: Vec<Choice>,
     pub files: Vec<String>,
+    pub agents: Vec<Choice>,
     pub show_reasoning: bool,
     pub expand_tools: bool,
     pub timestamps: bool,
@@ -206,6 +208,7 @@ impl App {
             completion: None,
             commands: Vec::new(),
             files: Vec::new(),
+            agents: Vec::new(),
             show_reasoning: false,
             expand_tools: false,
             timestamps: false,
@@ -221,6 +224,10 @@ impl App {
     pub(crate) fn set_session(&mut self, session: Session) {
         if session.id != self.session.id || self.mode_selection.as_deref() == Some(&session.mode) {
             self.mode_selection = None;
+        }
+        if session.directory != self.session.directory {
+            self.agents.clear();
+            self.completion = None;
         }
         self.session = session;
     }
@@ -452,15 +459,33 @@ impl App {
                 .collect()
         } else {
             actions.push(Action::FindFiles(word.clone()));
-            let ranked = fuzzy::rank(&word, &self.files, |f| f.clone());
-            ranked
+            let mut choices = Vec::new();
+            if self.composer.cursor().0 == 0
+                && self
+                    .composer
+                    .text()
+                    .chars()
+                    .take(start)
+                    .all(char::is_whitespace)
+            {
+                actions.push(Action::LoadAgents);
+                choices.extend(self.agents.clone());
+            }
+            choices.extend(
+                self.files
+                    .iter()
+                    .filter(|file| !choices.iter().any(|agent| agent.key == **file))
+                    .map(|file| Choice {
+                        key: file.clone(),
+                        label: file.clone(),
+                        detail: String::new(),
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            fuzzy::rank(&word, &choices, |choice| choice.label.clone())
                 .into_iter()
                 .take(20)
-                .map(|i| Choice {
-                    key: self.files[i].clone(),
-                    label: self.files[i].clone(),
-                    detail: String::new(),
-                })
+                .map(|i| choices[i].clone())
                 .collect()
         };
         let selected = self
@@ -477,6 +502,12 @@ impl App {
         actions
     }
 
+    pub(crate) fn set_agents(&mut self, agents: Vec<Choice>) {
+        self.agents = agents;
+        // Rebuild the menu locally; do not redispatch completion lookups.
+        let _ = self.update_completion(Vec::new());
+    }
+
     fn completion_key(&mut self, key: KeyEvent) -> Option<Vec<Action>> {
         let completion = self.completion.as_mut()?;
         match key.code {
@@ -490,7 +521,18 @@ impl App {
                 let choice = completion.items[completion.selected].clone();
                 let (trigger, start) = (completion.trigger, completion.start);
                 self.completion = None;
-                let text = format!("{trigger}{} ", choice.key);
+                let name = if trigger == '@'
+                    && !choice.detail.is_empty()
+                    && choice
+                        .key
+                        .chars()
+                        .any(|c| c.is_whitespace() || matches!(c, '"' | '\\'))
+                {
+                    serde_json::to_string(&choice.key).expect("string serialization")
+                } else {
+                    choice.key
+                };
+                let text = format!("{trigger}{name} ");
                 self.composer.complete(start, &text);
                 return Some(Vec::new());
             }
@@ -813,6 +855,10 @@ impl App {
             "server.connected" => vec![Action::Refresh],
             "session.worktree.rebound.1" => {
                 if let Some(path) = data["to"]["path"].as_str().filter(|path| !path.is_empty()) {
+                    if self.session.directory != path {
+                        self.agents.clear();
+                        self.completion = None;
+                    }
                     self.session.directory = path.into();
                 }
                 vec![Action::Refresh]

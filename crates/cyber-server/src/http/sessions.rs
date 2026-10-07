@@ -89,8 +89,10 @@ pub struct ForkBody {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SubtaskBody {
-    /// Explicit user request for a forked background child.
+    /// Explicit user request for a background child.
     pub prompt: String,
+    /// A visible subagent-capable profile. Omit to fork the current agent/context.
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -390,7 +392,10 @@ async fn subtask(
     Path(id): Path<String>,
     Json(body): Json<SubtaskBody>,
 ) -> Result<Response> {
-    let job = state.runtime.subtask(&id, &body.prompt).await?;
+    let job = state
+        .runtime
+        .subtask_with_agent(&id, &body.prompt, body.agent)
+        .await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: job })).into_response())
 }
 

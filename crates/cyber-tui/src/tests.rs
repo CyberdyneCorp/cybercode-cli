@@ -696,3 +696,163 @@ fn rebound_cursor_rejects_stale_or_malformed_directory_changes() {
     assert_eq!(app.session.directory, "/repo/new");
     assert_eq!(app.session.seq, 9);
 }
+
+#[test]
+fn leading_agent_completions_coexist_with_files_and_clear_after_relocation() {
+    use crate::model::Choice;
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let actions = typed(&mut app, "@ex");
+    assert!(actions.contains(&Action::LoadAgents));
+    app.files = vec!["example.rs".into()];
+    app.set_agents(vec![Choice {
+        key: "explore".into(),
+        label: "explore".into(),
+        detail: "agent · read only".into(),
+    }]);
+    let completion = app.completion.as_ref().unwrap();
+    assert!(
+        completion
+            .items
+            .iter()
+            .any(|choice| choice.key == "explore")
+    );
+    assert!(
+        completion
+            .items
+            .iter()
+            .any(|choice| choice.key == "example.rs")
+    );
+    assert!(screen(&app).contains("read only"));
+    app.composer.set_text("see @ex");
+    let actions = typed(&mut app, "p");
+    assert!(!actions.contains(&Action::LoadAgents));
+    assert!(
+        app.completion
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|choice| choice.key != "explore")
+    );
+    let mut relocated = session(false);
+    relocated.directory = "/new".into();
+    app.set_session(relocated);
+    assert!(app.agents.is_empty());
+    assert!(app.completion.is_none());
+    app.composer.set_text("@rev");
+    app.set_agents(vec![Choice {
+        key: "review team".into(),
+        label: "review team".into(),
+        detail: "agent · review".into(),
+    }]);
+    app.on_key(key(KeyCode::Tab));
+    assert_eq!(app.composer.text(), "@\"review team\" ");
+}
+
+#[tokio::test]
+async fn leading_mentions_use_named_subtasks_while_file_and_embedded_text_use_prompts() {
+    use crate::perform::{Msg, perform};
+    use std::io::{Read, Write};
+    for (text, lookup, target, delivery) in [
+        ("@explore find retry logic", true, Some("explore"), "steer"),
+        ("@explore find retry logic", true, Some("explore"), "queue"),
+        ("@README.md inspect", true, None, "steer"),
+        ("look at @explore", false, None, "steer"),
+        ("\"@explore\" inspect", false, None, "steer"),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            let responses = if delivery == "queue" {
+                vec![json!({"data":[{"name":"explore","mode":"subagent"}]})]
+            } else if lookup {
+                vec![
+                    json!({"data":[{"name":"explore","mode":"subagent","description":"read only"},{"name":"build","mode":"primary"}]}),
+                    json!({"data":{"name":"explore","id":"job_test"}}),
+                ]
+            } else {
+                vec![json!({"data":{}})]
+            };
+            for response in responses {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 2048];
+                let boundary = loop {
+                    if let Some(position) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                    {
+                        break position + 4;
+                    }
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                };
+                let header = String::from_utf8(request[..boundary].to_vec()).unwrap();
+                let length = header
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .and_then(|value| value.parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                while request.len() < boundary + length {
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let body = if length == 0 {
+                    json!(null)
+                } else {
+                    serde_json::from_slice(&request[boundary..boundary + length]).unwrap()
+                };
+                requests.push((header, body));
+                let body = response.to_string();
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).unwrap();
+            }
+            requests
+        });
+        let client = cyber_client::Client::http(&base, None).at("/old");
+        let result = perform(
+            &client,
+            &session(false),
+            Action::Prompt {
+                text: text.into(),
+                delivery,
+            },
+        )
+        .await;
+        let requests = server.join().unwrap();
+        if delivery == "queue" {
+            assert!(result.unwrap_err().contains("Enter"));
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].0.starts_with("GET /api/v1/agents "));
+            continue;
+        }
+        let result = result.unwrap();
+        assert_eq!(requests.len(), if lookup { 2 } else { 1 });
+        let (head, body) = requests.last().unwrap();
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("x-cyber-directory: /repo")
+        );
+        if let Some(target) = target {
+            assert!(
+                head.starts_with("POST /api/v1/sessions/ses_1/subtask "),
+                "{head}"
+            );
+            assert_eq!(body, &json!({"agent":target,"prompt":"find retry logic"}));
+            assert!(matches!(result, Msg::Toast(_)));
+        } else {
+            assert!(
+                head.starts_with("POST /api/v1/sessions/ses_1/prompt "),
+                "{head}"
+            );
+            assert_eq!(body["parts"][0]["text"], text);
+            assert_eq!(body["delivery"], "steer");
+        }
+    }
+}

@@ -3,6 +3,15 @@ use super::{Job, Runtime, RuntimeError, TurnContext};
 
 impl Runtime {
     pub async fn subtask(&self, session_id: &str, prompt: &str) -> Result<Job, RuntimeError> {
+        self.subtask_with_agent(session_id, prompt, None).await
+    }
+
+    pub async fn subtask_with_agent(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        agent: Option<String>,
+    ) -> Result<Job, RuntimeError> {
         if prompt.trim().is_empty() {
             return Err(RuntimeError::Invalid(
                 "subtask prompt must not be empty".into(),
@@ -23,7 +32,7 @@ impl Runtime {
         };
         self.inner
             .tools
-            .subtask(turn, prompt.into(), self.inner.closed.child_token())
+            .subtask_with_agent(turn, prompt.into(), agent, self.inner.closed.child_token())
             .await
             .map_err(RuntimeError::Invalid)
     }

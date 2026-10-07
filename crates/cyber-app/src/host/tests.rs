@@ -210,5 +210,13 @@ async fn app_host_subtask_delegation_preserves_user_deny_rules() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("Permission denied"), "{error}");
+    let named_error = app
+        .state
+        .runtime
+        .subtask_with_agent(&parent.id, "inspect retry logic", Some("explore".into()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(named_error.contains("Permission denied"), "{named_error}");
     assert!(app.state.runtime.jobs(Some(&parent.id)).unwrap().is_empty());
 }

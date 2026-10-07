@@ -1987,3 +1987,40 @@ async fn completed_setup_journal_recovers_a_lost_readiness_acknowledgement_witho
     );
     assert!(flow.main.requests().is_empty());
 }
+
+#[tokio::test]
+async fn named_user_delegation_honors_profile_isolation_and_parent_mode() {
+    let flow = flow(
+        vec![text("isolated findings"), text("notice handled")],
+        false,
+    );
+    flow.f.set_config(json!({"agents":{"general":{"isolation":"worktree","permission_mode":"bypass"}},"worktrees":{"keep":"always"}}));
+    let parent = flow.session("plan").await;
+    let job = flow
+        .runtime
+        .subtask_with_agent(&parent, "inspect in isolation", Some("general".into()))
+        .await
+        .unwrap();
+    let completed = done(&flow, &job.id).await;
+    assert_eq!(
+        completed.status,
+        cyber_server::runtime::JobStatus::Completed
+    );
+    let child = flow.runtime.state(&job.child_id).await.unwrap();
+    assert_eq!(child.info.agent, "general");
+    assert_eq!(child.info.mode, "plan");
+    assert!(!child.child_worktree_setup_pending());
+    let binding = child.child_worktree().unwrap();
+    assert_eq!(child.info.directory, binding.path.display().to_string());
+    assert_ne!(binding.path, flow.f.repo);
+    assert_eq!(
+        completed.result.as_ref().unwrap()["text"],
+        "isolated findings"
+    );
+    assert_eq!(
+        completed.result.as_ref().unwrap()["worktree"]["id"],
+        binding.id
+    );
+    assert_eq!(completed.result.as_ref().unwrap()["worktree"]["kept"], true);
+    assert!(binding.path.join("tracked.txt").exists());
+}

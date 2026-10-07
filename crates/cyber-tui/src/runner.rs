@@ -277,6 +277,11 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         Msg::Models(items) => app.open_picker(PickerKind::Models, "Models", items),
         Msg::Commands(items) => app.commands = items,
         Msg::Files(files) => app.files = files,
+        Msg::Agents { directory, items } => {
+            if directory == app.session.directory {
+                app.set_agents(items);
+            }
+        }
         Msg::Switched(session) => {
             app.set_session(session);
             app.items.clear();
@@ -563,5 +568,20 @@ mod mode_tests {
         );
         assert_eq!(app.session.directory, "/repo/new");
         assert_eq!(app.session.seq, 8);
+    }
+    #[test]
+    fn an_agent_catalogue_reply_from_the_previous_directory_is_ignored() {
+        let mut app = app();
+        app.session.directory = "/new".into();
+        let message = Msg::Agents {
+            directory: "/old".into(),
+            items: vec![crate::model::Choice {
+                key: "old-agent".into(),
+                label: "old-agent".into(),
+                detail: String::new(),
+            }],
+        };
+        assert!(apply(&mut app, Ok(message), &mut Refresh::default()).is_empty());
+        assert!(app.agents.is_empty());
     }
 }

@@ -234,6 +234,21 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Err("subtasks are not supported by this host".into()) })
     }
 
+    /// Explicit named user delegation. Omission preserves the legacy forked subtask.
+    fn subtask_with_agent(
+        &self,
+        turn: TurnContext,
+        prompt: String,
+        agent: Option<String>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<super::Job, String>> {
+        if agent.is_some() {
+            Box::pin(async { Err("named user delegation is not supported by this host".into()) })
+        } else {
+            self.subtask(turn, prompt, cancel)
+        }
+    }
+
     /// Run a user shell command (`!`) in a Location under the sandbox, without prompts.
     fn shell(
         &self,

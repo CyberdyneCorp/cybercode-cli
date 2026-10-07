@@ -1185,7 +1185,7 @@ export function createGroups(caller: Caller) {
       /** Run a user shell command (`POST /api/v1/sessions/{sessionID}/shell`) */
       shell: (sessionID: string, body: Operations["v1.session.shell"]["body"], options?: RequestOptions): Promise<Operations["v1.session.shell"]["response"]> =>
         caller.call("v1.session.shell", { path: { sessionID }, body }, options),
-      /** Start an explicitly requested forked background child (`POST /api/v1/sessions/{sessionID}/subtask`) */
+      /** Start an explicit named background child or fork the current context (`POST /api/v1/sessions/{sessionID}/subtask`) */
       subtask: (sessionID: string, body: Operations["v1.session.subtask"]["body"], options?: RequestOptions): Promise<Operations["v1.session.subtask"]["response"]> =>
         caller.call("v1.session.subtask", { path: { sessionID }, body }, options),
       /** Rename or archive a Session (`PATCH /api/v1/sessions/{sessionID}`) */

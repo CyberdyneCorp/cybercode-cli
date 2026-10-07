@@ -617,8 +617,10 @@ export type StopService = {
 };
 
 export type SubtaskBody = {
-  /** Explicit user request for a forked background child. */
+  /** Explicit user request for a background child. */
   prompt: string;
+  /** A visible subagent-capable profile. Omit to fork the current agent/context. */
+  agent?: string | null;
 };
 
 /** Durable task state (`compaction` → Durable task state), derived from promoted input. */

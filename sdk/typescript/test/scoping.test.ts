@@ -79,3 +79,14 @@ test("explicit child setup recovery sends the reviewed revision and reuses an id
   assert.equal(calls[0]?.headers.get("idempotency-key"), "retry-review");
   assert.deepEqual(JSON.parse(calls[0]!.body!), review);
 });
+
+
+test("named user delegation sends the selected profile through the Session endpoint", async () => {
+  const { client, calls } = mockClient(() => json(202, { data: {
+    id: "job_named", child_id: "ses_child", session_id: "ses_parent", name: "explore", status: "running",
+  } }));
+  const result = await client.session.subtask("ses_parent", { prompt: "find retry logic", agent: "explore" });
+  assert.equal(result.name, "explore");
+  assert.deepEqual(JSON.parse(calls[0]!.body!), { prompt: "find retry logic", agent: "explore" });
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses_parent/subtask");
+});
