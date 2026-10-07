@@ -111,3 +111,41 @@ async fn agent_tool_restrictions_refuse_client_dispatch_without_sending_a_reques
     assert_eq!(frames.try_recv(), Err(mpsc::error::TryRecvError::Empty));
     assert!(host.remote.has("client_write"));
 }
+
+#[tokio::test]
+async fn app_host_preserves_typed_agent_context_observations() {
+    let scratch = tempfile::tempdir().unwrap();
+    let app = application(scratch.path()).await;
+    let host = AppHost {
+        builtin: app.host.clone(),
+        remote: app.state.remote_tools.clone(),
+    };
+    let turn = TurnContext {
+        session_id: "ses_test".into(),
+        directory: scratch.path().display().to_string(),
+        agent: "build".into(),
+        mode: "default".into(),
+        prefers_apply_patch: false,
+        rules: json!(null),
+    };
+    let path = app.paths.config.join("cyber.json");
+    std::fs::write(
+        &path,
+        r#"{"agents":{"build":{"system":"App agent instructions."}}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        host.context_observations(&turn)["core/agent"],
+        cyber_server::runtime::ContextObservation::Value("App agent instructions.".into())
+    );
+    std::fs::write(&path, "{}").unwrap();
+    assert_eq!(
+        host.context_observations(&turn)["core/agent"],
+        cyber_server::runtime::ContextObservation::Absent
+    );
+    std::fs::write(&path, r#"{"agents":{"build":{"steps":0}}}"#).unwrap();
+    assert!(matches!(
+        host.context_observations(&turn)["core/agent"],
+        cyber_server::runtime::ContextObservation::Unavailable(_)
+    ));
+}

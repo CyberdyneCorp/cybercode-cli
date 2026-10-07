@@ -58,7 +58,13 @@ pub fn snapshot(
 }
 
 pub fn render_baseline(snapshot: &BTreeMap<String, String>) -> String {
-    snapshot.values().cloned().collect::<Vec<_>>().join("\n\n")
+    // Agent text is persisted separately as the Epoch's immutable system prefix.
+    snapshot
+        .iter()
+        .filter(|(key, _)| key.as_str() != "core/agent")
+        .map(|(_, value)| value.clone())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Merge newly observed values into the previous snapshot. Unavailable sources keep their

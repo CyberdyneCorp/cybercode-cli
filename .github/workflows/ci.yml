@@ -87,6 +87,12 @@ jobs:
       - name: Native client tool profile admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --lib host::tests
+      - name: Native durable agent context
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test agent_context
+      - name: Native historical context compatibility
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test context_compaction historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes
       - name: Native worktree setup admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test worktree_setup

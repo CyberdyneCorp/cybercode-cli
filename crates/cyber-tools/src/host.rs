@@ -405,6 +405,27 @@ impl ToolHost for BuiltinHost {
             .unwrap_or_default()
     }
 
+    fn context_observations(
+        &self,
+        turn: &TurnContext,
+    ) -> BTreeMap<String, cyber_server::runtime::ContextObservation> {
+        use cyber_server::runtime::ContextObservation;
+        let mut sources: BTreeMap<_, _> = self
+            .context_sources(turn)
+            .into_iter()
+            .map(|(key, value)| (key, ContextObservation::Value(value)))
+            .collect();
+        let agent = match self.agent_profile(Path::new(&turn.directory), &turn.agent) {
+            Ok(profile) => match profile.system.filter(|text| !text.is_empty()) {
+                Some(text) => ContextObservation::Value(text),
+                None => ContextObservation::Absent,
+            },
+            Err(error) => ContextObservation::Unavailable(error),
+        };
+        sources.insert("core/agent".into(), agent);
+        sources
+    }
+
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         Box::pin(async move {
             let Some(tool) = self.tools.iter().find(|t| t.def().spec.name == inv.name) else {

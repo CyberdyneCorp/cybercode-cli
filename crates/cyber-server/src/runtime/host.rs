@@ -219,6 +219,17 @@ pub trait ToolHost: Send + Sync {
         std::collections::BTreeMap::new()
     }
 
+    /// Typed observations distinguish removal from temporary source unavailability.
+    fn context_observations(
+        &self,
+        turn: &TurnContext,
+    ) -> std::collections::BTreeMap<String, super::context::Observed> {
+        self.context_sources(turn)
+            .into_iter()
+            .map(|(key, value)| (key, super::context::Observed::Value(value)))
+            .collect()
+    }
+
     /// Establish, without side effects, whether a dispatched call took effect.
     /// `directory` is the Session's Location, for resolving relative paths.
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {

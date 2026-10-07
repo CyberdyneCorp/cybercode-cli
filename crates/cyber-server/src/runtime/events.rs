@@ -127,6 +127,8 @@ pub struct EpochStarted {
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
     pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

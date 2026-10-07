@@ -157,6 +157,8 @@ pub struct Epoch {
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
     pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -560,6 +562,7 @@ impl SessionState {
             baseline: e.baseline,
             snapshot: e.snapshot,
             provider: e.provider,
+            system_prefix: e.system_prefix,
         });
         self.epoch_stale = false;
     }

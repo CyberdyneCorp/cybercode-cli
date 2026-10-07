@@ -35,7 +35,7 @@ use tokio_util::sync::CancellationToken;
 pub use auto::{AutoDecision, AutoEffect, AutoReview};
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
-pub use context::{ContextInputs, base_prompt};
+pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use events::{CompactionTrigger, registry as event_registry};
 pub use host::{
     CatalogResolver, FileDiff, Invocation, LocationGuard, LocationLease, ModelResolver,

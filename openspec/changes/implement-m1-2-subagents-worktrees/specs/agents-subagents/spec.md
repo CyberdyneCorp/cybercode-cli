@@ -40,6 +40,12 @@
 - **AND** bypass Mode SHALL NOT override profile visibility restrictions
 - **AND** hidden, disabled or unknown profiles SHALL NOT dispatch tools
 
+#### Scenario: Agent prompt uses the durable Context Epoch
+- **WHEN** a selected agent has system text at Context Epoch initialization
+- **THEN** its system text SHALL start model requests and be persisted as that Epoch's prefix
+- **AND** changes or removal SHALL arrive through safe-boundary context updates without rewriting the Epoch prefix
+- **AND** historical Epoch events without an explicit prefix SHALL retain provider-base fallback behavior
+
 #### Scenario: Request overlay applied
 - **WHEN** an agent sets `request.body.temperature: 0.2`
 - **THEN** its Turns send `temperature: 0.2` after provider, model and variant defaults

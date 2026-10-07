@@ -284,11 +284,16 @@ impl Inner {
         let mut state = handle.state.lock().await;
         let observed = self.observe(&state);
         let snapshot = context::snapshot(&observed).map_err(RuntimeError::ContextBlocked)?;
+        let system_prefix = snapshot
+            .get("core/agent")
+            .cloned()
+            .unwrap_or_else(|| context::base_prompt(provider));
         let payload = EpochStarted {
             epoch: state.epoch.as_ref().map_or(1, |e| e.number + 1),
             baseline: context::render_baseline(&snapshot),
             snapshot,
             provider: provider.into(),
+            system_prefix: Some(system_prefix),
         };
         self.commit_locked(&mut state, vec![event(EPOCH_STARTED, &payload)])?;
         Ok(())
@@ -301,7 +306,14 @@ impl Inner {
             return Ok(());
         };
         let observed = self.observe(&state);
-        let (snapshot, text) = context::reconcile(&epoch.snapshot, &observed);
+        let (snapshot, mut text) = context::reconcile(&epoch.snapshot, &observed);
+        if epoch.snapshot.contains_key("core/agent")
+            && matches!(observed.get("core/agent"), Some(context::Observed::Absent))
+            && let Some(text) = &mut text
+        {
+            text.push_str("\n\nThe default agent instructions now apply:\n");
+            text.push_str(&context::base_prompt(&epoch.provider));
+        }
         if let Some(text) = text {
             let payload = ContextUpdated {
                 message_id: cyber_core::ids::new_id("msg"),
@@ -320,8 +332,8 @@ impl Inner {
     ) -> std::collections::BTreeMap<String, context::Observed> {
         let mut observed = context::observe(&self.context_inputs(&state.info.directory));
         let turn = turn_context_for(state, false);
-        for (key, value) in self.options.tools.context_sources(&turn) {
-            observed.insert(key, context::Observed::Value(value));
+        for (key, value) in self.options.tools.context_observations(&turn) {
+            observed.insert(key, value);
         }
         observed
     }
@@ -470,7 +482,10 @@ impl Inner {
             .ok_or_else(|| RuntimeError::Corrupt("no context epoch".into()))?;
         let mut request = resolved.template.clone();
         request.system = vec![
-            context::base_prompt(&resolved.provider),
+            epoch
+                .system_prefix
+                .clone()
+                .unwrap_or_else(|| context::base_prompt(&resolved.provider)),
             epoch.baseline.clone(),
         ];
         request.messages = view::messages(&state, &resolved.provider, &resolved.model);
