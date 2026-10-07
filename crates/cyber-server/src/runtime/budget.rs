@@ -186,9 +186,26 @@ impl Inner {
 }
 
 pub(super) struct GatedAdapter<'a> {
-    pub inner: &'a Inner,
-    pub handle: &'a Handle,
-    pub adapter: &'a dyn cyber_llm::Adapter,
+    inner: &'a Inner,
+    handle: &'a Handle,
+    adapter: &'a dyn cyber_llm::Adapter,
+    failure: std::sync::Mutex<Option<RuntimeError>>,
+}
+impl<'a> GatedAdapter<'a> {
+    pub fn new(inner: &'a Inner, handle: &'a Handle, adapter: &'a dyn cyber_llm::Adapter) -> Self {
+        Self {
+            inner,
+            handle,
+            adapter,
+            failure: std::sync::Mutex::new(None),
+        }
+    }
+    pub fn take_error(&self) -> Option<RuntimeError> {
+        self.failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
 }
 impl cyber_llm::Adapter for GatedAdapter<'_> {
     fn stream(
@@ -196,9 +213,17 @@ impl cyber_llm::Adapter for GatedAdapter<'_> {
         request: cyber_llm::LlmRequest,
     ) -> futures::future::BoxFuture<'_, Result<cyber_llm::EventStream, cyber_llm::LlmError>> {
         Box::pin(async move {
-            self.inner.check_budget(self.handle).await.map_err(|e| {
-                cyber_llm::LlmError::new(cyber_llm::ErrorKind::InvalidRequest, e.to_string())
-            })?;
+            if let Err(error) = self.inner.check_budget(self.handle).await {
+                let message = error.to_string();
+                *self
+                    .failure
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+                return Err(cyber_llm::LlmError::new(
+                    cyber_llm::ErrorKind::InvalidRequest,
+                    message,
+                ));
+            }
             self.adapter.stream(request).await
         })
     }

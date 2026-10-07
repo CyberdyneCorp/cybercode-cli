@@ -125,7 +125,7 @@ jobs:
         run: cargo test --locked -p cyber-cli --test exec_delegation --bin cyber
       - name: Native Session subtree budgets and config validation
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-server --test budgets -p cyber-core --test config -p cyber-store --test store
+        run: cargo test --locked -p cyber-server --test budgets --test budget_errors -p cyber-core --test config -p cyber-store --test store
       - name: Native Session budget API
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http session_api_persists_budget_and_refuses_invalid_or_reserved_objects

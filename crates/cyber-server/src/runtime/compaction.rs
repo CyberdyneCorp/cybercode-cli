@@ -260,10 +260,22 @@ impl Inner {
             Err(error) => {
                 self.commit(
                     handle,
-                    vec![event(COMPACTION_FAILED, &CompactionFailed { error })],
+                    vec![event(
+                        COMPACTION_FAILED,
+                        &CompactionFailed {
+                            error: error.to_string(),
+                        },
+                    )],
                 )
                 .await?;
-                Err(RuntimeError::Compaction(FAILURE.into()))
+                if matches!(
+                    &error,
+                    RuntimeError::BudgetExceeded { .. } | RuntimeError::Store(_)
+                ) {
+                    Err(error)
+                } else {
+                    Err(RuntimeError::Compaction(FAILURE.into()))
+                }
             }
         }
     }
@@ -286,8 +298,11 @@ impl Inner {
         tail: usize,
         instructions: Option<&str>,
         model: &str,
-    ) -> Result<(String, cyber_llm::Usage, Option<f64>), String> {
-        let resolved = self.resolver.resolve(model)?;
+    ) -> Result<(String, cyber_llm::Usage, Option<f64>), RuntimeError> {
+        let resolved = self
+            .resolver
+            .resolve(model)
+            .map_err(RuntimeError::Compaction)?;
         let mut request = resolved.template.clone();
         request.system = vec![SUMMARY_SYSTEM.into()];
         request.messages = vec![Message::user_text(summary_prompt(
@@ -297,24 +312,21 @@ impl Inner {
         ))];
         request.tools = Vec::new();
         request.max_output_tokens = Some(request.max_output_tokens.unwrap_or(4096).min(8192));
-        let handle = self
-            .handle(&state.info.id)
-            .await
-            .map_err(|e| e.to_string())?;
-        self.check_budget(&handle)
-            .await
-            .map_err(|e| e.to_string())?;
-        let gated = super::budget::GatedAdapter {
-            inner: self,
-            handle: &handle,
-            adapter: resolved.adapter.as_ref(),
-        };
+        let handle = self.handle(&state.info.id).await?;
+        self.check_budget(&handle).await?;
+        let gated = super::budget::GatedAdapter::new(self, &handle, resolved.adapter.as_ref());
         let stream = open_with_retry(&gated, &request, &self.options.retry, |_, _, _| {})
             .await
-            .map_err(|e| e.to_string())?;
-        let out = collect(stream, |_| {}).await.map_err(|e| e.to_string())?;
+            .map_err(|error| {
+                gated
+                    .take_error()
+                    .unwrap_or_else(|| RuntimeError::Compaction(error.to_string()))
+            })?;
+        let out = collect(stream, |_| {})
+            .await
+            .map_err(|e| RuntimeError::Compaction(e.to_string()))?;
         if out.text.trim().is_empty() {
-            return Err("the summary was empty".into());
+            return Err(RuntimeError::Compaction("the summary was empty".into()));
         }
         let cost = compute_cost(resolved.cost.as_ref(), &out.usage);
         Ok((out.text.trim().to_string(), out.usage, cost))

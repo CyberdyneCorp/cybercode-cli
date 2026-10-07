@@ -446,11 +446,7 @@ impl Inner {
         let resolved = &prepared.model;
         let session_id = request.cache_key.clone().unwrap_or_default();
         let bus = self.bus.clone();
-        let gated = super::budget::GatedAdapter {
-            inner: self,
-            handle,
-            adapter: resolved.adapter.as_ref(),
-        };
+        let gated = super::budget::GatedAdapter::new(self, handle, resolved.adapter.as_ref());
         let opened = tokio::select! {
             _ = cancel.cancelled() => None,
             r = open_with_retry(&gated, &request, &self.options.retry, |attempt, delay, e| {
@@ -471,7 +467,20 @@ impl Inner {
                     )
                     .await;
             }
-            Some(Err(e)) => return self.fail_step(handle, &message_id, e).await,
+            Some(Err(e)) => {
+                if let Some(error) = gated.take_error() {
+                    self.stop_step(
+                        handle,
+                        &message_id,
+                        Accum::empty(),
+                        error_kind(&error),
+                        &error.to_string(),
+                    )
+                    .await?;
+                    return Err(error);
+                }
+                return self.fail_step(handle, &message_id, e).await;
+            }
             Some(Ok(stream)) => stream,
         };
         let acc = match self

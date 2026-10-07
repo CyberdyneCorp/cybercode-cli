@@ -25,3 +25,10 @@
 - **THEN** validation SHALL reject the malformed object with a scoped diagnostic
 - **AND** untrusted project budget overrides SHALL remain inactive until workspace approval
 - **AND** reserved enforcement SHALL never be interpreted as soft enforcement when conservative reservation support is unavailable
+
+#### Scenario: Budget refusal during preparation or retry
+- **WHEN** another descendant exhausts a shared scope during model resolution or before a provider retry
+- **THEN** the refused dispatch SHALL retain BudgetExceededError instead of a generic compaction or provider invalid-request failure
+- **AND** a refused visible step SHALL settle durably before exactly one live budget error is published
+- **AND** a refused retry SHALL not reach the underlying provider adapter
+- **AND** storage failures at the same boundary SHALL retain their runtime storage error classification
