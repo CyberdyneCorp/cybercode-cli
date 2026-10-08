@@ -22,6 +22,7 @@ ulid.workspace = true
 
 [dev-dependencies]
 futures = "0.3"
+git2 = { version = "0.21.0", default-features = false }
 tempfile.workspace = true
 
 [lints]

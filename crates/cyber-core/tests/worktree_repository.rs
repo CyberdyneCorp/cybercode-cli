@@ -12,6 +12,8 @@ use futures::executor::block_on;
 mod activity;
 #[path = "worktree_repository/inclusion.rs"]
 mod inclusion;
+#[path = "worktree_repository/library_status.rs"]
+mod library_status;
 #[path = "worktree_repository/listing.rs"]
 mod listing;
 #[path = "worktree_repository/removal.rs"]
