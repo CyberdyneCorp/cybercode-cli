@@ -100,6 +100,15 @@
 - **AND** untrusted checkout definitions SHALL remain withheld and their paths SHALL be reported separately
 - **AND** inspection SHALL NOT admit Session, hook execution or model work
 
+#### Scenario: Synthetic execution receipts remain independent of Sessions
+- **WHEN** a synthetic hook execution is admitted and settled
+- **THEN** its `hook.started.1` and `hook.executed.1` facts SHALL mark synthetic identity and use a separate projection without creating or binding a Session
+- **AND** a real Session identity or borrowed Session admission bindings SHALL be refused atomically
+- **AND** Session sequences, receipt history and ordinary last-run observations SHALL remain unchanged
+- **AND** IO policy and identity SHALL be pinned at admission and immutable through settlement
+- **AND** disposal without acknowledged settlement SHALL preserve unknown outcome and mandatory-stop observations without raw IO
+- **AND** once claims SHALL be exclusive within one synthetic invocation identity and SHALL NOT affect a Session's once claims
+
 #### Scenario: Last-run observations match the current handler and checkout
 - **WHEN** a client inspects a loaded hook through API/SDK, CLI list or TUI
 - **THEN** the system SHALL show the latest recorded execution with the same effective handler digest, event and scope in the current canonical checkout

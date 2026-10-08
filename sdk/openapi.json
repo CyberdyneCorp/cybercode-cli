@@ -356,6 +356,10 @@
           "id": {
             "type": "string"
           },
+          "synthetic": {
+            "type": "boolean",
+            "description": "Synthetic identity is never a Session binding."
+          },
           "session_id": {
             "type": "string"
           },

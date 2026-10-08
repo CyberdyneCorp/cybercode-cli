@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::{AdmissionAuthority, Runtime, RuntimeError};
 
 pub(super) const STARTED: &str = "hook.started.1";
-const EXECUTED: &str = "hook.executed.1";
+pub(super) const EXECUTED: &str = "hook.executed.1";
 const ONCE_ADMITTED: &str = "Hook once handler already admitted";
 const IO_LIMIT: usize = 1024 * 1024;
 
@@ -40,6 +40,9 @@ pub struct HookExecutionIo {
 #[serde(deny_unknown_fields)]
 pub struct HookExecutionRecord {
     pub id: String,
+    /// Synthetic identity is never a Session binding.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub synthetic: bool,
     pub session_id: String,
     pub hook_id: String,
     pub digest: String,
@@ -159,7 +162,51 @@ impl Drop for HookExecution {
     }
 }
 
-fn elapsed(started: Instant) -> u64 {
+pub(super) fn admission_record(
+    event: &HookEvent,
+    definition: &HookDefinition,
+    log_io: bool,
+) -> HookExecutionRecord {
+    let identity = event.identity();
+    HookExecutionRecord {
+        id: cyber_core::ids::new_id("hke"),
+        synthetic: false,
+        session_id: identity.session_id.clone(),
+        hook_id: definition
+            .handler
+            .id
+            .clone()
+            .unwrap_or_else(|| definition.digest.clone()),
+        digest: definition.digest.clone(),
+        event: event.event().into(),
+        call_id: event
+            .as_json()
+            .get("call_id")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        tool_name: event
+            .as_json()
+            .get("tool_name")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        scope: definition.scope,
+        directory: identity.location.directory.display().to_string(),
+        agent: identity.agent.clone(),
+        mode: identity.mode.clone(),
+        started_ms: chrono::Utc::now().timestamp_millis(),
+        log_io,
+        once: definition.handler.once,
+        status: HookExecutionStatus::Running,
+        duration_ms: None,
+        outcome: None,
+        decision: None,
+        acknowledged: None,
+        must_stop: false,
+        io: None,
+    }
+}
+
+pub(super) fn elapsed(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -209,42 +256,7 @@ impl Runtime {
         let activity = super::activity::Scope::reserve(&self.inner, &handle).await?;
         let authority = activity.authority();
         authority.verify(self, &event.identity().session_id)?;
-        let identity = event.identity();
-        let record = HookExecutionRecord {
-            id: cyber_core::ids::new_id("hke"),
-            session_id: identity.session_id.clone(),
-            hook_id: definition
-                .handler
-                .id
-                .clone()
-                .unwrap_or_else(|| definition.digest.clone()),
-            digest: definition.digest.clone(),
-            event: event.event().into(),
-            call_id: event
-                .as_json()
-                .get("call_id")
-                .and_then(|value| value.as_str())
-                .map(str::to_owned),
-            tool_name: event
-                .as_json()
-                .get("tool_name")
-                .and_then(|value| value.as_str())
-                .map(str::to_owned),
-            scope: definition.scope,
-            directory: identity.location.directory.display().to_string(),
-            agent: identity.agent.clone(),
-            mode: identity.mode.clone(),
-            started_ms: chrono::Utc::now().timestamp_millis(),
-            log_io,
-            once: definition.handler.once,
-            status: HookExecutionStatus::Running,
-            duration_ms: None,
-            outcome: None,
-            decision: None,
-            acknowledged: None,
-            must_stop: false,
-            io: None,
-        };
+        let record = admission_record(event, definition, log_io);
         let mut data = serde_json::to_value(&record).expect("receipt serializes");
         data["admission_bindings"] =
             serde_json::to_value(&authority.bindings).expect("authority serializes");
@@ -489,6 +501,9 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
     if event.aggregate_id != record.id {
         return Err("Hook execution aggregate differs from receipt".into());
     }
+    if record.synthetic {
+        return super::hook_tests::project(tx, event, &record);
+    }
     let data = serde_json::to_string(&record).map_err(|error| error.to_string())?;
     if event.kind == STARTED {
         let directory: String = tx
@@ -523,19 +538,7 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         let previous: HookExecutionRecord =
             serde_json::from_str(&previous.ok_or("Hook execution is absent or already settled")?)
                 .map_err(|error| error.to_string())?;
-        let mut expected = record.clone();
-        expected.status = previous.status;
-        expected.duration_ms = None;
-        expected.outcome = None;
-        expected.decision = None;
-        expected.acknowledged = None;
-        expected.must_stop = false;
-        expected.io = None;
-        if serde_json::to_value(expected).map_err(|error| error.to_string())?
-            != serde_json::to_value(previous).map_err(|error| error.to_string())?
-        {
-            return Err("Hook receipt changed its admitted identity or IO policy".into());
-        }
+        verify_settlement(&record, &previous)?;
         let status = if record.status == HookExecutionStatus::Unknown {
             "unknown"
         } else {
@@ -546,6 +549,26 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
             params![record.id, status, data],
         )
         .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub(super) fn verify_settlement(
+    record: &HookExecutionRecord,
+    previous: &HookExecutionRecord,
+) -> Result<(), String> {
+    let mut expected = record.clone();
+    expected.status = previous.status;
+    expected.duration_ms = None;
+    expected.outcome = None;
+    expected.decision = None;
+    expected.acknowledged = None;
+    expected.must_stop = false;
+    expected.io = None;
+    if serde_json::to_value(expected).map_err(|error| error.to_string())?
+        != serde_json::to_value(previous).map_err(|error| error.to_string())?
+    {
+        return Err("Hook receipt changed its admitted identity or IO policy".into());
     }
     Ok(())
 }

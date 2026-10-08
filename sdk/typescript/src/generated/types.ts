@@ -352,6 +352,8 @@ export type HookExecutionIo = {
 
 export type HookExecutionRecord = {
   id: string;
+  /** Synthetic identity is never a Session binding. */
+  synthetic?: boolean;
   session_id: string;
   hook_id: string;
   digest: string;

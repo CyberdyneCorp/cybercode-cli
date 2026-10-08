@@ -477,6 +477,10 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
     if event.kind == super::subtree_stop::SETTLED {
         return super::subtree_stop::project(tx, event);
     }
+    // Synthetic receipts use no Session authority; their projector rejects Session aliases.
+    if event.kind == super::hooks::STARTED && event.data["synthetic"] == true {
+        return Ok(());
+    }
     check_closed_admission(tx, event)?;
     let source = match event.kind.as_str() {
         super::events::CREATED => event.data["info"]["parent_id"].as_str().map(str::to_string),
