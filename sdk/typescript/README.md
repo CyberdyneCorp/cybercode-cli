@@ -63,6 +63,15 @@ What a method resolves with:
 So `client.session.get(id)` gives a `Session`, while `client.session.create()` gives
 `{ location, data: Session }` and `client.session.list()` gives `{ location, data: { data, cursor } }`.
 
+Queue a prompt with `client.session.prompt(id, { parts: [{ type: "text", text: "follow up" }],
+delivery: "queue", resume: false })`, then call `client.session.wake(id)` to dispatch the
+existing inbox row. Wake takes no prompt body and resolves to `undefined`. Held input needs
+`client.session.inboxRelease(id, messageID, { delivery: "queue" })` instead. An idle child keeps
+its structured schema and starts a fresh attempt after verified checkout preparation;
+preparation refusal leaves the row pending or held. A completed child with no promotable
+input keeps its result without starting inference. Explicit wake currently dispatches one
+queued structured attempt; automatic handoff of subsequent structured attempts remains open.
+
 ## Session budgets
 
 `client.session.create({ budget: { max_tokens: 100000, max_cost_usd: 2, enforcement: "soft" } })`

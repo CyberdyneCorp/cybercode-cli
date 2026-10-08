@@ -2418,3 +2418,227 @@ async fn child_thread_unacknowledged_settlement_is_durable_and_refuses_restart_d
     );
     assert_eq!(h.models.requests("test/main").len(), 1);
 }
+
+#[tokio::test]
+async fn child_thread_deferred_input_runs_a_fresh_structured_attempt_on_wake_or_release() {
+    use cyber_server::runtime::{
+        Admission, CreateSession, Delivery, InputStatus, StructuredSchema,
+    };
+    for held in [false, true] {
+        let h = Harness::new(Setup {
+            scripts: vec![(
+                "test/main",
+                vec![
+                    tools(&[("first", "return_result", "1")]),
+                    tools(&[("second", "return_result", "2")]),
+                ],
+            )],
+            ..Default::default()
+        });
+        let parent = h.session().await;
+        let child = h
+            .runtime
+            .create_session(CreateSession {
+                directory: h.repo.display().to_string(),
+                model: "test/main".into(),
+                parent_id: Some(parent),
+                subagent_name: Some("review".into()),
+                output_schema: Some(StructuredSchema::new(json!({"type":"integer"})).unwrap()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        h.runtime
+            .admit(&child, Admission::text("initial", Delivery::Steer))
+            .await
+            .unwrap();
+        h.runtime.wait_idle(&child).await;
+        let api = Api::new(&h);
+        let mut deferred = prompt("deferred follow up");
+        deferred["id"] = json!("msg_deferred");
+        deferred["delivery"] = json!(if held { "hold" } else { "queue" });
+        deferred["resume"] = json!(false);
+        assert_eq!(
+            api.post(&format!("/sessions/{child}/prompt"), deferred)
+                .await
+                .0,
+            StatusCode::ACCEPTED
+        );
+        let before = h.state(&child).await;
+        let seq = before.input("msg_deferred").unwrap().admitted_seq;
+        assert_eq!(before.structured_result(), Some(&json!(1)));
+        if held {
+            assert_eq!(
+                api.post(
+                    &format!("/sessions/{child}/inbox/msg_deferred/release"),
+                    json!({"delivery":"queue"})
+                )
+                .await
+                .0,
+                StatusCode::NO_CONTENT
+            );
+        } else {
+            assert_eq!(
+                api.post(&format!("/sessions/{child}/wake"), json!({}))
+                    .await
+                    .0,
+                StatusCode::NO_CONTENT
+            );
+        }
+        h.runtime.wait_idle(&child).await;
+        let state = h.state(&child).await;
+        assert_eq!(state.structured_result(), Some(&json!(2)), "held={held}");
+        assert_eq!(
+            state.input("msg_deferred").unwrap().status,
+            InputStatus::Promoted
+        );
+        assert_eq!(state.input("msg_deferred").unwrap().admitted_seq, seq);
+        assert_eq!(state.inbox.len(), 2);
+        let last = state.last_seq;
+        assert_eq!(
+            api.post(&format!("/sessions/{child}/wake"), json!({}))
+                .await
+                .0,
+            StatusCode::NO_CONTENT
+        );
+        h.runtime.wait_idle(&child).await;
+        assert_eq!(h.state(&child).await.last_seq, last);
+        assert_eq!(h.models.requests("test/main").len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn child_thread_held_release_and_queued_wake_refuse_result_ownership_without_mutation() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery, StructuredSchema};
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![tools(&[("first", "return_result", "1")])])],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            output_schema: Some(StructuredSchema::new(json!({"type":"integer"})).unwrap()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.runtime
+        .admit(&child, Admission::text("initial", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&child).await;
+    let held = h
+        .runtime
+        .admit_user(&child, Admission::text("held", Delivery::Hold))
+        .await
+        .unwrap();
+    let mut queued = Admission::text("queue", Delivery::Queue);
+    queued.resume = false;
+    h.runtime.admit_user(&child, queued).await.unwrap();
+    let _owner = h.runtime.claim_child_execution(&parent, &child).unwrap();
+    let before = h.state(&child).await;
+    let api = Api::new(&h);
+    assert_eq!(
+        api.post(
+            &format!("/sessions/{child}/inbox/{}/release", held.message_id),
+            json!({"delivery":"steer"})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        api.post(&format!("/sessions/{child}/wake"), json!({}))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(h.state(&child).await, before);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+}
+
+#[tokio::test]
+async fn child_thread_explicit_wakes_preserve_structured_queue_order_and_edited_input() {
+    use cyber_server::runtime::{
+        Admission, CreateSession, Delivery, InputStatus, StructuredSchema,
+    };
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("first", "return_result", "1")]),
+                tools(&[("second", "return_result", "2")]),
+                tools(&[("third", "return_result", "3")]),
+            ],
+        )],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent),
+            output_schema: Some(StructuredSchema::new(json!({"type":"integer"})).unwrap()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.runtime
+        .admit(&child, Admission::text("initial", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&child).await;
+    let mut receipts = Vec::new();
+    for text in ["obsolete queue text", "last queue text"] {
+        let mut admission = Admission::text(text, Delivery::Queue);
+        admission.resume = false;
+        receipts.push(h.runtime.admit_user(&child, admission).await.unwrap());
+    }
+    h.runtime
+        .edit_input(
+            &child,
+            &receipts[0].message_id,
+            Some(vec![cyber_llm::Content::Text {
+                text: "edited first queue text".into(),
+            }]),
+            None,
+        )
+        .await
+        .unwrap();
+    for (index, value) in [(0, 2), (1, 3)] {
+        h.runtime.wake(&child).await.unwrap();
+        h.runtime.wait_idle(&child).await;
+        let state = h.state(&child).await;
+        assert_eq!(state.structured_result(), Some(&json!(value)));
+        assert_eq!(
+            state.input(&receipts[index].message_id).unwrap().status,
+            InputStatus::Promoted
+        );
+        assert_eq!(
+            state
+                .input(&receipts[index].message_id)
+                .unwrap()
+                .admitted_seq,
+            receipts[index].admitted_seq
+        );
+        if index == 0 {
+            assert_eq!(
+                state.input(&receipts[1].message_id).unwrap().status,
+                InputStatus::Pending
+            );
+        }
+    }
+    let request = serde_json::to_string(&h.models.requests("test/main")[1]).unwrap();
+    assert!(request.contains("edited first queue text"));
+    assert!(!request.contains("obsolete queue text"));
+    assert_eq!(h.state(&child).await.inbox.len(), 3);
+}

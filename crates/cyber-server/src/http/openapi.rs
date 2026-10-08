@@ -325,6 +325,13 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<Session>>(g),
         op(
             "post",
+            "/sessions/{sessionID}/wake",
+            "v1.session.wake",
+            "Wake existing promotable Session input without admitting a new prompt",
+        )
+        .status(204),
+        op(
+            "post",
             "/sessions/{sessionID}/compact",
             "v1.session.compact",
             "Compact now or at the next Safe Boundary",

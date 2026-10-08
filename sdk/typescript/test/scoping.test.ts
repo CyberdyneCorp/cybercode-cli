@@ -148,3 +148,13 @@ test("session.children preserves parent identity and cursor without Location sco
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
   assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
 });
+
+test("session.wake dispatches existing input without a prompt body or Location scope", async () => {
+  const { client, calls } = mockClient(() => new Response(null, { status: 204 }), { directory: "/repo/a" });
+  assert.equal(await client.at("/repo/b").session.wake("ses/child"), undefined);
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fchild/wake");
+  assert.equal(calls[0]?.method, "POST");
+  assert.equal(calls[0]?.body, undefined);
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
+  assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+});

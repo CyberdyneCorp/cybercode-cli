@@ -2452,3 +2452,155 @@ async fn public_child_continuation_plan_mode_keeps_model_writes_denied() {
     );
     assert_eq!(flow.main.requests().len(), 3);
 }
+
+#[tokio::test]
+async fn deferred_child_input_replays_and_wakes_through_verified_checkout_recreation() {
+    use cyber_server::runtime::{Admission, Delivery, InputStatus};
+    let flow = flow(vec![text("first")], false);
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"deferred-replay","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let child = first["id"].as_str().unwrap().to_owned();
+    let original = flow
+        .runtime
+        .state(&child)
+        .await
+        .unwrap()
+        .child_worktree()
+        .unwrap()
+        .clone();
+    let mut input = Admission::text("obsolete text", Delivery::Queue);
+    input.resume = false;
+    let receipt = flow.runtime.admit_user(&child, input).await.unwrap();
+    flow.runtime
+        .edit_input(
+            &child,
+            &receipt.message_id,
+            Some(vec![cyber_llm::Content::Text {
+                text: "edited followup".into(),
+            }]),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!original.path.exists());
+    flow.runtime.shutdown().await;
+    let mut fixture = flow.f;
+    fixture.renew_host(Some("full-access".into()));
+    let restored = Flow::with(
+        fixture,
+        vec![text("resumed findings")],
+        false,
+        Arc::new(NoSnapshots),
+    );
+    restored.runtime.wake(&child).await.unwrap();
+    restored.runtime.wait_idle(&child).await;
+    let state = restored.runtime.state(&child).await.unwrap();
+    let managed = state.child_worktree().unwrap();
+    assert_ne!(managed.id, original.id);
+    assert_eq!(managed.branch, original.branch);
+    assert_eq!(managed.base, original.base);
+    assert!(!state.child_worktree_setup_pending());
+    assert!(!managed.path.exists());
+    let row = state.input(&receipt.message_id).unwrap();
+    assert_eq!(row.status, InputStatus::Promoted);
+    assert_eq!(row.admitted_seq, receipt.admitted_seq);
+    assert_eq!(restored.main.requests().len(), 1);
+    let request = serde_json::to_string(&restored.main.requests()[0]).unwrap();
+    assert!(request.contains("edited followup"));
+    assert!(!request.contains("obsolete text"));
+    let events = restored
+        .f
+        .store
+        .read_events(&child, -1, 200)
+        .unwrap()
+        .events;
+    let settled = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "session.child.continuation_settled.1")
+        .unwrap();
+    assert_eq!(settled.data["worktree"]["kept"], false);
+}
+
+#[tokio::test]
+async fn child_wake_without_promotable_input_keeps_removed_checkout_and_terminal_state() {
+    use cyber_server::runtime::{Admission, Delivery};
+    let flow = flow(vec![text("first"), text("must not run")], false);
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect","name":"noop-wake","isolation":"worktree"}),
+    )
+    .await
+    .unwrap();
+    let child = first["id"].as_str().unwrap();
+    // Held input is deliberately excluded from wake until explicitly released.
+    flow.runtime
+        .admit_user(child, Admission::text("held followup", Delivery::Hold))
+        .await
+        .unwrap();
+    let before = flow.runtime.state(child).await.unwrap();
+    assert!(!before.child_worktree().unwrap().path.exists());
+    flow.f
+        .set_config(json!({"permissions":{"worktree":"deny"}}));
+    flow.runtime.wake(child).await.unwrap();
+    flow.runtime.wait_idle(child).await;
+    assert_eq!(flow.runtime.state(child).await.unwrap(), before);
+    assert!(!before.child_worktree().unwrap().path.exists());
+    assert_eq!(flow.main.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn held_child_release_preserves_input_when_checkout_preparation_is_refused_or_fails() {
+    use cyber_server::runtime::{Admission, Delivery, InputStatus};
+    for failure in ["deny", "setup"] {
+        let flow = flow(vec![text("first"), text("must not run")], false);
+        let parent = flow.session("bypass").await;
+        let first = invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"held-refusal","isolation":"worktree"}),
+        )
+        .await
+        .unwrap();
+        let child = first["id"].as_str().unwrap();
+        let receipt = flow
+            .runtime
+            .admit_user(child, Admission::text("held followup", Delivery::Hold))
+            .await
+            .unwrap();
+        let before = flow.runtime.state(child).await.unwrap();
+        flow.f.set_config(match failure {
+            "deny" => json!({"permissions":{"worktree":"deny"}}),
+            _ => json!({"permissions":{"worktree":"allow"},"worktrees":{"setup":["exit 17"]}}),
+        });
+        assert!(
+            flow.runtime
+                .release(child, &receipt.message_id, Delivery::Queue)
+                .await
+                .is_err()
+        );
+        let after = flow.runtime.state(child).await.unwrap();
+        assert_eq!(after.inbox, before.inbox);
+        assert_eq!(
+            after.input(&receipt.message_id).unwrap().status,
+            InputStatus::Held
+        );
+        assert_eq!(flow.main.requests().len(), 1);
+        if failure == "deny" {
+            assert_eq!(after, before);
+            assert!(!after.child_worktree().unwrap().path.exists());
+        } else {
+            assert!(after.child_worktree_setup_pending());
+            assert!(after.child_worktree().unwrap().path.exists());
+            assert_ne!(after.info.worktree_id, before.info.worktree_id);
+        }
+    }
+}

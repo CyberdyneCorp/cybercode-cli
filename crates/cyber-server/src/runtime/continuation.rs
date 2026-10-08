@@ -29,10 +29,10 @@ impl Runtime {
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
             return Ok(receipt);
         }
-        let Some(parent) = &state.info.parent_id else {
+        if state.info.parent_id.is_none() {
             drop(lifecycle);
             return self.admit(id, admission).await;
-        };
+        }
         if self.child_is_settling(id) {
             return Err(RuntimeError::Busy(id.into()));
         }
@@ -40,23 +40,9 @@ impl Runtime {
             drop(lifecycle);
             return self.admit(id, admission).await;
         }
-        let owner = self
-            .claim_child_execution(parent, id)
-            .map_err(|_| RuntimeError::Busy(id.into()))?;
-        self.ensure_user_child_outcome(&handle, &state)?;
         drop(lifecycle);
-        let stop = self.inner.closed.child_token();
-        let _on_return = stop.clone().drop_guard();
-        let parent = self.state(parent).await?.info;
-        let settlement = self
-            .inner
-            .tools
-            .prepare_child_continuation(&parent, &state, &owner, stop)
-            .await
-            .map_err(RuntimeError::Invalid)?;
+        let (owner, settlement) = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
-        let ready = handle.state.lock().await.clone();
-        self.ensure_user_child_ready(&handle, &ready).await?;
         self.inner.commit_staged_revert(&handle).await?;
         let mut state = handle.state.lock().await;
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
@@ -104,6 +90,111 @@ impl Runtime {
         );
         launch_child(&self.inner, &mut drains, id, owner, settlement);
         Ok(receipt)
+    }
+
+    async fn prepare_user_child(
+        &self,
+        handle: &Handle,
+        state: &SessionState,
+    ) -> Result<(ChildExecution, Option<Box<dyn ChildContinuation>>), RuntimeError> {
+        drop(self.inner.open().await?);
+        let parent = state
+            .info
+            .parent_id
+            .as_deref()
+            .ok_or_else(|| RuntimeError::Invalid("Not a child Session".into()))?;
+        let owner = self
+            .claim_child_execution(parent, &state.info.id)
+            .map_err(|_| RuntimeError::Busy(state.info.id.clone()))?;
+        self.ensure_user_child_outcome(handle, state)?;
+        let stop = self.inner.closed.child_token();
+        let _on_return = stop.clone().drop_guard();
+        let parent = self.state(parent).await?.info;
+        let settlement = self
+            .inner
+            .tools
+            .prepare_child_continuation(&parent, state, &owner, stop)
+            .await
+            .map_err(RuntimeError::Invalid)?;
+        let ready = handle.state.lock().await.clone();
+        self.ensure_user_child_ready(handle, &ready).await?;
+        Ok((owner, settlement))
+    }
+
+    /// Return false for a root or an active child, preserving its normal safe boundary.
+    pub(super) async fn continue_child_input(
+        &self,
+        id: &str,
+        release: Option<(&str, Delivery)>,
+    ) -> Result<bool, RuntimeError> {
+        drop(self.inner.open().await?);
+        let handle = self.inner.handle(id).await?;
+        let state = handle.state.lock().await.clone();
+        if state.info.parent_id.is_none() {
+            return Ok(false);
+        }
+        state.ensure_worktree_ready()?;
+        if self.child_is_settling(id) {
+            return Err(RuntimeError::Busy(id.into()));
+        }
+        if self.is_running(id) {
+            return Ok(false);
+        }
+        if let Some((message, _)) = release {
+            let row = state
+                .input(message)
+                .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message}")))?;
+            super::check_inbox_action(row, super::events::InboxAction::Released)?;
+        } else if !has_pending_input(&state) {
+            return Ok(true);
+        }
+        let (owner, settlement) = self.prepare_user_child(&handle, &state).await?;
+        let _lifecycle = self.inner.open().await?;
+        self.inner.commit_staged_revert(&handle).await?;
+        let mut state = handle.state.lock().await;
+        state.ensure_worktree_ready()?;
+        let mut events = Vec::new();
+        if let Some((message, delivery)) = release {
+            let row = state
+                .input(message)
+                .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message}")))?;
+            super::check_inbox_action(row, super::events::InboxAction::Released)?;
+            events.push(event(
+                super::events::INBOX_UPDATED,
+                &super::events::InboxUpdated {
+                    message_id: message.into(),
+                    action: super::events::InboxAction::Released,
+                    parts: None,
+                    delivery: Some(delivery),
+                },
+            ));
+        } else if !has_pending_input(&state) {
+            return Ok(true);
+        }
+        if self.inner.closed.is_cancelled() {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        let mut drains = self
+            .inner
+            .drains
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if drains.contains_key(id) {
+            return Err(RuntimeError::Busy(id.into()));
+        }
+        events.insert(
+            0,
+            event(
+                RESUMED,
+                &Resumed {
+                    name: state.info.subagent_name.clone(),
+                    output_schema: None,
+                },
+            ),
+        );
+        self.inner.commit_locked(&mut state, events)?;
+        launch_child(&self.inner, &mut drains, id, owner, settlement);
+        Ok(true)
     }
 
     pub(super) fn child_is_settling(&self, id: &str) -> bool {
@@ -161,6 +252,11 @@ impl Runtime {
         }
         lease.settle().map_err(RuntimeError::Invalid)
     }
+}
+
+fn has_pending_input(state: &SessionState) -> bool {
+    state.pending(Delivery::Steer).next().is_some()
+        || state.pending(Delivery::Queue).next().is_some()
 }
 
 fn launch_child(

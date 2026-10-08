@@ -579,12 +579,18 @@ impl Runtime {
         message_id: &str,
         delivery: Delivery,
     ) -> Result<(), RuntimeError> {
-        let _admission = self.inner.open().await?;
         if delivery == Delivery::Hold {
             return Err(RuntimeError::Invalid(
                 "release a held input as steer or queue".into(),
             ));
         }
+        if self
+            .continue_child_input(session_id, Some((message_id, delivery)))
+            .await?
+        {
+            return Ok(());
+        }
+        let _admission = self.inner.open().await?;
         self.update_input(
             session_id,
             message_id,
@@ -617,6 +623,12 @@ impl Runtime {
             .input(message_id)
             .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message_id}")))?;
         check_inbox_action(row, action)?;
+        if action == InboxAction::Released {
+            state.ensure_worktree_ready()?;
+            if self.child_is_settling(session_id) {
+                return Err(RuntimeError::Busy(session_id.into()));
+            }
+        }
         let payload = InboxUpdated {
             message_id: message_id.into(),
             action,
@@ -630,6 +642,9 @@ impl Runtime {
 
     /// Start a Drain when idle, or record one coalesced follow-up when one is running.
     pub async fn wake(&self, session_id: &str) -> Result<(), RuntimeError> {
+        if self.continue_child_input(session_id, None).await? {
+            return Ok(());
+        }
         let _admission = self.inner.open().await?;
         if self.child_is_settling(session_id) {
             return Err(RuntimeError::Busy(session_id.into()));

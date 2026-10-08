@@ -384,6 +384,12 @@ export interface Operations {
     body: S.UpdateBody;
     response: S.Session;
   };
+  "v1.session.wake": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
   "v1.tool.list": {
     path: Record<string, never>;
     query: {
@@ -1035,6 +1041,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.wake": {
+    tag: "session",
+    name: "wake",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/wake",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.tool.list": {
     tag: "tool",
     name: "list",
@@ -1299,6 +1317,9 @@ export function createGroups(caller: Caller) {
       /** Rename or archive a Session (`PATCH /api/v1/sessions/{sessionID}`) */
       update: (sessionID: string, body: Operations["v1.session.update"]["body"], options?: RequestOptions): Promise<Operations["v1.session.update"]["response"]> =>
         caller.call("v1.session.update", { path: { sessionID }, body }, options),
+      /** Wake existing promotable Session input without admitting a new prompt (`POST /api/v1/sessions/{sessionID}/wake`) */
+      wake: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.wake"]["response"]> =>
+        caller.call("v1.session.wake", { path: { sessionID } }, options),
     },
     tool: {
       /** Tools offered for an agent and mode (`GET /api/v1/tools`) */

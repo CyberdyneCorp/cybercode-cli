@@ -4623,6 +4623,48 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/wake": {
+      "post": {
+        "operationId": "v1.session.wake",
+        "summary": "Wake existing promotable Session input without admitting a new prompt",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/compact": {
       "post": {
         "operationId": "v1.session.compact",

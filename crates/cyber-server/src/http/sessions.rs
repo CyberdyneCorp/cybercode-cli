@@ -237,6 +237,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route(&format!("{s}/prompt"), post(prompt))
         .route(&format!("{s}/interrupt"), post(interrupt))
+        .route(&format!("{s}/wake"), post(wake))
         .route(&format!("{s}/command"), post(command))
         .route(&format!("{s}/agent"), post(agent))
         .route(&format!("{s}/model"), post(model))
@@ -473,6 +474,11 @@ async fn prompt(
     };
     let receipt: Receipt = state.runtime.admit_user(&id, admission).await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
+}
+
+async fn wake(State(state): State<AppState>, Path(id): Path<String>) -> Result<StatusCode> {
+    state.runtime.wake(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Run a skill or custom command: its expanded template is admitted as the prompt.
