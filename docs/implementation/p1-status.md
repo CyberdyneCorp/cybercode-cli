@@ -16,6 +16,12 @@ Final local validation passes 1057 workspace Rust executions (three ignored entr
 
 The prior `80bc77e` CI run `37782597166` completed with all jobs successful except Windows job `113329182244`: the isolated-child suite passed 49 cases and again timed out waiting for the preparation-start marker in `interrupt_cancels_public_child_preparation_before_late_setup_or_input`. This repeats the observed `a58de7a` failure and remains unresolved; the timeout has not been relaxed.
 
+## Native preparation timeout diagnostics
+
+The isolated-child cancellation fixture now waits for the setup marker with a ten-millisecond timer instead of continuously yielding, and reports early preparation completion immediately. A deadline failure includes the stop operation, task completion state and recorded child events. The ten-second preparation deadline and five-second cancellation limits remain unchanged. Windows CI runs this regression first with uncaptured diagnostics and explicitly propagates its exit code before running the full serial isolated-child suite.
+
+Local validation passes the focused regression and all 54 isolated-child cases, tools all-target Clippy with warnings denied, formatting and all 57 strict specifications; cross-spec lint reports zero errors and 21 warnings. The timer change is a scheduling mitigation, not proof of the native failure's cause. Windows acceptance remains pending. CI for preceding `0f670ed` is in progress when inspected; neither this fixture change nor the full milestone is accepted from local results.
+
 ## Ancestor auto block ceilings
 
 Child dispatch now checks every effective auto-mode ancestor's trusted `always_block` configuration before the child's own mode gate. A matching block records the ancestor identity in a durable policy decision without evaluator inference, and prevents effects even when child mode permits them. Non-auto ancestors do not activate auto configuration. Production tests cover direct and grandparent blocks and the non-auto positive control. The direct regression fails against unchanged `80bc77e` because no ancestor policy decision is recorded; this is not evidence that the previous child executed an unauthorized edit. Ancestor classifier reviews, allow intersections and complete M1.1 acceptance remain open.

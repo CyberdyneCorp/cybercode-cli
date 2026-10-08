@@ -2708,23 +2708,33 @@ async fn interrupt_cancels_public_child_preparation_before_late_setup_or_input()
         flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["printf started > setup-started; while [ ! -f release-setup ]; do sleep 0.02; done; printf late > late-effect"]}}));
         let runtime = flow.runtime.clone();
         let id = child.clone();
-        let continuation = tokio::spawn(async move {
+        let mut continuation = tokio::spawn(async move {
             runtime
                 .admit_user(&id, Admission::text("continue", Delivery::Steer))
                 .await
         });
         let checkout = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
+                if continuation.is_finished() {
+                    let result = (&mut continuation).await;
+                    panic!("{stop}: preparation finished before its setup-started marker: {result:?}");
+                }
                 let state = flow.runtime.state(&child).await.unwrap();
                 let path = &state.child_worktree().unwrap().path;
                 if path.join("setup-started").exists() {
                     break path.clone();
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await
-        .unwrap();
+        .unwrap_or_else(|error| {
+            let events = flow.f.store.read_events(&child, -1, 100).map(|page| {
+                page.events.into_iter().rev().take(8)
+                    .map(|event| (event.seq, event.kind, event.data)).collect::<Vec<_>>()
+            });
+            panic!("{stop}: setup-started marker deadline expired: {error}; continuation finished: {}; recent child events: {events:?}", continuation.is_finished());
+        });
         if stop == "dispose" {
             continuation.abort();
         }
