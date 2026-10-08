@@ -64,7 +64,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
-pub use auto::{AutoDecision, AutoEffect, AutoReview};
+pub use auto::{AutoDecision, AutoEffect, AutoReview, AutoReviewStage};
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};

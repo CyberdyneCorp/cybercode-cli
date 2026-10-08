@@ -821,3 +821,253 @@ async fn checkout_statistics_reset_preserves_other_scopes_and_audit_history() {
         events.len()
     );
 }
+
+#[tokio::test]
+async fn ancestor_classifier_uses_parent_context_and_caps_accept_edits() {
+    for effect in ["allow", "block"] {
+        let f = flow(1, verdict(effect), false);
+        f.f.set_config(
+            json!({"permissions":{"auto_mode":{"policy":"Stay within the parent task"}}}),
+        );
+        let directory = f.f.dir.path().join("parent");
+        std::fs::create_dir_all(directory.join(".git")).unwrap();
+        let parent = f
+            .runtime
+            .create_session(CreateSession {
+                directory: directory.display().to_string(),
+                model: "test/main".into(),
+                mode: Some("auto".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        let child = f
+            .runtime
+            .create_session(CreateSession {
+                directory: f.f.repo.display().to_string(),
+                model: "test/main".into(),
+                mode: Some("accept-edits".into()),
+                parent_id: Some(parent.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        f.prompt(&child, "Write a file").await;
+        f.settle(&child).await;
+        assert_eq!(f.f.repo.join("result0.txt").exists(), effect == "allow");
+        let rows = decisions(&f, &child);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["decision"], effect);
+        assert_eq!(rows[0]["reviewed_session_id"], parent);
+        assert!(decisions(&f, &parent).is_empty());
+        let requests = f.requests("test/summary");
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0]
+                .system
+                .iter()
+                .any(|s| s.contains("Stay within the parent task"))
+        );
+        let cyber_llm::Content::Text { text } = &requests[0].messages[0].content[0] else {
+            panic!("evidence required")
+        };
+        let evidence: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(evidence["location"], directory.display().to_string());
+        assert_eq!(
+            evidence["execution_location"],
+            f.f.repo.display().to_string()
+        );
+        assert_eq!(evidence["reviewed_session_id"], parent);
+        assert!(
+            !evidence["last_messages"]
+                .to_string()
+                .contains("Write a file")
+        );
+    }
+}
+
+#[tokio::test]
+async fn ancestor_blocks_count_once_per_action_after_intermediate_allows() {
+    let replies = (0..3)
+        .flat_map(|_| [verdict("allow").remove(0), verdict("block").remove(0)])
+        .collect();
+    let f = flow(4, replies, false);
+    let parent = f.session("auto").await;
+    let child = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("auto".into()),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&child, "Write four files").await;
+    f.settle(&child).await;
+    assert!((0..4).all(|i| !f.f.repo.join(format!("result{i}.txt")).exists()));
+    assert_eq!(f.requests("test/summary").len(), 6);
+    let rows = decisions(&f, &child);
+    assert_eq!(rows.len(), 7);
+    assert_eq!(rows.last().unwrap()["decision"], "fallback");
+    assert_eq!(rows.iter().filter(|r| r["decision"] == "block").count(), 3);
+    assert!(
+        rows.iter()
+            .filter(|r| r["decision"] == "block")
+            .all(|r| r["reviewed_session_id"] == parent)
+    );
+}
+
+#[tokio::test]
+async fn ancestor_deny_fallback_opens_no_manual_request() {
+    let f = flow(1, vec![text("malformed")], true);
+    f.f.set_config(json!({"permissions":{"auto_mode":{"fallback":"deny"}}}));
+    let parent = f.session("auto").await;
+    let child = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("accept-edits".into()),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&child, "Write a file").await;
+    f.settle(&child).await;
+    assert!(!f.f.repo.join("result0.txt").exists());
+    assert!(f.runtime.pending_requests(None).is_empty());
+    assert_eq!(decisions(&f, &child)[0]["reviewed_session_id"], parent);
+    assert!(f.output(&child, "c0").await.contains("fallback is deny"));
+}
+
+#[tokio::test]
+async fn ancestor_auto_cannot_replace_child_default_manual_approval() {
+    let f = flow(1, verdict("allow"), true);
+    let parent = f.session("auto").await;
+    let child = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("default".into()),
+            parent_id: Some(parent),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&child, "Write a file").await;
+    let pending = f.pending(&child).await;
+    assert!(decisions(&f, &child).is_empty());
+    assert!(!f.f.repo.join("result0.txt").exists());
+    f.runtime
+        .reply_permission(&pending.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    f.settle(&child).await;
+    assert_eq!(f.f.read("result0.txt"), "approved");
+    assert!(f.requests("test/summary").is_empty());
+}
+
+#[tokio::test]
+async fn every_auto_ancestor_must_allow_before_child_effects() {
+    let f = flow(
+        1,
+        vec![verdict("allow").remove(0), verdict("block").remove(0)],
+        false,
+    );
+    let grandparent = f.session("auto").await;
+    let parent = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("auto".into()),
+            parent_id: Some(grandparent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let child = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("accept-edits".into()),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&child, "Write a file").await;
+    f.settle(&child).await;
+    assert!(!f.f.repo.join("result0.txt").exists());
+    let rows = decisions(&f, &child);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["reviewed_session_id"], parent);
+    assert_eq!(rows[0]["decision"], "allow");
+    assert_eq!(rows[1]["reviewed_session_id"], grandparent);
+    assert_eq!(rows[1]["decision"], "block");
+    assert!(decisions(&f, &parent).is_empty());
+    assert!(decisions(&f, &grandparent).is_empty());
+    let replay = f.runtime.state(&child).await.unwrap();
+    assert_eq!(
+        replay.totals.usage.input, 400,
+        "two coding turns and two child-billed reviews"
+    );
+    let events = f.f.store.read_events(&child, -1, 100).unwrap().events;
+    let restored = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    assert_eq!(restored.totals.usage, replay.totals.usage);
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["usage"]["input"].as_u64().unwrap())
+            .sum::<u64>(),
+        200
+    );
+}
+
+#[tokio::test]
+async fn confirmed_override_replays_an_ancestor_classifier_block_once() {
+    let f = flow(1, verdict("block"), true);
+    let parent = f.session("auto").await;
+    let child = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("accept-edits".into()),
+            parent_id: Some(parent),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&child, "Write a file").await;
+    f.settle(&child).await;
+    assert!(!f.f.repo.join("result0.txt").exists());
+    let receipt = f.runtime.approve_auto(&child).await.unwrap();
+    let pending = f.pending(&child).await;
+    f.runtime
+        .reply_permission(&pending.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    replay_settled(&f, &child, &receipt).await;
+    assert_eq!(f.f.read("result0.txt"), "approved");
+    assert_eq!(f.requests("test/summary").len(), 1);
+    assert_eq!(f.main.requests().len(), 2);
+    assert!(f.runtime.approve_auto(&child).await.is_err());
+    assert!(
+        cyber_tools::permissions::saved::list(&f.f.store, None)
+            .unwrap()
+            .is_empty()
+    );
+}

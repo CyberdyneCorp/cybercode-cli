@@ -15,7 +15,7 @@ Snapshot: 2026-10-08. The full goal covers M1.1–M1.5 and all P1-tagged contrac
 
 The absence of matching hooks/plugin/memory/LSP/browser/import/ACP implementation files in the current crates is evidence that later milestones need implementation, not evidence of a precise completion percentage. Existing passing tests establish their tested boundaries only. Check each scenario and public surface before changing an entry to accepted.
 
-Production auto-mode tool dispatch now has local evidence; see [current status](p1-status.md#production-auto-mode-tool-classification). Validated auto-mode configuration is implemented locally. Checkout-scoped statistics/reset are implemented locally. Confirmed one-shot replay is implemented locally through the TUI, API and SDK. Next priorities are ancestor auto configuration/review, remaining permission ceilings and complete native Windows enforcement. Later milestone delivery areas remain in scope. P0 local-model evaluation remains open and its artifacts are preserved.
+Production auto-mode tool dispatch now has local evidence; see [current status](p1-status.md#production-auto-mode-tool-classification). Validated auto-mode configuration is implemented locally. Checkout-scoped statistics/reset are implemented locally. Confirmed one-shot replay is implemented locally through the TUI, API and SDK. Ancestor auto configuration/review is implemented locally with independent gates and parent context. Next priorities are native acceptance, remaining permission ceilings and complete Windows enforcement. Later milestone delivery areas remain in scope. P0 local-model evaluation remains open and its artifacts are preserved.
 
 ## Canonical contract checklist
 

@@ -266,7 +266,13 @@ impl Policy {
 
     /// Classification cannot replace a hard ceiling or another Session's manual approval.
     pub(crate) fn auto_review_allowed(&self, req: &Request) -> bool {
-        self.mode == Mode::Auto
+        (self.mode == Mode::Auto || self.parent_modes.contains(&Mode::Auto))
+            && (self.mode == Mode::Auto
+                || self.decide_in_mode(
+                    req,
+                    evaluate_all(&self.rules, &req.action, &req.resources),
+                    self.mode,
+                ) != Decision::Ask)
             && req.removal_risk.is_none()
             && !self.touches_protected(req)
             && self.parent_modes.iter().all(|mode| {

@@ -377,3 +377,40 @@ async fn review_keeps_twenty_recent_messages_and_separates_untrusted_text() {
             .contains(injected)
     );
 }
+
+#[tokio::test]
+async fn staged_review_refuses_unrelated_duplicate_or_empty_gates_before_inference() {
+    use cyber_server::runtime::{AutoReview, AutoReviewStage};
+    let h = Harness::new(setup(vec![verdict("allow")], 1));
+    let id = run(&h).await;
+    let unrelated = h.session().await;
+    let asker = h.tools.executed.lock().unwrap()[0].asker.clone();
+    let stage = |ancestor_id| AutoReviewStage {
+        ancestor_id,
+        review: AutoReview {
+            action: "bash".into(),
+            resources: vec!["echo test".into()],
+            tool: "shell".into(),
+            input: json!({"command":"echo test"}),
+            policy: String::new(),
+        },
+        rule: None,
+    };
+    for stages in [
+        vec![],
+        vec![stage(Some(unrelated))],
+        vec![stage(None), stage(None)],
+    ] {
+        let error = asker
+            .review_auto_stages(stages, tokio_util::sync::CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid auto-mode review ancestry")
+        );
+    }
+    assert_eq!(events(&h, &id).len(), 1);
+    assert_eq!(h.models.requests("test/evaluator").len(), 1);
+}

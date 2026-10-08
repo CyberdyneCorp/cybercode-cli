@@ -4,7 +4,7 @@ use crate::{
     BuiltinHost,
     permissions::{Effect, Mode, Rule},
 };
-use cyber_core::config::{AutoModeSettings, AutoPattern};
+use cyber_core::config::AutoModeSettings;
 use cyber_server::runtime::SessionState;
 use std::path::Path;
 
@@ -12,7 +12,7 @@ use std::path::Path;
 pub(crate) struct ParentPermissions {
     pub rules: Vec<Rule>,
     pub modes: Vec<Mode>,
-    pub auto_blocks: Vec<(String, AutoPattern)>,
+    pub auto: Vec<(String, AutoModeSettings)>,
 }
 
 impl BuiltinHost {
@@ -53,13 +53,7 @@ impl BuiltinHost {
             if mode == Mode::Auto {
                 let (config, _) = (self.opts.config)(Path::new(&parent.directory))?;
                 let settings = AutoModeSettings::from_config(&config)?;
-                inherited.auto_blocks.extend(
-                    settings
-                        .rules
-                        .always_block
-                        .into_iter()
-                        .map(|rule| (parent.id.clone(), rule)),
-                );
+                inherited.auto.push((parent.id.clone(), settings));
             }
             let rules = self.session_rules(
                 Path::new(&parent.directory),

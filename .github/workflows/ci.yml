@@ -92,7 +92,7 @@ jobs:
         run: cargo test --locked -p cyber-tools --test agent_context
       - name: Native ordered permission rules
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-tools --test ordered_permissions --test auto_dispatch
+        run: cargo test --locked -p cyber-tools --test ordered_permissions --test auto_dispatch -p cyber-server --test auto
       - name: Native agent permission admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_permissions

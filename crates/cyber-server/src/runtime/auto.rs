@@ -33,6 +33,13 @@ pub struct AutoReview {
     pub policy: String,
 }
 
+/// One host-authorized gate in a child's auto-mode permission intersection.
+pub struct AutoReviewStage {
+    pub review: AutoReview,
+    pub ancestor_id: Option<String>,
+    pub rule: Option<(AutoEffect, String)>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AutoEffect {
@@ -43,6 +50,8 @@ pub enum AutoEffect {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoDecision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkout_root: Option<String>,
     pub call_id: String,
@@ -86,11 +95,15 @@ impl Asker {
         review: AutoReview,
         cancel: CancellationToken,
     ) -> Result<AutoDecision, RuntimeError> {
-        let inner = self
-            .inner
-            .upgrade()
-            .ok_or_else(|| RuntimeError::Invalid("Auto-mode evaluator has no runtime".into()))?;
-        inner.review_auto(self, review, cancel, None).await
+        self.review_auto_stages(
+            vec![AutoReviewStage {
+                review,
+                ancestor_id: None,
+                rule: None,
+            }],
+            cancel,
+        )
+        .await
     }
     /// Record a trusted host policy decision with the same durable boundary as classification.
     pub async fn decide_auto_rule(
@@ -100,13 +113,55 @@ impl Asker {
         reason: String,
         cancel: CancellationToken,
     ) -> Result<AutoDecision, RuntimeError> {
+        self.review_auto_stages(
+            vec![AutoReviewStage {
+                review,
+                ancestor_id: None,
+                rule: Some((effect, reason)),
+            }],
+            cancel,
+        )
+        .await
+    }
+
+    /// Review all gates under one block-counter lock; intermediate allows cannot reset it.
+    pub async fn review_auto_stages(
+        &self,
+        stages: Vec<AutoReviewStage>,
+        cancel: CancellationToken,
+    ) -> Result<AutoDecision, RuntimeError> {
         let inner = self
             .inner
             .upgrade()
-            .ok_or_else(|| RuntimeError::Invalid("Auto-mode policy has no runtime".into()))?;
-        inner
-            .review_auto(self, review, cancel, Some((effect, reason)))
+            .ok_or_else(|| RuntimeError::Invalid("Auto-mode evaluator has no runtime".into()))?;
+        let runtime = super::Runtime {
+            inner: inner.clone(),
+        };
+        let info = inner
+            .handle(&self.session_id)
+            .await?
+            .state
+            .lock()
             .await
+            .info
+            .clone();
+        let ancestors = runtime.ancestor_authorities(&info).await?;
+        let mut seen = std::collections::HashSet::new();
+        if stages.is_empty()
+            || stages.iter().any(|stage| {
+                !seen.insert(stage.ancestor_id.clone())
+                    || stage.ancestor_id.as_ref().is_some_and(|id| {
+                        !ancestors
+                            .iter()
+                            .any(|a| &a.info.id == id && a.effective_mode == "auto")
+                    })
+            })
+        {
+            return Err(RuntimeError::Invalid(
+                "Invalid auto-mode review ancestry".into(),
+            ));
+        }
+        inner.review_auto(self, stages, cancel).await
     }
 }
 
@@ -114,9 +169,8 @@ impl Inner {
     async fn review_auto(
         &self,
         asker: &Asker,
-        review: AutoReview,
+        stages: Vec<AutoReviewStage>,
         cancel: CancellationToken,
-        rule: Option<(AutoEffect, String)>,
     ) -> Result<AutoDecision, RuntimeError> {
         let handle = self.handle(&asker.session_id).await?;
         // Serialize reviews, including consecutive-block tracking, without holding Session state.
@@ -127,31 +181,28 @@ impl Inner {
         let directory = handle.state.lock().await.info.directory.clone();
         let root = cyber_core::config::project_root(std::path::Path::new(&directory));
         let checkout_root = std::fs::canonicalize(&root).unwrap_or(root);
-        let mut decision = AutoDecision {
-            checkout_root: Some(checkout_root.display().to_string()),
-            call_id: asker.call_id.clone(),
-            action: review.action.clone(),
-            resources: review.resources.clone(),
-            decision: AutoEffect::Fallback,
-            reason: "Three consecutive auto-mode blocks; explicit approval required".into(),
-            model: None,
-            usage: None,
-            cost: None,
-        };
-        if let Some((effect, reason)) = rule {
-            decision.decision = effect;
-            decision.reason = reason;
-        } else if *blocks < 3 {
-            self.evaluate_auto(&handle, &review, &cancel, &mut decision)
-                .await;
+        let mut result = None;
+        for stage in stages {
+            let decision = self
+                .evaluate_auto_stage(
+                    &handle,
+                    &asker.call_id,
+                    stage,
+                    &cancel,
+                    *blocks,
+                    &checkout_root.display().to_string(),
+                )
+                .await?;
+            self.commit(&handle, vec![event(AUTO_DECIDED, &decision)])
+                .await?;
+            self.observe_budget(&handle).await?;
+            let stop = decision.decision != AutoEffect::Allow;
+            result = Some(decision);
+            if stop {
+                break;
+            }
         }
-        if cancel.is_cancelled() {
-            decision.decision = AutoEffect::Fallback;
-            decision.reason = "Auto review cancelled".into();
-        }
-        self.commit(&handle, vec![event(AUTO_DECIDED, &decision)])
-            .await?;
-        self.observe_budget(&handle).await?;
+        let decision = result.ok_or_else(|| RuntimeError::Invalid("Empty auto review".into()))?;
         match decision.decision {
             AutoEffect::Allow => *blocks = 0,
             AutoEffect::Block => *blocks += 1,
@@ -160,9 +211,50 @@ impl Inner {
         Ok(decision)
     }
 
+    async fn evaluate_auto_stage(
+        &self,
+        handle: &std::sync::Arc<super::Handle>,
+        call_id: &str,
+        stage: AutoReviewStage,
+        cancel: &CancellationToken,
+        blocks: u32,
+        checkout_root: &str,
+    ) -> Result<AutoDecision, RuntimeError> {
+        let review = stage.review;
+        let mut decision = AutoDecision {
+            reviewed_session_id: stage.ancestor_id.clone(),
+            checkout_root: Some(checkout_root.into()),
+            call_id: call_id.into(),
+            action: review.action.clone(),
+            resources: review.resources.clone(),
+            decision: AutoEffect::Fallback,
+            reason: "Three consecutive auto-mode blocks; explicit approval required".into(),
+            model: None,
+            usage: None,
+            cost: None,
+        };
+        if let Some((effect, reason)) = stage.rule {
+            decision.decision = effect;
+            decision.reason = reason;
+        } else if blocks < 3 {
+            let context = match stage.ancestor_id {
+                Some(id) => self.handle(&id).await?,
+                None => handle.clone(),
+            };
+            self.evaluate_auto(handle, &context, &review, cancel, &mut decision)
+                .await;
+        }
+        if cancel.is_cancelled() {
+            decision.decision = AutoEffect::Fallback;
+            decision.reason = "Auto review cancelled".into();
+        }
+        Ok(decision)
+    }
+
     async fn evaluate_auto(
         &self,
         handle: &super::Handle,
+        context: &super::Handle,
         review: &AutoReview,
         cancel: &CancellationToken,
         decision: &mut AutoDecision,
@@ -183,12 +275,15 @@ impl Inner {
                 return;
             }
         };
+        let execution_location = handle.state.lock().await.info.directory.clone();
         let request = {
-            let state = handle.state.lock().await;
+            let state = context.state.lock().await;
             let mut messages = view::messages(&state, &resolved.provider, &resolved.model);
             messages.drain(..messages.len().saturating_sub(20));
             let evidence = json!({
                 "location": state.info.directory,
+                "execution_location": execution_location,
+                "reviewed_session_id": state.info.id,
                 "tool_call": review,
                 "last_messages": messages,
                 "user_boundaries": state.task.instructions,

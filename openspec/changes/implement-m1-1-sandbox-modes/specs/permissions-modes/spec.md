@@ -202,3 +202,10 @@
 - **THEN** the request is blocked before effects even when the child's own Mode permits it
 - **AND** the durable policy decision identifies the ancestor without classifier inference or saved approval
 - **AND** an ancestor outside auto mode does not activate its auto-mode configuration
+
+#### Scenario: Ancestor classifier caps child automatic approval
+- **WHEN** a child's eligible action requires approval under an effective auto-mode ancestor
+- **THEN** every auto-mode gate SHALL permit the action before effects, using each ancestor's own trusted policy, Location, recent messages and stated boundaries
+- **AND** decisions and evaluator usage SHALL remain recorded on the executing child, identifying the reviewed ancestor and the actual execution Location
+- **AND** intermediate allows SHALL NOT reset consecutive action blocks; three blocked actions SHALL trigger the ordinary fallback on the next classifier request
+- **AND** a deny fallback anywhere in the intersection SHALL refuse effects, while an independent manual ceiling SHALL remain a manual request

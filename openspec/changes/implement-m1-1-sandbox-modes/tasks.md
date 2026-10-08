@@ -67,6 +67,7 @@
 - [ ] Enforce org-policy mode restrictions; the full permission-mode requirement remains open.
 - [x] Implement confirmed one-shot approve replay, durable exclusive consumption, current permission ceilings, HTTP/SDK/TUI integration and production execution/cancellation regressions. Local validation passes; native acceptance and reviewed orphan/unknown recovery remain open.
 - [x] Preserve effective auto-mode ancestor always-block ceilings in child dispatch, recording ancestor identity before effects; direct/grandparent and non-auto controls cover this boundary. Full ancestor classification and overrides remain open.
+- [x] Batch child and effective auto-mode ancestor gates with parent-specific policy/context, child-billed durable decisions and one consecutive-block update per action. Preserve independent manual/protected ceilings, intersect automatic allows and deny fallbacks, and support confirmed replay of an ancestor classifier block. The admission regression fails on unchanged production main `9b196c3`; 1064 workspace Rust executions, final 37 production/12 runtime cases, workspace all-target Clippy, formatting and 57 strict specs pass locally. Native acceptance and full permission-mode enforcement remain open.
 - [ ] Add Windows CI; run existing platform, recovery and trust regressions.
   - [x] Add a native Windows workspace/test-compilation and executable smoke job.
   - [ ] Prove Windows compilation, sandbox enforcement and native lifecycle/recovery behavior.
