@@ -183,3 +183,20 @@
 - **THEN** the dispatcher SHALL stop subsequent effect admission
 - **AND** missing acknowledgement SHALL remain explicit and SHALL NOT produce an allow decision
 - **AND** raw diagnostics SHALL NOT be persisted in receipts by default
+
+
+#### Scenario: Command launch binds trust to the checkout
+- **WHEN** a resolved command handler is requested for an event
+- **THEN** its current definition SHALL be selected from loaded indexed origins
+- **AND** the event Location SHALL resolve to the same checkout as configuration trust
+- **AND** project/local checkout and exact-handler approvals SHALL be rechecked before spawning
+- **AND** revoked approvals or a changed effective handler digest SHALL prevent launch
+
+#### Scenario: Required hook profile cannot opt out
+- **WHEN** a project, local or sandbox-all command hook runs while ordinary tools use full access
+- **THEN** the command SHALL still use the workspace-write hooks profile with configured network policy and credential masking
+- **AND** an unavailable enforcing backend SHALL refuse execution before the user command starts
+
+#### Scenario: Command scratch preserves unknown ownership
+- **WHEN** the command owner is disposed or termination is not acknowledged
+- **THEN** its private scratch SHALL remain available for recovery rather than being removed as though execution had settled

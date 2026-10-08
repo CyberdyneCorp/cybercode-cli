@@ -1,8 +1,10 @@
 //! Bounded stdin/stdout/stderr transport for an already authorized owned hook process.
 //! The caller must retain this future under its execution owner and persist settlement.
 
+mod launch;
 mod results;
 
+pub use launch::HookCommandRunner;
 pub use results::{HookCommandReport, HookOutcome, interpret_hook_command};
 
 use std::io;

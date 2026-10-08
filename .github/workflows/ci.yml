@@ -69,6 +69,9 @@ jobs:
       - name: Native hook envelopes and captured identity
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test hook_envelopes
+      - name: Native hook command trust and launch refusals
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test hook_command_launch
       - name: Native hook command result contracts
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test hook_command_results
