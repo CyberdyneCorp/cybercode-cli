@@ -14,6 +14,9 @@ use super::{Inner, Runtime, RuntimeError};
 
 pub(super) const STALE: &str = "Child admission was fenced by cancellation or changed ancestry";
 
+pub(super) const CLOSED: &str =
+    "Subtree admission is closed pending cancellation acknowledgement or recovery";
+
 pub(super) const FENCED: &str = "session.admission.fenced.1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,32 +167,30 @@ impl Runtime {
     }
 
     fn snapshot_child_admission(&self, source: &str) -> Result<AdmissionAuthority, RuntimeError> {
-        let source_id = source.to_string();
-        let source = source_id.clone();
-        let bindings = self.inner.store.read(move |conn| {
-            let snapshot = conn.unchecked_transaction()?;
-            let exists = snapshot.query_row(
-                "SELECT EXISTS(SELECT 1 FROM session WHERE id=?1)",
-                [&source],
-                |row| row.get::<_, bool>(0),
-            )?;
-            let bindings = snapshot_chain(&snapshot, &source)?;
-            snapshot.commit()?;
-            Ok((exists, bindings))
-        })?;
-        if !bindings.0 {
-            return Err(RuntimeError::SessionNotFound(source_id));
-        }
-        let bindings = bindings.1.ok_or_else(|| {
-            RuntimeError::Corrupt(
-                "Child admission ancestry has a cycle or a missing ancestor".into(),
-            )
-        })?;
         Ok(AdmissionAuthority {
             runtime: Arc::downgrade(&self.inner),
             cancellations: Vec::new(),
-            bindings,
+            bindings: self.inner.open_admission_chain(source)?,
         })
+    }
+
+    /// Close fresh admission for an owned subtree sweep; this does not stop actors.
+    /// The scope remains closed until acknowledged settlement or reviewed recovery is implemented.
+    pub async fn close_subtree_admissions(&self, id: &str) -> Result<String, RuntimeError> {
+        let _open = self.inner.open().await?;
+        let handle = self.inner.handle(id).await?;
+        let mut state = handle.state.lock().await;
+        self.inner.ensure_admission_open(id)?;
+        self.inner.descendants(id)?;
+        let scope = cyber_core::ids::new_id("op");
+        self.inner.commit_locked(
+            &mut state,
+            vec![super::event(
+                FENCED,
+                &serde_json::json!({"closed":true,"scope_id":scope}),
+            )],
+        )?;
+        Ok(scope)
     }
 
     /// Durable launch boundary for a subsequent owned subtree cancellation sweep.
@@ -204,6 +205,59 @@ impl Runtime {
         )?;
         Ok(())
     }
+}
+
+impl Inner {
+    pub(super) fn ensure_admission_open(&self, source: &str) -> Result<(), RuntimeError> {
+        self.open_admission_chain(source).map(|_| ())
+    }
+
+    fn open_admission_chain(&self, source: &str) -> Result<Vec<Binding>, RuntimeError> {
+        let source_id = source.to_owned();
+        let source = source_id.clone();
+        let (exists, bindings, open) = self.store.read(move |conn| {
+            let snapshot = conn.unchecked_transaction()?;
+            let exists = snapshot.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session WHERE id=?1)",
+                [&source],
+                |row| row.get::<_, bool>(0),
+            )?;
+            let bindings = snapshot_chain(&snapshot, &source)?;
+            let open = match &bindings {
+                Some(bindings) => chain_is_open(&snapshot, bindings)?,
+                None => false,
+            };
+            snapshot.commit()?;
+            Ok((exists, bindings, open))
+        })?;
+        if !exists {
+            return Err(RuntimeError::SessionNotFound(source_id));
+        }
+        let bindings = bindings.ok_or_else(|| {
+            RuntimeError::Corrupt(
+                "Child admission ancestry has a cycle or a missing ancestor".into(),
+            )
+        })?;
+        if !open {
+            return Err(RuntimeError::Conflict(CLOSED.into()));
+        }
+        Ok(bindings)
+    }
+}
+
+fn chain_is_open(conn: &Connection, bindings: &[Binding]) -> Result<bool, StoreError> {
+    for binding in bindings {
+        let closed = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type=?2
+             AND json_extract(data,'$.closed')=1)",
+            params![binding.id, FENCED],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if closed {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn snapshot_chain(conn: &Connection, source: &str) -> Result<Option<Vec<Binding>>, StoreError> {
@@ -269,7 +323,7 @@ fn bindings_current(conn: &Connection, captured: &[Binding]) -> Result<bool, Sto
     let Some(mut current) = snapshot_chain(conn, &source.id)? else {
         return Ok(false);
     };
-    if current.len() != captured.len() {
+    if current.len() != captured.len() || !chain_is_open(conn, &current)? {
         return Ok(false);
     }
     for (current, captured) in current.iter_mut().zip(captured) {
@@ -305,6 +359,7 @@ fn operations_current(conn: &Connection, binding: &Binding) -> Result<bool, Stor
 }
 
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    check_closed_admission(tx, event)?;
     let source = match event.kind.as_str() {
         super::events::CREATED => event.data["info"]["parent_id"].as_str().map(str::to_string),
         super::events::ADMITTED | super::events::RESUMED => tx
@@ -343,4 +398,89 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         return Err(STALE.into());
     }
     Ok(())
+}
+
+fn check_closed_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    use super::events::{
+        ADMITTED, COMPACTION_STARTED, CREATED, EPOCH_STARTED, INBOX_UPDATED, PERMISSION_ASKED,
+        PROMOTED, QUESTION_ASKED, RESUMED, STEP_STARTED, TOOL_DISPATCHED,
+    };
+    if event.kind == FENCED
+        && event.data.get("closed").is_some()
+        && (event.data["closed"] != true
+            || !event.data["scope_id"]
+                .as_str()
+                .is_some_and(|id| !id.trim().is_empty()))
+    {
+        return Err("Invalid closed subtree admission boundary".into());
+    }
+    if shell_receipt(tx, event)? {
+        return Ok(());
+    }
+    let targets: Vec<&str> = match event.kind.as_str() {
+        CREATED => event.data["info"]["parent_id"]
+            .as_str()
+            .into_iter()
+            .collect(),
+        ADMITTED | RESUMED | PROMOTED | EPOCH_STARTED | STEP_STARTED | TOOL_DISPATCHED
+        | COMPACTION_STARTED | PERMISSION_ASKED | QUESTION_ASKED => vec![&event.aggregate_id],
+        INBOX_UPDATED if event.data["action"] == "released" => vec![&event.aggregate_id],
+        "job.started.1" => vec![
+            &event.aggregate_id,
+            event.data["child_id"]
+                .as_str()
+                .ok_or("Missing Job admission target")?,
+        ],
+        "delegation.changed.1" if event.data["data"]["status"] == "pending" => vec![
+            event.data["data"]["session_id"]
+                .as_str()
+                .ok_or("Missing delegation admission source")?,
+        ],
+        _ => return Ok(()),
+    };
+    for target in targets {
+        let chain = snapshot_chain(tx, target)
+            .map_err(|e| e.to_string())?
+            .ok_or("Admission ancestry has a cycle or a missing ancestor")?;
+        if !chain_is_open(tx, &chain).map_err(|e| e.to_string())? {
+            return Err(CLOSED.into());
+        }
+    }
+    Ok(())
+}
+
+fn shell_receipt(tx: &Transaction<'_>, event: &StoredEvent) -> Result<bool, String> {
+    use super::events::{ADMITTED, PROMOTED};
+    if event.data["shell_receipt"] != true {
+        return Ok(false);
+    }
+    match event.kind.as_str() {
+        ADMITTED
+            if event.data["source"] == "shell"
+                && event.data.get("wake").is_none_or(|wake| wake == false) =>
+        {
+            Ok(true)
+        }
+        PROMOTED => tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type=?2
+             AND json_extract(data,'$.message_id')=?3 AND json_extract(data,'$.shell_receipt')=1
+             AND json_extract(data,'$.source')='shell')",
+                params![
+                    event.aggregate_id,
+                    ADMITTED,
+                    event.data["message_id"].as_str()
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| e.to_string())
+            .and_then(|valid| {
+                if valid {
+                    Ok(true)
+                } else {
+                    Err("Missing paired shell settlement receipt".into())
+                }
+            }),
+        _ => Err("Invalid shell settlement receipt".into()),
+    }
 }

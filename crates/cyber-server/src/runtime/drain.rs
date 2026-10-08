@@ -121,6 +121,7 @@ async fn pass_owned(
     forced: bool,
     cancel: &CancellationToken,
 ) -> Result<(), RuntimeError> {
+    inner.ensure_admission_open(&handle.state.lock().await.info.id)?;
     inner.recover(handle).await?;
     let mut continue_tools = false;
     let mut first = forced;

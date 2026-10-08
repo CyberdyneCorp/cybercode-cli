@@ -271,7 +271,10 @@ impl Runtime {
                 self.inner
                     .commit(
                         &handle,
-                        vec![event(ADMITTED, &admitted), event(PROMOTED, &promoted)],
+                        vec![
+                            shell_receipt(ADMITTED, &admitted),
+                            shell_receipt(PROMOTED, &promoted),
+                        ],
                     )
                     .await?;
                 Ok(output)
@@ -374,4 +377,10 @@ impl Runtime {
         }
         self.inner.commit_staged_revert(&handle).await
     }
+}
+
+fn shell_receipt(kind: &str, payload: &impl serde::Serialize) -> cyber_store::NewEvent {
+    let mut receipt = event(kind, payload);
+    receipt.data["shell_receipt"] = serde_json::json!(true);
+    receipt
 }

@@ -134,7 +134,10 @@ pub struct RuntimeOptions {
 impl From<StoreError> for RuntimeError {
     fn from(error: StoreError) -> Self {
         match error {
-            StoreError::Projector { reason, .. } if reason == admission_authority::STALE => {
+            StoreError::Projector { reason, .. }
+                if reason == admission_authority::STALE
+                    || reason == admission_authority::CLOSED =>
+            {
                 Self::Conflict(reason)
             }
             error => Self::Store(error),
@@ -542,6 +545,7 @@ impl Runtime {
         attempt: Option<names::Resumed>,
     ) -> Result<Receipt, RuntimeError> {
         let _admission = self.inner.open().await?;
+        self.inner.ensure_admission_open(session_id)?;
         let admission_bindings = self.callback_admission_bindings(session_id)?;
         if let Some(bindings) = attempt
             .as_ref()
@@ -625,6 +629,7 @@ impl Runtime {
         message_id: &str,
         delivery: Delivery,
     ) -> Result<(), RuntimeError> {
+        self.inner.ensure_admission_open(session_id)?;
         if delivery == Delivery::Hold {
             return Err(RuntimeError::Invalid(
                 "release a held input as steer or queue".into(),
@@ -688,6 +693,7 @@ impl Runtime {
 
     /// Start a Drain when idle, or record one coalesced follow-up when one is running.
     pub async fn wake(&self, session_id: &str) -> Result<(), RuntimeError> {
+        self.inner.ensure_admission_open(session_id)?;
         if self.continue_child_input(session_id, None, false).await? {
             return Ok(());
         }
@@ -708,6 +714,7 @@ impl Runtime {
 
     /// Join an active Drain, or start one that performs at least one Turn.
     pub async fn resume(&self, session_id: &str) -> Result<(), RuntimeError> {
+        self.inner.ensure_admission_open(session_id)?;
         let _admission = self.inner.open().await?;
         if self.child_is_settling(session_id) {
             return Err(RuntimeError::Busy(session_id.into()));
@@ -814,6 +821,7 @@ impl Runtime {
         session_id: &str,
         instructions: Option<String>,
     ) -> Result<(), RuntimeError> {
+        self.inner.ensure_admission_open(session_id)?;
         let _admission = self.inner.open().await?;
         let handle = self.inner.handle(session_id).await?;
         if self.is_running(session_id) {
@@ -1349,7 +1357,7 @@ impl Inner {
 
     fn start_drain(self: &Arc<Self>, id: &str, forced: bool) {
         let mut drains = self.drains.lock().unwrap_or_else(PoisonError::into_inner);
-        if self.closed.is_cancelled() {
+        if self.closed.is_cancelled() || self.ensure_admission_open(id).is_err() {
             return;
         }
         if let Some(entry) = drains.get_mut(id) {

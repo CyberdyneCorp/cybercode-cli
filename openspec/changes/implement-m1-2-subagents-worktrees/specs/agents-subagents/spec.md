@@ -555,3 +555,22 @@
 #### Scenario: Rejected handoff without cancellation acknowledgement
 - **WHEN** a rejected or cancelled direct handoff returns a recorded Running Job without a live cancellation owner
 - **THEN** the request records Unknown with the verified Job identity and a cancelled caller receives a cancellation acknowledgement error
+
+### Requirement: Durable subtree admission closure
+(P1) An owned subtree cancellation SHALL close admission durably while its actors settle. Fresh capture and unbound writer admission SHALL check every ancestor closure. Admission SHALL check the target child as well as the source parent. Generation-only fences SHALL NOT reopen a closed scope. New input, release/reset, child or Job registration, Step/tool dispatch, compaction and new idle native work SHALL refuse closed ancestry. Terminal effect/cancellation receipts SHALL remain writable. Restart SHALL preserve closed admission until verified sweep settlement or reviewed recovery. The durable close primitive SHALL NOT imply completed actor cancellation.
+
+#### Scenario: Fresh request during closed sweep
+- **WHEN** a root or descendant receives fresh work after the scope is durably closed
+- **THEN** capture and the writer refuse it without projecting input, children or Jobs
+
+#### Scenario: Parent outside closed child scope
+- **WHEN** an open parent tries to register a Job targeting a closed child
+- **THEN** the writer refuses the target handoff and rolls back Job registration
+
+#### Scenario: Closure survives restart and another generation fence
+- **WHEN** the runtime restarts or a generation-only fence is added after scope closure
+- **THEN** new descendant work remains refused
+
+#### Scenario: Shell effect already started before closure
+- **WHEN** an already-owned native shell finishes after admission closes
+- **THEN** its internal output receipt remains durable without waking inference or permitting new prompt admission

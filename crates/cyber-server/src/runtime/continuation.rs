@@ -18,6 +18,7 @@ impl Runtime {
         id: &str,
         mut admission: Admission,
     ) -> Result<Receipt, RuntimeError> {
+        self.inner.ensure_admission_open(id)?;
         let lifecycle = self.inner.open().await?;
         let handle = self.inner.handle(id).await?;
         let state = handle.state.lock().await.clone();

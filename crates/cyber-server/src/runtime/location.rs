@@ -49,6 +49,7 @@ impl Inner {
             state.ensure_worktree_ready()?;
         }
         let info = state.info.clone();
+        self.ensure_admission_open(&info.id)?;
         drop(state);
         let lease = self.claim_location(&info, false, cancel).await?;
         if lease.worktree_id != info.worktree_id {
@@ -56,7 +57,10 @@ impl Inner {
                 "Managed checkout identity changed".into(),
             ));
         }
-        let result = operation.await;
+        let result = match self.ensure_admission_open(&info.id) {
+            Ok(()) => operation.await,
+            Err(error) => Err(error),
+        };
         let unsettled = handle.location_uncertain.load(Ordering::SeqCst)
             || handle.state.lock().await.calls.values().any(|call| {
                 matches!(

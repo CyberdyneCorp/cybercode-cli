@@ -199,14 +199,14 @@ async fn unavailable_parent_profile_refuses_child_dispatch() {
     );
 }
 
-fn append_legacy(
+fn restore_corrupt_parent(
     flow: &Flow,
     mut info: cyber_server::runtime::SessionInfo,
     id: &str,
     parent: &str,
 ) {
     info.id = id.into();
-    info.parent_id = Some(parent.into());
+    info.parent_id = None;
     info.rules = json!({"edit":"allow"});
     info.agent = "general".into();
     info.mode = "bypass".into();
@@ -223,6 +223,14 @@ fn append_legacy(
             )],
         )
         .unwrap();
+    let id = id.to_owned();
+    let parent = parent.to_owned();
+    // Restore corruption directly; current admission must not create invalid ancestry.
+    flow.f.store.transaction(move |tx| {
+        tx.execute("UPDATE session SET parent_id=?1 WHERE id=?2", rusqlite::params![parent,id])?;
+        tx.execute("UPDATE event SET data=json_set(data,'$.info.parent_id',?1) WHERE aggregate_id=?2 AND type='session.created.1'", rusqlite::params![parent,id])?;
+        Ok(())
+    }).unwrap();
 }
 
 #[tokio::test]
@@ -230,15 +238,35 @@ async fn restored_ancestry_cycle_refuses_dispatch_without_looping() {
     let flow = write_flow();
     let root = session(&flow, None, "build", "default", Value::Null).await;
     let info = flow.runtime.state(&root).await.unwrap().info;
-    append_legacy(&flow, info.clone(), "ses_a", "ses_b");
-    append_legacy(&flow, info.clone(), "ses_b", "ses_a");
-    append_legacy(&flow, info, "ses_child", "ses_a");
-    flow.prompt("ses_child", "write child.txt").await;
-    flow.settle("ses_child").await;
+    restore_corrupt_parent(&flow, info.clone(), "ses_a", "ses_b");
+    restore_corrupt_parent(&flow, info.clone(), "ses_b", "ses_a");
+    restore_corrupt_parent(&flow, info, "ses_child", "ses_a");
+    let error = flow
+        .runtime
+        .admit(
+            "ses_child",
+            cyber_server::runtime::Admission::text(
+                "write child.txt",
+                cyber_server::runtime::Delivery::Queue,
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        cyber_server::runtime::RuntimeError::Corrupt(_)
+    ));
+    assert!(!flow.runtime.is_running("ses_child"));
+    assert!(flow.main.requests().is_empty());
     assert!(!flow.f.repo.join("child.txt").exists());
-    let result =
-        serde_json::to_string(&flow.runtime.state("ses_child").await.unwrap().calls).unwrap();
-    assert!(result.contains("ancestry cycle"), "{result}");
+    assert!(
+        flow.runtime
+            .state("ses_child")
+            .await
+            .unwrap()
+            .calls
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -246,13 +274,33 @@ async fn restored_missing_parent_refuses_dispatch() {
     let flow = write_flow();
     let root = session(&flow, None, "build", "default", Value::Null).await;
     let info = flow.runtime.state(&root).await.unwrap().info;
-    append_legacy(&flow, info, "ses_child", "ses_missing");
-    flow.prompt("ses_child", "write child.txt").await;
-    flow.settle("ses_child").await;
+    restore_corrupt_parent(&flow, info, "ses_child", "ses_missing");
+    let error = flow
+        .runtime
+        .admit(
+            "ses_child",
+            cyber_server::runtime::Admission::text(
+                "write child.txt",
+                cyber_server::runtime::Delivery::Queue,
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        cyber_server::runtime::RuntimeError::Corrupt(_)
+    ));
+    assert!(!flow.runtime.is_running("ses_child"));
+    assert!(flow.main.requests().is_empty());
     assert!(!flow.f.repo.join("child.txt").exists());
-    let result =
-        serde_json::to_string(&flow.runtime.state("ses_child").await.unwrap().calls).unwrap();
-    assert!(result.contains("ses_missing"), "{result}");
+    assert!(
+        flow.runtime
+            .state("ses_child")
+            .await
+            .unwrap()
+            .calls
+            .is_empty()
+    );
 }
 
 #[tokio::test]
