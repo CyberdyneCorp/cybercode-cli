@@ -102,9 +102,9 @@ pub struct JobAdmission {
 }
 
 pub(super) struct Control {
-    stop: CancellationToken,
-    done: CancellationToken,
-    notify: std::sync::atomic::AtomicBool,
+    pub(super) stop: CancellationToken,
+    pub(super) done: CancellationToken,
+    pub(super) notify: std::sync::atomic::AtomicBool,
 }
 
 pub(super) fn register(registry: &mut EventRegistry) {

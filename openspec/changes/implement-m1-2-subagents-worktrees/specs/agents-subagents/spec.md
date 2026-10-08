@@ -574,3 +574,18 @@
 #### Scenario: Shell effect already started before closure
 - **WHEN** an already-owned native shell finishes after admission closes
 - **THEN** its internal output receipt remains durable without waking inference or permitting new prompt admission
+
+### Requirement: Owned bounded subtree stop
+(P1) Explicit subtree stop SHALL close admission before taking its descendant snapshot and SHALL retain the sweep after caller disposal. It SHALL signal all known scoped Drains, preparations, callback admissions, idle native operations and Jobs before waiting for any actor; Job target ownership SHALL count independently of its parent. Inbox pause intent SHALL remain durable and preserve rows. Acknowledgement SHALL be bounded and SHALL depend on terminal actor/effect evidence, not caller disposal. Missing owners, native uncertainty and held child-result ownership SHALL retain closed admission and a durable Unknown report. A local acknowledgement report SHALL NOT imply verified reopening or complete cross-process ownership.
+
+#### Scenario: Concurrent scoped actors
+- **WHEN** several descendant actors and parent-owned Jobs are active during subtree stop
+- **THEN** all receive cancellation before the sweep waits and unrelated actors remain active
+
+#### Scenario: Disposed sweep caller
+- **WHEN** the caller disappears after admission closes
+- **THEN** the tracked sweep continues to write its bounded settlement report
+
+#### Scenario: Idle native operation lacks acknowledgement
+- **WHEN** a scoped shell or maintenance operation is disposed or fails to acknowledge cancellation
+- **THEN** its durable pending/unknown receipt prevents successful acknowledgement and admission stays closed

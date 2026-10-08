@@ -4,6 +4,7 @@
 //! promotes input at Safe Boundaries and runs Turns until nothing is eligible. Every fact
 //! the model sees is committed before it is acted on, so a restart rebuilds state by replay.
 
+mod activity;
 mod admission_authority;
 pub use admission_authority::AdmissionAuthority;
 mod ancestry;
@@ -25,10 +26,12 @@ mod jobs;
 mod names;
 mod preparation;
 mod subtask;
+mod subtree_stop;
 pub use delegations::{Delegation, DelegationPhase, DelegationStatus};
 pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
 pub use names::ChildExecution;
 pub use subtask::UserSubtask;
+pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod location;
 mod model;
 mod requests;
@@ -288,6 +291,9 @@ pub(crate) struct Inner {
     delegations: StdMutex<HashMap<String, Arc<delegations::Control>>>,
     child_executions: StdMutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
     child_preparations: StdMutex<HashMap<String, Arc<preparation::Control>>>,
+    activities: StdMutex<HashMap<String, Arc<activity::Control>>>,
+    subtree_stops: StdMutex<HashMap<String, Arc<subtree_stop::Control>>>,
+    subtree_stop_lock: Mutex<()>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
@@ -346,6 +352,9 @@ impl Runtime {
             delegations: StdMutex::default(),
             child_executions: StdMutex::default(),
             child_preparations: StdMutex::default(),
+            activities: StdMutex::default(),
+            subtree_stops: StdMutex::default(),
+            subtree_stop_lock: Mutex::new(()),
             waiters: StdMutex::default(),
             me: me.clone(),
         });
@@ -733,6 +742,7 @@ impl Runtime {
     /// Stop the Drain and abandon owned requests, including idle host operations; inbox rows are kept.
     pub async fn interrupt(&self, session_id: &str) -> Result<(), RuntimeError> {
         let (paused, preparation) = self.pause_requested_child_input(session_id).await;
+        let activities = self.inner.cancel_idle_activities(session_id);
         {
             let mut drains = self
                 .inner
@@ -745,6 +755,9 @@ impl Runtime {
             }
         }
         self.wait_idle(session_id).await;
+        self.inner
+            .wait_idle_activities(session_id, activities)
+            .await?;
         if let Some(preparation) = preparation
             && tokio::time::timeout(
                 std::time::Duration::from_secs(3),

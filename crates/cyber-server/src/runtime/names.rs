@@ -46,6 +46,18 @@ impl Runtime {
             .child_executions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.capture_child_admission(parent)?;
+        let target = id.to_owned();
+        let exists = self.inner.store.read(move |db| {
+            Ok(db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session WHERE id=?1)",
+                [target],
+                |row| row.get::<_, bool>(0),
+            )?)
+        })?;
+        if exists {
+            self.inner.ensure_admission_open(id)?;
+        }
         owners.retain(|_, owner| owner.strong_count() > 0);
         let mutex = owners
             .get(id)

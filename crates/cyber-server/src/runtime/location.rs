@@ -68,8 +68,9 @@ impl Inner {
                     CallStatus::Dispatched | CallStatus::OutcomeUnknown
                 )
             });
-        if !unsettled {
-            lease.settle().map_err(RuntimeError::Invalid)?;
+        if !unsettled && let Err(error) = lease.settle() {
+            handle.location_uncertain.store(true, Ordering::SeqCst);
+            return Err(RuntimeError::Invalid(error));
         }
         result
     }
@@ -79,7 +80,7 @@ impl Inner {
         handle: &Handle,
         operation: impl Future<Output = Result<T, RuntimeError>>,
     ) -> Result<T, RuntimeError> {
-        self.with_idle_settlement(handle, operation, false).await
+        self.with_idle_settlement(handle, operation).await
     }
 
     pub(crate) async fn with_shell_location<T>(
@@ -87,28 +88,40 @@ impl Inner {
         handle: &Handle,
         operation: impl Future<Output = Result<T, RuntimeError>>,
     ) -> Result<T, RuntimeError> {
-        self.with_idle_settlement(handle, operation, true).await
+        self.with_idle_settlement(handle, operation).await
     }
 
     async fn with_idle_settlement<T>(
         &self,
         handle: &Handle,
         operation: impl Future<Output = Result<T, RuntimeError>>,
-        acknowledge: bool,
     ) -> Result<T, RuntimeError> {
-        let _admission = self.open().await?;
-        self.with_location(handle, self.closed.child_token(), async {
-            tokio::pin!(operation);
-            tokio::select! {
-                result = &mut operation => result,
-                _ = self.closed.cancelled() => {
-                    if acknowledge && let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut operation).await {
-                        return result;
-                    }
-                    handle.location_uncertain.store(true, Ordering::SeqCst);
-                    Err(RuntimeError::ShuttingDown)
-                },
-            }
-        }).await
+        let admission = self.open().await?;
+        let mut scope = super::activity::Scope::reserve(self, handle).await?;
+        drop(admission);
+        let cancel = scope.control.stop.clone();
+        let mut operation = Box::pin(operation);
+        let result = self.with_location(handle, cancel.child_token(), async {
+            scope.launch()?;
+            scope.run(async {
+                tokio::select! {
+                    biased;
+                    result = &mut operation => result,
+                    _ = cancel.cancelled() => {
+                        // Retain polling native work through its acknowledgement window.
+                        if let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut operation).await {
+                            return result;
+                        }
+                        handle.location_uncertain.store(true, Ordering::SeqCst);
+                        Err(if self.closed.is_cancelled() { RuntimeError::ShuttingDown }
+                            else { RuntimeError::Invalid("Idle operation did not acknowledge cancellation; recovery is required".into()) })
+                    },
+                }
+            }).await
+        }).await;
+        if !handle.location_uncertain.load(Ordering::SeqCst) {
+            scope.settle()?;
+        }
+        result
     }
 }

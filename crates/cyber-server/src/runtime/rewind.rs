@@ -242,7 +242,7 @@ impl Runtime {
                         &directory,
                         session_id,
                         command,
-                        self.inner.closed.child_token(),
+                        super::activity::cancellation(&self.inner.closed),
                     )
                     .await
                     .map_err(RuntimeError::Invalid)?;

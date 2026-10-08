@@ -63,7 +63,7 @@ impl AdmissionAuthority {
 
     /// Retain launch authority across a host callback without inheriting it into spawned Drains.
     pub fn run<'a, F>(
-        mut self,
+        self,
         cancel: CancellationToken,
         future: F,
     ) -> futures::future::BoxFuture<'a, F::Output>
@@ -71,8 +71,16 @@ impl AdmissionAuthority {
         F: Future + Send + 'a,
         F::Output: Send + 'a,
     {
+        Box::pin(self.scope(cancel, future))
+    }
+
+    pub(super) fn scope<F: Future>(
+        mut self,
+        cancel: CancellationToken,
+        future: F,
+    ) -> impl Future<Output = F::Output> {
         self.cancellations.push(cancel);
-        Box::pin(INHERITED.scope(self, Box::pin(future)))
+        INHERITED.scope(self, Box::pin(future))
     }
 
     pub fn verify(&self, runtime: &Runtime, source: &str) -> Result<(), RuntimeError> {
@@ -359,6 +367,9 @@ fn operations_current(conn: &Connection, binding: &Binding) -> Result<bool, Stor
 }
 
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    if event.kind == super::subtree_stop::SETTLED {
+        return super::subtree_stop::project(tx, event);
+    }
     check_closed_admission(tx, event)?;
     let source = match event.kind.as_str() {
         super::events::CREATED => event.data["info"]["parent_id"].as_str().map(str::to_string),
@@ -372,6 +383,9 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
             .map_err(|e| e.to_string())?
             .flatten(),
         "job.started.1" => Some(event.aggregate_id.clone()),
+        super::activity::CHANGED if event.data["status"] == "pending" => {
+            event.data["session_id"].as_str().map(str::to_string)
+        }
         "delegation.changed.1" if event.data["data"]["status"] == "pending" => {
             event.data["data"]["session_id"]
                 .as_str()
@@ -430,6 +444,11 @@ fn check_closed_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(
             event.data["child_id"]
                 .as_str()
                 .ok_or("Missing Job admission target")?,
+        ],
+        super::activity::CHANGED if event.data["status"] == "pending" => vec![
+            event.data["session_id"]
+                .as_str()
+                .ok_or("Missing native activity source")?,
         ],
         "delegation.changed.1" if event.data["data"]["status"] == "pending" => vec![
             event.data["data"]["session_id"]
