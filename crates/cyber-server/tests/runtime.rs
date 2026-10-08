@@ -1400,3 +1400,84 @@ async fn shutdown_drops_blocked_pre_post_snapshot_and_diff_work() {
         );
     }
 }
+
+#[tokio::test]
+async fn delete_refuses_cyclic_child_graph_without_mutation() {
+    const WORKER: &str = "CYBER_DELETE_CYCLE_WORKER";
+    if std::env::var_os(WORKER).is_none() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "delete_refuses_cyclic_child_graph_without_mutation",
+                "--nocapture",
+            ])
+            .env(WORKER, "1")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "cycle worker failed: {status}");
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("Session deletion did not refuse the cycle within five seconds");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let (parent_id, child_id) = (parent.clone(), child.clone());
+    h.store
+        .transaction(move |tx| {
+            tx.execute(
+                "UPDATE session SET parent_id=?1 WHERE id=?2",
+                rusqlite::params![child_id, parent_id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let history = || {
+        h.store
+            .read(|db| {
+                let mut query = db.prepare("SELECT id, data FROM event ORDER BY id")?;
+                Ok(query
+                    .query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?)
+            })
+            .unwrap()
+    };
+    let before = history();
+    let error = h.runtime.delete(&parent).await.unwrap_err();
+    assert!(matches!(error, RuntimeError::Corrupt(_)), "{error}");
+    assert!(error.to_string().contains("cycle"));
+    assert!(h.runtime.state(&parent).await.is_ok());
+    assert!(h.runtime.state(&child).await.is_ok());
+    let remaining = h
+        .store
+        .read(|db| {
+            Ok(db.query_row("SELECT COUNT(*) FROM session", [], |row| {
+                row.get::<_, i64>(0)
+            })?)
+        })
+        .unwrap();
+    assert_eq!(remaining, 2);
+    assert_eq!(history(), before);
+}

@@ -1294,18 +1294,29 @@ impl Inner {
 
     fn descendants(&self, id: &str) -> Result<Vec<String>, RuntimeError> {
         let root = id.to_string();
-        Ok(self.store.read(move |conn| {
-            let mut out = vec![root.clone()];
-            let mut frontier = vec![root];
-            while let Some(parent) = frontier.pop() {
-                let mut stmt = conn.prepare("SELECT id FROM session WHERE parent_id = ?1")?;
-                let children: Vec<String> = stmt
-                    .query_map([&parent], |r| r.get(0))?
-                    .collect::<Result<_, _>>()?;
-                frontier.extend(children.iter().cloned());
-                out.extend(children);
-            }
-            Ok(out)
-        })?)
+        self.store
+            .read(move |conn| {
+                let snapshot = conn.unchecked_transaction()?;
+                let mut seen = std::collections::HashSet::from([root.clone()]);
+                let mut out = vec![root.clone()];
+                let mut frontier = vec![root];
+                while let Some(parent) = frontier.pop() {
+                    let mut stmt =
+                        snapshot.prepare("SELECT id FROM session WHERE parent_id = ?1")?;
+                    let children: Vec<String> = stmt
+                        .query_map([&parent], |r| r.get(0))?
+                        .collect::<Result<_, _>>()?;
+                    if children.iter().any(|child| !seen.insert(child.clone())) {
+                        return Ok(None);
+                    }
+                    frontier.extend(children.iter().cloned());
+                    out.extend(children);
+                }
+                snapshot.commit()?;
+                Ok(Some(out))
+            })?
+            .ok_or_else(|| {
+                RuntimeError::Corrupt("Session descendant hierarchy contains a cycle".into())
+            })
     }
 }

@@ -138,6 +138,9 @@ jobs:
       - name: Native long-root library inspection candidate
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test worktree_repository library_status
+      - name: Native Session descendant deletion safety
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test runtime delete_
       - name: Native descendant billing and migration
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test child_usage
