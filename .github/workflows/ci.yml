@@ -57,6 +57,9 @@ jobs:
       - name: Native hook configuration validation and trust withholding
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test config hook
+      - name: Native individual hook trust and concurrent approval storage
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test hook_trust
       - name: Unsupported Unix bridge refuses execution
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --test bridge

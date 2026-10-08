@@ -2,8 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const EVENTS: &[&str] = &[
     "Setup",
@@ -69,7 +70,7 @@ pub struct HookGroup {
     pub hooks: Vec<HookHandler>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookKind {
     Command,
@@ -78,14 +79,14 @@ pub enum HookKind {
     McpTool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookCondition {
     pub field: String,
     pub matches: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookHandler {
     #[serde(rename = "type")]
@@ -112,6 +113,17 @@ pub struct HookHandler {
     pub once: bool,
     pub status_message: Option<String>,
     pub system_message: Option<String>,
+}
+
+impl HookHandler {
+    /// Hash the effective definition, including defaults and all execution options.
+    pub fn digest(&self) -> Result<String, serde_json::Error> {
+        let value = serde_json::to_value(self)?;
+        Ok(format!(
+            "sha256:{:x}",
+            Sha256::digest(super::canonical_json(&value))
+        ))
+    }
 }
 
 fn default_timeout() -> u32 {

@@ -37,3 +37,27 @@
 - **THEN** all contributions SHALL be appended to ordinary hook definitions
 - **AND** every selected group, handler and handler field SHALL retain its defining file origin rather than a generic profile label
 - **AND** untrusted or changed project definitions SHALL remain withheld and an empty later profile event array SHALL NOT erase earlier definitions
+
+### Requirement: Trust for project hooks
+(P1) The system SHALL require explicit user trust before running project-scope or local-scope hooks. Trust SHALL use the checkout-scoped workspace-trust store and the SHA-256 of each handler definition. A new or changed handler SHALL be skipped and reported as `untrusted` until approved via `/hooks` or `cyber hooks trust`. In `exec` mode, untrusted hooks SHALL be skipped unless `--trust-project-hooks` explicitly approves the currently inspected handler digests for that invocation, without approving future changes.
+
+#### Scenario: Changed hook requires re-trust
+- **WHEN** a teammate changes `.cyber/cyber.jsonc` hook command after the user trusted it
+- **THEN** the hook is skipped and the TUI shows `1 untrusted hook changed — review with /hooks`
+
+#### Scenario: Workspace approval does not approve handlers
+- **WHEN** a checkout's configuration is approved but its hook handler digest is not
+- **THEN** the shared trust store SHALL report that handler as unapproved
+- **AND** adding a handler approval SHALL preserve the workspace approval and other approved handler digests
+
+#### Scenario: Invocation approval remains temporary
+- **WHEN** an invocation approves inspected handler digests
+- **THEN** only those digests in that canonical checkout SHALL be approved for that invocation
+- **AND** changed definitions and other checkouts SHALL remain unapproved
+- **AND** no durable handler approval SHALL be written
+
+#### Scenario: Shared trust storage is serialized
+- **WHEN** multiple processes update workspace and handler approvals concurrently
+- **THEN** all independent approvals SHALL survive in the private shared store
+- **AND** legacy workspace-only files SHALL remain readable
+- **AND** checkout revocation SHALL remove that checkout's workspace and handler approvals
