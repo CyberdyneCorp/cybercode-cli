@@ -273,7 +273,13 @@ mod tests {
         write_record(&mut file, &record).unwrap();
         let proof = CheckoutLease { file, record }.settle_retained().unwrap();
         let mut probe = open_record(&path, false).unwrap();
+        #[cfg(not(windows))]
         assert!(read_record(&mut probe).unwrap().settled);
+        #[cfg(windows)]
+        assert_eq!(
+            read_record(&mut probe).unwrap_err().raw_os_error(),
+            Some(33)
+        );
         assert!(!try_lock(&probe).unwrap());
         drop(proof);
         assert!(try_lock(&probe).unwrap());

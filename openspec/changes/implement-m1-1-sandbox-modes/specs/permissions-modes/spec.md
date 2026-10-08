@@ -163,3 +163,28 @@
 #### Scenario: Nonrecursive removal with an option delimiter
 - **WHEN** a nonrecursive rm has literal workspace operands after `--`
 - **THEN** operand names starting with a dash SHALL be treated as paths rather than options
+
+### Requirement: Auto-mode configuration and override
+(P1) `permissions.auto_mode` SHALL accept `rules.always_block` and `rules.always_allow` (ordered `{ action, resource }` patterns applied before the classifier), `policy` (text appended to the classifier prompt describing the user's boundaries), `classify_read_only` (default false: read-only tools skip the classifier) and `fallback` (`ask` default, or `deny`). `/approve` SHALL re-issue the most recent call blocked by the classifier once, after the user confirms it in a permission prompt showing the classifier's reason; `cyber permissions auto show|reset` SHALL print or clear learned per-checkout statistics. Org policy MAY set the same keys as ceilings (`always_block` unions, `always_allow` intersects).
+
+#### Scenario: Always block a deploy command
+- **WHEN** `permissions.auto_mode.rules.always_block` contains `{ action: "bash", resource: "kubectl apply *" }`
+- **THEN** that command is blocked in `auto` without consulting the classifier
+
+#### Scenario: Override one block
+- **WHEN** the classifier blocked `git push origin feature/x` and the user runs `/approve`
+- **THEN** the user sees the command and the classifier's reason, and on confirmation the push runs once
+
+#### Scenario: Trusted validated controls
+- **WHEN** project configuration supplies auto-mode rules or classifier policy
+- **THEN** these settings require project trust before activation and invalid types, empty patterns and unsupported fallback values fail validation
+
+#### Scenario: Rule precedence and recorded decisions
+- **WHEN** a block rule matches an otherwise permitted request
+- **THEN** it blocks before inference and the decision must be committed before dispatch returns
+- **AND** an allow rule cannot lift a hard deny, protected path or independent manual approval
+
+#### Scenario: Read-only classification and deny fallback
+- **WHEN** an eligible read-only tool requires approval and classify_read_only is false
+- **THEN** it skips inference with a durable policy decision while block rules retain precedence
+- **AND** fallback deny refuses execution without opening an interactive request

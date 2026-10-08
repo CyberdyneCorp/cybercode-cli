@@ -172,7 +172,7 @@ jobs:
         run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children --test child_preparation --test admission_authority
       - name: Native isolated child checkout execution
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-tools --test isolated_subagents
+        run: cargo test --locked -p cyber-tools --test isolated_subagents -- --test-threads=1
       - name: Native durable subagent names
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test subagent_names -p cyber-tools --test subagent_names

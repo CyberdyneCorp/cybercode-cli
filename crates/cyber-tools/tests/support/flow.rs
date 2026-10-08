@@ -85,6 +85,7 @@ pub struct Flow {
     pub f: Fixture,
     pub main: Arc<ScriptedAdapter>,
     pub runtime: Runtime,
+    models: Arc<Models>,
 }
 
 impl Flow {
@@ -119,9 +120,10 @@ impl Flow {
                 .0
                 .insert(reference, Arc::new(ScriptedAdapter::new(script)));
         }
+        let models = Arc::new(models);
         let runtime = Runtime::new(RuntimeOptions {
             store: Arc::clone(&f.store),
-            resolver: Arc::new(models),
+            resolver: models.clone(),
             tools: Arc::clone(&f.host) as Arc<dyn ToolHost>,
             global_config_dir: f.dir.path().join("global"),
             shell: "bash".into(),
@@ -138,7 +140,19 @@ impl Flow {
             snapshots,
         });
         f.host.attach(runtime.clone());
-        Self { f, main, runtime }
+        Self {
+            f,
+            main,
+            runtime,
+            models,
+        }
+    }
+
+    pub fn requests(&self, reference: &str) -> Vec<LlmRequest> {
+        self.models
+            .0
+            .get(reference)
+            .map_or_else(Vec::new, |adapter| adapter.requests())
     }
 
     pub async fn session(&self, mode: &str) -> String {

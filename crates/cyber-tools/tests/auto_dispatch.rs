@@ -257,3 +257,121 @@ async fn rejected_classifier_decision_commit_refuses_actual_tool_effects() {
     assert!(f.runtime.pending_requests(Some(&id)).is_empty());
     assert!(f.output(&id, "c0").await.contains("Auto review failed:"));
 }
+
+#[tokio::test]
+async fn auto_always_block_beats_explicit_allow_without_classifier_call() {
+    let f = flow(1, verdict("allow"), false);
+    f.f.set_config(json!({"permissions":{"edit":"allow","auto_mode":{"rules":{"always_block":[{"action":"edit","resource":"result*.txt"}]}}}}));
+    let id = f.session("auto").await;
+    f.prompt(&id, "Write a file").await;
+    f.settle(&id).await;
+    assert!(!f.f.repo.join("result0.txt").exists());
+    let rows = decisions(&f, &id);
+    assert_eq!(rows[0]["decision"], "block");
+    assert_eq!(rows[0]["model"], Value::Null);
+}
+
+#[tokio::test]
+async fn auto_always_allow_is_durable_and_does_not_consult_classifier() {
+    let f = flow(1, verdict("block"), false);
+    f.f.set_config(json!({"permissions":{"auto_mode":{"rules":{"always_allow":[{"action":"edit","resource":"result*.txt"}]}}}}));
+    let id = f.session("auto").await;
+    f.prompt(&id, "Write a file").await;
+    f.settle(&id).await;
+    assert_eq!(f.f.read("result0.txt"), "approved");
+    assert_eq!(decisions(&f, &id)[0]["model"], Value::Null);
+}
+
+#[tokio::test]
+async fn configured_deny_fallback_does_not_open_interactive_approval() {
+    let f = flow(1, vec![text("malformed")], true);
+    f.f.set_config(json!({"permissions":{"auto_mode":{"fallback":"deny"}}}));
+    let id = f.session("auto").await;
+    f.prompt(&id, "Write a file").await;
+    f.settle(&id).await;
+    assert!(!f.f.repo.join("result0.txt").exists());
+    assert!(f.runtime.pending_requests(Some(&id)).is_empty());
+    assert_eq!(decisions(&f, &id)[0]["decision"], "fallback");
+}
+
+#[tokio::test]
+async fn read_only_classification_is_opt_in_and_rules_still_precede_it() {
+    for (settings, allowed) in [
+        (json!({}), true),
+        (json!({"classify_read_only":true}), false),
+        (
+            json!({"rules":{"always_block":[{"action":"read","resource":"note.txt"}]}}),
+            false,
+        ),
+    ] {
+        let f = single("read", json!({"path":"note.txt"}), verdict("block"), false);
+        f.f.write("note.txt", "repository note");
+        f.f.set_config(json!({"permissions":{"read":"ask","auto_mode":settings}}));
+        let id = f.session("auto").await;
+        f.prompt(&id, "Read the note").await;
+        f.settle(&id).await;
+        assert_eq!(
+            f.output(&id, "c0").await.contains("repository note"),
+            allowed
+        );
+    }
+}
+
+#[tokio::test]
+async fn trusted_policy_is_appended_to_the_classifier_system_prompt() {
+    let f = flow(1, verdict("allow"), false);
+    f.f.set_config(
+        json!({"permissions":{"auto_mode":{"policy":"Only update files for ticket 42"}}}),
+    );
+    let id = f.session("auto").await;
+    f.prompt(&id, "Write a file").await;
+    f.settle(&id).await;
+    let requests = f.requests("test/summary");
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0]
+            .system
+            .iter()
+            .any(|text| text.contains("Only update files for ticket 42"))
+    );
+    assert!(requests[0].tools.is_empty());
+}
+
+#[tokio::test]
+async fn auto_allow_rule_never_widens_hard_or_individual_confirmation_ceilings() {
+    let f = single(
+        "write",
+        json!({"path":"cyber.jsonc","content":"changed"}),
+        verdict("allow"),
+        false,
+    );
+    f.f.set_config(json!({"permissions":{"auto_mode":{"rules":{"always_allow":[{"action":"*","resource":"*"}]}}}}));
+    let id = f.session("auto").await;
+    f.prompt(&id, "Update configuration").await;
+    f.settle(&id).await;
+    assert!(!f.f.repo.join("cyber.jsonc").exists());
+    assert!(decisions(&f, &id).is_empty());
+    assert!(f.requests("test/summary").is_empty());
+}
+
+#[tokio::test]
+async fn mutating_tool_external_directory_check_cannot_use_read_only_skip() {
+    let fixture = Fixture::new();
+    let target = fixture.dir.path().join("outside.txt");
+    let invocation = call("c0", "write", json!({"path":target,"content":"changed"}));
+    let f = Flow::with_models(
+        fixture,
+        vec![invocation, text("done")],
+        false,
+        Arc::new(NoSnapshots),
+        vec![("test/summary", verdict("block"))],
+    );
+    let id = f.session("auto").await;
+    f.prompt(&id, "Write outside the repository").await;
+    f.settle(&id).await;
+    assert!(!target.exists());
+    let rows = decisions(&f, &id);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["action"], "external_directory");
+    assert_eq!(rows[0]["decision"], "block");
+}

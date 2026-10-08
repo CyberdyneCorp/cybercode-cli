@@ -88,7 +88,23 @@ impl Asker {
             .inner
             .upgrade()
             .ok_or_else(|| RuntimeError::Invalid("Auto-mode evaluator has no runtime".into()))?;
-        inner.review_auto(self, review, cancel).await
+        inner.review_auto(self, review, cancel, None).await
+    }
+    /// Record a trusted host policy decision with the same durable boundary as classification.
+    pub async fn decide_auto_rule(
+        &self,
+        review: AutoReview,
+        effect: AutoEffect,
+        reason: String,
+        cancel: CancellationToken,
+    ) -> Result<AutoDecision, RuntimeError> {
+        let inner = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| RuntimeError::Invalid("Auto-mode policy has no runtime".into()))?;
+        inner
+            .review_auto(self, review, cancel, Some((effect, reason)))
+            .await
     }
 }
 
@@ -98,6 +114,7 @@ impl Inner {
         asker: &Asker,
         review: AutoReview,
         cancel: CancellationToken,
+        rule: Option<(AutoEffect, String)>,
     ) -> Result<AutoDecision, RuntimeError> {
         let handle = self.handle(&asker.session_id).await?;
         // Serialize reviews, including consecutive-block tracking, without holding Session state.
@@ -115,7 +132,10 @@ impl Inner {
             usage: None,
             cost: None,
         };
-        if *blocks < 3 {
+        if let Some((effect, reason)) = rule {
+            decision.decision = effect;
+            decision.reason = reason;
+        } else if *blocks < 3 {
             self.evaluate_auto(&handle, &review, &cancel, &mut decision)
                 .await;
         }
@@ -167,8 +187,15 @@ impl Inner {
                 "last_messages": messages,
                 "user_boundaries": state.task.instructions,
             });
+            let mut system = vec![SYSTEM.into()];
+            if !review.policy.trim().is_empty() {
+                system.push(format!(
+                    "Trusted auto-mode configuration policy:\n{}",
+                    review.policy
+                ));
+            }
             LlmRequest {
-                system: vec![SYSTEM.into()],
+                system,
                 messages: vec![Message::user_text(evidence.to_string())],
                 tools: Vec::new(),
                 max_output_tokens: Some(512),

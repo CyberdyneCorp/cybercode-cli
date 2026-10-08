@@ -275,7 +275,8 @@ fn abandoned_lease_requires_recovery_even_after_kernel_lock_release() {
         assert!(
             error
                 .to_string()
-                .contains("outcome unknown for ses_abandoned")
+                .contains("outcome unknown for ses_abandoned"),
+            "{error}"
         );
     }
     let error = block_on(repository.claim(&fixture.execution, &managed, "ses_abandoned"))

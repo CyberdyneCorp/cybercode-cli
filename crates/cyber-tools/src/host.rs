@@ -74,6 +74,13 @@ impl BuiltinHost {
         })
     }
 
+    pub(crate) fn read_only_tool(&self, name: &str) -> bool {
+        self.tools.iter().map(|tool| tool.def()).any(|def| {
+            def.spec.name == name
+                && def.retry_safety == cyber_server::runtime::RetrySafety::ReadOnly
+        })
+    }
+
     fn settle_output(&self, ctx: &Ctx<'_>, output: String, keep_tail: bool) -> ToolOutcome {
         let value = if ctx.inv.name == "agent" {
             match serde_json::from_str::<Value>(&output) {
@@ -884,16 +891,19 @@ impl Ctx<'_> {
         always: Vec<String>,
         mut metadata: Value,
     ) -> Result<(), ToolError> {
-        match self.policy.decide(&req) {
-            Decision::Allow => Ok(()),
-            Decision::Deny(reason) => Err(ToolError::Failed(deny_message(&reason))),
-            Decision::Ask => {
-                if self.review_auto_permission(&req, &mut metadata).await? {
-                    return Ok(());
-                }
-                self.ask(req, always, metadata).await
-            }
+        let decision = self.policy.decide(&req);
+        if let Decision::Deny(reason) = decision {
+            return Err(ToolError::Failed(deny_message(&reason)));
         }
+        let needs_approval = decision == Decision::Ask;
+        if self
+            .review_auto_permission(&req, &mut metadata, needs_approval)
+            .await?
+            || !needs_approval
+        {
+            return Ok(());
+        }
+        self.ask(req, always, metadata).await
     }
 
     async fn ask(

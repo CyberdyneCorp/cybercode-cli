@@ -63,6 +63,7 @@ pub fn parse_rules(value: &Value, sources: &BTreeMap<String, String>) -> Vec<Rul
             .unwrap_or_default(),
         Value::Object(map) => map
             .iter()
+            .filter(|(action, _)| action.as_str() != "auto_mode")
             .flat_map(|(action, spec)| action_rules(action, spec, &source_of))
             .collect(),
         Value::Array(items) => items

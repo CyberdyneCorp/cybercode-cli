@@ -93,7 +93,9 @@ fn classify(path: &[String], value: &Value) -> Class {
     match parts.as_slice() {
         [key] if SENSITIVE_KEYS.contains(key) => Class::Sensitive,
         ["mode"] | ["agents", _, "permission_mode"] => sensitive_if(widens_mode(value)),
-        ["permissions"] | ["agents", _, "permissions"] => sensitive_if(grants_allow(value)),
+        ["permissions"] | ["agents", _, "permissions"] => {
+            sensitive_if(grants_allow(value) || value.get("auto_mode").is_some())
+        }
         ["worktrees", "setup"] | ["agents", _, "request"] => Class::Sensitive,
         _ if value.is_object() => Class::Recurse,
         _ => sensitive_if(has_placeholder_deep(value)),

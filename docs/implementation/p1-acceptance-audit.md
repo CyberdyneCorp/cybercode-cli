@@ -6,7 +6,7 @@ Snapshot: 2026-10-08. The full goal covers M1.1–M1.5 and all P1-tagged contrac
 
 | Milestone | Existing evidence | Required next work |
 |---|---|---|
-| M1.1 Sandbox and modes | Windows launch/ACL/job-owner primitives and native tests; mode UI, evaluator and production tool dispatch | Complete tool confinement, recursive roots/exclusions, credential-file isolation, proxy-only transport, crash recovery, service shutdown, auto-mode rules/overrides/statistics and full mode semantics |
+| M1.1 Sandbox and modes | Windows launch/ACL/job-owner primitives and native tests; mode UI, evaluator and production tool dispatch | Complete tool confinement, recursive roots/exclusions, credential-file isolation, proxy-only transport, crash recovery, service shutdown, auto-mode overrides/statistics and full ancestor mode semantics |
 | M1.2 Subagents and worktrees | Managed checkouts, child execution, durable owners, local stop and reviewed reopening | Complete public enter/exit/cleanup/recovery, cross-process cancellation, reviewed unknown recovery, client/budget cancellation adoption, remaining orchestration and native acceptance |
 | M1.3 Extensibility | P0 MCP foundation | Hook configuration/dispatch and every required lifecycle event, all four handler types; plugin protocol/package; MCP OAuth and deferred search |
 | M1.4 Memory and intelligence | P0 context/instruction foundation | Auto-memory lifecycle, LSP/formatter integration and diagnostics feedback; isolated browser verification and revision-linked artifacts |
@@ -15,7 +15,7 @@ Snapshot: 2026-10-08. The full goal covers M1.1–M1.5 and all P1-tagged contrac
 
 The absence of matching hooks/plugin/memory/LSP/browser/import/ACP implementation files in the current crates is evidence that later milestones need implementation, not evidence of a precise completion percentage. Existing passing tests establish their tested boundaries only. Check each scenario and public surface before changing an entry to accepted.
 
-Production auto-mode tool dispatch now has local evidence; see [current status](p1-status.md#production-auto-mode-tool-classification). Next priorities are the auto-mode configuration/override/statistics contract, remaining permission ceilings and complete native Windows enforcement. Later milestone delivery areas remain in scope. P0 local-model evaluation remains open and its artifacts are preserved.
+Production auto-mode tool dispatch now has local evidence; see [current status](p1-status.md#production-auto-mode-tool-classification). Validated auto-mode configuration is implemented locally. Next priorities are one-shot overrides/statistics, ancestor auto configuration/review, remaining permission ceilings and complete native Windows enforcement. Later milestone delivery areas remain in scope. P0 local-model evaluation remains open and its artifacts are preserved.
 
 ## Canonical contract checklist
 

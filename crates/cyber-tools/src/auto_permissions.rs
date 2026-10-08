@@ -2,6 +2,7 @@
 use crate::host::{Ctx, canonical};
 use crate::permissions::{Mode, Request, is_protected};
 use crate::tools::ToolError;
+use cyber_core::config::{AutoFallback, AutoModeSettings};
 use cyber_server::runtime::{AutoEffect, AutoReview};
 use serde_json::{Value, json};
 
@@ -11,31 +12,90 @@ impl Ctx<'_> {
         &self,
         request: &Request,
         metadata: &mut Value,
+        needs_approval: bool,
     ) -> Result<bool, ToolError> {
+        if self.policy.mode != Mode::Auto {
+            return Ok(false);
+        }
+        let (config, _) = (self.host.opts.config)(&self.location).map_err(ToolError::Failed)?;
+        let settings = AutoModeSettings::from_config(&config).map_err(ToolError::Failed)?;
+        let blocked = request.resources.iter().any(|resource| {
+            settings
+                .rules
+                .always_block
+                .iter()
+                .rev()
+                .any(|rule| rule.matches(&request.action, resource))
+        });
         let protected =
             self.policy.touches_protected(request) || self.auto_protected_resource(request);
-        if self.policy.mode == Mode::Auto && protected {
+        if protected {
             if !metadata.is_object() {
                 *metadata = json!({});
             }
             metadata["requires_confirmation"] = json!(true);
         }
-        if !self.policy.auto_review_allowed(request)
-            || metadata["requires_confirmation"] == true
-            || protected
-        {
+        let eligible = needs_approval
+            && self.policy.auto_review_allowed(request)
+            && metadata["requires_confirmation"] != true
+            && !protected;
+        if !blocked && !eligible {
             return Ok(false);
         }
+        let allowed = eligible
+            && !request.resources.is_empty()
+            && request.resources.iter().all(|resource| {
+                settings
+                    .rules
+                    .always_allow
+                    .iter()
+                    .rev()
+                    .any(|rule| rule.matches(&request.action, resource))
+            });
+        let rule = if blocked {
+            Some((
+                AutoEffect::Block,
+                "Matched permissions.auto_mode.rules.always_block",
+            ))
+        } else if allowed {
+            Some((
+                AutoEffect::Allow,
+                "Matched permissions.auto_mode.rules.always_allow",
+            ))
+        } else if request.read_only
+            && self.host.read_only_tool(&self.inv.name)
+            && !settings.classify_read_only
+        {
+            Some((AutoEffect::Allow, "Read-only classification is disabled"))
+        } else {
+            None
+        };
         let review = AutoReview {
             action: request.action.clone(),
             resources: request.resources.clone(),
             tool: self.inv.name.clone(),
             input: self.inv.input.clone(),
-            policy: String::new(),
+            policy: settings.policy,
+        };
+        let decide = async {
+            match rule {
+                Some((effect, reason)) => {
+                    self.inv
+                        .asker
+                        .decide_auto_rule(review, effect, reason.into(), self.cancel.clone())
+                        .await
+                }
+                None => {
+                    self.inv
+                        .asker
+                        .review_auto(review, self.cancel.clone())
+                        .await
+                }
+            }
         };
         let decision = tokio::select! {
             _ = self.cancel.cancelled() => return Err(ToolError::Aborted),
-            decision = self.inv.asker.review_auto(review, self.cancel.clone()) =>
+            decision = decide =>
                 decision.map_err(|error| ToolError::Failed(format!("Auto review failed: {error}")))?,
         };
         match decision.decision {
@@ -44,6 +104,12 @@ impl Ctx<'_> {
                 "Blocked by auto mode: {}",
                 decision.reason
             ))),
+            AutoEffect::Fallback if settings.fallback == AutoFallback::Deny => {
+                Err(ToolError::Failed(format!(
+                    "Blocked by auto mode: {} (fallback is deny)",
+                    decision.reason
+                )))
+            }
             AutoEffect::Fallback => Ok(false),
         }
     }

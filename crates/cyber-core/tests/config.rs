@@ -573,3 +573,15 @@ fn canonical_budget_defaults_accept_all_scopes_and_workflow_agent_extension() {
     assert_eq!(budget.enforcement, cyber_core::budget::Enforcement::Soft);
     assert_eq!(budget.max_tokens, Some(0));
 }
+
+#[test]
+fn invalid_auto_mode_controls_fail_real_configuration_loading() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.json",
+        r#"{"permissions":{"auto_mode":{"fallback":"allow"}}}"#,
+    );
+    let error = f.load().unwrap_err();
+    assert!(matches!(error, ConfigError::Invalid { .. }));
+    assert!(error.to_string().contains("permissions.auto_mode"));
+}
