@@ -2050,7 +2050,8 @@ async fn long_root_child_reports_changes_lists_status_and_resumes_through_owned_
         .dir
         .path()
         .join("segment".repeat(15))
-        .join("another".repeat(15));
+        .join("another".repeat(15))
+        .join("third-segment".repeat(10));
     flow.f.set_config(
         json!({"permissions":{"agent":"allow","worktree":"allow","edit":"allow"},
         "worktrees":{"root":root,"keep":"always"}}),

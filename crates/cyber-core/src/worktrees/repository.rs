@@ -115,7 +115,7 @@ impl Repository {
         execution: &dyn GitExecution,
         managed: &Managed,
     ) -> io::Result<WorktreeStatus> {
-        if super::inspection::required(managed) {
+        if super::inspection::required(managed)? {
             return Ok(super::inspection::inspect(
                 execution,
                 managed,

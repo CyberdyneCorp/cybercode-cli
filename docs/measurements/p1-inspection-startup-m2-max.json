@@ -1,0 +1,72 @@
+{
+  "machine": "MacBook Pro Mac14,6; Apple M2 Max 12 cores; 32 GB RAM; macOS 27.0",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "binary": "target/release/cyber",
+  "runs": 20,
+  "terminal": "xterm-256color PTY 120x32",
+  "cache": "OS file cache retained; fresh app data and processes per sample",
+  "results": {
+    "embedded": {
+      "samples_ms": [
+        655.907208,
+        70.633208,
+        70.075125,
+        68.454917,
+        70.345709,
+        68.724333,
+        67.832708,
+        69.749125,
+        72.141709,
+        70.258833,
+        70.679,
+        69.349666,
+        68.906333,
+        68.798541,
+        69.647166,
+        69.809375,
+        69.680083,
+        70.158459,
+        68.11575,
+        69.129916
+      ],
+      "p50_ms": 69.680083,
+      "p95_ms": 72.141709,
+      "p99_ms": 655.907208,
+      "min_ms": 67.832708,
+      "max_ms": 655.907208
+    },
+    "service-cold": {
+      "samples_ms": [
+        77.275708,
+        87.643208,
+        77.880833,
+        77.829667,
+        77.497167,
+        76.711292,
+        90.621833,
+        88.097542,
+        76.802208,
+        89.088125,
+        88.97225,
+        89.95375,
+        88.549583,
+        77.127333,
+        89.33975,
+        88.609583,
+        89.551167,
+        89.784125,
+        89.49725,
+        76.963
+      ],
+      "p50_ms": 88.097542,
+      "p95_ms": 89.95375,
+      "p99_ms": 90.621833,
+      "min_ms": 76.711292,
+      "max_ms": 90.621833
+    }
+  },
+  "source_commit": "b756e8c05f029356ec568ef5fc6b6cab0c382478",
+  "binary_sha256": "4a3811d5064d27bedf56eebb1a6978bc5f702fd5d9cca1c539f89c5a64be5440",
+  "cargo_lock_sha256": "7b1250005ada5bd4ea497c8048abd933453fccadde98f583f28e7a4db6d934a9",
+  "provenance": "Release binary built from b756e8c before the subsequent portability fixes; only new parity tests were uncommitted when it was compiled. Binary and source revision identify the measured implementation. All samples, including the first embedded outlier, are retained."
+}

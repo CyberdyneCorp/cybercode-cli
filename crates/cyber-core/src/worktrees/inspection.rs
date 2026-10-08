@@ -219,20 +219,20 @@ pub fn read(request: &Request) -> io::Result<Inspection> {
     Ok(result)
 }
 
-pub(super) fn required(managed: &super::Managed) -> bool {
+pub(super) fn required(managed: &super::Managed) -> io::Result<bool> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        super::repository::git_path_argument(&managed.path)
+        Ok(super::repository::git_path_argument(&managed.path)?
             .as_os_str()
             .encode_wide()
             .count()
-            >= 240
+            >= 240)
     }
     #[cfg(not(windows))]
     {
         let _ = managed;
-        false
+        Ok(false)
     }
 }
 

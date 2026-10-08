@@ -34,7 +34,7 @@ impl Repository {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
         self.verify_owned(execution, managed).await?;
-        let (status, mut files, untracked, ignored) = if super::inspection::required(managed) {
+        let (status, mut files, untracked, ignored) = if super::inspection::required(managed)? {
             let report = super::inspection::inspect(
                 execution,
                 managed,

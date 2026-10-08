@@ -1,4 +1,4 @@
-//! Candidate inspection only: production still uses the owned Git execution port.
+//! Library parity and actual owned-helper inspection coverage.
 
 use super::{Fixture, Name, Path, Repository, Settings};
 
@@ -91,7 +91,8 @@ fn library_status_reads_long_worktrees_without_changing_repository_files() {
             fixture
                 .data
                 .join("long-segment".repeat(8))
-                .join("another-segment".repeat(8)),
+                .join("another-segment".repeat(8))
+                .join("third-segment".repeat(10)),
         ),
         ..Default::default()
     };
@@ -274,7 +275,8 @@ fn owned_inspection_helper_reads_long_worktree_changes_and_ignored_files() {
             fixture
                 .data
                 .join("segment".repeat(15))
-                .join("another".repeat(15)),
+                .join("another".repeat(15))
+                .join("third-segment".repeat(10)),
         ),
         ..Default::default()
     };
@@ -311,4 +313,115 @@ fn owned_inspection_helper_reads_long_worktree_changes_and_ignored_files() {
     let changes = block_on(repository.changes(&fixture.execution, &managed)).unwrap();
     assert!(changes.dirty);
     assert_eq!(changes.files.len(), 3);
+}
+
+#[test]
+fn inspection_summaries_match_git_for_staged_deleted_and_binary_files() {
+    use super::block_on;
+    use cyber_core::worktrees::inspection::read;
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join("binary.dat"), [0, 1, 2]).unwrap();
+    std::fs::write(fixture.repo.join("delete.txt"), "delete this\n").unwrap();
+    fixture.git(&["add", "binary.dat", "delete.txt"]);
+    fixture.git(&["commit", "--quiet", "-m", "summary inputs"]);
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("summary-parity").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let request = request(&fixture, &repository, &managed);
+    std::fs::write(managed.path.join("tracked.txt"), "staged\n").unwrap();
+    std::fs::write(managed.path.join("added.txt"), "new staged\n").unwrap();
+    let repo = candidate(&fixture, &repository, &managed);
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("tracked.txt")).unwrap();
+    index.add_path(Path::new("added.txt")).unwrap();
+    index.write().unwrap();
+    std::fs::write(managed.path.join("tracked.txt"), "working\nsecond\n").unwrap();
+    std::fs::write(managed.path.join("binary.dat"), [0, 3, 4]).unwrap();
+    std::fs::remove_file(managed.path.join("delete.txt")).unwrap();
+    let expected = block_on(repository.changes(&fixture.execution, &managed)).unwrap();
+    let report = read(&request).unwrap();
+    assert_eq!(report.files, expected.files);
+    assert_eq!(report.status.dirty, expected.dirty);
+    assert_eq!(report.status.ahead, expected.ahead);
+    assert_eq!(report.status.behind, expected.behind);
+}
+
+#[cfg(unix)]
+#[test]
+fn inspection_summaries_match_git_for_mode_only_changes() {
+    use super::block_on;
+    use cyber_core::worktrees::inspection::read;
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    fixture.git(&["config", "core.filemode", "true"]);
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("mode-parity").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let request = request(&fixture, &repository, &managed);
+    std::fs::set_permissions(
+        managed.path.join("tracked.txt"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let expected = block_on(repository.changes(&fixture.execution, &managed)).unwrap();
+    assert_eq!(expected.files.len(), 1);
+    assert_eq!(expected.files[0].additions, Some(0));
+    let report = read(&request).unwrap();
+    assert_eq!(report.files, expected.files);
+}
+
+#[test]
+fn inspection_status_matches_git_when_head_moves_ahead_and_behind_the_base() {
+    use super::{OsString, block_on};
+    use cyber_core::worktrees::inspection::read;
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join("history.txt"), "second commit\n").unwrap();
+    fixture.git(&["add", "history.txt"]);
+    fixture.git(&["commit", "--quiet", "-m", "second"]);
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("head-parity").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let request = request(&fixture, &repository, &managed);
+    let compare = |ahead, behind| {
+        let expected = block_on(repository.status(&fixture.execution, &managed)).unwrap();
+        let report = read(&request).unwrap();
+        assert_eq!((report.status.ahead, report.status.behind), (ahead, behind));
+        assert_eq!(report.status, expected);
+    };
+    let git = |args: &[&str]| {
+        let output = fixture
+            .execution
+            .invoke(
+                &managed.path,
+                &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            )
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    compare(0, 0);
+    std::fs::write(managed.path.join("tracked.txt"), "committed child edit\n").unwrap();
+    git(&["add", "tracked.txt"]);
+    git(&["commit", "--quiet", "-m", "child edit"]);
+    compare(1, 0);
+    git(&["reset", "--hard", &format!("{}^", managed.base)]);
+    compare(0, 1);
 }

@@ -367,7 +367,7 @@ pub(super) async fn changed_ignored_files(
     execution: &dyn GitExecution,
     managed: &Managed,
 ) -> io::Result<Vec<PathBuf>> {
-    if super::inspection::required(managed) {
+    if super::inspection::required(managed)? {
         let report =
             super::inspection::inspect(execution, managed, super::inspection::Operation::Ignored)
                 .await?;
