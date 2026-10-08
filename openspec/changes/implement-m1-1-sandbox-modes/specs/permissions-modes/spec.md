@@ -57,6 +57,16 @@
 - **WHEN** three classifier blocks occurred in a previous Drain and a new Drain starts
 - **THEN** the consecutive-block counter SHALL reset before the next review
 
+#### Scenario: Production tool classification
+- **WHEN** a production tool request requires approval in auto mode and no independent parent or protected-path approval is required
+- **THEN** a durably recorded classifier allow authorizes that request once without saving an approval
+- **AND** block is returned to the model before tool effects, while fallback uses normal interactive approval or unattended denial
+
+#### Scenario: Independent manual approval survives classification
+- **WHEN** an ancestor requires manual approval or a protected file or credential requires individual confirmation
+- **THEN** a child's classifier cannot substitute for that approval
+- **AND** hard rule denies and critical-removal refusals precede classifier execution
+
 ### Requirement: Critical-path removal guard
 (P1) The system SHALL detect removals targeting critical paths (`/`, `~`, the home directory, the repository root, the Location root, `.git`, and any ancestor of the Location). These include `rm -rf`, `Remove-Item -Recurse`, `find -delete`, and removals inside nested shells or inline scripts. Such removals SHALL be denied in `auto`, `dont-ask` and `bypass` modes and SHALL require `ask` with a red warning in other modes. The model SHALL receive `Refused: removal of critical path <path>. Rewrite the command to target specific files.`
 

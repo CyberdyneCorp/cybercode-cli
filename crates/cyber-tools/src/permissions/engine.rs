@@ -263,6 +263,21 @@ impl Policy {
         decision
     }
 
+    /// Classification cannot replace a hard ceiling or another Session's manual approval.
+    pub(crate) fn auto_review_allowed(&self, req: &Request) -> bool {
+        self.mode == Mode::Auto
+            && req.removal_risk.is_none()
+            && !self.touches_protected(req)
+            && self.parent_modes.iter().all(|mode| {
+                *mode == Mode::Auto
+                    || self.decide_in_mode(
+                        req,
+                        evaluate_all(&self.rules, &req.action, &req.resources),
+                        *mode,
+                    ) != Decision::Ask
+            })
+    }
+
     /// Explicit user delegation approves only spawn admission; child tools still use decide.
     pub(crate) fn user_delegation(&self, req: &Request) -> Decision {
         let ruled = evaluate_all(&self.rules, &req.action, &req.resources);
@@ -359,7 +374,7 @@ impl Policy {
         req.file_edit && !req.mutates.is_empty() && req.mutates.iter().all(|p| *p == self.plan_file)
     }
 
-    fn touches_protected(&self, req: &Request) -> bool {
+    pub(crate) fn touches_protected(&self, req: &Request) -> bool {
         req.mutates
             .iter()
             .any(|p| is_protected(p, &self.location, &self.home))

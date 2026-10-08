@@ -137,3 +137,7 @@ Microsoft documents `registryRead` as required for LPAC registry access. The acc
 ## Ordered permission rules
 
 The shared parser accepts ordered action/resource/effect arrays alongside existing map/string shorthand. Array rules retain written order and source pointers. Session rules follow config rules and use last matching rule semantics within their own layer; they are not user/global deny ceilings. User/global ceilings remain independent of Session ordering and Mode. This prerequisite does not connect agent permission profiles or parent inheritance.
+
+### Production auto-mode tool admission
+
+Run the existing durable evaluator from the built-in host after ordinary policy evaluation returns Ask. Preserve protected-path and credential confirmation, critical/unresolved removal refusal, individual-confirmation metadata and independent non-auto ancestor approval. Classifier allow authorizes only the current request and does not persist a saved rule. Block reaches the model before effects; fallback follows the existing routed permission request and unattended denial path. Cancellation interrupts review, and rejected decision persistence refuses execution. The full auto-mode configuration/override/statistics contract, remaining interpreter proofs and complete ancestor auto classification remain required; this dispatch increment does not accept the full classifier or M1.1 milestone.

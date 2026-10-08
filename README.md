@@ -39,7 +39,7 @@ OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat endpoints are su
 | Models | Provider adapters, model catalog, credentials and usage pricing | Available; broader catalog work remains |
 | Sessions | Durable inbox, streaming tool loops, interrupt/resume, crash recovery and compaction | Available |
 | Tools | Repository inspection/editing, command execution, web tools and instruction/skill loading | Available; broader skills/commands remain |
-| Safety | Workspace trust, permission rules, protected paths, macOS/Linux sandboxing and credential masking | Available; Windows enforcement, proxy coverage and auto-mode dispatch are partial P1 |
+| Safety | Workspace trust, permission rules, protected paths, macOS/Linux sandboxing and credential masking | Available; Windows enforcement, proxy coverage and full auto-mode controls remain partial P1 |
 | File recovery | Shadow-git snapshots and conflict-aware restore preserving user edits | Available; broader rewind UI remains |
 | Clients | TUI, noninteractive `exec`, background service, HTTP/SSE/WebSocket/stdio API and generated TypeScript SDK | Available; complete P1 client surfaces remain |
 | Subagents | Foreground/background children, named resume, forked context, structured results, approvals and task controls | Partial P1 |

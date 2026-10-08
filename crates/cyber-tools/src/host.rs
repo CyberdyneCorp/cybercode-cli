@@ -882,12 +882,17 @@ impl Ctx<'_> {
         &self,
         req: Request,
         always: Vec<String>,
-        metadata: Value,
+        mut metadata: Value,
     ) -> Result<(), ToolError> {
         match self.policy.decide(&req) {
             Decision::Allow => Ok(()),
             Decision::Deny(reason) => Err(ToolError::Failed(deny_message(&reason))),
-            Decision::Ask => self.ask(req, always, metadata).await,
+            Decision::Ask => {
+                if self.review_auto_permission(&req, &mut metadata).await? {
+                    return Ok(());
+                }
+                self.ask(req, always, metadata).await
+            }
         }
     }
 
@@ -947,7 +952,7 @@ fn deny_message(reason: &str) -> String {
 fn unattended(mode: Mode) -> String {
     match mode {
         Mode::Auto => {
-            "Blocked by auto mode: no approver is available and the classifier arrives in P1".into()
+            "Blocked by auto mode: explicit approval required and no approver is attached".into()
         }
         _ => "Denied: no interactive approver is attached to this session".into(),
     }

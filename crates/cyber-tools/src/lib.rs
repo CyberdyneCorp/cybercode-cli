@@ -1,6 +1,7 @@
 //! Built-in tools, the permission engine and the tool host (`builtin-tools`,
 //! `tool-registry`, `permissions-modes`).
 
+mod auto_permissions;
 pub mod bash_analysis;
 mod budget;
 mod host;

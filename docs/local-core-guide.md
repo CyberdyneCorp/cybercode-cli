@@ -140,7 +140,7 @@ python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
 2. **Local-first.** Local state and local-model execution do not require a Cyber account. Hosted model calls require connectivity and provider credentials. Cyber Account and hosted services are planned.
 3. **Server-first.** The TUI, `exec` and TypeScript SDK share the public server API. IDE, web and mobile clients are planned.
 4. **Durable execution.** Prompt admission, tool calls and context changes are recorded before execution proceeds. Recovery handles interrupted streams and uncertain tool outcomes explicitly; file-backed storage uses FULL durability under the documented filesystem assumptions.
-5. **Controlled execution.** Permission rules, protected paths, an OS sandbox and snapshots constrain repository work. Windows enforcement and classifier approval integration remain M1.1 work.
+5. **Controlled execution.** Permission rules, protected paths, an OS sandbox and snapshots constrain repository work. Production auto-mode permission requests now use durable classifier allow/block/fallback decisions; protected/manual ceilings remain. Windows enforcement and complete auto-mode controls remain M1.1 work.
 6. **Familiar conventions.** Repository instructions and skills use familiar `AGENTS.md`/`CLAUDE.md` and `SKILL.md` conventions. MCP integration and setup import are later roadmap work.
 
 ## Architecture
@@ -160,7 +160,7 @@ See the architecture diagram in the [README](../README.md#architecture) and the 
 
 ## Specification glossary
 
-These terms describe the product contracts. Workflows, goals, loops, runners, Relay, devices, channels and Cyber Account are planned capabilities. Subagent execution is partially implemented; auto-mode classifier dispatch remains open. This table is not a list of shipped features.
+These terms describe the product contracts. Workflows, goals, loops, runners, Relay, devices, channels and Cyber Account are planned capabilities. Subagent execution is partially implemented; auto-mode tool classification is implemented locally while its full configuration/override contract remains open. This table is not a list of shipped features.
 
 | Term | Meaning |
 |---|---|
