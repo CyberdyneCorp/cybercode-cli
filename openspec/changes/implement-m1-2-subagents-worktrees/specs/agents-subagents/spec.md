@@ -494,3 +494,14 @@
 #### Scenario: Unacknowledged preparation after restart
 - **WHEN** preparation fails to acknowledge cancellation or panics and the server restarts
 - **THEN** durable unknown evidence refuses prompt, wake and resume pending recovery
+
+### Requirement: Captured child launch authority
+(P1) Child launches SHALL capture source and ancestor authority before approval, concurrency waiting and native preparation. Ordinary interruption SHALL invalidate outstanding launches sourced by the interrupted Session without invalidating independent background-child launches. A durable subtree admission fence SHALL invalidate outstanding launches from every descendant. Child creation SHALL recheck the captured identities and boundaries in its writer transaction and refuse stale authority without creating a Session. Missing or cyclic ancestry and foreign runtime authority SHALL be refused.
+
+#### Scenario: Cancel between preflight and writer commit
+- **WHEN** a source interruption commits after a child creation preflight but before its writer transaction
+- **THEN** the writer refuses stale authority and creates neither child history nor a Session projection
+
+#### Scenario: Background independence and subtree fencing
+- **WHEN** a parent Drain is interrupted while an independent background child holds launch authority
+- **THEN** the child authority remains valid until an explicit subtree admission fence commits for an ancestor

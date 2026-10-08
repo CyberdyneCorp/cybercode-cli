@@ -401,3 +401,55 @@ async fn a_queued_call_rechecks_disabled_profiles_before_creation() {
         .unwrap();
     assert_eq!(count, 1);
 }
+
+#[tokio::test]
+async fn queued_child_launch_is_refused_after_source_interrupt() {
+    use cyber_server::runtime::{PermissionReply, ToolHost};
+    use tokio_util::sync::CancellationToken;
+    let flow = Flow::new(
+        vec![
+            call("read", "read", json!({"path":".env"})),
+            text("done"),
+            text("late child"),
+        ],
+        true,
+    );
+    flow.f.write(".env", "private");
+    flow.f
+        .set_config(json!({"permissions":{"agent":"allow"},"agents":{"max_concurrent":1}}));
+    let parent = flow.session("default").await;
+    let mut inv = flow.f.invocation(
+        "default",
+        "agent",
+        json!({"prompt":"inspect", "model":"test/main"}),
+    );
+    inv.session_id = parent.clone();
+    let host = flow.f.host.clone();
+    let first_inv = inv.clone();
+    let first =
+        tokio::spawn(async move { host.execute(first_inv, CancellationToken::new()).await });
+    let request = flow.pending(&parent).await;
+    let host = flow.f.host.clone();
+    let mut second = Box::pin(async move { host.execute(inv, CancellationToken::new()).await });
+    assert!(futures::poll!(&mut second).is_pending());
+    flow.runtime.interrupt(&parent).await.unwrap();
+    flow.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    support::ok(first.await.unwrap());
+    let result = support::failed(second.await);
+    assert!(result.contains("fenced"), "{result}");
+    let count = flow
+        .f
+        .store
+        .read(|conn| {
+            Ok(conn.query_row(
+                "SELECT count(*) FROM session WHERE parent_id IS NOT NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+}

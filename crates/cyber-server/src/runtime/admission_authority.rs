@@ -1,0 +1,175 @@
+//! Captured source/ancestor authority, checked again by the single database writer.
+use std::collections::HashSet;
+use std::sync::{Arc, Weak};
+
+use cyber_store::{StoreError, StoredEvent};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use serde::{Deserialize, Serialize};
+
+use super::{Inner, Runtime, RuntimeError};
+
+pub(super) const STALE: &str = "Child admission was fenced by cancellation or changed ancestry";
+
+pub(super) const FENCED: &str = "session.admission.fenced.1";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Binding {
+    id: String,
+    created_id: String,
+    parent: Option<String>,
+    subtree_seq: i64,
+    /// Ordinary interruption invalidates only launches sourced by this Session.
+    local_seq: Option<i64>,
+}
+
+#[derive(Clone)]
+pub struct AdmissionAuthority {
+    runtime: Weak<Inner>,
+    pub(super) bindings: Vec<Binding>,
+}
+
+impl std::fmt::Debug for AdmissionAuthority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdmissionAuthority")
+            .field("bindings", &self.bindings)
+            .finish()
+    }
+}
+
+impl AdmissionAuthority {
+    pub fn verify(&self, runtime: &Runtime, source: &str) -> Result<(), RuntimeError> {
+        if !Weak::ptr_eq(&self.runtime, &Arc::downgrade(&runtime.inner))
+            || self.bindings.first().map(|b| b.id.as_str()) != Some(source)
+        {
+            return Err(RuntimeError::Conflict(
+                "Child admission authority has a different owner".into(),
+            ));
+        }
+        let current = runtime.capture_child_admission(source)?;
+        if current.bindings != self.bindings {
+            return Err(RuntimeError::Conflict(STALE.into()));
+        }
+        Ok(())
+    }
+}
+
+impl Runtime {
+    /// Capture before approval, concurrency waits or native child preparation.
+    pub fn capture_child_admission(
+        &self,
+        source: &str,
+    ) -> Result<AdmissionAuthority, RuntimeError> {
+        let source_id = source.to_string();
+        let source = source_id.clone();
+        let bindings = self.inner.store.read(move |conn| {
+            let snapshot = conn.unchecked_transaction()?;
+            let exists = snapshot.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session WHERE id=?1)",
+                [&source],
+                |row| row.get::<_, bool>(0),
+            )?;
+            let bindings = snapshot_chain(&snapshot, &source)?;
+            snapshot.commit()?;
+            Ok((exists, bindings))
+        })?;
+        if !bindings.0 {
+            return Err(RuntimeError::SessionNotFound(source_id));
+        }
+        let bindings = bindings.1.ok_or_else(|| {
+            RuntimeError::Corrupt(
+                "Child admission ancestry has a cycle or a missing ancestor".into(),
+            )
+        })?;
+        Ok(AdmissionAuthority {
+            runtime: Arc::downgrade(&self.inner),
+            bindings,
+        })
+    }
+
+    /// Durable launch boundary for a subsequent owned subtree cancellation sweep.
+    /// This invalidates captured launch authority; it does not stop running work.
+    pub async fn fence_subtree_admissions(&self, id: &str) -> Result<(), RuntimeError> {
+        let _open = self.inner.open().await?;
+        let handle = self.inner.handle(id).await?;
+        let mut state = handle.state.lock().await;
+        self.inner.commit_locked(
+            &mut state,
+            vec![super::event(FENCED, &serde_json::json!({}))],
+        )?;
+        Ok(())
+    }
+}
+
+fn snapshot_chain(conn: &Connection, source: &str) -> Result<Option<Vec<Binding>>, StoreError> {
+    let mut next = Some(source.to_string());
+    let mut seen = HashSet::new();
+    let mut bindings = Vec::new();
+    while let Some(id) = next {
+        if !seen.insert(id.clone()) {
+            return Ok(None);
+        }
+        let parent: Option<Option<String>> = conn
+            .query_row("SELECT parent_id FROM session WHERE id=?1", [&id], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        let Some(parent) = parent else {
+            return Ok(None);
+        };
+        let created_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM event WHERE aggregate_id=?1 AND type=?2 ORDER BY seq LIMIT 1",
+                params![id, super::events::CREATED],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(created_id) = created_id else {
+            return Ok(None);
+        };
+        let subtree_seq = sequence(conn, &id, FENCED)?;
+        let local_seq = if bindings.is_empty() {
+            Some(sequence(conn, &id, super::events::CHILD_INPUT_PAUSED)?)
+        } else {
+            None
+        };
+        next = parent.clone();
+        bindings.push(Binding {
+            id,
+            created_id,
+            parent,
+            subtree_seq,
+            local_seq,
+        });
+    }
+    Ok(Some(bindings))
+}
+
+fn sequence(conn: &Connection, id: &str, kind: &str) -> Result<i64, StoreError> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(MAX(seq),-1) FROM event WHERE aggregate_id=?1 AND type=?2",
+        params![id, kind],
+        |r| r.get(0),
+    )?)
+}
+
+pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    if event.kind != super::events::CREATED {
+        return Ok(());
+    }
+    let Some(value) = event.data.get("admission_bindings") else {
+        return Ok(());
+    };
+    let bindings: Vec<Binding> =
+        serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+    let Some(source) = bindings.first() else {
+        return Err("Empty child admission authority".into());
+    };
+    if event.data["info"]["parent_id"].as_str() != Some(source.id.as_str()) {
+        return Err("Child admission source differs from its declared parent".into());
+    }
+    let current = snapshot_chain(tx, &source.id).map_err(|e| e.to_string())?;
+    if current.as_ref() != Some(&bindings) {
+        return Err(STALE.into());
+    }
+    Ok(())
+}

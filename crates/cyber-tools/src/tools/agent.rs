@@ -36,6 +36,7 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    authority: Option<cyber_server::runtime::AdmissionAuthority>,
     attachments: Vec<cyber_llm::Content>,
     max_steps: Option<u32>,
     isolation: bool,
@@ -132,6 +133,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         return Err(failed("name must contain 1–128 bytes"));
     }
     Ok(Spawn {
+        authority: None,
         attachments: Vec::new(),
         max_steps: None,
         isolation,
@@ -206,6 +208,9 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
         .host
         .runtime()
         .ok_or_else(|| failed("Agent tool requires the runtime"))?;
+    let authority = runtime
+        .capture_child_admission(&ctx.inv.session_id)
+        .map_err(|e| failed(e.to_string()))?;
     let resume = match ctx.inv.input.get("resume").and_then(Value::as_str) {
         Some(reference) => Some(
             runtime
@@ -216,6 +221,7 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
         None => None,
     };
     let mut spawn = configured(ctx, resume.as_ref())?;
+    spawn.authority = Some(authority);
     spawn.user_requested = user_requested;
     user_options(&mut spawn, &ctx.inv.input)?;
     if let Some(existing) = &resume {
@@ -314,6 +320,12 @@ async fn prepare_child_admission(
     runtime: &Runtime,
     spawn: &mut Spawn,
 ) -> Result<(), ToolError> {
+    spawn
+        .authority
+        .as_ref()
+        .expect("captured admission authority")
+        .verify(runtime, &ctx.inv.session_id)
+        .map_err(|e| failed(e.to_string()))?;
     revalidate_spawn(ctx, spawn).await?;
     if spawn.user_requested {
         runtime
@@ -610,6 +622,12 @@ async fn create_child(
     id: &str,
     execution: &cyber_server::runtime::ChildExecution,
 ) -> Result<(String, Option<crate::worktrees::ChildWorktree>), ToolError> {
+    spawn
+        .authority
+        .as_ref()
+        .expect("captured admission authority")
+        .verify(runtime, &parent.id)
+        .map_err(|e| failed(e.to_string()))?;
     if let Some(existing) = &spawn.resume {
         let state = runtime
             .state(&existing.id)
@@ -646,6 +664,7 @@ async fn create_child(
     }
     let model = ctx.inv.input.get("model").and_then(Value::as_str);
     let request = CreateSession {
+        admission_authority: spawn.authority.clone(),
         output_schema: spawn.output_schema.clone(),
         fork_from: spawn.fork.then(|| parent.id.clone()),
         id: Some(id.into()),

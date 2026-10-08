@@ -338,6 +338,7 @@ async fn create(
         .or_else(|| state.services.default_model(&directory))
         .unwrap_or_default();
     let req = CreateSession {
+        admission_authority: None,
         budget: body.budget,
         child_worktree_setup_pending: false,
         child_worktree: None,

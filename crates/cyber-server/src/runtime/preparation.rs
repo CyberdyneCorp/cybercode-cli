@@ -96,7 +96,7 @@ impl Runtime {
             .unwrap_or_else(PoisonError::into_inner)
             .get(id)
             .cloned();
-        let paused = if state.info.parent_id.is_some() {
+        let paused = {
             self.inner
                 .commit_locked(
                     &mut state,
@@ -106,8 +106,6 @@ impl Runtime {
                     )],
                 )
                 .map(|_| ())
-        } else {
-            Ok(())
         };
         if let Some(control) = &preparation {
             control.cancel.cancel();

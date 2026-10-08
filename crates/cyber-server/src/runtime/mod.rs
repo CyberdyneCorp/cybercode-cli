@@ -4,6 +4,8 @@
 //! promotes input at Safe Boundaries and runs Turns until nothing is eligible. Every fact
 //! the model sees is committed before it is acted on, so a restart rebuilds state by replay.
 
+mod admission_authority;
+pub use admission_authority::AdmissionAuthority;
 mod ancestry;
 pub use ancestry::AncestorAuthority;
 mod auto;
@@ -131,6 +133,8 @@ pub struct RuntimeOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct CreateSession {
+    /// Internal source authority captured before asynchronous child preparation.
+    pub admission_authority: Option<AdmissionAuthority>,
     pub budget: Option<cyber_core::budget::Budget>,
     pub child_worktree_setup_pending: bool,
     /// Internal binding for a child-created isolated checkout.
@@ -406,6 +410,22 @@ impl Runtime {
                 "Isolated child binding differs from its owned checkout".into(),
             ));
         }
+        let admission_bindings = match req.parent_id.as_deref() {
+            Some(parent) => {
+                let authority = match &req.admission_authority {
+                    Some(authority) => authority.clone(),
+                    None => self.capture_child_admission(parent)?,
+                };
+                authority.verify(self, parent)?;
+                Some(authority.bindings)
+            }
+            None if req.admission_authority.is_some() => {
+                return Err(RuntimeError::Invalid(
+                    "Child admission authority requires a parent".into(),
+                ));
+            }
+            None => None,
+        };
         let mode_is_default = req.mode.is_none();
         let selection = selection::ModelSelection {
             reference: req.model.clone(),
@@ -483,6 +503,7 @@ impl Runtime {
                 calls,
                 req.fork_from,
                 CreationOptions {
+                    admission_bindings,
                     child_worktree_setup_pending: req.child_worktree_setup_pending,
                     child_worktree: req.child_worktree,
                     fork_context,
@@ -968,6 +989,7 @@ impl Runtime {
                 copied.calls,
                 Some(session_id.to_string()),
                 CreationOptions {
+                    admission_bindings: None,
                     child_worktree_setup_pending: false,
                     child_worktree: None,
                     fork_context: Some(copied.context),
@@ -1154,6 +1176,7 @@ fn query_sessions(
 }
 
 struct CreationOptions {
+    admission_bindings: Option<Vec<admission_authority::Binding>>,
     child_worktree_setup_pending: bool,
     child_worktree: Option<cyber_core::worktrees::Managed>,
     fork_context: Option<fork::ForkContext>,
@@ -1224,6 +1247,7 @@ impl Inner {
         info.worktree_id = lease.worktree_id.clone();
         let id = info.id.clone();
         let payload = Created {
+            admission_bindings: defaults.admission_bindings,
             child_worktree_setup_pending: defaults.child_worktree_setup_pending,
             child_worktree: defaults.child_worktree,
             fork_context: defaults.fork_context,
@@ -1242,6 +1266,12 @@ impl Inner {
             Ok(stored) => self.publish(&stored),
             // Created concurrently: return the existing Session unchanged.
             Err(StoreError::Concurrency { .. }) => {}
+            Err(StoreError::Projector { kind, reason })
+                if kind == CREATED && reason == admission_authority::STALE =>
+            {
+                lease.settle().map_err(RuntimeError::Invalid)?;
+                return Err(RuntimeError::Conflict(reason));
+            }
             Err(e) => {
                 lease.settle().map_err(RuntimeError::Invalid)?;
                 return Err(e.into());

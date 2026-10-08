@@ -55,6 +55,7 @@ const ALL: &[&str] = &[
     RESUMED,
     CHILD_CONTINUATION_SETTLED,
     CHILD_INPUT_PAUSED,
+    super::admission_authority::FENCED,
     WORKTREE_REBOUND,
     WORKTREE_SETUP_READY,
     INBOX_UPDATED,
@@ -92,6 +93,8 @@ const ALL: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Created {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) admission_bindings: Option<Vec<super::admission_authority::Binding>>,
     #[serde(default)]
     pub child_worktree_setup_pending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -385,6 +388,7 @@ pub fn registry() -> EventRegistry {
 }
 
 fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
+    super::admission_authority::project(tx, e)?;
     project_event(tx, e).map_err(|err| err.to_string())
 }
 
