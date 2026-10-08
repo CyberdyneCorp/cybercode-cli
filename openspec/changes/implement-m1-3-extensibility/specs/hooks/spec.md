@@ -263,6 +263,13 @@
 - **AND** an enabled execution MAY record bounded IO without changing its decision semantics
 - **AND** receipt projection and settlement SHALL commit together exactly once
 
+#### Scenario: Authenticated execution receipt pagination
+- **WHEN** a client lists a known Session's hook execution receipts
+- **THEN** the API SHALL require authentication and page in descending immutable admission-time/id order with Session-bound cursors
+- **AND** malformed or foreign cursors SHALL be refused
+- **AND** default receipts SHALL omit raw IO while explicitly enabled receipt IO remains visible to the authenticated client
+- **AND** running or unknown observations SHALL NOT imply successful process reconciliation or authorize replay
+
 ### Requirement: Conditional, one-shot and annotated handlers
 (P1) A handler MAY set `if` (`{ field, matches }`: a dotted payload field and a regex), `once: true` (run at most once per Session), `status_message` (shown in the client while the handler runs) and `system_message` (shown to the user, not the model, when the handler completes). A handler whose `if` does not match SHALL be skipped without logging an execution event.
 

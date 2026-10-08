@@ -331,6 +331,255 @@
           "data"
         ]
       },
+      "Page_HookExecutionRecord": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HookExecutionRecord"
+            }
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ]
+      },
+      "HookExecutionRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "hook_id": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "call_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HookScope"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "log_io": {
+            "type": "boolean"
+          },
+          "once": {
+            "type": "boolean",
+            "default": false
+          },
+          "status": {
+            "$ref": "#/components/schemas/HookExecutionStatus"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "acknowledged": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "must_stop": {
+            "type": "boolean"
+          },
+          "io": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookExecutionIo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "hook_id",
+          "digest",
+          "event",
+          "scope",
+          "directory",
+          "agent",
+          "mode",
+          "started_ms",
+          "log_io",
+          "status",
+          "must_stop"
+        ]
+      },
+      "HookScope": {
+        "type": "string",
+        "enum": [
+          "managed",
+          "global",
+          "project",
+          "local",
+          "plugin",
+          "invocation"
+        ]
+      },
+      "HookExecutionStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "completed",
+          "unknown"
+        ]
+      },
+      "HookOutcome": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "blocked",
+          "error",
+          "timeout",
+          "skipped"
+        ]
+      },
+      "HookDecision": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_input": true,
+          "additional_context": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "continue": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suppress_output": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "HookAction": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "retry",
+          "ask",
+          "deny",
+          "block"
+        ],
+        "description": "Increasing precedence; Retry and Block are limited to their respective events."
+      },
+      "HookExecutionIo": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stdin": {
+            "type": "string"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stdin",
+          "stdout",
+          "stderr",
+          "truncated"
+        ]
+      },
       "Data_LocationInfo": {
         "type": "object",
         "properties": {
@@ -3389,6 +3638,63 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/hook-executions": {
+      "get": {
+        "operationId": "v1.session.hooks",
+        "summary": "List durable hook executions; running receipts do not establish a live process",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_HookExecutionRecord"
                 }
               }
             }

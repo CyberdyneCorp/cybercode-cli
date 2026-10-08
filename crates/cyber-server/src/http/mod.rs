@@ -10,6 +10,7 @@ mod error;
 mod event_location;
 mod events;
 mod guard;
+mod hooks;
 mod idempotency;
 mod jobs;
 pub mod openapi;
@@ -209,6 +210,7 @@ pub fn router(state: AppState) -> Router {
         .merge(sessions::routes())
         .merge(children::router())
         .merge(jobs::routes())
+        .merge(hooks::routes())
         .merge(usage::routes())
         .merge(worktrees::routes())
         .merge(events::routes())

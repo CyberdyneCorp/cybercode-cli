@@ -3153,3 +3153,207 @@ async fn hook_notices_follow_session_and_location_without_durable_replay() {
         !history.contains("private hook diagnostic") && !history.contains("session.hook.notice")
     );
 }
+
+#[tokio::test]
+async fn hook_execution_api_is_authenticated_paginated_and_preserves_receipt_privacy() {
+    use cyber_core::{
+        config::{self, LoadRequest},
+        hooks::{HookCatalog, HookEvent, HookIdentity, HookLocation},
+        paths::Paths,
+    };
+    use cyber_server::runtime::{HookExecutionIo, HookExecutionResult};
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let other = h.session().await;
+    let env = std::collections::HashMap::from([(
+        "CYBER_HOME".into(),
+        h.dir.path().join("hooks-config").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, h.dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(paths.config.join("cyber.jsonc"),json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"printf reviewed","id":"guard"}]}]}}).to_string()).unwrap();
+    let resolved = config::load(&LoadRequest {
+        location: &h.repo,
+        paths: &paths,
+        env: &env,
+        home: h.dir.path(),
+        profile: None,
+        overrides: &[],
+        flags: json!({}),
+    })
+    .unwrap();
+    let definition = HookCatalog::from_config(&resolved)
+        .unwrap()
+        .definitions
+        .remove(0);
+    let make_event = |id: &str| {
+        HookEvent::new(
+            "PreToolUse",
+            HookIdentity {
+                session_id: id.into(),
+                location: HookLocation {
+                    directory: h.repo.clone(),
+                    workspace: None,
+                },
+                project_id: "global".into(),
+                agent: "build".into(),
+                mode: "default".into(),
+            },
+            1,
+            json!({"call_id":"call_receipt","tool_name":"read","tool_input":{"password":"private input"}}).as_object().unwrap().clone(),
+        )
+        .unwrap()
+    };
+    let result = || HookExecutionResult {
+        outcome: cyber_core::hooks::HookOutcome::Ok,
+        decision: Default::default(),
+        acknowledged: true,
+        must_stop: false,
+        io: Some(HookExecutionIo {
+            stdin: "private stdin".into(),
+            stdout: "private stdout".into(),
+            stderr: "private stderr".into(),
+            truncated: false,
+        }),
+    };
+    let masked = h
+        .runtime
+        .start_hook_execution(&make_event(&session), &definition, false)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let opted = h
+        .runtime
+        .start_hook_execution(&make_event(&session), &definition, true)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let unknown = h
+        .runtime
+        .start_hook_execution(&make_event(&session), &definition, false)
+        .await
+        .unwrap();
+    let unknown_id = unknown.record().id.clone();
+    drop(unknown);
+    let running = h
+        .runtime
+        .start_hook_execution(&make_event(&session), &definition, false)
+        .await
+        .unwrap();
+    let running_id = running.record().id.clone();
+    h.runtime
+        .start_hook_execution(&make_event(&other), &definition, false)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let url = format!("{base}/sessions/{session}/hook-executions");
+    let unauthenticated = client.get(&url).send().await.unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        !unauthenticated
+            .text()
+            .await
+            .unwrap()
+            .contains("private stdout")
+    );
+    let mut all = Vec::<Value>::new();
+    let mut cursor = None::<String>;
+    let mut first_cursor = None;
+    loop {
+        let mut query = vec![("limit", "1".to_owned())];
+        if let Some(cursor) = &cursor {
+            query.push(("cursor", cursor.clone()));
+        }
+        let mut page_url = reqwest::Url::parse(&url).unwrap();
+        page_url.query_pairs_mut().extend_pairs(&query);
+        let response = client
+            .get(page_url)
+            .basic_auth("cyber", Some("pw"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let page: Value = response.json().await.unwrap();
+        let rows = page["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        all.extend(rows.iter().cloned());
+        cursor = page["cursor"]["next"].as_str().map(str::to_owned);
+        if first_cursor.is_none() {
+            first_cursor = cursor.clone();
+        }
+        if cursor.is_none() {
+            break;
+        }
+        assert!(all.len() < 5, "pagination repeated receipts");
+    }
+    assert_eq!(all.len(), 4);
+    assert!(
+        all.windows(2).all(|rows| {
+            (
+                rows[0]["started_ms"].as_i64().unwrap(),
+                rows[0]["id"].as_str().unwrap(),
+            ) > (
+                rows[1]["started_ms"].as_i64().unwrap(),
+                rows[1]["id"].as_str().unwrap(),
+            )
+        }),
+        "receipt pagination must preserve descending admission keys"
+    );
+    let by_id = |id: &str| all.iter().find(|r| r["id"] == id).unwrap();
+    assert!(by_id(&masked.id).get("io").is_none());
+    assert_eq!(by_id(&masked.id)["call_id"], "call_receipt");
+    assert_eq!(by_id(&masked.id)["tool_name"], "read");
+    assert!(all.iter().all(|row| row.get("tool_input").is_none()));
+    assert!(
+        !serde_json::to_string(&all)
+            .unwrap()
+            .contains("private input")
+    );
+    assert_eq!(by_id(&opted.id)["io"]["stdout"], "private stdout");
+    assert_eq!(by_id(&unknown_id)["status"], "unknown");
+    assert_eq!(by_id(&running_id)["status"], "running");
+    assert!(all.iter().all(|row| row["session_id"] == session));
+    for (suffix, tag) in [
+        ("?limit=0", "InvalidRequestError"),
+        ("?limit=501", "InvalidRequestError"),
+        ("?cursor=malformed", "InvalidCursorError"),
+    ] {
+        let response = client
+            .get(format!("{url}{suffix}"))
+            .basic_auth("cyber", Some("pw"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.json::<Value>().await.unwrap()["_tag"], tag);
+    }
+    let mut foreign_url =
+        reqwest::Url::parse(&format!("{base}/sessions/{other}/hook-executions")).unwrap();
+    foreign_url
+        .query_pairs_mut()
+        .append_pair("cursor", &first_cursor.unwrap());
+    let foreign = client
+        .get(foreign_url)
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        foreign.json::<Value>().await.unwrap()["_tag"],
+        "InvalidCursorError"
+    );
+    let absent = client
+        .get(format!("{base}/sessions/ses_missing/hook-executions"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+    running.finish(result()).unwrap();
+}

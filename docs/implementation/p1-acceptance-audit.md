@@ -27,6 +27,8 @@ At `80587be`, Linux job `113541744124` completes successfully, including durable
 
 At `9094310`, standalone Windows lint job `113547414708` completes with an unused mutable DirBuilder binding in command scratch preparation. The fix confines mutability to Unix and retains its private directory mode; a portable scratch ownership regression and native CI gate are added. Bounded fixed-input command concurrency now has actual-process pool/refill/order/cancellation tests. Complete pre-tool concurrency, async contexts, remaining event/handler delivery and native acceptance remain open.
 
+Windows lint at `7e6aede`, job `113555145769`, completes successfully. Authenticated Session receipt pagination and generated SDK access now expose durable hook outcomes, IO policy, optional call/tool correlation and unresolved observations. HTTP/SDK tests cover scope, cursor, status and privacy boundaries; full recovery, transcript/review clients and hook lifecycle acceptance remain open.
+
 Every entry starts unverified at the complete requirement scope; this does not imply its foundations are absent. Acceptance needs implementation links, scenario-level tests, public-client evidence and native gates where required. No percentage is inferred from this checklist.
 
 ### agents-subagents (14)

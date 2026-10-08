@@ -6,6 +6,16 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+## M1.3 execution receipt API and SDK
+
+Authenticated GET `/sessions/{sessionID}/hook-executions` now pages durable receipts by descending admission time/id, with a default of 50 and maximum of 500. Cursors retain the Session identity and malformed/foreign cursors are refused. Rows preserve default raw-IO omission and explicit opt-in IO, and expose captured call/tool identifiers where available without copying tool input. Legacy receipts remain readable with missing optional identifiers. Running/unknown statuses remain recorded observations; this read-only API does not reconcile live processes or authorize replay.
+
+A real TCP test covers authentication, ordered single-row pages with no cross-Session data, default and opted-in IO, running/unknown receipts, invalid limits/cursors and unknown Sessions. An actual tool-dispatch assertion verifies captured call/tool correlation. Generated OpenAPI/SDK schemas expose `client.session.hooks`; its typed client test verifies unresolved status, IO omission, cursor propagation, path encoding, authentication and no Location override. Transcript presentation, TUI/CLI execution history/review, every remaining lifecycle event and complete recovery reconciliation remain required.
+
+Local validation passes 1,154 Rust workspace test executions (three ignored, 121 suites), followed by the strengthened HTTP correlation/input-privacy regression. Workspace all-target Clippy with warnings denied, formatting, SDK type checking and all 54 SDK tests, generated-contract consistency and all 58 strict specs pass. Cross-spec lint reports zero errors and 21 warnings. Complete P1 acceptance remains open.
+
+The [Windows lint job for `7e6aede`](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37848462468/job/113555145769) completes successfully, accepting the conditional DirBuilder mutability correction at that gate. The Ubuntu Rust job and all four Linux build targets also complete successfully for that revision; Windows build remains running and macOS jobs queued when inspected. Full native execution and milestone acceptance remain open.
+
 ## M1.3 bounded fixed-input command concurrency
 
 PermissionRequest and post-tool command handlers now execute through a per-event pool bounded by `hooks.concurrency`. Selection uses their fixed final input; per-event command deduplication remains synchronized. Out-of-order completion frees worker slots immediately, while results merge in declared order. Mandatory stop and fail-closed admission errors cancel event siblings and drain launched owners before returning the original refusal. Queued handlers check cancellation before admission and launch. PreToolUse remains sequential to preserve rewrite-dependent inputs and selectors; its full concurrency model remains required.

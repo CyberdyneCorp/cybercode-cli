@@ -9,6 +9,7 @@ use cyber_core::hooks::{
 };
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
 use rusqlite::{OptionalExtension, Transaction, params};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{AdmissionAuthority, Runtime, RuntimeError};
@@ -18,7 +19,7 @@ const EXECUTED: &str = "hook.executed.1";
 const ONCE_ADMITTED: &str = "Hook once handler already admitted";
 const IO_LIMIT: usize = 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HookExecutionStatus {
     Running,
@@ -26,7 +27,7 @@ pub enum HookExecutionStatus {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookExecutionIo {
     pub stdin: String,
@@ -35,7 +36,7 @@ pub struct HookExecutionIo {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookExecutionRecord {
     pub id: String,
@@ -43,6 +44,10 @@ pub struct HookExecutionRecord {
     pub hook_id: String,
     pub digest: String,
     pub event: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
     pub scope: HookScope,
     pub directory: String,
     pub agent: String,
@@ -215,6 +220,16 @@ impl Runtime {
                 .unwrap_or_else(|| definition.digest.clone()),
             digest: definition.digest.clone(),
             event: event.event().into(),
+            call_id: event
+                .as_json()
+                .get("call_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned),
+            tool_name: event
+                .as_json()
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned),
             scope: definition.scope,
             directory: identity.location.directory.display().to_string(),
             agent: identity.agent.clone(),
@@ -261,20 +276,62 @@ impl Runtime {
         session: &str,
         limit: u32,
     ) -> Result<Vec<HookExecutionRecord>, RuntimeError> {
+        self.hook_executions_page(session, limit, None)
+            .map(|(rows, _)| rows)
+    }
+
+    pub fn hook_executions_page(
+        &self,
+        session: &str,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<HookExecutionRecord>, Option<String>), RuntimeError> {
         if limit == 0 || limit > cyber_store::MAX_PAGE_LIMIT {
             return Err(RuntimeError::Invalid(
                 "Hook receipt limit must be between 1 and 500".into(),
             ));
         }
+        let (at, id) = hook_cursor(session, cursor)?;
         let session = session.to_owned();
-        Ok(self.inner.store.read(move |conn| {
-            let mut statement = conn.prepare("SELECT data FROM hook_execution WHERE session_id=?1 ORDER BY started_ms DESC,id DESC LIMIT ?2")?;
-            let rows = statement.query_map(params![session,limit],|row| row.get::<_,String>(0))?;
-            rows.map(|row| {
-                serde_json::from_str(&row?).map_err(|error| StoreError::CorruptEvent { id: "hook receipt projection".into(), reason: error.to_string() })
-            }).collect()
-        })?)
+        let mut rows: Vec<HookExecutionRecord> = self.inner.store.read(move |conn| {
+            let mut statement = conn.prepare("SELECT data FROM hook_execution WHERE session_id=?1 AND (started_ms<?2 OR (started_ms=?2 AND id<?3)) ORDER BY started_ms DESC,id DESC LIMIT ?4")?;
+            let rows = statement.query_map(params![session,at,id,limit+1],|row| row.get::<_,String>(0))?;
+            rows.map(|row| serde_json::from_str(&row?).map_err(|error| StoreError::CorruptEvent { id:"hook receipt projection".into(),reason:error.to_string() })).collect()
+        })?;
+        let more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        let next = more
+            .then(|| {
+                rows.last()
+                    .map(|row| format!("{}:{}:{}", row.started_ms, row.session_id, row.id))
+            })
+            .flatten();
+        Ok((rows, next))
     }
+}
+
+fn hook_cursor(session: &str, cursor: Option<&str>) -> Result<(i64, String), RuntimeError> {
+    let Some(cursor) = cursor else {
+        return Ok((i64::MAX, String::new()));
+    };
+    let invalid =
+        || RuntimeError::Invalid("InvalidCursorError: malformed or foreign hook cursor".into());
+    let mut fields = cursor.split(':');
+    let at: i64 = fields
+        .next()
+        .ok_or_else(invalid)?
+        .parse()
+        .map_err(|_| invalid())?;
+    let owner = fields.next().ok_or_else(invalid)?;
+    let id = fields.next().ok_or_else(invalid)?;
+    if at < 0
+        || owner != session
+        || !cyber_core::ids::has_prefix(id, "hke")
+        || fields.next().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok((at, id.into()))
 }
 
 pub(super) fn register(registry: &mut EventRegistry) {

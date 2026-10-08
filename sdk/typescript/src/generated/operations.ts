@@ -270,6 +270,15 @@ export interface Operations {
     body: undefined;
     response: S.HistoryPage;
   };
+  "v1.session.hooks": {
+    path: { sessionID: string };
+    query: {
+      limit?: QueryValue;
+      cursor?: QueryValue;
+    };
+    body: undefined;
+    response: S.Page_HookExecutionRecord;
+  };
   "v1.session.inbox": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -843,6 +852,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.hooks": {
+    tag: "session",
+    name: "hooks",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/hook-executions",
+    pathParams: ["sessionID"],
+    query: ["limit", "cursor"],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
   "v1.session.inbox": {
     tag: "session",
     name: "inbox",
@@ -1317,6 +1338,9 @@ export function createGroups(caller: Caller) {
       /** Durable events after a sequence (`GET /api/v1/sessions/{sessionID}/history`) */
       history: (sessionID: string, query?: Operations["v1.session.history"]["query"], options?: RequestOptions): Promise<Operations["v1.session.history"]["response"]> =>
         caller.call("v1.session.history", { path: { sessionID }, query }, options),
+      /** List durable hook executions; running receipts do not establish a live process (`GET /api/v1/sessions/{sessionID}/hook-executions`) */
+      hooks: (sessionID: string, query?: Operations["v1.session.hooks"]["query"], options?: RequestOptions): Promise<Operations["v1.session.hooks"]["response"]> =>
+        caller.call("v1.session.hooks", { path: { sessionID }, query }, options),
       /** List inbox rows (`GET /api/v1/sessions/{sessionID}/inbox`) */
       inbox: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.inbox"]["response"]> =>
         caller.call("v1.session.inbox", { path: { sessionID } }, options),

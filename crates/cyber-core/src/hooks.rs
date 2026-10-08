@@ -10,12 +10,15 @@ pub use envelope::{HookEvent, HookIdentity, HookLocation};
 use std::io;
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{HookHandler, HookKind, HookSettings, Resolved};
 use crate::trust::{HookInvocationTrust, TrustStore};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HookScope {
     Managed,
@@ -36,7 +39,7 @@ impl HookScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HookOutcome {
     Ok,

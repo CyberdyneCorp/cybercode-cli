@@ -73,6 +73,8 @@ async fn command_hook_denies_write_even_in_bypass_mode() {
     let receipts = f.runtime.hook_executions(&session, 10).unwrap();
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].status, HookExecutionStatus::Completed);
+    assert_eq!(receipts[0].call_id.as_deref(), Some("call_write"));
+    assert_eq!(receipts[0].tool_name.as_deref(), Some("write"));
     assert!(receipts[0].io.is_none());
 }
 

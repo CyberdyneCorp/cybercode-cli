@@ -1,9 +1,12 @@
 //! Validate hook decisions and merge them in declared order.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 /// Increasing precedence; Retry and Block are limited to their respective events.
 pub enum HookAction {
@@ -14,7 +17,7 @@ pub enum HookAction {
     Block,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct HookDecision {
     pub decision: Option<HookAction>,
     pub reason: Option<String>,

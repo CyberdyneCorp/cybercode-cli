@@ -321,6 +321,56 @@ export type HistoryPage = {
   hasMore: boolean;
 };
 
+/** Increasing precedence; Retry and Block are limited to their respective events. */
+export type HookAction = "allow" | "retry" | "ask" | "deny" | "block";
+
+export type HookDecision = {
+  decision?: HookAction | null;
+  reason?: string | null;
+  updated_input?: unknown;
+  additional_context?: string | null;
+  continue?: boolean | null;
+  stop_reason?: string | null;
+  suppress_output?: boolean | null;
+};
+
+export type HookExecutionIo = {
+  stdin: string;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+};
+
+export type HookExecutionRecord = {
+  id: string;
+  session_id: string;
+  hook_id: string;
+  digest: string;
+  event: string;
+  call_id?: string | null;
+  tool_name?: string | null;
+  scope: HookScope;
+  directory: string;
+  agent: string;
+  mode: string;
+  started_ms: number;
+  log_io: boolean;
+  once?: boolean;
+  status: HookExecutionStatus;
+  duration_ms?: number | null;
+  outcome?: HookOutcome | null;
+  decision?: HookDecision | null;
+  acknowledged?: boolean | null;
+  must_stop: boolean;
+  io?: HookExecutionIo | null;
+};
+
+export type HookExecutionStatus = "running" | "completed" | "unknown";
+
+export type HookOutcome = "ok" | "blocked" | "error" | "timeout" | "skipped";
+
+export type HookScope = "managed" | "global" | "project" | "local" | "plugin" | "invocation";
+
 export type InboxEditBody = {
   parts?: Content[] | null;
   delivery?: Delivery | null;
@@ -456,6 +506,11 @@ export type ModelInfo = {
   available: boolean;
   context_limit: number;
   reasoning: boolean;
+};
+
+export type Page_HookExecutionRecord = {
+  data: HookExecutionRecord[];
+  cursor: Cursor;
 };
 
 export type Page_Job = {

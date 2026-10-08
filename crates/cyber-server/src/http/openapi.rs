@@ -136,6 +136,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "Cancel a background task and await settlement",
         )
         .ok::<Data<crate::runtime::Job>>(g),
+        op(
+            "get",
+            "/sessions/{sessionID}/hook-executions",
+            "v1.session.hooks",
+            "List durable hook executions; running receipts do not establish a live process",
+        )
+        .query(&["limit", "cursor"])
+        .ok::<Page<crate::runtime::HookExecutionRecord>>(g),
         op("get", "/openapi.json", "v1.health.openapi", "This document"),
         op("get", "/location", "v1.location.get", "Resolve a Location")
             .located()
