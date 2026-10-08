@@ -144,3 +144,24 @@
 - **THEN** the next handler SHALL receive that input with unchanged Session, Location, agent, Mode and timestamp
 - **AND** the original event SHALL remain unchanged
 - **AND** tool-schema validation and permission evaluation SHALL still be required before execution
+
+### Requirement: Command handlers
+(P1) A `command` handler SHALL run its `command` string through the configured shell with the event JSON on stdin, working directory set to the Location directory, and environment variables `CYBER_PROJECT_DIR`, `CYBER_SESSION_ID`, `CYBER_HOOK_EVENT` and `CYBER_AGENT` added. Exit code 0 SHALL mean success, with stdout parsed as a JSON decision when it is a JSON object. Exit code 2 SHALL mean block, and stderr SHALL be fed back as the reason. Any other exit code SHALL be a non-blocking error that is logged and shown to the user.
+
+#### Scenario: Exit 2 blocks a tool
+- **WHEN** a `PreToolUse` command hook exits with code 2 and stderr `rm on prod paths is forbidden`
+- **THEN** the tool call is not executed and the model receives a tool error containing that text
+
+#### Scenario: Non-blocking failure
+- **WHEN** a `PostToolUse` command hook exits with code 1
+- **THEN** the turn continues and a warning with the hook id and stderr is shown
+
+#### Scenario: Simultaneous command streams
+- **WHEN** a command writes stdout and stderr before consuming a large event from stdin
+- **THEN** all three streams SHALL progress concurrently and the owned exit code SHALL remain available
+- **AND** output beyond the capture limit SHALL be drained without unbounded memory growth
+
+#### Scenario: Command stop acknowledgement
+- **WHEN** command execution times out or its owner explicitly cancels it
+- **THEN** the owned process tree SHALL be terminated and acknowledgement SHALL be awaited with a bound
+- **AND** absent acknowledgement SHALL remain explicit rather than being reported as successful termination

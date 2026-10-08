@@ -8,6 +8,7 @@ use tokio::process::Command;
 
 /// A captured stream from either the ordinary or AppContainer command backend.
 pub type ReadStream = Box<dyn tokio::io::AsyncRead + Send + Unpin>;
+pub type WriteStream = Box<dyn tokio::io::AsyncWrite + Send + Unpin>;
 
 #[cfg(windows)]
 enum WindowsChild {
@@ -59,9 +60,31 @@ impl Process {
     #[cfg(windows)]
     pub fn from_container(mut child: cyber_sandbox::windows_streams::PipedChild) -> Self {
         drop(child.take_stdin());
+        Self::from_container_with_stdin(child)
+    }
+
+    /// Hook commands retain stdin so the owner can supply the event and close it.
+    #[cfg(windows)]
+    pub fn from_container_with_stdin(child: cyber_sandbox::windows_streams::PipedChild) -> Self {
         Self {
             child: WindowsChild::Container(Box::new(child)),
         }
+    }
+
+    pub fn stdin(&mut self) -> Option<WriteStream> {
+        #[cfg(windows)]
+        return match &mut self.child {
+            WindowsChild::Ordinary(child) => child
+                .child_mut()
+                .stdin
+                .take()
+                .map(|s| Box::new(s) as WriteStream),
+            WindowsChild::Container(child) => {
+                child.take_stdin().map(|s| Box::new(s) as WriteStream)
+            }
+        };
+        #[cfg(not(windows))]
+        self.child.stdin.take().map(|s| Box::new(s) as WriteStream)
     }
 
     pub fn stdout(&mut self) -> Option<ReadStream> {

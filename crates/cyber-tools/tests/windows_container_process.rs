@@ -149,6 +149,21 @@ fn container_process_worker() {
     let Ok(role) = std::env::var("CYBER_PROCESS_WORKER") else {
         return;
     };
+    if role == "hook" {
+        std::io::stdout()
+            .write_all(&vec![b'O'; 256 * 1024])
+            .unwrap();
+        std::io::stdout().flush().unwrap();
+        std::io::stderr()
+            .write_all(&vec![b'E'; 256 * 1024])
+            .unwrap();
+        std::io::stderr().flush().unwrap();
+        let mut input = Vec::new();
+        std::io::stdin().read_to_end(&mut input).unwrap();
+        std::io::stdout().write_all(&input).unwrap();
+        std::io::stdout().flush().unwrap();
+        std::process::exit(2);
+    }
     let mut input = Vec::new();
     std::io::stdin().read_to_end(&mut input).unwrap();
     if !input.is_empty() {
@@ -169,4 +184,92 @@ fn container_process_worker() {
         std::io::stderr().flush().unwrap();
     }
     std::process::exit(73);
+}
+
+#[tokio::test]
+async fn container_hook_transport_preserves_event_input_streams_and_exit() {
+    use cyber_core::hooks::{HookEvent, HookIdentity, HookLocation};
+    use cyber_tools::hook_commands::{HookCommandEnd, capture_hook_command};
+    use tokio_util::sync::CancellationToken;
+    let mut fixture = Fixture::new("hook").await;
+    let child = fixture.child.take().unwrap();
+    let scratch = child.temporary_directory().to_owned();
+    let fields = serde_json::json!({"text":"Δ".repeat(128*1024)})
+        .as_object()
+        .unwrap()
+        .clone();
+    let event = HookEvent::new(
+        "UserPromptSubmit",
+        HookIdentity {
+            session_id: "ses_hook".into(),
+            location: HookLocation {
+                directory: fixture._directory.path().into(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: "coder".into(),
+            mode: "default".into(),
+        },
+        1,
+        fields,
+    )
+    .unwrap();
+    let captured = capture_hook_command(
+        AppContainerProcess::from_container_with_stdin(child),
+        &event,
+        Duration::from_secs(10),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(captured.end, HookCommandEnd::Exited(Some(2)));
+    let mut input = serde_json::to_vec(&event).unwrap();
+    input.push(b'\n');
+    assert!(captured.stdout.bytes.ends_with(&input));
+    assert_eq!(captured.stderr.bytes, vec![b'E'; 256 * 1024]);
+    assert!(!captured.stdout.truncated && !captured.stderr.truncated);
+    assert!(!scratch.exists());
+    fixture.close();
+}
+
+#[tokio::test]
+async fn container_hook_transport_acknowledges_pre_cancelled_owned_process() {
+    use cyber_core::hooks::{HookEvent, HookIdentity, HookLocation};
+    use cyber_tools::hook_commands::{HookCommandEnd, capture_hook_command};
+    use tokio_util::sync::CancellationToken;
+    let mut fixture = Fixture::new("wait").await;
+    let child = fixture.child.take().unwrap();
+    let scratch = child.temporary_directory().to_owned();
+    let event = HookEvent::new(
+        "Stop",
+        HookIdentity {
+            session_id: "ses_hook".into(),
+            location: HookLocation {
+                directory: fixture._directory.path().into(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: "coder".into(),
+            mode: "default".into(),
+        },
+        1,
+        serde_json::Map::new(),
+    )
+    .unwrap();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let captured = capture_hook_command(
+        AppContainerProcess::from_container_with_stdin(child),
+        &event,
+        Duration::from_secs(10),
+        cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        captured.end,
+        HookCommandEnd::Cancelled { acknowledged: true }
+    );
+    assert!(!scratch.exists());
+    fixture.close();
 }

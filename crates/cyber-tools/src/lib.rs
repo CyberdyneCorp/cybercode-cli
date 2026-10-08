@@ -4,6 +4,7 @@
 mod auto_permissions;
 pub mod bash_analysis;
 mod budget;
+pub mod hook_commands;
 mod host;
 mod parent_permissions;
 pub mod permissions;
@@ -17,6 +18,7 @@ mod worktrees;
 pub use budget::Budget;
 pub use host::{BuiltinHost, ConfigFn, HostOptions};
 pub use schema::validate as validate_input;
+pub use tools::process::Process as HookCommandProcess;
 #[cfg(windows)]
 pub use tools::process::Process as AppContainerProcess;
 
