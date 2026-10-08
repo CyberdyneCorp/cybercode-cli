@@ -406,3 +406,49 @@ async fn tool_panic_and_read_only_cancellation_timeout_retain_unknown_activity()
         }
     }
 }
+
+#[test]
+fn retained_location_proof_refuses_consuming_only_hosts() {
+    let activity = Arc::new(Activity::default());
+    activity.active.store(1, Ordering::SeqCst);
+    let lease = LocationLease::managed(
+        "wt_test".into(),
+        Box::new(Guard {
+            activity: Arc::clone(&activity),
+            settled: false,
+        }),
+    );
+    assert!(lease.settle_retained().is_err());
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert!(activity.unknown.load(Ordering::SeqCst));
+}
+
+#[test]
+fn retained_location_proof_preserves_acknowledged_guard_until_disposal() {
+    struct Retained(Guard);
+    impl LocationGuard for Retained {
+        fn settle(self: Box<Self>) -> Result<(), String> {
+            Box::new(self.0).settle()
+        }
+        fn settle_retained(mut self: Box<Self>) -> Result<Box<dyn Send>, String> {
+            self.0.settled = true;
+            Ok(self)
+        }
+    }
+    let activity = Arc::new(Activity::default());
+    activity.active.store(1, Ordering::SeqCst);
+    let lease = LocationLease::managed(
+        "wt_test".into(),
+        Box::new(Retained(Guard {
+            activity: Arc::clone(&activity),
+            settled: false,
+        })),
+    );
+    let proof = lease.settle_retained().unwrap();
+    assert_eq!(activity.active.load(Ordering::SeqCst), 1);
+    assert!(!activity.unknown.load(Ordering::SeqCst));
+    drop(proof);
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert!(!activity.unknown.load(Ordering::SeqCst));
+    drop(LocationLease::unmanaged().settle_retained().unwrap());
+}

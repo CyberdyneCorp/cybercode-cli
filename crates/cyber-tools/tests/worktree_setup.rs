@@ -1350,3 +1350,43 @@ async fn process_launch_failure_remains_uncertain_and_cannot_authorize_retry() {
     assert_eq!(journal.snapshot().unwrap(), snapshot);
     assert!(!managed.path.join("target.txt").exists());
 }
+
+#[tokio::test]
+async fn retained_native_location_proof_prevents_checkout_removal_until_disposal() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, NoSnapshots, ToolHost};
+    let (fixture, repository, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let lease = flow
+        .f
+        .host
+        .claim_location(&info, false, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(lease.worktree_id.as_deref(), Some(managed.id.as_str()));
+    let proof = lease.settle_retained().unwrap();
+    let error = repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains(&info.id), "{error}");
+    assert!(managed.path.exists());
+    drop(proof);
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+    assert!(!managed.path.exists());
+}

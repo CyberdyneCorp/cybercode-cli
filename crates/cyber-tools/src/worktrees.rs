@@ -780,6 +780,15 @@ impl cyber_server::runtime::LocationGuard for WorktreeLease {
         }
         Ok(())
     }
+
+    fn settle_retained(self: Box<Self>) -> Result<Box<dyn Send>, String> {
+        let leases = self
+            .0
+            .into_iter()
+            .map(|lease| lease.settle_retained().map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Box::new(leases))
+    }
 }
 
 impl GitExecution for GitPort<'_> {

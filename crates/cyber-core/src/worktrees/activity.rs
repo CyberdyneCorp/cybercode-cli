@@ -23,9 +23,15 @@ pub struct CheckoutLease {
 }
 
 impl CheckoutLease {
-    pub fn settle(mut self) -> io::Result<()> {
+    pub fn settle(self) -> io::Result<()> {
+        self.settle_retained().map(drop)
+    }
+
+    /// Record acknowledgement while retaining the native lock through a later commit.
+    pub fn settle_retained(mut self) -> io::Result<Self> {
         self.record.settled = true;
-        write_record(&mut self.file, &self.record)
+        write_record(&mut self.file, &self.record)?;
+        Ok(self)
     }
 }
 
@@ -252,6 +258,50 @@ fn invalid(error: impl std::fmt::Display) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_settlement_keeps_the_native_lock_until_proof_disposal() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lease.lock");
+        let mut file = open_record(&path, true).unwrap();
+        assert!(try_lock(&file).unwrap());
+        let record = UseRecord {
+            worktree_id: "wt_test".into(),
+            session_id: "ses_test".into(),
+            settled: false,
+        };
+        write_record(&mut file, &record).unwrap();
+        let proof = CheckoutLease { file, record }.settle_retained().unwrap();
+        let mut probe = open_record(&path, false).unwrap();
+        assert!(read_record(&mut probe).unwrap().settled);
+        assert!(!try_lock(&probe).unwrap());
+        drop(proof);
+        assert!(try_lock(&probe).unwrap());
+        assert!(read_record(&mut probe).unwrap().settled);
+        probe.unlock().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_retained_settlement_preserves_unknown_native_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lease.lock");
+        let mut initial = open_record(&path, true).unwrap();
+        let record = UseRecord {
+            worktree_id: "wt_test".into(),
+            session_id: "ses_test".into(),
+            settled: false,
+        };
+        write_record(&mut initial, &record).unwrap();
+        drop(initial);
+        let file = File::open(&path).unwrap();
+        assert!(try_lock(&file).unwrap());
+        assert!(CheckoutLease { file, record }.settle_retained().is_err());
+        let mut probe = open_record(&path, false).unwrap();
+        assert!(try_lock(&probe).unwrap());
+        assert!(!read_record(&mut probe).unwrap().settled);
+        probe.unlock().unwrap();
+    }
 
     #[test]
     fn explicit_release_does_not_depend_on_closing_duplicate_descriptors() {

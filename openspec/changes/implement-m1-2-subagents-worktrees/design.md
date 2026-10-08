@@ -410,3 +410,7 @@ Bind each ownership receipt to its actual execution source as well as parent/tar
 ## Public explicit subtree stop
 
 Expose the existing owned runtime sweep as POST /sessions/{sessionID}/stop-subtree and generated session.stopSubtree. Return Data<SubtreeStopReport> with HTTP 200 for either Acknowledged or Unknown; HTTP success reports completion of observation, not proven native cancellation. The route uses normal authentication, Session identity routing and write idempotency. A repeated new request audits the same durable closure; replay of an idempotency key returns its original observation. Admission stays closed. Ordinary interrupt and Job stop retain their existing semantics until matched reopening and full client adoption are implemented.
+
+## Native ownership through reopening commit
+
+Current Location settlement consumes and releases its lock. Matched reopening needs a second form that acknowledges settlement while retaining ownership until the writer commit finishes. CheckoutLease::settle_retained returns the acknowledged original lease; LocationGuard::settle_retained returns an opaque Send guard and defaults to refusal. The production worktree host retains every source/target checkout lease. Partial failure drops guards but returns no usable proof; remaining unknown records continue to require recovery. Unmanaged Locations return an empty guard. This is a prerequisite for reopening, not an implementation of the complete generation/receipt/actor reconciliation transaction.

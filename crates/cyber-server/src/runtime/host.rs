@@ -14,6 +14,11 @@ use super::model::{CallState, RetrySafety, SessionInfo};
 /// An owned Location admission. Disposal without settlement must retain recovery evidence.
 pub trait LocationGuard: Send {
     fn settle(self: Box<Self>) -> Result<(), String>;
+
+    /// Acknowledge native settlement and retain ownership through a consuming commit.
+    fn settle_retained(self: Box<Self>) -> Result<Box<dyn Send>, String> {
+        Err("Location host does not support retained native settlement".into())
+    }
 }
 
 pub struct LocationLease {
@@ -38,6 +43,14 @@ impl LocationLease {
 
     pub fn settle(self) -> Result<(), String> {
         self.guard.map_or(Ok(()), |guard| guard.settle())
+    }
+
+    /// Keep acknowledged host ownership alive until the returned proof is dropped.
+    pub fn settle_retained(self) -> Result<Box<dyn Send>, String> {
+        self.guard.map_or_else(
+            || Ok(Box::new(()) as Box<dyn Send>),
+            |guard| guard.settle_retained(),
+        )
     }
 }
 

@@ -614,3 +614,20 @@
 #### Scenario: Independent child continuation
 - **WHEN** the parent Drain is interrupted during child-sourced continuation
 - **THEN** the child retains its authority until its own interruption or an explicit ancestor subtree fence
+
+### Requirement: Retained native settlement proof
+(P1) Verified admission reopening SHALL hold native Location ownership through the database commit that consumes its settlement evidence. A managed Location host SHALL explicitly support retained settlement; consuming settlement that releases ownership SHALL NOT be accepted as retained proof. A retained proof SHALL record acknowledged settlement while keeping the original native lock until disposal. Unsupported hosts and failed settlement SHALL refuse proof. This primitive SHALL NOT reopen admission or replace actor/effect audits.
+
+#### Scenario: Native lock held after settlement
+- **WHEN** a checkout lease records settlement for a retained proof
+- **THEN** another native claimant cannot acquire its activity record until the proof is dropped
+- **AND** the settled record remains durable after release
+
+#### Scenario: Host without retained settlement
+- **WHEN** a managed host implements only consuming settlement
+- **THEN** retained proof is refused without silently invoking consuming settlement
+
+#### Scenario: Retained host guard disposal
+- **WHEN** a host supplies retained acknowledged ownership
+- **THEN** the runtime preserves that guard until proof disposal
+- **AND** unmanaged Locations require no managed checkout lock
