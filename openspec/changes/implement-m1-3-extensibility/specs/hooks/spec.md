@@ -86,6 +86,13 @@
 - **AND** pages SHALL preserve Session scope, receipt IO policy and unresolved statuses without adding durable events
 - **AND** text output SHALL omit raw IO and distinguish recorded running observations from verified live processes
 
+#### Scenario: TUI receipt inspection preserves unresolved observations
+- **WHEN** the user opens `/hooks history` in the current Session
+- **THEN** the viewer SHALL page authenticated committed receipts and support refresh, scrolling and dismissal
+- **AND** raw IO SHALL be excluded from viewer state and display
+- **AND** running and unknown labels SHALL NOT imply verified live execution or authorize replay
+- **AND** superseded, dismissed or foreign-Session responses SHALL NOT replace the visible observation page
+
 ### Requirement: Matchers
 (P1) The system SHALL match hook groups by `matcher`, which is either a glob over the event's subject (tool name for tool events, including `mcp__<server>__<tool>`; notification type; file path for `FileChanged`) or, when wrapped in `/.../`, a regular expression. An absent or `*` matcher SHALL match every subject. A group MAY add `paths` (globs relative to the Location) that SHALL also match for tool calls with file targets.
 

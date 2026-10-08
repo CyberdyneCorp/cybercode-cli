@@ -53,6 +53,10 @@ pub enum Action {
         request: String,
         body: Value,
     },
+    LoadHookHistory {
+        generation: u64,
+        cursor: Option<String>,
+    },
     LoadTasks,
     LoadChildren,
     OpenTask(String),
@@ -166,6 +170,7 @@ pub enum Overlay {
     Question(QuestionForm),
     Help,
     Cost,
+    HookHistory,
     ConfirmBypass,
     ConfirmStopTasks,
 }
@@ -182,6 +187,7 @@ pub struct App {
     pub admissions: crate::admissions::Admissions,
     pub session: Session,
     pub cost: crate::cost::CostView,
+    pub hooks: crate::hooks::View,
     pub(crate) mode_selection: Option<String>,
     pub items: Vec<Item>,
     /// Text streaming in for assistant messages not yet durable.
@@ -214,6 +220,7 @@ impl App {
             admissions: Default::default(),
             session,
             cost: Default::default(),
+            hooks: Default::default(),
             mode_selection: None,
             items: Vec::new(),
             streaming: BTreeMap::new(),
@@ -242,7 +249,8 @@ impl App {
     pub(crate) fn set_session(&mut self, session: Session) {
         if session.id != self.session.id {
             self.cost.invalidate();
-            if matches!(self.overlay, Overlay::Cost) {
+            self.hooks.invalidate();
+            if matches!(self.overlay, Overlay::Cost | Overlay::HookHistory) {
                 self.overlay = Overlay::None;
             }
         }
@@ -355,6 +363,7 @@ impl App {
                     Vec::new()
                 }
             }
+            Overlay::HookHistory => self.hook_history_key(key),
             Overlay::Cost => match key.code {
                 KeyCode::Char('r' | 'R') => self.load_cost(),
                 KeyCode::Esc | KeyCode::Enter => {
@@ -368,6 +377,39 @@ impl App {
                 Vec::new()
             }
         }
+    }
+
+    fn load_hook_history(&mut self, cursor: Option<String>) -> Vec<Action> {
+        vec![Action::LoadHookHistory {
+            generation: self.hooks.load(),
+            cursor,
+        }]
+    }
+    fn hook_history_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char('r' | 'R') => return self.load_hook_history(None),
+            KeyCode::Char('n' | 'N') => {
+                if let Some(cursor) = self.hooks.next() {
+                    return self.load_hook_history(Some(cursor));
+                }
+            }
+            KeyCode::Up => self.hooks.scroll = self.hooks.scroll.saturating_sub(1),
+            KeyCode::Down => {
+                self.hooks.scroll = self.hooks.scroll.saturating_add(1).min(
+                    self.hooks
+                        .lines()
+                        .len()
+                        .saturating_sub(1)
+                        .min(u16::MAX as usize) as u16,
+                )
+            }
+            KeyCode::Esc | KeyCode::Enter => {
+                self.overlay = Overlay::None;
+                self.hooks.invalidate();
+            }
+            _ => {}
+        }
+        Vec::new()
     }
 
     pub fn on_paste(&mut self, text: &str) {
@@ -632,6 +674,14 @@ impl App {
             .split_once(' ')
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
+            "hooks" if args == "history" => {
+                self.overlay = Overlay::HookHistory;
+                self.load_hook_history(None)
+            }
+            "hooks" => {
+                self.toast("Use /hooks history for execution receipts; definition review is still under implementation");
+                Vec::new()
+            }
             "cost" => {
                 self.overlay = Overlay::Cost;
                 self.load_cost()

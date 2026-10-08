@@ -56,6 +56,10 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
         "Fork a background child with the current context",
     ),
     ("tasks", "List background tasks and open or stop a child"),
+    (
+        "hooks",
+        "Inspect recorded hook executions with /hooks history",
+    ),
     ("ps", "List background tasks"),
     ("stop", "Confirm stopping this Session's background tasks"),
     ("help", "Show commands and keys"),

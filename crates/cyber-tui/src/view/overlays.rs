@@ -336,6 +336,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
     let rows = [
         ("Enter", "send (steer while running)"),
         ("/cost", "token classes, subtree cost and cache hit rate"),
+        (
+            "/hooks history",
+            "page recorded hook outcomes without replay",
+        ),
         ("/admissions", "inspect or cancel pending delegation"),
         ("Tab / Alt+Enter", "queue while running"),
         ("Shift+Enter, Ctrl+J", "newline"),
@@ -434,6 +438,21 @@ pub(super) fn confirm_stop_tasks(f: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .block(frame(app, "Stop background tasks?")),
+        rect,
+    );
+}
+
+pub fn hook_history(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered(area, 100, 25);
+    let lines: Vec<Line> = app.hooks.lines().into_iter().map(Line::from).collect();
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .scroll((app.hooks.scroll, 0))
+            .block(frame(
+                app,
+                "Hook execution history · R refresh · N next · ↑/↓ scroll · Esc close",
+            )),
         rect,
     );
 }

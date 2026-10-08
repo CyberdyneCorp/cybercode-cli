@@ -262,6 +262,8 @@ GET `/api/v1/sessions/{sessionID}/hook-executions` lists durable hook receipts w
 
 `cyber hooks history --session <id> [--limit 50] [--cursor <cursor>]` reads these committed receipts directly from the local database without starting a server, loading executable configuration or reconciling owners. `--format json` preserves the receipt fields and next cursor, including explicitly recorded IO; text output summarizes status and acknowledgement without raw IO. Running observations remain unverified as live, and unknown observations require recovery.
 
+In the TUI, `/hooks history` pages the current Session’s receipts. Use `N` for the next page, `R` to refresh from the first page, arrows to scroll and Escape to close. The viewer shows recorded status, outcome, timing, call/tool correlation and stop acknowledgement. Raw IO is excluded from viewer state and display; running observations remain unverified as live. Definition review and trust controls remain under implementation.
+
 On Windows, eligible global full-access command hooks now use PowerShell with an explicit parent-owned event-input route. The helper consumes its private launch permit before command input; required sandbox hooks still refuse until Windows confinement is integrated. Native acceptance of this route remains pending.
 
 Other lifecycle events, remote tools, HTTP/prompt/MCP handlers, async scheduling, pre-tool concurrency, context admission, required Windows hook confinement, `cyber hooks test`, the TUI viewer, complete execution-history controls and managed/plugin collection remain under implementation. These review commands execute no handlers.

@@ -6,6 +6,7 @@ mod children;
 mod composer;
 mod cost;
 mod fuzzy;
+mod hooks;
 mod model;
 mod perform;
 mod runner;

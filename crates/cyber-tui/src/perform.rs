@@ -27,6 +27,11 @@ pub enum Msg {
         generation: u64,
         result: Result<crate::cost::Cost, String>,
     },
+    HookHistory {
+        session_id: String,
+        generation: u64,
+        result: Result<crate::hooks::Page, String>,
+    },
     Tasks {
         session_id: String,
         items: Vec<Choice>,
@@ -116,6 +121,31 @@ pub(crate) fn err(e: cyber_client::ClientError) -> String {
     e.to_string()
 }
 
+async fn hook_history(
+    client: &Client,
+    session: &Session,
+    generation: u64,
+    cursor: Option<String>,
+) -> Result<Msg, String> {
+    let cursor = cursor
+        .as_deref()
+        .map(|value| format!("&cursor={}", encode(value)))
+        .unwrap_or_default();
+    let result = client
+        .get(&format!(
+            "/sessions/{}/hook-executions?limit=50{cursor}",
+            encode(&session.id)
+        ))
+        .await
+        .map_err(err)
+        .and_then(|value| crate::hooks::Page::parse(&value, &session.id));
+    Ok(Msg::HookHistory {
+        session_id: session.id.clone(),
+        generation,
+        result,
+    })
+}
+
 async fn submit_prompt(
     client: &Client,
     session: &Session,
@@ -170,6 +200,9 @@ pub async fn perform_owned(
             Ok(crate::admissions::perform(client, request, stop).await)
         }
         Action::Refresh => snapshot(client, &session.id).await,
+        Action::LoadHookHistory { generation, cursor } => {
+            hook_history(client, session, generation, cursor).await
+        }
         Action::LoadCost { generation } => {
             let result = client
                 .get(&format!("/usage?scope=session&id={}", encode(&session.id)))
@@ -203,6 +236,16 @@ pub async fn perform_owned(
                 .post(&format!("/sessions/{id}/fork"), json!({}))
                 .await,
         ),
+        Action::LoadModels | Action::LoadAgents | Action::FindFiles(_) => {
+            load_choices(client, session, action).await
+        }
+        Action::SaveTheme(_) | Action::Editor(_) | Action::Quit => Ok(Msg::Done),
+        other => converse(client, session, other, context).await,
+    }
+}
+
+async fn load_choices(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    match action {
         Action::LoadModels => models(client).await,
         Action::LoadAgents => {
             let items = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
@@ -226,8 +269,7 @@ pub async fn perform_owned(
                     .collect(),
             ))
         }
-        Action::SaveTheme(_) | Action::Editor(_) | Action::Quit => Ok(Msg::Done),
-        other => converse(client, session, other, context).await,
+        _ => Err("Unsupported choice-list action".into()),
     }
 }
 

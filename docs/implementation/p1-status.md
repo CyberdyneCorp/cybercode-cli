@@ -6,6 +6,18 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+## M1.3 TUI receipt history
+
+`/hooks history` now pages the current Session’s durable receipts through the public API, with refresh-from-first-page, next-page, scroll and close controls. Recorded outcomes, timing, call/tool identity and stop acknowledgement are displayed; running remains unverified as live and unknown requires recovery. Raw IO is excluded from the view model and display, and untrusted control characters are escaped. Request generations and Session/overlay guards reject stale, foreign or dismissed responses. The command is discoverable in help and the built-in command catalog.
+
+Five local cases cover rendered status/privacy/escaping, pagination/refresh/scroll/dismissal, malformed/foreign pages, stale generations and Session switches, plus real authenticated HTTP endpoint/cursor requests and late-response handling through the runner. Native CI now runs these tests explicitly. Definition review/trust, transcript association, recovery reconciliation and complete client controls remain required; no hook milestone acceptance is inferred.
+
+The initial workspace run stops at `abandoned_lease_requires_recovery_even_after_kernel_lock_release`, reporting `Worktree in use by ses_abandoned` instead of unknown outcome. All 57 worktree-repository cases pass against a clean `273ab22` main checkout. This observation does not establish a pre-existing failure or its production cause; the final current workspace rerun also passes all 57 cases.
+
+Final workspace validation passes 1,160 Rust test executions (three ignored, 122 suites), all-target workspace Clippy with warnings denied, formatting, generated SDK consistency, workflow YAML and all 58 strict specs. Cross-spec lint reports zero errors and 21 warnings. The final TUI parser reads borrowed JSON to discard raw IO without duplicating it; all five focused UI cases and workspace all-target Clippy pass again after that final presentation/parser adjustment.
+
+Windows all-target lint at `273ab22`, job `113567636983`, completes successfully. All four Linux build targets, SDK and OpenSpec also complete successfully; Ubuntu Rust and Windows execution jobs remain running and macOS jobs queued when inspected. The native CLI hook-history step passes in [Windows job `113568488946`](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37852206324/job/113568488946), along with configuration, individual trust, CLI review, selectors and envelopes. The global Windows hook event-input case also passes its native command-launch gate, as do durable receipts, scratch ownership, result interpretation and AppContainer command transport. The parent-owned process-tree suite remains running when inspected; full input-route acceptance and native TUI history remain pending.
+
 ## M1.3 CLI execution history
 
 `cyber hooks history --session <id>` now reads durable receipts through the shared store-level page reader, without constructing Runtime actors, starting a server or parsing executable configuration. The default/max page limits are 50/500; Session existence and Session-bound cursors are checked. JSON preserves receipt IO policy and the next cursor; text summarizes escaped identities, status, outcome and stop acknowledgement without raw IO. Running observations remain explicitly unverified as live, and unknown outcomes require recovery.

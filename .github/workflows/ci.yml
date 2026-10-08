@@ -80,6 +80,9 @@ jobs:
       - name: Native CLI hook execution history
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test hook_history
+      - name: Native TUI hook receipt history
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui hook_history
       - name: Native hook selectors and ordered decisions
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test hook_decisions

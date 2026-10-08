@@ -280,6 +280,17 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         Msg::ModeChanged { session_id, result } => {
             return mode_changed(app, refresh, session_id, result);
         }
+        Msg::HookHistory {
+            session_id,
+            generation,
+            result,
+        } => {
+            if session_id == app.session.id
+                && matches!(app.overlay, crate::app::Overlay::HookHistory)
+            {
+                app.hooks.apply(generation, result);
+            }
+        }
         Msg::Cost {
             session_id,
             generation,
@@ -488,6 +499,47 @@ fn set_title(app: &App) {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    #[test]
+    fn hook_history_responses_do_not_reopen_dismissed_views_or_cross_sessions() {
+        let mut app = app();
+        let mut refresh = Refresh::default();
+        let generation = app.hooks.load();
+        app.overlay = crate::app::Overlay::HookHistory;
+        apply(
+            &mut app,
+            Ok(Msg::HookHistory {
+                session_id: "previous".into(),
+                generation,
+                result: Err("foreign failure".into()),
+            }),
+            &mut refresh,
+        );
+        assert!(
+            app.hooks
+                .lines()
+                .join(" ")
+                .contains("Loading hook receipts")
+        );
+        app.overlay = crate::app::Overlay::None;
+        apply(
+            &mut app,
+            Ok(Msg::HookHistory {
+                session_id: "current".into(),
+                generation,
+                result: Err("dismissed failure".into()),
+            }),
+            &mut refresh,
+        );
+        assert!(matches!(app.overlay, crate::app::Overlay::None));
+        assert!(
+            app.hooks
+                .lines()
+                .join(" ")
+                .contains("Loading hook receipts")
+        );
+        assert!(app.toast.is_none());
+    }
 
     #[test]
     fn child_thread_responses_are_ignored_after_switching_sessions() {

@@ -1244,3 +1244,197 @@ fn child_thread_commands_open_existing_threads_and_preserve_steer_delivery() {
     assert_eq!(app.session.id, "ses_child");
     assert_eq!(app.session.directory, "/worktree");
 }
+
+fn hook_history_fixture() -> serde_json::Value {
+    let row = |id: &str, status: &str| {
+        let mut row = json!({"id":id,"session_id":"ses_1","hook_id":"guard\u{1b}[31m","event":"PreToolUse","status":status,"started_ms":1,
+        "duration_ms":null,"outcome":null,"acknowledged":null,"must_stop":false,"call_id":"call_1","tool_name":"write","io":{"stdout":"private hook IO"}});
+        if status == "unknown" {
+            row["duration_ms"] = json!(2);
+            row["outcome"] = json!("error");
+            row["acknowledged"] = json!(false);
+            row["must_stop"] = json!(true);
+        }
+        row
+    };
+    json!({"data":[row("hke_running","running"),row("hke_unknown","unknown")],"cursor":{"next":"1:ses_1:hke_next"}})
+}
+fn open_hook_history(app: &mut App) -> u64 {
+    typed(app, "/hooks history");
+    let actions = app.on_key(key(KeyCode::Enter));
+    let [
+        Action::LoadHookHistory {
+            generation,
+            cursor: None,
+        },
+    ] = actions.as_slice()
+    else {
+        panic!("expected receipt request")
+    };
+    *generation
+}
+#[test]
+fn hook_history_renders_observations_without_raw_io_or_control_characters() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_history(&mut app);
+    assert!(matches!(app.overlay, Overlay::HookHistory));
+    assert!(screen(&app).contains("Loading hook receipts"));
+    app.hooks.apply(
+        generation,
+        crate::hooks::Page::parse(&hook_history_fixture(), "ses_1"),
+    );
+    let rendered = screen(&app);
+    assert!(rendered.contains("live state unverified"));
+    assert!(rendered.contains("recovery required"));
+    assert!(rendered.contains("call_1") && rendered.contains("write"));
+    assert!(!rendered.contains("private hook IO") && !rendered.contains('\u{1b}'));
+    assert!(rendered.contains("\\u{1b}"));
+    assert!(!format!("{:?}", app.hooks).contains("private hook IO"));
+    assert!(rendered.contains("must stop: yes"));
+}
+#[test]
+fn hook_history_pages_refreshes_scrolls_and_dismisses() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_history(&mut app);
+    app.hooks.apply(
+        generation,
+        crate::hooks::Page::parse(&hook_history_fixture(), "ses_1"),
+    );
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.hooks.scroll, 1);
+    app.on_key(key(KeyCode::Up));
+    assert_eq!(app.hooks.scroll, 0);
+    let next = app.on_key(key(KeyCode::Char('n')));
+    let [
+        Action::LoadHookHistory {
+            generation: next_generation,
+            cursor: Some(cursor),
+        },
+    ] = next.as_slice()
+    else {
+        panic!("expected next page")
+    };
+    assert_eq!(cursor, "1:ses_1:hke_next");
+    assert_ne!(generation, *next_generation);
+    app.hooks.apply(
+        *next_generation,
+        crate::hooks::Page::parse(&json!({"data":[],"cursor":{"next":null}}), "ses_1"),
+    );
+    assert!(screen(&app).contains("No recorded hook executions"));
+    assert!(app.on_key(key(KeyCode::Char('n'))).is_empty());
+    assert!(matches!(
+        app.on_key(key(KeyCode::Char('r'))).as_slice(),
+        [Action::LoadHookHistory { cursor: None, .. }]
+    ));
+    assert!(screen(&app).contains("Loading hook receipts"));
+    app.on_key(key(KeyCode::Esc));
+    assert_eq!(app.overlay, Overlay::None);
+}
+#[test]
+fn hook_history_refuses_foreign_and_malformed_pages_and_ignores_old_generations() {
+    let mut foreign = hook_history_fixture();
+    foreign["data"][0]["session_id"] = json!("ses_other");
+    assert!(crate::hooks::Page::parse(&foreign, "ses_1").is_err());
+    foreign = hook_history_fixture();
+    foreign["data"][0]["status"] = json!("live");
+    assert!(crate::hooks::Page::parse(&foreign, "ses_1").is_err());
+    assert!(crate::hooks::Page::parse(&json!({"data":{}}), "ses_1").is_err());
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let old = open_hook_history(&mut app);
+    let refresh = app.on_key(key(KeyCode::Char('r')));
+    let [Action::LoadHookHistory { generation, .. }] = refresh.as_slice() else {
+        panic!("expected refresh")
+    };
+    app.hooks.apply(
+        old,
+        crate::hooks::Page::parse(&hook_history_fixture(), "ses_1"),
+    );
+    assert!(screen(&app).contains("Loading hook receipts"));
+    app.hooks.apply(*generation, Err("unavailable".into()));
+    assert!(screen(&app).contains("Could not load receipts: unavailable"));
+    app.on_key(key(KeyCode::Esc));
+    let generation = open_hook_history(&mut app);
+    let mut other = session(false);
+    other.id = "ses_other".into();
+    app.set_session(other);
+    assert_eq!(app.overlay, Overlay::None);
+    app.hooks.apply(
+        generation,
+        crate::hooks::Page::parse(&hook_history_fixture(), "ses_1"),
+    );
+    assert!(!app.hooks.lines().join(" ").contains("hke_running"));
+}
+#[tokio::test]
+async fn hook_history_uses_authenticated_receipt_api_and_encodes_next_cursor() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = cyber_client::Client::http(
+        &format!("http://{}", listener.local_addr().unwrap()),
+        Some("pw".into()),
+    );
+    let server = std::thread::spawn(move || {
+        let mut headers = Vec::new();
+        for page in [
+            hook_history_fixture(),
+            json!({"data":[],"cursor":{"next":null}}),
+        ] {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 2048];
+            while !bytes.windows(4).any(|v| v == b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                bytes.extend_from_slice(&buffer[..n]);
+            }
+            headers.push(String::from_utf8(bytes).unwrap());
+            let body = page.to_string();
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+        }
+        headers
+    });
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_history(&mut app);
+    let action = Action::LoadHookHistory {
+        generation,
+        cursor: None,
+    };
+    let crate::perform::Msg::HookHistory {
+        session_id,
+        generation,
+        result,
+    } = crate::perform::perform(&client, &app.session, action)
+        .await
+        .unwrap()
+    else {
+        panic!("expected receipt response")
+    };
+    assert_eq!(session_id, app.session.id);
+    app.hooks.apply(generation, result);
+    assert!(screen(&app).contains("hke_running"));
+    let action = app.on_key(key(KeyCode::Char('n'))).remove(0);
+    let crate::perform::Msg::HookHistory {
+        generation, result, ..
+    } = crate::perform::perform(&client, &app.session, action)
+        .await
+        .unwrap()
+    else {
+        panic!("expected next receipt response")
+    };
+    app.hooks.apply(generation, result);
+    assert!(screen(&app).contains("No recorded hook executions"));
+    let headers = server.join().unwrap();
+    assert!(headers[0].starts_with("GET /api/v1/sessions/ses_1/hook-executions?limit=50 "));
+    assert!(headers[1].starts_with(
+        "GET /api/v1/sessions/ses_1/hook-executions?limit=50&cursor=1%3Ases_1%3Ahke_next "
+    ));
+    assert!(headers.iter().all(|header| {
+        header.to_ascii_lowercase().contains(
+            "authorization: basic Y3liZXI6cHc="
+                .to_ascii_lowercase()
+                .as_str(),
+        )
+    }));
+}
