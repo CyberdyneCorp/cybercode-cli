@@ -165,3 +165,21 @@
 - **WHEN** command execution times out or its owner explicitly cancels it
 - **THEN** the owned process tree SHALL be terminated and acknowledgement SHALL be awaited with a bound
 - **AND** absent acknowledgement SHALL remain explicit rather than being reported as successful termination
+
+
+#### Scenario: Captured command decision interpretation
+- **WHEN** a command exits successfully with complete JSON object output
+- **THEN** its applicable decision fields SHALL be validated against the event
+- **AND** non-JSON output SHALL mean success without a decision
+- **AND** truncated output or malformed decision objects SHALL be errors rather than accepted allow decisions
+
+#### Scenario: Command failure and timeout policies
+- **WHEN** a command exits with a code other than zero or two
+- **THEN** its stderr SHALL produce a transient nonblocking diagnostic even when fail_closed is enabled
+- **AND** an acknowledged timeout SHALL block only when fail_closed is enabled
+
+#### Scenario: Unknown command termination prevents admission
+- **WHEN** command termination lacks acknowledgement or the owner cancels execution
+- **THEN** the dispatcher SHALL stop subsequent effect admission
+- **AND** missing acknowledgement SHALL remain explicit and SHALL NOT produce an allow decision
+- **AND** raw diagnostics SHALL NOT be persisted in receipts by default

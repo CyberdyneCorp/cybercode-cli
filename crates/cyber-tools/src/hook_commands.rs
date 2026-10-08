@@ -1,6 +1,10 @@
 //! Bounded stdin/stdout/stderr transport for an already authorized owned hook process.
 //! The caller must retain this future under its execution owner and persist settlement.
 
+mod results;
+
+pub use results::{HookCommandReport, HookOutcome, interpret_hook_command};
+
 use std::io;
 use std::time::Duration;
 
@@ -201,6 +205,37 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn hook_transport_interprets_actual_command_decisions_and_failures() {
+        let directory = tempfile::tempdir().unwrap();
+        let event = event(directory.path());
+        for (script, outcome, action) in [
+            (
+                "cat >/dev/null; printf '%s' '{\"decision\":\"deny\",\"reason\":\"policy\"}'",
+                HookOutcome::Blocked,
+                Some(cyber_core::hooks::HookAction::Deny),
+            ),
+            (
+                "printf blocked >&2; exit 2",
+                HookOutcome::Blocked,
+                Some(cyber_core::hooks::HookAction::Deny),
+            ),
+            ("printf failed >&2; exit 1", HookOutcome::Error, None),
+        ] {
+            let captured = capture_hook_command(
+                process(script).await,
+                &event,
+                Duration::from_secs(10),
+                CancellationToken::new(),
+            )
+            .await;
+            let report = interpret_hook_command(&event, "guard", true, captured);
+            assert_eq!(report.outcome, outcome);
+            assert_eq!(report.decision.decision, action);
+            assert!(report.acknowledged && !report.must_stop);
+        }
     }
 
     #[tokio::test]
