@@ -158,7 +158,14 @@ async fn execute_session(
     mut out: Out,
 ) -> Result<u8, CliError> {
     let id = session["id"].as_str().unwrap_or_default().to_string();
+    let mut run = Run::new(args, Instant::now());
+    let baseline = client.get(&format!("/sessions/{id}")).await.map_err(api)?;
+    run.begin_session(&baseline["data"])?;
     out.init(client, session).await;
+    if run.over_budget() {
+        run.stop_reason = Some("budget_exceeded".into());
+        return Ok(out.finish(&run, args, session));
+    }
     let mut events =
         Box::pin(
             client.events(true).await.map_err(api)?.filter(move |e| {
@@ -167,14 +174,33 @@ async fn execute_session(
         );
     let id = session["id"].as_str().unwrap_or_default();
     setup::send(client, id, args, prompt).await?;
-    let mut run = Run::new(args, Instant::now());
+    follow_session(client, id, &mut events, &mut run, &mut out, timeout).await;
+    if let Err(error) = refresh_usage(client, id, &mut run).await {
+        run.error.get_or_insert(error.message);
+    } else if run.over_budget() {
+        run.stop_reason
+            .get_or_insert_with(|| "budget_exceeded".into());
+    }
+    Ok(out.finish(&run, args, session))
+}
+
+async fn follow_session<S: futures::Stream<Item = Event> + Unpin>(
+    client: &Client,
+    id: &str,
+    events: &mut S,
+    run: &mut Run,
+    out: &mut Out,
+    timeout: Option<Duration>,
+) {
+    let mut billing = tokio::time::interval(Duration::from_millis(200));
+    billing.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let deadline = tokio::time::sleep(timeout.unwrap_or(Duration::from_secs(u64::MAX / 4)));
     tokio::pin!(deadline);
     loop {
         tokio::select! {
             event = events.next() => match event {
                 Some(event) => {
-                    if handle(&mut run, &mut out, client, id, event).await {
+                    if handle(run, out, client, id, event).await {
                         break;
                     }
                 }
@@ -183,24 +209,67 @@ async fn execute_session(
                     break;
                 }
             },
-            _ = &mut deadline => {
-                stop(client, id, &mut run, "timeout").await;
+            _ = billing.tick() => {
+                if monitor_billing(client, id, run).await { break; }
             }
-            _ = tokio::signal::ctrl_c() => {
-                stop(client, id, &mut run, "interrupted").await;
+            _ = &mut deadline, if run.stop_reason.is_none() => {
+                stop(client, id, run, "timeout").await;
+            }
+            _ = tokio::signal::ctrl_c(), if run.stop_reason.is_none() => {
+                stop(client, id, run, "interrupted").await;
             }
         }
     }
-    Ok(out.finish(&run, args, session))
+}
+
+async fn monitor_billing(client: &Client, id: &str, run: &mut Run) -> bool {
+    if run
+        .stop_requested
+        .is_some_and(|started| started.elapsed() >= Duration::from_secs(5))
+    {
+        run.error.get_or_insert_with(|| {
+            "Session interruption was not acknowledged; inspect the Session before retrying".into()
+        });
+        return true;
+    }
+    if let Err(error) = refresh_usage(client, id, run).await {
+        run.error = Some(error.message);
+        stop(client, id, run, "error").await;
+    } else if run.over_budget() {
+        stop(client, id, run, "budget_exceeded").await;
+    }
+    false
+}
+
+async fn refresh_usage(client: &Client, id: &str, run: &mut Run) -> Result<(), CliError> {
+    let snapshot = tokio::time::timeout(
+        Duration::from_secs(2),
+        client.get(&format!("/sessions/{id}")),
+    )
+    .await
+    .map_err(|_| CliError::runtime("Exec billing refresh timed out"))?
+    .map_err(api)?;
+    run.session_snapshot(&snapshot["data"])
 }
 
 /// Interrupt the Drain; the run ends when it reports idle.
 async fn stop(client: &Client, id: &str, run: &mut Run, reason: &str) {
     if run.stop_reason.is_none() {
         run.stop_reason = Some(reason.into());
-        let _ = client
-            .post(&format!("/sessions/{id}/interrupt"), json!({}))
-            .await;
+        run.stop_requested = Some(Instant::now());
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            client.post(&format!("/sessions/{id}/interrupt"), json!({})),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            _ => {
+                run.error.get_or_insert_with(|| {
+                    "Session interruption request was not acknowledged".into()
+                });
+            }
+        }
     }
 }
 

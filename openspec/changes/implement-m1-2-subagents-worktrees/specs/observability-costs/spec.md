@@ -45,3 +45,11 @@
 - **AND** a refused visible step SHALL settle durably before exactly one live budget error is published
 - **AND** a refused retry SHALL not reach the underlying provider adapter
 - **AND** storage failures at the same boundary SHALL retain their runtime storage error classification
+
+#### Scenario: Ordinary exec subtree accounting
+- **WHEN** an ordinary exec run submits a prompt to a new or reused Session
+- **THEN** it SHALL capture a durable own/descendant baseline before submission and report spending since that baseline without rebilling prior history
+- **AND** token and cost monitoring SHALL observe hidden and descendant usage even without a parent step event
+- **AND** budgeted execution SHALL refuse missing or incomplete descendant accounting before prompt dispatch
+- **AND** final reporting SHALL preserve separate own and descendant totals, all five own token classes and attribution completeness
+- **AND** client-side soft monitoring SHALL disclose in-flight overshoot and SHALL NOT claim that ordinary conversation interruption proves descendant task cancellation

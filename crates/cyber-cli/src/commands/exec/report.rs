@@ -24,10 +24,12 @@ pub struct Run {
     pub denials: Vec<Value>,
     pub error: Option<String>,
     pub stop_reason: Option<String>,
+    pub stop_requested: Option<Instant>,
     pub usage: Option<Value>,
     pub unpriced: bool,
     extra_tokens: u64,
     children_usage: Option<cyber_server::runtime::ChildrenUsage>,
+    session_baseline: Option<Value>,
     calls: HashMap<String, (String, Value)>,
     max_tokens: Option<u64>,
     max_cost: Option<f64>,
@@ -45,10 +47,12 @@ impl Run {
             denials: Vec::new(),
             error: None,
             stop_reason: None,
+            stop_requested: None,
             usage: None,
             unpriced: false,
             extra_tokens: 0,
             children_usage: None,
+            session_baseline: None,
             calls: HashMap::new(),
             max_tokens: args.max_tokens,
             max_cost: args.max_cost,
@@ -58,6 +62,22 @@ impl Run {
     pub fn over_budget(&self) -> bool {
         self.max_tokens.is_some_and(|m| self.combined_tokens() >= m)
             || self.max_cost.is_some_and(|m| self.combined_cost() >= m)
+    }
+
+    pub fn begin_session(&mut self, snapshot: &Value) -> Result<(), crate::error::CliError> {
+        validate_session_totals(snapshot)?;
+        self.delegated_snapshot(snapshot)?;
+        self.session_baseline = Some(snapshot.clone());
+        self.session_snapshot(snapshot)
+    }
+
+    pub fn session_snapshot(&mut self, snapshot: &Value) -> Result<(), crate::error::CliError> {
+        let baseline = self
+            .session_baseline
+            .as_ref()
+            .ok_or_else(|| crate::error::CliError::runtime("Missing exec billing baseline"))?;
+        let delta = session_delta(snapshot, baseline)?;
+        self.delegated_snapshot(&delta)
     }
 
     fn combined_tokens(&self) -> u64 {
@@ -105,13 +125,13 @@ impl Run {
         };
         if budgeted && !children.as_ref().is_some_and(|u| u.children_usage_complete) {
             return Err(crate::error::CliError::runtime(
-                "Budgeted delegation has incomplete descendant billing",
+                "Budgeted execution has incomplete descendant billing",
             ));
         }
         self.totals(&snapshot["totals"]);
         self.unpriced |= children
             .as_ref()
-            .is_some_and(|u| u.children_unpriced_steps > 0);
+            .is_none_or(|u| !u.children_usage_complete || u.children_unpriced_steps > 0);
         self.children_usage = children;
         Ok(())
     }
@@ -139,6 +159,93 @@ impl Run {
             _ => 0,
         }
     }
+}
+
+fn billing_error() -> crate::error::CliError {
+    crate::error::CliError::runtime("Invalid or decreasing exec billing snapshot")
+}
+
+fn count(value: &Value) -> Result<u64, crate::error::CliError> {
+    if value.is_null() {
+        Ok(0)
+    } else {
+        value.as_u64().ok_or_else(billing_error)
+    }
+}
+
+fn cost(value: &Value) -> Result<f64, crate::error::CliError> {
+    value
+        .as_f64()
+        .filter(|cost| cost.is_finite() && *cost >= 0.0)
+        .ok_or_else(billing_error)
+}
+
+fn validate_session_totals(snapshot: &Value) -> Result<(), crate::error::CliError> {
+    if !snapshot["id"].is_string() || !snapshot["totals"]["usage"].is_object() {
+        return Err(billing_error());
+    }
+    cost(&snapshot["totals"]["cost"])?;
+    for field in ["input", "output", "reasoning", "cache_read", "cache_write"] {
+        count(&snapshot["totals"]["usage"][field])?;
+    }
+    count(&snapshot["totals"]["steps"])?;
+    count(&snapshot["totals"]["unpriced_steps"])?;
+    Ok(())
+}
+
+fn session_delta(snapshot: &Value, baseline: &Value) -> Result<Value, crate::error::CliError> {
+    validate_session_totals(snapshot)?;
+    if [
+        "children_cost",
+        "children_tokens",
+        "children_unpriced_steps",
+        "children_usage_complete",
+    ]
+    .iter()
+    .any(|field| snapshot.get(*field).is_some())
+    {
+        serde_json::from_value::<cyber_server::runtime::ChildrenUsage>(snapshot.clone())
+            .map_err(|_| billing_error())?;
+    }
+    if snapshot["id"] != baseline["id"] {
+        return Err(billing_error());
+    }
+    let mut delta = json!({"totals":{"usage":{}}});
+    for field in ["input", "output", "reasoning", "cache_read", "cache_write"] {
+        delta["totals"]["usage"][field] = count(&snapshot["totals"]["usage"][field])?
+            .checked_sub(count(&baseline["totals"]["usage"][field])?)
+            .ok_or_else(billing_error)?
+            .into();
+    }
+    for field in ["steps", "unpriced_steps"] {
+        delta["totals"][field] = count(&snapshot["totals"][field])?
+            .checked_sub(count(&baseline["totals"][field])?)
+            .ok_or_else(billing_error)?
+            .into();
+    }
+    let own_cost = cost(&snapshot["totals"]["cost"])? - cost(&baseline["totals"]["cost"])?;
+    if own_cost < 0.0 {
+        return Err(billing_error());
+    }
+    delta["totals"]["cost"] = own_cost.into();
+    if baseline.get("children_cost").is_some() {
+        let children_cost = cost(&snapshot["children_cost"])? - cost(&baseline["children_cost"])?;
+        if children_cost < 0.0 {
+            return Err(billing_error());
+        }
+        delta["children_cost"] = children_cost.into();
+        for field in ["children_tokens", "children_unpriced_steps"] {
+            delta[field] = count(&snapshot[field])?
+                .checked_sub(count(&baseline[field])?)
+                .ok_or_else(billing_error)?
+                .into();
+        }
+        delta["children_usage_complete"] = json!(
+            snapshot["children_usage_complete"] == true
+                && baseline["children_usage_complete"] == true
+        );
+    }
+    Ok(delta)
 }
 
 pub struct Out {
@@ -262,10 +369,12 @@ impl Out {
             "session.tool.called" => self.tool_use(run, data),
             "session.tool.settled" => self.tool_result(run, data),
             "session.step.ended" => {
-                run.turns += 1;
-                run.input_tokens += data["usage"]["input"].as_u64().unwrap_or(0);
-                run.output_tokens += data["usage"]["output"].as_u64().unwrap_or(0);
-                run.cost += data["cost"].as_f64().unwrap_or(0.0);
+                if run.session_baseline.is_none() {
+                    run.turns += 1;
+                    run.input_tokens += data["usage"]["input"].as_u64().unwrap_or(0);
+                    run.output_tokens += data["usage"]["output"].as_u64().unwrap_or(0);
+                    run.cost += data["cost"].as_f64().unwrap_or(0.0);
+                }
             }
             // A failed step also publishes `session.error`, which reports it once; an
             // overflow that compaction recovers from is not an error of the run.
@@ -335,7 +444,7 @@ impl Out {
             result["usage"] = usage.clone();
             result["cost_unpriced"] = run.unpriced.into();
         }
-        if self.delegation.is_some() {
+        if self.delegation.is_some() || run.session_baseline.is_some() {
             result["own_cost_usd"] = run.cost.into();
             result["total_tokens"] = run.combined_tokens().into();
             result["children_usage_complete"] = run
@@ -485,5 +594,39 @@ mod tests {
         assert_eq!(run.text, "inflight answer");
         assert_eq!(run.stop_reason.as_deref(), Some("budget_exceeded"));
         assert_eq!(run.exit_code(false), EXIT_BUDGET);
+    }
+
+    #[test]
+    fn ordinary_snapshot_deltas_replace_totals_without_duplicate_step_billing() {
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut run = Run::new(&args, Instant::now());
+        let baseline = json!({"id":"ses_1","totals":{"usage":{"input":10},"cost":2.0,"steps":1,"unpriced_steps":0},"children_cost":3.0,"children_tokens":10,"children_unpriced_steps":0,"children_usage_complete":true});
+        run.begin_session(&baseline).unwrap();
+        let mut current = baseline.clone();
+        current["totals"]["usage"]["input"] = json!(20);
+        current["totals"]["cost"] = json!(2.5);
+        current["children_tokens"] = json!(20);
+        current["children_cost"] = json!(3.5);
+        run.session_snapshot(&current).unwrap();
+        let mut out = Out::new(Format::Json, &args, &baseline);
+        out.durable(
+            &mut run,
+            "session.step.ended.1",
+            &json!({"usage":{"input":10},"cost":0.5}),
+        );
+        assert_eq!(run.combined_cost(), 1.0);
+        assert_eq!(run.combined_tokens(), 20);
+        run.session_snapshot(&current).unwrap();
+        assert_eq!(run.combined_tokens(), 20);
+        let mut invalid = current.clone();
+        invalid["children_tokens"] = json!(-1);
+        assert!(run.session_snapshot(&invalid).is_err());
+        invalid = current.clone();
+        invalid["totals"]["cost"] = json!(1.0);
+        assert!(run.session_snapshot(&invalid).is_err());
+        invalid = current;
+        invalid["id"] = json!("ses_other");
+        assert!(run.session_snapshot(&invalid).is_err());
+        assert_eq!(run.combined_cost(), 1.0);
     }
 }

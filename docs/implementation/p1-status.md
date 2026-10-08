@@ -22,6 +22,14 @@ Two durable-billing regressions fail on unchanged main 75d7a6b. All 65 focused J
 
 ## Delivery sequence
 
+### Ordinary exec subtree accounting increment
+
+Ordinary exec now captures own/descendant billing before prompt submission, polls every 200 ms and performs a bounded final snapshot read. Final JSON includes spending since that baseline, all five own token classes, separate own/descendant totals and attribution completeness. Reused Session history is excluded; hidden and descendant calls are observed without needing a parent step event. Durable snapshots replace previous totals, and later parent step events cannot duplicate already observed charges. Counter regression, malformed attribution or a foreign Session snapshot refuses accounting while preserving previously known totals. Budgeted runs refuse missing/incomplete descendant attribution before sending the prompt; unbudgeted legacy servers retain the known own lower bound and explicitly disclose unknown descendants.
+
+Three regressions fail on unchanged production main 553f718 with the corrected blocking HTTP fixture. All 59 CLI test executions pass locally; the final five binary-level accounting tests and workspace all-target Clippy pass again after fixture extraction. Those cases cover reused-history exclusion, descendant-only budget exhaustion, pre-prompt legacy refusal, unbudgeted legacy uncertainty and a server that never acknowledges interruption. The last case is bounded and reports uncertainty instead of waiting indefinitely. Formatting, generated contracts and all 57 strict specs pass; cross-spec lint remains zero errors and 21 warnings. Native CI now includes ordinary accounting tests; new native acceptance is pending.
+
+This is a soft observation window over the selected Session subtree, including other activity recorded there during execution. It does not prove exclusive per-prompt ownership, conservative reservations, ancestor warning presentation, daily caps or descendant task cancellation. Those contracts, durable admission-generation fences, Windows confinement, the remaining long-root investigation and the full P1 goal stay open. P0 artifacts are unchanged. The native diagnostic job for 553f718 is still running; its mandatory repository step has failed, but the job log API currently returns 404, so the new controls have no inspected result yet.
+
 - [ ] M1.1: Windows sandbox and network enforcement; classifier, permission ceilings, mode cycling and pending state.
 - [ ] M1.2: Subagents, schema validation, worktree isolation, background results and concurrency limits.
 - [ ] M1.3: Hooks, out-of-process plugin host, MCP authentication/search/resources/prompts and complete skills support.

@@ -122,7 +122,7 @@ jobs:
         run: cargo test --locked -p cyber-tui --lib tasks
       - name: Native exec durable admission and child Job ownership
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-cli --test exec_delegation --bin cyber
+        run: cargo test --locked -p cyber-cli --test exec_delegation --test exec_session_usage --bin cyber
       - name: Native Session subtree budgets and config validation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test budgets --test budget_errors -p cyber-core --test config -p cyber-store --test store
