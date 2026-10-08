@@ -324,6 +324,10 @@ export type HistoryPage = {
 /** Increasing precedence; Retry and Block are limited to their respective events. */
 export type HookAction = "allow" | "retry" | "ask" | "deny" | "block";
 
+export type HookApproval = {
+  digest: string;
+};
+
 export type HookCondition = {
   field: string;
   matches: string;
@@ -405,7 +409,16 @@ export type HookReview = {
   checkout_trusted: boolean;
 };
 
+export type HookRevocation = {
+  digest: string;
+  revoked: boolean;
+};
+
 export type HookScope = "managed" | "global" | "project" | "local" | "plugin" | "invocation";
+
+export type HookTrustBody = {
+  digest: string;
+};
 
 export type InboxEditBody = {
   parts?: Content[] | null;
@@ -491,9 +504,21 @@ export type Located_CreatedWorktree = {
 };
 
 /** A Location-scoped response. */
+export type Located_HookApproval = {
+  location: LocationInfo;
+  data: HookApproval;
+};
+
+/** A Location-scoped response. */
 export type Located_HookReview = {
   location: LocationInfo;
   data: HookReview;
+};
+
+/** A Location-scoped response. */
+export type Located_HookRevocation = {
+  location: LocationInfo;
+  data: HookRevocation;
 };
 
 /** A Location-scoped response. */

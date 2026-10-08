@@ -533,6 +533,24 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .located()
         .ok::<Located<cyber_core::hooks::HookReview>>(g),
+        op(
+            "post",
+            "/hooks/trust",
+            "v1.hook.trust",
+            "Approve a current project/local hook digest",
+        )
+        .located()
+        .body::<super::hooks::HookTrustBody>(g)
+        .ok::<Located<super::hooks::HookApproval>>(g),
+        op(
+            "post",
+            "/hooks/untrust",
+            "v1.hook.untrust",
+            "Revoke a checkout hook digest without loading configuration",
+        )
+        .located()
+        .body::<super::hooks::HookTrustBody>(g)
+        .ok::<Located<super::hooks::HookRevocation>>(g),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),

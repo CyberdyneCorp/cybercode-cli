@@ -25,7 +25,7 @@ Native CLI hook-history execution passes at `273ab22` in Windows job `1135684889
 
 TUI `/hooks history` now pages committed Session receipts through the public API, with refresh/scroll/dismissal and unresolved-state labels. Local rendered/HTTP/runner cases cover raw-IO exclusion, escaping, cursor encoding and stale/foreign-response guards. Native execution is pending; the definition/trust viewer, transcript integration and full recovery controls remain required.
 
-Authenticated Location-scoped hook catalog access now uses the live full resolver, original digests and uncached approvals with header/secret redaction and withheld-path metadata. Real App TCP and typed SDK cases prove inspected boundaries without Session/hook admission or command effects. Native catalog execution, approval writes, withheld raw review and the complete TUI definition/trust controls remain required.
+Authenticated Location-scoped hook catalog access now uses the live full resolver, original digests and uncached approvals with header/secret redaction and withheld-path metadata. Real App TCP and typed SDK cases prove inspected boundaries without Session/hook admission or command effects. Native catalog execution, withheld raw review and the complete TUI definition/trust controls remain required.
 
 ## Canonical contract checklist
 

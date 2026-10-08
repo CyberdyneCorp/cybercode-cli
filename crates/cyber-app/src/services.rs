@@ -76,6 +76,26 @@ impl Services for AppServices {
             .map_err(cyber_server::http::ApiError::invalid)
     }
 
+    fn trust_hook(
+        &self,
+        location: &Path,
+        digest: &str,
+    ) -> Result<(), cyber_server::http::ApiError> {
+        self.host
+            .trust_hook(location, digest)
+            .map_err(cyber_server::http::ApiError::invalid)
+    }
+
+    fn untrust_hook(
+        &self,
+        location: &Path,
+        digest: &str,
+    ) -> Result<bool, cyber_server::http::ApiError> {
+        self.host
+            .untrust_hook(location, digest)
+            .map_err(cyber_server::http::ApiError::invalid)
+    }
+
     fn inspect_child_setup(
         &self,
         parent: String,

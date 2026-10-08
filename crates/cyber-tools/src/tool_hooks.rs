@@ -47,6 +47,41 @@ impl BuiltinHost {
         cyber_core::hooks::HookReview::from_config(&(config.resolve)(location)?, &config.trust)
     }
 
+    /// Approve only an exact, currently resolved checkout-scoped definition.
+    pub fn trust_hook(&self, location: &Path, digest: &str) -> Result<(), String> {
+        let config = self
+            .hook_config
+            .get()
+            .ok_or("Hook configuration resolver is unavailable")?;
+        let resolved = (config.resolve)(location)?;
+        if !resolved.trust.trusted {
+            return Err("Trust the current checkout configuration before approving hooks".into());
+        }
+        let catalog = HookCatalog::from_config(&resolved)?;
+        if !catalog.definitions.iter().any(|definition| {
+            definition.digest == digest && definition.scope.requires_handler_trust()
+        }) {
+            return Err("Digest does not identify a currently resolved project/local hook".into());
+        }
+        config
+            .trust
+            .approve_hook(&resolved.trust.checkout_root, digest)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Revoke obsolete approvals without loading potentially malformed configuration.
+    pub fn untrust_hook(&self, location: &Path, digest: &str) -> Result<bool, String> {
+        let config = self
+            .hook_config
+            .get()
+            .ok_or("Hook configuration resolver is unavailable")?;
+        let root = cyber_core::config::project_root(location);
+        config
+            .trust
+            .revoke_hook(&root, digest)
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) async fn pre_tool_hooks(
         &self,
         inv: &mut Invocation,

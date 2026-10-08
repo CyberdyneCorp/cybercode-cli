@@ -100,6 +100,15 @@
 - **AND** untrusted checkout definitions SHALL remain withheld and their paths SHALL be reported separately
 - **AND** inspection SHALL NOT admit Session, hook execution or model work
 
+#### Scenario: Authenticated exact-digest trust mutation
+- **WHEN** a client posts a digest to `/hooks/trust` for a Location
+- **THEN** the API SHALL require authentication and current checkout trust and approve only a freshly resolved project/local digest
+- **AND** global, unknown, obsolete or withheld digests SHALL be refused
+- **AND** unknown body fields SHALL be refused
+- **WHEN** a client posts an obsolete digest to `/hooks/untrust`
+- **THEN** revocation SHALL remain checkout-scoped and available with malformed configuration, reporting whether an approval existed
+- **AND** neither operation SHALL execute handlers or admit Session, hook execution or model work
+
 ### Requirement: Matchers
 (P1) The system SHALL match hook groups by `matcher`, which is either a glob over the event's subject (tool name for tool events, including `mcp__<server>__<tool>`; notification type; file path for `FileChanged`) or, when wrapped in `/.../`, a regular expression. An absent or `*` matcher SHALL match every subject. A group MAY add `paths` (globs relative to the Location) that SHALL also match for tool calls with file targets.
 

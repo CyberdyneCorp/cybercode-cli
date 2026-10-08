@@ -1200,6 +1200,23 @@ async fn hook_catalog(
     response.json().await.unwrap()
 }
 
+async fn hook_trust_request(
+    client: &reqwest::Client,
+    url: &str,
+    directory: &std::path::Path,
+    operation: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    client
+        .post(format!("{url}/{operation}"))
+        .header("x-cyber-directory", directory.display().to_string())
+        .basic_auth("cyber", Some("test-password-123456"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn hook_catalog_api_reloads_location_trust_and_redacts_without_execution() {
     use cyber_core::trust::TrustStore;
@@ -1287,12 +1304,64 @@ async fn hook_catalog_api_reloads_location_trust_and_redacts_without_execution()
     assert_eq!(hooks[1]["trusted"], false);
     assert_eq!(hooks[1]["sandbox_required"], true);
     let digest = hooks[1]["digest"].as_str().unwrap();
-    trust.approve_hook(&report.checkout_root, digest).unwrap();
+    trust.revoke(&report.checkout_root).unwrap();
+    assert_eq!(
+        hook_trust_request(&client, &url, &nested, "trust", json!({"digest":digest}))
+            .await
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    trust
+        .approve(&report.checkout_root, report.digest.as_ref().unwrap())
+        .unwrap();
+
+    assert_eq!(
+        client
+            .post(format!("{url}/trust"))
+            .json(&json!({"digest":digest}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    for body in [
+        json!({"digest":digest,"extra":true}),
+        json!({}),
+        json!({"digest":hooks[0]["digest"]}),
+        json!({"digest":"invalid"}),
+    ] {
+        assert_eq!(
+            hook_trust_request(&client, &url, &nested, "trust", body)
+                .await
+                .status(),
+            reqwest::StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        hook_trust_request(&client, &url, &other, "trust", json!({"digest":digest}))
+            .await
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    let approved =
+        hook_trust_request(&client, &url, &nested, "trust", json!({"digest":digest})).await;
+    assert_eq!(approved.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        approved.json::<serde_json::Value>().await.unwrap()["data"]["digest"],
+        digest
+    );
     assert_eq!(
         hook_catalog(&client, &url, &nested).await["data"]["hooks"][1]["trusted"],
         true
     );
-    trust.revoke_hook(&report.checkout_root, digest).unwrap();
+    let revoked =
+        hook_trust_request(&client, &url, &nested, "untrust", json!({"digest":digest})).await;
+    assert_eq!(revoked.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        revoked.json::<serde_json::Value>().await.unwrap()["data"]["revoked"],
+        true
+    );
     assert_eq!(
         hook_catalog(&client, &url, &nested).await["data"]["hooks"][1]["trusted"],
         false
@@ -1304,7 +1373,41 @@ async fn hook_catalog_api_reloads_location_trust_and_redacts_without_execution()
             .len(),
         1
     );
+    assert_eq!(
+        hook_trust_request(&client, &url, &nested, "trust", json!({"digest":digest}))
+            .await
+            .status(),
+        reqwest::StatusCode::OK
+    );
+    std::fs::write(&file, "{ malformed").unwrap();
+    assert_eq!(
+        hook_trust_request(&client, &url, &nested, "trust", json!({"digest":digest}))
+            .await
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    let revoked =
+        hook_trust_request(&client, &url, &nested, "untrust", json!({"digest":digest})).await;
+    assert_eq!(revoked.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        revoked.json::<serde_json::Value>().await.unwrap()["data"]["revoked"],
+        true
+    );
+    assert_eq!(
+        hook_trust_request(&client, &url, &nested, "untrust", json!({"digest":digest}))
+            .await
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["data"]["revoked"],
+        false
+    );
     std::fs::write(&file, "{}").unwrap();
+    assert_eq!(
+        hook_trust_request(&client, &url, &nested, "trust", json!({"digest":digest}))
+            .await
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
     let changed = hook_catalog(&client, &url, &nested).await;
     assert_eq!(changed["data"]["hooks"].as_array().unwrap().len(), 1);
     assert!(!nested.join("effect").exists());

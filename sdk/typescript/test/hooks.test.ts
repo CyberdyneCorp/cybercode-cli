@@ -38,3 +38,25 @@ test("hook catalog retains Location, withheld definitions and current trust meta
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
   assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
 });
+
+test("hook approval and revocation preserve exact digests and Location envelopes", async () => {
+  const digest = "sha256:reviewed";
+  const location = { directory: "/checkout A/nested", project: { id: "global", directory: "/checkout A" } };
+  const { client, calls } = mockClient((_, index) => json(200, {
+    location, data: index === 0 ? { digest } : { digest, revoked: true },
+  }), { directory: location.directory });
+  const approval = await client.hook.trust({ digest });
+  const revocation = await client.hook.untrust({ digest });
+  assert.equal(approval.data.digest, digest);
+  assert.deepEqual(approval.location, location);
+  assert.equal(revocation.data.revoked, true);
+  assert.deepEqual(revocation.location, location);
+  for (const [index, operation] of ["trust", "untrust"].entries()) {
+    const call = calls[index]!;
+    assert.equal(call.method, "POST");
+    assert.equal(call.url.pathname, `/api/v1/hooks/${operation}`);
+    assert.deepEqual(JSON.parse(call.body!), { digest });
+    assert.equal(call.headers.get("x-cyber-directory"), encodeURIComponent(location.directory));
+    assert.equal(call.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+  }
+});

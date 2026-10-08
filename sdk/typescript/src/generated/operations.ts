@@ -104,6 +104,18 @@ export interface Operations {
     body: undefined;
     response: S.Located_HookReview;
   };
+  "v1.hook.trust": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.HookTrustBody;
+    response: S.Located_HookApproval;
+  };
+  "v1.hook.untrust": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.HookTrustBody;
+    response: S.Located_HookRevocation;
+  };
   "v1.job.get": {
     path: { id: string };
     query: Record<string, never>;
@@ -566,6 +578,30 @@ export const operations = {
     pathParams: [],
     query: [],
     body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hook.trust": {
+    tag: "hook",
+    name: "trust",
+    method: "POST",
+    path: "/api/v1/hooks/trust",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hook.untrust": {
+    tag: "hook",
+    name: "untrust",
+    method: "POST",
+    path: "/api/v1/hooks/untrust",
+    pathParams: [],
+    query: [],
+    body: "required",
     located: true,
     unwrap: false,
     stream: false,
@@ -1270,6 +1306,12 @@ export function createGroups(caller: Caller) {
       /** Inspect resolved hook definitions and current trust without execution (`GET /api/v1/hooks`) */
       list: (options?: RequestOptions): Promise<Operations["v1.hook.list"]["response"]> =>
         caller.call("v1.hook.list", {}, options),
+      /** Approve a current project/local hook digest (`POST /api/v1/hooks/trust`) */
+      trust: (body: Operations["v1.hook.trust"]["body"], options?: RequestOptions): Promise<Operations["v1.hook.trust"]["response"]> =>
+        caller.call("v1.hook.trust", { body }, options),
+      /** Revoke a checkout hook digest without loading configuration (`POST /api/v1/hooks/untrust`) */
+      untrust: (body: Operations["v1.hook.untrust"]["body"], options?: RequestOptions): Promise<Operations["v1.hook.untrust"]["response"]> =>
+        caller.call("v1.hook.untrust", { body }, options),
     },
     job: {
       /** Read a background task (`GET /api/v1/jobs/{id}`) */

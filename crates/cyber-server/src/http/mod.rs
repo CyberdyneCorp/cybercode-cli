@@ -151,6 +151,20 @@ pub trait Services: Send + Sync {
             "Hook configuration review is unavailable in this host",
         ))
     }
+    fn trust_hook(&self, _location: &Path, _digest: &str) -> Result<(), ApiError> {
+        Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceUnavailableError",
+            "Hook approval is unavailable in this host",
+        ))
+    }
+    fn untrust_hook(&self, _location: &Path, _digest: &str) -> Result<bool, ApiError> {
+        Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceUnavailableError",
+            "Hook revocation is unavailable in this host",
+        ))
+    }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;

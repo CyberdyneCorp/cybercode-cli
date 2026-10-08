@@ -6,8 +6,11 @@ use super::{
 use crate::runtime::{HookExecutionRecord, RuntimeError};
 use axum::{
     Json, Router,
-    extract::{Path, Query, State, rejection::QueryRejection},
-    routing::get,
+    extract::{
+        Path, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
+    routing::{get, post},
 };
 use serde::Deserialize;
 #[derive(Default, Deserialize)]
@@ -20,6 +23,8 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/sessions/{sessionID}/hook-executions", get(list))
         .route("/hooks", get(review))
+        .route("/hooks/trust", post(trust))
+        .route("/hooks/untrust", post(untrust))
 }
 async fn list(
     State(state): State<AppState>,
@@ -57,6 +62,52 @@ async fn review(
     let directory = super::envelope::location(&parts, &state.options.default_directory)?;
     Ok(Json(super::envelope::Located {
         data: state.services.review_hooks(&directory)?,
+        location: super::envelope::LocationInfo::of(&directory),
+    }))
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HookTrustBody {
+    pub digest: String,
+}
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct HookRevocation {
+    pub digest: String,
+    pub revoked: bool,
+}
+async fn trust(
+    State(state): State<AppState>,
+    parts: axum::http::request::Parts,
+    body: Result<Json<HookTrustBody>, JsonRejection>,
+) -> Result<Json<super::envelope::Located<HookApproval>>, ApiError> {
+    let Json(body) = body.map_err(|error| ApiError::invalid(error.body_text()))?;
+    let directory = super::envelope::location(&parts, &state.options.default_directory)?;
+    state.services.trust_hook(&directory, &body.digest)?;
+    Ok(Json(super::envelope::Located {
+        data: HookApproval {
+            digest: body.digest,
+        },
+        location: super::envelope::LocationInfo::of(&directory),
+    }))
+}
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct HookApproval {
+    pub digest: String,
+}
+async fn untrust(
+    State(state): State<AppState>,
+    parts: axum::http::request::Parts,
+    body: Result<Json<HookTrustBody>, JsonRejection>,
+) -> Result<Json<super::envelope::Located<HookRevocation>>, ApiError> {
+    let Json(body) = body.map_err(|error| ApiError::invalid(error.body_text()))?;
+    let directory = super::envelope::location(&parts, &state.options.default_directory)?;
+    let revoked = state.services.untrust_hook(&directory, &body.digest)?;
+    Ok(Json(super::envelope::Located {
+        data: HookRevocation {
+            digest: body.digest,
+            revoked,
+        },
         location: super::envelope::LocationInfo::of(&directory),
     }))
 }
