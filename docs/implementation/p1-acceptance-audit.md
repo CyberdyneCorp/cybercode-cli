@@ -431,3 +431,5 @@ Authenticated hook approval/revocation APIs now have exact current-digest and ch
 TUI `/hooks` now reviews loaded definitions and exact project/local approvals through authenticated public APIs, with confirmation, fresh post-write metadata and Session/Location/generation guards. This covers loaded review and tested trust controls locally; native acceptance, raw withheld inspection, last-run integration and synthetic testing remain required.
 
 Raw withheld top-level/profile sections now have a distinct catalog/API/SDK/CLI/TUI representation, retaining literal placeholders and origins with credential redaction. Review does not substitute, validate or compile handlers and provides no executable approval digest. Native acceptance, last-run integration and synthetic testing remain required.
+
+Loaded hook review now includes last-run summary metadata correlated by effective digest/event/scope and current canonical checkout using captured receipt Locations. Summaries exclude raw IO/decisions and preserve unresolved states. This does not verify live ownership or historical checkout incarnations; native acceptance and synthetic testing remain required.

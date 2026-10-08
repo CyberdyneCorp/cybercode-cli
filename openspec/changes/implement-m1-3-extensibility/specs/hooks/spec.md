@@ -100,6 +100,15 @@
 - **AND** untrusted checkout definitions SHALL remain withheld and their paths SHALL be reported separately
 - **AND** inspection SHALL NOT admit Session, hook execution or model work
 
+#### Scenario: Last-run observations match the current handler and checkout
+- **WHEN** a client inspects a loaded hook through API/SDK, CLI list or TUI
+- **THEN** the system SHALL show the latest recorded execution with the same effective handler digest, event and scope in the current canonical checkout
+- **AND** ordering SHALL use admission time and receipt id, including newer running/unknown observations rather than falling back to an older completed result
+- **AND** correlation SHALL use the receipt's captured execution Location, not the Session's rebound directory
+- **AND** summaries SHALL omit raw IO and decision content even when receipt IO logging was enabled
+- **AND** running/unknown observations SHALL remain explicitly unverified/recovery-required and inspection SHALL NOT launch handlers, reconcile owners or admit durable events
+- **AND** an absent local database SHALL NOT be created merely to inspect last-run metadata
+
 #### Scenario: Review withheld hook sections without interpretation
 - **WHEN** checkout configuration is untrusted and the user inspects hooks through the catalog API, CLI list or TUI viewer
 - **THEN** original project/local top-level and profile hook sections SHALL be available as redacted literal JSON with file origins and escaped JSON pointers

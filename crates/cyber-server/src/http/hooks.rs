@@ -60,8 +60,12 @@ async fn review(
     parts: axum::http::request::Parts,
 ) -> Result<Json<super::envelope::Located<cyber_core::hooks::HookReview>>, ApiError> {
     let directory = super::envelope::location(&parts, &state.options.default_directory)?;
+    let mut review = state.services.review_hooks(&directory)?;
+    for hook in &mut review.hooks {
+        hook.last_run = crate::runtime::hook_last_run(&state.store, &directory, &hook.definition)?;
+    }
     Ok(Json(super::envelope::Located {
-        data: state.services.review_hooks(&directory)?,
+        data: review,
         location: super::envelope::LocationInfo::of(&directory),
     }))
 }

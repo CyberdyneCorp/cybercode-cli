@@ -1439,3 +1439,90 @@ async fn hook_catalog_api_reloads_location_trust_and_redacts_without_execution()
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn hook_catalog_api_last_run_preserves_outcome_without_opted_in_io() {
+    use cyber_core::hooks::{HookCatalog, HookEvent, HookIdentity, HookLocation, HookOutcome};
+    use cyber_server::runtime::{CreateSession, HookExecutionIo, HookExecutionResult};
+    let tmp = tempfile::tempdir().unwrap();
+    let application = app(tmp.path()).await;
+    std::fs::write(application.paths.config.join("cyber.jsonc"),serde_json::json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo reviewed"}]}]}}).to_string()).unwrap();
+    let loader = cyber_app::hook_config_loader(application.paths.clone(), tmp.path().join("home"));
+    let definition = HookCatalog::from_config(&loader(tmp.path()).unwrap())
+        .unwrap()
+        .definitions
+        .remove(0);
+    let session = application
+        .runtime
+        .create_session(CreateSession {
+            directory: tmp.path().display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let event = HookEvent::new(
+        "PreToolUse",
+        HookIdentity {
+            session_id: session,
+            location: HookLocation {
+                directory: tmp.path().to_path_buf(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: "build".into(),
+            mode: "default".into(),
+        },
+        1,
+        serde_json::Map::new(),
+    )
+    .unwrap();
+    let record = application
+        .runtime
+        .start_hook_execution(&event, &definition, true)
+        .await
+        .unwrap()
+        .finish(HookExecutionResult {
+            outcome: HookOutcome::Blocked,
+            decision: Default::default(),
+            acknowledged: true,
+            must_stop: false,
+            io: Some(HookExecutionIo {
+                stdin: "private stdin".into(),
+                stdout: "private stdout".into(),
+                stderr: "private stderr".into(),
+                truncated: false,
+            }),
+        })
+        .unwrap();
+    let before: i64 = application
+        .store
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/api/v1/hooks", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let review = hook_catalog(&client, &url, tmp.path()).await;
+    assert_eq!(review["data"]["hooks"][0]["last_run"]["id"], record.id);
+    assert_eq!(review["data"]["hooks"][0]["last_run"]["outcome"], "blocked");
+    for secret in ["private stdin", "private stdout", "private stderr"] {
+        assert!(!review.to_string().contains(secret));
+    }
+    assert!(review["data"]["hooks"][0]["last_run"].get("io").is_none());
+    let after: i64 = application
+        .store
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    assert_eq!(before, after);
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}

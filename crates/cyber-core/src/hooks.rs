@@ -167,6 +167,27 @@ fn scope(source: &str) -> Result<HookScope, String> {
     Err(format!("unsupported hook origin: {source}"))
 }
 
+/// A committed observation, never proof that a recorded process is still live.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HookRunStatus {
+    Running,
+    Completed,
+    Unknown,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HookLastRun {
+    pub id: String,
+    pub session_id: String,
+    pub directory: String,
+    pub started_ms: i64,
+    pub duration_ms: Option<u64>,
+    pub status: HookRunStatus,
+    pub outcome: Option<HookOutcome>,
+    pub acknowledged: Option<bool>,
+    pub must_stop: bool,
+}
+
 /// Read-only configuration inspection; digests refer to original unredacted definitions.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct HookReview {
@@ -181,6 +202,7 @@ pub struct ReviewedHook {
     pub definition: HookDefinition,
     pub trusted: bool,
     pub sandbox_required: bool,
+    pub last_run: Option<HookLastRun>,
 }
 impl HookReview {
     pub fn from_config(resolved: &Resolved, trust: &TrustStore) -> Result<Self, String> {
@@ -204,6 +226,7 @@ impl HookReview {
                     definition,
                     trusted,
                     sandbox_required,
+                    last_run: None,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;

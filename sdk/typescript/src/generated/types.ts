@@ -400,6 +400,18 @@ export type HookHandler = {
 
 export type HookKind = "command" | "http" | "prompt" | "mcp_tool";
 
+export type HookLastRun = {
+  id: string;
+  session_id: string;
+  directory: string;
+  started_ms: number;
+  duration_ms?: number | null;
+  status: HookRunStatus;
+  outcome?: HookOutcome | null;
+  acknowledged?: boolean | null;
+  must_stop: boolean;
+};
+
 export type HookOutcome = "ok" | "blocked" | "error" | "timeout" | "skipped";
 
 /** Read-only configuration inspection; digests refer to original unredacted definitions. */
@@ -414,6 +426,9 @@ export type HookRevocation = {
   digest: string;
   revoked: boolean;
 };
+
+/** A committed observation, never proof that a recorded process is still live. */
+export type HookRunStatus = "running" | "completed" | "unknown";
 
 export type HookScope = "managed" | "global" | "project" | "local" | "plugin" | "invocation";
 
@@ -732,6 +747,7 @@ export type ReviewedHook = {
   digest: string;
   trusted: boolean;
   sandbox_required: boolean;
+  last_run?: HookLastRun | null;
 };
 
 /** A Session with its live status. */

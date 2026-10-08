@@ -41,6 +41,7 @@ struct ListedHook<'a> {
     definition: &'a HookDefinition,
     trusted: bool,
     sandbox_required: bool,
+    last_run: Option<cyber_core::hooks::HookLastRun>,
 }
 
 pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
@@ -64,7 +65,14 @@ pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliE
     let resolved = ctx.config()?;
     let catalog = HookCatalog::from_config(&resolved).map_err(CliError::usage)?;
     match cmd {
-        HooksCmd::List => list(&catalog, &resolved, &store, global, &ctx.withheld_hooks()?),
+        HooksCmd::List => list(
+            &catalog,
+            &resolved,
+            &store,
+            global,
+            &ctx.withheld_hooks()?,
+            ctx,
+        ),
         HooksCmd::Trust { digest } => approve(&catalog, &resolved, &store, &digest, global),
         HooksCmd::Untrust { .. } | HooksCmd::History { .. } => {
             unreachable!("handled before configuration loading")
@@ -78,7 +86,9 @@ fn list(
     store: &TrustStore,
     global: &GlobalArgs,
     raw: &[cyber_core::config::RawHookSection],
+    ctx: &Context,
 ) -> Result<(), CliError> {
+    let database = review_database(ctx)?;
     let hooks: Vec<_> = catalog
         .definitions
         .iter()
@@ -89,6 +99,14 @@ fn list(
                 sandbox_required: definition
                     .scope
                     .requires_sandbox(catalog.settings.sandbox_all),
+                last_run: database
+                    .as_ref()
+                    .map(|store| {
+                        cyber_server::runtime::hook_last_run(store, &ctx.location, definition)
+                    })
+                    .transpose()
+                    .map_err(|error| CliError::runtime(error.to_string()))?
+                    .flatten(),
             })
         })
         .collect::<Result<_, CliError>>()?;
@@ -112,6 +130,24 @@ fn list(
             hook.definition.digest
         );
         println!("  {} {}", hook.definition.source, hook.definition.pointer);
+        match hook.last_run {
+            Some(run) => println!(
+                "  last run: {} started_ms={} outcome={} duration_ms={} acknowledged={} must_stop={} session={}",
+                run_status(&run.status),
+                run.started_ms,
+                run.outcome
+                    .as_ref()
+                    .map(|value| format!("{value:?}").to_lowercase())
+                    .unwrap_or_else(|| "pending".into()),
+                run.duration_ms
+                    .map_or("pending".into(), |value| value.to_string()),
+                run.acknowledged
+                    .map_or("unverified", |value| if value { "yes" } else { "no" }),
+                run.must_stop,
+                run.session_id.escape_debug()
+            ),
+            None => println!("  last run: no recorded execution for this definition/checkout"),
+        }
     }
     for definition in withheld {
         println!("withheld until checkout configuration approval: {definition}");
@@ -131,6 +167,27 @@ fn list(
         );
     }
     Ok(())
+}
+
+fn run_status(status: &cyber_core::hooks::HookRunStatus) -> &'static str {
+    match status {
+        cyber_core::hooks::HookRunStatus::Running => "running (live state unverified)",
+        cyber_core::hooks::HookRunStatus::Unknown => "unknown (recovery required)",
+        cyber_core::hooks::HookRunStatus::Completed => "completed",
+    }
+}
+
+fn review_database(ctx: &Context) -> Result<Option<cyber_store::Store>, CliError> {
+    let location = ctx.database();
+    let cyber_core::paths::DatabaseLocation::File(path) = &location else {
+        return Ok(None);
+    };
+    if !path.try_exists()? {
+        return Ok(None);
+    }
+    Ok(Some(cyber_store::Store::open(
+        cyber_store::StoreOptions::new(location, cyber_server::runtime::Runtime::registry()),
+    )?))
 }
 
 fn approve(

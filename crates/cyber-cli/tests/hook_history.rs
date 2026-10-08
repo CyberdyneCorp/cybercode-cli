@@ -207,3 +207,81 @@ async fn history_pages_receipts_without_loading_config_or_reconciling_owners() {
     assert!(h.models.requests("test/main").is_empty());
     running.finish(result()).unwrap();
 }
+
+#[tokio::test]
+async fn listing_shows_latest_exact_definition_observation_without_io_or_new_events() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let env = std::collections::HashMap::from([(
+        "CYBER_HOME".into(),
+        h.dir.path().join("definitions").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, h.dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(paths.config.join("cyber.jsonc"),json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"printf reviewed","id":"guard"}]}]}}).to_string()).unwrap();
+    let config = config::load(&LoadRequest {
+        location: &h.repo,
+        paths: &paths,
+        env: &env,
+        home: h.dir.path(),
+        profile: None,
+        overrides: &[],
+        flags: json!({}),
+    })
+    .unwrap();
+    let definition = HookCatalog::from_config(&config)
+        .unwrap()
+        .definitions
+        .remove(0);
+    let event = HookEvent::new(
+        "PreToolUse",
+        HookIdentity {
+            session_id: session.clone(),
+            location: HookLocation {
+                directory: h.repo.clone(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: "build".into(),
+            mode: "default".into(),
+        },
+        1,
+        serde_json::Map::new(),
+    )
+    .unwrap();
+    let record = h
+        .runtime
+        .start_hook_execution(&event, &definition, true)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let before = count(&h);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
+    command
+        .args(["hooks", "list", "--format", "json"])
+        .env_clear()
+        .env("HOME", h.dir.path())
+        .env("CYBER_HOME", h.dir.path().join("definitions"))
+        .env("CYBER_DB", h.dir.path().join("cyber.db"))
+        .current_dir(&h.repo);
+    #[cfg(windows)]
+    if let Some(system) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", system);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["hooks"][0]["last_run"]["id"], record.id);
+    assert_eq!(value["hooks"][0]["last_run"]["status"], "completed");
+    assert_eq!(value["hooks"][0]["last_run"]["outcome"], "ok");
+    assert!(value["hooks"][0]["last_run"].get("io").is_none());
+    for secret in ["private input", "private output", "private error"] {
+        assert!(!value.to_string().contains(secret));
+    }
+    assert_eq!(before, count(&h));
+}

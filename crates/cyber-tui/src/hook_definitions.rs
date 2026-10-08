@@ -14,6 +14,8 @@ struct Definition {
     digest: String,
     trusted: bool,
     sandbox_required: bool,
+    #[serde(default)]
+    last_run: Option<cyber_core::hooks::HookLastRun>,
 }
 impl Definition {
     fn checkout_scoped(&self) -> bool {
@@ -199,8 +201,9 @@ impl View {
                 safe(row.matcher.as_deref().unwrap_or("*")),
                 safe(&row.paths.join(", "))
             ),
-            "Handler (credentials redacted):".into(),
         ]);
+        lines.extend(last_run_lines(row.last_run.as_ref()));
+        lines.push("Handler (credentials redacted):".into());
         lines.extend(
             serde_json::to_string_pretty(&row.handler)
                 .unwrap_or_default()
@@ -222,4 +225,40 @@ impl View {
 }
 fn safe(value: &str) -> String {
     value.escape_debug().to_string()
+}
+
+fn last_run_lines(run: Option<&cyber_core::hooks::HookLastRun>) -> Vec<String> {
+    let Some(run) = run else {
+        return vec!["Last run: no recorded execution for this definition/checkout".into()];
+    };
+    let status = match run.status {
+        cyber_core::hooks::HookRunStatus::Running => "running · live state unverified",
+        cyber_core::hooks::HookRunStatus::Unknown => "unknown · recovery required",
+        cyber_core::hooks::HookRunStatus::Completed => "completed",
+    };
+    vec![
+        format!(
+            "Last run: {} · started_ms={} · outcome={} · duration_ms={}",
+            status,
+            run.started_ms,
+            run.outcome
+                .as_ref()
+                .map(|value| format!("{value:?}").to_lowercase())
+                .unwrap_or_else(|| "pending".into()),
+            run.duration_ms
+                .map_or("pending".into(), |value| value.to_string())
+        ),
+        format!(
+            "Receipt: {} · Session: {} · Location: {}",
+            safe(&run.id),
+            safe(&run.session_id),
+            safe(&run.directory)
+        ),
+        format!(
+            "Stop acknowledged: {} · must stop: {}",
+            run.acknowledged
+                .map_or("unverified", |value| if value { "yes" } else { "no" }),
+            run.must_stop
+        ),
+    ]
 }

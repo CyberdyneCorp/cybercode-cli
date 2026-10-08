@@ -579,9 +579,19 @@ fn hook_listing_redacts_credentials_and_reports_global_scope() {
     let config = env.root.join("cyber-home/config");
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("cyber.jsonc"),r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"http","url":"http://127.0.0.1:9/hook","headers":{"Authorization":"secret-credential"}}]}]}}"#).unwrap();
-    let output = env.cyber(&["hooks", "list", "--format", "json"]);
+    let absent = env.root.join("absent-review.db");
+    let output = env
+        .command(&["hooks", "list", "--format", "json"])
+        .env("CYBER_DB", &absent)
+        .output()
+        .unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
     let value = json(&output);
+    assert!(
+        !absent.exists(),
+        "review must not create a missing database"
+    );
+    assert!(value["hooks"][0]["last_run"].is_null());
     assert_eq!(value["hooks"][0]["scope"], "global");
     assert_eq!(value["hooks"][0]["trusted"], true);
     assert_eq!(value["hooks"][0]["sandbox_required"], false);

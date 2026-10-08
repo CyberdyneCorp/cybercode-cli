@@ -62,3 +62,21 @@ test("hook approval and revocation preserve exact digests and Location envelopes
     assert.equal(call.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
   }
 });
+
+test("hook catalog last-run summaries retain unknown status without IO", async () => {
+  const { client } = mockClient(() => json(200, {
+    location: { directory: "/repo", project: { id: "global", directory: "/repo" } },
+    data: { checkout_trusted:true, withheld_definitions:[], withheld_hooks:[], hooks:[{
+      event:"PreToolUse", scope:"global", source:"/config/cyber.jsonc", pointer:"/hooks", matcher:null, paths:[],
+      handler:{type:"command",command:"echo reviewed"},digest:"sha256:reviewed",trusted:true,sandbox_required:false,
+      last_run:{id:"hke_latest",session_id:"ses_previous",directory:"/repo/nested",started_ms:42,duration_ms:1,status:"unknown",outcome:"error",acknowledged:false,must_stop:true},
+    }] },
+  }));
+  const review = await client.hook.list();
+  const last = review.data.hooks[0]?.last_run;
+  assert.equal(last?.status,"unknown");
+  assert.equal(last?.session_id,"ses_previous");
+  assert.equal(last?.must_stop,true);
+  assert.equal(last?.acknowledged,false);
+  assert.equal("io" in (last ?? {}),false);
+});

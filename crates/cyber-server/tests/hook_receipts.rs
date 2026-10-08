@@ -395,3 +395,125 @@ async fn once_receipt_cannot_change_its_claim_and_changed_digest_is_a_new_handle
         .unwrap();
     assert_eq!(h.runtime.hook_executions(&session, 10).unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn last_run_matches_checkout_digest_event_scope_and_keeps_unknown_without_io() {
+    use cyber_core::hooks::HookRunStatus;
+    use cyber_server::runtime::{CreateSession, hook_last_run};
+    let h = Harness::new(Setup::default());
+    let definition = definition(&h);
+    let session = h.session().await;
+    assert!(
+        hook_last_run(&h.store, &h.repo, &definition)
+            .unwrap()
+            .is_none()
+    );
+    let completed = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition, true)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let summary = hook_last_run(&h.store, &h.repo, &definition)
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.id, completed.id);
+    assert!(matches!(summary.status, HookRunStatus::Completed));
+    for secret in ["private stdin", "private stdout", "private stderr"] {
+        assert!(!serde_json::to_string(&summary).unwrap().contains(secret));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    let nested = h.repo.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: nested.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &child).await, &definition, true)
+        .await
+        .unwrap();
+    let unknown = owner.record().id.clone();
+    drop(owner);
+    let other = h.dir.path().join("other-checkout");
+    std::fs::create_dir_all(other.join(".git")).unwrap();
+    let foreign = h
+        .runtime
+        .create_session(CreateSession {
+            directory: other.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.runtime
+        .start_hook_execution(&event(&h, &foreign).await, &definition, false)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let mut changed = definition.clone();
+    changed.event = "PostToolUse".into();
+    let post = HookEvent::new(
+        "PostToolUse",
+        event(&h, &session).await.identity().clone(),
+        1,
+        serde_json::Map::new(),
+    )
+    .unwrap();
+    h.runtime
+        .start_hook_execution(&post, &changed, false)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let mut scoped = definition.clone();
+    scoped.scope = cyber_core::hooks::HookScope::Local;
+    h.runtime
+        .start_hook_execution(&event(&h, &session).await, &scoped, false)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    let before: i64 = h
+        .store
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    let last = hook_last_run(&h.store, &nested, &definition)
+        .unwrap()
+        .unwrap();
+    assert_eq!(last.id, unknown);
+    assert!(matches!(last.status, HookRunStatus::Unknown));
+    assert!(last.must_stop);
+    for secret in ["private stdin", "private stdout", "private stderr"] {
+        assert!(!serde_json::to_string(&last).unwrap().contains(secret));
+    }
+    let mut new_digest = definition.clone();
+    new_digest.digest = format!("sha256:{}", "b".repeat(64));
+    assert!(
+        hook_last_run(&h.store, &h.repo, &new_digest)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        hook_last_run(&h.store, &other, &definition)
+            .unwrap()
+            .unwrap()
+            .session_id,
+        foreign
+    );
+    let after: i64 = h
+        .store
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    assert_eq!(before, after);
+}

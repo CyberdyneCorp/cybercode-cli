@@ -1784,3 +1784,24 @@ fn hook_definitions_show_withheld_raw_sections_without_activation_or_approval() 
     app.on_key(key(KeyCode::Char('t')));
     assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
 }
+
+#[test]
+fn hook_definitions_last_run_distinguishes_unknown_and_running_without_raw_io() {
+    for (status, label) in [
+        ("unknown", "recovery required"),
+        ("running", "live state unverified"),
+        ("completed", "completed"),
+    ] {
+        let mut value = hook_definitions_fixture(false);
+        value["data"]["hooks"][0]["last_run"] = serde_json::json!({"id":"hke_latest","session_id":"ses_previous","directory":"/repo\u{1b}","started_ms":42,"duration_ms":1,"status":status,"outcome":"error","acknowledged":false,"must_stop":true,"io":{"stdout":"private output"},"decision":{"reason":"private reason"}});
+        let mut app = App::new(session(false), Vec::new(), "cyber");
+        let generation = open_hook_definitions(&mut app);
+        app.hook_definitions
+            .apply(generation, crate::hook_definitions::Catalog::parse(&value));
+        let lines = app.hook_definitions.lines().join(" ");
+        assert!(lines.contains(label) && lines.contains("hke_latest"));
+        assert!(lines.contains("must stop: true"));
+        assert!(!lines.contains("private") && !lines.contains('\u{1b}'));
+        assert!(!format!("{:?}", app.hook_definitions).contains("private"));
+    }
+}

@@ -3267,6 +3267,16 @@
           },
           "sandbox_required": {
             "type": "boolean"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookLastRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3407,6 +3417,71 @@
           "field",
           "matches"
         ]
+      },
+      "HookLastRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/HookRunStatus"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "acknowledged": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "must_stop": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "directory",
+          "started_ms",
+          "status",
+          "must_stop"
+        ]
+      },
+      "HookRunStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "completed",
+          "unknown"
+        ],
+        "description": "A committed observation, never proof that a recorded process is still live."
       },
       "RawHookSection": {
         "type": "object",

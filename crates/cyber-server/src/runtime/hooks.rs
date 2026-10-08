@@ -324,6 +324,31 @@ pub fn hook_execution_page(
     Ok((rows, next))
 }
 
+/// Read only summary metadata, matching the immutable execution Location rather
+/// than a Session's potentially rebound current directory. No reconciliation.
+pub fn hook_last_run(
+    store: &Store,
+    location: &std::path::Path,
+    definition: &HookDefinition,
+) -> Result<Option<cyber_core::hooks::HookLastRun>, RuntimeError> {
+    let root = std::fs::canonicalize(cyber_core::config::project_root(location))
+        .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
+    let digest = definition.digest.clone();
+    let event = definition.event.clone();
+    let scope = serde_json::to_value(definition.scope)
+        .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
+    store.read(move |conn| {
+        let mut statement = conn.prepare("SELECT json_remove(data,'$.io','$.decision') FROM hook_execution WHERE json_extract(data,'$.digest')=?1 AND json_extract(data,'$.event')=?2 AND json_extract(data,'$.scope')=?3 ORDER BY started_ms DESC,id DESC")?;
+        let rows = statement.query_map(params![digest,event,scope.as_str()], |row| row.get::<_,String>(0))?;
+        for row in rows {
+            let observation: cyber_core::hooks::HookLastRun = serde_json::from_str(&row?).map_err(|error| StoreError::CorruptEvent { id:"hook last-run projection".into(),reason:error.to_string() })?;
+            let recorded_root = cyber_core::config::project_root(std::path::Path::new(&observation.directory));
+            if std::fs::canonicalize(recorded_root).is_ok_and(|path| path == root) { return Ok(Some(observation)); }
+        }
+        Ok(None)
+    }).map_err(Into::into)
+}
+
 fn hook_cursor(session: &str, cursor: Option<&str>) -> Result<(i64, String), RuntimeError> {
     let Some(cursor) = cursor else {
         return Ok((i64::MAX, String::new()));
