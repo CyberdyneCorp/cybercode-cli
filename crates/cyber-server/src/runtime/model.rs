@@ -259,6 +259,8 @@ pub struct SessionState {
     #[serde(skip)]
     pub(crate) child_requested_inputs: BTreeSet<String>,
     #[serde(skip)]
+    pub(super) child_pause_seq: i64,
+    #[serde(skip)]
     pub(crate) child_continuation_error: Option<String>,
     #[serde(skip)]
     pub(crate) child_continuation_unknown: bool,
@@ -345,6 +347,7 @@ impl SessionState {
     pub fn new(info: SessionInfo) -> Self {
         Self {
             child_requested_inputs: BTreeSet::new(),
+            child_pause_seq: -1,
             child_continuation_error: None,
             child_continuation_unknown: false,
             child_worktree_setup_pending: false,
@@ -435,7 +438,10 @@ impl SessionState {
             .rsplit_once('.')
             .map_or(e.kind.as_str(), |(base, _)| base);
         match kind {
-            "session.child.input_paused" => self.child_requested_inputs.clear(),
+            "session.child.input_paused" => {
+                self.child_requested_inputs.clear();
+                self.child_pause_seq = e.seq;
+            }
             "session.prompt.admitted" => self.on_admitted(decode(e)?, e.seq),
             "session.inbox.updated" => self.on_inbox_updated(decode(e)?),
             "session.prompt.promoted" => self.on_promoted(decode::<Promoted>(e)?, e.seq),

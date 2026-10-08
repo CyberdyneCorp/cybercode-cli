@@ -72,7 +72,9 @@ preparation refusal leaves the row pending or held. A completed child with no pr
 input keeps its result without starting inference. Explicit wake dispatches one
 deferred structured attempt. Prompts queued with `resume: true` during active child execution
 hand off automatically after result collection or Job settlement. Interruption preserves their
-rows and clears automatic wake intent; use an explicit wake to resume later.
+rows and clears automatic wake intent; use an explicit wake to resume later. Interruption also
+cancels owned checkout preparation, and late completion cannot admit or release input.
+Unacknowledged preparation requires recovery before execution can resume.
 
 ## Session budgets
 

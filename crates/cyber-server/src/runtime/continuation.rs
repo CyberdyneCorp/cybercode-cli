@@ -41,14 +41,18 @@ impl Runtime {
             return self.admit(id, admission).await;
         }
         drop(lifecycle);
-        let (owner, settlement) = self.prepare_user_child(&handle, &state).await?;
+        let prepared = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
+        {
+            let current = handle.state.lock().await;
+            prepared.check(&current)?;
+        }
         self.inner.commit_staged_revert(&handle).await?;
         let mut state = handle.state.lock().await;
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
             return Ok(receipt);
         }
-        state.ensure_worktree_ready()?;
+        prepared.check(&state)?;
         if self.inner.closed.is_cancelled() {
             return Err(RuntimeError::ShuttingDown);
         }
@@ -89,37 +93,8 @@ impl Runtime {
             &message,
             stored.last().expect("admission event").seq,
         );
-        launch_child(&self.inner, &mut drains, id, owner, settlement);
+        prepared.launch(&self.inner, &mut drains, id);
         Ok(receipt)
-    }
-
-    async fn prepare_user_child(
-        &self,
-        handle: &Handle,
-        state: &SessionState,
-    ) -> Result<(ChildExecution, Option<Box<dyn ChildContinuation>>), RuntimeError> {
-        drop(self.inner.open().await?);
-        let parent = state
-            .info
-            .parent_id
-            .as_deref()
-            .ok_or_else(|| RuntimeError::Invalid("Not a child Session".into()))?;
-        let owner = self
-            .claim_child_execution(parent, &state.info.id)
-            .map_err(|_| RuntimeError::Busy(state.info.id.clone()))?;
-        self.ensure_user_child_outcome(handle, state)?;
-        let stop = self.inner.closed.child_token();
-        let _on_return = stop.clone().drop_guard();
-        let parent = self.state(parent).await?.info;
-        let settlement = self
-            .inner
-            .tools
-            .prepare_child_continuation(&parent, state, &owner, stop)
-            .await
-            .map_err(RuntimeError::Invalid)?;
-        let ready = handle.state.lock().await.clone();
-        self.ensure_user_child_ready(handle, &ready).await?;
-        Ok((owner, settlement))
     }
 
     /// Return false for a root or an active child, preserving its normal safe boundary.
@@ -150,11 +125,15 @@ impl Runtime {
         } else if !eligible_child_input(&state, requested_only) {
             return Ok(true);
         }
-        let (owner, settlement) = self.prepare_user_child(&handle, &state).await?;
+        let prepared = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
+        {
+            let current = handle.state.lock().await;
+            prepared.check(&current)?;
+        }
         self.inner.commit_staged_revert(&handle).await?;
         let mut state = handle.state.lock().await;
-        state.ensure_worktree_ready()?;
+        prepared.check(&state)?;
         let mut events = Vec::new();
         if let Some((message, delivery)) = release {
             let row = state
@@ -195,7 +174,7 @@ impl Runtime {
             ),
         );
         self.inner.commit_locked(&mut state, events)?;
-        launch_child(&self.inner, &mut drains, id, owner, settlement);
+        prepared.launch(&self.inner, &mut drains, id);
         Ok(true)
     }
 
@@ -208,7 +187,7 @@ impl Runtime {
             .is_some_and(|entry| entry.child_settling)
     }
 
-    fn ensure_user_child_outcome(
+    pub(super) fn ensure_user_child_outcome(
         &self,
         handle: &Handle,
         state: &SessionState,
@@ -237,15 +216,16 @@ impl Runtime {
         Ok(())
     }
 
-    async fn ensure_user_child_ready(
+    pub(super) async fn ensure_user_child_ready(
         &self,
         handle: &Handle,
         state: &SessionState,
+        cancel: CancellationToken,
     ) -> Result<(), RuntimeError> {
         self.ensure_user_child_outcome(handle, state)?;
         let lease = self
             .inner
-            .claim_location(&state.info, false, self.inner.closed.child_token())
+            .claim_location(&state.info, false, cancel)
             .await?;
         if lease.worktree_id != state.info.worktree_id {
             return Err(RuntimeError::Invalid(
@@ -277,7 +257,7 @@ fn eligible_child_input(state: &SessionState, requested_only: bool) -> bool {
     }
 }
 
-fn launch_child(
+pub(super) fn launch_child(
     inner: &Arc<super::Inner>,
     drains: &mut std::collections::HashMap<String, DrainEntry>,
     id: &str,
@@ -343,25 +323,6 @@ impl Runtime {
             return Ok(());
         }
         self.continue_child_input(id, None, true).await?;
-        Ok(())
-    }
-
-    pub(super) async fn pause_requested_child_input(&self, id: &str) -> Result<(), RuntimeError> {
-        let handle = match self.inner.handle(id).await {
-            Ok(handle) => handle,
-            Err(RuntimeError::SessionNotFound(_)) => return Ok(()),
-            Err(error) => return Err(error),
-        };
-        let mut state = handle.state.lock().await;
-        if !state.child_requested_inputs.is_empty() {
-            self.inner.commit_locked(
-                &mut state,
-                vec![event(
-                    super::events::CHILD_INPUT_PAUSED,
-                    &serde_json::json!({"reason":"interrupt"}),
-                )],
-            )?;
-        }
         Ok(())
     }
 }

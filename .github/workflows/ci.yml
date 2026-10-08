@@ -166,7 +166,7 @@ jobs:
           cargo test --locked -p cyber-tui child_thread
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children
+        run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children --test child_preparation
       - name: Native isolated child checkout execution
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test isolated_subagents

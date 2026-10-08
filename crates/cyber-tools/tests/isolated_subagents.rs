@@ -2689,3 +2689,78 @@ async fn structured_foreground_result_is_collected_before_automatic_queued_attem
         assert!(!request.contains("obsolete queued prompt"));
     }
 }
+
+#[tokio::test]
+async fn interrupt_cancels_public_child_preparation_before_late_setup_or_input() {
+    use cyber_server::runtime::{Admission, Delivery};
+    for stop in ["interrupt", "dispose", "shutdown"] {
+        let flow = flow(vec![text("first"), text("must not run")], false);
+        let parent = flow.session("bypass").await;
+        let first = invoke(
+            &flow,
+            &parent,
+            json!({"prompt":"inspect","name":"interrupt-preparation","isolation":"worktree"}),
+        )
+        .await
+        .unwrap();
+        let child = first["id"].as_str().unwrap().to_owned();
+        let before = flow.runtime.state(&child).await.unwrap();
+        flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["printf started > setup-started; while [ ! -f release-setup ]; do sleep 0.02; done; printf late > late-effect"]}}));
+        let runtime = flow.runtime.clone();
+        let id = child.clone();
+        let continuation = tokio::spawn(async move {
+            runtime
+                .admit_user(&id, Admission::text("continue", Delivery::Steer))
+                .await
+        });
+        let checkout = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let state = flow.runtime.state(&child).await.unwrap();
+                let path = &state.child_worktree().unwrap().path;
+                if path.join("setup-started").exists() {
+                    break path.clone();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        if stop == "dispose" {
+            continuation.abort();
+        }
+        if stop == "shutdown" {
+            tokio::time::timeout(std::time::Duration::from_secs(5), flow.runtime.shutdown())
+                .await
+                .unwrap();
+        } else {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                flow.runtime.interrupt(&child),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        }
+        // Release the old process if interruption failed to terminate it, proving late admission.
+        std::fs::write(checkout.join("release-setup"), "released\n").unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), continuation)
+            .await
+            .unwrap();
+        if stop == "dispose" {
+            assert!(result.unwrap_err().is_cancelled());
+        } else {
+            let result = result.unwrap();
+            assert!(
+                result.is_err(),
+                "interrupted preparation admitted new input: {result:?}"
+            );
+        }
+        flow.runtime.wait_idle(&child).await;
+        let state = flow.runtime.state(&child).await.unwrap();
+        assert_eq!(state.inbox, before.inbox);
+        assert!(state.child_worktree_setup_pending());
+        assert!(!checkout.join("late-effect").exists());
+        assert_eq!(flow.main.requests().len(), 1);
+        assert!(flow.runtime.claim_child_execution(&parent, &child).is_ok());
+    }
+}

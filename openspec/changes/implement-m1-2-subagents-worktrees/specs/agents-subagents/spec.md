@@ -479,3 +479,18 @@
 #### Scenario: Interrupted queued input remains deferred
 - **WHEN** a child is interrupted with requested pending input and the server restarts
 - **THEN** the input remains pending without automatic inference until an explicit wake
+
+### Requirement: Child continuation preparation ownership
+(P1) Existing-child preparation for public prompts, wake, held release and automatic handoff SHALL retain exclusive execution ownership through native acknowledgement and admission. Caller disposal SHALL cancel preparation without releasing ownership early. Child interruption SHALL record a durable pause boundary, cancel registered preparation and await bounded acknowledgement; preparation registration and admission SHALL reject an older boundary. A late successful result after cancellation SHALL NOT admit input, release held input or start inference. Unacknowledged or panicked preparation SHALL retain unknown recovery evidence and refuse execution after restart. Shutdown SHALL cancel and join owned native preparation.
+
+#### Scenario: Interrupt native setup before new input
+- **WHEN** interruption occurs while existing-child checkout setup is running
+- **THEN** setup is cancelled and acknowledged, the prior inbox is preserved and neither late setup effects nor new inference occur
+
+#### Scenario: Disposed caller with delayed acknowledgement
+- **WHEN** the caller disappears while preparation is running and the host delays its cancellation acknowledgement
+- **THEN** execution ownership remains held until the owned preparation settles
+
+#### Scenario: Unacknowledged preparation after restart
+- **WHEN** preparation fails to acknowledge cancellation or panics and the server restarts
+- **THEN** durable unknown evidence refuses prompt, wake and resume pending recovery

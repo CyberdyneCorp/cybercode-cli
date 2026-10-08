@@ -21,6 +21,7 @@ mod fork;
 mod host;
 mod jobs;
 mod names;
+mod preparation;
 mod subtask;
 pub use delegations::{Delegation, DelegationPhase, DelegationStatus};
 pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
@@ -268,6 +269,7 @@ pub(crate) struct Inner {
     job_admission: Arc<Mutex<()>>,
     delegations: StdMutex<HashMap<String, Arc<delegations::Control>>>,
     child_executions: StdMutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
+    child_preparations: StdMutex<HashMap<String, Arc<preparation::Control>>>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
@@ -325,6 +327,7 @@ impl Runtime {
             job_admission: Arc::new(Mutex::new(())),
             delegations: StdMutex::default(),
             child_executions: StdMutex::default(),
+            child_preparations: StdMutex::default(),
             waiters: StdMutex::default(),
             me: me.clone(),
         });
@@ -682,7 +685,7 @@ impl Runtime {
 
     /// Stop the Drain and abandon owned requests, including idle host operations; inbox rows are kept.
     pub async fn interrupt(&self, session_id: &str) -> Result<(), RuntimeError> {
-        let paused = self.pause_requested_child_input(session_id).await;
+        let (paused, preparation) = self.pause_requested_child_input(session_id).await;
         {
             let mut drains = self
                 .inner
@@ -695,6 +698,21 @@ impl Runtime {
             }
         }
         self.wait_idle(session_id).await;
+        if let Some(preparation) = preparation
+            && tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                preparation.done.cancelled(),
+            )
+            .await
+            .is_err()
+        {
+            let handle = self.inner.handle(session_id).await?;
+            let message =
+                "Child preparation did not acknowledge interruption; recovery is required";
+            self.mark_child_preparation_unknown(&handle, message)
+                .await?;
+            return Err(RuntimeError::Invalid(message.into()));
+        }
         self.inner.abandon_requests(session_id).await?;
         paused
     }
