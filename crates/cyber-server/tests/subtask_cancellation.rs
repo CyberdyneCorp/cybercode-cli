@@ -485,3 +485,179 @@ async fn durable_request_cancellation_fences_child_writer_after_location_preflig
     );
     runtime.shutdown().await;
 }
+
+struct AcknowledgingHost {
+    entered: tokio::sync::Notify,
+    cancelled: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    acknowledged: std::sync::atomic::AtomicBool,
+}
+impl ToolHost for AcknowledgingHost {
+    fn definitions(&self, _: &TurnContext) -> Vec<ToolDef> {
+        vec![]
+    }
+    fn execute(&self, _: Invocation, _: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
+        Box::pin(async { panic!("No inference in acknowledgement fixture") })
+    }
+    fn subtask_request(
+        &self,
+        _: TurnContext,
+        _: UserSubtask,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Job, String>> {
+        Box::pin(async move {
+            self.entered.notify_one();
+            cancel.cancelled().await;
+            self.cancelled.notify_one();
+            self.release.notified().await;
+            self.acknowledged
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Err("Native cancellation acknowledged".into())
+        })
+    }
+}
+
+#[tokio::test]
+async fn disposed_legacy_caller_retains_host_until_native_cancellation_acknowledges() {
+    let h = Harness::new(Setup::default());
+    let host = Arc::new(AcknowledgingHost {
+        entered: Default::default(),
+        cancelled: Default::default(),
+        release: Default::default(),
+        acknowledged: Default::default(),
+    });
+    let runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: h.models.clone(),
+        tools: host.clone(),
+        global_config_dir: h.dir.path().join("global"),
+        shell: "bash".into(),
+        claude_compat: true,
+        compaction: Default::default(),
+        retry: Default::default(),
+        max_steps: None,
+        today: None,
+        interactive: false,
+        snapshots: Arc::new(NoSnapshots),
+    });
+    let parent = source(&runtime, &h).await;
+    let task_runtime = runtime.clone();
+    let task_parent = parent.clone();
+    let task =
+        tokio::spawn(async move { task_runtime.subtask_request(&task_parent, request()).await });
+    host.entered.notified().await;
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(std::time::Duration::from_secs(2), host.cancelled.notified())
+        .await
+        .expect("Disposed caller must leave the host running to acknowledge cancellation");
+    assert!(!host.acknowledged.load(std::sync::atomic::Ordering::SeqCst));
+    host.release.notify_one();
+    runtime.shutdown().await;
+    assert!(host.acknowledged.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn disposed_reply_stops_registered_job_before_handoff_acceptance() {
+    let (h, runtime, host) = fixture(false, false);
+    let parent = source(&runtime, &h).await;
+    let mut caller =
+        Box::pin(runtime.subtask_request_owned(&parent, request(), host.owner.clone()));
+    assert!(futures::poll!(&mut caller).is_pending());
+    let job = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(job) = runtime.jobs(Some(&parent)).unwrap().pop() {
+                break job;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(caller);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if runtime.job(&job.id).unwrap().status == JobStatus::Cancelled {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    runtime.shutdown().await;
+}
+
+struct OwnerlessHandoff {
+    job: Job,
+    caller: CancellationToken,
+}
+impl ToolHost for OwnerlessHandoff {
+    fn definitions(&self, _: &TurnContext) -> Vec<ToolDef> {
+        vec![]
+    }
+    fn execute(&self, _: Invocation, _: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
+        Box::pin(async { panic!("No inference in ownerless handoff fixture") })
+    }
+    fn subtask_request(
+        &self,
+        _: TurnContext,
+        _: UserSubtask,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<Job, String>> {
+        Box::pin(async move {
+            self.caller.cancel();
+            Ok(self.job.clone())
+        })
+    }
+}
+
+#[tokio::test]
+async fn cancelled_ownerless_handoff_records_unknown_and_refuses_success() {
+    let (h, original, _) = fixture(false, false);
+    let parent = source(&original, &h).await;
+    let job = original.subtask_request(&parent, request()).await.unwrap();
+    let caller = CancellationToken::new();
+    // A second runtime can observe the durable Job but does not own its native actor.
+    let runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: h.models.clone(),
+        tools: Arc::new(OwnerlessHandoff {
+            job: job.clone(),
+            caller: caller.clone(),
+        }),
+        global_config_dir: h.dir.path().join("global"),
+        shell: "bash".into(),
+        claude_compat: true,
+        compaction: Default::default(),
+        retry: Default::default(),
+        max_steps: None,
+        today: None,
+        interactive: false,
+        snapshots: Arc::new(NoSnapshots),
+    });
+    let error = runtime
+        .subtask_request_owned(&parent, request(), caller)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cancellation was not acknowledged")
+    );
+    let identity: String = h.store.read(|db| {
+        Ok(db.query_row(
+            "SELECT aggregate_id FROM event WHERE type='delegation.changed.1' ORDER BY rowid DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?)
+    }).unwrap();
+    let record = runtime.delegation(&parent, &identity).unwrap().unwrap();
+    assert_eq!(record.status, DelegationStatus::Unknown);
+    assert_eq!(record.job_id.as_deref(), Some(job.id.as_str()));
+    assert_eq!(runtime.job(&job.id).unwrap().status, JobStatus::Running);
+    assert!(record.error.unwrap().contains("not acknowledged"));
+    runtime.shutdown().await;
+    original.cancel_job(&job.id).await.unwrap();
+    original.shutdown().await;
+}

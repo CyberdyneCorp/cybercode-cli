@@ -1,5 +1,7 @@
 //! Explicit user delegation shares child ownership without creating a parent Turn.
-use super::{Job, JobStatus, Runtime, RuntimeError, TurnContext};
+use super::delegations::Control;
+use super::{Job, JobStatus, Runtime, RuntimeError};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
@@ -66,56 +68,104 @@ impl Runtime {
                 "subtask prompt must not be empty".into(),
             ));
         }
-        // Child admission takes its own lifecycle guard; do not hold a nested read
-        // across queued admission when shutdown is waiting for the write guard.
-        let authority = self.capture_child_admission(session_id)?;
-        drop(self.inner.open().await?);
-        let state = self.state(session_id).await?;
-        let running = self.is_running(session_id);
-        let turn = TurnContext {
-            session_id: session_id.into(),
-            directory: state.info.directory.clone(),
-            agent: state.effective_agent(running).into(),
-            mode: state.effective_mode(running).into(),
-            prefers_apply_patch: false,
-            rules: state.info.rules.clone(),
-        };
-        let stop = self.inner.closed.child_token();
-        let _on_return = stop.clone().drop_guard();
-        let watch = stop.clone();
-        let caller = owner.clone();
-        tokio::spawn(async move {
+        let identity = cyber_core::ids::new_id("op");
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let (accepted, acceptance) = tokio::sync::oneshot::channel();
+        let control = self
+            .start_owned_subtask(
+                session_id,
+                &identity,
+                request,
+                owner.clone(),
+                ReplyChannel { send, acceptance },
+            )
+            .await?;
+        let on_disposal = control.stop.clone().drop_guard();
+        self.watch_subtask_owner(session_id, &identity, owner.clone(), control.clone());
+        let result = receive.await.map_err(|_| {
+            RuntimeError::Invalid(format!("Subtask owner was lost; reconcile {identity}"))
+        })?;
+        if owner.is_cancelled() {
+            control.stop.cancel();
+        }
+        let _ = accepted.send(());
+        control.done.cancelled().await;
+        on_disposal.disarm();
+        let job = result.and_then(|job| self.job(&job.id))?;
+        if owner.is_cancelled() && job.status == JobStatus::Running {
+            return Err(RuntimeError::Invalid(format!(
+                "Subtask cancellation was not acknowledged; inspect {}",
+                job.id
+            )));
+        }
+        Ok(job)
+    }
+
+    fn watch_subtask_owner(
+        &self,
+        parent: &str,
+        identity: &str,
+        owner: CancellationToken,
+        control: Arc<Control>,
+    ) {
+        let weak = self.downgrade();
+        let parent = parent.to_owned();
+        let identity = identity.to_owned();
+        let task = tokio::spawn(async move {
             tokio::select! {
-                _ = caller.cancelled() => watch.cancel(),
-                _ = watch.cancelled() => {},
+                biased;
+                _ = owner.cancelled() => control.stop.cancel(),
+                _ = control.stop.cancelled() => {},
+                _ = control.done.cancelled() => return,
+            }
+            if control.done.is_cancelled() {
+                return;
+            }
+            if let Some(runtime) = weak.upgrade() {
+                let _ = runtime.cancel_delegation(&parent, &identity).await;
             }
         });
-        let result = authority
-            .with_cancellation(owner.clone())
-            .run(
-                stop.clone(),
-                self.inner.tools.subtask_request(turn, request, stop),
-            )
-            .await
-            .map_err(RuntimeError::Invalid);
-        match result {
-            Ok(job) if owner.is_cancelled() => {
-                let recorded = self.job(&job.id)?;
-                if recorded.session_id != session_id || recorded.child_id != job.child_id {
-                    return Err(RuntimeError::Corrupt(
-                        "Delegated Job ownership changed".into(),
-                    ));
-                }
-                let settled = self.cancel_job(&job.id).await?;
-                if settled.status == JobStatus::Running {
-                    return Err(RuntimeError::Invalid(format!(
-                        "Subtask cancellation was not acknowledged; inspect {}",
-                        job.id
-                    )));
-                }
-                Ok(settled)
-            }
-            result => result,
+        let mut tasks = self
+            .inner
+            .background
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        tasks.retain(|task| !task.is_finished());
+        tasks.push(task);
+    }
+}
+
+pub(super) struct ReplyChannel {
+    pub send: tokio::sync::oneshot::Sender<Result<Job, RuntimeError>>,
+    pub acceptance: tokio::sync::oneshot::Receiver<()>,
+}
+
+pub(super) async fn deliver_reply(
+    runtime: &Runtime,
+    parent: &str,
+    identity: &str,
+    result: Result<Job, RuntimeError>,
+    reply: ReplyChannel,
+    control: &Control,
+) -> Result<(), RuntimeError> {
+    let job = result.as_ref().ok().cloned();
+    let sent = reply.send.send(result).is_ok();
+    let accepted = if sent {
+        tokio::select! {
+            biased;
+            _ = control.stop.cancelled() => false,
+            accepted = reply.acceptance => accepted.is_ok(),
+        }
+    } else {
+        false
+    };
+    if !accepted && let Some(job) = job {
+        // finish_delegation already verified the recorded parent and child identities.
+        if job.session_id == parent {
+            runtime
+                .finish_delegation(parent, identity, Ok(job), true)
+                .await?;
         }
     }
+    Ok(())
 }

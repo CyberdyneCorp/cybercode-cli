@@ -40,8 +40,9 @@ struct Record {
     hash: Option<String>,
 }
 pub(super) struct Control {
-    stop: CancellationToken,
-    done: CancellationToken,
+    pub source: String,
+    pub stop: CancellationToken,
+    pub done: CancellationToken,
 }
 pub(super) fn register(registry: &mut EventRegistry) {
     registry.register(CHANGED).expect("valid delegation event");
@@ -118,7 +119,7 @@ impl Runtime {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .get(id)
-                .is_some_and(|control| !control.done.is_cancelled())
+                .is_some_and(|control| control.source == parent && !control.done.is_cancelled())
         {
             data.status = DelegationStatus::Unknown;
             data.error =
@@ -130,8 +131,36 @@ impl Runtime {
         &self,
         parent: &str,
         id: &str,
-        mut request: UserSubtask,
+        request: UserSubtask,
     ) -> Result<Delegation, RuntimeError> {
+        self.begin_delegation(parent, id, request, true, None, None)
+            .await
+            .map(|(data, _)| data)
+    }
+
+    pub(super) async fn start_owned_subtask(
+        &self,
+        parent: &str,
+        id: &str,
+        request: UserSubtask,
+        owner: CancellationToken,
+        reply: super::subtask::ReplyChannel,
+    ) -> Result<Arc<Control>, RuntimeError> {
+        self.begin_delegation(parent, id, request, false, Some(owner), Some(reply))
+            .await?
+            .1
+            .ok_or_else(|| RuntimeError::Corrupt("Missing new subtask owner".into()))
+    }
+
+    async fn begin_delegation(
+        &self,
+        parent: &str,
+        id: &str,
+        mut request: UserSubtask,
+        require_durable_host: bool,
+        owner: Option<CancellationToken>,
+        reply: Option<super::subtask::ReplyChannel>,
+    ) -> Result<(Delegation, Option<Arc<Control>>), RuntimeError> {
         valid(id)?;
         if request.prompt.trim().is_empty()
             || request.max_steps == Some(0)
@@ -142,16 +171,21 @@ impl Runtime {
             ));
         }
         let authority = self.capture_child_admission(parent)?;
+        let authority = match &owner {
+            Some(owner) => authority.with_cancellation(owner.clone()),
+            None => authority,
+        };
         let _open = self.inner.open().await?;
         let state = self.state(parent).await?;
-        if !self.inner.tools.durable_user_delegation() {
+        let durable_host = self.inner.tools.durable_user_delegation();
+        if require_durable_host && !durable_host {
             return Err(RuntimeError::Invalid(
                 "Host does not support durable user delegation".into(),
             ));
         }
         let hash = format!("{:x}",Sha256::digest(serde_json::to_vec(&serde_json::json!({"prompt":request.prompt,"agent":request.agent,"attachments":request.attachments,"max_steps":request.max_steps})).expect("serializable request")));
         if let Some(existing) = self.existing_delegation(parent, id, &hash)? {
-            return Ok(existing);
+            return Ok((existing, None));
         }
         let record = Record {
             admission_bindings: Some(authority.bindings.clone()),
@@ -159,13 +193,18 @@ impl Runtime {
                 id: id.into(),
                 session_id: parent.into(),
                 status: DelegationStatus::Pending,
-                phase: DelegationPhase::Reserved,
+                phase: if durable_host {
+                    DelegationPhase::Reserved
+                } else {
+                    DelegationPhase::Launching
+                },
                 job_id: None,
                 error: None,
             },
             hash: Some(hash.clone()),
         };
         let control = Arc::new(Control {
+            source: parent.into(),
             stop: self.inner.closed.child_token(),
             done: CancellationToken::new(),
         });
@@ -175,6 +214,7 @@ impl Runtime {
             Err(RuntimeError::Store(StoreError::Concurrency { .. })) => {
                 return self
                     .existing_delegation(parent, id, &hash)?
+                    .map(|data| (data, None))
                     .ok_or_else(|| RuntimeError::Corrupt("Missing competing admission".into()));
             }
             Err(error) => return Err(error),
@@ -184,7 +224,7 @@ impl Runtime {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(id.into(), control.clone());
-        request.admission_id = Some(id.into());
+        request.admission_id = durable_host.then(|| id.into());
         let running = self.is_running(parent);
         let turn = TurnContext {
             session_id: parent.into(),
@@ -198,6 +238,7 @@ impl Runtime {
         let weak = self.downgrade();
         let identity = id.to_owned();
         let source = parent.to_owned();
+        let published = control.clone();
         let worker = tokio::spawn(async move {
             let _on_exit = control.done.clone().drop_guard();
             let result = authority
@@ -212,8 +253,27 @@ impl Runtime {
             if let Some(runtime) = weak.upgrade() {
                 let cancelled = control.stop.is_cancelled()
                     || (result.is_err() && authority.verify(&runtime, &source).is_err());
-                if let Err(error) = runtime
-                    .finish_delegation(&source, &identity, result, cancelled)
+                let response = match runtime
+                    .finish_delegation(&source, &identity, result.clone(), cancelled)
+                    .await
+                {
+                    Ok(()) => match result {
+                        Ok(job) => runtime.job(&job.id),
+                        Err(error) => Err(RuntimeError::Invalid(error)),
+                    },
+                    Err(error) => {
+                        cyber_core::log::error(
+                            "delegation",
+                            &error.to_string(),
+                            serde_json::json!({"request_id":identity,"session_id":source}),
+                        );
+                        Err(error)
+                    }
+                };
+                if let Some(reply) = reply
+                    && let Err(error) = super::subtask::deliver_reply(
+                        &runtime, &source, &identity, response, reply, &control,
+                    )
                     .await
                 {
                     cyber_core::log::error(
@@ -237,7 +297,7 @@ impl Runtime {
             .unwrap_or_else(PoisonError::into_inner);
         owners.retain(|owner| !owner.is_finished());
         owners.push(worker);
-        Ok(record.data)
+        Ok((record.data, Some(published)))
     }
     fn existing_delegation(
         &self,
@@ -290,7 +350,9 @@ impl Runtime {
                 .unwrap_or_else(PoisonError::into_inner)
                 .get(id)
                 .is_some_and(|control| {
-                    !control.done.is_cancelled() && !control.stop.is_cancelled()
+                    control.source == parent
+                        && !control.done.is_cancelled()
+                        && !control.stop.is_cancelled()
                 });
             if !owned {
                 return Err(RuntimeError::Invalid(
@@ -355,6 +417,14 @@ impl Runtime {
                     .unwrap_or_else(PoisonError::into_inner)
                     .get(id)
                     .cloned();
+                if control
+                    .as_ref()
+                    .is_some_and(|control| control.source != parent)
+                {
+                    return Err(RuntimeError::Corrupt(
+                        "Delegation control ownership changed".into(),
+                    ));
+                }
                 if let Some(control) = control.filter(|control| !control.done.is_cancelled()) {
                     control.stop.cancel();
                     record.data.status = DelegationStatus::Cancelling;
@@ -373,7 +443,7 @@ impl Runtime {
             }
         }
     }
-    async fn finish_delegation(
+    pub(super) async fn finish_delegation(
         &self,
         parent: &str,
         id: &str,

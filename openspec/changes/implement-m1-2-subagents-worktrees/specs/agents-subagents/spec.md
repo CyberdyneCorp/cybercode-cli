@@ -540,3 +540,18 @@
 #### Scenario: Missing admission owner at launch marker
 - **WHEN** a Reserved admission has lost its live actor through restart or failure
 - **THEN** a launch-marker call refuses before advancing the record and preserves Unknown lookup and reviewed cancellation semantics
+
+### Requirement: Owned legacy subtask callback
+(P1) Direct user subtask requests SHALL share the tracked durable callback owner with explicit delegation. Caller disposal SHALL cancel the request without disposing the host before native acknowledgement. Caller cancellation SHALL invalidate durable request authority. Callback-owned Job delivery SHALL require caller acceptance; disposed or cancelled delivery SHALL stop only the verified owned Job and await settlement. Accepted delivery SHALL transfer ownership to the independent Job. Hosts without the launch-marker contract SHALL retain conservative post-launch uncertainty.
+
+#### Scenario: Disposed direct request before native acknowledgement
+- **WHEN** a direct subtask caller disappears while its host delays cancellation acknowledgement
+- **THEN** the host remains tracked until acknowledgement and cannot create new child work under revoked authority
+
+#### Scenario: Accepted Job remains independent
+- **WHEN** a direct subtask returns an accepted Job and its former caller token is later cancelled
+- **THEN** the registered Job keeps running
+
+#### Scenario: Rejected handoff without cancellation acknowledgement
+- **WHEN** a rejected or cancelled direct handoff returns a recorded Running Job without a live cancellation owner
+- **THEN** the request records Unknown with the verified Job identity and a cancelled caller receives a cancellation acknowledgement error
