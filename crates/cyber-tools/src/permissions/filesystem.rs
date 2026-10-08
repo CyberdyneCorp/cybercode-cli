@@ -66,8 +66,11 @@ fn command(node: Node<'_>, src: &[u8], cwd: &Path, paths: &mut Vec<PathBuf>) -> 
     }
     let resolved: Vec<PathBuf> = operands
         .iter()
-        .map(|word| normalize(&canonical(&cwd.join(word))))
-        .collect();
+        .map(|word| literal_path(&cwd.join(word)))
+        .collect::<Option<_>>()?;
+    if resolved.iter().any(|path| !links::unaliased(path)) {
+        return None;
+    }
     if matches!(name.as_str(), "cp" | "mv") {
         copy_targets(name, args, &resolved, &operands, paths)?;
     }
@@ -135,7 +138,11 @@ fn copy_targets(
         } else {
             destination.clone()
         };
-        paths.push(normalize(&canonical(&target)));
+        let target = literal_path(&target)?;
+        if !links::unaliased(&target) {
+            return None;
+        }
+        paths.push(target.clone());
         if source.is_dir() {
             // Trailing slash and dot operands have different copy semantics on
             // supported platforms; don't infer which tree layout they produce.
@@ -173,7 +180,7 @@ fn directory_targets(
         if kind.is_symlink() || !(kind.is_file() || kind.is_dir()) {
             return None;
         }
-        let destination = directory_destination(&target)?;
+        let destination = literal_path(&target)?;
         // A second file name may alias protected data outside this tree.
         if !links::unaliased(&source) || !links::unaliased(&destination) {
             return None;
@@ -193,7 +200,7 @@ fn directory_targets(
     Some(())
 }
 
-fn directory_destination(path: &Path) -> Option<PathBuf> {
+fn literal_path(path: &Path) -> Option<PathBuf> {
     let mut ancestor = path;
     let mut tail = Vec::new();
     loop {
@@ -221,13 +228,15 @@ mod tests {
 
     #[test]
     fn literal_lists_quotes_and_option_delimiters_are_proven() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
         let paths = literal_edits(
             "mkdir -pv build && touch 'build/a b'; cp 'build/a b' build/c; mv build/c build/d; rm -- -r",
-            Path::new("/repo"),
+            &root,
         ).unwrap();
-        assert!(paths.contains(&PathBuf::from("/repo/build/a b")));
-        assert!(paths.contains(&PathBuf::from("/repo/-r")));
-        assert!(literal_edits("'touch' escaped\\ space", Path::new("/repo")).is_some());
+        assert!(paths.contains(&root.join("build/a b")));
+        assert!(paths.contains(&root.join("-r")));
+        assert!(literal_edits("'touch' escaped\\ space", &root).is_some());
     }
 
     #[test]
@@ -328,6 +337,49 @@ mod tests {
             std::fs::read_to_string(root.join("protected")).unwrap(),
             "protected"
         );
+    }
+
+    #[test]
+    fn file_hard_links_and_implicit_copy_targets_keep_ordinary_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        std::fs::write(root.join("protected"), "protected").unwrap();
+        std::fs::write(root.join("replacement"), "replacement").unwrap();
+        std::fs::hard_link(root.join("protected"), root.join("alias")).unwrap();
+        std::fs::create_dir(root.join("destination")).unwrap();
+        std::fs::hard_link(root.join("protected"), root.join("destination/replacement")).unwrap();
+        for command in [
+            "cp replacement alias",
+            "cp replacement destination",
+            "touch alias",
+            "mv alias fresh",
+            "rm alias",
+        ] {
+            assert!(literal_edits(command, &root).is_none(), "{command}");
+        }
+        assert!(literal_edits("cp replacement fresh", &root).is_some());
+        assert!(literal_edits("touch fresh", &root).is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_file_operands_and_implicit_copy_targets_keep_ordinary_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        std::fs::write(root.join("replacement"), "replacement").unwrap();
+        std::os::unix::fs::symlink(root.join("absent"), root.join("alias")).unwrap();
+        std::fs::create_dir(root.join("destination")).unwrap();
+        std::os::unix::fs::symlink(root.join("absent"), root.join("destination/replacement"))
+            .unwrap();
+        for command in [
+            "touch alias",
+            "mkdir -p alias/nested",
+            "cp replacement alias",
+            "cp replacement destination",
+        ] {
+            assert!(literal_edits(command, &root).is_none(), "{command}");
+        }
+        assert!(!root.join("absent").exists());
     }
 
     #[cfg(unix)]

@@ -78,6 +78,7 @@
 - [x] Prove literal filesystem commands for accept-edits; preserve ordinary asks for unresolved paths/options and protected-path ceilings for symlink aliases.
 - [ ] Extend accept-edits proof to recursive copies, directory moves and remaining filesystem option semantics before closing the full requirement.
   - [x] Inspect bounded literal directory copy/move sources and mapped destinations, preserving protected/outside-path ceilings and ordinary approval for source symlinks, multiply linked files, unsupported flags and ambiguous layouts. Add actual tool effects, deny-rule and destination-alias regressions plus a dedicated native path-proof step. Native acceptance, remaining option/context semantics and complete enforcement remain open.
+  - [x] Extend strict literal-path resolution and file-link checks to ordinary filesystem operands and implicit copy destinations. Unchanged-main regression confirms the single-file hard-link approval gap; add file/dangling-alias tests and use a platform-native temporary root in the literal path fixture. Native acceptance and remaining command semantics remain open.
 
 - [x] Gate Unix transport exports and represent Windows TCP listener registration without a Unix socket; local Unix lifecycle regressions pass.
 - [x] Prove Windows listener lifecycle and unsupported-flag rejection in the native CI job. The Windows job passes at `a54aeb9`; this does not implement authenticated service shutdown or sandbox enforcement.

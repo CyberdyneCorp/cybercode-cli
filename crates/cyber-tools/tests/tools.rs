@@ -543,6 +543,40 @@ async fn accept_edits_copies_and_moves_inspected_directory_trees() {
     assert!(!f.repo.join("denied").exists());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn accept_edits_single_file_aliases_keep_ordinary_approval() {
+    for command in [
+        "cp replacement alias",
+        "cp replacement destination",
+        "touch dangling",
+    ] {
+        let f = Fixture::with_policy(
+            "bash",
+            cyber_sandbox::find_helper(),
+            Some("full-access".into()),
+        );
+        f.write(".cyber/hooks.jsonc", "protected");
+        f.write("replacement", "replacement");
+        std::fs::hard_link(f.repo.join(".cyber/hooks.jsonc"), f.repo.join("alias")).unwrap();
+        std::fs::create_dir(f.repo.join("destination")).unwrap();
+        std::fs::hard_link(
+            f.repo.join(".cyber/hooks.jsonc"),
+            f.repo.join("destination/replacement"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(f.repo.join(".cyber/mcp.json"), f.repo.join("dangling"))
+            .unwrap();
+        let out = failed(
+            f.call("accept-edits", "bash", json!({"command":command}))
+                .await,
+        );
+        assert!(out.contains("no interactive approver"), "{command}: {out}");
+        assert_eq!(f.read(".cyber/hooks.jsonc"), "protected");
+        assert!(!f.repo.join(".cyber/mcp.json").exists());
+    }
+}
+
 #[tokio::test]
 async fn accept_edits_directory_operations_keep_protected_descendants_behind_approval() {
     let f = Fixture::new();

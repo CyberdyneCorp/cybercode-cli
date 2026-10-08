@@ -160,6 +160,10 @@
 - **WHEN** a literal filesystem operand resolves through a symlink to a protected configuration document
 - **THEN** accept-edits SHALL preserve the protected-path approval requirement
 
+#### Scenario: File alias identity is unresolved
+- **WHEN** a literal filesystem operand or implicit copy destination is a multiply linked file or traverses a dangling symbolic link
+- **THEN** accept-edits SHALL retain ordinary approval rather than infer an unaliased workspace target
+
 #### Scenario: Nonrecursive removal with an option delimiter
 - **WHEN** a nonrecursive rm has literal workspace operands after `--`
 - **THEN** operand names starting with a dash SHALL be treated as paths rather than options

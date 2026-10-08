@@ -267,6 +267,9 @@ fn abandoned_lease_requires_recovery_even_after_kernel_lock_release() {
     );
     let probe = std::fs::File::open(&path).unwrap();
     probe.try_lock().unwrap();
+    // A transient inherited/duplicated descriptor must not retain this probe's lock.
+    let retained_probe = probe.try_clone().unwrap();
+    probe.unlock().unwrap();
     drop(probe);
     for force in [false, true] {
         let error =
@@ -284,6 +287,7 @@ fn abandoned_lease_requires_recovery_even_after_kernel_lock_release() {
         .unwrap();
     assert!(error.to_string().contains("recovery is required"));
     assert_eq!(std::fs::read(path).unwrap(), before);
+    drop(retained_probe);
     assert!(managed.path.join("tracked.txt").exists());
     assert!(
         !managed
