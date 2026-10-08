@@ -65,6 +65,7 @@
 - [ ] Test allow/block, irreversible actions, malformed output, three-block fallback and unattended denial.
 - [x] Complete the four-mode cycle and pending/effective TUI state with tests. Turn modes are pinned durably through tool settlement, with legacy replay, rapid-selection serialization and TUI bypass confirmation.
 - [ ] Enforce org-policy mode restrictions; the full permission-mode requirement remains open.
+- [x] Implement confirmed one-shot approve replay, durable exclusive consumption, current permission ceilings, HTTP/SDK/TUI integration and production execution/cancellation regressions. Local validation passes; native acceptance and reviewed orphan/unknown recovery remain open.
 - [x] Preserve effective auto-mode ancestor always-block ceilings in child dispatch, recording ancestor identity before effects; direct/grandparent and non-auto controls cover this boundary. Full ancestor classification and overrides remain open.
 - [ ] Add Windows CI; run existing platform, recovery and trust regressions.
   - [x] Add a native Windows workspace/test-compilation and executable smoke job.

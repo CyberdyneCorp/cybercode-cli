@@ -604,6 +604,9 @@ impl ToolHost for BuiltinHost {
 
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         Box::pin(async move {
+            if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
+                return ToolOutcome::Failed(error.to_string());
+            }
             let Some(tool) = self.tools.iter().find(|t| t.def().spec.name == inv.name) else {
                 return ToolOutcome::Failed(format!("Unknown tool: {}", inv.name));
             };

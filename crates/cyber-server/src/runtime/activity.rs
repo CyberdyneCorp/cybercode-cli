@@ -34,6 +34,12 @@ pub(super) struct Scope {
     settled: bool,
 }
 impl Scope {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn authority(&self) -> AdmissionAuthority {
+        self.authority.clone()
+    }
     pub async fn reserve(inner: &Inner, handle: &Handle) -> Result<Self, RuntimeError> {
         let runtime = Runtime {
             inner: inner.me.upgrade().ok_or(RuntimeError::ShuttingDown)?,

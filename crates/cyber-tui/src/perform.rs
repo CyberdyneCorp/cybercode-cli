@@ -116,6 +116,42 @@ pub(crate) fn err(e: cyber_client::ClientError) -> String {
     e.to_string()
 }
 
+async fn submit_prompt(
+    client: &Client,
+    session: &Session,
+    text: &str,
+    delivery: &str,
+    context: Option<&crate::admissions::Context<'_>>,
+) -> Result<Msg, String> {
+    let id = session.id.as_str();
+    if let Some((agent, prompt)) = leading_agent_mention(text) {
+        let agents = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
+        if agents.iter().any(|profile| profile.key == agent) {
+            if delivery != "steer" {
+                return Err("Submit an agent mention with Enter to start the child".into());
+            }
+            if prompt.trim().is_empty() {
+                return Err(format!("Usage: @{agent} <prompt>"));
+            }
+            return crate::admissions::start(
+                client,
+                id,
+                &session.directory,
+                json!({"prompt":prompt,"agent":agent}),
+                context,
+            )
+            .await;
+        }
+    }
+    let parts = parts(text, &session.directory);
+    post(
+        client,
+        &format!("/sessions/{id}/prompt"),
+        json!({ "parts": parts, "delivery": delivery }),
+    )
+    .await
+}
+
 #[cfg(test)]
 pub async fn perform(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     perform_owned(client, session, action, None).await
@@ -205,32 +241,7 @@ async fn converse(
     let id = session.id.as_str();
     match action {
         Action::Prompt { text, delivery } => {
-            if let Some((agent, prompt)) = leading_agent_mention(&text) {
-                let agents = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
-                if agents.iter().any(|profile| profile.key == agent) {
-                    if delivery != "steer" {
-                        return Err("Submit an agent mention with Enter to start the child".into());
-                    }
-                    if prompt.trim().is_empty() {
-                        return Err(format!("Usage: @{agent} <prompt>"));
-                    }
-                    return crate::admissions::start(
-                        client,
-                        id,
-                        &session.directory,
-                        json!({"prompt":prompt,"agent":agent}),
-                        context,
-                    )
-                    .await;
-                }
-            }
-            let parts = parts(&text, &session.directory);
-            post(
-                client,
-                &format!("/sessions/{id}/prompt"),
-                json!({ "parts": parts, "delivery": delivery }),
-            )
-            .await
+            submit_prompt(client, session, &text, delivery, context).await
         }
         Action::Subtask(prompt) => {
             crate::admissions::start(
@@ -242,6 +253,7 @@ async fn converse(
             )
             .await
         }
+        Action::ApproveAuto => post(client, &format!("/sessions/{id}/approve"), json!({})).await,
         Action::Shell(command) => {
             post(
                 client,

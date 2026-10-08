@@ -126,6 +126,7 @@ pub struct Asker {
     pub call_id: String,
     pub message_id: String,
     agent: String,
+    pub(super) auto_override: Option<super::auto_override::Grant>,
 }
 
 impl std::fmt::Debug for Asker {
@@ -151,6 +152,7 @@ impl Asker {
             call_id: call_id.into(),
             message_id: message_id.into(),
             agent: agent.into(),
+            auto_override: None,
         }
     }
 
@@ -162,6 +164,7 @@ impl Asker {
             call_id: String::new(),
             message_id: String::new(),
             agent: String::new(),
+            auto_override: None,
         }
     }
 
@@ -208,6 +211,28 @@ impl Asker {
 }
 
 impl Inner {
+    pub(super) async fn abandon_call_requests(
+        &self,
+        session: &str,
+        call: &str,
+    ) -> Result<(), RuntimeError> {
+        for request in self
+            .owned_pending(session)
+            .into_iter()
+            .filter(|r| r.call_id == call)
+        {
+            if let Some(waiter) = self.take_waiter(&request.id)
+                && let Reply::Permission(sender) = waiter.reply
+            {
+                let reply = PermissionReply::Reject {
+                    message: Some("The operation was cancelled".into()),
+                };
+                self.record_reply(&request, &reply).await?;
+                let _ = sender.send(reply);
+            }
+        }
+        Ok(())
+    }
     /// Record and register a request. Returns false when nobody can answer it.
     async fn open_request(
         self: &Arc<Self>,

@@ -1015,7 +1015,7 @@ impl Inner {
     }
 
     /// Persist the dispatch record before running anything.
-    async fn dispatch(
+    pub(super) async fn dispatch(
         &self,
         handle: &Handle,
         turn: &TurnContext,
@@ -1059,7 +1059,7 @@ impl Inner {
     }
 
     /// Run one call; after cancellation the tool has 2 seconds to stop.
-    async fn run_tool(
+    pub(super) async fn run_tool(
         &self,
         handle: &Handle,
         def: ToolDef,
@@ -1217,7 +1217,11 @@ fn settled(
 }
 
 /// Map an outcome to a settlement. A dispatched mutation that did not finish has an unknown outcome.
-fn settlement(call_id: &str, def: &ToolDef, outcome: ToolOutcome) -> cyber_store::NewEvent {
+pub(super) fn settlement(
+    call_id: &str,
+    def: &ToolDef,
+    outcome: ToolOutcome,
+) -> cyber_store::NewEvent {
     let read_only = def.retry_safety == RetrySafety::ReadOnly;
     match outcome {
         ToolOutcome::Ok(output) => settled(call_id, CallStatus::Ok, &output, None),

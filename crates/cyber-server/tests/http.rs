@@ -302,6 +302,260 @@ async fn permission_requests_are_listed_and_replied() {
 }
 
 #[tokio::test]
+async fn approve_route_returns_before_confirmation_and_preserves_exact_call_identity() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![tools(&[("original", "clock", "{}")]), text("done")],
+            ),
+            (
+                "test/summary",
+                vec![text(
+                    r#"{"decision":"block","reason":"Review this command"}"#,
+                )],
+            ),
+        ],
+        roles: vec![("evaluator", "test/summary")],
+        ..Setup::default()
+    });
+    h.tools.set(
+        "clock",
+        Behavior::AutoBlock("git push origin feature/x".into()),
+    );
+    let api = Api::new(&h);
+    let id = h.session().await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("inspect"))
+        .await;
+    h.settle(&id).await;
+    let (status, receipt) = tokio::time::timeout(
+        Duration::from_secs(2),
+        api.post(&format!("/sessions/{id}/approve"), json!({})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(receipt["data"]["original_call_id"], "original");
+    let request = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = h.runtime.pending_requests(Some(&id)).into_iter().next() {
+                break request;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(receipt["data"]["call_id"], request.call_id);
+    h.tools.set("clock", Behavior::Gated);
+    api.post(
+        &format!("/sessions/{id}/permissions/{}/reply", request.id),
+        json!({"reply":"once"}),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    let invocation = h.tools.executed.lock().unwrap().last().unwrap().clone();
+    assert!(invocation.asker.auto_override_matches("clock", &json!({})));
+    assert!(
+        invocation
+            .asker
+            .validate_auto_override("clock", &json!({}))
+            .is_ok()
+    );
+    assert!(
+        invocation
+            .asker
+            .validate_auto_override("write", &json!({}))
+            .is_err()
+    );
+    assert!(!invocation.asker.auto_override_matches("write", &json!({})));
+    assert!(
+        !invocation
+            .asker
+            .auto_override_matches("clock", &json!({"changed":true}))
+    );
+    let mut other = invocation.asker.clone();
+    other.call_id = "another-call".into();
+    assert!(!other.auto_override_matches("clock", &json!({})));
+    other = invocation.asker.clone();
+    other.session_id = "another-session".into();
+    assert!(!other.auto_override_matches("clock", &json!({})));
+    h.tools.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = h.runtime.state(&id).await.unwrap();
+            if state
+                .calls
+                .get(&request.call_id)
+                .is_some_and(|c| c.status == cyber_server::runtime::CallStatus::Ok)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (status, _) = api
+        .post(&format!("/sessions/{id}/approve"), json!({}))
+        .await;
+    assert!(!status.is_success());
+    assert!(h.restart().approve_auto(&id).await.is_err());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while invocation.asker.auto_override_matches("clock", &json!({})) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the grant must expire when its owned invocation ends");
+    assert!(
+        invocation
+            .asker
+            .validate_auto_override("clock", &json!({}))
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn confirmed_override_waits_for_the_existing_drain_without_rejecting_the_command() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![
+                    tools(&[("original", "clock", "{}")]),
+                    tools(&[("in-flight", "read", "{}")]),
+                    text("done"),
+                ],
+            ),
+            (
+                "test/summary",
+                vec![text(
+                    r#"{"decision":"block","reason":"Review this command"}"#,
+                )],
+            ),
+        ],
+        roles: vec![("evaluator", "test/summary")],
+        ..Setup::default()
+    });
+    h.tools.set(
+        "clock",
+        Behavior::AutoBlock("git push origin feature/x".into()),
+    );
+    h.tools.set("read", Behavior::Gated);
+    let api = Api::new(&h);
+    let id = h.session().await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("inspect"))
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    assert!(h.runtime.is_running(&id));
+    let receipt = h.runtime.approve_auto(&id).await.unwrap();
+    let pending = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = h.runtime.pending_requests(Some(&id)).into_iter().next() {
+                break request;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    h.runtime
+        .reply_permission(&pending.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    assert!(
+        !h.runtime
+            .state(&id)
+            .await
+            .unwrap()
+            .calls
+            .contains_key(&receipt.call_id)
+    );
+    h.tools.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if h.runtime
+                .state(&id)
+                .await
+                .unwrap()
+                .calls
+                .get(&receipt.call_id)
+                .is_some_and(|c| c.status == cyber_server::runtime::CallStatus::Ok)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.models.requests("test/main").len(), 3);
+}
+
+#[tokio::test]
+async fn stopped_override_keeps_terminal_tool_acknowledgement_after_admission_closes() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![tools(&[("original", "clock", "{}")]), text("done")],
+            ),
+            (
+                "test/summary",
+                vec![text(
+                    r#"{"decision":"block","reason":"Review this command"}"#,
+                )],
+            ),
+        ],
+        roles: vec![("evaluator", "test/summary")],
+        ..Setup::default()
+    });
+    h.tools
+        .set("clock", Behavior::AutoBlock("inspect repository".into()));
+    let api = Api::new(&h);
+    let id = h.session().await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("inspect"))
+        .await;
+    h.settle(&id).await;
+    let receipt = h.runtime.approve_auto(&id).await.unwrap();
+    let pending = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = h.runtime.pending_requests(Some(&id)).into_iter().next() {
+                break request;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    h.tools.set("clock", Behavior::UntilCancelled);
+    h.runtime
+        .reply_permission(&pending.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), h.tools.started.notified())
+        .await
+        .unwrap();
+    let report = h.runtime.stop_subtree(&id).await.unwrap();
+    assert_eq!(
+        report.status,
+        cyber_server::runtime::SubtreeStopStatus::Acknowledged,
+        "{:?}",
+        report.problems
+    );
+    assert_eq!(
+        h.runtime.state(&id).await.unwrap().calls[&receipt.call_id].status,
+        cyber_server::runtime::CallStatus::Interrupted
+    );
+    assert!(h.runtime.approve_auto(&id).await.is_err());
+}
+
+#[tokio::test]
 async fn history_pages_durable_events() {
     let h = Harness::new(Setup {
         scripts: vec![("test/main", vec![text("ok")])],

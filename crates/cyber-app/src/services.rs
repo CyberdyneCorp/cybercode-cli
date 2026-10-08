@@ -44,6 +44,10 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
     ("compact", "Summarize older history to free context"),
     ("model", "Switch the model"),
     ("mode", "Switch the permission mode"),
+    (
+        "approve",
+        "Confirm and replay the last classifier-blocked call once",
+    ),
     ("resume", "Open another Session"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),

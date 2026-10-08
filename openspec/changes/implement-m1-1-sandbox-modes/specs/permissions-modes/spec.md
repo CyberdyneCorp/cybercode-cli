@@ -174,6 +174,8 @@
 #### Scenario: Override one block
 - **WHEN** the classifier blocked `git push origin feature/x` and the user runs `/approve`
 - **THEN** the user sees the command and the classifier's reason, and on confirmation the push runs once
+- **AND** POST /api/v1/sessions/:id/approve and the SDK session.approve method return a replay receipt before waiting for the confirmation
+- **AND** current permission ceilings still apply; rejected or unattended confirmation has no effect, and consumed attempts remain spent after restart
 
 #### Scenario: Trusted validated controls
 - **WHEN** project configuration supplies auto-mode rules or classifier policy

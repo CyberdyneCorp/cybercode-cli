@@ -25,6 +25,13 @@ export type AssistantEntry = {
   error?: string | null;
 };
 
+export type AutoOverrideReceipt = {
+  id: string;
+  decision_id: string;
+  original_call_id: string;
+  call_id: string;
+};
+
 export type Budget = {
   max_turns?: number | null;
   max_tokens?: number | null;
@@ -175,6 +182,10 @@ export type Data_Array_of_InboxRow = {
 
 export type Data_Array_of_PendingRequest = {
   data: PendingRequest[];
+};
+
+export type Data_AutoOverrideReceipt = {
+  data: AutoOverrideReceipt;
 };
 
 export type Data_ChildSetupInspection = {

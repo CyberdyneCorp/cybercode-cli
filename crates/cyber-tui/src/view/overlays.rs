@@ -1,7 +1,7 @@
 //! Pickers, the permission and question prompts, help and autocomplete.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
@@ -135,6 +135,39 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
         .map(|r| Line::from(Span::styled(format!("  {r}"), Style::default().fg(t.text))))
         .collect();
     lines.extend(resource_lines);
+    if action == "auto_override" {
+        if let Some(reason) = metadata["classifier_reason"].as_str() {
+            lines.push(Line::from(format!("Classifier blocked: {reason}")));
+        }
+        lines.push(Line::from(format!(
+            "Tool: {}",
+            metadata["tool"].as_str().unwrap_or_default()
+        )));
+        lines.push(Line::from(format!("Arguments: {}", metadata["input"])));
+        lines.push(Line::default());
+        let selected = match step {
+            PermStep::Choose(i) => *i,
+            _ => 0,
+        };
+        let mut controls = vec![
+            selectable(app, "Confirm replay once (y)".into(), selected == 0),
+            selectable(app, "Cancel (n)".into(), selected == 1),
+        ];
+        controls.push(Line::from("PgUp/PgDn review details · Home return to top"));
+        f.render_widget(Clear, rect);
+        let block = frame(app, "Approve blocked call once");
+        let inner = block.inner(rect);
+        let panels = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
+        f.render_widget(block, rect);
+        f.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((app.permission_scroll, 0)),
+            panels[0],
+        );
+        f.render_widget(Paragraph::new(controls), panels[1]);
+        return;
+    }
     if let Some(diff) = metadata["diff"].as_str() {
         lines.push(Line::default());
         for l in diff.lines().take(12) {

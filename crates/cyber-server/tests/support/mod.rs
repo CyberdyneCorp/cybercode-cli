@@ -139,6 +139,8 @@ pub enum Behavior {
     AskConfirm(String),
     /// Review a request through the real auto-mode evaluator boundary.
     Auto(String),
+    /// Enforce a classifier block, or honor an exact runtime override grant.
+    AutoBlock(String),
     /// Ask one question, then report the answer.
     AskQuestion,
 }
@@ -266,6 +268,32 @@ impl ToolHost for Tools {
                     match asker.review_auto(review, cancel).await {
                         Ok(decision) => ToolOutcome::Ok(serde_json::to_string(&decision).unwrap()),
                         Err(_) => ToolOutcome::Failed("Auto decision could not be recorded".into()),
+                    }
+                }
+                Some(Behavior::AutoBlock(resource)) => {
+                    if asker.auto_override_matches(&name, &input) {
+                        return ToolOutcome::Ok("confirmed replay".into());
+                    }
+                    match asker
+                        .review_auto(
+                            AutoReview {
+                                action: "bash".into(),
+                                resources: vec![resource],
+                                tool: name,
+                                input,
+                                policy: String::new(),
+                            },
+                            cancel,
+                        )
+                        .await
+                    {
+                        Ok(decision) if decision.decision == AutoEffect::Block => {
+                            ToolOutcome::Failed(format!(
+                                "Blocked by auto mode: {}",
+                                decision.reason
+                            ))
+                        }
+                        _ => ToolOutcome::Failed("Classifier block expected".into()),
                     }
                 }
                 Some(Behavior::Ask(resource) | Behavior::AskConfirm(resource)) => {

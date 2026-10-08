@@ -66,6 +66,7 @@ pub enum Action {
     SwitchMode(String),
     Fork,
     Subtask(String),
+    ApproveAuto,
     Compact(Option<String>),
     FindFiles(String),
     LoadAgents,
@@ -199,6 +200,7 @@ pub struct App {
     pub timestamps: bool,
     /// Lines scrolled up from the bottom.
     pub scroll: u16,
+    pub permission_scroll: u16,
     pub toast: Option<(String, Instant)>,
     pub theme: Theme,
     leader: Option<Instant>,
@@ -228,6 +230,7 @@ impl App {
             expand_tools: false,
             timestamps: false,
             scroll: 0,
+            permission_scroll: 0,
             toast: None,
             theme: theme::by_name(theme_name),
             leader: None,
@@ -287,6 +290,9 @@ impl App {
             .active_request()
             .map(|request| request.id().to_string());
         let same_request = self.shown_request == request_id;
+        if !same_request {
+            self.permission_scroll = 0;
+        }
         self.shown_request = request_id;
         match (self.active_request(), blocking && same_request) {
             (Some(Request::Permission { .. }), false) => {
@@ -630,6 +636,11 @@ impl App {
                 self.overlay = Overlay::Cost;
                 self.load_cost()
             }
+            "approve" if args.is_empty() => vec![Action::ApproveAuto],
+            "approve" => {
+                self.toast("Usage: /approve");
+                Vec::new()
+            }
             "admissions" => {
                 let items = self.admissions.choices(&self.session.id);
                 self.open_picker(
@@ -826,10 +837,13 @@ impl App {
     }
 
     fn permission_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        let Some(Request::Permission { id, .. }) = self.active_request().cloned() else {
+        let Some(Request::Permission { id, action, .. }) = self.active_request().cloned() else {
             self.overlay = Overlay::None;
             return Vec::new();
         };
+        if action == "auto_override" {
+            return self.auto_override_key(key, &id);
+        }
         let Overlay::Permission(step) = &mut self.overlay else {
             return Vec::new();
         };
@@ -875,6 +889,50 @@ impl App {
             },
         }
         Vec::new()
+    }
+
+    fn auto_override_key(&mut self, key: KeyEvent, id: &str) -> Vec<Action> {
+        match key.code {
+            KeyCode::PageDown => {
+                self.permission_scroll = self.permission_scroll.saturating_add(8);
+                return Vec::new();
+            }
+            KeyCode::PageUp => {
+                self.permission_scroll = self.permission_scroll.saturating_sub(8);
+                return Vec::new();
+            }
+            KeyCode::Home => {
+                self.permission_scroll = 0;
+                return Vec::new();
+            }
+            _ => {}
+        }
+        let Overlay::Permission(PermStep::Choose(selected)) = &mut self.overlay else {
+            return Vec::new();
+        };
+        let approve = match key.code {
+            KeyCode::Up => {
+                *selected = 0;
+                return Vec::new();
+            }
+            KeyCode::Down => {
+                *selected = 1;
+                return Vec::new();
+            }
+            KeyCode::Char('y') => true,
+            KeyCode::Enter => *selected == 0,
+            KeyCode::Esc | KeyCode::Char('n') => false,
+            _ => return Vec::new(),
+        };
+        let body = if approve {
+            json!({"reply":"once"})
+        } else {
+            json!({"reply":"reject","message":"Override cancelled"})
+        };
+        self.answered(vec![Action::Reply {
+            request: id.into(),
+            body,
+        }])
     }
 
     /// Drop the answered request locally so the next one shows at once.

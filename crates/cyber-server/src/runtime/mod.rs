@@ -10,6 +10,8 @@ pub use admission_authority::AdmissionAuthority;
 mod ancestry;
 pub use ancestry::AncestorAuthority;
 mod auto;
+mod auto_override;
+pub use auto_override::AutoOverrideReceipt;
 pub mod auto_statistics;
 mod budget;
 mod bus;

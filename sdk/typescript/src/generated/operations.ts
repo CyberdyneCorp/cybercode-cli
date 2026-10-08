@@ -188,6 +188,12 @@ export interface Operations {
     body: S.AgentBody;
     response: S.Session;
   };
+  "v1.session.approve": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.AutoOverrideReceipt;
+  };
   "v1.session.children": {
     path: { id: string };
     query: {
@@ -689,6 +695,18 @@ export const operations = {
     pathParams: ["sessionID"],
     query: [],
     body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.approve": {
+    tag: "session",
+    name: "approve",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/approve",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
     located: false,
     unwrap: true,
     stream: false,
@@ -1263,6 +1281,9 @@ export function createGroups(caller: Caller) {
       /** Switch the agent (`POST /api/v1/sessions/{sessionID}/agent`) */
       agent: (sessionID: string, body: Operations["v1.session.agent"]["body"], options?: RequestOptions): Promise<Operations["v1.session.agent"]["response"]> =>
         caller.call("v1.session.agent", { path: { sessionID }, body }, options),
+      /** Confirm and replay the latest classifier-blocked call once (`POST /api/v1/sessions/{sessionID}/approve`) */
+      approve: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.approve"]["response"]> =>
+        caller.call("v1.session.approve", { path: { sessionID } }, options),
       /** List direct child threads across Locations with observed state (`GET /api/v1/sessions/{id}/children`) */
       children: (id: string, query?: Operations["v1.session.children"]["query"], options?: RequestOptions): Promise<Operations["v1.session.children"]["response"]> =>
         caller.call("v1.session.children", { path: { id }, query }, options),

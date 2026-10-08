@@ -1827,6 +1827,40 @@
           "name"
         ]
       },
+      "Data_AutoOverrideReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AutoOverrideReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "AutoOverrideReceipt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "original_call_id": {
+            "type": "string"
+          },
+          "call_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "decision_id",
+          "original_call_id",
+          "call_id"
+        ]
+      },
       "ReopenSubtreeBody": {
         "type": "object",
         "properties": {
@@ -4507,6 +4541,55 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CommandBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/approve": {
+      "post": {
+        "operationId": "v1.session.approve",
+        "summary": "Confirm and replay the latest classifier-blocked call once",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_AutoOverrideReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

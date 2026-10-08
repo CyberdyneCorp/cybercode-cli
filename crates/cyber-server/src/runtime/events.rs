@@ -87,6 +87,7 @@ const ALL: &[&str] = &[
     MODEL_SWITCHED,
     MODE_SWITCHED,
     AUTO_DECIDED,
+    super::auto_override::CHANGED,
     PERMISSION_ASKED,
     PERMISSION_REPLIED,
     QUESTION_ASKED,
@@ -400,6 +401,7 @@ pub fn registry() -> EventRegistry {
 fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
     super::admission_authority::project(tx, e)?;
     super::auto_statistics::project(tx, e)?;
+    super::auto_override::project(tx, e)?;
     project_event(tx, e).map_err(|err| err.to_string())
 }
 

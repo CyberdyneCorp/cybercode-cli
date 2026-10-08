@@ -182,3 +182,13 @@ test("session.reopenSubtree sends the reviewed receipt and retains response iden
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
   assert.equal(calls[0]?.headers.get("idempotency-key"), "review");
 });
+
+test("session.approve returns a scoped replay receipt before interactive confirmation", async () => {
+  const receipt = { id: "ovr_1", decision_id: "evt_block", original_call_id: "original", call_id: "replay" };
+  const { client, calls } = mockClient(() => json(202, { data: receipt }), { directory: "/other" });
+  assert.deepEqual(await client.session.approve("ses/child", { idempotencyKey: "confirm-replay" }), receipt);
+  assert.equal(calls[0]?.method, "POST");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fchild/approve");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "confirm-replay");
+});

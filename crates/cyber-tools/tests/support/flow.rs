@@ -65,7 +65,7 @@ impl ModelResolver for Models {
             model: model.into(),
             context_limit: 200_000,
             cost: None,
-            prefers_apply_patch: false,
+            prefers_apply_patch: model == "patch",
         })
     }
 

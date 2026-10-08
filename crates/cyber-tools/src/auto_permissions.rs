@@ -100,6 +100,16 @@ impl Ctx<'_> {
                 AutoEffect::Block,
                 "Matched permissions.auto_mode.rules.always_block",
             ))
+        } else if eligible
+            && self
+                .inv
+                .asker
+                .auto_override_matches(&self.inv.name, &self.inv.input)
+        {
+            Some((
+                AutoEffect::Allow,
+                "User confirmed one-shot classifier override",
+            ))
         } else if allowed {
             Some((
                 AutoEffect::Allow,

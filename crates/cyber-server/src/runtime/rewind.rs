@@ -121,7 +121,7 @@ impl Inner {
         }
     }
 
-    fn ensure_idle(&self, session_id: &str) -> Result<(), RuntimeError> {
+    pub(super) fn ensure_idle(&self, session_id: &str) -> Result<(), RuntimeError> {
         let running = self
             .drains
             .lock()

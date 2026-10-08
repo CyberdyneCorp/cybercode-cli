@@ -498,6 +498,59 @@ fn critical_permission_warning_is_visible_in_the_error_color() {
 }
 
 #[test]
+fn approve_command_and_confirmation_show_exact_call_without_permanent_approval() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    typed(&mut app, "/approve");
+    app.completion = None;
+    assert_eq!(app.on_key(key(KeyCode::Enter)), vec![Action::ApproveAuto]);
+    let mut request = permission();
+    if let Request::Permission {
+        action,
+        metadata,
+        patterns,
+        ..
+    } = &mut request
+    {
+        *action = "auto_override".into();
+        patterns.clear();
+        *metadata = json!({"requires_confirmation":true,"classifier_reason":"Remote push requires review","tool":"bash","input":{"command":"git push origin feature/x"}});
+    }
+    app.requests = vec![request];
+    app.sync_overlay();
+    let rendered = screen(&app);
+    assert!(rendered.contains("Remote push requires review"));
+    assert!(rendered.contains("git push origin feature/x"));
+    assert!(rendered.contains("Confirm replay once"));
+    assert!(!rendered.contains("Allow always"));
+    assert!(app.on_key(key(KeyCode::Char('a'))).is_empty());
+    let actions = app.on_key(key(KeyCode::Char('y')));
+    assert!(matches!(&actions[..],[Action::Reply { body,.. }] if body["reply"] == "once"));
+}
+
+#[test]
+fn long_override_details_scroll_while_confirmation_controls_stay_visible() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let mut request = permission();
+    if let Request::Permission {
+        action, metadata, ..
+    } = &mut request
+    {
+        *action = "auto_override".into();
+        *metadata = json!({"classifier_reason":"Review command","tool":"bash","input":{"command":"long argument ".repeat(300)}});
+    }
+    app.requests = vec![request];
+    app.sync_overlay();
+    assert!(screen(&app).contains("Confirm replay once"));
+    app.on_key(key(KeyCode::PageDown));
+    assert!(app.permission_scroll > 0);
+    let rendered = screen(&app);
+    assert!(rendered.contains("Confirm replay once"));
+    assert!(rendered.contains("Cancel (n)"));
+    app.on_key(key(KeyCode::Home));
+    assert_eq!(app.permission_scroll, 0);
+}
+
+#[test]
 fn routed_child_approval_shows_its_name_and_replies_from_the_parent() {
     let mut app = App::new(session(true), Vec::new(), "cyber");
     let request = Request::parse(&json!({

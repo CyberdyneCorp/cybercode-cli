@@ -247,6 +247,7 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/reopen-subtree"), post(reopen_subtree))
         .route(&format!("{s}/wake"), post(wake))
         .route(&format!("{s}/command"), post(command))
+        .route(&format!("{s}/approve"), post(approve_auto))
         .route(&format!("{s}/agent"), post(agent))
         .route(&format!("{s}/model"), post(model))
         .route(&format!("{s}/mode"), post(mode))
@@ -514,6 +515,11 @@ async fn command(
         resume: true,
     };
     let receipt = state.runtime.admit_user(&id, admission).await?;
+    Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
+}
+
+async fn approve_auto(State(state): State<AppState>, Path(id): Path<String>) -> Result<Response> {
+    let receipt = state.runtime.approve_auto(&id).await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
 }
 
