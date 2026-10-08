@@ -17,6 +17,7 @@ pub(super) struct Control {
 }
 
 struct Scope {
+    authority: super::AdmissionAuthority,
     owner: Option<ChildExecution>,
     inner: Weak<Inner>,
     id: String,
@@ -55,7 +56,19 @@ impl PreparedChild {
         {
             return Err(interrupted());
         }
+        let runtime = Runtime {
+            inner: self
+                .scope
+                .inner
+                .upgrade()
+                .ok_or(RuntimeError::ShuttingDown)?,
+        };
+        self.scope.authority.verify(&runtime, &self.scope.id)?;
         state.ensure_worktree_ready()
+    }
+
+    pub fn admission_bindings(&self) -> Option<Vec<super::admission_authority::Binding>> {
+        Some(self.scope.authority.bindings.clone())
     }
 
     pub fn launch(
@@ -137,6 +150,7 @@ impl Runtime {
             done: CancellationToken::new(),
         });
         let scope = Scope {
+            authority: self.capture_child_admission(&state.info.id)?,
             owner: Some(owner),
             inner: Arc::downgrade(&self.inner),
             id: state.info.id.clone(),
@@ -191,28 +205,29 @@ impl Runtime {
             return Err(interrupted());
         }
         let outcome = {
-            let work = std::panic::AssertUnwindSafe(async {
-                let parent = self
-                    .state(state.info.parent_id.as_deref().expect("owned child"))
-                    .await?
-                    .info;
-                let settlement = self
-                    .inner
-                    .tools
-                    .prepare_child_continuation(
-                        &parent,
-                        &state,
-                        scope.owner.as_ref().expect("owned preparation"),
-                        cancel.child_token(),
-                    )
-                    .await
-                    .map_err(RuntimeError::Invalid)?;
-                let current = handle.state.lock().await.clone();
-                self.ensure_user_child_ready(&handle, &current, cancel.child_token())
-                    .await?;
-                Ok::<_, RuntimeError>(settlement)
-            })
-            .catch_unwind();
+            let work =
+                std::panic::AssertUnwindSafe(scope.authority.clone().run(cancel.clone(), async {
+                    let parent = self
+                        .state(state.info.parent_id.as_deref().expect("owned child"))
+                        .await?
+                        .info;
+                    let settlement = self
+                        .inner
+                        .tools
+                        .prepare_child_continuation(
+                            &parent,
+                            &state,
+                            scope.owner.as_ref().expect("owned preparation"),
+                            cancel.child_token(),
+                        )
+                        .await
+                        .map_err(RuntimeError::Invalid)?;
+                    let current = handle.state.lock().await.clone();
+                    self.ensure_user_child_ready(&handle, &current, cancel.child_token())
+                        .await?;
+                    Ok::<_, RuntimeError>(settlement)
+                }))
+                .catch_unwind();
             tokio::pin!(work);
             tokio::select! {
                 result = &mut work => Some(result),

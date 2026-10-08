@@ -71,6 +71,7 @@ impl Runtime {
                 event(
                     RESUMED,
                     &Resumed {
+                        admission_bindings: prepared.admission_bindings(),
                         name,
                         output_schema: None,
                     },
@@ -78,6 +79,7 @@ impl Runtime {
                 event(
                     ADMITTED,
                     &Admitted {
+                        admission_bindings: prepared.admission_bindings(),
                         wake: true,
                         message_id: message.clone(),
                         parts: admission.parts,
@@ -168,6 +170,7 @@ impl Runtime {
             event(
                 RESUMED,
                 &Resumed {
+                    admission_bindings: prepared.admission_bindings(),
                     name: state.info.subagent_name.clone(),
                     output_schema: None,
                 },

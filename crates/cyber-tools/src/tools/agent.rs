@@ -312,7 +312,16 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
         permit = pool.acquire_owned() => permit.map_err(|e| failed(e.to_string()))?,
     };
     prepare_child_admission(ctx, &runtime, &mut spawn).await?;
-    execute_child(ctx, runtime, parent, spawn, permit, execution).await
+    let authority = spawn
+        .authority
+        .clone()
+        .expect("captured admission authority");
+    authority
+        .run(
+            ctx.cancel.clone(),
+            execute_child(ctx, runtime, parent, spawn, permit, execution),
+        )
+        .await
 }
 
 async fn prepare_child_admission(

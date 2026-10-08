@@ -34,6 +34,8 @@ pub struct Delegation {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Record {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admission_bindings: Option<Vec<super::admission_authority::Binding>>,
     data: Delegation,
     hash: Option<String>,
 }
@@ -139,6 +141,7 @@ impl Runtime {
                 "Invalid delegation prompt, ceiling or internal identity".into(),
             ));
         }
+        let authority = self.capture_child_admission(parent)?;
         let _open = self.inner.open().await?;
         let state = self.state(parent).await?;
         if !self.inner.tools.durable_user_delegation() {
@@ -151,6 +154,7 @@ impl Runtime {
             return Ok(existing);
         }
         let record = Record {
+            admission_bindings: Some(authority.bindings.clone()),
             data: Delegation {
                 id: id.into(),
                 session_id: parent.into(),
@@ -196,12 +200,20 @@ impl Runtime {
         let source = parent.to_owned();
         let worker = tokio::spawn(async move {
             let _on_exit = control.done.clone().drop_guard();
-            let result = host
-                .subtask_request(turn, request, control.stop.clone())
+            let result = authority
+                .clone()
+                .with_operation(identity.clone())
+                .with_cancellation(control.done.clone())
+                .run(
+                    control.stop.clone(),
+                    host.subtask_request(turn, request, control.stop.clone()),
+                )
                 .await;
             if let Some(runtime) = weak.upgrade() {
+                let cancelled = control.stop.is_cancelled()
+                    || (result.is_err() && authority.verify(&runtime, &source).is_err());
                 if let Err(error) = runtime
-                    .finish_delegation(&source, &identity, result, control.stop.is_cancelled())
+                    .finish_delegation(&source, &identity, result, cancelled)
                     .await
                 {
                     cyber_core::log::error(
@@ -258,6 +270,7 @@ impl Runtime {
         parent: &str,
         id: &str,
     ) -> Result<(), RuntimeError> {
+        self.capture_child_admission(parent)?;
         self.state(parent).await?;
         loop {
             let Some((mut record, seq)) = self.delegation_record(parent, id)? else {
@@ -268,6 +281,20 @@ impl Runtime {
             {
                 return Err(RuntimeError::Invalid(
                     "Delegation no longer permits child creation".into(),
+                ));
+            }
+            let owned = self
+                .inner
+                .delegations
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(id)
+                .is_some_and(|control| {
+                    !control.done.is_cancelled() && !control.stop.is_cancelled()
+                });
+            if !owned {
+                return Err(RuntimeError::Invalid(
+                    "Delegation owner is unavailable; reconcile before launch".into(),
                 ));
             }
             record.data.phase = DelegationPhase::Launching;
@@ -289,6 +316,7 @@ impl Runtime {
             let (mut record, seq) = prior.unwrap_or_else(|| {
                 (
                     Record {
+                        admission_bindings: None,
                         data: Delegation {
                             id: id.into(),
                             session_id: parent.into(),

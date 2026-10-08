@@ -103,7 +103,7 @@ pub enum RuntimeError {
     #[error("{0}")]
     Compaction(String),
     #[error(transparent)]
-    Store(#[from] StoreError),
+    Store(StoreError),
     #[error("corrupt session history: {0}")]
     Corrupt(String),
     #[error("RewindConflictError: changed since the snapshot and cannot be merged: {}", .0.join(", "))]
@@ -129,6 +129,17 @@ pub struct RuntimeOptions {
     pub interactive: bool,
     /// Working-tree snapshots; [`NoSnapshots`] disables code rewind.
     pub snapshots: Arc<dyn Snapshots>,
+}
+
+impl From<StoreError> for RuntimeError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::Projector { reason, .. } if reason == admission_authority::STALE => {
+                Self::Conflict(reason)
+            }
+            error => Self::Store(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -531,6 +542,13 @@ impl Runtime {
         attempt: Option<names::Resumed>,
     ) -> Result<Receipt, RuntimeError> {
         let _admission = self.inner.open().await?;
+        let admission_bindings = self.callback_admission_bindings(session_id)?;
+        if let Some(bindings) = attempt
+            .as_ref()
+            .and_then(|attempt| attempt.admission_bindings.as_ref())
+        {
+            self.verify_admission_bindings(bindings)?;
+        }
         let handle = self.inner.handle(session_id).await?;
         handle.state.lock().await.ensure_worktree_ready()?;
         self.inner.commit_staged_revert(&handle).await?;
@@ -550,6 +568,7 @@ impl Runtime {
                 return Err(RuntimeError::Busy(session_id.into()));
             }
             let payload = Admitted {
+                admission_bindings,
                 wake: state.info.parent_id.is_some()
                     && admission.resume
                     && admission.delivery != Delivery::Hold,
@@ -1266,12 +1285,6 @@ impl Inner {
             Ok(stored) => self.publish(&stored),
             // Created concurrently: return the existing Session unchanged.
             Err(StoreError::Concurrency { .. }) => {}
-            Err(StoreError::Projector { kind, reason })
-                if kind == CREATED && reason == admission_authority::STALE =>
-            {
-                lease.settle().map_err(RuntimeError::Invalid)?;
-                return Err(RuntimeError::Conflict(reason));
-            }
             Err(e) => {
                 lease.settle().map_err(RuntimeError::Invalid)?;
                 return Err(e.into());

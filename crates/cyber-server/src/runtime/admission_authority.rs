@@ -1,5 +1,9 @@
 //! Captured source/ancestor authority, checked again by the single database writer.
 use std::collections::HashSet;
+use std::future::Future;
+use tokio_util::sync::CancellationToken;
+
+tokio::task_local! { static INHERITED: AdmissionAuthority; }
 use std::sync::{Arc, Weak};
 
 use cyber_store::{StoreError, StoredEvent};
@@ -20,11 +24,14 @@ pub(super) struct Binding {
     subtree_seq: i64,
     /// Ordinary interruption invalidates only launches sourced by this Session.
     local_seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    operations: Vec<String>,
 }
 
 #[derive(Clone)]
 pub struct AdmissionAuthority {
     runtime: Weak<Inner>,
+    cancellations: Vec<CancellationToken>,
     pub(super) bindings: Vec<Binding>,
 }
 
@@ -37,6 +44,34 @@ impl std::fmt::Debug for AdmissionAuthority {
 }
 
 impl AdmissionAuthority {
+    pub(super) fn with_operation(mut self, id: String) -> Self {
+        self.bindings
+            .first_mut()
+            .expect("captured source")
+            .operations
+            .push(id);
+        self
+    }
+
+    pub(super) fn with_cancellation(mut self, cancel: CancellationToken) -> Self {
+        self.cancellations.push(cancel);
+        self
+    }
+
+    /// Retain launch authority across a host callback without inheriting it into spawned Drains.
+    pub fn run<'a, F>(
+        mut self,
+        cancel: CancellationToken,
+        future: F,
+    ) -> futures::future::BoxFuture<'a, F::Output>
+    where
+        F: Future + Send + 'a,
+        F::Output: Send + 'a,
+    {
+        self.cancellations.push(cancel);
+        Box::pin(INHERITED.scope(self, Box::pin(future)))
+    }
+
     pub fn verify(&self, runtime: &Runtime, source: &str) -> Result<(), RuntimeError> {
         if !Weak::ptr_eq(&self.runtime, &Arc::downgrade(&runtime.inner))
             || self.bindings.first().map(|b| b.id.as_str()) != Some(source)
@@ -45,20 +80,90 @@ impl AdmissionAuthority {
                 "Child admission authority has a different owner".into(),
             ));
         }
-        let current = runtime.capture_child_admission(source)?;
-        if current.bindings != self.bindings {
+        if self
+            .cancellations
+            .iter()
+            .any(CancellationToken::is_cancelled)
+        {
             return Err(RuntimeError::Conflict(STALE.into()));
         }
-        Ok(())
+        runtime.verify_admission_bindings(&self.bindings)
     }
 }
 
 impl Runtime {
+    pub(super) fn verify_admission_bindings(
+        &self,
+        bindings: &[Binding],
+    ) -> Result<(), RuntimeError> {
+        let bindings = bindings.to_vec();
+        let valid = self.inner.store.read(move |conn| {
+            let snapshot = conn.unchecked_transaction()?;
+            let valid = bindings_current(&snapshot, &bindings)?;
+            snapshot.commit()?;
+            Ok(valid)
+        })?;
+        if !valid {
+            return Err(RuntimeError::Conflict(STALE.into()));
+        }
+        Ok(())
+    }
+
     /// Capture before approval, concurrency waits or native child preparation.
     pub fn capture_child_admission(
         &self,
         source: &str,
     ) -> Result<AdmissionAuthority, RuntimeError> {
+        if let Some(authority) = self.inherited_child_admission(source)? {
+            return Ok(authority);
+        }
+        self.snapshot_child_admission(source)
+    }
+
+    pub(super) fn inherited_child_admission(
+        &self,
+        source: &str,
+    ) -> Result<Option<AdmissionAuthority>, RuntimeError> {
+        let Some(inherited) = INHERITED.try_with(Clone::clone).ok() else {
+            return Ok(None);
+        };
+        let inherited_source = inherited
+            .bindings
+            .first()
+            .expect("captured source")
+            .id
+            .as_str();
+        if inherited_source == source {
+            inherited.verify(self, source)?;
+            return Ok(Some(inherited));
+        }
+        let mut current = self.snapshot_child_admission(source)?;
+        let Some(index) = current
+            .bindings
+            .iter()
+            .position(|binding| binding.id == inherited_source)
+        else {
+            return Ok(None);
+        };
+        inherited.verify(self, inherited_source)?;
+        // Until handoff, nested callback work still belongs to the original launch source.
+        current
+            .bindings
+            .splice(index.., inherited.bindings.iter().cloned());
+        current.cancellations = inherited.cancellations;
+        Ok(Some(current))
+    }
+
+    pub(super) fn callback_admission_bindings(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Vec<Binding>>, RuntimeError> {
+        Ok(self
+            .inherited_child_admission(session_id)?
+            .map(|authority| authority.bindings))
+    }
+
+    fn snapshot_child_admission(&self, source: &str) -> Result<AdmissionAuthority, RuntimeError> {
         let source_id = source.to_string();
         let source = source_id.clone();
         let bindings = self.inner.store.read(move |conn| {
@@ -82,6 +187,7 @@ impl Runtime {
         })?;
         Ok(AdmissionAuthority {
             runtime: Arc::downgrade(&self.inner),
+            cancellations: Vec::new(),
             bindings,
         })
     }
@@ -139,6 +245,7 @@ fn snapshot_chain(conn: &Connection, source: &str) -> Result<Option<Vec<Binding>
             parent,
             subtree_seq,
             local_seq,
+            operations: Vec::new(),
         });
     }
     Ok(Some(bindings))
@@ -152,23 +259,87 @@ fn sequence(conn: &Connection, id: &str, kind: &str) -> Result<i64, StoreError> 
     )?)
 }
 
-pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
-    if event.kind != super::events::CREATED {
-        return Ok(());
+fn bindings_current(conn: &Connection, captured: &[Binding]) -> Result<bool, StoreError> {
+    let Some(source) = captured.first() else {
+        return Ok(false);
+    };
+    if source.local_seq.is_none() {
+        return Ok(false);
     }
+    let Some(mut current) = snapshot_chain(conn, &source.id)? else {
+        return Ok(false);
+    };
+    if current.len() != captured.len() {
+        return Ok(false);
+    }
+    for (current, captured) in current.iter_mut().zip(captured) {
+        if !operations_current(conn, captured)? {
+            return Ok(false);
+        }
+        current.operations = captured.operations.clone();
+        if captured.local_seq.is_some() && current.local_seq.is_none() {
+            current.local_seq = Some(sequence(
+                conn,
+                &current.id,
+                super::events::CHILD_INPUT_PAUSED,
+            )?);
+        }
+    }
+    Ok(current == captured)
+}
+
+fn operations_current(conn: &Connection, binding: &Binding) -> Result<bool, StoreError> {
+    for operation in &binding.operations {
+        let record = conn.query_row(
+            "SELECT json_extract(data,'$.data.session_id'),json_extract(data,'$.data.status')
+             FROM event WHERE aggregate_id=?1 AND type='delegation.changed.1' ORDER BY seq DESC LIMIT 1",
+            [operation], |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+        ).optional()?;
+        if !record.is_some_and(|(source, status)| {
+            source.as_deref() == Some(binding.id.as_str()) && status.as_deref() == Some("pending")
+        }) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    let source = match event.kind.as_str() {
+        super::events::CREATED => event.data["info"]["parent_id"].as_str().map(str::to_string),
+        super::events::ADMITTED | super::events::RESUMED => tx
+            .query_row(
+                "SELECT parent_id FROM session WHERE id=?1",
+                [&event.aggregate_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .flatten(),
+        "job.started.1" => Some(event.aggregate_id.clone()),
+        "delegation.changed.1" if event.data["data"]["status"] == "pending" => {
+            event.data["data"]["session_id"]
+                .as_str()
+                .map(str::to_string)
+        }
+        _ => return Ok(()),
+    };
     let Some(value) = event.data.get("admission_bindings") else {
         return Ok(());
     };
     let bindings: Vec<Binding> =
         serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
-    let Some(source) = bindings.first() else {
+    let Some(captured) = bindings.first() else {
         return Err("Empty child admission authority".into());
     };
-    if event.data["info"]["parent_id"].as_str() != Some(source.id.as_str()) {
+    let self_source = matches!(
+        event.kind.as_str(),
+        super::events::ADMITTED | super::events::RESUMED
+    ) && captured.id == event.aggregate_id;
+    if !self_source && source.as_deref() != Some(captured.id.as_str()) {
         return Err("Child admission source differs from its declared parent".into());
     }
-    let current = snapshot_chain(tx, &source.id).map_err(|e| e.to_string())?;
-    if current.as_ref() != Some(&bindings) {
+    if !bindings_current(tx, &bindings).map_err(|e| e.to_string())? {
         return Err(STALE.into());
     }
     Ok(())

@@ -29,6 +29,8 @@ pub struct ChildExecution {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Resumed {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
     pub name: Option<String>,
     pub output_schema: Option<serde_json::Value>,
 }
@@ -109,6 +111,7 @@ impl Runtime {
                 "Child owner belongs to another runtime".into(),
             ));
         }
+        let authority = self.capture_child_admission(&owner.parent)?;
         let state = self.state(&owner.id).await?;
         if state.child_continuation_unknown {
             return Err(RuntimeError::Invalid(
@@ -142,6 +145,7 @@ impl Runtime {
             &owner.id,
             admission,
             Some(Resumed {
+                admission_bindings: Some(authority.bindings),
                 name: Some(name),
                 output_schema: schema.map(|schema| schema.schema().clone()),
             }),

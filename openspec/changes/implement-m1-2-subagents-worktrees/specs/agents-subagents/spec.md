@@ -505,3 +505,38 @@
 #### Scenario: Background independence and subtree fencing
 - **WHEN** a parent Drain is interrupted while an independent background child holds launch authority
 - **THEN** the child authority remains valid until an explicit subtree admission fence commits for an ancestor
+
+### Requirement: Delegation callback authority
+(P1) Explicit user delegation and owned child-preparation callbacks SHALL retain their original source/ancestor authority and caller cancellation through host awaits. A delayed callback SHALL NOT recapture fresh authority after cancellation. Nested callback work SHALL retain the original source boundary until execution handoff; independent child Drains SHALL NOT inherit that callback scope. Durable reservation/launch markers, callback-owned input and resumed attempts, and background Job registration SHALL recheck captured boundaries in the single writer transaction. A refused pre-launch request SHALL remain Reserved and settle Cancelled; terminal cancellation evidence SHALL remain writable after authority is fenced.
+
+#### Scenario: Delayed user host callback
+- **WHEN** the source is interrupted or an ancestor subtree boundary commits before the host dispatches a delegated child
+- **THEN** neither a child, input nor a Job is created using newly captured authority
+
+#### Scenario: Cancelled callback owner
+- **WHEN** a caller cancels while its host delays acknowledgement
+- **THEN** callback-local admission refuses further child effects and a durable pre-launch reservation settles Cancelled
+
+#### Scenario: Nested callback and independent child
+- **WHEN** a callback creates a child before source interruption and attempts nested work afterward
+- **THEN** nested callback admission refuses the old source boundary while subsequent independent child work retains ordinary background semantics
+
+#### Scenario: Ancestor fence during child preparation
+- **WHEN** an ancestor admission fence commits while public child preparation is awaiting its host
+- **THEN** late success cannot reset the result, release held input, admit a prompt or infer using the older authority
+
+#### Scenario: Job registered before delayed reply
+- **WHEN** a background Job registers before ordinary parent interruption while its delegation reply remains delayed
+- **THEN** ordinary parent interruption does not cancel the registered Job and its terminal admission receipt remains writable
+
+#### Scenario: Staged conversation changes before refused input
+- **WHEN** a fenced callback attempts admission into a Session with a staged conversation revert
+- **THEN** admission refuses before committing that revert and preserves the prior history and staged state
+
+#### Scenario: Revoked request during Location admission
+- **WHEN** a durable request is cancelled after child creation preflight while its Location claim waits
+- **THEN** the writer checks the request's current pending authority and rolls back child creation without registering a Job
+
+#### Scenario: Missing admission owner at launch marker
+- **WHEN** a Reserved admission has lost its live actor through restart or failure
+- **THEN** a launch-marker call refuses before advancing the record and preserves Unknown lookup and reviewed cancellation semantics

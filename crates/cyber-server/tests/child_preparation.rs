@@ -14,6 +14,7 @@ use support::{Harness, Setup, tools};
 
 #[derive(Clone, Copy)]
 enum Behavior {
+    DelayedSuccess,
     LateSuccess,
     Ignore,
     Panic,
@@ -44,6 +45,10 @@ impl ToolHost for Host {
         Box::pin(async move {
             self.started.notify_one();
             match self.behavior {
+                Behavior::DelayedSuccess => {
+                    self.release.notified().await;
+                    Ok(None)
+                }
                 Behavior::Ignore => std::future::pending().await,
                 Behavior::Panic => panic!("controlled preparation panic"),
                 Behavior::LateSuccess => {
@@ -233,5 +238,35 @@ async fn late_preparation_success_cannot_release_held_input_after_interrupt() {
         InputStatus::Held
     );
     assert_eq!(h.models.requests("test/main").len(), 1);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn ancestor_fence_refuses_late_preparation_without_resetting_child_result_or_input() {
+    let (h, runtime, host, parent, child) = fixture(Behavior::DelayedSuccess).await;
+    let before = runtime.state(&child).await.unwrap();
+    let running = runtime.clone();
+    let id = child.clone();
+    let request = tokio::spawn(async move {
+        running
+            .admit_user(&id, Admission::text("follow up", Delivery::Queue))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), host.started.notified())
+        .await
+        .unwrap();
+    runtime.fence_subtree_admissions(&parent).await.unwrap();
+    host.release.notify_one();
+    let error = request
+        .await
+        .unwrap()
+        .expect_err("Ancestor fence must reject older child preparation");
+    assert!(matches!(error, RuntimeError::Conflict(_)));
+    let after = runtime.state(&child).await.unwrap();
+    assert_eq!(after.last_seq, before.last_seq);
+    assert_eq!(after.inbox, before.inbox);
+    assert_eq!(after.structured_result(), Some(&json!(1)));
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    assert!(runtime.claim_child_execution(&parent, &child).is_ok());
     runtime.shutdown().await;
 }

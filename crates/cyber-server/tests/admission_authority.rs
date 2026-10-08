@@ -211,3 +211,212 @@ async fn cancellation_during_location_claim_returns_conflict_without_creating_ch
         Err(RuntimeError::SessionNotFound(_))
     ));
 }
+
+#[tokio::test]
+async fn nested_callback_authority_retains_source_boundary_until_handoff() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let authority = h.runtime.capture_child_admission(&parent).unwrap();
+    let nested = authority
+        .run(tokio_util::sync::CancellationToken::new(), async {
+            let nested = child(&h, &parent, None).await.unwrap();
+            let ticket = h.runtime.capture_child_admission(&nested.id).unwrap();
+            ticket.verify(&h.runtime, &nested.id).unwrap();
+            h.runtime.interrupt(&parent).await.unwrap();
+            assert!(matches!(
+                ticket.verify(&h.runtime, &nested.id),
+                Err(RuntimeError::Conflict(_))
+            ));
+            assert!(matches!(
+                child(&h, &nested.id, None).await,
+                Err(RuntimeError::Conflict(_))
+            ));
+            nested
+        })
+        .await;
+    // A subsequent independent child action has no inherited callback ownership.
+    h.runtime
+        .capture_child_admission(&nested.id)
+        .unwrap()
+        .verify(&h.runtime, &nested.id)
+        .unwrap();
+    child(&h, &nested.id, None).await.unwrap();
+}
+
+#[tokio::test]
+async fn writer_refuses_scoped_input_after_source_cancellation_without_inbox_changes() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let nested = child(&h, &parent, None).await.unwrap();
+    let authority = h.runtime.capture_child_admission(&parent).unwrap();
+    authority
+        .run(tokio_util::sync::CancellationToken::new(), async {
+            let mut admission = Admission::text("first", Delivery::Hold);
+            admission.resume = false;
+            h.runtime.admit(&nested.id, admission).await.unwrap();
+        })
+        .await;
+    let events = h.store.read_events(&nested.id, -1, 10).unwrap().events;
+    let mut payload = events
+        .iter()
+        .find(|event| event.kind == "session.prompt.admitted.1")
+        .unwrap()
+        .data
+        .clone();
+    payload["message_id"] = json!(cyber_core::ids::new_id("msg"));
+    h.runtime.interrupt(&parent).await.unwrap();
+    let seq = h.store.aggregate_seq(&nested.id).unwrap().unwrap();
+    assert!(
+        h.store
+            .append(
+                &nested.id,
+                Expected::Seq(seq),
+                vec![NewEvent::new("session.prompt.admitted.1", payload)]
+            )
+            .is_err()
+    );
+    assert_eq!(h.store.aggregate_seq(&nested.id).unwrap().unwrap(), seq);
+    assert_eq!(h.runtime.state(&nested.id).await.unwrap().inbox.len(), 1);
+}
+
+#[tokio::test]
+async fn writer_refuses_job_handoff_after_source_fence_but_terminal_settlement_remains_writable() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let nested = child(&h, &parent, None).await.unwrap();
+    let job = h
+        .runtime
+        .start_child_job(
+            &parent,
+            &nested.id,
+            "original".into(),
+            "original".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    let events = h.store.read_events(&parent, -1, 20).unwrap().events;
+    let mut payload = events
+        .iter()
+        .find(|event| event.kind == "job.started.1")
+        .unwrap()
+        .data
+        .clone();
+    let id = cyber_core::ids::new_id("job");
+    payload["id"] = json!(id);
+    h.runtime.fence_subtree_admissions(&parent).await.unwrap();
+    let seq = h.store.aggregate_seq(&parent).unwrap().unwrap();
+    assert!(
+        h.store
+            .append(
+                &parent,
+                Expected::Seq(seq),
+                vec![NewEvent::new("job.started.1", payload)]
+            )
+            .is_err()
+    );
+    assert_eq!(h.store.aggregate_seq(&parent).unwrap().unwrap(), seq);
+    assert!(h.runtime.job(&id).is_err());
+    assert_eq!(h.runtime.job(&job.id).unwrap().status, JobStatus::Running);
+    assert_eq!(
+        h.runtime.cancel_job(&job.id).await.unwrap().status,
+        JobStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn writer_rolls_back_resumed_attempt_and_input_after_source_interruption() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let nested = child(&h, &parent, None).await.unwrap();
+    let owner = h
+        .runtime
+        .claim_child_execution(&parent, &nested.id)
+        .unwrap();
+    let mut admission = Admission::text("held", Delivery::Hold);
+    admission.resume = false;
+    h.runtime
+        .resume_child(&owner, admission, "named".into(), None)
+        .await
+        .unwrap();
+    drop(owner);
+    let original = h.store.read_events(&nested.id, -1, 20).unwrap().events;
+    let resume = original
+        .iter()
+        .find(|event| event.kind == "session.subagent.resumed.1")
+        .unwrap()
+        .data
+        .clone();
+    let mut input = original
+        .iter()
+        .find(|event| event.kind == "session.prompt.admitted.1")
+        .unwrap()
+        .data
+        .clone();
+    input["message_id"] = json!(cyber_core::ids::new_id("msg"));
+    h.runtime.interrupt(&parent).await.unwrap();
+    let seq = h.store.aggregate_seq(&nested.id).unwrap().unwrap();
+    assert!(
+        h.store
+            .append(
+                &nested.id,
+                Expected::Seq(seq),
+                vec![
+                    NewEvent::new("session.subagent.resumed.1", resume),
+                    NewEvent::new("session.prompt.admitted.1", input)
+                ]
+            )
+            .is_err()
+    );
+    assert_eq!(h.store.aggregate_seq(&nested.id).unwrap().unwrap(), seq);
+    assert_eq!(
+        h.store
+            .read_events(&nested.id, -1, 20)
+            .unwrap()
+            .events
+            .len(),
+        original.len()
+    );
+    assert_eq!(h.runtime.state(&nested.id).await.unwrap().inbox.len(), 1);
+}
+
+#[tokio::test]
+async fn fenced_callback_refuses_before_committing_a_staged_conversation_revert() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![support::text("answer")])],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let nested = child(&h, &parent, None).await.unwrap();
+    let receipt = h
+        .runtime
+        .admit(&nested.id, Admission::text("initial", Delivery::Queue))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&nested.id).await;
+    h.runtime
+        .revert_stage(&nested.id, &receipt.message_id, RevertTarget::Conversation)
+        .await
+        .unwrap();
+    let before = h.runtime.state(&nested.id).await.unwrap();
+    let authority = h.runtime.capture_child_admission(&parent).unwrap();
+    authority
+        .run(tokio_util::sync::CancellationToken::new(), async {
+            h.runtime.interrupt(&parent).await.unwrap();
+            let mut admission = Admission::text("late", Delivery::Hold);
+            admission.resume = false;
+            assert!(matches!(
+                h.runtime.admit(&nested.id, admission).await,
+                Err(RuntimeError::Conflict(_))
+            ));
+        })
+        .await;
+    let after = h.runtime.state(&nested.id).await.unwrap();
+    assert_eq!(
+        after.last_seq, before.last_seq,
+        "Fenced callback must not commit staged conversation changes"
+    );
+    assert!(after.revert.is_some());
+    assert_eq!(after.entries.len(), before.entries.len());
+}

@@ -95,6 +95,7 @@ pub struct JobAttempt {
 
 /// Fences child creation/registration against Session deletion.
 pub struct JobAdmission {
+    authority: super::AdmissionAuthority,
     runtime: WeakRuntime,
     parent: String,
     _guard: tokio::sync::OwnedMutexGuard<()>,
@@ -252,12 +253,15 @@ impl Runtime {
     }
 
     pub async fn reserve_child_job(&self, parent: &str) -> Result<JobAdmission, RuntimeError> {
+        let authority = self.capture_child_admission(parent)?;
         let guard = self.inner.job_admission.clone().lock_owned().await;
+        authority.verify(self, parent)?;
         if self.is_shutting_down() {
             return Err(RuntimeError::ShuttingDown);
         }
         self.state(parent).await?;
         Ok(JobAdmission {
+            authority,
             runtime: self.downgrade(),
             parent: parent.into(),
             _guard: guard,
@@ -314,6 +318,7 @@ impl Runtime {
             }
             None => self.reserve_child_job(parent).await?,
         };
+        _reservation.authority.verify(self, parent)?;
         let _open = self.inner.open().await?;
         let child_info = self.state(child).await?.info;
         if child_info.parent_id.as_deref() != Some(parent) {
@@ -341,6 +346,8 @@ impl Runtime {
             notified: false,
         };
         let mut started = serde_json::to_value(&job).expect("job serializes");
+        started["admission_bindings"] =
+            serde_json::to_value(&_reservation.authority.bindings).expect("authority serializes");
         started["usage_baseline"] = serde_json::to_value(usage).expect("usage serializes");
         let handle = self.inner.handle(parent).await?;
         self.inner

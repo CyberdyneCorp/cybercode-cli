@@ -539,3 +539,33 @@ async fn abrupt_process_death_recovers_only_the_proven_pre_effect_reservation() 
     assert_eq!(host.calls.load(Ordering::Relaxed), 0);
     recovered.shutdown().await;
 }
+
+#[tokio::test]
+async fn missing_admission_owner_cannot_advance_a_reserved_launch_marker() {
+    let h = Harness::new(Setup::default());
+    let (first, host) = runtime(&h, false, false);
+    let parent = source(&first, &h).await;
+    first
+        .start_delegation(&parent, "op_missing_marker", request())
+        .await
+        .unwrap();
+    host.entered.cancelled().await;
+    drop(first);
+    let (second, _) = runtime(&h, false, false);
+    let error = second
+        .mark_delegation_launching(&parent, "op_missing_marker")
+        .await
+        .expect_err("Missing ownership must not authorize a native launch marker");
+    assert!(error.to_string().contains("unavailable"), "{error}");
+    let record = second
+        .delegation(&parent, "op_missing_marker")
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.status, DelegationStatus::Unknown);
+    assert_eq!(record.phase, DelegationPhase::Reserved);
+    second
+        .cancel_delegation(&parent, "op_missing_marker")
+        .await
+        .unwrap();
+    second.shutdown().await;
+}

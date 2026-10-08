@@ -203,14 +203,18 @@ impl BuiltinHost {
             credentials: &[],
         };
         let managed = retry_repository_busy(&ctx.cancel, || async {
-            if let Some(authority) = &request.session.admission_authority {
-                let runtime = self
-                    .runtime()
-                    .ok_or_else(|| io::Error::other("Missing runtime"))?;
-                authority
-                    .verify(&runtime, &inv.session_id)
-                    .map_err(io::Error::other)?;
-            }
+            let runtime = self
+                .runtime()
+                .ok_or_else(|| io::Error::other("Missing runtime"))?;
+            let authority = match &request.session.admission_authority {
+                Some(authority) => authority.clone(),
+                None => runtime
+                    .capture_child_admission(&inv.session_id)
+                    .map_err(io::Error::other)?,
+            };
+            authority
+                .verify(&runtime, &inv.session_id)
+                .map_err(io::Error::other)?;
             if let Some(removed) = removed {
                 repository
                     .recreate_removed(

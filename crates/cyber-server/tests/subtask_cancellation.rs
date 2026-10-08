@@ -172,3 +172,316 @@ async fn returned_job_transfers_cancellation_ownership_to_its_job_control() {
     );
     runtime.shutdown().await;
 }
+
+struct DelayedLaunch {
+    delay_location: bool,
+    delay_after_job: bool,
+    runtime: Mutex<Option<WeakRuntime>>,
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+impl ToolHost for DelayedLaunch {
+    fn definitions(&self, _: &TurnContext) -> Vec<ToolDef> {
+        vec![]
+    }
+    fn execute(&self, _: Invocation, _: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
+        Box::pin(async { panic!("Unexpected inference in delayed admission fixture") })
+    }
+    fn durable_user_delegation(&self) -> bool {
+        true
+    }
+    fn claim_location<'a>(
+        &'a self,
+        info: &'a SessionInfo,
+        _: bool,
+        _: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        Box::pin(async move {
+            if self.delay_location && info.parent_id.is_some() {
+                self.started.notify_one();
+                self.release.notified().await;
+            }
+            Ok(LocationLease::unmanaged())
+        })
+    }
+
+    fn subtask_request(
+        &self,
+        turn: TurnContext,
+        request: UserSubtask,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<Job, String>> {
+        Box::pin(async move {
+            if !self.delay_after_job && !self.delay_location {
+                self.started.notify_one();
+                self.release.notified().await;
+            }
+            let runtime = self
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .upgrade()
+                .unwrap();
+            if let Some(id) = request.admission_id {
+                runtime
+                    .mark_delegation_launching(&turn.session_id, &id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            let source = runtime
+                .state(&turn.session_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .info;
+            let child = runtime
+                .create_session(CreateSession {
+                    directory: source.directory,
+                    model: source.model,
+                    parent_id: Some(source.id.clone()),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            let job = runtime
+                .start_child_job(
+                    &source.id,
+                    &child.id,
+                    "late".into(),
+                    "Delayed launch".into(),
+                    None,
+                    Box::pin(futures::future::pending()),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            if self.delay_after_job {
+                self.started.notify_one();
+                self.release.notified().await;
+            }
+            Ok(job)
+        })
+    }
+}
+
+#[tokio::test]
+async fn delayed_user_callbacks_cannot_recapture_authority_after_cancellation() {
+    for durable in [false, true] {
+        for boundary in ["source", "subtree", "caller"] {
+            let h = Harness::new(Setup::default());
+            let host = Arc::new(DelayedLaunch {
+                delay_after_job: false,
+                delay_location: false,
+                runtime: Mutex::new(None),
+                started: Default::default(),
+                release: Default::default(),
+            });
+            let runtime = Runtime::new(RuntimeOptions {
+                store: h.store.clone(),
+                resolver: h.models.clone(),
+                tools: host.clone(),
+                global_config_dir: h.dir.path().join("global"),
+                shell: "bash".into(),
+                claude_compat: true,
+                compaction: Default::default(),
+                retry: Default::default(),
+                max_steps: None,
+                today: None,
+                interactive: false,
+                snapshots: Arc::new(NoSnapshots),
+            });
+            *host.runtime.lock().unwrap() = Some(runtime.downgrade());
+            let parent = source(&runtime, &h).await;
+            let owner = CancellationToken::new();
+            let task_owner = owner.clone();
+            let task_runtime = runtime.clone();
+            let task_parent = parent.clone();
+            let task = if durable {
+                runtime
+                    .start_delegation(&parent, "op_delayed_boundary", request())
+                    .await
+                    .unwrap();
+                None
+            } else {
+                Some(tokio::spawn(async move {
+                    task_runtime
+                        .subtask_request_owned(&task_parent, request(), task_owner)
+                        .await
+                }))
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(2), host.started.notified())
+                .await
+                .unwrap();
+            match boundary {
+                "subtree" => runtime.fence_subtree_admissions(&parent).await.unwrap(),
+                "caller" if durable => {
+                    runtime
+                        .cancel_delegation(&parent, "op_delayed_boundary")
+                        .await
+                        .unwrap();
+                }
+                "caller" => {
+                    owner.cancel();
+                    tokio::task::yield_now().await;
+                }
+                _ => runtime.interrupt(&parent).await.unwrap(),
+            }
+            host.release.notify_one();
+            if let Some(task) = task {
+                let error = task
+                    .await
+                    .unwrap()
+                    .expect_err("Delayed callback must not regain launch authority");
+                assert!(error.to_string().contains("fenced"), "{error}");
+            } else {
+                let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    loop {
+                        let result = runtime
+                            .delegation(&parent, "op_delayed_boundary")
+                            .unwrap()
+                            .unwrap();
+                        if !matches!(
+                            result.status,
+                            DelegationStatus::Pending | DelegationStatus::Cancelling
+                        ) {
+                            break result;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+                assert_eq!(result.status, DelegationStatus::Cancelled);
+                assert_eq!(result.phase, DelegationPhase::Reserved);
+                assert!(result.job_id.is_none());
+            }
+            assert!(runtime.jobs(Some(&parent)).unwrap().is_empty());
+            assert_eq!(runtime.list(&Default::default()).unwrap().sessions.len(), 1);
+            runtime.shutdown().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn parent_interrupt_preserves_job_registered_before_delayed_delegation_reply() {
+    let h = Harness::new(Setup::default());
+    let host = Arc::new(DelayedLaunch {
+        delay_after_job: true,
+        delay_location: false,
+        runtime: Mutex::new(None),
+        started: Default::default(),
+        release: Default::default(),
+    });
+    let runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: h.models.clone(),
+        tools: host.clone(),
+        global_config_dir: h.dir.path().join("global"),
+        shell: "bash".into(),
+        claude_compat: true,
+        compaction: Default::default(),
+        retry: Default::default(),
+        max_steps: None,
+        today: None,
+        interactive: false,
+        snapshots: Arc::new(NoSnapshots),
+    });
+    *host.runtime.lock().unwrap() = Some(runtime.downgrade());
+    let parent = source(&runtime, &h).await;
+    runtime
+        .start_delegation(&parent, "op_registered_reply", request())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), host.started.notified())
+        .await
+        .unwrap();
+    let job = runtime.jobs(Some(&parent)).unwrap().pop().unwrap();
+    assert_eq!(job.status, JobStatus::Running);
+    runtime.interrupt(&parent).await.unwrap();
+    host.release.notify_one();
+    let admission = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let admission = runtime
+                .delegation(&parent, "op_registered_reply")
+                .unwrap()
+                .unwrap();
+            if admission.status == DelegationStatus::Admitted {
+                break admission;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(admission.job_id.as_deref(), Some(job.id.as_str()));
+    assert_eq!(runtime.job(&job.id).unwrap().status, JobStatus::Running);
+    runtime.cancel_job(&job.id).await.unwrap();
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn durable_request_cancellation_fences_child_writer_after_location_preflight() {
+    let h = Harness::new(Setup::default());
+    let host = Arc::new(DelayedLaunch {
+        delay_after_job: false,
+        delay_location: true,
+        runtime: Mutex::new(None),
+        started: Default::default(),
+        release: Default::default(),
+    });
+    let runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: h.models.clone(),
+        tools: host.clone(),
+        global_config_dir: h.dir.path().join("global"),
+        shell: "bash".into(),
+        claude_compat: true,
+        compaction: Default::default(),
+        retry: Default::default(),
+        max_steps: None,
+        today: None,
+        interactive: false,
+        snapshots: Arc::new(NoSnapshots),
+    });
+    *host.runtime.lock().unwrap() = Some(runtime.downgrade());
+    let parent = source(&runtime, &h).await;
+    runtime
+        .start_delegation(&parent, "op_location_cancel", request())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), host.started.notified())
+        .await
+        .unwrap();
+    runtime
+        .cancel_delegation(&parent, "op_location_cancel")
+        .await
+        .unwrap();
+    host.release.notify_one();
+    let data = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let data = runtime
+                .delegation(&parent, "op_location_cancel")
+                .unwrap()
+                .unwrap();
+            if !matches!(
+                data.status,
+                DelegationStatus::Pending | DelegationStatus::Cancelling
+            ) {
+                break data;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(data.phase, DelegationPhase::Launching);
+    assert_eq!(data.status, DelegationStatus::Unknown);
+    assert!(data.job_id.is_none());
+    assert!(runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert_eq!(
+        runtime.list(&Default::default()).unwrap().sessions.len(),
+        1,
+        "Cancelled durable authority must roll back child creation after Location preflight"
+    );
+    runtime.shutdown().await;
+}

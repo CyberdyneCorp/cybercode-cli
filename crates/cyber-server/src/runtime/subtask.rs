@@ -68,6 +68,7 @@ impl Runtime {
         }
         // Child admission takes its own lifecycle guard; do not hold a nested read
         // across queued admission when shutdown is waiting for the write guard.
+        let authority = self.capture_child_admission(session_id)?;
         drop(self.inner.open().await?);
         let state = self.state(session_id).await?;
         let running = self.is_running(session_id);
@@ -89,10 +90,12 @@ impl Runtime {
                 _ = watch.cancelled() => {},
             }
         });
-        let result = self
-            .inner
-            .tools
-            .subtask_request(turn, request, stop)
+        let result = authority
+            .with_cancellation(owner.clone())
+            .run(
+                stop.clone(),
+                self.inner.tools.subtask_request(turn, request, stop),
+            )
             .await
             .map_err(RuntimeError::Invalid);
         match result {
