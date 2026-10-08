@@ -166,11 +166,7 @@ fn billing_error() -> crate::error::CliError {
 }
 
 fn count(value: &Value) -> Result<u64, crate::error::CliError> {
-    if value.is_null() {
-        Ok(0)
-    } else {
-        value.as_u64().ok_or_else(billing_error)
-    }
+    value.as_u64().ok_or_else(billing_error)
 }
 
 fn cost(value: &Value) -> Result<f64, crate::error::CliError> {
@@ -600,7 +596,7 @@ mod tests {
     fn ordinary_snapshot_deltas_replace_totals_without_duplicate_step_billing() {
         let args = Wrapper::parse_from(["exec", "hi"]).args;
         let mut run = Run::new(&args, Instant::now());
-        let baseline = json!({"id":"ses_1","totals":{"usage":{"input":10},"cost":2.0,"steps":1,"unpriced_steps":0},"children_cost":3.0,"children_tokens":10,"children_unpriced_steps":0,"children_usage_complete":true});
+        let baseline = json!({"id":"ses_1","totals":{"usage":{"input":10,"output":0,"reasoning":0,"cache_read":0,"cache_write":0},"cost":2.0,"steps":1,"unpriced_steps":0},"children_cost":3.0,"children_tokens":10,"children_unpriced_steps":0,"children_usage_complete":true});
         run.begin_session(&baseline).unwrap();
         let mut current = baseline.clone();
         current["totals"]["usage"]["input"] = json!(20);
@@ -626,6 +622,12 @@ mod tests {
         assert!(run.session_snapshot(&invalid).is_err());
         invalid = current;
         invalid["id"] = json!("ses_other");
+        assert!(run.session_snapshot(&invalid).is_err());
+        invalid["id"] = json!("ses_1");
+        invalid["totals"]["usage"]
+            .as_object_mut()
+            .unwrap()
+            .remove("cache_write");
         assert!(run.session_snapshot(&invalid).is_err());
         assert_eq!(run.combined_cost(), 1.0);
     }
