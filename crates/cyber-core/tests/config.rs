@@ -241,6 +241,70 @@ fn project_hooks_remain_withheld_until_checkout_trust_and_changes_revoke_it() {
 }
 
 #[test]
+fn hook_layers_append_in_order_and_preserve_each_handler_origin() {
+    let f = Fixture::new();
+    let group =
+        |command: &str| json!({"matcher":"edit","hooks":[{"type":"command","command":command}]});
+    let global = f.write(
+        "global:cyber.json",
+        &json!({"hooks":{"PostToolUse":[group("global"),group("shared")]}}).to_string(),
+    );
+    let project = f.write(
+        "cyber.jsonc",
+        &json!({"hooks":{"PostToolUse":[group("project")]}}).to_string(),
+    );
+    let local = f.write(
+        ".cyber/cyber.local.jsonc",
+        &json!({"hooks":{"PostToolUse":[group("shared"),group("local")]}}).to_string(),
+    );
+    let untrusted = f.load().unwrap();
+    assert_eq!(
+        untrusted.value["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    f.approve_current();
+    let resolved = f.load().unwrap();
+    let settings = config::HookSettings::from_config(&resolved.value).unwrap();
+    let commands: Vec<_> = settings.events["PostToolUse"]
+        .iter()
+        .map(|group| group.hooks[0].command.as_deref().unwrap())
+        .collect();
+    assert_eq!(commands, ["global", "shared", "project", "shared", "local"]);
+    for (index, origin) in [
+        (&global, "global"),
+        (&global, "global"),
+        (&project, "project"),
+        (&local, "project"),
+        (&local, "project"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let pointer = format!("/hooks/PostToolUse/{index}/hooks/0");
+        assert_eq!(
+            resolved.sources[&pointer],
+            format!("{}:{}", origin.1, origin.0.display())
+        );
+    }
+    f.write(
+        ".cyber/cyber.local.jsonc",
+        r#"{"hooks":{"PostToolUse":[]}}"#,
+    );
+    f.approve_current();
+    let resolved = f.load().unwrap();
+    assert_eq!(
+        resolved.value["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[test]
 fn agent_profile_fields_and_orchestration_limits_reject_invalid_values() {
     for (field, value) in [
         ("description", json!(true)),

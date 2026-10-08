@@ -66,6 +66,7 @@ pub struct TrustReport {
 pub struct Resolved {
     pub value: Value,
     /// JSON pointer of each leaf → label of the layer that set it.
+    /// Hook groups and handlers also retain their own indexed origin labels.
     pub sources: BTreeMap<String, String>,
     pub warnings: Vec<String>,
     pub trust: TrustReport,

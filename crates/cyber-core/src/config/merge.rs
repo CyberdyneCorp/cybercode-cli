@@ -33,15 +33,7 @@ fn merge_value(
         }
         return;
     }
-    if CONCAT_KEYS.contains(&pointer)
-        && let (Some(items), Some(over)) = (slot.as_array_mut(), overlay.as_array())
-    {
-        for item in over {
-            if !items.contains(item) {
-                items.push(item.clone());
-            }
-        }
-        sources.insert(pointer.to_string(), source.to_string());
+    if append_arrays(slot, overlay, pointer, source, sources) {
         return;
     }
     *slot = overlay.clone();
@@ -49,7 +41,59 @@ fn merge_value(
     record(overlay, pointer, source, sources);
 }
 
+fn append_arrays(
+    slot: &mut Value,
+    overlay: &Value,
+    pointer: &str,
+    source: &str,
+    sources: &mut Sources,
+) -> bool {
+    let (Some(items), Some(over)) = (slot.as_array_mut(), overlay.as_array()) else {
+        return false;
+    };
+    if hook_event(pointer) {
+        let offset = items.len();
+        for (index, group) in over.iter().enumerate() {
+            record_hook_group(
+                group,
+                &child_pointer(pointer, &(offset + index).to_string()),
+                source,
+                sources,
+            );
+            items.push(group.clone());
+        }
+        if !over.is_empty() {
+            sources.insert(pointer.to_string(), source.to_string());
+        }
+        return true;
+    }
+    if !CONCAT_KEYS.contains(&pointer) {
+        return false;
+    }
+    for item in over {
+        if !items.contains(item) {
+            items.push(item.clone());
+        }
+    }
+    sources.insert(pointer.to_string(), source.to_string());
+    true
+}
+
 fn record(value: &Value, pointer: &str, source: &str, sources: &mut Sources) {
+    if hook_event(pointer)
+        && let Some(groups) = value.as_array()
+    {
+        sources.insert(pointer.to_string(), source.to_string());
+        for (index, group) in groups.iter().enumerate() {
+            record_hook_group(
+                group,
+                &child_pointer(pointer, &index.to_string()),
+                source,
+                sources,
+            );
+        }
+        return;
+    }
     match value.as_object() {
         Some(map) if !map.is_empty() => {
             for (key, child) in map {
@@ -58,6 +102,25 @@ fn record(value: &Value, pointer: &str, source: &str, sources: &mut Sources) {
         }
         _ => {
             sources.insert(pointer.to_string(), source.to_string());
+        }
+    }
+}
+
+fn hook_event(pointer: &str) -> bool {
+    pointer
+        .strip_prefix("/hooks/")
+        .is_some_and(super::hooks::is_event_name)
+}
+
+fn record_hook_group(group: &Value, pointer: &str, source: &str, sources: &mut Sources) {
+    sources.insert(pointer.to_string(), source.to_string());
+    record(group, pointer, source, sources);
+    if let Some(handlers) = group.get("hooks").and_then(Value::as_array) {
+        let handlers_pointer = child_pointer(pointer, "hooks");
+        for (index, handler) in handlers.iter().enumerate() {
+            let handler_pointer = child_pointer(&handlers_pointer, &index.to_string());
+            sources.insert(handler_pointer.clone(), source.to_string());
+            record(handler, &handler_pointer, source, sources);
         }
     }
 }
@@ -101,5 +164,35 @@ mod tests {
             &mut s,
         );
         assert_eq!(base, json!({"instructions": ["a", "b"], "x": [2]}));
+    }
+
+    #[test]
+    fn hook_sources_cover_every_handler_and_clear_on_replacement() {
+        let mut base = json!({});
+        let mut sources = Sources::new();
+        let group = json!({"hooks":[
+            {"type":"command","command":"first"},
+            {"type":"command","command":"second"}
+        ]});
+        for source in ["global", "project"] {
+            merge_layer(
+                &mut base,
+                &json!({"hooks":{"PostToolUse":[group.clone()]}}),
+                source,
+                &mut sources,
+            );
+        }
+        for (index, source) in ["global", "project"].into_iter().enumerate() {
+            let pointer = format!("/hooks/PostToolUse/{index}");
+            assert_eq!(sources[&pointer], source);
+            for handler in 0..2 {
+                let pointer = format!("{pointer}/hooks/{handler}");
+                assert_eq!(sources[&pointer], source);
+                assert_eq!(sources[&format!("{pointer}/command")], source);
+            }
+        }
+        merge_layer(&mut base, &json!({"hooks":false}), "invalid", &mut sources);
+        assert_eq!(sources["/hooks"], "invalid");
+        assert!(!sources.keys().any(|key| key.starts_with("/hooks/")));
     }
 }

@@ -48,6 +48,10 @@ const EVENTS: &[&str] = &[
     "MessageReceived",
 ];
 
+pub(super) fn is_event_name(name: &str) -> bool {
+    EVENTS.contains(&name)
+}
+
 #[derive(Debug, Clone)]
 pub struct HookSettings {
     pub events: BTreeMap<String, Vec<HookGroup>>,
@@ -133,7 +137,7 @@ impl HookSettings {
             ) {
                 continue;
             }
-            if !EVENTS.contains(&event.as_str()) {
+            if !is_event_name(event) {
                 return Err(format!("hooks.{event}: unknown hook event"));
             }
             let groups = value
