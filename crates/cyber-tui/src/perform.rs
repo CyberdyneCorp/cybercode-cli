@@ -31,6 +31,10 @@ pub enum Msg {
         session_id: String,
         items: Vec<Choice>,
     },
+    Children {
+        session_id: String,
+        result: Result<Vec<Choice>, String>,
+    },
     Sessions(Vec<Choice>),
     Models(Vec<Choice>),
     Commands(Vec<Choice>),
@@ -108,7 +112,7 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
     })
 }
 
-fn err(e: cyber_client::ClientError) -> String {
+pub(crate) fn err(e: cyber_client::ClientError) -> String {
     e.to_string()
 }
 
@@ -150,6 +154,10 @@ pub async fn perform_owned(
         Action::LoadTasks | Action::OpenTask(_) | Action::StopTask(_) | Action::StopTasks => {
             manage_tasks(client, session, action).await
         }
+        Action::LoadChildren => Ok(Msg::Children {
+            session_id: session.id.clone(),
+            result: crate::children::load(client, session).await,
+        }),
         Action::LoadSessions => sessions(client).await,
         Action::Rename { .. } | Action::Archive(_) | Action::Delete(_) => {
             manage(client, action).await

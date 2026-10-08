@@ -497,6 +497,203 @@
           "children_usage_complete"
         ]
       },
+      "Data_ChildThreads": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ChildThreads"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ChildThreads": {
+        "type": "object",
+        "properties": {
+          "parent_id": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChildThread"
+            }
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          }
+        },
+        "required": [
+          "parent_id",
+          "data",
+          "cursor"
+        ]
+      },
+      "ChildThread": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/SessionInfo"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ThreadStatus"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "session",
+          "status"
+        ]
+      },
+      "SessionInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Exact managed checkout incarnation admitted at creation."
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subagent_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Durable child identity within its parent, independent of title and agent."
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "archived": {
+            "type": "boolean",
+            "default": false
+          },
+          "default_title": {
+            "type": "boolean",
+            "description": "The title is still the generated default.",
+            "default": false
+          },
+          "rules": {
+            "description": "Session ruleset (`permissions-modes`), in the `permissions` config shape."
+          },
+          "max_steps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Step limit for this Session's Drains, on top of the runtime-wide limit."
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "directory",
+          "agent",
+          "model",
+          "mode",
+          "created_ms"
+        ]
+      },
+      "Budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "max_turns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "max_wall_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "enforcement": {
+            "$ref": "#/components/schemas/Enforcement",
+            "default": "soft"
+          }
+        }
+      },
+      "Enforcement": {
+        "type": "string",
+        "enum": [
+          "soft",
+          "reserved"
+        ]
+      },
+      "ThreadStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "waiting",
+          "completed",
+          "failed"
+        ]
+      },
       "CreateWorktreeBody": {
         "type": "object",
         "properties": {
@@ -581,53 +778,6 @@
             "minimum": 0
           }
         }
-      },
-      "Budget": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "max_turns": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint64",
-            "minimum": 0
-          },
-          "max_tokens": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint64",
-            "minimum": 0
-          },
-          "max_cost_usd": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "max_wall_seconds": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "enforcement": {
-            "$ref": "#/components/schemas/Enforcement",
-            "default": "soft"
-          }
-        }
-      },
-      "Enforcement": {
-        "type": "string",
-        "enum": [
-          "soft",
-          "reserved"
-        ]
       },
       "Located_CreatedWorktree": {
         "type": "object",
@@ -3418,6 +3568,63 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/children": {
+      "get": {
+        "operationId": "v1.session.children",
+        "summary": "List direct child threads across Locations with observed state",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ChildThreads"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

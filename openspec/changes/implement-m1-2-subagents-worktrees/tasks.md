@@ -73,3 +73,7 @@
 - [ ] Verify full M1.2 contracts locally and on supported native platforms, preserve P0/M1.1 regressions and update roadmap evidence.
 
 - [ ] Refuse cyclic durable descendant graphs before Session deletion, verify a bounded unchanged-main regression and preservation of all Sessions/history, and accept native CI. Keep durable cancellation/admission generation fencing open.
+
+- [ ] Implement authenticated paginated child-thread listing with own-attempt status, API/SDK coverage, /agent and /subagents switching/parent navigation and selected-child steering; verify stale scopes, cross-worktree children, copied history and continuation ownership/recovery before full acceptance.
+
+  - [x] Implement the child-list API/generated SDK and TUI picker with scope/cursor refusal, copied-history exclusion, compaction/restart replay, user-request status and parent navigation. Local validation: 120 focused Rust tests, 49 SDK tests/type checking, workspace Clippy and 57 strict specifications. Full continuation ownership/recovery and native acceptance remain open.

@@ -298,6 +298,18 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
                 );
             }
         }
+        Msg::Children { session_id, result } => {
+            if session_id == app.session.id {
+                match result {
+                    Ok(items) => app.open_picker(
+                        PickerKind::Children,
+                        "Subagents · Enter opens thread · Ctrl+R refreshes",
+                        items,
+                    ),
+                    Err(error) => app.toast(error),
+                }
+            }
+        }
         Msg::Sessions(items) => app.open_picker(PickerKind::Sessions, "Sessions", items),
         Msg::Models(items) => app.open_picker(PickerKind::Models, "Models", items),
         Msg::Commands(items) => app.commands = items,
@@ -476,6 +488,36 @@ fn set_title(app: &App) {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    #[test]
+    fn child_thread_responses_are_ignored_after_switching_sessions() {
+        let mut app = app();
+        let mut refresh = Refresh::default();
+        for result in [Ok(Vec::new()), Err("old request failed".into())] {
+            assert!(
+                apply(
+                    &mut app,
+                    Ok(Msg::Children {
+                        session_id: "previous".into(),
+                        result,
+                    }),
+                    &mut refresh
+                )
+                .is_empty()
+            );
+            assert!(matches!(app.overlay, crate::app::Overlay::None));
+            assert!(app.toast.is_none());
+        }
+        apply(
+            &mut app,
+            Ok(Msg::Children {
+                session_id: "current".into(),
+                result: Err("current request failed".into()),
+            }),
+            &mut refresh,
+        );
+        assert_eq!(app.toast.as_ref().unwrap().0, "current request failed");
+    }
 
     #[test]
     fn routed_child_request_events_are_visible_without_forwarding_child_text() {

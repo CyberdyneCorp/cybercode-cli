@@ -54,6 +54,7 @@ pub enum Action {
         body: Value,
     },
     LoadTasks,
+    LoadChildren,
     OpenTask(String),
     StopTask(String),
     StopTasks,
@@ -85,6 +86,7 @@ pub enum Action {
 pub enum PickerKind {
     Admissions,
     Tasks,
+    Children,
     Sessions,
     Models,
     Themes,
@@ -637,6 +639,7 @@ impl App {
                 );
                 Vec::new()
             }
+            "agent" | "subagents" => vec![Action::LoadChildren],
             "tasks" | "ps" => vec![Action::LoadTasks],
             "stop" => {
                 self.overlay = Overlay::ConfirmStopTasks;
@@ -713,6 +716,12 @@ impl App {
         let Overlay::Picker(picker) = &mut self.overlay else {
             return Vec::new();
         };
+        if picker.kind == PickerKind::Children
+            && key.code == KeyCode::Char('r')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            return vec![Action::LoadChildren];
+        }
         if picker.pending.is_some() {
             return session_op_key(picker, key);
         }
@@ -806,7 +815,7 @@ impl App {
                 .map(|entry| vec![entry.request.action(false)])
                 .unwrap_or_default(),
             PickerKind::Tasks => vec![Action::OpenTask(choice.key)],
-            PickerKind::Sessions => vec![Action::Open(choice.key)],
+            PickerKind::Sessions | PickerKind::Children => vec![Action::Open(choice.key)],
             PickerKind::Models => vec![Action::SwitchModel(choice.key)],
             PickerKind::Modes => self.select_mode(&choice.key),
             PickerKind::Themes => {

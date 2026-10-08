@@ -1761,3 +1761,253 @@ async fn session_usage_api_refuses_corrupt_or_overflowing_projections() {
         assert!(body.get("data").is_none());
     }
 }
+
+#[tokio::test]
+async fn child_threads_are_parent_scoped_paginated_and_use_own_attempt_status() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery};
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![text("parent answer"), text("child answer")],
+            ),
+            ("test/summary", vec![text("Child finished its task")]),
+        ],
+        compaction: cyber_server::runtime::CompactionConfig {
+            keep_tokens: 4,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    h.runtime
+        .admit(&parent, Admission::text("parent prompt", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&parent).await;
+    let outside = h.dir.path().join("child-worktree");
+    std::fs::create_dir(&outside).unwrap();
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: outside.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            subagent_name: Some("review".into()),
+            fork_from: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let other = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            subagent_name: Some("waiting".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let foreign_parent = h.session().await;
+    h.runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(foreign_parent),
+            subagent_name: Some("foreign".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let api = Api::new(&h);
+    let path = format!("/sessions/{parent}/children?limit=1");
+    let (status, page, _) = api.call(Method::GET, &path, None, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["data"]["parent_id"], parent);
+    assert_eq!(page["data"]["data"].as_array().unwrap().len(), 1);
+    let cursor = page["data"]["cursor"]["next"].as_str().unwrap();
+    let (_, second, _) = api
+        .call(Method::GET, &format!("{path}&cursor={cursor}"), None, &[])
+        .await;
+    let mut rows = page["data"]["data"].as_array().unwrap().clone();
+    rows.extend(second["data"]["data"].as_array().unwrap().clone());
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row["status"] == "waiting"));
+    assert!(rows.iter().any(|row| row["session"]["id"] == child));
+    assert!(rows.iter().any(|row| row["session"]["id"] == other));
+    h.runtime
+        .admit(&child, Admission::text("child prompt", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&child).await;
+    let (_, page, _) = api
+        .call(
+            Method::GET,
+            &format!("/sessions/{parent}/children"),
+            None,
+            &[],
+        )
+        .await;
+    let completed = page["data"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["session"]["id"] == child)
+        .unwrap();
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(
+        completed["session"]["directory"],
+        outside.display().to_string()
+    );
+    h.runtime.compact(&child, None).await.unwrap();
+    assert!(h.state(&child).await.compacted.is_some());
+    let mut restarted = state(&h, None);
+    restarted.runtime = h.restart();
+    let replay = Api {
+        client: EmbeddedClient::new(http::router(restarted)),
+    };
+    let (_, page) = replay.get(&format!("/sessions/{parent}/children")).await;
+    let row = page["data"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["session"]["id"] == child)
+        .unwrap();
+    assert_eq!(row["status"], "completed");
+    let (status, _, _) = api
+        .call(Method::GET, "/sessions/ses_missing/children", None, &[])
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn child_threads_distinguish_running_waiting_and_failed() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery};
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c", "clock", "{}")]),
+                support::error(
+                    cyber_llm::ErrorKind::InvalidRequest,
+                    "child provider failed",
+                ),
+            ],
+        )],
+        ..Default::default()
+    });
+    h.tools.set("clock", Behavior::Gated);
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let started = h.tools.started.notified();
+    h.runtime
+        .admit(&child, Admission::text("run", Delivery::Steer))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), started)
+        .await
+        .unwrap();
+    let api = Api::new(&h);
+    let path = format!("/sessions/{parent}/children");
+    let (_, page) = api.get(&path).await;
+    assert_eq!(page["data"]["data"][0]["status"], "running");
+    h.runtime.interrupt(&child).await.unwrap();
+    let (_, page) = api.get(&path).await;
+    assert_eq!(page["data"]["data"][0]["status"], "failed");
+    h.runtime
+        .admit(&child, Admission::text("try again", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&child).await;
+    let (_, page) = api.get(&path).await;
+    assert_eq!(page["data"]["data"][0]["status"], "failed");
+    assert!(
+        page["data"]["data"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("child provider failed")
+    );
+}
+
+#[tokio::test]
+async fn child_threads_show_only_their_own_pending_user_requests() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery};
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("ask1", "shell", "{}")]), text("done")],
+        )],
+        ..Default::default()
+    });
+    h.tools.set("shell", Behavior::Ask("approval".into()));
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.runtime
+        .admit(&child, Admission::text("ask", Delivery::Steer))
+        .await
+        .unwrap();
+    let requests = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let requests = h.runtime.pending_requests(Some(&child));
+            if !requests.is_empty() {
+                break requests;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let api = Api::new(&h);
+    let (_, page) = api.get(&format!("/sessions/{parent}/children")).await;
+    assert_eq!(page["data"]["data"][0]["status"], "waiting");
+    assert_eq!(
+        page["data"]["data"][0]["reason"],
+        "Waiting for a user reply"
+    );
+    let (status, _) = api
+        .post(
+            &format!("/sessions/{child}/permissions/{}/reply", requests[0].id),
+            json!({"reply":"once"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    h.runtime.wait_idle(&child).await;
+    let (_, page) = api.get(&format!("/sessions/{parent}/children")).await;
+    assert_eq!(page["data"]["data"][0]["status"], "completed");
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{parent}/children");
+    let response = client.get(&path).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = client
+        .get(&path)
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}

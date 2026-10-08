@@ -5,6 +5,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
     pub id: String,
+    pub parent_id: Option<String>,
     pub title: String,
     pub directory: String,
     pub model: String,
@@ -41,6 +42,7 @@ impl Session {
         let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
         Self {
             id: s("id"),
+            parent_id: v["parent_id"].as_str().map(str::to_string),
             title: s("title"),
             directory: s("directory"),
             model: s("model"),

@@ -159,6 +159,11 @@ jobs:
       - name: Native forked child context and ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test forked_subagents -p cyber-server --test fork_context
+      - name: Native child-thread API and TUI browsing
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-server --test http child_threads_
+          cargo test --locked -p cyber-tui child_thread
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children

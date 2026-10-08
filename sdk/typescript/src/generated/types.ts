@@ -55,6 +55,18 @@ export type ChildSetupInspection = {
   journal: SetupSnapshot;
 };
 
+export type ChildThread = {
+  session: SessionInfo;
+  status: ThreadStatus;
+  reason?: string | null;
+};
+
+export type ChildThreads = {
+  parent_id: string;
+  data: ChildThread[];
+  cursor: Cursor;
+};
+
 export type CommandBody = {
   /** A skill or custom command name, without the slash. */
   name: string;
@@ -167,6 +179,10 @@ export type Data_Array_of_PendingRequest = {
 
 export type Data_ChildSetupInspection = {
   data: ChildSetupInspection;
+};
+
+export type Data_ChildThreads = {
+  data: ChildThreads;
 };
 
 export type Data_CreatedWorktree = {
@@ -599,6 +615,29 @@ export type SessionContext = {
   task: TaskState;
 };
 
+export type SessionInfo = {
+  id: string;
+  title: string;
+  directory: string;
+  /** Exact managed checkout incarnation admitted at creation. */
+  worktree_id?: string | null;
+  parent_id?: string | null;
+  /** Durable child identity within its parent, independent of title and agent. */
+  subagent_name?: string | null;
+  agent: string;
+  model: string;
+  mode: string;
+  created_ms: number;
+  archived?: boolean;
+  /** The title is still the generated default. */
+  default_title?: boolean;
+  /** Session ruleset (`permissions-modes`), in the `permissions` config shape. */
+  rules?: unknown;
+  /** Step limit for this Session's Drains, on top of the runtime-wide limit. */
+  max_steps?: number | null;
+  budget?: Budget | null;
+};
+
 export type SessionRow = {
   id: string;
   title: string;
@@ -685,6 +724,8 @@ export type TaskState = {
   /** Every user instruction, in order, with its source message ID. */
   instructions: Sourced[];
 };
+
+export type ThreadStatus = "running" | "waiting" | "completed" | "failed";
 
 export type ToolInfo = {
   name: string;

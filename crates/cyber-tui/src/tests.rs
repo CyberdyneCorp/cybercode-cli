@@ -1146,3 +1146,48 @@ fn cost_refresh_ignores_superseded_responses_and_invalidates_on_session_switch()
     );
     assert!(!screen(&app).contains("Total cost: $1.0000"));
 }
+
+#[test]
+fn child_thread_commands_open_existing_threads_and_preserve_steer_delivery() {
+    use crate::app::PickerKind;
+    for command in ["/agent", "/subagents"] {
+        let mut app = App::new(session(false), Vec::new(), "cyber");
+        typed(&mut app, command);
+        assert_eq!(app.on_key(key(KeyCode::Enter)), vec![Action::LoadChildren]);
+    }
+    let mut app = App::new(session(true), Vec::new(), "cyber");
+    app.open_picker(
+        PickerKind::Children,
+        "Subagents",
+        vec![crate::model::Choice {
+            key: "ses_child".into(),
+            label: "review (running)".into(),
+            detail: "/worktree".into(),
+        }],
+    );
+    assert_eq!(
+        app.on_key(with(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+        vec![Action::LoadChildren]
+    );
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::Open("ses_child".into())]
+    );
+    app.set_session(Session {
+        id: "ses_child".into(),
+        parent_id: Some("ses_1".into()),
+        directory: "/worktree".into(),
+        running: true,
+        ..session(true)
+    });
+    typed(&mut app, "inspect this too");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::Prompt {
+            text: "inspect this too".into(),
+            delivery: "steer"
+        }]
+    );
+    assert_eq!(app.session.id, "ses_child");
+    assert_eq!(app.session.directory, "/worktree");
+}

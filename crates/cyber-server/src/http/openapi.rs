@@ -166,6 +166,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .query(&["limit", "cursor", "search", "children", "archived"])
         .ok::<Located<Page<SessionRow>>>(g),
         op(
+            "get",
+            "/sessions/{id}/children",
+            "v1.session.children",
+            "List direct child threads across Locations with observed state",
+        )
+        .query(&["limit", "cursor"])
+        .ok::<Data<super::children::ChildThreads>>(g),
+        op(
             "post",
             "/worktrees",
             "v1.worktree.create",

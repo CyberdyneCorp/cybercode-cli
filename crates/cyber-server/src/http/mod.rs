@@ -4,6 +4,7 @@
 //! transport mark each request with a [`Transport`], which decides authentication.
 
 mod catalog;
+mod children;
 mod envelope;
 mod error;
 mod event_location;
@@ -206,6 +207,7 @@ async fn request_log(
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
+        .merge(children::router())
         .merge(jobs::routes())
         .merge(usage::routes())
         .merge(worktrees::routes())

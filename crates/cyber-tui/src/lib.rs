@@ -2,6 +2,7 @@
 
 mod admissions;
 mod app;
+mod children;
 mod composer;
 mod cost;
 mod fuzzy;

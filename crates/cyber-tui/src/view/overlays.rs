@@ -316,6 +316,7 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         ),
         ("/model /resume /new /mode /compact /theme", "commands"),
         ("/subtask <prompt> · /tasks · /stop", "background tasks"),
+        ("/agent · /subagents", "browse child and parent threads"),
         ("@path  !cmd", "mention a file · run a shell command"),
         ("Alt+Up", "take back the last queued message"),
         ("PageUp / PageDown", "scroll"),

@@ -136,3 +136,15 @@ test("usage.get preserves scope identity and incomplete billing without a Locati
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
   assert.ok(calls[0]?.headers.get("authorization"));
 });
+
+test("session.children preserves parent identity and cursor without Location scoping", async () => {
+  const page = { parent_id: "ses/parent", data: [], cursor: { previous: null, next: "opaque /+" } };
+  const { client, calls } = mockClient(() => json(200, { data: page }), { directory: "/repo/a" });
+  const result = await client.at("/repo/other").session.children("ses/parent", { limit: 2, cursor: "opaque /+" });
+  assert.deepEqual(result, page);
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fparent/children");
+  assert.equal(calls[0]?.url.searchParams.get("cursor"), "opaque /+");
+  assert.equal(calls[0]?.url.searchParams.get("limit"), "2");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
+  assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+});
