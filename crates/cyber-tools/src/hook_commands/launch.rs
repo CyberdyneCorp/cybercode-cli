@@ -140,8 +140,8 @@ impl HookCommandRunner<'_> {
         if cancel.is_cancelled() {
             return Err("hook command cancelled before launch".into());
         }
-        if cfg!(windows) {
-            return Err("Windows hook command launch requires an owned event-stdin route".into());
+        if cfg!(windows) && self.helper.is_none() {
+            return Err("Windows hook command launch requires the trusted process helper".into());
         }
         let timeout = Duration::from_secs(definition.handler.timeout.into());
         let deadline = tokio::time::Instant::now() + timeout;
@@ -161,7 +161,7 @@ impl HookCommandRunner<'_> {
                 .mark_launch(runtime)
                 .map_err(|error| error.to_string())?;
         }
-        let spawned = HookCommandProcess::spawn(
+        let spawned = HookCommandProcess::spawn_with_stdin(
             &prepared.wrapped.program,
             &prepared.wrapped.args,
             self.helper,
@@ -297,12 +297,21 @@ impl HookCommandRunner<'_> {
             .command
             .as_ref()
             .ok_or("missing hook command")?;
-        let wrapped = cyber_sandbox::wrap(
-            &launch,
-            &crate::tools::bash::shell(self.shell),
-            &["-c".into(), command.clone()],
-        )
-        .map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        let (program, args) = (
+            crate::tools::powershell::installed(&event.identity().location.directory)
+                .ok_or("PowerShell is required for Windows hook commands")?
+                .display()
+                .to_string(),
+            crate::tools::powershell::arguments(command),
+        );
+        #[cfg(not(windows))]
+        let (program, args) = (
+            crate::tools::bash::shell(self.shell),
+            vec!["-c".into(), command.clone()],
+        );
+        let wrapped =
+            cyber_sandbox::wrap(&launch, &program, &args).map_err(|error| error.to_string())?;
         let mut credentials = crate::sandboxing::credential_env_names(&self.resolved.value);
         credentials.extend_from_slice(self.credential_env_names);
         let mut env = if sandbox.policy == Policy::FullAccess {

@@ -88,6 +88,7 @@ impl Job {
 /// The user command cannot start until successful parent-owned job assignment.
 pub struct OwnedCommand {
     command: Command,
+    event_stdin: bool,
 }
 
 impl OwnedCommand {
@@ -98,11 +99,31 @@ impl OwnedCommand {
     ) -> Self {
         let mut command = Command::new(helper);
         command.args(["--parent-job", "--"]).arg(program).args(args);
-        Self { command }
+        Self {
+            command,
+            event_stdin: false,
+        }
     }
 
-    /// Configure environment, working directory and output. Stdin is reserved for
-    /// the launch handshake; the eventual user command receives null stdin.
+    /// Keep the pipe after the private permit so the command can consume event input.
+    pub fn with_event_stdin(
+        helper: &Path,
+        program: impl AsRef<OsStr>,
+        args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+    ) -> Self {
+        let mut command = Command::new(helper);
+        command
+            .args(["--parent-job-stdin", "--"])
+            .arg(program)
+            .args(args);
+        Self {
+            command,
+            event_stdin: true,
+        }
+    }
+
+    /// Configure environment, working directory and output. The private handshake
+    /// always precedes user input; only with_event_stdin retains the pipe afterward.
     pub fn command_mut(&mut self) -> &mut Command {
         &mut self.command
     }
@@ -122,7 +143,11 @@ impl OwnedCommand {
             .take()
             .ok_or_else(|| io::Error::other("Windows helper launch pipe is missing"))?;
         permit.write_all(START).await?;
-        drop(permit);
+        if self.event_stdin {
+            owned.child.stdin = Some(permit);
+        } else {
+            drop(permit);
+        }
         Ok(owned)
     }
 }

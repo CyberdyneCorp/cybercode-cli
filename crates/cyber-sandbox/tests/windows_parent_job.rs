@@ -107,7 +107,13 @@ fn parent_death_before_assignment_refuses_user_code() {
 
 #[test]
 fn dropping_owner_and_normal_exit_clean_up_descendants() {
-    for role in ["drop-owner", "terminate-owner", "abort-owner", "owner"] {
+    for role in [
+        "drop-owner",
+        "terminate-owner",
+        "abort-owner",
+        "owner",
+        "drop-event-owner",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let mut parent = launch(root.path(), role);
         let helper = live_process(root.path(), "helper.pid", &mut parent.0);
@@ -160,20 +166,69 @@ async fn owned_launch_preserves_output_and_exit_status() {
     assert!(output.contains("parent-owned-output"));
 }
 
+#[tokio::test]
+async fn event_stdin_route_preserves_bytes_eof_and_exit_after_assignment() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let root = tempfile::tempdir().unwrap();
+    let mut command = OwnedCommand::with_event_stdin(
+        Path::new(HELPER),
+        std::env::current_exe().unwrap(),
+        ["--exact", "windows_parent_worker", "--nocapture"],
+    );
+    command
+        .command_mut()
+        .env("CYBER_PARENT_TEST_ROLE", "event-input")
+        .env("CYBER_PARENT_TEST_ROOT", root.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().await.unwrap();
+    let mut stdin = child.child_mut().stdin.take().unwrap();
+    let mut stdout = child.child_mut().stdout.take().unwrap();
+    let mut stderr = child.child_mut().stderr.take().unwrap();
+    let expected = "{\"text\":\"Δ\"}\n".repeat(32 * 1024).into_bytes();
+    let mut output = Vec::new();
+    let mut errors = Vec::new();
+    let (_, _, _, status) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(
+            async {
+                stdin.write_all(&expected).await?;
+                stdin.shutdown().await
+            },
+            stdout.read_to_end(&mut output),
+            stderr.read_to_end(&mut errors),
+            child.wait()
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(status.code(), Some(73));
+    assert!(
+        output.ends_with(&expected),
+        "event bytes must survive the private prefix without read-ahead"
+    );
+    assert!(
+        !output
+            .windows(b"CYBER-JOB-START".len())
+            .any(|bytes| bytes == b"CYBER-JOB-START")
+    );
+    assert_eq!(errors, vec![b'E'; 256 * 1024]);
+}
+
 #[test]
 fn absent_or_invalid_permit_refuses_execution() {
     use std::io::Write;
 
-    for permit in [b"".as_slice(), b"not-a-job-start\n".as_slice()] {
+    for (mode, permit) in ["--parent-job", "--parent-job-stdin"]
+        .into_iter()
+        .flat_map(|mode| {
+            [b"".as_slice(), b"not-a-job-start\n".as_slice()]
+                .into_iter()
+                .map(move |permit| (mode, permit))
+        })
+    {
         let mut child = Command::new(HELPER)
-            .args([
-                "--parent-job",
-                "--",
-                "cmd.exe",
-                "/D",
-                "/C",
-                "echo unexpected-child",
-            ])
+            .args([mode, "--", "cmd.exe", "/D", "/C", "echo unexpected-child"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -194,6 +249,19 @@ fn windows_parent_worker() {
         return;
     };
     let root = PathBuf::from(std::env::var_os("CYBER_PARENT_TEST_ROOT").unwrap());
+    if role == "event-input" {
+        use std::io::{Read, Write};
+        std::io::stderr()
+            .write_all(&vec![b'E'; 256 * 1024])
+            .unwrap();
+        std::io::stderr().flush().unwrap();
+        let mut input = Vec::new();
+        std::io::stdin().read_to_end(&mut input).unwrap();
+        std::io::stdout().write_all(&input).unwrap();
+        std::io::stdout().flush().unwrap();
+        std::process::exit(73);
+    }
+
     if role == "grandchild" {
         publish(&root, "grandchild.pid", std::process::id());
         std::thread::sleep(Duration::from_secs(30));
@@ -235,11 +303,19 @@ fn windows_parent_worker() {
         .build()
         .unwrap()
         .block_on(async {
-            let mut command = OwnedCommand::new(
-                Path::new(HELPER),
-                std::env::current_exe().unwrap(),
-                ["--exact", "windows_parent_worker", "--nocapture"],
-            );
+            let mut command = if role == "drop-event-owner" {
+                OwnedCommand::with_event_stdin(
+                    Path::new(HELPER),
+                    std::env::current_exe().unwrap(),
+                    ["--exact", "windows_parent_worker", "--nocapture"],
+                )
+            } else {
+                OwnedCommand::new(
+                    Path::new(HELPER),
+                    std::env::current_exe().unwrap(),
+                    ["--exact", "windows_parent_worker", "--nocapture"],
+                )
+            };
             command
                 .command_mut()
                 .env("CYBER_PARENT_TEST_ROLE", "command")

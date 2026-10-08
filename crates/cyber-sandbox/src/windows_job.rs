@@ -42,7 +42,7 @@ fn own_process_tree() -> io::Result<OwnedHandle> {
     Ok(job)
 }
 
-pub(super) fn run(parent_owned: bool) -> ExitCode {
+pub(super) fn run(parent_owned: bool, event_stdin: bool) -> ExitCode {
     let mut args = std::env::args_os().skip(2);
     let delimiter = args.next();
     let program = args.next();
@@ -53,11 +53,7 @@ pub(super) fn run(parent_owned: bool) -> ExitCode {
     if parent_owned {
         let mut permit = [0_u8; 16];
         let start = b"CYBER-JOB-START\n";
-        if std::io::stdin()
-            .read_exact(&mut permit[..start.len()])
-            .is_err()
-            || &permit[..start.len()] != start
-        {
+        if read_permit(&mut permit[..start.len()]).is_err() || &permit[..start.len()] != start {
             eprintln!("cyber-sandbox-exec: parent job assignment was not confirmed");
             return ExitCode::from(69);
         }
@@ -71,7 +67,7 @@ pub(super) fn run(parent_owned: bool) -> ExitCode {
     };
     let mut command = Command::new(program.unwrap());
     command.args(args);
-    if parent_owned {
+    if parent_owned && !event_stdin {
         command.stdin(Stdio::null());
     }
     let code = match command.status() {
@@ -84,4 +80,14 @@ pub(super) fn run(parent_owned: bool) -> ExitCode {
     // Do not drop our own kill-on-close job before setting the helper's exit status.
     // Process exit closes its non-inherited handle and terminates remaining descendants.
     std::process::exit(code)
+}
+
+/// Read exactly the private prefix without Rust stdin buffering consuming event bytes.
+fn read_permit(permit: &mut [u8]) -> io::Result<()> {
+    use std::os::windows::io::AsHandle;
+    let stdin = std::io::stdin();
+    let handle = stdin.as_handle();
+    let owned = handle.try_clone_to_owned()?;
+    let mut input = std::fs::File::from(owned);
+    input.read_exact(permit)
 }

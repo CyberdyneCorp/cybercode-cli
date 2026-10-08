@@ -238,6 +238,13 @@
 - **THEN** matching command handlers SHALL receive PostToolUse or PostToolUseFailure with captured identity, call id, final input, output and elapsed duration
 - **AND** their receipts SHALL remain durable without claiming the completed tool effect was undone
 
+#### Scenario: Windows command event input retains native ownership
+- **WHEN** an authorized Windows global command hook is eligible for full-access launch
+- **THEN** the parent SHALL assign the trusted helper to its owned process tree before permitting user code
+- **AND** the helper SHALL consume only the private permit prefix and preserve subsequent event bytes and EOF for the command
+- **AND** ordinary shell launches SHALL retain their null-stdin behavior
+- **AND** hooks requiring sandbox confinement SHALL refuse before effects until that enforcement is available
+
 ### Requirement: Hook observability
 (P1) Every hook execution SHALL be recorded as a durable `hook.executed.1` event with hook id, event, scope, duration, outcome (`ok`, `blocked`, `error`, `timeout`, `skipped`) and decision. Execution SHALL NOT record stdin or stdout contents unless `telemetry.log_hook_io` is true. Outcomes SHALL be visible in the transcript when a hook blocks or modifies an action.
 

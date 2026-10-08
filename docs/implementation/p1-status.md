@@ -6,6 +6,12 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+## M1.3 Windows global command event input
+
+Eligible global full-access command hooks now use the trusted parent-job helper with an explicit event-stdin route and the existing encoded PowerShell source arguments. Assignment precedes the private permit; the helper reads exactly the permit bytes through an unbuffered duplicated handle, then passes the remaining stream to the command. Ordinary shell launches still use null command stdin. Missing helpers refuse before preparation. Required Windows hook sandboxing still refuses through ordinary sandbox selection before command effects; complete native confinement remains required.
+
+Native tests cover large Unicode input, EOF, simultaneous stderr pressure, exit status, absent/invalid permits for both helper modes and helper/descendant cleanup when the event-input owner drops. A loaded-config Windows hook case checks event identity/environment and refuses a required sandbox effect. Existing CI runs both native test files. Local validation passes 1,154 Rust workspace test executions (three ignored, 121 suites), workspace all-target Clippy with warnings denied, formatting, generated SDK consistency and all 58 strict specs. Cross-spec lint reports zero errors and 21 warnings. The nine Unix launch regressions pass; new Windows cases await native execution. Complete M1.1/M1.3 acceptance remains pending.
+
 ## M1.3 execution receipt API and SDK
 
 Authenticated GET `/sessions/{sessionID}/hook-executions` now pages durable receipts by descending admission time/id, with a default of 50 and maximum of 500. Cursors retain the Session identity and malformed/foreign cursors are refused. Rows preserve default raw-IO omission and explicit opt-in IO, and expose captured call/tool identifiers where available without copying tool input. Legacy receipts remain readable with missing optional identifiers. Running/unknown statuses remain recorded observations; this read-only API does not reconcile live processes or authorize replay.

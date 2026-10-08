@@ -30,13 +30,37 @@ impl Process {
         _helper: Option<&Path>,
         configure: impl FnOnce(&mut Command),
     ) -> io::Result<Self> {
+        Self::spawn_inner(program, args, _helper, configure, false).await
+    }
+
+    pub(crate) async fn spawn_with_stdin(
+        program: &str,
+        args: &[String],
+        helper: Option<&Path>,
+        configure: impl FnOnce(&mut Command),
+    ) -> io::Result<Self> {
+        Self::spawn_inner(program, args, helper, configure, true).await
+    }
+
+    async fn spawn_inner(
+        program: &str,
+        args: &[String],
+        _helper: Option<&Path>,
+        configure: impl FnOnce(&mut Command),
+        _event_stdin: bool,
+    ) -> io::Result<Self> {
         #[cfg(windows)]
         {
             let helper = _helper.ok_or_else(|| {
                 io::Error::other("cyber-sandbox-exec.exe is required for Windows process ownership")
             })?;
-            let mut command =
-                cyber_sandbox::windows_process::OwnedCommand::new(helper, program, args);
+            let mut command = if _event_stdin {
+                cyber_sandbox::windows_process::OwnedCommand::with_event_stdin(
+                    helper, program, args,
+                )
+            } else {
+                cyber_sandbox::windows_process::OwnedCommand::new(helper, program, args)
+            };
             configure(command.command_mut());
             Ok(Self {
                 child: WindowsChild::Ordinary(Box::new(command.spawn().await?)),

@@ -339,7 +339,7 @@ async fn mandatory_hook_sandbox_masks_credentials_and_denies_home_writes() {
 
 #[cfg(windows)]
 #[tokio::test]
-async fn windows_missing_event_stdin_route_refuses_before_process_creation() {
+async fn windows_missing_helper_refuses_before_process_creation() {
     let f = Fixture::new();
     f.write(false, "echo unsafe > effect", false);
     let resolved = f.load();
@@ -349,10 +349,42 @@ async fn windows_missing_event_stdin_route_refuses_before_process_creation() {
             .await
             .err()
             .unwrap()
-            .contains("event-stdin route")
+            .contains("trusted process helper")
     );
     assert!(!f.location.join("effect").exists());
     assert!(!f.temp.exists());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_global_command_receives_event_input_and_required_sandbox_refuses() {
+    let f = Fixture::new();
+    let helper = cyber_sandbox::find_helper().expect("native test requires the trusted helper");
+    f.write(false, "$e = [Console]::In.ReadToEnd() | ConvertFrom-Json; @{additional_context=($e.session_id + ':' + $env:CYBER_HOOK_EVENT)} | ConvertTo-Json -Compress", false);
+    let resolved = f.load();
+    let mut runner = f.runner(&resolved);
+    runner.helper = Some(&helper);
+    let report = runner
+        .run(POINTER, &f.event(), CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.outcome, cyber_tools::hook_commands::HookOutcome::Ok);
+    assert_eq!(
+        report.decision.additional_context.as_deref(),
+        Some("ses_launch:PreToolUse")
+    );
+    assert_eq!(std::fs::read_dir(&f.temp).unwrap().count(), 0);
+    f.write(false, "Set-Content effect unsafe", true);
+    let resolved = f.load();
+    let mut runner = f.runner(&resolved);
+    runner.helper = Some(&helper);
+    assert!(
+        runner
+            .run(POINTER, &f.event(), CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert!(!f.location.join("effect").exists());
 }
 
 #[tokio::test]

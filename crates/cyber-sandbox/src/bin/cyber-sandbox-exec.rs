@@ -20,9 +20,9 @@ fn main() -> ExitCode {
 
     #[cfg(windows)]
     if let Some(mode) = std::env::args_os().nth(1)
-        && (mode == "--job" || mode == "--parent-job")
+        && (mode == "--job" || mode == "--parent-job" || mode == "--parent-job-stdin")
     {
-        return windows_job::run(mode == "--parent-job");
+        return windows_job::run(mode != "--job", mode == "--parent-job-stdin");
     }
 
     #[cfg(unix)]
