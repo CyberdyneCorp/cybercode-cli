@@ -15,6 +15,7 @@ const RESERVED: &[&str] = &[
     "agent",
     "mode",
     "timestamp",
+    "synthetic",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +68,37 @@ pub struct HookEvent {
 }
 
 impl HookEvent {
+    /// Build a test invocation with fresh identity, independent of every live Session.
+    /// Payload files supply event fields only; trusted context supplies the envelope.
+    /// Construction does not grant execution, checkout or handler trust authority.
+    pub fn synthetic(
+        event: impl Into<String>,
+        location: HookLocation,
+        project_id: String,
+        agent: String,
+        mode: String,
+        timestamp_ms: i64,
+        payload: Value,
+    ) -> Result<Self, String> {
+        let Value::Object(fields) = payload else {
+            return Err("hook test payload: expected a JSON object".into());
+        };
+        let identity = HookIdentity {
+            session_id: crate::ids::new_id("ses"),
+            location,
+            project_id,
+            agent,
+            mode,
+        };
+        let mut event = Self::new(event, identity, timestamp_ms, fields)?;
+        event.payload["synthetic"] = Value::Bool(true);
+        Ok(event)
+    }
+
+    pub fn is_synthetic(&self) -> bool {
+        self.payload["synthetic"] == true
+    }
+
     /// Timestamp is Unix milliseconds. This validates shape, not execution authority.
     /// The runtime must supply its captured identity and own every subsequent effect.
     pub fn new(

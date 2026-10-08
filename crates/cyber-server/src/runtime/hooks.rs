@@ -241,7 +241,8 @@ impl Runtime {
         log_io: bool,
     ) -> Result<Option<HookExecution>, RuntimeError> {
         let _open = self.inner.open().await?;
-        if definition.event != event.event()
+        if event.is_synthetic()
+            || definition.event != event.event()
             || definition
                 .handler
                 .digest()
@@ -249,7 +250,7 @@ impl Runtime {
                 != definition.digest
         {
             return Err(RuntimeError::Invalid(
-                "Hook event or effective digest changed".into(),
+                "Hook event is synthetic or effective event/digest changed".into(),
             ));
         }
         let handle = self.inner.handle(&event.identity().session_id).await?;

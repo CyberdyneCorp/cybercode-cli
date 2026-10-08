@@ -53,6 +53,7 @@ fn payload_cannot_spoof_any_common_envelope_field() {
         "agent",
         "mode",
         "timestamp",
+        "synthetic",
     ] {
         let mut payload = serde_json::Map::new();
         payload.insert(key.into(), json!("spoofed"));
@@ -60,6 +61,85 @@ fn payload_cannot_spoof_any_common_envelope_field() {
             HookEvent::new("PreToolUse", identity(directory.path()), 1, payload).unwrap_err();
         assert!(error.contains(key), "{error}");
     }
+}
+
+fn synthetic(directory: &std::path::Path, payload: Value) -> Result<HookEvent, String> {
+    HookEvent::synthetic(
+        "PreToolUse",
+        HookLocation {
+            directory: directory.into(),
+            workspace: Some("wtr_test".into()),
+        },
+        "prj_example".into(),
+        "coder".into(),
+        "accept-edits".into(),
+        123,
+        payload,
+    )
+}
+
+#[test]
+fn synthetic_invocations_generate_fresh_identity_and_preserve_payload_fields() {
+    let directory = tempfile::tempdir().unwrap();
+    let payload = json!({"tool_name":"edit","tool_input":{"path":"src/main.rs"}});
+    let first = synthetic(directory.path(), payload.clone()).unwrap();
+    let second = synthetic(directory.path(), payload.clone()).unwrap();
+    assert!(first.is_synthetic());
+    assert!(cyber_core::ids::has_prefix(
+        &first.identity().session_id,
+        "ses"
+    ));
+    assert_ne!(first.identity().session_id, second.identity().session_id);
+    assert_ne!(first.identity().session_id, "ses_owned");
+    let value = serde_json::to_value(&first).unwrap();
+    assert_eq!(value["synthetic"], true);
+    assert_eq!(value["tool_name"], payload["tool_name"]);
+    assert_eq!(value["tool_input"], payload["tool_input"]);
+    let expected = json!({
+        "event":"PreToolUse", "timestamp":123, "project_id":"prj_example",
+        "agent":"coder", "mode":"accept-edits",
+        "location":{"directory":directory.path(), "workspace":"wtr_test"}
+    });
+    for (key, expected) in expected.as_object().unwrap() {
+        assert_eq!(&value[key], expected, "{key}");
+    }
+    let rewritten = first
+        .with_tool_input(json!({"path":"src/other.rs"}))
+        .unwrap();
+    assert!(rewritten.is_synthetic());
+    assert_eq!(rewritten.identity().session_id, first.identity().session_id);
+    assert_eq!(first.as_json()["tool_input"]["path"], "src/main.rs");
+    assert_eq!(rewritten.as_json()["tool_input"]["path"], "src/other.rs");
+}
+
+#[test]
+fn synthetic_payloads_cannot_supply_envelope_fields_or_nonobjects() {
+    let directory = tempfile::tempdir().unwrap();
+    for key in [
+        "event",
+        "session_id",
+        "location",
+        "project_id",
+        "agent",
+        "mode",
+        "timestamp",
+        "synthetic",
+    ] {
+        let error = synthetic(directory.path(), json!({key:"spoofed"})).unwrap_err();
+        assert!(error.contains(key), "{error}");
+    }
+    for payload in [Value::Null, json!(true), json!(1), json!("text"), json!([])] {
+        assert!(
+            synthetic(directory.path(), payload)
+                .unwrap_err()
+                .contains("JSON object")
+        );
+    }
+    assert!(synthetic(std::path::Path::new("relative"), json!({})).is_err());
+    let ordinary =
+        HookEvent::new("Stop", identity(directory.path()), 1, fields(json!({}))).unwrap();
+    assert!(!ordinary.is_synthetic());
+    assert!(ordinary.as_json().get("synthetic").is_none());
 }
 
 #[test]

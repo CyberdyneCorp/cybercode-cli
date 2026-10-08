@@ -109,6 +109,13 @@
 - **AND** disposal without acknowledged settlement SHALL preserve unknown outcome and mandatory-stop observations without raw IO
 - **AND** once claims SHALL be exclusive within one synthetic invocation identity and SHALL NOT affect a Session's once claims
 
+#### Scenario: Synthetic payloads cannot borrow execution identity
+- **WHEN** a hook test event is constructed from caller-supplied JSON
+- **THEN** the system SHALL require an object containing event-specific fields and generate a fresh synthetic invocation identity
+- **AND** event, Session identity, Location, project, agent, Mode, timestamp and the synthetic marker SHALL come from the test invocation rather than the payload
+- **AND** attempts to supply those protected fields SHALL be rejected, including attempts to set the synthetic marker on an ordinary event
+- **AND** chained tool-input rewrites SHALL preserve the generated identity and synthetic marker without modifying prior event input
+
 #### Scenario: Last-run observations match the current handler and checkout
 - **WHEN** a client inspects a loaded hook through API/SDK, CLI list or TUI
 - **THEN** the system SHALL show the latest recorded execution with the same effective handler digest, event and scope in the current canonical checkout

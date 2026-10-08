@@ -23,7 +23,7 @@ pub fn start_synthetic_hook_execution(
     definition: &HookDefinition,
     log_io: bool,
 ) -> Result<SyntheticHookExecution, RuntimeError> {
-    if event.as_json()["synthetic"] != true
+    if !event.is_synthetic()
         || definition.event != event.event()
         || definition
             .handler

@@ -518,24 +518,18 @@ async fn last_run_matches_checkout_digest_event_scope_and_keeps_unknown_without_
     assert_eq!(before, after);
 }
 
-fn synthetic_event(h: &Harness, identity: &str) -> HookEvent {
-    HookEvent::new(
+fn synthetic_event(h: &Harness) -> HookEvent {
+    HookEvent::synthetic(
         "PreToolUse",
-        HookIdentity {
-            session_id: identity.into(),
-            location: HookLocation {
-                directory: h.repo.clone(),
-                workspace: None,
-            },
-            project_id: "global".into(),
-            agent: "build".into(),
-            mode: "default".into(),
+        HookLocation {
+            directory: h.repo.clone(),
+            workspace: None,
         },
+        "global".into(),
+        "build".into(),
+        "default".into(),
         1,
-        json!({"synthetic":true,"tool_input":{"private":"private stdin"}})
-            .as_object()
-            .unwrap()
-            .clone(),
+        json!({"tool_input":{"private":"private stdin"}}),
     )
     .unwrap()
 }
@@ -547,7 +541,13 @@ async fn synthetic_receipts_settle_and_dispose_without_session_history_or_last_r
     let session = h.session().await;
     let sequence = h.state(&session).await.last_seq;
     let definition = definition(&h);
-    let event = synthetic_event(&h, "ses_synthetic_one");
+    let event = synthetic_event(&h);
+    assert!(matches!(
+        h.runtime
+            .try_start_hook_execution(&event, &definition, false)
+            .await,
+        Err(cyber_server::runtime::RuntimeError::Invalid(_))
+    ));
     let owner =
         start_synthetic_hook_execution(h.store.clone(), &event, &definition, false).unwrap();
     let id = owner.record().id.clone();
@@ -564,13 +564,9 @@ async fn synthetic_receipts_settle_and_dispose_without_session_history_or_last_r
             .unwrap()
             .contains("private stdin")
     );
-    let owner = start_synthetic_hook_execution(
-        h.store.clone(),
-        &synthetic_event(&h, "ses_synthetic_two"),
-        &definition,
-        true,
-    )
-    .unwrap();
+    let owner =
+        start_synthetic_hook_execution(h.store.clone(), &synthetic_event(&h), &definition, true)
+            .unwrap();
     let unknown = owner.record().id.clone();
     drop(owner);
     let facts = h.store.read_events(&unknown, -1, 10).unwrap().events;
@@ -608,29 +604,29 @@ async fn synthetic_receipts_refuse_session_aliases_bindings_and_changed_terminal
     assert!(
         start_synthetic_hook_execution(
             h.store.clone(),
-            &synthetic_event(&h, &session),
-            &definition,
-            false
-        )
-        .is_err()
-    );
-    assert!(
-        start_synthetic_hook_execution(
-            h.store.clone(),
             &event(&h, &session).await,
             &definition,
             false
         )
         .is_err()
     );
-    let owner = start_synthetic_hook_execution(
-        h.store.clone(),
-        &synthetic_event(&h, "ses_synthetic_fenced"),
-        &definition,
-        false,
-    )
-    .unwrap();
+    let owner =
+        start_synthetic_hook_execution(h.store.clone(), &synthetic_event(&h), &definition, false)
+            .unwrap();
     let id = owner.record().id.clone();
+    let mut alias = serde_json::to_value(owner.record()).unwrap();
+    alias["id"] = json!("hke_synthetic_alias");
+    alias["session_id"] = json!(session);
+    alias["admission_bindings"] = json!([]);
+    assert!(
+        h.store
+            .append(
+                "hke_synthetic_alias",
+                Expected::Seq(-1),
+                vec![NewEvent::new("hook.started.1", alias)]
+            )
+            .is_err()
+    );
     let mut forged = serde_json::to_value(owner.record()).unwrap();
     forged["status"] = json!("completed");
     forged["duration_ms"] = json!(1);
@@ -682,19 +678,15 @@ async fn synthetic_once_claims_are_per_test_identity_and_io_policy_remains_pinne
     let mut definition = definition(&h);
     definition.handler.once = true;
     definition.digest = definition.handler.digest().unwrap();
-    let event = synthetic_event(&h, "ses_synthetic_once");
+    let event = synthetic_event(&h);
     let owner = start_synthetic_hook_execution(h.store.clone(), &event, &definition, true).unwrap();
     assert!(start_synthetic_hook_execution(h.store.clone(), &event, &definition, true).is_err());
     let record = owner.finish(result()).unwrap();
     assert!(record.io.is_some());
     assert!(start_synthetic_hook_execution(h.store.clone(), &event, &definition, true).is_err());
-    let owner = start_synthetic_hook_execution(
-        h.store.clone(),
-        &synthetic_event(&h, "ses_synthetic_again"),
-        &definition,
-        false,
-    )
-    .unwrap();
+    let owner =
+        start_synthetic_hook_execution(h.store.clone(), &synthetic_event(&h), &definition, false)
+            .unwrap();
     owner.finish(result()).unwrap();
     let count: i64 = h
         .store
