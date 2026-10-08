@@ -9,6 +9,12 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
+    /// Transient hook diagnostics; raw IO is not persisted by the live bus.
+    HookNotice {
+        session_id: String,
+        hook_id: String,
+        message: String,
+    },
     /// A child request notification on an ancestor's live stream, never its history.
     RequestRouted {
         session_id: String,

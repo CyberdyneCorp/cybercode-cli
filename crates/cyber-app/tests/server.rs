@@ -1122,3 +1122,60 @@ async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
     assert_eq!(repeated.status(), StatusCode::CONFLICT);
     application.runtime.shutdown().await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn application_reloads_command_hooks_at_the_builtin_boundary() {
+    use cyber_server::runtime::{Asker, CreateSession, Invocation, ToolHost, ToolOutcome};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let application = app(&root).await;
+    let file = application.paths.config.join("cyber.json");
+    let config = serde_json::json!({"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{}}}}});
+    std::fs::write(&file, config.to_string()).unwrap();
+    let session = application
+        .runtime
+        .create_session(CreateSession {
+            directory: root.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut changed = config;
+    changed["hooks"] = serde_json::json!({"PreToolUse":[{"matcher":"write","hooks":[{"type":"command","id":"app-guard","command":"cat >/dev/null; printf '%s' '{\"decision\":\"deny\",\"reason\":\"live guard\"}'"}]}]});
+    std::fs::write(&file, changed.to_string()).unwrap();
+    let outcome = application
+        .host
+        .execute(
+            Invocation {
+                session_id: session.id.clone(),
+                directory: session.directory.clone(),
+                agent: session.agent.clone(),
+                mode: session.mode.clone(),
+                rules: session.rules.clone(),
+                message_id: "msg_hook".into(),
+                call_id: "call_hook".into(),
+                operation_key: "call_hook".into(),
+                name: "write".into(),
+                input: serde_json::json!({"path":"blocked.txt","content":"unsafe"}),
+                attempt: 1,
+                asker: Asker::detached(),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    assert!(
+        matches!(&outcome, ToolOutcome::Failed(message) if message.contains("live guard")),
+        "{outcome:?}"
+    );
+    assert!(!root.join("blocked.txt").exists());
+    let records = application
+        .runtime
+        .hook_executions(&session.id, 10)
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].hook_id, "app-guard");
+    assert!(records[0].io.is_none());
+}

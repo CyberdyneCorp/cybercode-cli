@@ -156,6 +156,14 @@ fn elapsed(started: Instant) -> u64 {
 }
 
 impl Runtime {
+    pub fn hook_notice(&self, session: &str, hook_id: &str, message: &str) {
+        self.inner.bus.publish(super::LiveEvent::HookNotice {
+            session_id: session.into(),
+            hook_id: hook_id.into(),
+            message: message.into(),
+        });
+    }
+
     /// The caller supplies captured identity and an inspected definition, then still
     /// verifies authority, current config/trust and sandbox policy before launching.
     pub async fn start_hook_execution(

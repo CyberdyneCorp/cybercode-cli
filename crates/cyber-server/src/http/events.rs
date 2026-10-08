@@ -126,6 +126,7 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
 fn session_of(event: &LiveEvent) -> &str {
     match event {
         LiveEvent::Durable { session_id, .. }
+        | LiveEvent::HookNotice { session_id, .. }
         | LiveEvent::RequestRouted { session_id, .. }
         | LiveEvent::WorktreeSetup { session_id, .. }
         | LiveEvent::TextDelta { session_id, .. }
@@ -320,7 +321,8 @@ async fn follow(
                 }
             }
             Ok(LiveEvent::Deleted { session_id }) if session_id == id => return,
-            Ok(event @ LiveEvent::RequestRouted { .. })
+            Ok(event @ LiveEvent::HookNotice { .. })
+            | Ok(event @ LiveEvent::RequestRouted { .. })
             | Ok(event @ LiveEvent::WorktreeSetup { .. })
                 if session_of(&event) == id =>
             {

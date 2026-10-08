@@ -1036,6 +1036,14 @@ impl App {
                 }
                 vec![Action::Refresh]
             }
+            "session.hook.notice" => {
+                self.toast(format!(
+                    "hook {}: {}",
+                    data["hook_id"].as_str().unwrap_or_default(),
+                    data["message"].as_str().unwrap_or_default()
+                ));
+                Vec::new()
+            }
             "session.error" => {
                 self.toast(format!(
                     "error: {}",

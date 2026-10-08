@@ -9,7 +9,6 @@ pub mod retention;
 mod server;
 mod services;
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -24,7 +23,7 @@ use cyber_server::runtime::{
     Snapshots, ToolHost,
 };
 use cyber_store::{Store, StoreOptions};
-use cyber_tools::{BuiltinHost, ConfigFn, HostOptions};
+use cyber_tools::{BuiltinHost, ConfigFn, HookConfigFn, HostOptions};
 use serde_json::{Value, json};
 
 pub use registration::{
@@ -67,7 +66,7 @@ pub fn version() -> &'static str {
 }
 
 /// The resolved config of a Location as `(value, sources)`; empty on errors.
-pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
+pub fn hook_config_loader(paths: Paths, home: PathBuf) -> Arc<HookConfigFn> {
     Arc::new(move |location: &std::path::Path| {
         let req = LoadRequest {
             location,
@@ -78,10 +77,13 @@ pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
             overrides: &[],
             flags: json!({}),
         };
-        config::load(&req)
-            .map(|r| (r.value, r.sources.into_iter().collect::<BTreeMap<_, _>>()))
-            .map_err(|e| e.to_string())
+        config::load(&req).map_err(|error| error.to_string())
     })
+}
+
+pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
+    let resolved = hook_config_loader(paths, home);
+    Arc::new(move |location| resolved(location).map(|resolved| (resolved.value, resolved.sources)))
 }
 
 impl App {
@@ -116,6 +118,10 @@ impl App {
             sandbox_policy: opts.sandbox_policy.clone(),
             sandbox_helper: cyber_sandbox::find_helper(),
         });
+        host.attach_hook_config(
+            hook_config_loader(opts.paths.clone(), opts.home.clone()),
+            cyber_core::trust::TrustStore::new(opts.paths.trust_file()),
+        )?;
         let snapshots: Arc<dyn Snapshots> = if opts.snapshots {
             let loader = Arc::clone(&config);
             let snaps = cyber_snapshot::GitSnapshots::new(

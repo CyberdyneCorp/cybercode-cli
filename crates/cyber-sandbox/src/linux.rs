@@ -66,7 +66,14 @@ pub(crate) fn wrap(
     }
     for path in launch.unreadable.iter().filter(|p| p.exists()) {
         if path.is_dir() {
-            out.extend(["--tmpfs".into(), text(path)]);
+            // An empty private overlay must also reject writes, rather than
+            // reporting success for effects that disappear with the sandbox.
+            out.extend([
+                "--tmpfs".into(),
+                text(path),
+                "--remount-ro".into(),
+                text(path),
+            ]);
         } else {
             out.extend(["--ro-bind".into(), "/dev/null".into(), text(path)]);
         }

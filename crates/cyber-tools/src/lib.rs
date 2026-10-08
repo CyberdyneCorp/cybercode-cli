@@ -12,6 +12,8 @@ mod reconcile;
 mod sandboxing;
 mod schema;
 mod subagents;
+mod tool_hooks;
+pub use tool_hooks::HookConfigFn;
 mod tools;
 mod worktrees;
 

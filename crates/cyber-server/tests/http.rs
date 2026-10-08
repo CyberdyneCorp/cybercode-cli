@@ -3106,3 +3106,50 @@ async fn reviewed_subtree_reopening_requires_tcp_authentication() {
     assert_eq!(response.status(), StatusCode::OK);
     assert!(h.runtime.capture_child_admission(&root).is_ok());
 }
+
+#[tokio::test]
+async fn hook_notices_follow_session_and_location_without_durable_replay() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let cursor = h.state(&id).await.last_seq;
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{base}/event"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut location = response.bytes_stream();
+    read_sse_until(&mut location, "server.connected").await;
+    let response = client
+        .get(format!("{base}/sessions/{id}/events?after={cursor}"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut session = response.bytes_stream();
+    h.runtime
+        .hook_notice(&id, "guard", "private hook diagnostic");
+    for stream in [&mut location, &mut session] {
+        let notice = read_sse_until(stream, "session.hook.notice").await;
+        assert!(
+            notice.contains(&id)
+                && notice.contains("guard")
+                && notice.contains("private hook diagnostic"),
+            "{notice}"
+        );
+        assert!(!notice.contains("\"durable\""));
+    }
+    assert_eq!(h.state(&id).await.last_seq, cursor);
+    let response = client
+        .get(format!("{base}/sessions/{id}/history"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let history = response.text().await.unwrap();
+    assert!(
+        !history.contains("private hook diagnostic") && !history.contains("session.hook.notice")
+    );
+}

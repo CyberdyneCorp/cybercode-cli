@@ -144,6 +144,7 @@ impl BuiltinHost {
         removed: Option<&Managed>,
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let ctx = Ctx {
+            hook_decision: None,
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,
@@ -476,6 +477,7 @@ impl ChildWorktree {
             guard = lock.lock() => guard,
         };
         let ctx = Ctx {
+            hook_decision: None,
             host: &host,
             inv: &self.invocation,
             policy: host
@@ -529,6 +531,7 @@ impl ChildWorktree {
             return Ok(());
         }
         let ctx = Ctx {
+            hook_decision: None,
             policy: host
                 .policy(&self.invocation)
                 .await

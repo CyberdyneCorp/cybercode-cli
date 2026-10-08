@@ -439,6 +439,7 @@ mod tests {
             rules: serde_json::Value::Null,
         };
         let ctx = Ctx {
+            hook_decision: None,
             host: &host,
             inv: &inv,
             policy: host.policy(&inv).await.unwrap(),

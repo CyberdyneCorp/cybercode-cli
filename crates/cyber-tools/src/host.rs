@@ -53,6 +53,7 @@ pub struct BuiltinHost {
     reads: Mutex<HashMap<String, HashSet<PathBuf>>>,
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
+    pub(crate) hook_config: OnceLock<crate::tool_hooks::HooksConfig>,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -68,6 +69,7 @@ impl BuiltinHost {
             reads: Mutex::default(),
             locks: Mutex::default(),
             runtime: OnceLock::new(),
+            hook_config: OnceLock::new(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -604,6 +606,7 @@ impl ToolHost for BuiltinHost {
 
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         Box::pin(async move {
+            let mut inv = inv;
             if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
                 return ToolOutcome::Failed(error.to_string());
             }
@@ -617,6 +620,14 @@ impl ToolHost for BuiltinHost {
             {
                 return ToolOutcome::Failed(message);
             }
+            let hook_decision = match self
+                .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
+                .await
+            {
+                Ok(allowed) => allowed,
+                Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
+                Err(ToolError::Aborted) => return ToolOutcome::Aborted,
+            };
             let policy = match self.policy(&inv).await {
                 Ok(policy) => policy,
                 Err(error) => return ToolOutcome::Failed(error),
@@ -626,14 +637,25 @@ impl ToolHost for BuiltinHost {
                 policy,
                 location: PathBuf::from(&inv.directory),
                 inv: &inv,
-                cancel,
+                cancel: cancel.clone(),
+                hook_decision,
             };
+            let started = std::time::Instant::now();
             let keep_tail = matches!(inv.name.as_str(), "bash" | "powershell");
-            match tool.run(&ctx).await {
+            let outcome = match tool.run(&ctx).await {
                 Ok(output) => self.settle_output(&ctx, output, keep_tail),
                 Err(ToolError::Failed(message)) => ToolOutcome::Failed(message),
                 Err(ToolError::Aborted) => ToolOutcome::Aborted,
+            };
+            if let Err(error) = self.post_tool_hooks(&inv, &outcome, started, cancel).await {
+                return match error {
+                    ToolError::Aborted => ToolOutcome::Aborted,
+                    ToolError::Failed(error) => {
+                        ToolOutcome::Failed(format!("Tool settled; post-hook failed: {error}"))
+                    }
+                };
             }
+            outcome
         })
     }
 
@@ -717,6 +739,7 @@ impl ToolHost for BuiltinHost {
             };
             self.check_agent_tool(&inv)?;
             let ctx = Ctx {
+                hook_decision: None,
                 host: self,
                 policy: self.policy(&inv).await?,
                 location: PathBuf::from(&inv.directory),
@@ -771,6 +794,7 @@ impl ToolHost for BuiltinHost {
         let command = command.to_string();
         Box::pin(async move {
             let ctx = Ctx {
+                hook_decision: None,
                 host: self,
                 policy: self.policy_for(&inv, None).await?,
                 location: PathBuf::from(&inv.directory),
@@ -839,6 +863,7 @@ pub(crate) struct Ctx<'a> {
     pub policy: Policy,
     pub location: PathBuf,
     pub cancel: CancellationToken,
+    pub hook_decision: Option<cyber_core::hooks::HookAction>,
 }
 
 impl Ctx<'_> {
@@ -898,7 +923,11 @@ impl Ctx<'_> {
         if let Decision::Deny(reason) = decision {
             return Err(ToolError::Failed(deny_message(&reason)));
         }
-        let needs_approval = decision == Decision::Ask;
+        if self.hook_decision == Some(cyber_core::hooks::HookAction::Ask) {
+            return self.ask(req, always, metadata).await;
+        }
+        let needs_approval = decision == Decision::Ask
+            && self.hook_decision != Some(cyber_core::hooks::HookAction::Allow);
         if self
             .review_auto_permission(&req, &mut metadata, needs_approval)
             .await?

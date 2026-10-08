@@ -244,3 +244,20 @@ async fn network_off_blocks_everything() {
     .await;
     assert!(!ok);
 }
+
+#[tokio::test]
+async fn hidden_credential_directories_reject_writes_without_changing_host_files() {
+    let s = setup();
+    let target = s.home.join(".ssh/config");
+    std::fs::write(&target, "original").unwrap();
+    for config in [json!({}), json!({"sandbox":{"policy":"read-only"}})] {
+        let l = launch(&s, config, None);
+        let (ok, output) = run(&l, &format!("printf stolen > {}", q(&target))).await;
+        assert!(!ok, "hidden directory accepted a write: {output}");
+        assert!(output.contains("Read-only file system"), "{output}");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
+        let fresh = s.home.join(".ssh/new-secret");
+        assert!(!run(&l, &format!("touch {}", q(&fresh))).await.0);
+        assert!(!fresh.exists());
+    }
+}

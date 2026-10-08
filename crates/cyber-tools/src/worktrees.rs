@@ -100,6 +100,7 @@ impl BuiltinHost {
             asker: Asker::detached(),
         };
         let ctx = Ctx {
+            hook_decision: None,
             host: self,
             inv: &inv,
             policy: self.policy(&inv).await?,
@@ -159,6 +160,7 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> io::Result<Vec<WorktreeListing>> {
         let ctx = Ctx {
+            hook_decision: None,
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,
@@ -362,6 +364,7 @@ impl BuiltinHost {
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let location = Path::new(&inv.directory).canonicalize()?;
         let ctx = Ctx {
+            hook_decision: None,
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,
@@ -537,6 +540,7 @@ impl BuiltinHost {
             ));
         }
         let ctx = Ctx {
+            hook_decision: None,
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,

@@ -277,6 +277,13 @@ async fn stop(client: &Client, id: &str, run: &mut Run, reason: &str) {
 async fn handle(run: &mut Run, out: &mut Out, client: &Client, id: &str, event: Event) -> bool {
     match event.kind.as_str() {
         "session.idle" => return true,
+        "session.hook.notice" => {
+            eprintln!(
+                "hook {}: {}",
+                event.data["hook_id"].as_str().unwrap_or_default(),
+                event.data["message"].as_str().unwrap_or_default()
+            );
+        }
         "session.error" => {
             if event.data["kind"] == "budget_exceeded" {
                 run.stop_reason

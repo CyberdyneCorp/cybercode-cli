@@ -47,6 +47,7 @@ impl BuiltinHost {
             asker: Asker::detached(),
         };
         let ctx = Ctx {
+            hook_decision: None,
             host: self,
             inv: &inv,
             policy: self.policy(&inv).await.map_err(io::Error::other)?,
@@ -178,6 +179,7 @@ impl BuiltinHost {
         child_inv.mode = context.child.mode.clone();
         child_inv.rules = context.child.rules.clone();
         let child_ctx = Ctx {
+            hook_decision: None,
             host: self,
             inv: &child_inv,
             policy: self.policy(&child_inv).await.map_err(io::Error::other)?,
