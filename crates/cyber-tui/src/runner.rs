@@ -280,6 +280,19 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         Msg::ModeChanged { session_id, result } => {
             return mode_changed(app, refresh, session_id, result);
         }
+        Msg::HookDefinitions {
+            session_id,
+            directory,
+            generation,
+            result,
+        } => {
+            if session_id == app.session.id
+                && directory == app.session.directory
+                && matches!(app.overlay, crate::app::Overlay::HookDefinitions)
+            {
+                app.hook_definitions.apply(generation, result);
+            }
+        }
         Msg::HookHistory {
             session_id,
             generation,
@@ -499,6 +512,68 @@ fn set_title(app: &App) {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    #[test]
+    fn hook_definitions_responses_cannot_cross_session_location_or_dismissal() {
+        let mut app = app();
+        app.session.directory = "/current".into();
+        let mut refresh = Refresh::default();
+        let generation = app.hook_definitions.load();
+        app.overlay = crate::app::Overlay::HookDefinitions;
+        for (id, directory) in [("previous", "/current"), ("current", "/previous")] {
+            apply(
+                &mut app,
+                Ok(Msg::HookDefinitions {
+                    session_id: id.into(),
+                    directory: directory.into(),
+                    generation,
+                    result: Err("foreign failure".into()),
+                }),
+                &mut refresh,
+            );
+            assert!(
+                !app.hook_definitions
+                    .lines()
+                    .join(" ")
+                    .contains("foreign failure")
+            );
+        }
+        app.overlay = crate::app::Overlay::None;
+        apply(
+            &mut app,
+            Ok(Msg::HookDefinitions {
+                session_id: "current".into(),
+                directory: "/current".into(),
+                generation,
+                result: Err("dismissed failure".into()),
+            }),
+            &mut refresh,
+        );
+        assert!(matches!(app.overlay, crate::app::Overlay::None));
+        assert!(
+            !app.hook_definitions
+                .lines()
+                .join(" ")
+                .contains("dismissed failure")
+        );
+        app.overlay = crate::app::Overlay::HookDefinitions;
+        apply(
+            &mut app,
+            Ok(Msg::HookDefinitions {
+                session_id: "current".into(),
+                directory: "/current".into(),
+                generation,
+                result: Err("current failure".into()),
+            }),
+            &mut refresh,
+        );
+        assert!(
+            app.hook_definitions
+                .lines()
+                .join(" ")
+                .contains("current failure")
+        );
+    }
 
     #[test]
     fn hook_history_responses_do_not_reopen_dismissed_views_or_cross_sessions() {

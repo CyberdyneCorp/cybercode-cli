@@ -100,6 +100,14 @@
 - **AND** untrusted checkout definitions SHALL remain withheld and their paths SHALL be reported separately
 - **AND** inspection SHALL NOT admit Session, hook execution or model work
 
+#### Scenario: TUI definition review and exact-digest confirmation
+- **WHEN** the user opens `/hooks`
+- **THEN** the viewer SHALL inspect the current Location's loaded definitions, file origins, selectors, redacted handlers, original digests and trust/sandbox requirements through authenticated public APIs
+- **AND** withheld checkout paths SHALL be reported without interpreting their handlers
+- **AND** changing a project/local approval SHALL require confirmation of the displayed selected digest and reload current metadata after success
+- **AND** refresh, dismissal or Session/Location changes SHALL invalidate pending confirmation and stale responses
+- **AND** other scopes SHALL NOT offer individual checkout approvals
+
 #### Scenario: Authenticated exact-digest trust mutation
 - **WHEN** a client posts a digest to `/hooks/trust` for a Location
 - **THEN** the API SHALL require authentication and current checkout trust and approve only a freshly resolved project/local digest

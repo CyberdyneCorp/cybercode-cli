@@ -27,6 +27,12 @@ pub enum Msg {
         generation: u64,
         result: Result<crate::cost::Cost, String>,
     },
+    HookDefinitions {
+        session_id: String,
+        directory: String,
+        generation: u64,
+        result: Result<crate::hook_definitions::Catalog, String>,
+    },
     HookHistory {
         session_id: String,
         generation: u64,
@@ -121,6 +127,38 @@ pub(crate) fn err(e: cyber_client::ClientError) -> String {
     e.to_string()
 }
 
+async fn hook_definitions(
+    client: &Client,
+    session: &Session,
+    generation: u64,
+    change: Option<(String, bool)>,
+) -> Result<Msg, String> {
+    let result = async {
+        if let Some((digest, approve)) = change {
+            client
+                .post(
+                    if approve {
+                        "/hooks/trust"
+                    } else {
+                        "/hooks/untrust"
+                    },
+                    json!({"digest":digest}),
+                )
+                .await
+                .map_err(err)?;
+        }
+        let value = client.get("/hooks").await.map_err(err)?;
+        crate::hook_definitions::Catalog::parse(&value)
+    }
+    .await;
+    Ok(Msg::HookDefinitions {
+        session_id: session.id.clone(),
+        directory: session.directory.clone(),
+        generation,
+        result,
+    })
+}
+
 async fn hook_history(
     client: &Client,
     session: &Session,
@@ -200,9 +238,9 @@ pub async fn perform_owned(
             Ok(crate::admissions::perform(client, request, stop).await)
         }
         Action::Refresh => snapshot(client, &session.id).await,
-        Action::LoadHookHistory { generation, cursor } => {
-            hook_history(client, session, generation, cursor).await
-        }
+        Action::LoadHookDefinitions { .. }
+        | Action::ChangeHookTrust { .. }
+        | Action::LoadHookHistory { .. } => inspect_hooks(client, session, action).await,
         Action::LoadCost { generation } => {
             let result = client
                 .get(&format!("/usage?scope=session&id={}", encode(&session.id)))
@@ -241,6 +279,23 @@ pub async fn perform_owned(
         }
         Action::SaveTheme(_) | Action::Editor(_) | Action::Quit => Ok(Msg::Done),
         other => converse(client, session, other, context).await,
+    }
+}
+
+async fn inspect_hooks(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::LoadHookDefinitions { generation } => {
+            hook_definitions(client, session, generation, None).await
+        }
+        Action::ChangeHookTrust {
+            generation,
+            digest,
+            approve,
+        } => hook_definitions(client, session, generation, Some((digest, approve))).await,
+        Action::LoadHookHistory { generation, cursor } => {
+            hook_history(client, session, generation, cursor).await
+        }
+        _ => Err("Unsupported hook inspection action".into()),
     }
 }
 

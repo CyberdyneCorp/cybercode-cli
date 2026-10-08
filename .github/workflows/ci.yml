@@ -83,6 +83,9 @@ jobs:
       - name: Native TUI hook receipt history
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tui hook_history
+      - name: Native TUI hook definition and trust review
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui hook_definitions
       - name: Native authenticated hook definition catalog
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test server hook_catalog_api

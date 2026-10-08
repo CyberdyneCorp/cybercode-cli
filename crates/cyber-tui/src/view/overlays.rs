@@ -335,6 +335,7 @@ pub fn cost(f: &mut Frame, app: &App, area: Rect) {
 pub fn help(f: &mut Frame, app: &App, area: Rect) {
     let rows = [
         ("Enter", "send (steer while running)"),
+        ("/hooks", "review definitions and exact checkout approvals"),
         ("/cost", "token classes, subtree cost and cache hit rate"),
         (
             "/hooks history",
@@ -453,6 +454,23 @@ pub fn hook_history(f: &mut Frame, app: &App, area: Rect) {
                 app,
                 "Hook execution history · R refresh · N next · ↑/↓ scroll · Esc close",
             )),
+        rect,
+    );
+}
+
+pub fn hook_definitions(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered(area, 110, 30);
+    let lines: Vec<Line> = app
+        .hook_definitions
+        .lines()
+        .into_iter()
+        .map(Line::from)
+        .collect();
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .scroll((app.hook_definitions.scroll, 0))
+            .block(frame(app, "Hook definitions · T approve · U revoke")),
         rect,
     );
 }

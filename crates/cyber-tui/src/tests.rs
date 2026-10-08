@@ -1438,3 +1438,327 @@ async fn hook_history_uses_authenticated_receipt_api_and_encodes_next_cursor() {
         )
     }));
 }
+
+fn hook_definitions_fixture(trusted: bool) -> serde_json::Value {
+    serde_json::json!({"data":{"hooks":[{
+        "event":"PreToolUse","scope":"project","source":"/repo/cyber.jsonc","pointer":"#/hooks/PreToolUse/0/hooks/0",
+        "matcher":"write","paths":["src/**"],"handler":{"type":"http","url":"https://example.test/hook","headers":{"Authorization":"private-token"}},
+        "digest":format!("sha256:{}","a".repeat(64)),"trusted":trusted,"sandbox_required":true
+    }],"withheld_definitions":[],"checkout_trusted":true},"location":{"directory":"/repo"}})
+}
+fn open_hook_definitions(app: &mut App) -> u64 {
+    typed(app, "/hooks");
+    let actions = app.on_key(key(KeyCode::Enter));
+    let [Action::LoadHookDefinitions { generation }] = actions.as_slice() else {
+        panic!("expected catalog request")
+    };
+    *generation
+}
+#[test]
+fn hook_definitions_review_requires_confirmation_for_exact_digest_and_masks_credentials() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_definitions(&mut app);
+    app.hook_definitions.apply(
+        generation,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(false)),
+    );
+    let rendered = screen(&app);
+    assert!(rendered.contains("PreToolUse") && rendered.contains("src/**"));
+    assert!(rendered.contains("sandbox required: true"));
+    assert!(
+        !rendered.contains("private-token")
+            && !format!("{:?}", app.hook_definitions).contains("private-token")
+    );
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+    assert!(app.on_key(key(KeyCode::Char('t'))).is_empty());
+    assert!(
+        app.hook_definitions
+            .lines()
+            .join(" ")
+            .contains("Approve this exact digest?")
+    );
+    app.on_key(key(KeyCode::Char('n')));
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+    app.on_key(key(KeyCode::Char('t')));
+    let actions = app.on_key(key(KeyCode::Char('y')));
+    let [
+        Action::ChangeHookTrust {
+            generation,
+            digest,
+            approve: true,
+        },
+    ] = actions.as_slice()
+    else {
+        panic!("expected confirmed approval")
+    };
+    assert_eq!(digest, &format!("sha256:{}", "a".repeat(64)));
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+    app.hook_definitions.apply(
+        *generation,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(true)),
+    );
+    app.on_key(key(KeyCode::Char('u')));
+    assert!(matches!(
+        app.on_key(key(KeyCode::Char('y'))).as_slice(),
+        [Action::ChangeHookTrust { approve: false, .. }]
+    ));
+}
+#[test]
+fn hook_definitions_withheld_global_and_untrusted_checkouts_cannot_be_approved() {
+    for (scope, trusted_checkout) in [("global", true), ("project", false)] {
+        let mut value = hook_definitions_fixture(false);
+        value["data"]["hooks"][0]["scope"] = serde_json::json!(scope);
+        value["data"]["checkout_trusted"] = serde_json::json!(trusted_checkout);
+        value["data"]["withheld_definitions"] = serde_json::json!(["/repo/cyber.jsonc\u{1b}"]);
+        let mut app = App::new(session(false), Vec::new(), "cyber");
+        let generation = open_hook_definitions(&mut app);
+        app.hook_definitions
+            .apply(generation, crate::hook_definitions::Catalog::parse(&value));
+        app.on_key(key(KeyCode::Char('t')));
+        assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+        let rendered = screen(&app);
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(rendered.contains("Withheld:"));
+    }
+}
+#[test]
+fn hook_definitions_refresh_dismissal_and_location_switch_invalidate_confirmation() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let old = open_hook_definitions(&mut app);
+    app.hook_definitions.apply(
+        old,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(false)),
+    );
+    app.on_key(key(KeyCode::Char('t')));
+    let actions = app.on_key(key(KeyCode::Char('r')));
+    let [Action::LoadHookDefinitions { generation }] = actions.as_slice() else {
+        panic!("expected refresh")
+    };
+    app.hook_definitions.apply(
+        old,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(true)),
+    );
+    assert!(
+        !app.hook_definitions
+            .lines()
+            .join(" ")
+            .contains("Trusted: true")
+    );
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+    app.hook_definitions.apply(
+        *generation,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(false)),
+    );
+    app.on_key(key(KeyCode::Char('t')));
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.overlay, Overlay::HookDefinitions));
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.overlay, Overlay::None));
+    app.hook_definitions.apply(
+        *generation,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(true)),
+    );
+    let generation = open_hook_definitions(&mut app);
+    app.hook_definitions.apply(
+        generation,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(false)),
+    );
+    app.on_key(key(KeyCode::Char('t')));
+    let mut rebound = app.session.clone();
+    rebound.directory = "/other".into();
+    app.set_session(rebound);
+    assert!(matches!(app.overlay, Overlay::None));
+    assert!(app.hook_definitions.change().is_none());
+    let mut malformed = hook_definitions_fixture(false);
+    malformed["data"]["hooks"][0]["digest"] = serde_json::json!("unknown");
+    assert!(crate::hook_definitions::Catalog::parse(&malformed).is_err());
+}
+#[tokio::test]
+async fn hook_definitions_http_uses_authenticated_location_and_refreshes_after_mutations() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = cyber_client::Client::http(
+        &format!("http://{}", listener.local_addr().unwrap()),
+        Some("pw".into()),
+    );
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let responses = [
+        hook_definitions_fixture(false),
+        serde_json::json!({"data":{"digest":digest}}),
+        hook_definitions_fixture(true),
+        serde_json::json!({"data":{"digest":digest,"revoked":true}}),
+        hook_definitions_fixture(false),
+    ];
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        for response in responses {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 2048];
+            loop {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                bytes.extend_from_slice(&buffer[..n]);
+                if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]);
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if bytes.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            requests.push(String::from_utf8(bytes).unwrap());
+            let body = response.to_string();
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+        }
+        requests
+    });
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    app.session.directory = "/repo space".into();
+    let generation = open_hook_definitions(&mut app);
+    let msg = crate::perform::perform(
+        &client,
+        &app.session,
+        Action::LoadHookDefinitions { generation },
+    )
+    .await
+    .unwrap();
+    let crate::perform::Msg::HookDefinitions { result, .. } = msg else {
+        panic!("expected catalog")
+    };
+    app.hook_definitions.apply(generation, result);
+    for (control, approve) in [('t', true), ('u', false)] {
+        app.on_key(key(KeyCode::Char(control)));
+        let action = app.on_key(key(KeyCode::Char('y'))).pop().unwrap();
+        assert!(matches!(&action, Action::ChangeHookTrust { approve:value,.. } if *value==approve));
+        let msg = crate::perform::perform(&client, &app.session, action)
+            .await
+            .unwrap();
+        let crate::perform::Msg::HookDefinitions {
+            generation,
+            result,
+            directory,
+            ..
+        } = msg
+        else {
+            panic!("expected refreshed catalog")
+        };
+        assert_eq!(directory, "/repo space");
+        app.hook_definitions.apply(generation, result);
+    }
+    let requests = server.join().unwrap();
+    for request in &requests {
+        assert!(
+            request
+                .to_lowercase()
+                .contains("authorization: basic y3lizxi6chc=")
+        );
+        assert!(
+            request
+                .to_lowercase()
+                .contains("x-cyber-directory: /repo%20space")
+        );
+    }
+    assert!(requests[0].starts_with("GET /api/v1/hooks "));
+    assert!(requests[1].starts_with("POST /api/v1/hooks/trust "));
+    assert!(requests[3].starts_with("POST /api/v1/hooks/untrust "));
+    for i in [1, 3] {
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                requests[i].split("\r\n\r\n").nth(1).unwrap()
+            )
+            .unwrap(),
+            serde_json::json!({"digest":digest})
+        );
+    }
+}
+
+#[test]
+fn hook_definitions_selection_is_frozen_during_exact_digest_confirmation() {
+    let mut value = hook_definitions_fixture(false);
+    let mut second = value["data"]["hooks"][0].clone();
+    second["digest"] = serde_json::json!(format!("sha256:{}", "b".repeat(64)));
+    second["source"] = serde_json::json!("/repo/.cyber/local.jsonc");
+    value["data"]["hooks"].as_array_mut().unwrap().push(second);
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_definitions(&mut app);
+    app.hook_definitions
+        .apply(generation, crate::hook_definitions::Catalog::parse(&value));
+    app.on_key(key(KeyCode::Down));
+    assert!(
+        app.hook_definitions
+            .lines()
+            .join(" ")
+            .contains("Definition 2/2")
+    );
+    app.on_key(key(KeyCode::PageDown));
+    assert!(app.hook_definitions.scroll > 0);
+    app.on_key(key(KeyCode::Char('t')));
+    app.on_key(key(KeyCode::Up));
+    let action = app.on_key(key(KeyCode::Char('y')));
+    let [
+        Action::ChangeHookTrust {
+            generation,
+            digest,
+            approve: true,
+        },
+    ] = action.as_slice()
+    else {
+        panic!("expected selected digest approval")
+    };
+    assert_eq!(digest, &format!("sha256:{}", "b".repeat(64)));
+    app.hook_definitions
+        .apply(*generation, Err("Digest no longer current".into()));
+    assert!(
+        app.hook_definitions
+            .lines()
+            .join(" ")
+            .contains("Digest no longer current")
+    );
+    app.on_key(key(KeyCode::Char('r')));
+    assert!(
+        app.hook_definitions
+            .lines()
+            .join(" ")
+            .contains("Loading current")
+    );
+}
+
+#[test]
+fn hook_definitions_worktree_rebound_event_clears_review_and_pending_approval() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_definitions(&mut app);
+    app.hook_definitions.apply(
+        generation,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(false)),
+    );
+    app.on_key(key(KeyCode::Char('t')));
+    let actions = app.on_event(
+        "session.worktree.rebound.1",
+        &serde_json::json!({"to":{"path":"/new checkout"}}),
+    );
+    assert!(matches!(actions.as_slice(), [Action::Refresh]));
+    assert_eq!(app.session.directory, "/new checkout");
+    assert!(matches!(app.overlay, Overlay::None));
+    assert!(app.hook_definitions.change().is_none());
+    app.hook_definitions.apply(
+        generation,
+        crate::hook_definitions::Catalog::parse(&hook_definitions_fixture(true)),
+    );
+    assert!(
+        !app.hook_definitions
+            .lines()
+            .join(" ")
+            .contains("Trusted: true")
+    );
+}

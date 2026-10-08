@@ -53,6 +53,14 @@ pub enum Action {
         request: String,
         body: Value,
     },
+    LoadHookDefinitions {
+        generation: u64,
+    },
+    ChangeHookTrust {
+        generation: u64,
+        digest: String,
+        approve: bool,
+    },
     LoadHookHistory {
         generation: u64,
         cursor: Option<String>,
@@ -171,6 +179,7 @@ pub enum Overlay {
     Help,
     Cost,
     HookHistory,
+    HookDefinitions,
     ConfirmBypass,
     ConfirmStopTasks,
 }
@@ -188,6 +197,7 @@ pub struct App {
     pub session: Session,
     pub cost: crate::cost::CostView,
     pub hooks: crate::hooks::View,
+    pub hook_definitions: crate::hook_definitions::View,
     pub(crate) mode_selection: Option<String>,
     pub items: Vec<Item>,
     /// Text streaming in for assistant messages not yet durable.
@@ -221,6 +231,7 @@ impl App {
             session,
             cost: Default::default(),
             hooks: Default::default(),
+            hook_definitions: Default::default(),
             mode_selection: None,
             items: Vec::new(),
             streaming: BTreeMap::new(),
@@ -250,7 +261,11 @@ impl App {
         if session.id != self.session.id {
             self.cost.invalidate();
             self.hooks.invalidate();
-            if matches!(self.overlay, Overlay::Cost | Overlay::HookHistory) {
+            self.hook_definitions.invalidate();
+            if matches!(
+                self.overlay,
+                Overlay::Cost | Overlay::HookHistory | Overlay::HookDefinitions
+            ) {
                 self.overlay = Overlay::None;
             }
         }
@@ -258,6 +273,10 @@ impl App {
             self.mode_selection = None;
         }
         if session.directory != self.session.directory {
+            self.hook_definitions.invalidate();
+            if matches!(self.overlay, Overlay::HookDefinitions) {
+                self.overlay = Overlay::None;
+            }
             self.agents.clear();
             self.completion = None;
         }
@@ -364,6 +383,7 @@ impl App {
                 }
             }
             Overlay::HookHistory => self.hook_history_key(key),
+            Overlay::HookDefinitions => self.hook_definitions_key(key),
             Overlay::Cost => match key.code {
                 KeyCode::Char('r' | 'R') => self.load_cost(),
                 KeyCode::Esc | KeyCode::Enter => {
@@ -377,6 +397,50 @@ impl App {
                 Vec::new()
             }
         }
+    }
+
+    fn hook_definitions_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Char('r' | 'R') => {
+                return vec![Action::LoadHookDefinitions {
+                    generation: self.hook_definitions.load(),
+                }];
+            }
+            KeyCode::Up => self.hook_definitions.select(false),
+            KeyCode::Down => self.hook_definitions.select(true),
+            KeyCode::PageUp => {
+                self.hook_definitions.scroll = self.hook_definitions.scroll.saturating_sub(5)
+            }
+            KeyCode::PageDown => {
+                self.hook_definitions.scroll = self.hook_definitions.scroll.saturating_add(5).min(
+                    self.hook_definitions
+                        .lines()
+                        .len()
+                        .saturating_sub(1)
+                        .min(u16::MAX as usize) as u16,
+                )
+            }
+            KeyCode::Char('t' | 'T') => self.hook_definitions.confirm(true),
+            KeyCode::Char('u' | 'U') => self.hook_definitions.confirm(false),
+            KeyCode::Char('y' | 'Y') => {
+                if let Some((generation, digest, approve)) = self.hook_definitions.change() {
+                    return vec![Action::ChangeHookTrust {
+                        generation,
+                        digest,
+                        approve,
+                    }];
+                }
+            }
+            KeyCode::Char('n' | 'N') => {
+                self.hook_definitions.cancel_confirmation();
+            }
+            KeyCode::Esc if !self.hook_definitions.cancel_confirmation() => {
+                self.hook_definitions.invalidate();
+                self.overlay = Overlay::None;
+            }
+            _ => {}
+        }
+        Vec::new()
     }
 
     fn load_hook_history(&mut self, cursor: Option<String>) -> Vec<Action> {
@@ -678,8 +742,14 @@ impl App {
                 self.overlay = Overlay::HookHistory;
                 self.load_hook_history(None)
             }
+            "hooks" if args.is_empty() => {
+                self.overlay = Overlay::HookDefinitions;
+                vec![Action::LoadHookDefinitions {
+                    generation: self.hook_definitions.load(),
+                }]
+            }
             "hooks" => {
-                self.toast("Use /hooks history for execution receipts; definition review is still under implementation");
+                self.toast("Use /hooks to review definitions or /hooks history for receipts");
                 Vec::new()
             }
             "cost" => {
@@ -1063,11 +1133,9 @@ impl App {
             "server.connected" => vec![Action::Refresh],
             "session.worktree.rebound.1" => {
                 if let Some(path) = data["to"]["path"].as_str().filter(|path| !path.is_empty()) {
-                    if self.session.directory != path {
-                        self.agents.clear();
-                        self.completion = None;
-                    }
-                    self.session.directory = path.into();
+                    let mut session = self.session.clone();
+                    session.directory = path.into();
+                    self.set_session(session);
                 }
                 vec![Action::Refresh]
             }
