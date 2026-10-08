@@ -59,6 +59,10 @@ impl Context {
         Ok(config::load(&self.request())?)
     }
 
+    pub fn withheld_hooks(&self) -> Result<Vec<config::RawHookSection>, CliError> {
+        Ok(config::withheld_hook_sections(&self.request())?)
+    }
+
     pub fn trust(&self) -> Result<TrustReport, CliError> {
         Ok(config::trust_report(&self.request())?)
     }

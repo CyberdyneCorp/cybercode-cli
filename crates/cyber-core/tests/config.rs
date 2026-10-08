@@ -968,3 +968,81 @@ fn hook_catalog_keeps_invocation_hooks_sandboxed_and_rejects_generic_profile_ori
             .contains("unsupported hook origin")
     );
 }
+
+#[test]
+fn withheld_hook_review_preserves_literal_invalid_sections_and_never_reads_host_values() {
+    struct NoSecrets;
+    impl cyber_core::env::EnvSource for NoSecrets {
+        fn get(&self, key: &str) -> Option<String> {
+            assert_eq!(
+                key, "CYBER_DISABLE_PROJECT_CONFIG",
+                "review must not substitute host values"
+            );
+            None
+        }
+    }
+    let f = Fixture::new();
+    f.write("cyber.jsonc", r#"{
+        // Invalid handler schema remains reviewable while withheld.
+        "hooks":{"PreToolUse":[{"hooks":[{"type":"unsupported","command":"{env:DO_NOT_READ}","headers":{"Authorization":"private-token"}}]}]},
+        "profiles":{"review/a~b":{"hooks":{"FakeEvent":{"literal":"{file:/unreadable-secret}"}}}}
+    }"#);
+    f.write(".cyber/cyber.local.jsonc", r#"{"hooks":17}"#);
+    let nested = f.repo.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    f.write("nested/cyber.jsonc", r#"{"hooks":{"PostToolUse":[]}}"#);
+    let mut req = f.request(&nested, &[]);
+    req.env = &NoSecrets;
+    let sections = config::withheld_hook_sections(&req).unwrap();
+    assert_eq!(sections.len(), 4);
+    assert_eq!(sections[0].pointer, "/hooks");
+    assert_eq!(sections[1].pointer, "/profiles/review~1a~0b/hooks");
+    assert_eq!(
+        sections[2].source,
+        nested.join("cyber.jsonc").display().to_string()
+    );
+    assert_eq!(sections[3].scope, cyber_core::hooks::HookScope::Local);
+    assert_eq!(sections[3].value, json!(17));
+    assert_eq!(
+        sections[0].value["PreToolUse"][0]["hooks"][0]["command"],
+        "{env:DO_NOT_READ}"
+    );
+    assert_eq!(
+        sections[0].value["PreToolUse"][0]["hooks"][0]["headers"]["Authorization"],
+        "***"
+    );
+    assert_eq!(
+        sections[1].value["FakeEvent"]["literal"],
+        "{file:/unreadable-secret}"
+    );
+    assert!(
+        !serde_json::to_string(&sections)
+            .unwrap()
+            .contains("private-token")
+    );
+    let report = config::trust_report(&req).unwrap();
+    assert!(!report.trusted);
+    assert!(!f.paths.trust_file().exists());
+    TrustStore::new(f.paths.trust_file())
+        .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+        .unwrap();
+    assert!(config::withheld_hook_sections(&req).unwrap().is_empty());
+    assert!(
+        config::load(&f.request(&nested, &[])).is_err(),
+        "raw review must not silently validate or activate invalid handlers"
+    );
+}
+
+#[test]
+fn withheld_hook_review_honors_disabled_project_config_and_reports_jsonc_errors() {
+    let mut f = Fixture::new();
+    f.write("cyber.jsonc", "{ malformed");
+    assert!(config::withheld_hook_sections(&f.request(&f.repo, &[])).is_err());
+    f.env
+        .insert("CYBER_DISABLE_PROJECT_CONFIG".into(), "1".into());
+    assert!(
+        config::withheld_hook_sections(&f.request(&f.repo, &[]))
+            .unwrap()
+            .is_empty()
+    );
+}

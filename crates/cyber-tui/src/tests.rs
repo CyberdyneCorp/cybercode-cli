@@ -1762,3 +1762,25 @@ fn hook_definitions_worktree_rebound_event_clears_review_and_pending_approval() 
             .contains("Trusted: true")
     );
 }
+
+#[test]
+fn hook_definitions_show_withheld_raw_sections_without_activation_or_approval() {
+    let mut value = hook_definitions_fixture(false);
+    value["data"]["hooks"] = serde_json::json!([]);
+    value["data"]["checkout_trusted"] = serde_json::json!(false);
+    value["data"]["withheld_hooks"] = serde_json::json!([{
+        "scope":"local","source":"/repo/.cyber/cyber.local.jsonc","pointer":"/profiles/review~1a/hooks",
+        "value":{"InvalidEvent":{"command":"{env:SECRET}\u{1b}","headers":{"Authorization":"private-token"}}}
+    }]);
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_definitions(&mut app);
+    app.hook_definitions
+        .apply(generation, crate::hook_definitions::Catalog::parse(&value));
+    let lines = app.hook_definitions.lines().join(" ");
+    assert!(lines.contains("literal/inactive") && lines.contains("{env:SECRET}"));
+    assert!(!lines.contains("private-token") && !lines.contains('\u{1b}'));
+    assert!(lines.contains("review~1a"));
+    assert!(!format!("{:?}", app.hook_definitions).contains("private-token"));
+    app.on_key(key(KeyCode::Char('t')));
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+}

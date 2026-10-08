@@ -172,6 +172,7 @@ fn scope(source: &str) -> Result<HookScope, String> {
 pub struct HookReview {
     pub hooks: Vec<ReviewedHook>,
     pub withheld_definitions: Vec<String>,
+    pub withheld_hooks: Vec<crate::config::RawHookSection>,
     pub checkout_trusted: bool,
 }
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -208,6 +209,7 @@ impl HookReview {
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Self {
             hooks,
+            withheld_hooks: Vec::new(),
             checkout_trusted: resolved.trust.trusted,
             withheld_definitions: if resolved.trust.trusted {
                 Vec::new()

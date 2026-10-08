@@ -406,6 +406,7 @@ export type HookOutcome = "ok" | "blocked" | "error" | "timeout" | "skipped";
 export type HookReview = {
   hooks: ReviewedHook[];
   withheld_definitions: string[];
+  withheld_hooks: RawHookSection[];
   checkout_trusted: boolean;
 };
 
@@ -654,6 +655,14 @@ export type QuestionOption = {
 export type QuestionReplyBody = {
   /** Selected labels (or custom text) per question; omit to dismiss. */
   answers?: Array<string[]> | null;
+};
+
+/** Original, redacted project hook sections. Never substitute or validate handlers. */
+export type RawHookSection = {
+  source: string;
+  pointer: string;
+  scope: HookScope;
+  value: unknown;
 };
 
 /** The receipt returned for an admission and for an exact retry of it. */

@@ -591,3 +591,42 @@ fn hook_listing_redacts_credentials_and_reports_global_scope() {
     );
     assert!(!stdout(&output).contains("secret-credential"));
 }
+
+#[test]
+fn hook_listing_reviews_withheld_literals_without_approval_or_execution() {
+    let env = Env::new();
+    let repo = env.repo(r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"invalid","command":"{env:UNREAD_SECRET} {file:/unreadable-secret}","headers":{"Authorization":"private-token"}}]}]}}"#);
+    let cwd = repo.to_str().unwrap();
+    let list = json(&env.cyber(&["hooks", "list", "--cwd", cwd, "--format", "json"]));
+    assert!(list["hooks"].as_array().unwrap().is_empty());
+    assert_eq!(list["withheld_hooks"][0]["scope"], "project");
+    assert_eq!(list["withheld_hooks"][0]["pointer"], "/hooks");
+    assert_eq!(
+        list["withheld_hooks"][0]["value"]["PreToolUse"][0]["hooks"][0]["command"],
+        "{env:UNREAD_SECRET} {file:/unreadable-secret}"
+    );
+    assert_eq!(
+        list["withheld_hooks"][0]["value"]["PreToolUse"][0]["hooks"][0]["headers"]["Authorization"],
+        "***"
+    );
+    assert!(!list.to_string().contains("private-token"));
+    let text = env.cyber(&["hooks", "list", "--cwd", cwd]);
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.contains("literal, inactive") && text.contains("UNREAD_SECRET"));
+    assert!(!text.contains("private-token"));
+    let report = json(&env.cyber(&["trust", "inspect", "--cwd", cwd, "--format", "json"]));
+    assert_eq!(report["trusted"], false);
+    assert!(
+        !env.cyber(&[
+            "hooks",
+            "trust",
+            "--cwd",
+            cwd,
+            "--digest",
+            report["digest"].as_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+}

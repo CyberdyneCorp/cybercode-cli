@@ -1256,6 +1256,17 @@ async fn hook_catalog_api_reloads_location_trust_and_redacts_without_execution()
     let withheld = hook_catalog(&client, &url, &nested).await;
     assert_eq!(withheld["data"]["hooks"].as_array().unwrap().len(), 1);
     assert_eq!(withheld["data"]["checkout_trusted"], false);
+    assert_eq!(withheld["data"]["withheld_hooks"][0]["scope"], "project");
+    assert_eq!(
+        withheld["data"]["withheld_hooks"][0]["value"]["PreToolUse"][0]["hooks"][0]["command"],
+        "echo unsafe > effect"
+    );
+    assert!(
+        withheld["data"]["withheld_hooks"][0]
+            .get("digest")
+            .is_none()
+    );
+
     assert!(
         !withheld["data"]["withheld_definitions"]
             .as_array()
@@ -1296,6 +1307,12 @@ async fn hook_catalog_api_reloads_location_trust_and_redacts_without_execution()
     assert_eq!(
         review["location"]["directory"],
         nested.canonicalize().unwrap().display().to_string()
+    );
+    assert!(
+        review["data"]["withheld_hooks"]
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
     let hooks = review["data"]["hooks"].as_array().unwrap();
     assert_eq!(hooks.len(), 2);

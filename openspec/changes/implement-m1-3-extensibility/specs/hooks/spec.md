@@ -100,6 +100,14 @@
 - **AND** untrusted checkout definitions SHALL remain withheld and their paths SHALL be reported separately
 - **AND** inspection SHALL NOT admit Session, hook execution or model work
 
+#### Scenario: Review withheld hook sections without interpretation
+- **WHEN** checkout configuration is untrusted and the user inspects hooks through the catalog API, CLI list or TUI viewer
+- **THEN** original project/local top-level and profile hook sections SHALL be available as redacted literal JSON with file origins and escaped JSON pointers
+- **AND** host environment and file substitutions, handler validation and execution SHALL NOT run for this review
+- **AND** malformed handler schemas SHALL remain inspectable without activation
+- **AND** these raw sections SHALL NOT receive executable handler digests or individual approval controls
+- **AND** disabled project configuration SHALL remain undiscovered and approved checkout sections SHALL NOT be duplicated as withheld
+
 #### Scenario: TUI definition review and exact-digest confirmation
 - **WHEN** the user opens `/hooks`
 - **THEN** the viewer SHALL inspect the current Location's loaded definitions, file origins, selectors, redacted handlers, original digests and trust/sandbox requirements through authenticated public APIs

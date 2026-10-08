@@ -77,6 +77,64 @@ pub fn trust_report(req: &LoadRequest<'_>) -> Result<TrustReport, ConfigError> {
     assess_trust(req, &project)
 }
 
+/// Original, redacted project hook sections. Never substitute or validate handlers.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct RawHookSection {
+    pub source: String,
+    pub pointer: String,
+    pub scope: crate::hooks::HookScope,
+    pub value: Value,
+}
+
+pub fn withheld_hook_sections(req: &LoadRequest<'_>) -> Result<Vec<RawHookSection>, ConfigError> {
+    let project = read_project_layers(req)?;
+    if assess_trust(req, &project)?.trusted {
+        return Ok(Vec::new());
+    }
+    let mut sections = Vec::new();
+    for layer in project {
+        collect_hook_sections(&layer, &mut sections);
+    }
+    Ok(sections)
+}
+
+fn collect_hook_sections(layer: &Layer, sections: &mut Vec<RawHookSection>) {
+    let mut append = |pointer: String, value: &Value| {
+        sections.push(RawHookSection {
+            source: layer
+                .path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
+            pointer,
+            scope: if layer
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .is_some_and(|n| n == "cyber.local.jsonc")
+            {
+                crate::hooks::HookScope::Local
+            } else {
+                crate::hooks::HookScope::Project
+            },
+            value: super::redact_secrets(value),
+        });
+    };
+    if let Some(hooks) = layer.value.get("hooks") {
+        append("/hooks".into(), hooks);
+    }
+    if let Some(profiles) = layer.value.get("profiles").and_then(Value::as_object) {
+        for (name, profile) in profiles {
+            if let Some(hooks) = profile.get("hooks") {
+                append(
+                    format!("{}/hooks", merge::child_pointer("/profiles", name)),
+                    hooks,
+                );
+            }
+        }
+    }
+}
+
 /// The git worktree root containing `location`, or `location` itself outside git.
 pub fn project_root(location: &Path) -> PathBuf {
     location

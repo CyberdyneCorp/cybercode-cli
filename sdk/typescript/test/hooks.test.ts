@@ -27,11 +27,13 @@ test("session hook receipts preserve pagination, unresolved status and IO omissi
 test("hook catalog retains Location, withheld definitions and current trust metadata", async () => {
   const { client, calls } = mockClient(() => json(200, {
     location: { directory: "/repo", project: { id: "global", directory: "/repo" } },
-    data: { hooks: [], withheld_definitions: ["/repo/cyber.jsonc#/hooks"], checkout_trusted: false },
+    data: { hooks: [], withheld_definitions: ["/repo/cyber.jsonc#/hooks"], checkout_trusted: false, withheld_hooks: [{ source:"/repo/cyber.jsonc", pointer:"/hooks", scope:"project", value:{PreToolUse:{command:"{env:UNREAD}"}} }] },
   }), { directory: "/repo" });
   const review = await client.hook.list();
   assert.equal(review.location.directory, "/repo");
   assert.equal(review.data.checkout_trusted, false);
+  assert.equal(review.data.withheld_hooks[0]?.scope, "project");
+  assert.deepEqual(review.data.withheld_hooks[0]?.value, {PreToolUse:{command:"{env:UNREAD}"}});
   assert.deepEqual(review.data.withheld_definitions, ["/repo/cyber.jsonc#/hooks"]);
   assert.equal(calls[0]?.method, "GET");
   assert.equal(calls[0]?.url.pathname, "/api/v1/hooks");

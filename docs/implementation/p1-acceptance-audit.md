@@ -429,3 +429,5 @@ Canonical source: [worktrees](../../openspec/specs/worktrees/spec.md).
 Authenticated hook approval/revocation APIs now have exact current-digest and checkout-trust refusal coverage, malformed-config obsolete revocation and typed Location-preserving SDK methods. These tests accept the tested API boundaries; full TUI definition/trust controls and native API acceptance remain open.
 
 TUI `/hooks` now reviews loaded definitions and exact project/local approvals through authenticated public APIs, with confirmation, fresh post-write metadata and Session/Location/generation guards. This covers loaded review and tested trust controls locally; native acceptance, raw withheld inspection, last-run integration and synthetic testing remain required.
+
+Raw withheld top-level/profile sections now have a distinct catalog/API/SDK/CLI/TUI representation, retaining literal placeholders and origins with credential redaction. Review does not substitute, validate or compile handlers and provides no executable approval digest. Native acceptance, last-run integration and synthetic testing remain required.

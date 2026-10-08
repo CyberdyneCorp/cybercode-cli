@@ -64,7 +64,7 @@ pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliE
     let resolved = ctx.config()?;
     let catalog = HookCatalog::from_config(&resolved).map_err(CliError::usage)?;
     match cmd {
-        HooksCmd::List => list(&catalog, &resolved, &store, global),
+        HooksCmd::List => list(&catalog, &resolved, &store, global, &ctx.withheld_hooks()?),
         HooksCmd::Trust { digest } => approve(&catalog, &resolved, &store, &digest, global),
         HooksCmd::Untrust { .. } | HooksCmd::History { .. } => {
             unreachable!("handled before configuration loading")
@@ -77,6 +77,7 @@ fn list(
     resolved: &cyber_core::config::Resolved,
     store: &TrustStore,
     global: &GlobalArgs,
+    raw: &[cyber_core::config::RawHookSection],
 ) -> Result<(), CliError> {
     let hooks: Vec<_> = catalog
         .definitions
@@ -97,7 +98,8 @@ fn list(
         resolved.trust.definitions.as_slice()
     };
     if output::is_json(global.format) {
-        let value = serde_json::json!({"hooks":hooks,"withheld_definitions":withheld});
+        let value =
+            serde_json::json!({"hooks":hooks,"withheld_definitions":withheld,"withheld_hooks":raw});
         return output::json(&cyber_core::config::redact_secrets(&value));
     }
     for hook in hooks {
@@ -113,6 +115,20 @@ fn list(
     }
     for definition in withheld {
         println!("withheld until checkout configuration approval: {definition}");
+    }
+    for section in raw {
+        println!(
+            "Withheld {:?} {}#{} (literal, inactive; no handler approval digest)",
+            section.scope,
+            section.source.escape_debug(),
+            section.pointer.escape_debug()
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&section.value)
+                .map_err(|error| CliError::usage(error.to_string()))?
+                .escape_debug()
+        );
     }
     Ok(())
 }

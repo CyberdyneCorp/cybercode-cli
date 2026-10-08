@@ -25,6 +25,8 @@ pub struct Catalog {
     hooks: Vec<Definition>,
     withheld_definitions: Vec<String>,
     checkout_trusted: bool,
+    #[serde(default)]
+    withheld_hooks: Vec<cyber_core::config::RawHookSection>,
 }
 impl Catalog {
     pub fn parse(value: &Value) -> Result<Self, String> {
@@ -44,6 +46,9 @@ impl Catalog {
                 return Err("Invalid hook definition metadata".into());
             }
             row.handler = cyber_core::config::redact_secrets(&row.handler);
+        }
+        for section in &mut catalog.withheld_hooks {
+            section.value = cyber_core::config::redact_secrets(&section.value);
         }
         Ok(catalog)
     }
@@ -152,6 +157,20 @@ impl View {
                 "Withheld: {} (review checkout configuration with cyber trust)",
                 safe(path)
             ));
+        }
+        for section in &catalog.withheld_hooks {
+            lines.push(format!(
+                "Withheld {:?} {}#{} · literal/inactive · no handler approval digest",
+                section.scope,
+                safe(&section.source),
+                safe(&section.pointer)
+            ));
+            lines.extend(
+                serde_json::to_string_pretty(&section.value)
+                    .unwrap_or_default()
+                    .lines()
+                    .map(safe),
+            );
         }
         let Some(row) = catalog.hooks.get(self.selected) else {
             lines.push("No loaded hook definitions.".into());

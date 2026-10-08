@@ -10,6 +10,9 @@ use cyber_server::runtime::{CatalogResolver, ToolDef, ToolHost, TurnContext};
 use cyber_tools::{BuiltinHost, ConfigFn};
 use futures::future::BoxFuture;
 
+pub type HookReviewFn =
+    dyn Fn(&Path) -> Result<Vec<cyber_core::config::RawHookSection>, String> + Send + Sync;
+
 pub struct AppServices {
     resolver: Arc<CatalogResolver>,
     host: Arc<BuiltinHost>,
@@ -17,6 +20,7 @@ pub struct AppServices {
     config: Arc<ConfigFn>,
     recent_file: PathBuf,
     data: PathBuf,
+    hook_review: Arc<HookReviewFn>,
 }
 
 impl AppServices {
@@ -27,6 +31,7 @@ impl AppServices {
         config: Arc<ConfigFn>,
         recent_file: PathBuf,
         data: PathBuf,
+        hook_review: Arc<HookReviewFn>,
     ) -> Self {
         Self {
             resolver,
@@ -35,6 +40,7 @@ impl AppServices {
             config,
             recent_file,
             data,
+            hook_review,
         }
     }
 }
@@ -71,9 +77,13 @@ impl Services for AppServices {
         &self,
         location: &Path,
     ) -> Result<cyber_core::hooks::HookReview, cyber_server::http::ApiError> {
-        self.host
+        let mut review = self
+            .host
             .review_hooks(location)
-            .map_err(cyber_server::http::ApiError::invalid)
+            .map_err(cyber_server::http::ApiError::invalid)?;
+        review.withheld_hooks =
+            (self.hook_review)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        Ok(review)
     }
 
     fn trust_hook(

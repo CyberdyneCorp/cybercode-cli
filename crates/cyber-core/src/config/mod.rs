@@ -26,7 +26,10 @@ pub use auto_mode::{AutoFallback, AutoModeSettings, AutoPattern};
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};
 pub use hooks::{HookCondition, HookGroup, HookHandler, HookKind, HookSettings};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
-pub use load::{LoadRequest, ensure_global_config, load, project_root, trust_report};
+pub use load::{
+    LoadRequest, RawHookSection, ensure_global_config, load, project_root, trust_report,
+    withheld_hook_sections,
+};
 pub use validate::redact_secrets;
 
 /// Published JSON Schema URL written into new config documents.

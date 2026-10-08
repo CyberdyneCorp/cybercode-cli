@@ -81,6 +81,21 @@ pub fn hook_config_loader(paths: Paths, home: PathBuf) -> Arc<HookConfigFn> {
     })
 }
 
+fn withheld_hook_loader(paths: Paths, home: PathBuf) -> Arc<services::HookReviewFn> {
+    Arc::new(move |location| {
+        config::withheld_hook_sections(&LoadRequest {
+            location,
+            paths: &paths,
+            env: &ProcessEnv,
+            home: &home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .map_err(|error| error.to_string())
+    })
+}
+
 pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
     let resolved = hook_config_loader(paths, home);
     Arc::new(move |location| resolved(location).map(|resolved| (resolved.value, resolved.sources)))
@@ -165,6 +180,7 @@ impl App {
             config,
             opts.paths.state.join("model.json"),
             opts.paths.data.clone(),
+            withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
         );
         let state = AppState {
             service: None,
