@@ -1,0 +1,307 @@
+//! Hook admission, atomic terminal projections, privacy and interrupted owners.
+mod support;
+use cyber_core::config::{self, LoadRequest};
+use cyber_core::hooks::{
+    HookAction, HookCatalog, HookDecision, HookDefinition, HookEvent, HookIdentity, HookLocation,
+    HookOutcome,
+};
+use cyber_core::paths::Paths;
+use cyber_server::runtime::{HookExecutionIo, HookExecutionResult, HookExecutionStatus};
+use cyber_store::{Expected, NewEvent};
+use serde_json::json;
+use support::{Harness, Setup};
+
+fn definition(h: &Harness) -> HookDefinition {
+    let env = std::collections::HashMap::from([(
+        "CYBER_HOME".into(),
+        h.dir.path().join("config").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, h.dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(paths.config.join("cyber.jsonc"),json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"printf reviewed","id":"guard"}]}]}}).to_string()).unwrap();
+    let resolved = config::load(&LoadRequest {
+        location: &h.repo,
+        paths: &paths,
+        env: &env,
+        home: h.dir.path(),
+        profile: None,
+        overrides: &[],
+        flags: json!({}),
+    })
+    .unwrap();
+    HookCatalog::from_config(&resolved)
+        .unwrap()
+        .definitions
+        .remove(0)
+}
+async fn event(h: &Harness, id: &str) -> HookEvent {
+    let info = h.state(id).await.info;
+    HookEvent::new(
+        "PreToolUse",
+        HookIdentity {
+            session_id: id.into(),
+            location: HookLocation {
+                directory: info.directory.into(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: info.agent,
+            mode: info.mode,
+        },
+        1,
+        json!({"tool_input":{"command":"private stdin"}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )
+    .unwrap()
+}
+fn result() -> HookExecutionResult {
+    HookExecutionResult {
+        outcome: HookOutcome::Blocked,
+        decision: HookDecision {
+            decision: Some(HookAction::Deny),
+            reason: Some("policy".into()),
+            ..Default::default()
+        },
+        acknowledged: true,
+        must_stop: false,
+        io: Some(HookExecutionIo {
+            stdin: "private stdin".into(),
+            stdout: "private stdout".into(),
+            stderr: "private stderr".into(),
+            truncated: false,
+        }),
+    }
+}
+
+#[tokio::test]
+async fn committed_start_and_terminal_receipts_survive_runtime_restart_without_raw_io() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), false)
+        .await
+        .unwrap();
+    owner.verify(&h.runtime).unwrap();
+    let id = owner.record().id.clone();
+    let started = h.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0].status, HookExecutionStatus::Running);
+    assert_eq!(
+        h.store.read_events(&id, -1, 10).unwrap().events[0].kind,
+        "hook.started.1"
+    );
+    let settled = owner.finish(result()).unwrap();
+    assert_eq!(settled.status, HookExecutionStatus::Completed);
+    assert!(settled.io.is_none());
+    assert_eq!(settled.outcome, Some(HookOutcome::Blocked));
+    let replay = h.restart().hook_executions(&session, 10).unwrap();
+    assert_eq!(
+        replay[0].decision.as_ref().unwrap().reason.as_deref(),
+        Some("policy")
+    );
+    let events = h.store.read_events(&id, -1, 10).unwrap().events;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].kind, "hook.executed.1");
+    let encoded = serde_json::to_string(&events).unwrap();
+    for text in ["private stdin", "private stdout", "private stderr"] {
+        assert!(!encoded.contains(text));
+    }
+    // Independent execution aggregates must not advance the cached Session sequence.
+    h.runtime.rename(&session, "after hook").await.unwrap();
+}
+
+#[tokio::test]
+async fn admitted_io_policy_allows_bounded_capture_and_cannot_change_at_settlement() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), true)
+        .await
+        .unwrap();
+    let id = owner.record().id.clone();
+    let mut forged = serde_json::to_value(owner.record()).unwrap();
+    forged["status"] = json!("completed");
+    forged["duration_ms"] = json!(1);
+    forged["outcome"] = json!("ok");
+    forged["decision"] = json!({});
+    forged["acknowledged"] = json!(true);
+    forged["log_io"] = json!(false);
+    assert!(
+        h.store
+            .append(
+                &id,
+                Expected::Seq(0),
+                vec![NewEvent::new("hook.executed.1", forged)]
+            )
+            .is_err()
+    );
+    assert_eq!(h.store.read_events(&id, -1, 10).unwrap().events.len(), 1);
+    let receipt = owner.finish(result()).unwrap();
+    assert_eq!(receipt.io.unwrap().stdout, "private stdout");
+    let duplicate = h.store.read_events(&id, -1, 10).unwrap().events[1]
+        .data
+        .clone();
+    assert!(
+        h.store
+            .append(
+                &id,
+                Expected::Any,
+                vec![NewEvent::new("hook.executed.1", duplicate)]
+            )
+            .is_err()
+    );
+    assert_eq!(h.store.read_events(&id, -1, 10).unwrap().events.len(), 2);
+}
+
+#[tokio::test]
+async fn disposed_or_invalid_terminal_owner_records_unknown_without_success() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), true)
+        .await
+        .unwrap();
+    drop(owner);
+    let record = h.runtime.hook_executions(&session, 10).unwrap().remove(0);
+    assert_eq!(record.status, HookExecutionStatus::Unknown);
+    assert_eq!(record.outcome, Some(HookOutcome::Error));
+    assert_eq!(record.acknowledged, Some(false));
+    assert!(record.must_stop);
+    assert!(record.io.is_none());
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), true)
+        .await
+        .unwrap();
+    let id = owner.record().id.clone();
+    let mut invalid = result();
+    invalid.acknowledged = false;
+    invalid.outcome = HookOutcome::Ok;
+    assert!(owner.finish(invalid).is_err());
+    let events = h.store.read_events(&id, -1, 10).unwrap().events;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].data["status"], "unknown");
+    assert_eq!(events[1].data["outcome"], "error");
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), false)
+        .await
+        .unwrap();
+    let id = owner.record().id.clone();
+    let mut unacknowledged_allow = result();
+    unacknowledged_allow.acknowledged = false;
+    unacknowledged_allow.outcome = HookOutcome::Error;
+    unacknowledged_allow.decision.decision = Some(HookAction::Allow);
+    assert!(owner.finish(unacknowledged_allow).is_err());
+    let events = h.store.read_events(&id, -1, 10).unwrap().events;
+    assert_eq!(events[1].data["status"], "unknown");
+    assert!(events[1].data["decision"]["decision"].is_null());
+}
+
+#[tokio::test]
+async fn closed_scope_refuses_new_hook_admission_but_allows_terminal_receipts() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let event = event(&h, &session).await;
+    let definition = definition(&h);
+    let owner = h
+        .runtime
+        .start_hook_execution(&event, &definition, false)
+        .await
+        .unwrap();
+    let original = h
+        .store
+        .read_events(&owner.record().id, -1, 10)
+        .unwrap()
+        .events[0]
+        .data
+        .clone();
+    h.runtime.stop_subtree(&session).await.unwrap();
+    assert!(owner.verify(&h.runtime).is_err());
+    assert!(
+        h.runtime
+            .start_hook_execution(&event, &definition, false)
+            .await
+            .is_err()
+    );
+    // Verify the single writer independently refuses replay of old captured authority.
+    let mut raced = original;
+    raced["id"] = json!("hke_racing");
+    assert!(
+        h.store
+            .append(
+                "hke_racing",
+                Expected::Seq(-1),
+                vec![NewEvent::new("hook.started.1", raced)]
+            )
+            .is_err()
+    );
+    assert!(
+        h.store
+            .read_events("hke_racing", -1, 10)
+            .unwrap()
+            .events
+            .is_empty()
+    );
+    assert!(owner.finish(result()).is_ok());
+}
+
+#[tokio::test]
+async fn foreign_location_or_changed_definition_cannot_admit_a_hook() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let mut definition = definition(&h);
+    definition.handler.command = Some("changed".into());
+    let event = event(&h, &session).await;
+    assert!(
+        h.runtime
+            .start_hook_execution(&event, &definition, false)
+            .await
+            .is_err()
+    );
+    let foreign = HookEvent::new(
+        "PreToolUse",
+        HookIdentity {
+            location: HookLocation {
+                directory: h.dir.path().into(),
+                workspace: None,
+            },
+            ..event.identity().clone()
+        },
+        1,
+        serde_json::Map::new(),
+    )
+    .unwrap();
+    assert!(
+        h.runtime
+            .start_hook_execution(&foreign, &self::definition(&h), false)
+            .await
+            .is_err()
+    );
+    assert!(h.runtime.hook_executions(&session, 10).unwrap().is_empty());
+    assert!(h.runtime.hook_executions(&session, 0).is_err());
+}
+
+#[tokio::test]
+async fn oversized_opt_in_io_rolls_back_terminal_projection_and_preserves_unknown_evidence() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), true)
+        .await
+        .unwrap();
+    let id = owner.record().id.clone();
+    let mut oversized = result();
+    oversized.io.as_mut().unwrap().stdout = "x".repeat(1024 * 1024 + 1);
+    assert!(owner.finish(oversized).is_err());
+    let events = h.store.read_events(&id, -1, 10).unwrap().events;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].data["status"], "unknown");
+    assert!(events[1].data.get("io").is_none());
+}

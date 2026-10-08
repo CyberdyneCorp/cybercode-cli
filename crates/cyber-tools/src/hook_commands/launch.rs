@@ -38,6 +38,79 @@ impl HookCommandRunner<'_> {
         event: &HookEvent,
         cancel: CancellationToken,
     ) -> Result<HookCommandReport, String> {
+        self.run_inner(pointer, event, cancel, None).await
+    }
+
+    /// Runtime-owned command execution with durable admission, cancellation tracking
+    /// and a terminal receipt. Lifecycle dispatch and decision application are separate.
+    pub async fn run_recorded(
+        &self,
+        runtime: &cyber_server::runtime::Runtime,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: CancellationToken,
+    ) -> Result<HookCommandReport, String> {
+        let (definition, _) = self.authorize(pointer, event)?;
+        if cancel.is_cancelled() {
+            return Err("hook command cancelled before admission".into());
+        }
+        let log_io = self.resolved.value["telemetry"]["log_hook_io"]
+            .as_bool()
+            .unwrap_or(false);
+        let mut owner = runtime
+            .start_hook_execution(event, &definition, log_io)
+            .await
+            .map_err(|error| error.to_string())?;
+        let stop = owner.cancellation();
+        let result = {
+            let execution =
+                self.run_inner(pointer, event, stop.clone(), Some((&mut owner, runtime)));
+            tokio::pin!(execution);
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {stop.cancel(); execution.await}
+                result = &mut execution => result,
+            }
+        };
+        let mut report = match &result {
+            Ok(report) => cyber_server::runtime::HookExecutionResult {
+                outcome: report.outcome,
+                decision: report.decision.clone(),
+                acknowledged: report.acknowledged,
+                must_stop: report.must_stop,
+                io: None,
+            },
+            Err(_) => cyber_server::runtime::HookExecutionResult {
+                outcome: if stop.is_cancelled() {
+                    super::HookOutcome::Skipped
+                } else {
+                    super::HookOutcome::Error
+                },
+                decision: Default::default(),
+                acknowledged: true,
+                must_stop: stop.is_cancelled(),
+                io: None,
+            },
+        };
+        let fenced = owner.verify(runtime).is_err();
+        report.must_stop |= fenced;
+        owner.finish(report).map_err(|error| error.to_string())?;
+        result.map(|mut report| {
+            report.must_stop |= fenced;
+            report
+        })
+    }
+
+    async fn run_inner(
+        &self,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: CancellationToken,
+        mut owner: Option<(
+            &mut cyber_server::runtime::HookExecution,
+            &cyber_server::runtime::Runtime,
+        )>,
+    ) -> Result<HookCommandReport, String> {
         let (definition, sandbox_all) = self.authorize(pointer, event)?;
         if cancel.is_cancelled() {
             return Err("hook command cancelled before launch".into());
@@ -57,6 +130,11 @@ impl HookCommandRunner<'_> {
         self.authorize(pointer, event)?;
         if cancel.is_cancelled() || tokio::time::Instant::now() >= deadline {
             return Err("hook command cancelled or expired before launch".into());
+        }
+        if let Some((owner, runtime)) = owner.as_mut() {
+            owner
+                .mark_launch(runtime)
+                .map_err(|error| error.to_string())?;
         }
         let spawned = HookCommandProcess::spawn(
             &prepared.wrapped.program,

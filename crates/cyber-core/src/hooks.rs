@@ -10,12 +10,12 @@ pub use envelope::{HookEvent, HookIdentity, HookLocation};
 use std::io;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{HookHandler, HookKind, HookSettings, Resolved};
 use crate::trust::{HookInvocationTrust, TrustStore};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookScope {
     Managed,
@@ -34,6 +34,16 @@ impl HookScope {
     pub fn requires_sandbox(self, sandbox_all: bool) -> bool {
         sandbox_all || !matches!(self, Self::Managed | Self::Global)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookOutcome {
+    Ok,
+    Blocked,
+    Error,
+    Timeout,
+    Skipped,
 }
 
 #[derive(Debug, Clone, Serialize)]

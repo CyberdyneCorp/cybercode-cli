@@ -200,3 +200,29 @@
 #### Scenario: Command scratch preserves unknown ownership
 - **WHEN** the command owner is disposed or termination is not acknowledged
 - **THEN** its private scratch SHALL remain available for recovery rather than being removed as though execution had settled
+
+
+### Requirement: Hook observability
+(P1) Every hook execution SHALL be recorded as a durable `hook.executed.1` event with hook id, event, scope, duration, outcome (`ok`, `blocked`, `error`, `timeout`, `skipped`) and decision. Execution SHALL NOT record stdin or stdout contents unless `telemetry.log_hook_io` is true. Outcomes SHALL be visible in the transcript when a hook blocks or modifies an action.
+
+#### Scenario: Blocked action visible
+- **WHEN** a hook blocks an `edit`
+- **THEN** the transcript shows `blocked by hook <id>: <reason>` and a `hook.executed.1` event with outcome `blocked` is stored
+
+#### Scenario: Durable admission precedes hook effects
+- **WHEN** a hook execution is admitted for a captured Session and Location
+- **THEN** its start record and projection SHALL commit atomically before the caller receives execution ownership
+- **AND** closed or stale Session/ancestor admission fences SHALL refuse the start
+- **AND** the execution owner SHALL remain subject to verification before launch or decision admission
+
+#### Scenario: Unknown hook owner disposal
+- **WHEN** an admitted execution owner is disposed without acknowledged settlement
+- **THEN** its durable receipt SHALL record an explicit unknown error with missing acknowledgement
+- **AND** unavailable storage SHALL leave the committed start as unresolved evidence rather than implying success or authorizing replay
+- **AND** terminal recording SHALL remain possible after scope closure
+
+#### Scenario: Receipt IO policy is pinned
+- **WHEN** an execution starts with hook IO logging disabled
+- **THEN** terminal recording SHALL omit supplied raw stdin, stdout and stderr
+- **AND** an enabled execution MAY record bounded IO without changing its decision semantics
+- **AND** receipt projection and settlement SHALL commit together exactly once

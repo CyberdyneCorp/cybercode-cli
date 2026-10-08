@@ -489,6 +489,7 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
             .optional()
             .map_err(|e| e.to_string())?
             .flatten(),
+        super::hooks::STARTED => event.data["session_id"].as_str().map(str::to_string),
         "job.started.1" => Some(event.aggregate_id.clone()),
         super::activity::CHANGED if event.data["status"] == "pending" => {
             event.data["session_id"].as_str().map(str::to_string)
@@ -546,6 +547,11 @@ fn check_closed_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(
         ADMITTED | RESUMED | PROMOTED | EPOCH_STARTED | STEP_STARTED | TOOL_DISPATCHED
         | COMPACTION_STARTED | PERMISSION_ASKED | QUESTION_ASKED => vec![&event.aggregate_id],
         INBOX_UPDATED if event.data["action"] == "released" => vec![&event.aggregate_id],
+        super::hooks::STARTED => vec![
+            event.data["session_id"]
+                .as_str()
+                .ok_or("Missing hook Session")?,
+        ],
         "job.started.1" => vec![
             &event.aggregate_id,
             event.data["child_id"]

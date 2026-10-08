@@ -391,6 +391,7 @@ pub fn registry() -> EventRegistry {
         .register(super::auto_statistics::RESET)
         .expect("valid auto statistics reset event");
     super::budget::register(&mut registry);
+    super::hooks::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
     registry.projector(project);
@@ -400,6 +401,7 @@ pub fn registry() -> EventRegistry {
 
 fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
     super::admission_authority::project(tx, e)?;
+    super::hooks::project(tx, e)?;
     super::auto_statistics::project(tx, e)?;
     super::auto_override::project(tx, e)?;
     project_event(tx, e).map_err(|err| err.to_string())

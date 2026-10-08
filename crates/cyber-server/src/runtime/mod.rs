@@ -25,6 +25,10 @@ mod delegations;
 mod drain;
 mod events;
 mod fork;
+mod hooks;
+pub use hooks::{
+    HookExecution, HookExecutionIo, HookExecutionRecord, HookExecutionResult, HookExecutionStatus,
+};
 mod host;
 mod jobs;
 mod names;

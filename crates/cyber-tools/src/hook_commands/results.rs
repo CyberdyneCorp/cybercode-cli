@@ -1,20 +1,11 @@
 //! Interpret captured command results without persisting raw IO.
 
 use cyber_core::hooks::{HookAction, HookDecision, HookEvent};
-use serde::Serialize;
 use serde_json::Value;
 
 use super::{HookCommandCapture, HookCommandEnd, HookCommandError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HookOutcome {
-    Ok,
-    Blocked,
-    Error,
-    Timeout,
-    Skipped,
-}
+pub use cyber_core::hooks::HookOutcome;
 
 pub struct HookCommandReport {
     pub outcome: HookOutcome,
