@@ -201,3 +201,44 @@ fn glob_subjects_and_explicit_wildcards_match_independently_of_conditions() {
     assert!(!catalog.definitions[0].matches("PreToolUse", "bash", &[], &json!({})));
     assert!(catalog.definitions[1].matches("PreToolUse", "bash", &[], &json!({})));
 }
+
+#[test]
+fn rewritten_envelope_drives_later_handler_conditions_without_replacing_identity() {
+    use cyber_core::hooks::{HookEvent, HookIdentity, HookLocation};
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = catalog(json!({"PreToolUse":[{"matcher":"bash","hooks":[
+        {"type":"command","command":"check","if":{"field":"tool_input.command","matches":"^second$"}}
+    ]}]}));
+    let fields = json!({"tool_name":"bash","tool_input":{"command":"first"}})
+        .as_object()
+        .unwrap()
+        .clone();
+    let event = HookEvent::new(
+        "PreToolUse",
+        HookIdentity {
+            session_id: "ses_owned".into(),
+            location: HookLocation {
+                directory: directory.path().into(),
+                workspace: None,
+            },
+            project_id: "global".into(),
+            agent: "coder".into(),
+            mode: "default".into(),
+        },
+        123,
+        fields,
+    )
+    .unwrap();
+    assert!(!catalog.definitions[0].matches_event(&event, "bash", &[]));
+    let decision =
+        HookDecision::parse("PreToolUse", &json!({"updated_input":{"command":"second"}}))
+            .unwrap()
+            .decision;
+    let rewritten = event
+        .with_tool_input(decision.input(&event.as_json()["tool_input"]).clone())
+        .unwrap();
+    assert!(catalog.definitions[0].matches_event(&rewritten, "bash", &[]));
+    assert_eq!(rewritten.identity().session_id, event.identity().session_id);
+    assert_eq!(rewritten.identity().mode, event.identity().mode);
+    assert_eq!(event.as_json()["tool_input"]["command"], "first");
+}

@@ -1,9 +1,11 @@
 //! Hook catalog with explicit provenance; constructing a catalog performs no effects.
 
 mod decisions;
+mod envelope;
 mod selectors;
 
 pub use decisions::{HookAction, HookDecision, ParsedDecision};
+pub use envelope::{HookEvent, HookIdentity, HookLocation};
 
 use std::io;
 use std::path::Path;

@@ -6,6 +6,7 @@
 - [ ] Implement individual handler digest trust, invocation-scoped exec trust and changed-definition refusal.
   - [x] Add canonical effective-handler SHA-256 digests, separate durable handler approvals in the shared checkout trust store and non-persisted invocation digest sets. Preserve legacy workspace approvals, serialize cross-process mutations and clear handler approvals on checkout revocation. Dispatch checks, CLI/TUI review and exec flag integration remain required.
 - [ ] Implement event envelopes and every P1 lifecycle event under durable runtime ownership.
+  - [x] Add immutable common envelope assembly from supplied captured identity, reserved-field refusal, Session/project/Location/Mode validation and flat JSON serialization. Chained tool-input rewrites preserve the envelope and drive later selector conditions. Runtime identity capture, lifecycle emission and durable ownership remain required.
 - [ ] Implement command, HTTP, prompt and MCP-tool handlers with required transport, sandbox and usage semantics.
 - [ ] Implement decision validation/ordered merging, rewrites, permissions, context admission and Stop continuation limits.
   - [x] Add event-aware decision parsing, debug-diagnostic field filtering, deny/ask/allow precedence, ordered rewrite/context accumulation and persistent stop/suppression flags. Preserve explicit Stop block and PermissionDenied retry exceptions. Sequential effectful dispatch, tool-schema revalidation, context admission, permissions and continuation limits remain required.

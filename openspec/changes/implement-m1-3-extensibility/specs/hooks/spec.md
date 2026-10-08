@@ -119,3 +119,28 @@
 - **WHEN** successive hooks add context, rewrite input and set continue false
 - **THEN** context SHALL retain declared order and the next hook SHALL receive the rewritten input
 - **AND** a later continue true SHALL NOT erase the stop request
+
+### Requirement: Supported events
+(P1) The system SHALL emit hook events `Setup` (first Session in a Location after install or `cyber --init`), `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch` (after all calls of one Turn settle), `PermissionRequest`, `PermissionDenied` (MAY return `{ "decision": "retry", "updated_input" }` to re-issue the call once), `Stop`, `StopFailure`, `Interrupt`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `InstructionsLoaded` (an instruction or rule file entered the context), `PreModelSwitch`, `PostModelSwitch`, `Elicitation`, `ElicitationResult`, `DirectoryAdded`, `Notification`, `FileChanged`, `CwdChanged`, `ConfigChange`, `TaskCreated`, `TaskCompleted`, `WorktreeCreate`, `WorktreeRemove` and `JobEnded`, and (P2) `GoalEvaluated`, `GoalCompleted`, `WorkflowRunStart`, `WorkflowRunEnd`, `LoopIteration`, `ScheduleRun`, `TeammateIdle` and `MessageReceived`. Each event SHALL carry a common envelope `{ event, session_id, location: { directory, workspace? }, project_id, agent, mode, timestamp }` plus event-specific fields.
+
+#### Scenario: PostToolUse payload
+- **WHEN** an `edit` tool call completes successfully
+- **THEN** each matching `PostToolUse` hook receives the envelope plus `tool_name`, `tool_input`, `tool_output`, `call_id` and `duration_ms`
+
+#### Scenario: MessageReceived for cross-session messages
+- **WHEN** another session's message is delivered into session `ses_1`
+- **THEN** `MessageReceived` hooks run with `from_session`, `from_machine` and `text` before the message is shown to the model
+
+#### Scenario: Denied call retried by a hook
+- **WHEN** a `PermissionDenied` hook returns `{ "decision": "retry", "updated_input": { "command": "npm test -- --ci" } }`
+- **THEN** the rewritten call is evaluated once more and runs if the rules allow it
+
+#### Scenario: Payload cannot replace captured identity
+- **WHEN** event-specific data contains event, session_id, location, project_id, agent, mode or timestamp
+- **THEN** envelope construction SHALL refuse that payload rather than overwriting the captured identity
+
+#### Scenario: Chained rewrite preserves envelope
+- **WHEN** a PreToolUse or PermissionDenied decision rewrites tool input
+- **THEN** the next handler SHALL receive that input with unchanged Session, Location, agent, Mode and timestamp
+- **AND** the original event SHALL remain unchanged
+- **AND** tool-schema validation and permission evaluation SHALL still be required before execution

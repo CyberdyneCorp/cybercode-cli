@@ -131,12 +131,16 @@ fn drop_tui_keys(map: &mut Map<String, Value>, sources: &mut Sources, warnings: 
 pub(super) fn check_mode(value: Option<&Value>, path: &str, issues: &mut Vec<String>) {
     match value {
         None => {}
-        Some(Value::String(m)) if MODES.contains(&m.as_str()) => {}
+        Some(Value::String(m)) if is_mode(m) => {}
         Some(other) => issues.push(format!(
             "{path}: expected one of {}, got {other}",
             MODES.join(", ")
         )),
     }
+}
+
+pub(crate) fn is_mode(mode: &str) -> bool {
+    MODES.contains(&mode)
 }
 
 pub(super) fn check_model_ref(value: Option<&Value>, path: &str, issues: &mut Vec<String>) {
