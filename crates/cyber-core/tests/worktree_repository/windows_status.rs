@@ -27,6 +27,44 @@ pub(super) fn diagnose(
     ] {
         append_probe(original, label, execution.invoke(launch, &arguments));
     }
+    // These builtins initialize core configuration before their own worktree
+    // setup. Keep the exact metadata/alias boundary and all execution policy.
+    if let Some(command) = args.iter().position(|arg| arg == "status") {
+        for (label, tail) in [
+            (
+                "config-before-worktree-unstaged",
+                vec![
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--name-only",
+                    "-z",
+                    "--",
+                ],
+            ),
+            (
+                "config-before-worktree-staged",
+                vec![
+                    "diff",
+                    "--cached",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--name-only",
+                    "-z",
+                    "HEAD",
+                    "--",
+                ],
+            ),
+            (
+                "config-before-worktree-untracked",
+                vec!["ls-files", "--others", "--exclude-standard", "-z", "--"],
+            ),
+        ] {
+            let mut arguments = args[..command].to_vec();
+            arguments.extend(tail.into_iter().map(OsString::from));
+            append_probe(original, label, execution.invoke(directory, &arguments));
+        }
+    }
     append_probe(
         original,
         "git-version",
