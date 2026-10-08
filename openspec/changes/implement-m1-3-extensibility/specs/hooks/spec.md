@@ -93,6 +93,13 @@
 - **AND** running and unknown labels SHALL NOT imply verified live execution or authorize replay
 - **AND** superseded, dismissed or foreign-Session responses SHALL NOT replace the visible observation page
 
+#### Scenario: Authenticated Location definition catalog
+- **WHEN** a client reads GET `/hooks` for a Location
+- **THEN** the API SHALL require authentication and return freshly resolved definitions with their source, scope, original digest, current trust state and sandbox requirements
+- **AND** credentials in headers and recognized secret fields SHALL be redacted without changing the original approval digest
+- **AND** untrusted checkout definitions SHALL remain withheld and their paths SHALL be reported separately
+- **AND** inspection SHALL NOT admit Session, hook execution or model work
+
 ### Requirement: Matchers
 (P1) The system SHALL match hook groups by `matcher`, which is either a glob over the event's subject (tool name for tool events, including `mcp__<server>__<tool>`; notification type; file path for `FileChanged`) or, when wrapped in `/.../`, a regular expression. An absent or `*` matcher SHALL match every subject. A group MAY add `paths` (globs relative to the Location) that SHALL also match for tool calls with file targets.
 

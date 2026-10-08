@@ -17,7 +17,9 @@ struct Filter {
     cursor: Option<String>,
 }
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/sessions/{sessionID}/hook-executions", get(list))
+    Router::new()
+        .route("/sessions/{sessionID}/hook-executions", get(list))
+        .route("/hooks", get(review))
 }
 async fn list(
     State(state): State<AppState>,
@@ -45,5 +47,16 @@ async fn list(
             next,
             ..Default::default()
         },
+    }))
+}
+
+async fn review(
+    State(state): State<AppState>,
+    parts: axum::http::request::Parts,
+) -> Result<Json<super::envelope::Located<cyber_core::hooks::HookReview>>, ApiError> {
+    let directory = super::envelope::location(&parts, &state.options.default_directory)?;
+    Ok(Json(super::envelope::Located {
+        data: state.services.review_hooks(&directory)?,
+        location: super::envelope::LocationInfo::of(&directory),
     }))
 }

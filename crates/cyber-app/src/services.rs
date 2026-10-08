@@ -67,6 +67,15 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn review_hooks(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_core::hooks::HookReview, cyber_server::http::ApiError> {
+        self.host
+            .review_hooks(location)
+            .map_err(cyber_server::http::ApiError::invalid)
+    }
+
     fn inspect_child_setup(
         &self,
         parent: String,

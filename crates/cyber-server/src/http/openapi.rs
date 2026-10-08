@@ -525,6 +525,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         op("get", "/models", "v1.model.list", "Models, available first")
             .located()
             .ok::<Located<Vec<ModelInfo>>>(g),
+        op(
+            "get",
+            "/hooks",
+            "v1.hook.list",
+            "Inspect resolved hook definitions and current trust without execution",
+        )
+        .located()
+        .ok::<Located<cyber_core::hooks::HookReview>>(g),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),

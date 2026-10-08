@@ -49,7 +49,7 @@ pub enum HookOutcome {
     Skipped,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct HookDefinition {
     pub event: String,
     pub scope: HookScope,
@@ -165,4 +165,55 @@ fn scope(source: &str) -> Result<HookScope, String> {
         return Ok(HookScope::Invocation);
     }
     Err(format!("unsupported hook origin: {source}"))
+}
+
+/// Read-only configuration inspection; digests refer to original unredacted definitions.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct HookReview {
+    pub hooks: Vec<ReviewedHook>,
+    pub withheld_definitions: Vec<String>,
+    pub checkout_trusted: bool,
+}
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ReviewedHook {
+    #[serde(flatten)]
+    pub definition: HookDefinition,
+    pub trusted: bool,
+    pub sandbox_required: bool,
+}
+impl HookReview {
+    pub fn from_config(resolved: &Resolved, trust: &TrustStore) -> Result<Self, String> {
+        let catalog = HookCatalog::from_config(resolved)?;
+        let hooks = catalog
+            .definitions
+            .into_iter()
+            .map(|mut definition| {
+                let trusted = definition
+                    .is_trusted(&resolved.trust.checkout_root, trust, None)
+                    .map_err(|error| error.to_string())?;
+                let sandbox_required = definition
+                    .scope
+                    .requires_sandbox(catalog.settings.sandbox_all);
+                let handler =
+                    serde_json::to_value(&definition.handler).map_err(|error| error.to_string())?;
+                definition.handler =
+                    serde_json::from_value(crate::config::redact_secrets(&handler))
+                        .map_err(|error| error.to_string())?;
+                Ok(ReviewedHook {
+                    definition,
+                    trusted,
+                    sandbox_required,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            hooks,
+            checkout_trusted: resolved.trust.trusted,
+            withheld_definitions: if resolved.trust.trusted {
+                Vec::new()
+            } else {
+                resolved.trust.definitions.clone()
+            },
+        })
+    }
 }

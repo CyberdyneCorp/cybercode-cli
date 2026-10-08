@@ -38,6 +38,15 @@ impl BuiltinHost {
             .map_err(|_| "Hook configuration resolver is already attached".into())
     }
 
+    /// Reload definitions and exact approvals without dispatching handlers.
+    pub fn review_hooks(&self, location: &Path) -> Result<cyber_core::hooks::HookReview, String> {
+        let config = self
+            .hook_config
+            .get()
+            .ok_or("Hook configuration resolver is unavailable")?;
+        cyber_core::hooks::HookReview::from_config(&(config.resolve)(location)?, &config.trust)
+    }
+
     pub(crate) async fn pre_tool_hooks(
         &self,
         inv: &mut Invocation,

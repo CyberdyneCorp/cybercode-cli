@@ -3180,6 +3180,227 @@
         ],
         "description": "A model offered to clients."
       },
+      "Located_HookReview": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/HookReview"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "HookReview": {
+        "type": "object",
+        "properties": {
+          "hooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewedHook"
+            }
+          },
+          "withheld_definitions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "checkout_trusted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hooks",
+          "withheld_definitions",
+          "checkout_trusted"
+        ],
+        "description": "Read-only configuration inspection; digests refer to original unredacted definitions."
+      },
+      "ReviewedHook": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HookScope"
+          },
+          "source": {
+            "type": "string"
+          },
+          "pointer": {
+            "type": "string"
+          },
+          "matcher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "handler": {
+            "$ref": "#/components/schemas/HookHandler"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "trusted": {
+            "type": "boolean"
+          },
+          "sandbox_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "event",
+          "scope",
+          "source",
+          "pointer",
+          "paths",
+          "handler",
+          "digest",
+          "trusted",
+          "sandbox_required"
+        ]
+      },
+      "HookHandler": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/HookKind"
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          },
+          "arguments": true,
+          "timeout": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 60
+          },
+          "async": {
+            "type": "boolean",
+            "default": false
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fail_closed": {
+            "type": "boolean",
+            "default": false
+          },
+          "if": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookCondition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "once": {
+            "type": "boolean",
+            "default": false
+          },
+          "status_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "system_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "HookKind": {
+        "type": "string",
+        "enum": [
+          "command",
+          "http",
+          "prompt",
+          "mcp_tool"
+        ]
+      },
+      "HookCondition": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "matches": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "matches"
+        ]
+      },
       "Located_Array_of_AgentInfo": {
         "type": "object",
         "properties": {
@@ -6387,6 +6608,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Array_of_ModelInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/hooks": {
+      "get": {
+        "operationId": "v1.hook.list",
+        "summary": "Inspect resolved hook definitions and current trust without execution",
+        "tags": [
+          "hook"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_HookReview"
                 }
               }
             }

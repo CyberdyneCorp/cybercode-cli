@@ -6,6 +6,12 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+## M1.3 authenticated hook definition catalog
+
+GET `/hooks` now returns a typed, Location-scoped review from the host’s full provenance-aware resolver. Each request reloads configuration and exact individual approvals, retains original digests/source/scope and sandbox requirements, redacts headers/recognized secrets and reports withheld checkout paths separately. Inspection creates no Session or hook execution. Generated OpenAPI/SDK access exposes `client.hook.list()` with its Location envelope. API approval writes, withheld raw review and the full TUI definition/trust viewer remain required.
+
+A real App TCP case covers authentication, subdirectory Location, global/project order, checkout withholding, approval/revocation refresh, separate checkouts, configuration reload, redaction and unchanged durable events/no command effect. SDK type checking and all 55 tests pass, including catalog envelope/auth/encoded Location behavior. Workspace all-target Clippy passes. Final local validation passes 1,161 Rust workspace test executions (three ignored, 122 suites), workspace all-target Clippy with warnings denied, formatting, generated SDK consistency, valid workflow YAML and all 58 strict specs. Cross-spec lint reports zero errors and 21 warnings. The final TCP case additionally confirms that redaction preserves the original unredacted configuration digest, and it and workspace all-target Clippy pass again. Native catalog execution remains pending; the existing native server suite and a dedicated early gate include this case.
+
 ## M1.3 TUI receipt history
 
 `/hooks history` now pages the current Session’s durable receipts through the public API, with refresh-from-first-page, next-page, scroll and close controls. Recorded outcomes, timing, call/tool identity and stop acknowledgement are displayed; running remains unverified as live and unknown requires recovery. Raw IO is excluded from the view model and display, and untrusted control characters are escaped. Request generations and Session/overlay guards reject stale, foreign or dismissed responses. The command is discoverable in help and the built-in command catalog.

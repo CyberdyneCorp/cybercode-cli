@@ -144,6 +144,13 @@ pub trait Services: Send + Sync {
         })
     }
 
+    fn review_hooks(&self, _location: &Path) -> Result<cyber_core::hooks::HookReview, ApiError> {
+        Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceUnavailableError",
+            "Hook configuration review is unavailable in this host",
+        ))
+    }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;

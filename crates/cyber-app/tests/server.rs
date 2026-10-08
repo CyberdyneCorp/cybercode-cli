@@ -1179,3 +1179,143 @@ async fn application_reloads_command_hooks_at_the_builtin_boundary() {
     assert_eq!(records[0].hook_id, "app-guard");
     assert!(records[0].io.is_none());
 }
+
+async fn hook_catalog(
+    client: &reqwest::Client,
+    url: &str,
+    directory: &std::path::Path,
+) -> serde_json::Value {
+    let response = client
+        .get(url)
+        .header("x-cyber-directory", directory.display().to_string())
+        .basic_auth("cyber", Some("test-password-123456"))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "{}",
+        response.text().await.unwrap()
+    );
+    response.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn hook_catalog_api_reloads_location_trust_and_redacts_without_execution() {
+    use cyber_core::trust::TrustStore;
+    use serde_json::json;
+    let tmp = tempfile::tempdir().unwrap();
+    let p = paths(tmp.path());
+    p.ensure().unwrap();
+    std::fs::write(p.config.join("cyber.jsonc"),json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"http","url":"http://127.0.0.1:9/never","headers":{"Authorization":"private-token"}}]}]}}).to_string()).unwrap();
+    let repo = tmp.path().join("checkout A");
+    let nested = repo.join("nested");
+    let other = tmp.path().join("checkout B");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::create_dir_all(other.join(".git")).unwrap();
+    let file = repo.join("cyber.jsonc");
+    std::fs::write(&file,json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo unsafe > effect","id":"project-guard"}]}]}}).to_string()).unwrap();
+    let application = app(tmp.path()).await;
+    let before: i64 = application
+        .store
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/api/v1/hooks", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let withheld = hook_catalog(&client, &url, &nested).await;
+    assert_eq!(withheld["data"]["hooks"].as_array().unwrap().len(), 1);
+    assert_eq!(withheld["data"]["checkout_trusted"], false);
+    assert!(
+        !withheld["data"]["withheld_definitions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!withheld.to_string().contains("private-token"));
+    assert_eq!(
+        withheld["data"]["hooks"][0]["handler"]["headers"]["Authorization"],
+        "***"
+    );
+    let trust = TrustStore::new(p.trust_file());
+    let home = tmp.path().join("home");
+    let request = cyber_core::config::LoadRequest {
+        location: &nested,
+        paths: &p,
+        env: &cyber_core::env::ProcessEnv,
+        home: &home,
+        profile: None,
+        overrides: &[],
+        flags: json!({}),
+    };
+    let resolved = cyber_core::config::load(&request).unwrap();
+    let original = cyber_core::hooks::HookCatalog::from_config(&resolved).unwrap();
+    assert_eq!(
+        withheld["data"]["hooks"][0]["digest"],
+        original.definitions[0].digest
+    );
+    assert_eq!(
+        original.definitions[0].handler.headers["Authorization"],
+        "private-token"
+    );
+    let report = cyber_core::config::trust_report(&request).unwrap();
+    trust
+        .approve(&report.checkout_root, report.digest.as_ref().unwrap())
+        .unwrap();
+    let review = hook_catalog(&client, &url, &nested).await;
+    assert_eq!(
+        review["location"]["directory"],
+        nested.canonicalize().unwrap().display().to_string()
+    );
+    let hooks = review["data"]["hooks"].as_array().unwrap();
+    assert_eq!(hooks.len(), 2);
+    assert_eq!(hooks[0]["scope"], "global");
+    assert_eq!(hooks[1]["scope"], "project");
+    assert_eq!(hooks[1]["trusted"], false);
+    assert_eq!(hooks[1]["sandbox_required"], true);
+    let digest = hooks[1]["digest"].as_str().unwrap();
+    trust.approve_hook(&report.checkout_root, digest).unwrap();
+    assert_eq!(
+        hook_catalog(&client, &url, &nested).await["data"]["hooks"][1]["trusted"],
+        true
+    );
+    trust.revoke_hook(&report.checkout_root, digest).unwrap();
+    assert_eq!(
+        hook_catalog(&client, &url, &nested).await["data"]["hooks"][1]["trusted"],
+        false
+    );
+    assert_eq!(
+        hook_catalog(&client, &url, &other).await["data"]["hooks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    std::fs::write(&file, "{}").unwrap();
+    let changed = hook_catalog(&client, &url, &nested).await;
+    assert_eq!(changed["data"]["hooks"].as_array().unwrap().len(), 1);
+    assert!(!nested.join("effect").exists());
+    let after: i64 = application
+        .store
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "catalog inspection must not create Session or hook events"
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}

@@ -324,6 +324,11 @@ export type HistoryPage = {
 /** Increasing precedence; Retry and Block are limited to their respective events. */
 export type HookAction = "allow" | "retry" | "ask" | "deny" | "block";
 
+export type HookCondition = {
+  field: string;
+  matches: string;
+};
+
 export type HookDecision = {
   decision?: HookAction | null;
   reason?: string | null;
@@ -367,7 +372,38 @@ export type HookExecutionRecord = {
 
 export type HookExecutionStatus = "running" | "completed" | "unknown";
 
+export type HookHandler = {
+  type: HookKind;
+  command?: string | null;
+  url?: string | null;
+  prompt?: string | null;
+  server?: string | null;
+  tool?: string | null;
+  headers?: {
+    [key: string]: string;
+  };
+  arguments?: unknown;
+  timeout?: number;
+  async?: boolean;
+  id?: string | null;
+  description?: string | null;
+  fail_closed?: boolean;
+  if?: HookCondition | null;
+  once?: boolean;
+  status_message?: string | null;
+  system_message?: string | null;
+};
+
+export type HookKind = "command" | "http" | "prompt" | "mcp_tool";
+
 export type HookOutcome = "ok" | "blocked" | "error" | "timeout" | "skipped";
+
+/** Read-only configuration inspection; digests refer to original unredacted definitions. */
+export type HookReview = {
+  hooks: ReviewedHook[];
+  withheld_definitions: string[];
+  checkout_trusted: boolean;
+};
 
 export type HookScope = "managed" | "global" | "project" | "local" | "plugin" | "invocation";
 
@@ -452,6 +488,12 @@ export type Located_Array_of_string = {
 export type Located_CreatedWorktree = {
   location: LocationInfo;
   data: CreatedWorktree;
+};
+
+/** A Location-scoped response. */
+export type Located_HookReview = {
+  location: LocationInfo;
+  data: HookReview;
 };
 
 /** A Location-scoped response. */
@@ -644,6 +686,19 @@ export type RevertState = {
 
 /** What a rewind restores (`snapshots-checkpoints` → Three-phase revert). */
 export type RevertTarget = "code" | "conversation" | "both";
+
+export type ReviewedHook = {
+  event: string;
+  scope: HookScope;
+  source: string;
+  pointer: string;
+  matcher?: string | null;
+  paths: string[];
+  handler: HookHandler;
+  digest: string;
+  trusted: boolean;
+  sandbox_required: boolean;
+};
 
 /** A Session with its live status. */
 export type Session = {

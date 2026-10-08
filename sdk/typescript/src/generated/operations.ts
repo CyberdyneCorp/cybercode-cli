@@ -98,6 +98,12 @@ export interface Operations {
     body: undefined;
     response: unknown;
   };
+  "v1.hook.list": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_HookReview;
+  };
   "v1.job.get": {
     path: { id: string };
     query: Record<string, never>;
@@ -549,6 +555,18 @@ export const operations = {
     query: [],
     body: "none",
     located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.hook.list": {
+    tag: "hook",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/hooks",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
     unwrap: false,
     stream: false,
   },
@@ -1247,6 +1265,11 @@ export function createGroups(caller: Caller) {
       /** This document (`GET /api/v1/openapi.json`) */
       openapi: (options?: RequestOptions): Promise<Operations["v1.health.openapi"]["response"]> =>
         caller.call("v1.health.openapi", {}, options),
+    },
+    hook: {
+      /** Inspect resolved hook definitions and current trust without execution (`GET /api/v1/hooks`) */
+      list: (options?: RequestOptions): Promise<Operations["v1.hook.list"]["response"]> =>
+        caller.call("v1.hook.list", {}, options),
     },
     job: {
       /** Read a background task (`GET /api/v1/jobs/{id}`) */
