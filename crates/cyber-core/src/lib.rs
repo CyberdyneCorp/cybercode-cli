@@ -6,6 +6,7 @@ pub mod budget;
 pub mod config;
 pub mod env;
 pub mod eval;
+pub mod hooks;
 pub mod ids;
 pub mod log;
 pub mod paths;

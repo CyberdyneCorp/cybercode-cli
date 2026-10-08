@@ -1,0 +1,129 @@
+//! Review resolved hook definitions and approve individual checkout-scoped digests.
+
+use clap::Subcommand;
+use cyber_core::hooks::{HookCatalog, HookDefinition};
+use cyber_core::trust::TrustStore;
+use serde::Serialize;
+
+use crate::cli::GlobalArgs;
+use crate::context::Context;
+use crate::error::CliError;
+use crate::output;
+
+#[derive(Debug, Subcommand)]
+pub enum HooksCmd {
+    /// List resolved definitions, file origins, digests and individual trust state.
+    List,
+    /// Approve a currently resolved project/local handler after inspecting its digest.
+    Trust {
+        #[arg(long)]
+        digest: String,
+    },
+    /// Revoke a handler digest, including an obsolete definition.
+    Untrust {
+        #[arg(long)]
+        digest: String,
+    },
+}
+
+#[derive(Serialize)]
+struct ListedHook<'a> {
+    #[serde(flatten)]
+    definition: &'a HookDefinition,
+    trusted: bool,
+    sandbox_required: bool,
+}
+
+pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    let store = TrustStore::new(ctx.paths.trust_file());
+    if let HooksCmd::Untrust { digest } = cmd {
+        let root = std::fs::canonicalize(cyber_core::config::project_root(&ctx.location))?;
+        let removed = store.revoke_hook(&root, &digest)?;
+        return report(
+            global,
+            &serde_json::json!({"digest":digest,"revoked":removed}),
+        );
+    }
+    let resolved = ctx.config()?;
+    let catalog = HookCatalog::from_config(&resolved).map_err(CliError::usage)?;
+    match cmd {
+        HooksCmd::List => list(&catalog, &resolved, &store, global),
+        HooksCmd::Trust { digest } => approve(&catalog, &resolved, &store, &digest, global),
+        HooksCmd::Untrust { .. } => unreachable!("handled before configuration loading"),
+    }
+}
+
+fn list(
+    catalog: &HookCatalog,
+    resolved: &cyber_core::config::Resolved,
+    store: &TrustStore,
+    global: &GlobalArgs,
+) -> Result<(), CliError> {
+    let hooks: Vec<_> = catalog
+        .definitions
+        .iter()
+        .map(|definition| {
+            Ok(ListedHook {
+                definition,
+                trusted: definition.is_trusted(&resolved.trust.checkout_root, store, None)?,
+                sandbox_required: definition
+                    .scope
+                    .requires_sandbox(catalog.settings.sandbox_all),
+            })
+        })
+        .collect::<Result<_, CliError>>()?;
+    let withheld = if resolved.trust.trusted {
+        &[][..]
+    } else {
+        resolved.trust.definitions.as_slice()
+    };
+    if output::is_json(global.format) {
+        let value = serde_json::json!({"hooks":hooks,"withheld_definitions":withheld});
+        return output::json(&cyber_core::config::redact_secrets(&value));
+    }
+    for hook in hooks {
+        println!(
+            "{} {:?} {:?} {} {}",
+            hook.definition.event,
+            hook.definition.scope,
+            hook.definition.kind(),
+            if hook.trusted { "trusted" } else { "untrusted" },
+            hook.definition.digest
+        );
+        println!("  {} {}", hook.definition.source, hook.definition.pointer);
+    }
+    for definition in withheld {
+        println!("withheld until checkout configuration approval: {definition}");
+    }
+    Ok(())
+}
+
+fn approve(
+    catalog: &HookCatalog,
+    resolved: &cyber_core::config::Resolved,
+    store: &TrustStore,
+    digest: &str,
+    global: &GlobalArgs,
+) -> Result<(), CliError> {
+    if !catalog
+        .definitions
+        .iter()
+        .any(|definition| definition.digest == digest && definition.scope.requires_handler_trust())
+    {
+        return Err(CliError::usage("digest does not match a currently resolved project/local hook")
+            .with_hint("inspect with cyber hooks list; withheld configuration requires cyber trust approval first"));
+    }
+    store.approve_hook(&resolved.trust.checkout_root, digest)?;
+    report(
+        global,
+        &serde_json::json!({"digest":digest,"approved":true}),
+    )
+}
+
+fn report(global: &GlobalArgs, value: &serde_json::Value) -> Result<(), CliError> {
+    if output::is_json(global.format) {
+        return output::json(value);
+    }
+    println!("{value}");
+    Ok(())
+}

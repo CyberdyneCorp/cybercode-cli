@@ -9,6 +9,7 @@ use crate::commands::{
     db::DbCmd,
     debug::DebugCmd,
     exec::ExecArgs,
+    hooks::HooksCmd,
     models::ModelsArgs,
     serve::{ServeArgs, ServiceCmd},
     trust::TrustCmd,
@@ -131,6 +132,11 @@ pub enum Command {
     Db {
         #[command(subcommand)]
         cmd: DbCmd,
+    },
+    /// Review hook definitions and individual handler trust.
+    Hooks {
+        #[command(subcommand)]
+        cmd: HooksCmd,
     },
     /// Inspect and approve repository-controlled configuration for this checkout.
     Trust {

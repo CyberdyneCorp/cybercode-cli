@@ -42,6 +42,7 @@ impl Fixture {
         } else {
             self.repo.join(rel)
         };
+        let path: PathBuf = path.components().collect();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, content).unwrap();
         path
@@ -873,4 +874,97 @@ fn invalid_auto_mode_controls_fail_real_configuration_loading() {
     let error = f.load().unwrap_err();
     assert!(matches!(error, ConfigError::Invalid { .. }));
     assert!(error.to_string().contains("permissions.auto_mode"));
+}
+
+#[test]
+fn hook_catalog_orders_nested_scopes_and_rechecks_handler_revocation() {
+    use cyber_core::hooks::{HookCatalog, HookScope};
+    let f = Fixture::new();
+    let group = |command: &str| json!({"hooks":[{"type":"command","command":command}]});
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"hooks":{"PreToolUse":[group("global")]}}).to_string(),
+    );
+    f.write(
+        ".cyber/cyber.local.jsonc",
+        &json!({"hooks":{"PreToolUse":[group("parent local")]}}).to_string(),
+    );
+    f.write(
+        "nested/.cyber/cyber.jsonc",
+        &json!({"hooks":{"PreToolUse":[group("nested project"),group("second project")]}})
+            .to_string(),
+    );
+    let location = f.repo.join("nested");
+    let req = f.request(&location, &[]);
+    let report = config::trust_report(&req).unwrap();
+    let store = TrustStore::new(f.paths.trust_file());
+    store
+        .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+        .unwrap();
+    let mut resolved = config::load(&req).unwrap();
+    let catalog = HookCatalog::from_config(&resolved).unwrap();
+    let commands: Vec<_> = catalog
+        .definitions
+        .iter()
+        .map(|definition| definition.handler.command.as_deref().unwrap())
+        .collect();
+    assert_eq!(
+        commands,
+        ["global", "nested project", "second project", "parent local"]
+    );
+    assert_eq!(catalog.definitions[0].scope, HookScope::Global);
+    assert_eq!(catalog.definitions[3].scope, HookScope::Local);
+    assert!(!HookScope::Global.requires_sandbox(false));
+    assert!(HookScope::Global.requires_sandbox(true));
+    assert!(HookScope::Project.requires_sandbox(false));
+    let hook = &catalog.definitions[1];
+    assert!(
+        !hook
+            .is_trusted(&report.checkout_root, &store, None)
+            .unwrap()
+    );
+    store
+        .approve_hook(&report.checkout_root, &hook.digest)
+        .unwrap();
+    assert!(
+        hook.is_trusted(&report.checkout_root, &store, None)
+            .unwrap()
+    );
+    store
+        .revoke_hook(&report.checkout_root, &hook.digest)
+        .unwrap();
+    assert!(
+        !hook
+            .is_trusted(&report.checkout_root, &store, None)
+            .unwrap()
+    );
+    resolved.sources.remove(&hook.pointer);
+    assert!(
+        HookCatalog::from_config(&resolved)
+            .unwrap_err()
+            .contains("missing loaded handler origin")
+    );
+}
+
+#[test]
+fn hook_catalog_keeps_invocation_hooks_sandboxed_and_rejects_generic_profile_origins() {
+    use cyber_core::hooks::{HookCatalog, HookScope};
+    let f = Fixture::new();
+    let overrides = vec![
+        r#"hooks.PreToolUse=[{"hooks":[{"type":"command","command":"explicit"}]}]"#.to_string(),
+    ];
+    let mut resolved = config::load(&f.request(&f.repo, &overrides)).unwrap();
+    let catalog = HookCatalog::from_config(&resolved).unwrap();
+    let definition = &catalog.definitions[0];
+    assert_eq!(definition.scope, HookScope::Invocation);
+    assert!(definition.scope.requires_sandbox(false));
+    resolved
+        .sources
+        .insert(definition.pointer.clone(), "profile:generic".into());
+    resolved.layers.push("profile:generic".into());
+    assert!(
+        HookCatalog::from_config(&resolved)
+            .unwrap_err()
+            .contains("unsupported hook origin")
+    );
 }

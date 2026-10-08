@@ -8,7 +8,7 @@ Inspect and edit a repository, run verification, preserve user changes and resum
 
 **P0 implementation is built; its release gates are not closed.** A complete local-model coding baseline, including the long task, remains open. An Ollama/Qwen3.5 9B pilot passed one small task. Recovery/trust tests, per-tool goldens, storage measurements and all six macOS/Linux build targets have passing evidence. Recorded default-service startup meets the 150 ms first-frame target on the named M2 Max machine; embedded mode retains an outlier. See [P0 evidence](docs/measurements/p0-exit-evidence.md) and [evaluation setup/results](eval/README.md).
 
-**P1 implementation is active in M1.1 and M1.2; no P1 milestone is fully accepted.** Native Windows long-root inspection and isolated-child execution have passing CI evidence, while complete Windows confinement remains open. Subagents, worktrees and cancellation have substantial partial implementations. The [P1 status](docs/implementation/p1-status.md) and [roadmap](ROADMAP.md) track remaining contracts and acceptance gates.
+**P1 implementation is active in M1.1–M1.3; no P1 milestone is fully accepted.** Native Windows long-root inspection and isolated-child execution have passing CI evidence, while complete Windows confinement remains open. Subagents, worktrees and cancellation have substantial partial implementations. Hook configuration and individual trust review are implemented; execution remains open. The [P1 status](docs/implementation/p1-status.md) and [roadmap](ROADMAP.md) track remaining contracts and acceptance gates.
 
 ## Quick start
 
@@ -46,6 +46,7 @@ OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat endpoints are su
 | Worktrees | Managed startup and isolated children, setup journals, file summaries, cleanup and reviewed setup retry | Partial P1; public lifecycle and unknown-effect recovery remain |
 | Cancellation | Durable admission closure, exclusive child result ownership, bounded stop reports and matched reopening | Partial P1; unknown-effect recovery, cross-process actor cancellation and exec/TUI adoption remain |
 | Spending | Durable own/descendant billing, atomic usage API, TUI `/cost` and soft Session budgets | Partial P1; reservations, daily caps and complete enforcement/displays remain |
+| Hooks | Configuration, scope/origin inspection and individual digest approval via `cyber hooks list\|trust\|untrust` | Partial P1; execution, TUI review and plugin integration remain |
 | Operations | Database-plus-artifact backup, verify/restore, retention, logs and diagnostics | Available; broader observability remains |
 
 Remaining P1 scope includes hooks/plugins/MCP (M1.3), memory/code intelligence/browser verification (M1.4), migration/editor integration (M1.5), the local web client and the other P1-tagged APIs. Workflows, goals, loops, remote control and cloud runners belong to later phases. The [capability map](docs/local-core-guide.md#specification-capability-map) covers the full planned product; [OpenSpec](openspec/specs) defines the contracts by phase.

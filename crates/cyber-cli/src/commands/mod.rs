@@ -6,6 +6,7 @@ pub mod debug;
 pub mod doctor;
 pub mod eval;
 pub mod exec;
+pub mod hooks;
 pub mod models;
 pub mod permissions;
 pub mod serve;
@@ -44,6 +45,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Permissions { cmd } => permissions::run(cmd, &ctx, &cli.global),
         Command::Db { cmd } => db::run(cmd, &ctx, &cli.global),
         Command::Trust { cmd } => trust::run(cmd, &ctx, &cli.global),
+        Command::Hooks { cmd } => hooks::run(cmd, &ctx, &cli.global),
         Command::Serve(args) => serve::serve(args, &ctx),
         Command::Service { cmd } => serve::service(cmd, &ctx, &cli.global),
         Command::Api(args) => api::run(args, &ctx),

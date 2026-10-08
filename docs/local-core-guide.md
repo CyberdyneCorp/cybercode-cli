@@ -37,6 +37,7 @@ cargo run -p cyber-cli -- doctor           # config, keys, catalog, database, sa
 cargo run -p cyber-cli -- db backup ~/cyber-backup --artifacts   # online backup bundle with a manifest
 cargo run -p cyber-cli -- debug info       # build, paths, database, config layers, trust
 cargo run -p cyber-cli -- trust inspect    # repository-controlled definitions awaiting approval
+cargo run -p cyber-cli -- hooks list       # resolved hooks, file origins, digests and handler trust
 cargo run -p cyber-cli -- models openai    # catalog: available models first
 
 # one real turn with a tool call (uses OPENAI_API_KEY)
@@ -244,3 +245,9 @@ The first release targets dependable local coding: inspect and edit a repository
 OpenCode, Codex and Claude Code are design references. Provider independence, a public server API, durable execution and later multi-model workflows define Cyber Code's direction. Competitor parity claims require dated, reproducible measurements rather than an undated feature matrix.
 
 The local storage decision is SQLite WAL with FULL synchronization and one writer owner. PostgreSQL supports later hosted services with multiple active instances. See the [storage decision](../docs/decisions/0001-storage-architecture.md) for alternatives and benchmark criteria.
+
+## Hook configuration and trust review
+
+`cyber hooks list --format json` shows resolved hook definitions, file origins, scope, SHA-256 digests and individual trust state, with credentials redacted. Checkout definitions remain withheld until configuration approval with `cyber trust inspect|approve`; the list reports those withheld paths. After reviewing a resolved project/local handler, use `cyber hooks trust --digest <digest>`. A changed handler needs its new digest approved. `cyber hooks untrust --digest <digest>` also revokes obsolete digests when current configuration cannot be parsed.
+
+Hook execution, `cyber hooks test`, the TUI viewer, execution history and managed/plugin collection remain under implementation. These review commands execute no handlers.

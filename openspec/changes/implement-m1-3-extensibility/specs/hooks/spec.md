@@ -61,3 +61,20 @@
 - **THEN** all independent approvals SHALL survive in the private shared store
 - **AND** legacy workspace-only files SHALL remain readable
 - **AND** checkout revocation SHALL remove that checkout's workspace and handler approvals
+
+### Requirement: Hooks viewer and CLI
+(P1) The system SHALL provide `/hooks` in the TUI and `cyber hooks list|trust|untrust|test <event>` on the CLI. These SHALL show every hook with its scope, event, matcher, type, trust state, last run time and last result. `cyber hooks test` SHALL run matching hooks against a synthetic or `--payload <file>` event and print their decisions without affecting any session.
+
+#### Scenario: Dry-run a hook
+- **WHEN** the user runs `cyber hooks test PreToolUse --payload ev.json`
+- **THEN** each matching handler runs and its parsed decision is printed
+
+#### Scenario: Inspect and approve a resolved handler
+- **WHEN** a checkout's configuration is trusted and the user lists hooks
+- **THEN** resolved handlers SHALL show source, scope, definition digest and individual trust state with credentials redacted
+- **AND** trust SHALL approve only a currently resolved project/local definition digest
+- **AND** a changed definition SHALL remain unapproved
+
+#### Scenario: Revoke an obsolete handler
+- **WHEN** the user untrusts a previously approved handler digest after the definition is removed or current configuration becomes malformed
+- **THEN** the approval SHALL be revoked without resolving executable configuration

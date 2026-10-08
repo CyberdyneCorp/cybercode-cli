@@ -2,6 +2,7 @@
 - [ ] Preserve all hook scopes, declared order and per-definition provenance; enforce managed-only policy.
   - [x] Append top-level event groups from loaded global/project/local layers without configuration deduplication; retain indexed group, handler and leaf sources. Verify actual trust-gated configuration resolution and empty-array non-removal.
   - [x] Accumulate profile event groups across files and preserve each selected group/handler/field origin after appending to ordinary definitions. Cover escaped profile names, initially absent events, empty later arrays and changed-checkout withholding. Managed/plugin collection, final execution scope order and managed-only authority remain required.
+  - [x] Build a catalog from indexed loaded origins with stable global/project/local ordering, sandbox requirements and uncached handler approval checks. Explicit environment/CLI definitions retain invocation scope and require sandboxing; missing/unsupported origins fail closed. Managed/plugin collection and dispatch remain open.
 - [ ] Implement individual handler digest trust, invocation-scoped exec trust and changed-definition refusal.
   - [x] Add canonical effective-handler SHA-256 digests, separate durable handler approvals in the shared checkout trust store and non-persisted invocation digest sets. Preserve legacy workspace approvals, serialize cross-process mutations and clear handler approvals on checkout revocation. Dispatch checks, CLI/TUI review and exec flag integration remain required.
 - [ ] Implement event envelopes and every P1 lifecycle event under durable runtime ownership.
@@ -10,6 +11,7 @@
 - [ ] Implement bounded concurrency/deduplication, once/conditions, async contexts, deadlines and cancellation.
 - [ ] Persist hook executions and expose transcript/API/SDK/TUI observability and controls.
 - [ ] Implement `/hooks` and `cyber hooks list|trust|untrust|test` with synthetic/payload event testing.
+  - [x] Add CLI list/trust/untrust for resolved definitions with scope, source, matcher/type, digest and trust state. Redact credentials, report withheld checkout definitions, approve only current project/local digests and revoke obsolete digests even with malformed current config. Raw withheld handler inspection, last execution results, TUI viewer and test execution remain open.
 - [ ] Implement P1 JSON-RPC plugin host, package and required plugin lifecycle/capabilities.
 - [ ] Implement MCP OAuth and deferred tool discovery/search.
 - [ ] Validate full canonical P1 extensibility scenarios, native behavior, documentation and M1.3 acceptance.

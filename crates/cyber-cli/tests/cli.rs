@@ -504,3 +504,90 @@ fn auto_statistics_show_and_reset_are_checkout_scoped_and_persisted() {
         value
     );
 }
+
+#[test]
+fn hook_review_approves_exact_digests_and_revokes_obsolete_definitions() {
+    let env = Env::new();
+    let repo = env.repo(
+        r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo reviewed"}]}]}}"#,
+    );
+    let cwd = repo.to_str().unwrap();
+    let list = json(&env.cyber(&["hooks", "list", "--cwd", cwd, "--format", "json"]));
+    assert!(list["hooks"].as_array().unwrap().is_empty());
+    assert!(!list["withheld_definitions"].as_array().unwrap().is_empty());
+    let report = json(&env.cyber(&["trust", "inspect", "--cwd", cwd, "--format", "json"]));
+    assert!(
+        env.cyber(&[
+            "trust",
+            "approve",
+            "--cwd",
+            cwd,
+            "--digest",
+            report["digest"].as_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+    let list = json(&env.cyber(&["hooks", "list", "--cwd", cwd, "--format", "json"]));
+    let digest = list["hooks"][0]["digest"].as_str().unwrap();
+    assert_eq!(list["hooks"][0]["trusted"], false);
+    assert_eq!(list["hooks"][0]["scope"], "project");
+    assert_eq!(list["hooks"][0]["sandbox_required"], true);
+    assert!(
+        env.cyber(&["hooks", "trust", "--cwd", cwd, "--digest", digest])
+            .status
+            .success()
+    );
+    let trusted = json(&env.cyber(&["hooks", "list", "--cwd", cwd, "--format", "json"]));
+    assert_eq!(trusted["hooks"][0]["trusted"], true);
+    std::fs::write(
+        repo.join("cyber.jsonc"),
+        r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo changed"}]}]}}"#,
+    )
+    .unwrap();
+    assert!(
+        !env.cyber(&["hooks", "trust", "--cwd", cwd, "--digest", digest])
+            .status
+            .success()
+    );
+    let changed = json(&env.cyber(&["trust", "inspect", "--cwd", cwd, "--format", "json"]));
+    assert!(
+        env.cyber(&[
+            "trust",
+            "approve",
+            "--cwd",
+            cwd,
+            "--digest",
+            changed["digest"].as_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+    let changed_list = json(&env.cyber(&["hooks", "list", "--cwd", cwd, "--format", "json"]));
+    assert_eq!(changed_list["hooks"][0]["trusted"], false);
+    assert_ne!(changed_list["hooks"][0]["digest"], digest);
+    std::fs::write(repo.join("cyber.jsonc"), "malformed").unwrap();
+    let revoke = json(&env.cyber(&[
+        "hooks", "untrust", "--cwd", cwd, "--digest", digest, "--format", "json",
+    ]));
+    assert_eq!(revoke["revoked"], true);
+}
+
+#[test]
+fn hook_listing_redacts_credentials_and_reports_global_scope() {
+    let env = Env::new();
+    let config = env.root.join("cyber-home/config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("cyber.jsonc"),r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"http","url":"http://127.0.0.1:9/hook","headers":{"Authorization":"secret-credential"}}]}]}}"#).unwrap();
+    let output = env.cyber(&["hooks", "list", "--format", "json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["hooks"][0]["scope"], "global");
+    assert_eq!(value["hooks"][0]["trusted"], true);
+    assert_eq!(value["hooks"][0]["sandbox_required"], false);
+    assert_eq!(
+        value["hooks"][0]["handler"]["headers"]["Authorization"],
+        "***"
+    );
+    assert!(!stdout(&output).contains("secret-credential"));
+}
