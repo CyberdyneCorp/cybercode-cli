@@ -90,7 +90,7 @@ The APIs are `GET /api/v1/worktrees` for listing and `POST /api/v1/worktrees` fo
 
 For a setup-pending isolated child, inspect `GET /api/v1/sessions/{parent}/children/{child}/setup`, then submit `POST` to the same path with the reviewed `revision`, `digest`, optional `retry_index` and a nonempty `reason`. The SDK methods are `worktree.inspectChildSetup(parent, child)` and `worktree.recoverChildSetup(parent, child, review)`. An explicit retry preserves earlier successful steps and the original failure; use an idempotency key to replay the same request safely. Omit `retry_index` to continue undispatched steps or acknowledge fully completed setup. A command preparation failure recorded as `not_dispatched` can also be retried after review because it never reached process launch. Changed recipes, stale reviews, active/unknown ownership, pending command outcomes and generic execution or launch errors without an acknowledged exit cannot authorize retry. Recovery retains current deny/sandbox rules and starts no inference.
 
-
+In the TUI, `/cost` opens a Session-and-descendants snapshot with all five token classes, cost and cache hit rate. Press `R` to refresh and `Esc` to close. Unpriced calls and incomplete historical attribution are shown explicitly; the view labels known spending as a lower bound when necessary.
 
 On Linux the sandbox needs bubblewrap (`apt install bubblewrap`); without it commands fail closed unless you pass `--sandbox full-access`.
 

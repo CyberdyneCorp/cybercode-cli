@@ -28,6 +28,12 @@ The migration reconstructs classes from surviving source events without changing
 
 Two class-retention assertions fail on unchanged main 80049f3. Validation passes 88 focused Rust tests (64 server and 24 storage), workspace all-target Clippy, 47 SDK tests/type checking, generated contract consistency and all 57 strict specs. Cross-spec lint reports zero errors and 21 warnings. Native acceptance is pending. This supplies durable data for the required cost breakdown; TUI `/cost`, complete usage API/client presentation, reservations, daily caps and subtree ownership/cancellation remain required. No complete P1 milestone is accepted, and P0 artifacts are unchanged.
 
+## TUI cost snapshot increment
+
+`/cost` now opens a local TUI overlay and requests a fresh public Session snapshot. It shows own, descendant and combined input/output/reasoning/cache-read/cache-write counts, known cost, and cache hit rate (cache read divided by input plus cache read plus cache write). Unknown or malformed classes cannot become complete zero counts. Unpriced calls and incomplete financial attribution are disclosed as lower bounds; no prompt tokens are distinct from unknown attribution. The view labels its last observed snapshot, supports R refresh and Esc/Enter dismissal, and replaces counters after refresh without adding them twice.
+
+Two behavior regressions fail on unchanged main 299fa1b. All 61 TUI tests and workspace all-target Clippy pass locally, including subtree rendering, legacy/unpriced uncertainty, snapshot replacement and invalid/zero-token cache states. Strict specs, generated contract consistency and formatting pass. Native acceptance remains pending. This completes the local cost snapshot increment; `/status`, `/usage`, complete `stats`, continuous descendant monitoring and budget presentation remain open. No full Usage commands requirement or P1 milestone is accepted. P0 artifacts are unchanged.
+
 ## Delivery sequence
 
 ### Ordinary exec subtree accounting increment

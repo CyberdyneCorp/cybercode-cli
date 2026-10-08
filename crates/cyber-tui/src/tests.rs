@@ -931,3 +931,97 @@ fn admission_picker_updates_acknowledgement_without_changing_selected_request() 
     assert_eq!(picker.current().unwrap().key, "op_b");
     assert!(picker.current().unwrap().label.starts_with("cancelled"));
 }
+
+fn cost_fixture() -> serde_json::Value {
+    json!({"id":"ses_1","totals":{"cost":0.25,"unpriced_steps":0,
+        "usage":{"input":100,"output":20,"reasoning":3,"cache_read":200,"cache_write":50}},
+        "children_cost":0.75,"children_unpriced_steps":0,"children_usage_complete":true,
+        "children_token_classes":{"input":400,"output":80,"reasoning":7,"cache_read":300,"cache_write":150},
+        "children_token_classes_complete":true})
+}
+
+#[test]
+fn cost_command_refreshes_and_renders_all_classes_for_the_subtree() {
+    let mut app = App::new(Session::parse(&cost_fixture()), Vec::new(), "cyber");
+    typed(&mut app, "/cost");
+    assert_eq!(app.on_key(key(KeyCode::Enter)), vec![Action::Refresh]);
+    let rendered = screen(&app);
+    for text in [
+        "Session and descendants",
+        "Input",
+        "Output",
+        "Reasoning",
+        "Cache read",
+        "Cache write",
+        "500",
+        "100",
+        "10",
+        "200",
+        "$1.0000",
+        "41.7%",
+    ] {
+        assert!(rendered.contains(text), "missing {text}: {rendered}");
+    }
+    assert!(app.on_key(key(KeyCode::Esc)).is_empty());
+    assert!(matches!(app.overlay, Overlay::None));
+}
+
+#[test]
+fn cost_command_discloses_unpriced_and_legacy_unknown_attribution() {
+    let mut data = cost_fixture();
+    data["totals"]["unpriced_steps"] = json!(1);
+    data.as_object_mut()
+        .unwrap()
+        .remove("children_token_classes");
+    data.as_object_mut()
+        .unwrap()
+        .remove("children_usage_complete");
+    data.as_object_mut()
+        .unwrap()
+        .remove("children_token_classes_complete");
+    let mut app = App::new(Session::parse(&data), Vec::new(), "cyber");
+    typed(&mut app, "/cost");
+    app.on_key(key(KeyCode::Enter));
+    let rendered = screen(&app);
+    assert!(rendered.contains("unpriced"));
+    assert!(rendered.contains("incomplete"));
+    assert!(rendered.contains("Cache hit rate: unknown"));
+    assert!(!rendered.contains("Total cost: $1.0000"));
+}
+
+#[test]
+fn cost_refresh_replaces_the_snapshot_and_preserves_the_open_view() {
+    let mut app = App::new(Session::parse(&cost_fixture()), Vec::new(), "cyber");
+    typed(&mut app, "/cost");
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(app.on_key(key(KeyCode::Char('r'))), vec![Action::Refresh]);
+    let mut next = cost_fixture();
+    next["children_cost"] = json!(1.75);
+    app.set_session(Session::parse(&next));
+    app.sync_overlay();
+    assert!(screen(&app).contains("Total cost: $2.0000"));
+}
+
+#[test]
+fn cost_zero_prompt_and_invalid_classes_have_distinct_displays() {
+    let mut data = cost_fixture();
+    for scope in ["totals", "children_token_classes"] {
+        let usage = if scope == "totals" {
+            &mut data[scope]["usage"]
+        } else {
+            &mut data[scope]
+        };
+        for class in ["input", "output", "reasoning", "cache_read", "cache_write"] {
+            usage[class] = json!(0);
+        }
+    }
+    let mut app = App::new(Session::parse(&data), Vec::new(), "cyber");
+    typed(&mut app, "/cost");
+    app.on_key(key(KeyCode::Enter));
+    assert!(screen(&app).contains("no prompt tokens"));
+    data["children_token_classes"]["input"] = json!(-1);
+    app.set_session(Session::parse(&data));
+    let rendered = screen(&app);
+    assert!(rendered.contains("Cache hit rate: unknown"));
+    assert!(rendered.contains("Attribution incomplete"));
+}

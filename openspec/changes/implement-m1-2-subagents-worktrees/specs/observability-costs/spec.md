@@ -60,3 +60,17 @@
 - **AND** budgeted execution SHALL refuse missing or incomplete descendant accounting before prompt dispatch
 - **AND** final reporting SHALL preserve separate own and descendant totals, all five own token classes and attribution completeness
 - **AND** client-side soft monitoring SHALL disclose in-flight overshoot and SHALL NOT claim that ordinary conversation interruption proves descendant task cancellation
+
+### Requirement: Usage commands
+(P1) The system SHALL provide `/cost` (session and descendants: tokens by class, cost, cache hit rate), `/status` (model, mode, agent, context window use, sandbox state, account, MCP and LSP summary), and `/usage` (today, last 7 and 30 days for this machine). It SHALL also provide `cyber stats [--days N] [--models] [--tools] [--project <id>] [--plugins] [--format json]`.
+
+#### Scenario: Stats for a week
+- **WHEN** the user runs `cyber stats --days 7 --models`
+- **THEN** totals of sessions, messages, tokens and cost, plus a per-model table, are printed for the last 7 days
+
+#### Scenario: Session cost snapshot
+- **WHEN** a TUI user opens `/cost`
+- **THEN** it SHALL refresh the Session snapshot and show own, descendant and combined input, output, reasoning, cache-read and cache-write counts
+- **AND** cache hit rate SHALL be cache-read tokens divided by all prompt tokens (input plus cache read plus cache write), with no-token and unknown attribution states shown explicitly
+- **AND** unpriced calls and incomplete historical attribution SHALL prevent known priced spending from being presented as a complete total
+- **AND** the user SHALL be able to refresh the open snapshot and dismiss it without sending a provider prompt

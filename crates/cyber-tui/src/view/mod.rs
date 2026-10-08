@@ -37,6 +37,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
         Overlay::Permission(step) => overlays::permission(f, app, step, area),
         Overlay::Question(form) => overlays::question(f, app, form, area),
+        Overlay::Cost => overlays::cost(f, app, area),
         Overlay::Help => overlays::help(f, app, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),

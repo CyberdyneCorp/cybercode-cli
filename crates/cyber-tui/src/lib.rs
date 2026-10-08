@@ -3,6 +3,7 @@
 mod admissions;
 mod app;
 mod composer;
+mod cost;
 mod fuzzy;
 mod model;
 mod perform;

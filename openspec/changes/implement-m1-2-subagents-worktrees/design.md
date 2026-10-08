@@ -306,3 +306,7 @@ A complete task stop must first persist an admission-generation fence over the o
 ## Preserve typed budget refusal across preparation and retries
 
 Provider retry adapters retain the original runtime gate error instead of reducing it to an InvalidRequest provider failure. Visible steps settle before the Drain publishes the original budget/storage error once. Compaction records its failure evidence and propagates budget/store errors without the generic summary-failure wrapper; ordinary provider failures retain their existing compaction diagnostic. Regression tests charge a parallel descendant during model resolution and before retry, proving no extra dispatch and correct durable/live error kinds.
+
+## TUI cost snapshot
+
+Handle `/cost` locally and request the existing public Session snapshot. Render the five own and descendant classes and their combined known counts, priced cost and cache-read share of all prompt tokens. Strict cost parsing is separate from the lenient general Session presentation: missing, negative or malformed class counters remain unknown. Missing financial completeness or unpriced calls make known priced cost a lower bound. Render no-token cache usage distinctly from unknown attribution. The overlay labels the last observed snapshot and allows R to request refresh; it does not claim continuous monitoring or complete budget presentation. Existing durable-event refreshes replace the snapshot, and permission/question overlays retain priority. Complete usage/status/stats commands and live descendant monitoring remain required.

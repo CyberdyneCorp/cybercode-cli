@@ -159,6 +159,7 @@ pub enum Overlay {
     Permission(PermStep),
     Question(QuestionForm),
     Help,
+    Cost,
     ConfirmBypass,
     ConfirmStopTasks,
 }
@@ -335,6 +336,14 @@ impl App {
                     Vec::new()
                 }
             }
+            Overlay::Cost => match key.code {
+                KeyCode::Char('r' | 'R') => vec![Action::Refresh],
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.overlay = Overlay::None;
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            },
             Overlay::Help => {
                 self.overlay = Overlay::None;
                 Vec::new()
@@ -604,6 +613,10 @@ impl App {
             .split_once(' ')
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
+            "cost" => {
+                self.overlay = Overlay::Cost;
+                vec![Action::Refresh]
+            }
             "admissions" => {
                 let items = self.admissions.choices(&self.session.id);
                 self.open_picker(

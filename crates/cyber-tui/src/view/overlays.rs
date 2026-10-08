@@ -292,9 +292,23 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
     );
 }
 
+pub fn cost(f: &mut Frame, app: &App, area: Rect) {
+    let lines: Vec<Line> = app
+        .session
+        .cost_snapshot
+        .lines()
+        .into_iter()
+        .map(Line::from)
+        .collect();
+    let rect = centered(area, 90, lines.len() as u16 + 2);
+    f.render_widget(Clear, rect);
+    f.render_widget(Paragraph::new(lines).block(frame(app, "Cost")), rect);
+}
+
 pub fn help(f: &mut Frame, app: &App, area: Rect) {
     let rows = [
         ("Enter", "send (steer while running)"),
+        ("/cost", "token classes, subtree cost and cache hit rate"),
         ("/admissions", "inspect or cancel pending delegation"),
         ("Tab / Alt+Enter", "queue while running"),
         ("Shift+Enter, Ctrl+J", "newline"),
