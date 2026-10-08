@@ -12,6 +12,8 @@ mod merge;
 mod subst;
 mod validate;
 
+pub(crate) use hooks::is_event_name;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

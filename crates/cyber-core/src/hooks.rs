@@ -1,5 +1,10 @@
 //! Hook catalog with explicit provenance; constructing a catalog performs no effects.
 
+mod decisions;
+mod selectors;
+
+pub use decisions::{HookAction, HookDecision, ParsedDecision};
+
 use std::io;
 use std::path::Path;
 
@@ -39,6 +44,8 @@ pub struct HookDefinition {
     pub paths: Vec<String>,
     pub handler: HookHandler,
     pub digest: String,
+    #[serde(skip)]
+    selector: selectors::Selector,
 }
 
 impl HookDefinition {
@@ -94,6 +101,11 @@ impl HookCatalog {
                         paths: group.paths.clone(),
                         handler: handler.clone(),
                         digest: handler.digest().map_err(|error| error.to_string())?,
+                        selector: selectors::Selector::new(
+                            group.matcher.as_deref(),
+                            &group.paths,
+                            handler,
+                        )?,
                     });
                 }
             }

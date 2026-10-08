@@ -8,7 +8,9 @@
 - [ ] Implement event envelopes and every P1 lifecycle event under durable runtime ownership.
 - [ ] Implement command, HTTP, prompt and MCP-tool handlers with required transport, sandbox and usage semantics.
 - [ ] Implement decision validation/ordered merging, rewrites, permissions, context admission and Stop continuation limits.
+  - [x] Add event-aware decision parsing, debug-diagnostic field filtering, deny/ask/allow precedence, ordered rewrite/context accumulation and persistent stop/suppression flags. Preserve explicit Stop block and PermissionDenied retry exceptions. Sequential effectful dispatch, tool-schema revalidation, context admission, permissions and continuation limits remain required.
 - [ ] Implement bounded concurrency/deduplication, once/conditions, async contexts, deadlines and cancellation.
+  - [x] Compile subject glob/regex, Location-relative path selectors and dotted-field regex conditions in the catalog; refuse absolute/escaping path candidates. Actual scheduling, once state, deduplication, async admission and execution ownership remain required.
 - [ ] Persist hook executions and expose transcript/API/SDK/TUI observability and controls.
 - [ ] Implement `/hooks` and `cyber hooks list|trust|untrust|test` with synthetic/payload event testing.
   - [x] Add CLI list/trust/untrust for resolved definitions with scope, source, matcher/type, digest and trust state. Redact credentials, report withheld checkout definitions, approve only current project/local digests and revoke obsolete digests even with malformed current config. Raw withheld handler inspection, last execution results, TUI viewer and test execution remain open.

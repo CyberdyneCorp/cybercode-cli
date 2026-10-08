@@ -63,6 +63,9 @@ jobs:
       - name: Native hook review and exact handler approval CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test cli hook_
+      - name: Native hook selectors and ordered decisions
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test hook_decisions
       - name: Unsupported Unix bridge refuses execution
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --test bridge

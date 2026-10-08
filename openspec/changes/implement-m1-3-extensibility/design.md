@@ -10,6 +10,7 @@ Project executable configuration is currently withheld until checkout trust is a
 - Add ordered scope contributions with per-definition provenance before dispatch; ordinary last-value replacement must not discard earlier hooks.
 - Accumulate event arrays inside named profiles as well as top-level hooks. On profile selection, remap indexed hook origins into their new appended positions; ordinary profile settings retain their existing profile labels. Source paths remain necessary for later scope classification and individual handler trust.
 - Runtime admission owns prompt hooks; the tool host owns tool hooks and revalidation. Permission denies and protected ceilings remain independent of hook allows. Every execution needs a durable receipt and cancellation owner.
+- Compile selectors at catalog construction and keep matching side-effect free. Decision parsing reports ignored fields separately for later debug logging. Declared-order merging retains restrictive decisions, rewrite/context accumulation and stop flags; the future dispatcher must feed each rewritten input to the next handler and the tool host must revalidate it before effects.
 - Implement process-tree ownership, sandbox selection and bounded IO before command execution. HTTP, evaluator and MCP handlers share the event and decision model while retaining their own authentication and usage boundaries.
 - Deliver the remaining lifecycle events, trust/viewer/test CLI, plugin process protocol/package and MCP OAuth/search as subsequent increments under this same change.
 

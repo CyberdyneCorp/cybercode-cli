@@ -78,3 +78,44 @@
 #### Scenario: Revoke an obsolete handler
 - **WHEN** the user untrusts a previously approved handler digest after the definition is removed or current configuration becomes malformed
 - **THEN** the approval SHALL be revoked without resolving executable configuration
+
+### Requirement: Matchers
+(P1) The system SHALL match hook groups by `matcher`, which is either a glob over the event's subject (tool name for tool events, including `mcp__<server>__<tool>`; notification type; file path for `FileChanged`) or, when wrapped in `/.../`, a regular expression. An absent or `*` matcher SHALL match every subject. A group MAY add `paths` (globs relative to the Location) that SHALL also match for tool calls with file targets.
+
+#### Scenario: Regex matcher for MCP tools
+- **WHEN** a hook group has matcher `/^mcp__github__.*/`
+- **THEN** it SHALL match `mcp__github__create_issue` and not `bash`
+
+#### Scenario: Path filter
+- **WHEN** a `PreToolUse` group has matcher `edit` and `paths: ["migrations/**"]`
+- **THEN** it SHALL match edits under `migrations/` only
+- **AND** absolute or escaping path candidates SHALL NOT satisfy a Location-relative path filter
+
+### Requirement: Decision schema
+(P1) A hook decision SHALL be a JSON object with optional fields: `decision` (`allow`, `deny`, `ask`), `reason`, `updated_input` (PreToolUse only, replaces tool input after re-validation against the tool schema), `additional_context` (text admitted as a system message at the next Safe Boundary; for `PreCompact` it is appended to the summary instructions instead), `continue` (false stops the Drain after the current Turn), `stop_reason`, and `suppress_output` (hide the hook's output from the transcript). Fields not valid for the event SHALL be ignored with a debug log. The explicit Stop `block` and PermissionDenied `retry`/`updated_input` contracts SHALL remain valid for those events.
+
+#### Scenario: Input rewritten
+- **WHEN** a `PreToolUse` hook returns `{"updated_input": {"command": "npm test -- --ci"}}` for a bash call
+- **THEN** the bash tool SHALL run `npm test -- --ci` and the transcript SHALL show the rewrite
+
+#### Scenario: Invalid rewritten input
+- **WHEN** `updated_input` fails the tool's input schema
+- **THEN** the call SHALL be denied with `hook produced invalid tool input`
+
+#### Scenario: Event-specific fields
+- **WHEN** a PostToolUse decision contains updated_input or a non-Stop decision contains block
+- **THEN** those fields SHALL be ignored and identified for debug diagnostics
+- **AND** malformed applicable decision fields SHALL fail decision validation
+
+### Requirement: Decision merging
+(P1) When several hooks return decisions for one event, the system SHALL apply them in execution order and combine them: any `deny` SHALL win over `ask`, and `ask` SHALL win over `allow`. `updated_input` SHALL chain, with each later hook receiving the previous hook's output. `additional_context` values SHALL be concatenated. Any `continue: false` SHALL stop continuation.
+
+#### Scenario: Deny beats allow
+- **WHEN** one hook returns `allow` and a later hook returns `deny`
+- **THEN** the action SHALL be denied with the later hook's reason
+- **AND** another later allow SHALL NOT erase that denial
+
+#### Scenario: Ordered context and continuation
+- **WHEN** successive hooks add context, rewrite input and set continue false
+- **THEN** context SHALL retain declared order and the next hook SHALL receive the rewritten input
+- **AND** a later continue true SHALL NOT erase the stop request

@@ -49,7 +49,7 @@ const EVENTS: &[&str] = &[
     "MessageReceived",
 ];
 
-pub(super) fn is_event_name(name: &str) -> bool {
+pub(crate) fn is_event_name(name: &str) -> bool {
     EVENTS.contains(&name)
 }
 
