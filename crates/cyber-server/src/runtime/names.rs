@@ -110,6 +110,11 @@ impl Runtime {
             ));
         }
         let state = self.state(&owner.id).await?;
+        if state.child_continuation_unknown {
+            return Err(RuntimeError::Invalid(
+                "Child continuation outcome is unknown; recovery is required".into(),
+            ));
+        }
         if state.info.parent_id.as_deref() != Some(&owner.parent) {
             return Err(RuntimeError::Invalid("Subagent not found".into()));
         }

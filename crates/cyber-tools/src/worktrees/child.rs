@@ -250,6 +250,19 @@ impl BuiltinHost {
         child: &cyber_server::runtime::SessionInfo,
         removed: Managed,
     ) -> io::Result<ChildWorktree> {
+        self.resume_child_worktree_authorized(inv, cancel, owner, child, removed, false)
+            .await
+    }
+
+    pub(crate) async fn resume_child_worktree_authorized(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        owner: &cyber_server::runtime::ChildExecution,
+        child: &cyber_server::runtime::SessionInfo,
+        removed: Managed,
+        user_requested: bool,
+    ) -> io::Result<ChildWorktree> {
         let runtime = self
             .runtime()
             .ok_or_else(|| io::Error::other("Runtime stopped"))?;
@@ -295,7 +308,7 @@ impl BuiltinHost {
                     cancel.clone(),
                     &request,
                     &removed.branch,
-                    false,
+                    user_requested,
                     Some(&removed),
                 ),
             )
@@ -315,7 +328,7 @@ impl BuiltinHost {
                 &repository,
                 &managed,
                 SetupAdmission {
-                    user_requested: false,
+                    user_requested,
                     explicit: true,
                     recipe: Some(&recipe),
                     recovery: None,
@@ -395,7 +408,12 @@ impl ChildWorktree {
         result
     }
 
-    async fn confirm_cleanup(&self, host: &BuiltinHost, cleanup: Cleanup) -> io::Result<bool> {
+    async fn confirm_cleanup(
+        &self,
+        host: &BuiltinHost,
+        cleanup: Cleanup,
+        cancel: &CancellationToken,
+    ) -> io::Result<bool> {
         if cleanup != Cleanup::Ask {
             return Ok(true);
         }
@@ -406,12 +424,20 @@ impl ChildWorktree {
             .operation_asker(&self.child_id)
             .await
             .map_err(io::Error::other)?;
-        let reply = asker.permission(cyber_server::runtime::PermissionAsk {
-                action: "worktree".into(),
-                resources: vec![format!("Remove clean worktree: {}", self.managed.path.display()), format!("Branch: {}", self.managed.branch)],
-                always_patterns: Vec::new(),
-                metadata: json!({"operation":"cleanup", "requires_confirmation":true, "path":self.managed.path, "branch":self.managed.branch}),
-            }).await;
+        let ask = cyber_server::runtime::PermissionAsk {
+            action: "worktree".into(),
+            resources: vec![
+                format!("Remove clean worktree: {}", self.managed.path.display()),
+                format!("Branch: {}", self.managed.branch),
+            ],
+            always_patterns: Vec::new(),
+            metadata: json!({"operation":"cleanup", "requires_confirmation":true, "path":self.managed.path, "branch":self.managed.branch}),
+        };
+        let reply = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(false),
+            reply = asker.permission(ask) => reply,
+        };
         Ok(matches!(
             reply,
             cyber_server::runtime::PermissionReply::Once
@@ -472,7 +498,7 @@ impl ChildWorktree {
             return Ok(());
         }
         drop(_lifecycle);
-        if !self.confirm_cleanup(&host, cleanup).await? {
+        if !self.confirm_cleanup(&host, cleanup, &ctx.cancel).await? {
             result["cleanup_reason"] = json!("Cleanup was not approved");
             return Ok(());
         }
@@ -529,5 +555,24 @@ impl ChildWorktree {
         .await?;
         result["kept"] = json!(false);
         Ok(())
+    }
+}
+
+impl cyber_server::runtime::ChildContinuation for ChildWorktree {
+    fn settle(
+        self: Box<Self>,
+        completed: bool,
+        cancel: CancellationToken,
+    ) -> futures::future::BoxFuture<'static, Result<Option<Value>, String>> {
+        Box::pin(async move {
+            if !completed {
+                return Ok(None);
+            }
+            let report = self.report(cancel).await;
+            if let Some(error) = report["cleanup_error"].as_str() {
+                return Err(error.to_owned());
+            }
+            Ok(Some(report))
+        })
     }
 }

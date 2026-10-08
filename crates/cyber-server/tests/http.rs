@@ -2261,3 +2261,160 @@ async fn child_thread_continuation_holds_ownership_through_running_steer_and_int
     h.runtime.wait_idle(&child).await;
     let _next_owner = h.runtime.claim_child_execution(&parent, &child).unwrap();
 }
+
+#[tokio::test]
+async fn child_thread_unacknowledged_settlement_is_durable_and_refuses_restart_dispatch() {
+    use cyber_server::runtime::{
+        Admission, ChildContinuation, ChildExecution, CreateSession, Delivery, Runtime,
+        RuntimeOptions, SessionInfo, SessionState, ToolHost,
+    };
+    use futures::future::BoxFuture;
+    use tokio_util::sync::CancellationToken;
+    struct Stalled(Arc<tokio::sync::Notify>);
+    impl ChildContinuation for Stalled {
+        fn settle(
+            self: Box<Self>,
+            completed: bool,
+            _cancel: CancellationToken,
+        ) -> BoxFuture<'static, Result<Option<Value>, String>> {
+            Box::pin(async move {
+                assert!(completed);
+                self.0.notify_one();
+                std::future::pending().await
+            })
+        }
+    }
+    struct Host {
+        tools: Arc<support::Tools>,
+        started: Arc<tokio::sync::Notify>,
+    }
+    impl ToolHost for Host {
+        fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
+            self.tools.definitions(turn)
+        }
+        fn execute(
+            &self,
+            call: cyber_server::runtime::Invocation,
+            cancel: CancellationToken,
+        ) -> BoxFuture<'_, cyber_server::runtime::ToolOutcome> {
+            self.tools.execute(call, cancel)
+        }
+        fn prepare_child_continuation<'a>(
+            &'a self,
+            _parent: &'a SessionInfo,
+            _child: &'a SessionState,
+            _owner: &'a ChildExecution,
+            _cancel: CancellationToken,
+        ) -> BoxFuture<'a, Result<Option<Box<dyn ChildContinuation>>, String>> {
+            Box::pin(async {
+                Ok(Some(
+                    Box::new(Stalled(self.started.clone())) as Box<dyn ChildContinuation>
+                ))
+            })
+        }
+    }
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("done")])],
+        ..Default::default()
+    });
+    let started = Arc::new(tokio::sync::Notify::new());
+    let runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: h.models.clone(),
+        tools: Arc::new(Host {
+            tools: h.tools.clone(),
+            started: started.clone(),
+        }),
+        global_config_dir: h.dir.path().join("global"),
+        shell: "bash".into(),
+        claude_compat: true,
+        compaction: Default::default(),
+        retry: Default::default(),
+        max_steps: None,
+        today: None,
+        interactive: true,
+        snapshots: Arc::new(cyber_server::runtime::NoSnapshots),
+    });
+    let parent = runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let child = runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    runtime
+        .admit_user(&child, Admission::text("run", Delivery::Steer))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .unwrap();
+    assert!(runtime.claim_child_execution(&parent, &child).is_err());
+    tokio::time::timeout(Duration::from_secs(5), runtime.interrupt(&child))
+        .await
+        .unwrap()
+        .unwrap();
+    let events = h.store.read_events(&child, -1, 200).unwrap().events;
+    let settlement = events
+        .iter()
+        .find(|e| e.kind == "session.child.continuation_settled.1")
+        .unwrap();
+    assert_eq!(settlement.data["unknown"], true);
+    runtime.shutdown().await;
+    let restarted = h.restart();
+    let before = restarted.state(&child).await.unwrap();
+    assert!(restarted.wake(&child).await.is_err());
+    assert!(restarted.resume(&child).await.is_err());
+    assert!(restarted.shell(&child, "echo must-not-run").await.is_err());
+    assert!(restarted.compact(&child, None).await.is_err());
+    assert!(restarted.repair_context(&child).await.is_err());
+    assert!(
+        restarted
+            .admit_user(&child, Admission::text("retry", Delivery::Steer))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unknown")
+    );
+    let owner = restarted.claim_child_execution(&parent, &child).unwrap();
+    assert!(
+        restarted
+            .resume_child(
+                &owner,
+                Admission::text("retry", Delivery::Queue),
+                "review".into(),
+                None
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unknown")
+    );
+    assert_eq!(restarted.state(&child).await.unwrap(), before);
+    let mut app = state(&h, None);
+    app.runtime = restarted;
+    let api = Api {
+        client: EmbeddedClient::new(http::router(app)),
+    };
+    let (_, page) = api.get(&format!("/sessions/{parent}/children")).await;
+    assert_eq!(page["data"]["data"][0]["status"], "failed");
+    assert!(
+        page["data"]["data"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("acknowledge")
+    );
+    assert_eq!(h.models.requests("test/main").len(), 1);
+}

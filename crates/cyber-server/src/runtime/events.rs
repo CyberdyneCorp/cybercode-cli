@@ -13,6 +13,7 @@ use super::model::{CallState, CallStatus, Delivery, Entry, RetrySafety, SessionI
 pub const CREATED: &str = "session.created.1";
 pub const WORKTREE_REBOUND: &str = "session.worktree.rebound.1";
 pub const WORKTREE_SETUP_READY: &str = "session.worktree.setup_ready.1";
+pub const CHILD_CONTINUATION_SETTLED: &str = "session.child.continuation_settled.1";
 pub const RESUMED: &str = "session.subagent.resumed.1";
 pub const ADMITTED: &str = "session.prompt.admitted.1";
 pub const INBOX_UPDATED: &str = "session.inbox.updated.1";
@@ -51,6 +52,7 @@ const ALL: &[&str] = &[
     CREATED,
     ADMITTED,
     RESUMED,
+    CHILD_CONTINUATION_SETTLED,
     WORKTREE_REBOUND,
     WORKTREE_SETUP_READY,
     INBOX_UPDATED,

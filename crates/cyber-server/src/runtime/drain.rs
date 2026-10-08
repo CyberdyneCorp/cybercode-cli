@@ -61,6 +61,7 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
                 "the Drain stopped on an internal error; see the log".to_string(),
             )),
         };
+        let succeeded = failure.is_none();
         if let Some((kind, message)) = failure {
             inner.bus.publish(LiveEvent::Error {
                 session_id: id.clone(),
@@ -68,6 +69,7 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
                 message,
             });
         }
+        inner.settle_user_child(&id, &cancel, succeeded).await;
         if !inner.finish_pass(&id, &cancel) {
             break;
         }

@@ -41,6 +41,15 @@ impl LocationLease {
     }
 }
 
+/// Host-owned managed child reporting/cleanup, retained until the Drain settles it.
+pub trait ChildContinuation: Send {
+    fn settle(
+        self: Box<Self>,
+        completed: bool,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'static, Result<Option<Value>, String>>;
+}
+
 /// Trusted profile defaults and its final request layer, resolved from one snapshot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentInference {
@@ -224,6 +233,23 @@ pub trait ToolHost: Send + Sync {
         _cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<LocationLease, String>> {
         Box::pin(async { Ok(LocationLease::unmanaged()) })
+    }
+
+    /// Prepare an existing child under its exclusive owner. Opening a client view grants no bypass.
+    fn prepare_child_continuation<'a>(
+        &'a self,
+        _parent: &'a SessionInfo,
+        child: &'a super::SessionState,
+        _owner: &'a super::ChildExecution,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Option<Box<dyn ChildContinuation>>, String>> {
+        Box::pin(async move {
+            if child.child_worktree().is_some() {
+                Err("Managed child continuation is not supported by this host".into())
+            } else {
+                Ok(None)
+            }
+        })
     }
 
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef>;

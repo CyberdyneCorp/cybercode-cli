@@ -257,6 +257,10 @@ pub struct StepSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
     #[serde(skip)]
+    pub(crate) child_continuation_error: Option<String>,
+    #[serde(skip)]
+    pub(crate) child_continuation_unknown: bool,
+    #[serde(skip)]
     pub(super) child_worktree_setup_pending: bool,
     #[serde(skip)]
     pub(super) child_worktree: Option<cyber_core::worktrees::Managed>,
@@ -297,6 +301,11 @@ const MAX_INSTRUCTION_CHARS: usize = 2000;
 
 impl SessionState {
     pub(super) fn ensure_worktree_ready(&self) -> Result<(), super::RuntimeError> {
+        if self.child_continuation_unknown {
+            return Err(super::RuntimeError::Invalid(
+                "Child continuation outcome is unknown; recovery is required".into(),
+            ));
+        }
         if self.child_worktree_setup_pending {
             return Err(super::RuntimeError::Invalid(
                 "Isolated child setup is incomplete; recovery is required".into(),
@@ -333,6 +342,8 @@ impl SessionState {
     }
     pub fn new(info: SessionInfo) -> Self {
         Self {
+            child_continuation_error: None,
+            child_continuation_unknown: false,
             child_worktree_setup_pending: false,
             child_worktree: None,
             result: super::structured::ResultState::default(),
@@ -582,7 +593,13 @@ impl SessionState {
             self.selection_revision = e.seq;
         }
         match kind {
+            "session.child.continuation_settled" => {
+                self.child_continuation_error = e.data["error"].as_str().map(str::to_owned);
+                self.child_continuation_unknown = e.data["unknown"].as_bool().unwrap_or(false);
+            }
             "session.subagent.resumed" => {
+                self.child_continuation_error = None;
+                self.child_continuation_unknown = false;
                 let resumed: super::names::Resumed = decode(e)?;
                 if let Some(name) = resumed.name {
                     self.info.subagent_name = Some(name);

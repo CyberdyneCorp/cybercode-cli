@@ -50,6 +50,18 @@ impl ToolHost for AppHost {
         self.builtin.claim_location(info, creating, cancel)
     }
 
+    fn prepare_child_continuation<'a>(
+        &'a self,
+        parent: &'a cyber_server::runtime::SessionInfo,
+        child: &'a cyber_server::runtime::SessionState,
+        owner: &'a cyber_server::runtime::ChildExecution,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Option<Box<dyn cyber_server::runtime::ChildContinuation>>, String>>
+    {
+        self.builtin
+            .prepare_child_continuation(parent, child, owner, cancel)
+    }
+
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let mut defs = self.builtin.definitions(turn);
         defs.extend(

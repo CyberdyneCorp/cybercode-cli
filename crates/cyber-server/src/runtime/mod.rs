@@ -58,9 +58,9 @@ pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
-    AgentInference, CatalogResolver, FileDiff, Invocation, LocationGuard, LocationLease,
-    ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, Snapshot,
-    Snapshots, ToolDef, ToolHost, ToolOutcome, TurnContext,
+    AgentInference, CatalogResolver, ChildContinuation, FileDiff, Invocation, LocationGuard,
+    LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
+    RestoreError, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, TurnContext,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
@@ -245,6 +245,8 @@ pub(crate) struct Handle {
 
 struct DrainEntry {
     _child_owner: Option<ChildExecution>,
+    child_settlement: Option<Box<dyn ChildContinuation>>,
+    child_settling: bool,
     cancel: CancellationToken,
     follow_up: bool,
 }
@@ -519,6 +521,10 @@ impl Runtime {
             if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
                 return Ok(receipt);
             }
+            // The state lock makes accepted input visible before settlement chooses cleanup.
+            if self.child_is_settling(session_id) {
+                return Err(RuntimeError::Busy(session_id.into()));
+            }
             let payload = Admitted {
                 message_id: message_id.clone(),
                 parts: admission.parts,
@@ -625,6 +631,9 @@ impl Runtime {
     /// Start a Drain when idle, or record one coalesced follow-up when one is running.
     pub async fn wake(&self, session_id: &str) -> Result<(), RuntimeError> {
         let _admission = self.inner.open().await?;
+        if self.child_is_settling(session_id) {
+            return Err(RuntimeError::Busy(session_id.into()));
+        }
         self.inner
             .handle(session_id)
             .await?
@@ -639,6 +648,9 @@ impl Runtime {
     /// Join an active Drain, or start one that performs at least one Turn.
     pub async fn resume(&self, session_id: &str) -> Result<(), RuntimeError> {
         let _admission = self.inner.open().await?;
+        if self.child_is_settling(session_id) {
+            return Err(RuntimeError::Busy(session_id.into()));
+        }
         self.inner
             .handle(session_id)
             .await?
@@ -1261,6 +1273,9 @@ impl Inner {
             return;
         }
         if let Some(entry) = drains.get_mut(id) {
+            if entry.child_settling {
+                return;
+            }
             entry.follow_up = true;
             return;
         }
@@ -1269,6 +1284,8 @@ impl Inner {
             id.into(),
             DrainEntry {
                 _child_owner: None,
+                child_settlement: None,
+                child_settling: false,
                 cancel: cancel.clone(),
                 follow_up: false,
             },

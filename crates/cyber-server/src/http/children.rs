@@ -103,6 +103,9 @@ fn observed(runtime: &Runtime, state: &SessionState) -> (ThreadStatus, Option<St
     if !state.unresolved().is_empty() {
         return failed("Tool outcome is unknown; recovery is required");
     }
+    if let Some(error) = &state.child_continuation_error {
+        return failed(format!("Continuation settlement failed: {error}"));
+    }
     let Some(input) = state.inbox.last() else {
         return (
             ThreadStatus::Waiting,

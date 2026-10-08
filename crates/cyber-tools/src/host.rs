@@ -499,6 +499,43 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.claim_worktree_location(info, creating, cancel))
     }
 
+    fn prepare_child_continuation<'a>(
+        &'a self,
+        parent: &'a cyber_server::runtime::SessionInfo,
+        child: &'a cyber_server::runtime::SessionState,
+        owner: &'a cyber_server::runtime::ChildExecution,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Option<Box<dyn cyber_server::runtime::ChildContinuation>>, String>>
+    {
+        Box::pin(async move {
+            let Some(managed) = child.child_worktree().cloned() else {
+                return Ok(None);
+            };
+            let info = &child.info;
+            let inv = Invocation {
+                session_id: info.id.clone(),
+                directory: parent.directory.clone(),
+                agent: info.agent.clone(),
+                mode: info.mode.clone(),
+                rules: info.rules.clone(),
+                message_id: String::new(),
+                call_id: cyber_core::ids::new_id("call"),
+                name: "agent".into(),
+                input: serde_json::json!({"operation":"continue","resume":info.id}),
+                attempt: 1,
+                operation_key: cyber_core::ids::new_id("op"),
+                asker: cyber_server::runtime::Asker::detached(),
+            };
+            let worktree = self
+                .resume_child_worktree_authorized(&inv, cancel, owner, info, managed, true)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(Some(
+                Box::new(worktree) as Box<dyn cyber_server::runtime::ChildContinuation>
+            ))
+        })
+    }
+
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let Ok(rules) =
             self.session_rules(Path::new(&turn.directory), Some(&turn.agent), &turn.rules)
