@@ -138,7 +138,7 @@ impl Runtime {
             .as_deref()
             .ok_or_else(|| RuntimeError::Invalid("Not a child Session".into()))?;
         let owner = self
-            .claim_child_execution(parent, &state.info.id)
+            .claim_child_continuation(parent, &state.info.id)
             .map_err(|_| RuntimeError::Busy(state.info.id.clone()))?;
         let current = handle.state.lock().await;
         if current.child_pause_seq != state.child_pause_seq {

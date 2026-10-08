@@ -206,6 +206,13 @@ impl Runtime {
             }
         }
         self.audit_idle_receipts(ids, &mut problems)?;
+        for (operation, owner) in super::child_ownership::held(&self.inner.store)? {
+            if ids.contains(&owner.parent_id) || ids.contains(&owner.child_id) {
+                problems.push(format!(
+                    "Child result owner {operation} requires acknowledgement or recovery"
+                ));
+            }
+        }
         let mut leases = Vec::new();
         for id in ids {
             let handle = self.inner.handle(id).await?;

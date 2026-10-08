@@ -57,6 +57,7 @@ const ALL: &[&str] = &[
     CHILD_INPUT_PAUSED,
     super::admission_authority::FENCED,
     super::activity::CHANGED,
+    super::child_ownership::CHANGED,
     super::subtree_stop::SETTLED,
     WORKTREE_REBOUND,
     WORKTREE_SETUP_READY,

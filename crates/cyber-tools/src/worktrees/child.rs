@@ -278,6 +278,7 @@ impl BuiltinHost {
         let runtime = self
             .runtime()
             .ok_or_else(|| io::Error::other("Runtime stopped"))?;
+        owner.verify(&runtime).map_err(io::Error::other)?;
         if runtime
             .state(&child.id)
             .await

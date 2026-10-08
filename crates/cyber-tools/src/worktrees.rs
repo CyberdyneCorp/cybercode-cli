@@ -526,6 +526,11 @@ impl BuiltinHost {
         sink: &dyn SetupSink,
         admission: SetupAdmission<'_>,
     ) -> io::Result<SetupOutcome> {
+        let authority = self
+            .runtime()
+            .map(|runtime| runtime.capture_child_admission(&inv.session_id))
+            .transpose()
+            .map_err(io::Error::other)?;
         if Path::new(&inv.directory).canonicalize()? != managed.path {
             return Err(io::Error::other(
                 "Session is not located in the owned worktree",
@@ -584,6 +589,7 @@ impl BuiltinHost {
             }
         }
         let execution = Execution {
+            authority,
             ctx: &ctx,
             journal: SetupJournal::new(
                 Arc::clone(&self.opts.store),
@@ -619,6 +625,7 @@ impl BuiltinHost {
 }
 
 struct Execution<'a> {
+    authority: Option<cyber_server::runtime::AdmissionAuthority>,
     ctx: &'a Ctx<'a>,
     journal: SetupJournal,
     next_command: AtomicUsize,
@@ -678,14 +685,30 @@ impl Execution<'_> {
         command: &str,
         sink: &dyn SetupSink,
     ) -> Result<Option<i32>, SetupFailure> {
+        self.verify_authority().map_err(SetupFailure::Preparation)?;
         let prepared = self
             .prepare_setup(command)
             .await
             .map_err(SetupFailure::Preparation)?;
+        self.verify_authority().map_err(SetupFailure::Preparation)?;
         let status = run(self.ctx, prepared, directory, sink)
             .await
             .map_err(SetupFailure::Execution)?;
         Ok(status.code())
+    }
+
+    fn verify_authority(&self) -> io::Result<()> {
+        if let Some(authority) = &self.authority {
+            let runtime = self
+                .ctx
+                .host
+                .runtime()
+                .ok_or_else(|| io::Error::other("Setup runtime stopped"))?;
+            authority
+                .verify(&runtime, &self.ctx.inv.session_id)
+                .map_err(io::Error::other)?;
+        }
+        Ok(())
     }
 
     async fn prepare_setup(&self, command: &str) -> io::Result<crate::sandboxing::Prepared> {

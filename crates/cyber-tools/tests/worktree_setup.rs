@@ -93,6 +93,89 @@ struct Sink {
     ready: Notify,
     fail: bool,
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn original_setup_authority_refuses_a_second_command_after_generation_fence() {
+    use cyber_server::runtime::{CreateSession, NoSnapshots};
+    use cyber_store::{Expected, NewEvent};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct FenceSink {
+        store: Arc<cyber_store::Store>,
+        session: String,
+        output: Mutex<Vec<u8>>,
+        fenced: AtomicBool,
+    }
+    impl SetupSink for FenceSink {
+        fn emit(&self, event: SetupEvent<'_>) -> io::Result<()> {
+            if let SetupEvent::Output { bytes, .. } = event {
+                let mut output = self.output.lock().unwrap();
+                output.extend_from_slice(bytes);
+                if output.windows(9).any(|bytes| bytes == b"fence-now")
+                    && !self.fenced.swap(true, Ordering::SeqCst)
+                {
+                    self.store
+                        .append(
+                            &self.session,
+                            Expected::Any,
+                            vec![NewEvent::new("session.admission.fenced.1", json!({}))],
+                        )
+                        .map_err(io::Error::other)?;
+                }
+            }
+            Ok(())
+        }
+    }
+    let (fixture, repository, managed) = owned().await;
+    let commands = vec![
+        "printf fence-now".to_string(),
+        "printf forbidden > second.txt".to_string(),
+    ];
+    fixture.set_config(json!({"permissions":{"worktree":"allow"}, "worktrees":{"setup":commands}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut inv = flow.f.invocation("bypass", "worktree", json!({}));
+    inv.session_id = info.id.clone();
+    inv.directory = info.directory;
+    let sink = FenceSink {
+        store: flow.f.store.clone(),
+        session: info.id.clone(),
+        output: Mutex::default(),
+        fenced: AtomicBool::new(false),
+    };
+    let error = flow
+        .f
+        .host
+        .setup_worktree(&inv, CancellationToken::new(), &repository, &managed, &sink)
+        .await
+        .unwrap_err();
+    assert!(sink.fenced.load(Ordering::SeqCst));
+    assert!(error.to_string().contains("fenced"), "{error}");
+    assert!(!managed.path.join("second.txt").exists());
+    let journal = cyber_server::worktrees::SetupJournal::new(
+        flow.f.store.clone(),
+        &managed,
+        &commands,
+        &info.id,
+    )
+    .unwrap();
+    assert!(matches!(
+        journal.start(1).unwrap(),
+        cyber_server::worktrees::CommandDecision::Recorded(
+            cyber_server::worktrees::CommandResult::NotDispatched { .. }
+        )
+    ));
+    flow.runtime.shutdown().await;
+}
 impl SetupSink for Sink {
     fn emit(&self, event: SetupEvent<'_>) -> io::Result<()> {
         if let SetupEvent::Output { bytes, .. } = event {

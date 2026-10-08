@@ -408,7 +408,7 @@ async fn execute_child(
     let result = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
-        result = create_child(ctx, &runtime, &parent, &spawn, &id, guard.execution()) => result,
+        result = guard.execution().run(ctx.cancel.clone(), create_child(ctx, &runtime, &parent, &spawn, &id, guard.execution())) => result,
     };
     let (prompt, worktree) = match result {
         Ok(created) => created,

@@ -24,7 +24,34 @@ pub struct ChildExecution {
     runtime: super::WeakRuntime,
     parent: String,
     id: String,
+    authority: super::AdmissionAuthority,
+    _lease: super::child_ownership::Lease,
     _guard: tokio::sync::OwnedMutexGuard<()>,
+    done: tokio_util::sync::CancellationToken,
+}
+
+impl ChildExecution {
+    pub fn verify(&self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        self.authority
+            .verify(runtime, &self.authority.bindings[0].id)
+    }
+    /// Preserve the originally claimed source and target through native callback awaits.
+    pub fn run<'a, F>(
+        &self,
+        cancel: tokio_util::sync::CancellationToken,
+        future: F,
+    ) -> futures::future::BoxFuture<'a, F::Output>
+    where
+        F: std::future::Future + Send + 'a,
+        F::Output: Send + 'a,
+    {
+        self.authority.clone().run(cancel, future)
+    }
+}
+impl Drop for ChildExecution {
+    fn drop(&mut self) {
+        self.done.cancel();
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -41,12 +68,42 @@ impl Runtime {
         parent: &str,
         id: &str,
     ) -> Result<ChildExecution, RuntimeError> {
+        self.claim_child_execution_from(parent, id, parent)
+    }
+
+    /// Existing-child continuation is sourced by the child and survives ordinary parent interruption.
+    pub fn claim_child_continuation(
+        &self,
+        parent: &str,
+        id: &str,
+    ) -> Result<ChildExecution, RuntimeError> {
+        let lookup_parent = parent.to_owned();
+        let target = id.to_owned();
+        let valid = self.inner.store.read(move |db| {
+            Ok(db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session WHERE id=?1 AND parent_id=?2)",
+                rusqlite::params![target, lookup_parent],
+                |row| row.get::<_, bool>(0),
+            )?)
+        })?;
+        if !valid {
+            return Err(RuntimeError::Invalid("Subagent not found".into()));
+        }
+        self.claim_child_execution_from(parent, id, id)
+    }
+
+    fn claim_child_execution_from(
+        &self,
+        parent: &str,
+        id: &str,
+        source: &str,
+    ) -> Result<ChildExecution, RuntimeError> {
         let mut owners = self
             .inner
             .child_executions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.capture_child_admission(parent)?;
+        let mut authority = self.capture_child_admission(source)?;
         let target = id.to_owned();
         let exists = self.inner.store.read(move |db| {
             Ok(db.query_row(
@@ -56,7 +113,7 @@ impl Runtime {
             )?)
         })?;
         if exists {
-            self.inner.ensure_admission_open(id)?;
+            authority = authority.with_target(self.capture_child_admission(id)?);
         }
         owners.retain(|_, owner| owner.strong_count() > 0);
         let mutex = owners
@@ -70,11 +127,20 @@ impl Runtime {
         let guard = mutex
             .try_lock_owned()
             .map_err(|_| RuntimeError::Invalid("Subagent busy".into()))?;
+        let lease =
+            super::child_ownership::Lease::claim(self.inner.store.clone(), parent, id, &authority)?;
+        let done = tokio_util::sync::CancellationToken::new();
+        authority = authority
+            .with_operation(lease.operation_id().into())
+            .with_cancellation(done.clone());
         Ok(ChildExecution {
             runtime: self.downgrade(),
             parent: parent.into(),
             id: id.into(),
+            authority,
+            _lease: lease,
             _guard: guard,
+            done,
         })
     }
 
@@ -123,7 +189,8 @@ impl Runtime {
                 "Child owner belongs to another runtime".into(),
             ));
         }
-        let authority = self.capture_child_admission(&owner.parent)?;
+        owner.verify(self)?;
+        let authority = owner.authority.clone();
         let state = self.state(&owner.id).await?;
         if state.child_continuation_unknown {
             return Err(RuntimeError::Invalid(
@@ -186,6 +253,7 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         use super::events::*;
         let _admission = self.inner.open().await?;
+        owner.verify(self)?;
         if !std::sync::Weak::ptr_eq(&owner.runtime.inner, &self.downgrade().inner) {
             return Err(RuntimeError::Invalid(
                 "Child owner belongs to another runtime".into(),
@@ -237,6 +305,7 @@ impl Runtime {
         from: &cyber_core::worktrees::Managed,
         to: &cyber_core::worktrees::Managed,
     ) -> Result<(), RuntimeError> {
+        owner.verify(self)?;
         state.ensure_worktree_ready()?;
         if state.info.parent_id.as_deref() != Some(&owner.parent)
             || state.child_worktree.as_ref() != Some(from)
@@ -307,6 +376,7 @@ impl Runtime {
         owner: &ChildExecution,
         managed: &cyber_core::worktrees::Managed,
     ) -> Result<(), RuntimeError> {
+        owner.verify(self)?;
         if !std::sync::Weak::ptr_eq(&owner.runtime.inner, &self.downgrade().inner) {
             return Err(RuntimeError::Invalid(
                 "Child owner belongs to another runtime".into(),

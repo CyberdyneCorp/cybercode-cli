@@ -198,19 +198,23 @@ impl BuiltinHost {
         let mut setup_inv = context.inv;
         setup_inv.session_id = context.child.id.clone();
         setup_inv.directory = context.child.directory.clone();
-        let setup = Box::pin(self.setup_worktree_session_authorized(
-            &setup_inv,
-            cancel,
-            &context.repository,
-            &context.managed,
-            SetupAdmission {
-                explicit: true,
-                user_requested: true,
-                recipe: Some(&context.recipe),
-                recovery: Some(&review),
-            },
-        ))
-        .await?;
+        let setup = owner
+            .run(
+                cancel.clone(),
+                self.setup_worktree_session_authorized(
+                    &setup_inv,
+                    cancel,
+                    &context.repository,
+                    &context.managed,
+                    SetupAdmission {
+                        explicit: true,
+                        user_requested: true,
+                        recipe: Some(&context.recipe),
+                        recovery: Some(&review),
+                    },
+                ),
+            )
+            .await?;
         if matches!(setup, SetupOutcome::Completed) {
             runtime
                 .complete_child_worktree_setup(&context.child.id, &context.managed)

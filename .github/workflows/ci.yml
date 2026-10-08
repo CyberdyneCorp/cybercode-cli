@@ -158,7 +158,7 @@ jobs:
         run: cargo test --locked -p cyber-tools --test subtasks --test delegations -p cyber-server --test subtask_cancellation
       - name: Native subtree admission closure
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-server --test subtree_admission --test subtree_stop --test idle_cancellation
+        run: cargo test --locked -p cyber-server --test subtree_admission --test subtree_stop --test idle_cancellation --test child_ownership
       - name: Native forked child context and ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test forked_subagents -p cyber-server --test fork_context

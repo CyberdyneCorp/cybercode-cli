@@ -12,6 +12,7 @@ pub use ancestry::AncestorAuthority;
 mod auto;
 mod budget;
 mod bus;
+mod child_ownership;
 mod child_usage;
 mod compaction;
 pub use child_usage::ChildrenUsage;

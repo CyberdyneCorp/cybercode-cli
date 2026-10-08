@@ -74,11 +74,22 @@ impl Runtime {
             .handle(session_id)
             .await
             .map_err(io::Error::other)?;
+        let authority = self
+            .capture_child_admission(session_id)
+            .map_err(io::Error::other)?;
         let owned_cancel = cancel.clone();
         let result = self
             .settle_worktree_setup(cancel, async {
                 self.inner
-                    .with_setup_location(&handle, owned_cancel, async { Ok(work.await) }, true)
+                    .with_setup_location(
+                        &handle,
+                        owned_cancel.clone(),
+                        async {
+                            authority.verify(self, session_id)?;
+                            Ok(authority.scope(owned_cancel, work).await)
+                        },
+                        true,
+                    )
                     .await
                     .map_err(io::Error::other)?
             })

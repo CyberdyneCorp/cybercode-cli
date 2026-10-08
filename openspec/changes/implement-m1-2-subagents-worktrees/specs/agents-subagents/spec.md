@@ -589,3 +589,28 @@
 #### Scenario: Idle native operation lacks acknowledgement
 - **WHEN** a scoped shell or maintenance operation is disposed or fails to acknowledge cancellation
 - **THEN** its durable pending/unknown receipt prevents successful acknowledgement and admission stays closed
+
+
+### Requirement: Durable child result ownership and target authority
+(P1) Child result ownership SHALL be exclusive across runtimes sharing the database, and acquisition SHALL verify the target belongs to the declared parent. Acquisition SHALL persist original source authority and, for existing children, the original target identity and cancellation boundaries before callbacks or native preparation. The writer SHALL refuse a closed target independently of supplied bindings. Callback work and resumed admission SHALL retain this original authority through awaits and writer settlement. Existing-child continuation SHALL be sourced by the child so ordinary parent interruption does not revoke independent child work; an explicit subtree fence SHALL revoke it. Session setup SHALL capture source/target authority before Location admission and recheck it before each new native command, including after asynchronous sandbox preparation. Owner release SHALL revoke callback authority while preserving terminal release evidence after closure. A held or orphaned durable owner SHALL prevent subtree acknowledgement; releasing result ownership SHALL NOT itself prove native effects acknowledged.
+
+#### Scenario: Another runtime holds the result owner
+- **WHEN** a child owner belongs to another runtime or has not released before restart
+- **THEN** another claim is refused and subtree stop records Unknown until ownership is acknowledged or recovered
+
+#### Scenario: Target fence during parent callback
+- **WHEN** the parent remains open but its originally claimed child is fenced while a callback waits
+- **THEN** native preparation and child admission refuse the original target authority instead of capturing a fresh boundary
+
+#### Scenario: Owner disposal after closure
+- **WHEN** a child result owner is released after its source or target closes
+- **THEN** its release receipt is durable and retained callback authority cannot launch additional work
+
+
+#### Scenario: Setup admission waits across a target boundary
+- **WHEN** target authority changes while a setup Location claim waits or between setup commands
+- **THEN** the next effect is refused with original captured authority and a not-dispatched command receipt when journaled
+
+#### Scenario: Independent child continuation
+- **WHEN** the parent Drain is interrupted during child-sourced continuation
+- **THEN** the child retains its authority until its own interruption or an explicit ancestor subtree fence

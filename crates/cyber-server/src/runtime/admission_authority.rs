@@ -21,11 +21,24 @@ pub(super) const FENCED: &str = "session.admission.fenced.1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Binding {
-    id: String,
+    pub(super) id: String,
     created_id: String,
     parent: Option<String>,
     subtree_seq: i64,
     /// Ordinary interruption invalidates only launches sourced by this Session.
+    local_seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    operations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    guards: Vec<Boundary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Boundary {
+    id: String,
+    created_id: String,
+    parent: Option<String>,
+    subtree_seq: i64,
     local_seq: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     operations: Vec<String>,
@@ -47,6 +60,22 @@ impl std::fmt::Debug for AdmissionAuthority {
 }
 
 impl AdmissionAuthority {
+    pub(super) fn with_target(mut self, target: Self) -> Self {
+        let guards = &mut self.bindings.first_mut().expect("captured source").guards;
+        for binding in target.bindings {
+            guards.push(Boundary {
+                id: binding.id,
+                created_id: binding.created_id,
+                parent: binding.parent,
+                subtree_seq: binding.subtree_seq,
+                local_seq: binding.local_seq,
+                operations: binding.operations,
+            });
+            guards.extend(binding.guards);
+        }
+        self.cancellations.extend(target.cancellations);
+        self
+    }
     pub(super) fn with_operation(mut self, id: String) -> Self {
         self.bindings
             .first_mut()
@@ -154,6 +183,14 @@ impl Runtime {
             .iter()
             .position(|binding| binding.id == inherited_source)
         else {
+            if inherited
+                .bindings
+                .iter()
+                .any(|binding| binding.id == source)
+            {
+                inherited.verify(self, inherited_source)?;
+                return Ok(Some(current.with_target(inherited)));
+            }
             return Ok(None);
         };
         inherited.verify(self, inherited_source)?;
@@ -268,6 +305,21 @@ fn chain_is_open(conn: &Connection, bindings: &[Binding]) -> Result<bool, StoreE
     Ok(true)
 }
 
+pub(super) fn existing_target_open(conn: &Connection, id: &str) -> Result<bool, StoreError> {
+    let exists = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM session WHERE id=?1)",
+        [id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !exists {
+        return Ok(true);
+    }
+    let Some(chain) = snapshot_chain(conn, id)? else {
+        return Ok(false);
+    };
+    chain_is_open(conn, &chain)
+}
+
 fn snapshot_chain(conn: &Connection, source: &str) -> Result<Option<Vec<Binding>>, StoreError> {
     let mut next = Some(source.to_string());
     let mut seen = HashSet::new();
@@ -308,6 +360,7 @@ fn snapshot_chain(conn: &Connection, source: &str) -> Result<Option<Vec<Binding>
             subtree_seq,
             local_seq,
             operations: Vec::new(),
+            guards: Vec::new(),
         });
     }
     Ok(Some(bindings))
@@ -321,7 +374,10 @@ fn sequence(conn: &Connection, id: &str, kind: &str) -> Result<i64, StoreError> 
     )?)
 }
 
-fn bindings_current(conn: &Connection, captured: &[Binding]) -> Result<bool, StoreError> {
+pub(super) fn bindings_current(
+    conn: &Connection,
+    captured: &[Binding],
+) -> Result<bool, StoreError> {
     let Some(source) = captured.first() else {
         return Ok(false);
     };
@@ -335,10 +391,11 @@ fn bindings_current(conn: &Connection, captured: &[Binding]) -> Result<bool, Sto
         return Ok(false);
     }
     for (current, captured) in current.iter_mut().zip(captured) {
-        if !operations_current(conn, captured)? {
+        if !operations_current(conn, captured)? || !guards_current(conn, &captured.guards)? {
             return Ok(false);
         }
         current.operations = captured.operations.clone();
+        current.guards = captured.guards.clone();
         if captured.local_seq.is_some() && current.local_seq.is_none() {
             current.local_seq = Some(sequence(
                 conn,
@@ -350,11 +407,38 @@ fn bindings_current(conn: &Connection, captured: &[Binding]) -> Result<bool, Sto
     Ok(current == captured)
 }
 
+fn guards_current(conn: &Connection, guards: &[Boundary]) -> Result<bool, StoreError> {
+    for guard in guards {
+        let Some(chain) = snapshot_chain(conn, &guard.id)? else {
+            return Ok(false);
+        };
+        if !chain_is_open(conn, &chain)? {
+            return Ok(false);
+        }
+        let mut current = chain[0].clone();
+        current.operations = guard.operations.clone();
+        if !operations_current(conn, &current)? {
+            return Ok(false);
+        }
+        if current.created_id != guard.created_id
+            || current.parent != guard.parent
+            || current.subtree_seq != guard.subtree_seq
+            || guard
+                .local_seq
+                .is_some_and(|seq| current.local_seq != Some(seq))
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn operations_current(conn: &Connection, binding: &Binding) -> Result<bool, StoreError> {
     for operation in &binding.operations {
         let record = conn.query_row(
-            "SELECT json_extract(data,'$.data.session_id'),json_extract(data,'$.data.status')
-             FROM event WHERE aggregate_id=?1 AND type='delegation.changed.1' ORDER BY seq DESC LIMIT 1",
+            "SELECT CASE type WHEN 'child.execution.changed.1' THEN json_extract(data,'$.source_id') ELSE json_extract(data,'$.data.session_id') END,
+             CASE type WHEN 'child.execution.changed.1' THEN CASE json_extract(data,'$.status') WHEN 'held' THEN 'pending' ELSE 'released' END ELSE json_extract(data,'$.data.status') END
+             FROM event WHERE aggregate_id=?1 AND type IN ('delegation.changed.1','child.execution.changed.1') ORDER BY seq DESC LIMIT 1",
             [operation], |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
         ).optional()?;
         if !record.is_some_and(|(source, status)| {
@@ -367,6 +451,9 @@ fn operations_current(conn: &Connection, binding: &Binding) -> Result<bool, Stor
 }
 
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    if event.kind == super::child_ownership::CHANGED {
+        return super::child_ownership::project(tx, event);
+    }
     if event.kind == super::subtree_stop::SETTLED {
         return super::subtree_stop::project(tx, event);
     }
