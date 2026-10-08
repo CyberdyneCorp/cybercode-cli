@@ -18,7 +18,7 @@ struct UseRecord {
 /// Dropping without `settle` releases the OS lock but retains unknown activity.
 /// The caller must settle its owned work/process trees before calling `settle`.
 pub struct CheckoutLease {
-    file: File,
+    file: LockedRecord,
     record: UseRecord,
 }
 
@@ -35,11 +35,24 @@ impl CheckoutLease {
     }
 }
 
-impl Drop for CheckoutLease {
+/// Release explicitly on every exit, including failed record validation. Closing
+/// alone can leave a transient inherited descriptor holding the native lock.
+struct LockedRecord(File);
+
+impl std::ops::Deref for LockedRecord {
+    type Target = File;
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for LockedRecord {
+    fn deref_mut(&mut self) -> &mut File {
+        &mut self.0
+    }
+}
+impl Drop for LockedRecord {
     fn drop(&mut self) {
-        // Closing alone can leave a transient inherited descriptor holding the lock.
-        // An unsettled record still refuses admission after this explicit release.
-        let _ = self.file.unlock();
+        let _ = self.0.unlock();
     }
 }
 
@@ -49,15 +62,7 @@ impl Drop for CheckoutLease {
 pub struct CheckoutActivity;
 
 struct RemovalFence {
-    _files: Vec<File>,
-}
-
-impl Drop for RemovalFence {
-    fn drop(&mut self) {
-        for file in &self._files {
-            let _ = file.unlock();
-        }
-    }
+    _files: Vec<LockedRecord>,
 }
 
 impl RemovalActivity for CheckoutActivity {
@@ -80,10 +85,11 @@ impl RemovalActivity for CheckoutActivity {
             if path.extension().is_none_or(|extension| extension != "lock") {
                 return Err(invalid("Unexpected activity record"));
             }
-            let mut file = open_record(&path, false)?;
+            let file = open_record(&path, false)?;
             if !try_lock(&file)? {
                 return Err(io::Error::other(format!("Worktree in use by {session}")));
             }
+            let mut file = LockedRecord(file);
             let record = read_record(&mut file)?;
             check_record(&record, managed, session)?;
             if !record.settled {
@@ -128,10 +134,11 @@ impl Repository {
         }
         let path = use_directory(managed, true)?.join(format!("{session}.lock"));
         let existed = path.try_exists()?;
-        let mut file = open_record(&path, true)?;
+        let file = open_record(&path, true)?;
         if !try_lock(&file)? {
             return Err(io::Error::other(format!("Worktree in use by {session}")));
         }
+        let mut file = LockedRecord(file);
         if existed {
             let record = read_record(&mut file)?;
             check_record(&record, managed, session)?;
@@ -271,7 +278,12 @@ mod tests {
             settled: false,
         };
         write_record(&mut file, &record).unwrap();
-        let proof = CheckoutLease { file, record }.settle_retained().unwrap();
+        let proof = CheckoutLease {
+            file: LockedRecord(file),
+            record,
+        }
+        .settle_retained()
+        .unwrap();
         let mut probe = open_record(&path, false).unwrap();
         #[cfg(not(windows))]
         assert!(read_record(&mut probe).unwrap().settled);
@@ -302,11 +314,39 @@ mod tests {
         drop(initial);
         let file = File::open(&path).unwrap();
         assert!(try_lock(&file).unwrap());
-        assert!(CheckoutLease { file, record }.settle_retained().is_err());
+        assert!(
+            CheckoutLease {
+                file: LockedRecord(file),
+                record
+            }
+            .settle_retained()
+            .is_err()
+        );
         let mut probe = open_record(&path, false).unwrap();
         assert!(try_lock(&probe).unwrap());
         assert!(!read_record(&mut probe).unwrap().settled);
         probe.unlock().unwrap();
+    }
+
+    #[test]
+    fn failed_record_validation_releases_lock_with_duplicate_descriptor_retained() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lease.lock");
+        std::fs::write(&path, b"malformed record").unwrap();
+        let file = open_record(&path, false).unwrap();
+        assert!(try_lock(&file).unwrap());
+        let duplicate = file.try_clone().unwrap();
+        let result = (|| -> io::Result<()> {
+            let mut locked = LockedRecord(file);
+            read_record(&mut locked)?;
+            Ok(())
+        })();
+        assert!(result.is_err());
+        let probe = open_record(&path, false).unwrap();
+        assert!(try_lock(&probe).unwrap());
+        probe.unlock().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"malformed record");
+        drop(duplicate);
     }
 
     #[test]
@@ -323,7 +363,10 @@ mod tests {
                 settled: false,
             };
             write_record(&mut file, &record).unwrap();
-            let lease = CheckoutLease { file, record };
+            let lease = CheckoutLease {
+                file: LockedRecord(file),
+                record,
+            };
             if settle {
                 lease.settle().unwrap();
             } else {

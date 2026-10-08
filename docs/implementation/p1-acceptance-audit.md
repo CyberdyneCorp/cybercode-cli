@@ -425,3 +425,5 @@ Canonical source: [worktrees](../../openspec/specs/worktrees/spec.md).
 - [ ] Worktree management commands
 - [ ] Concurrency safety
 - [ ] Worktree events
+
+Authenticated hook approval/revocation APIs now have exact current-digest and checkout-trust refusal coverage, malformed-config obsolete revocation and typed Location-preserving SDK methods. These tests accept the tested API boundaries; full TUI definition/trust controls and native API acceptance remain open.

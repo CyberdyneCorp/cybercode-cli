@@ -243,6 +243,7 @@
 - **WHEN** a checkout activity owner exits without explicitly settling its work
 - **THEN** release of its OS lock alone SHALL NOT permit removal, including forced removal
 - **AND** persisted unknown activity SHALL remain available for recovery
+- **AND** validation or admission refusal SHALL explicitly release every acquired native record lock even when a duplicated descriptor remains open
 
 #### Scenario: A Session uses a nested checkout
 - **WHEN** a Session runs inside a nested Git repository or managed checkout
