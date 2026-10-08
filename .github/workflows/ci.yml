@@ -96,6 +96,9 @@ jobs:
       - name: Native durable agent context
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_context
+      - name: Native filesystem edit path proofs
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --lib permissions::filesystem
       - name: Native ordered permission rules
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test ordered_permissions --test auto_dispatch -p cyber-server --test auto

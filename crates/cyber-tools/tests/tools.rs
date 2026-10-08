@@ -510,6 +510,96 @@ async fn accept_edits_retains_protected_ceilings_through_filesystem_aliases() {
 }
 
 #[tokio::test]
+async fn accept_edits_copies_and_moves_inspected_directory_trees() {
+    let f = Fixture::new();
+    f.write("source/nested/data.txt", "original");
+    ok(f.call(
+        "accept-edits",
+        "bash",
+        json!({"command":"cp -R source copied"}),
+    )
+    .await);
+    assert_eq!(f.read("copied/nested/data.txt"), "original");
+    std::fs::create_dir(f.repo.join("destination")).unwrap();
+    ok(f.call(
+        "accept-edits",
+        "bash",
+        json!({"command":"mv copied destination"}),
+    )
+    .await);
+    assert_eq!(f.read("destination/copied/nested/data.txt"), "original");
+    assert!(!f.repo.join("copied").exists());
+    assert_eq!(f.read("source/nested/data.txt"), "original");
+    f.set_config(json!({"permissions":{"bash":"deny"}}));
+    let out = failed(
+        f.call(
+            "accept-edits",
+            "bash",
+            json!({"command":"cp -R source denied"}),
+        )
+        .await,
+    );
+    assert!(out.contains("denied"), "{out}");
+    assert!(!f.repo.join("denied").exists());
+}
+
+#[tokio::test]
+async fn accept_edits_directory_operations_keep_protected_descendants_behind_approval() {
+    let f = Fixture::new();
+    f.write(".cyber/hooks.jsonc", "protected");
+    f.write("payload/hooks.jsonc", "replacement");
+    for command in [
+        "mv .cyber moved",
+        "cp -R payload .cyber/plugins",
+        "cp -R .cyber copied",
+    ] {
+        let out = failed(
+            f.call("accept-edits", "bash", json!({"command":command}))
+                .await,
+        );
+        assert!(out.contains("no interactive approver"), "{command}: {out}");
+        assert_eq!(f.read(".cyber/hooks.jsonc"), "protected");
+    }
+    assert!(!f.repo.join("moved").exists());
+    assert!(!f.repo.join("copied").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn accept_edits_directory_destinations_preserve_protected_and_outside_alias_ceilings() {
+    for protected in [true, false] {
+        let f = Fixture::new();
+        f.write("source/nested/data", "replacement");
+        f.write(".cyber/hooks.jsonc", "protected");
+        std::fs::create_dir_all(f.repo.join("destination/source/nested")).unwrap();
+        let outside = f.dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        if protected {
+            std::os::unix::fs::symlink(
+                f.repo.join(".cyber/hooks.jsonc"),
+                f.repo.join("destination/source/nested/data"),
+            )
+            .unwrap();
+        } else {
+            std::fs::remove_dir(f.repo.join("destination/source/nested")).unwrap();
+            std::os::unix::fs::symlink(&outside, f.repo.join("destination/source/nested")).unwrap();
+        }
+        let out = failed(
+            f.call(
+                "accept-edits",
+                "bash",
+                json!({"command":"cp -R source destination"}),
+            )
+            .await,
+        );
+        assert!(out.contains("no interactive approver"), "{out}");
+        assert_eq!(f.read(".cyber/hooks.jsonc"), "protected");
+        assert!(!outside.join("data").exists());
+        assert_eq!(f.read("source/nested/data"), "replacement");
+    }
+}
+
+#[tokio::test]
 async fn inline_critical_removals_cannot_be_lifted_by_rules_or_saved_approvals() {
     let f = Fixture::new();
     f.write("keep.txt", "preserve me");

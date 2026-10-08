@@ -164,6 +164,11 @@
 - **WHEN** a nonrecursive rm has literal workspace operands after `--`
 - **THEN** operand names starting with a dash SHALL be treated as paths rather than options
 
+#### Scenario: Literal directory copies and moves
+- **WHEN** a literal recursive copy or directory move has a bounded, inspectable ordinary source tree and established destination semantics
+- **THEN** accept-edits SHALL check every source descendant and its resolved destination against Location and protected-path ceilings before automatic allowance
+- **AND** uninspectable trees, symbolic links, multiply linked files, unsupported options and ambiguous directory operands SHALL retain ordinary approval
+
 ### Requirement: Auto-mode configuration and override
 (P1) `permissions.auto_mode` SHALL accept `rules.always_block` and `rules.always_allow` (ordered `{ action, resource }` patterns applied before the classifier), `policy` (text appended to the classifier prompt describing the user's boundaries), `classify_read_only` (default false: read-only tools skip the classifier) and `fallback` (`ask` default, or `deny`). `/approve` SHALL re-issue the most recent call blocked by the classifier once, after the user confirms it in a permission prompt showing the classifier's reason; `cyber permissions auto show|reset` SHALL print or clear learned per-checkout statistics. Org policy MAY set the same keys as ceilings (`always_block` unions, `always_allow` intersects).
 
