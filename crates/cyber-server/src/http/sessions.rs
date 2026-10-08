@@ -471,7 +471,7 @@ async fn prompt(
         source: body.source.unwrap_or_else(|| "user".into()),
         resume: body.resume,
     };
-    let receipt: Receipt = state.runtime.admit(&id, admission).await?;
+    let receipt: Receipt = state.runtime.admit_user(&id, admission).await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
 }
 
@@ -498,7 +498,7 @@ async fn command(
         source: "user".into(),
         resume: true,
     };
-    let receipt = state.runtime.admit(&id, admission).await?;
+    let receipt = state.runtime.admit_user(&id, admission).await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
 }
 

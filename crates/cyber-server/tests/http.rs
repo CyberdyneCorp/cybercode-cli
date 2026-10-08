@@ -2011,3 +2011,253 @@ async fn child_threads_show_only_their_own_pending_user_requests() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn child_thread_prompt_starts_a_fresh_structured_attempt_and_preserves_receipts() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery, StructuredSchema};
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("first", "return_result", "1")]),
+                tools(&[("second", "return_result", "2")]),
+            ],
+        )],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            subagent_name: Some("review".into()),
+            output_schema: Some(StructuredSchema::new(json!({"type":"integer"})).unwrap()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.runtime
+        .admit(&child, Admission::text("initial", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&child).await;
+    assert_eq!(h.state(&child).await.structured_result(), Some(&json!(1)));
+    let api = Api::new(&h);
+    let path = format!("/sessions/{child}/prompt");
+    let mut followup = prompt("follow up");
+    followup["id"] = json!("msg_user_followup");
+    let (status, receipt) = api.post(&path, followup.clone()).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    h.runtime.wait_idle(&child).await;
+    assert_eq!(h.state(&child).await.structured_result(), Some(&json!(2)));
+    let seq = h.state(&child).await.last_seq;
+    let (status, retry) = api.post(&path, followup).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    for field in ["session_id", "message_id", "delivery", "admitted_seq"] {
+        assert_eq!(retry["data"][field], receipt["data"][field]);
+    }
+    assert_eq!(retry["data"]["status"], "promoted");
+    assert_eq!(h.state(&child).await.last_seq, seq);
+    let mut conflict = prompt("different prompt");
+    conflict["id"] = json!("msg_user_followup");
+    assert_eq!(api.post(&path, conflict).await.0, StatusCode::CONFLICT);
+    assert_eq!(h.state(&child).await.structured_result(), Some(&json!(2)));
+    assert_eq!(h.models.requests("test/main").len(), 2);
+    assert_eq!(
+        h.state(&child).await.info.subagent_name.as_deref(),
+        Some("review")
+    );
+    assert_eq!(
+        h.state(&child).await.output_schema().unwrap().schema(),
+        &json!({"type":"integer"})
+    );
+}
+
+#[tokio::test]
+async fn child_thread_continuation_refuses_a_result_owner_and_preserves_unnamed_identity() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery, StructuredSchema};
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("first", "return_result", "1")]),
+                tools(&[("second", "return_result", "2")]),
+            ],
+        )],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            output_schema: Some(StructuredSchema::new(json!({"type":"integer"})).unwrap()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let owner = h.runtime.claim_child_execution(&parent, &child).unwrap();
+    h.runtime
+        .admit(&child, Admission::text("initial", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&child).await;
+    let before = h.state(&child).await;
+    let api = Api::new(&h);
+    let path = format!("/sessions/{child}/prompt");
+    let (status, refused) = api.post(&path, prompt("follow up")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(refused["_tag"], "SessionBusyError");
+    assert_eq!(h.state(&child).await, before);
+    drop(owner);
+    assert_eq!(
+        api.post(&path, prompt("follow up")).await.0,
+        StatusCode::ACCEPTED
+    );
+    h.runtime.wait_idle(&child).await;
+    let after = h.state(&child).await;
+    assert_eq!(after.structured_result(), Some(&json!(2)));
+    assert_eq!(after.info.subagent_name, None);
+    let lookup = child.clone();
+    let stored_name: Option<String> = h
+        .store
+        .read(move |db| {
+            db.query_row(
+                "SELECT subagent_name FROM session WHERE id=?1",
+                [lookup],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap();
+    assert_eq!(stored_name, None);
+    h.runtime.shutdown().await;
+    let replay = h.restart().state(&child).await.unwrap();
+    assert_eq!(replay.structured_result(), Some(&json!(2)));
+    assert_eq!(replay.info.subagent_name, None);
+}
+
+#[tokio::test]
+async fn child_thread_held_inputs_preserve_terminal_result_and_unknown_outcomes_refuse() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery, StructuredSchema};
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("first", "return_result", "1")]),
+                tools(&[("write1", "write", "{}")]),
+            ],
+        )],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            output_schema: Some(StructuredSchema::new(json!({"type":"integer"})).unwrap()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.runtime
+        .admit(&child, Admission::text("initial", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&child).await;
+    let api = Api::new(&h);
+    let path = format!("/sessions/{child}/prompt");
+    let mut held = prompt("later");
+    held["delivery"] = json!("hold");
+    assert_eq!(api.post(&path, held).await.0, StatusCode::ACCEPTED);
+    let mut sleeping = prompt("do not wake");
+    sleeping["resume"] = json!(false);
+    assert_eq!(api.post(&path, sleeping).await.0, StatusCode::ACCEPTED);
+    assert_eq!(h.state(&child).await.structured_result(), Some(&json!(1)));
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    let uncertain = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.tools.set("write", Behavior::Crash);
+    h.runtime
+        .admit(&uncertain, Admission::text("write", Delivery::Steer))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&uncertain).await;
+    let before = h.state(&uncertain).await;
+    assert!(!before.unresolved().is_empty());
+    let (status, refused) = api
+        .post(&format!("/sessions/{uncertain}/prompt"), prompt("retry"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(refused["message"].as_str().unwrap().contains("recovery"));
+    assert_eq!(h.state(&uncertain).await, before);
+}
+
+#[tokio::test]
+async fn child_thread_continuation_holds_ownership_through_running_steer_and_interrupt() {
+    use cyber_server::runtime::CreateSession;
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![tools(&[("clock1", "clock", "{}")])])],
+        ..Default::default()
+    });
+    h.tools.set("clock", Behavior::UntilCancelled);
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            subagent_name: Some("review".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let api = Api::new(&h);
+    let path = format!("/sessions/{child}/prompt");
+    assert_eq!(api.post(&path, prompt("run")).await.0, StatusCode::ACCEPTED);
+    tokio::time::timeout(Duration::from_secs(3), h.tools.started.notified())
+        .await
+        .unwrap();
+    assert!(h.runtime.claim_child_execution(&parent, &child).is_err());
+    assert_eq!(
+        api.post(&path, prompt("hint while running")).await.0,
+        StatusCode::ACCEPTED
+    );
+    let events = h.store.read_events(&child, -1, 200).unwrap().events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "session.subagent.resumed.1")
+            .count(),
+        1
+    );
+    let reset = events
+        .iter()
+        .position(|event| event.kind == "session.subagent.resumed.1")
+        .unwrap();
+    assert_eq!(events[reset + 1].kind, "session.prompt.admitted.1");
+    assert!(h.runtime.claim_child_execution(&parent, &child).is_err());
+    h.runtime.interrupt(&child).await.unwrap();
+    h.runtime.wait_idle(&child).await;
+    let _next_owner = h.runtime.claim_child_execution(&parent, &child).unwrap();
+}

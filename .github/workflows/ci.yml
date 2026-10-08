@@ -162,7 +162,7 @@ jobs:
       - name: Native child-thread API and TUI browsing
         if: ${{ !cancelled() }}
         run: |
-          cargo test --locked -p cyber-server --test http child_threads_
+          cargo test --locked -p cyber-server --test http child_thread
           cargo test --locked -p cyber-tui child_thread
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}

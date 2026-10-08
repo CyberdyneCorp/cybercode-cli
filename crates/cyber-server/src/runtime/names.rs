@@ -29,7 +29,7 @@ pub struct ChildExecution {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Resumed {
-    pub name: String,
+    pub name: Option<String>,
     pub output_schema: Option<serde_json::Value>,
 }
 
@@ -137,7 +137,7 @@ impl Runtime {
             &owner.id,
             admission,
             Some(Resumed {
-                name,
+                name: Some(name),
                 output_schema: schema.map(|schema| schema.schema().clone()),
             }),
         )

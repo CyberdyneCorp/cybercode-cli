@@ -584,7 +584,9 @@ impl SessionState {
         match kind {
             "session.subagent.resumed" => {
                 let resumed: super::names::Resumed = decode(e)?;
-                self.info.subagent_name = Some(resumed.name);
+                if let Some(name) = resumed.name {
+                    self.info.subagent_name = Some(name);
+                }
                 if let Some(schema) = resumed.output_schema {
                     self.result.schema = Some(super::StructuredSchema::new(schema)?);
                 }

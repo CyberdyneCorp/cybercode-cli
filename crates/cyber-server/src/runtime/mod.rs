@@ -13,6 +13,7 @@ mod child_usage;
 mod compaction;
 pub use child_usage::ChildrenUsage;
 mod context;
+mod continuation;
 mod delegations;
 mod drain;
 mod events;
@@ -243,6 +244,7 @@ pub(crate) struct Handle {
 }
 
 struct DrainEntry {
+    _child_owner: Option<ChildExecution>,
     cancel: CancellationToken,
     follow_up: bool,
 }
@@ -1266,6 +1268,7 @@ impl Inner {
         drains.insert(
             id.into(),
             DrainEntry {
+                _child_owner: None,
                 cancel: cancel.clone(),
                 follow_up: false,
             },

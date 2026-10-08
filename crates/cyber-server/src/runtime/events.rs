@@ -396,7 +396,7 @@ fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
         }
         RESUMED => {
             tx.execute(
-                "UPDATE session SET subagent_name=?2 WHERE id=?1",
+                "UPDATE session SET subagent_name=COALESCE(?2, subagent_name) WHERE id=?1",
                 params![id, d["name"].as_str()],
             )?;
         }
