@@ -2620,6 +2620,8 @@ async fn structured_foreground_result_is_collected_before_automatic_queued_attem
         );
         flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow","read":"ask"},"worktrees":{"cleanup":cleanup}}));
         let parent = flow.session("default").await;
+        // Subscribe before queue admission so even a fast handoff cannot lose its wakeup.
+        let mut updates = flow.runtime.subscribe();
         let (result, receipts) = tokio::join!(
             invoke(
                 &flow,
@@ -2666,11 +2668,25 @@ async fn structured_foreground_result_is_collected_before_automatic_queued_attem
                 if flow.runtime.state(child).await.unwrap().structured_result() == Some(&json!(3)) {
                     break;
                 }
-                tokio::task::yield_now().await;
+                match updates.recv().await {
+                    Ok(cyber_server::runtime::LiveEvent::Error { session_id, kind, message }) if session_id == child => {
+                        panic!("{cleanup}: queued child failed before its third result: {kind}: {message}");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        panic!("{cleanup}: child event stream closed before its third result");
+                    }
+                    _ => {}
+                }
             }
         })
         .await
-        .expect("queued structured attempts should dispatch automatically after result collection");
+        .unwrap_or_else(|error| {
+            let events = flow.f.store.read_events(child, -1, 100).map(|page| {
+                page.events.into_iter().rev().take(8)
+                    .map(|event| (event.seq, event.kind, event.data)).collect::<Vec<_>>()
+            });
+            panic!("{cleanup}: queued structured attempts did not dispatch after result collection: {error}; child events: {events:?}");
+        });
         flow.runtime.wait_idle(child).await;
         let state = flow.runtime.state(child).await.unwrap();
         for receipt in &receipts {

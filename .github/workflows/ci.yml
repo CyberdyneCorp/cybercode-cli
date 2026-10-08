@@ -170,6 +170,9 @@ jobs:
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children --test child_preparation --test admission_authority
+      - name: Native automatic structured child handoff
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test isolated_subagents structured_foreground_result_is_collected_before_automatic_queued_attempts -- --exact --nocapture
       - name: Native isolated child checkout execution
         if: ${{ !cancelled() }}
         run: |
