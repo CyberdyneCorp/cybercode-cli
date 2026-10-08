@@ -75,6 +75,9 @@ jobs:
       - name: Native Windows AppContainer launch and direct-object isolation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch
+      - name: Native Windows AppContainer asynchronous command streams
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch piped_ -- --nocapture
       - name: Native tool proxy transport
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests

@@ -48,6 +48,13 @@
 - **AND** redirected streams SHALL preserve input bytes, EOF and separate Unicode stdout/stderr output
 - **AND** temporary parent duplicates SHALL be released after process creation or setup failure
 
+#### Scenario: Owned asynchronous Windows command streams
+- **WHEN** an AppContainer command needs live standard streams
+- **THEN** the host SHALL connect invocation-specific, local, single-instance byte pipes and verify the connected client is the host before launching user code
+- **AND** only the three synchronous client handles SHALL be inherited; asynchronous server handles SHALL remain host-owned
+- **AND** stdin EOF, separate Unicode output and concurrent output exceeding pipe buffers SHALL be preserved
+- **AND** explicit termination SHALL retain the process handle for exit acknowledgement, while owner or wait-future disposal SHALL terminate the process tree and release its invocation-owned storage
+
 #### Scenario: Windows private temporary storage
 - **WHEN** a Windows sandbox invocation prepares its temporary storage
 - **THEN** TEMP and TMP SHALL identify an invocation-owned directory beneath that profile's storage

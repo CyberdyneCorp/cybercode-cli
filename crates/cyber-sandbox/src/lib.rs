@@ -14,6 +14,8 @@ pub mod windows_container;
 pub mod windows_launch;
 #[cfg(windows)]
 pub mod windows_process;
+#[cfg(windows)]
+pub mod windows_streams;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

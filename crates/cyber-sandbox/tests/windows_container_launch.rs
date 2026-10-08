@@ -794,6 +794,9 @@ fn container_worker() {
     if role == "exit" {
         std::process::exit(73);
     }
+    if role == "piped-bulk" {
+        exit_worker(&root, bulk_stream_worker(), "piped-bulk", 58);
+    }
     if role == "streams" {
         exit_worker(&root, stream_worker(&root), "streams", 52);
     }
@@ -957,6 +960,19 @@ fn tree_worker(root: &Path) -> std::io::Result<()> {
     }
     // Deliberately leave the live descendant for the command owner's job to kill.
     Ok(())
+}
+
+fn bulk_stream_worker() -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+    if input != vec![b'I'; 128 * 1024] {
+        return Err(std::io::Error::other("Bulk stdin changed"));
+    }
+    std::io::stdout().write_all(&vec![b'O'; 512 * 1024])?;
+    std::io::stdout().flush()?;
+    std::io::stderr().write_all(&vec![b'E'; 512 * 1024])?;
+    std::io::stderr().flush()
 }
 
 fn stream_worker(root: &Path) -> std::io::Result<()> {
@@ -1212,4 +1228,175 @@ fn normalized_windows_path(path: &Path) -> String {
     path.to_string_lossy()
         .trim_start_matches("\\\\?\\")
         .to_lowercase()
+}
+
+#[tokio::test]
+async fn piped_streams_preserve_live_unicode_and_large_concurrent_output() {
+    use cyber_sandbox::windows_streams::spawn_piped;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for bulk in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = Profile::new().unwrap();
+        let (program, grants) = setup(directory.path(), &profile);
+        let env = environment(
+            directory.path(),
+            if bulk { "piped-bulk" } else { "streams" },
+            &profile,
+        );
+        let mut child = spawn_piped(&profile, &program, &arguments(), &env, directory.path())
+            .await
+            .unwrap();
+        let scratch = child.temporary_directory().to_path_buf();
+        let mut stdin = child.take_stdin().unwrap();
+        let mut stdout = child.take_stdout().unwrap();
+        let mut stderr = child.take_stderr().unwrap();
+        assert!(child.take_stdin().is_none());
+        assert!(child.take_stdout().is_none());
+        assert!(child.take_stderr().is_none());
+        std::fs::write(directory.path().join("read.txt"), "streams-go").unwrap();
+        let input = if bulk {
+            vec![b'I'; 128 * 1024]
+        } else {
+            "input λ\n".as_bytes().to_vec()
+        };
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let (_, _, _, code) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::try_join!(
+                async {
+                    stdin.write_all(&input).await?;
+                    drop(stdin);
+                    Ok::<_, std::io::Error>(())
+                },
+                stdout.read_to_end(&mut out),
+                stderr.read_to_end(&mut err),
+                child.wait_owned()
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            code,
+            0,
+            "{}",
+            std::fs::read_to_string(directory.path().join("write.txt")).unwrap()
+        );
+        if bulk {
+            assert!(out.ends_with(&vec![b'O'; 512 * 1024]));
+            assert_eq!(err, vec![b'E'; 512 * 1024]);
+        } else {
+            assert!(
+                String::from_utf8(out)
+                    .unwrap()
+                    .contains("stdout: input λ\n")
+            );
+            assert_eq!(String::from_utf8(err).unwrap(), "stderr: 日本語\n");
+        }
+        assert!(!scratch.exists());
+        for grant in grants {
+            grant.close().unwrap();
+        }
+        profile.close().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn piped_owner_disposal_cancels_pending_reads_and_retains_exit_acknowledgement() {
+    for route in ["owner", "unpolled", "abort", "terminate"] {
+        piped_disposal_case(route).await;
+    }
+}
+
+async fn piped_disposal_case(route: &str) {
+    use cyber_sandbox::windows_streams::spawn_piped;
+    use tokio::io::AsyncReadExt;
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let env = environment(directory.path(), "wait", &profile);
+    let mut child = spawn_piped(&profile, &program, &arguments(), &env, directory.path())
+        .await
+        .unwrap();
+    let retained = child.as_handle().try_clone_to_owned().unwrap();
+    let scratch = child.temporary_directory().to_path_buf();
+    let mut stdout = child.take_stdout().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while std::fs::read_to_string(directory.path().join("started.txt")).unwrap() != "running" {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_process_live(&retained);
+    let mut out = Vec::new();
+    let read = stdout.read_to_end(&mut out);
+    tokio::pin!(read);
+    assert!(futures::poll!(read.as_mut()).is_pending());
+    match route {
+        "owner" => drop(child),
+        "unpolled" => drop(child.wait_owned()),
+        "abort" => {
+            let (entered, ready) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(async move {
+                entered.send(()).unwrap();
+                child.wait_owned().await
+            });
+            ready.await.unwrap();
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+        }
+        _ => {
+            child.terminate();
+            tokio::time::timeout(Duration::from_secs(5), child.wait_owned())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+    assert_process_terminated(&retained);
+    tokio::time::timeout(Duration::from_secs(5), read)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!scratch.exists());
+    assert_profile_reuse_refused(&profile, &program, &env, directory.path());
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
+}
+
+#[tokio::test]
+async fn failed_piped_launch_leaves_identity_available_for_retry() {
+    use cyber_sandbox::windows_streams::spawn_piped;
+    let directory = tempfile::tempdir().unwrap();
+    let mut profile = Profile::new().unwrap();
+    let (program, grants) = setup(directory.path(), &profile);
+    let env = environment(directory.path(), "exit", &profile);
+    assert!(
+        spawn_piped(
+            &profile,
+            &directory.path().join("missing.exe"),
+            &[],
+            &env,
+            directory.path()
+        )
+        .await
+        .is_err()
+    );
+    let child = spawn_piped(&profile, &program, &arguments(), &env, directory.path())
+        .await
+        .unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), child.wait_owned())
+            .await
+            .unwrap()
+            .unwrap(),
+        73
+    );
+    for grant in grants {
+        grant.close().unwrap();
+    }
+    profile.close().unwrap();
 }

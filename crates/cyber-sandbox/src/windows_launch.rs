@@ -374,6 +374,11 @@ impl AsHandle for ContainerChild {
 }
 
 impl ContainerChild {
+    /// Terminate the owned process tree while retaining its handles for acknowledgement.
+    pub fn terminate(&mut self) {
+        drop(self.job.take());
+    }
+
     /// Invocation-owned scratch space, removed when this process owner is dropped.
     pub fn temporary_directory(&self) -> &Path {
         &self._temp.path
