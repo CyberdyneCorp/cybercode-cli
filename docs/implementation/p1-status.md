@@ -6,6 +6,16 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+## M1.3 CLI execution history
+
+`cyber hooks history --session <id>` now reads durable receipts through the shared store-level page reader, without constructing Runtime actors, starting a server or parsing executable configuration. The default/max page limits are 50/500; Session existence and Session-bound cursors are checked. JSON preserves receipt IO policy and the next cursor; text summarizes escaped identities, status, outcome and stop acknowledgement without raw IO. Running observations remain explicitly unverified as live, and unknown outcomes require recovery.
+
+A real CLI subprocess case holds a running owner while inspecting completed/default-IO, opted-in IO and unknown receipts. It verifies ordered pagination, cross-Session exclusion, malformed/foreign cursor and limit refusal, unknown Session errors, malformed configuration independence and unchanged durable event count/no model calls. The case passes locally and is added to native Windows CI. Full transcript/TUI review, remaining history controls and recovery reconciliation remain required.
+
+Local validation passes 1,155 Rust workspace test executions (three ignored, 122 suites), workspace all-target Clippy with warnings denied, formatting, generated SDK consistency, valid workflow YAML and all 58 strict specs. Cross-spec lint reports zero errors and 21 warnings. The final CLI case additionally distinguishes an empty known Session from a missing Session. Native CLI history execution remains pending.
+
+The Windows all-target lint job for `bced0ba`, `113564286711`, completes successfully, compiling the event-input route and new native tests at that gate. Its Windows execution job `113565034514` remains running when inspected; this does not establish native route execution or full confinement acceptance.
+
 ## M1.3 Windows global command event input
 
 Eligible global full-access command hooks now use the trusted parent-job helper with an explicit event-stdin route and the existing encoded PowerShell source arguments. Assignment precedes the private permit; the helper reads exactly the permit bytes through an unbuffered duplicated handle, then passes the remaining stream to the command. Ordinary shell launches still use null command stdin. Missing helpers refuse before preparation. Required Windows hook sandboxing still refuses through ordinary sandbox selection before command effects; complete native confinement remains required.

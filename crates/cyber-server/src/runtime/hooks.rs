@@ -286,28 +286,42 @@ impl Runtime {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<(Vec<HookExecutionRecord>, Option<String>), RuntimeError> {
-        if limit == 0 || limit > cyber_store::MAX_PAGE_LIMIT {
-            return Err(RuntimeError::Invalid(
-                "Hook receipt limit must be between 1 and 500".into(),
-            ));
-        }
-        let (at, id) = hook_cursor(session, cursor)?;
-        let session = session.to_owned();
-        let mut rows: Vec<HookExecutionRecord> = self.inner.store.read(move |conn| {
+        hook_execution_page(&self.inner.store, session, limit, cursor)
+    }
+}
+
+/// Read committed observations without constructing a runtime or reconciling owners.
+pub fn hook_execution_page(
+    store: &Store,
+    session: &str,
+    limit: u32,
+    cursor: Option<&str>,
+) -> Result<(Vec<HookExecutionRecord>, Option<String>), RuntimeError> {
+    if limit == 0 || limit > cyber_store::MAX_PAGE_LIMIT {
+        return Err(RuntimeError::Invalid(
+            "Hook receipt limit must be between 1 and 500".into(),
+        ));
+    }
+    let (at, id) = hook_cursor(session, cursor)?;
+    let session_id = session;
+    let session = session.to_owned();
+    let rows: Option<Vec<HookExecutionRecord>> = store.read(move |conn| {
+            let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM session WHERE id=?1)", [&session], |row| row.get(0))?;
+            if !exists { return Ok(None); }
             let mut statement = conn.prepare("SELECT data FROM hook_execution WHERE session_id=?1 AND (started_ms<?2 OR (started_ms=?2 AND id<?3)) ORDER BY started_ms DESC,id DESC LIMIT ?4")?;
             let rows = statement.query_map(params![session,at,id,limit+1],|row| row.get::<_,String>(0))?;
-            rows.map(|row| serde_json::from_str(&row?).map_err(|error| StoreError::CorruptEvent { id:"hook receipt projection".into(),reason:error.to_string() })).collect()
+            rows.map(|row| serde_json::from_str(&row?).map_err(|error| StoreError::CorruptEvent { id:"hook receipt projection".into(),reason:error.to_string() })).collect::<Result<Vec<_>,_>>().map(Some)
         })?;
-        let more = rows.len() > limit as usize;
-        rows.truncate(limit as usize);
-        let next = more
-            .then(|| {
-                rows.last()
-                    .map(|row| format!("{}:{}:{}", row.started_ms, row.session_id, row.id))
-            })
-            .flatten();
-        Ok((rows, next))
-    }
+    let mut rows = rows.ok_or_else(|| RuntimeError::SessionNotFound(session_id.into()))?;
+    let more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    let next = more
+        .then(|| {
+            rows.last()
+                .map(|row| format!("{}:{}:{}", row.started_ms, row.session_id, row.id))
+        })
+        .flatten();
+    Ok((rows, next))
 }
 
 fn hook_cursor(session: &str, cursor: Option<&str>) -> Result<(i64, String), RuntimeError> {

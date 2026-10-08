@@ -79,6 +79,13 @@
 - **WHEN** the user untrusts a previously approved handler digest after the definition is removed or current configuration becomes malformed
 - **THEN** the approval SHALL be revoked without resolving executable configuration
 
+#### Scenario: CLI execution history does not reconcile owners
+- **WHEN** the user runs `cyber hooks history --session <id>` with optional page limit and cursor
+- **THEN** the CLI SHALL read committed execution observations without launching handlers or rebuilding runtime owners
+- **AND** malformed executable configuration SHALL NOT prevent inspection
+- **AND** pages SHALL preserve Session scope, receipt IO policy and unresolved statuses without adding durable events
+- **AND** text output SHALL omit raw IO and distinguish recorded running observations from verified live processes
+
 ### Requirement: Matchers
 (P1) The system SHALL match hook groups by `matcher`, which is either a glob over the event's subject (tool name for tool events, including `mcp__<server>__<tool>`; notification type; file path for `FileChanged`) or, when wrapped in `/.../`, a regular expression. An absent or `*` matcher SHALL match every subject. A group MAY add `paths` (globs relative to the Location) that SHALL also match for tool calls with file targets.
 

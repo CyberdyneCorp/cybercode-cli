@@ -14,6 +14,15 @@ use crate::output;
 pub enum HooksCmd {
     /// List resolved definitions, file origins, digests and individual trust state.
     List,
+    /// Inspect committed Session execution receipts without running hooks or recovery.
+    History {
+        #[arg(long)]
+        session: String,
+        #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=500))]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
     /// Approve a currently resolved project/local handler after inspecting its digest.
     Trust {
         #[arg(long)]
@@ -35,6 +44,14 @@ struct ListedHook<'a> {
 }
 
 pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    if let HooksCmd::History {
+        session,
+        limit,
+        cursor,
+    } = &cmd
+    {
+        return history(ctx, global, session, *limit, cursor.as_deref());
+    }
     let store = TrustStore::new(ctx.paths.trust_file());
     if let HooksCmd::Untrust { digest } = cmd {
         let root = std::fs::canonicalize(cyber_core::config::project_root(&ctx.location))?;
@@ -49,7 +66,9 @@ pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliE
     match cmd {
         HooksCmd::List => list(&catalog, &resolved, &store, global),
         HooksCmd::Trust { digest } => approve(&catalog, &resolved, &store, &digest, global),
-        HooksCmd::Untrust { .. } => unreachable!("handled before configuration loading"),
+        HooksCmd::Untrust { .. } | HooksCmd::History { .. } => {
+            unreachable!("handled before configuration loading")
+        }
     }
 }
 
@@ -125,5 +144,50 @@ fn report(global: &GlobalArgs, value: &serde_json::Value) -> Result<(), CliError
         return output::json(value);
     }
     println!("{value}");
+    Ok(())
+}
+
+fn history(
+    ctx: &Context,
+    global: &GlobalArgs,
+    session: &str,
+    limit: u32,
+    cursor: Option<&str>,
+) -> Result<(), CliError> {
+    use cyber_server::runtime::{Runtime, RuntimeError, hook_execution_page};
+    use cyber_store::{Store, StoreOptions};
+    let store = Store::open(StoreOptions::new(ctx.database(), Runtime::registry()))?;
+    let (data, next) =
+        hook_execution_page(&store, session, limit, cursor).map_err(|error| match error {
+            RuntimeError::Invalid(message) => CliError::usage(message),
+            other => CliError::runtime(other.to_string()),
+        })?;
+    if output::is_json(global.format) {
+        return output::json(&serde_json::json!({"data":data,"cursor":{"next":next}}));
+    }
+    for record in data {
+        let observation = match record.status {
+            cyber_server::runtime::HookExecutionStatus::Running => {
+                "running (live state unverified)"
+            }
+            cyber_server::runtime::HookExecutionStatus::Unknown => "unknown (recovery required)",
+            cyber_server::runtime::HookExecutionStatus::Completed => "completed",
+        };
+        println!(
+            "{} {} {} event={:?} hook={:?} outcome={:?} duration_ms={:?} acknowledged={:?} must_stop={}",
+            record.id,
+            record.started_ms,
+            observation,
+            record.event,
+            record.hook_id,
+            record.outcome,
+            record.duration_ms,
+            record.acknowledged,
+            record.must_stop
+        );
+    }
+    if let Some(next) = next {
+        println!("next cursor: {next}");
+    }
     Ok(())
 }

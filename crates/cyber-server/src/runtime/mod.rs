@@ -28,6 +28,7 @@ mod fork;
 mod hooks;
 pub use hooks::{
     HookExecution, HookExecutionIo, HookExecutionRecord, HookExecutionResult, HookExecutionStatus,
+    hook_execution_page,
 };
 mod host;
 mod jobs;

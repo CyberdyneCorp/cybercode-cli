@@ -77,6 +77,9 @@ jobs:
       - name: Native hook review and exact handler approval CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test cli hook_
+      - name: Native CLI hook execution history
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-cli --test hook_history
       - name: Native hook selectors and ordered decisions
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test hook_decisions
