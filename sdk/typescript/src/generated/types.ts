@@ -225,6 +225,10 @@ export type Data_ShellResult = {
   data: ShellResult;
 };
 
+export type Data_SubtreeStopReport = {
+  data: SubtreeStopReport;
+};
+
 export type Data_UsageReport = {
   data: UsageReport;
 };
@@ -716,6 +720,16 @@ export type SubtaskBody = {
   /** Positive ceiling capped by the selected profile's subagent step limit. */
   max_steps?: number | null;
 };
+
+export type SubtreeStopReport = {
+  session_id: string;
+  scope_id: string;
+  status: SubtreeStopStatus;
+  problems: string[];
+  persisted: boolean;
+};
+
+export type SubtreeStopStatus = "acknowledged" | "unknown";
 
 /** Durable task state (`compaction` → Durable task state), derived from promoted input. */
 export type TaskState = {

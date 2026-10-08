@@ -1827,6 +1827,54 @@
           "name"
         ]
       },
+      "Data_SubtreeStopReport": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SubtreeStopReport"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SubtreeStopReport": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SubtreeStopStatus"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "persisted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "scope_id",
+          "status",
+          "problems",
+          "persisted"
+        ]
+      },
+      "SubtreeStopStatus": {
+        "type": "string",
+        "enum": [
+          "acknowledged",
+          "unknown"
+        ]
+      },
       "AgentBody": {
         "type": "object",
         "properties": {
@@ -4398,6 +4446,55 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CommandBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/stop-subtree": {
+      "post": {
+        "operationId": "v1.session.stopSubtree",
+        "summary": "Close subtree admission and report bounded local stop acknowledgement",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SubtreeStopReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

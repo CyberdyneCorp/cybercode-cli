@@ -2642,3 +2642,150 @@ async fn child_thread_explicit_wakes_preserve_structured_queue_order_and_edited_
     assert!(!request.contains("obsolete queue text"));
     assert_eq!(h.state(&child).await.inbox.len(), 3);
 }
+
+#[tokio::test]
+async fn explicit_subtree_stop_api_preserves_input_and_unrelated_jobs() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery, JobStatus};
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let unrelated = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            parent_id: Some(root.clone()),
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let job = h
+        .runtime
+        .start_child_job(
+            &root,
+            &child,
+            "owned".into(),
+            "owned".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    let unrelated_child = h
+        .runtime
+        .create_session(CreateSession {
+            parent_id: Some(unrelated.clone()),
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let other = h
+        .runtime
+        .start_child_job(
+            &unrelated,
+            &unrelated_child,
+            "other".into(),
+            "other".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    let mut input = Admission::text("preserved", Delivery::Queue);
+    input.resume = false;
+    h.runtime.admit(&root, input).await.unwrap();
+    let inbox = h.runtime.state(&root).await.unwrap().inbox;
+    let api = Api::new(&h);
+    let path = format!("/sessions/{root}/stop-subtree");
+    let (status, report, _) = api.call(Method::POST, &path, None, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["data"]["session_id"], root);
+    assert_eq!(report["data"]["status"], "acknowledged");
+    assert_eq!(report["data"]["persisted"], true);
+    assert_eq!(report["data"]["problems"], json!([]));
+    assert_eq!(h.runtime.job(&job.id).unwrap().status, JobStatus::Cancelled);
+    assert_eq!(h.runtime.job(&other.id).unwrap().status, JobStatus::Running);
+    assert_eq!(
+        h.runtime.state(&root).await.unwrap().inbox.len(),
+        inbox.len()
+    );
+    assert_eq!(
+        h.runtime.state(&root).await.unwrap().inbox[0].message_id,
+        inbox[0].message_id
+    );
+    assert!(h.runtime.capture_child_admission(&root).is_err());
+    assert!(h.runtime.capture_child_admission(&unrelated).is_ok());
+    let (status, repeated, _) = api.call(Method::POST, &path, None, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(repeated["data"]["scope_id"], report["data"]["scope_id"]);
+    assert_eq!(
+        api.post(&format!("/sessions/{root}/prompt"), prompt("late"))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    h.runtime.cancel_job(&other.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn explicit_subtree_stop_api_retains_unknown_and_reassesses_same_scope() {
+    use cyber_server::runtime::CreateSession;
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            parent_id: Some(root.clone()),
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let owner = h.runtime.claim_child_execution(&root, &child).unwrap();
+    let api = Api::new(&h);
+    let path = format!("/sessions/{child}/stop-subtree");
+    let headers = [("idempotency-key", "subtree-stop-observation")];
+    let (status, unknown, _) = api.call(Method::POST, &path, None, &headers).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(unknown["data"]["status"], "unknown");
+    assert_eq!(unknown["data"]["persisted"], true);
+    assert!(!unknown["data"]["problems"].as_array().unwrap().is_empty());
+    drop(owner);
+    let (_, replay, _) = api.call(Method::POST, &path, None, &headers).await;
+    assert_eq!(replay, unknown);
+    let (status, settled, _) = api.call(Method::POST, &path, None, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(settled["data"]["status"], "acknowledged");
+    assert_eq!(settled["data"]["scope_id"], unknown["data"]["scope_id"]);
+    assert!(h.runtime.capture_child_admission(&child).is_err());
+}
+
+#[tokio::test]
+async fn explicit_subtree_stop_api_requires_authentication_and_existing_session() {
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/sessions/{root}/stop-subtree"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(h.runtime.capture_child_admission(&root).is_ok());
+    let response = client
+        .post(format!("{base}/sessions/ses_missing/stop-subtree"))
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let error: Value = response.json().await.unwrap();
+    assert_eq!(error["_tag"], "SessionNotFoundError");
+}

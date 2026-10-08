@@ -158,3 +158,16 @@ test("session.wake dispatches existing input without a prompt body or Location s
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
   assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
 });
+
+test("session.stopSubtree retains Unknown evidence and scopes by Session identity", async () => {
+  const report = { session_id: "ses/child", scope_id: "op_scope", status: "unknown",
+    problems: ["held child result ownership"], persisted: true };
+  const { client, calls } = mockClient(() => json(200, { data: report }), { directory: "/other" });
+  const result = await client.at("/different").session.stopSubtree("ses/child", { idempotencyKey: "observed-stop" });
+  assert.deepEqual(result, report);
+  assert.equal(calls[0]?.method, "POST");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fchild/stop-subtree");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
+  assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "observed-stop");
+});

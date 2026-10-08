@@ -406,3 +406,7 @@ Existing-child claims retain the original target creation identity, parent links
 
 
 Bind each ownership receipt to its actual execution source as well as parent/target. Parent-requested resume uses the original parent source; user continuation preparation uses the existing child source, preserving ordinary background independence. The writer checks the declared parent relation and source identity. Capturing an ancestor inside a child callback retains the original child as a guard rather than silently issuing an independent parent capability. Session setup captures authority before Location admission, carries it into native setup and verifies again after sandbox preparation before each command dispatch. Native effect receipt/release remains separate from ownership release.
+
+## Public explicit subtree stop
+
+Expose the existing owned runtime sweep as POST /sessions/{sessionID}/stop-subtree and generated session.stopSubtree. Return Data<SubtreeStopReport> with HTTP 200 for either Acknowledged or Unknown; HTTP success reports completion of observation, not proven native cancellation. The route uses normal authentication, Session identity routing and write idempotency. A repeated new request audits the same durable closure; replay of an idempotency key returns its original observation. Admission stays closed. Ordinary interrupt and Job stop retain their existing semantics until matched reopening and full client adoption are implemented.

@@ -372,6 +372,12 @@ export interface Operations {
     body: undefined;
     response: S.Delegation;
   };
+  "v1.session.stopSubtree": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SubtreeStopReport;
+  };
   "v1.session.subtask": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1017,6 +1023,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.stopSubtree": {
+    tag: "session",
+    name: "stopSubtree",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/stop-subtree",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.subtask": {
     tag: "session",
     name: "subtask",
@@ -1311,6 +1329,9 @@ export function createGroups(caller: Caller) {
       /** Cancel one admission request or its recorded Job (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}/stop`) */
       stopDelegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.stopDelegation"]["response"]> =>
         caller.call("v1.session.stopDelegation", { path: { sessionID, requestID } }, options),
+      /** Close subtree admission and report bounded local stop acknowledgement (`POST /api/v1/sessions/{sessionID}/stop-subtree`) */
+      stopSubtree: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.stopSubtree"]["response"]> =>
+        caller.call("v1.session.stopSubtree", { path: { sessionID } }, options),
       /** Start an explicit named background child or fork the current context (`POST /api/v1/sessions/{sessionID}/subtask`) */
       subtask: (sessionID: string, body: Operations["v1.session.subtask"]["body"], options?: RequestOptions): Promise<Operations["v1.session.subtask"]["response"]> =>
         caller.call("v1.session.subtask", { path: { sessionID }, body }, options),

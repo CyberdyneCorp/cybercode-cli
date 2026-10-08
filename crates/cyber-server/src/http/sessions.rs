@@ -237,6 +237,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route(&format!("{s}/prompt"), post(prompt))
         .route(&format!("{s}/interrupt"), post(interrupt))
+        .route(&format!("{s}/stop-subtree"), post(stop_subtree))
         .route(&format!("{s}/wake"), post(wake))
         .route(&format!("{s}/command"), post(command))
         .route(&format!("{s}/agent"), post(agent))
@@ -507,6 +508,14 @@ async fn command(
     };
     let receipt = state.runtime.admit_user(&id, admission).await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
+}
+
+async fn stop_subtree(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<crate::runtime::SubtreeStopReport>>> {
+    let report = state.runtime.stop_subtree(&id).await?;
+    Ok(Json(Data { data: report }))
 }
 
 async fn interrupt(State(state): State<AppState>, Path(id): Path<String>) -> Result<StatusCode> {

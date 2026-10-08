@@ -294,6 +294,13 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<Receipt>>(g),
         op(
             "post",
+            "/sessions/{sessionID}/stop-subtree",
+            "v1.session.stopSubtree",
+            "Close subtree admission and report bounded local stop acknowledgement",
+        )
+        .ok::<Data<crate::runtime::SubtreeStopReport>>(g),
+        op(
+            "post",
             "/sessions/{sessionID}/interrupt",
             "v1.session.interrupt",
             "Interrupt the running Drain",
