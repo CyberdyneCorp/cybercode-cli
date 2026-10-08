@@ -120,6 +120,31 @@
 - **THEN** context SHALL retain declared order and the next hook SHALL receive the rewritten input
 - **AND** a later continue true SHALL NOT erase the stop request
 
+### Requirement: Interaction with permissions
+(P1) `PreToolUse` hooks SHALL run before permission evaluation. A hook `deny` SHALL block even in `bypass` mode. A hook `allow` SHALL skip the `ask` prompt but SHALL NOT override a permission rule whose effect is `deny`. `PermissionRequest` hooks SHALL run when a request would prompt the user and MAY answer it with `allow` or `deny`.
+
+#### Scenario: Hook cannot override deny rule
+- **WHEN** a hook returns `allow` for `bash` and the permission rules deny `bash` for `rm -rf *`
+- **THEN** the call is denied by the permission rule
+
+#### Scenario: Auto-answer permission prompt
+- **WHEN** a `PermissionRequest` hook returns `allow` for an `edit` under `docs/**`
+- **THEN** no prompt is shown and the request is approved once
+
+#### Scenario: Permission request command approves only the current ask
+- **WHEN** an allowed built-in invocation requires approval and a matching command PermissionRequest hook returns allow
+- **THEN** the current ask SHALL be approved without publishing a pending user request or saving a permission rule
+- **AND** the event SHALL carry the captured invocation identity, final tool input and current permission ask
+- **AND** updated_input SHALL be ignored for this event
+
+#### Scenario: Permission request cannot override a hard denial
+- **WHEN** ordinary deny rules or a hard Mode ceiling refuse a built-in invocation
+- **THEN** PermissionRequest handlers SHALL NOT execute to approve that refused action
+
+#### Scenario: Explicit hook ask preserves auto block ceilings
+- **WHEN** a PreToolUse command returns ask and current or ancestor auto-mode policy always-blocks the action
+- **THEN** the call SHALL remain blocked before any PermissionRequest handler can allow it
+
 ### Requirement: Supported events
 (P1) The system SHALL emit hook events `Setup` (first Session in a Location after install or `cyber --init`), `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch` (after all calls of one Turn settle), `PermissionRequest`, `PermissionDenied` (MAY return `{ "decision": "retry", "updated_input" }` to re-issue the call once), `Stop`, `StopFailure`, `Interrupt`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `InstructionsLoaded` (an instruction or rule file entered the context), `PreModelSwitch`, `PostModelSwitch`, `Elicitation`, `ElicitationResult`, `DirectoryAdded`, `Notification`, `FileChanged`, `CwdChanged`, `ConfigChange`, `TaskCreated`, `TaskCompleted`, `WorktreeCreate`, `WorktreeRemove` and `JobEnded`, and (P2) `GoalEvaluated`, `GoalCompleted`, `WorkflowRunStart`, `WorkflowRunEnd`, `LoopIteration`, `ScheduleRun`, `TeammateIdle` and `MessageReceived`. Each event SHALL carry a common envelope `{ event, session_id, location: { directory, workspace? }, project_id, agent, mode, timestamp }` plus event-specific fields.
 

@@ -67,6 +67,29 @@ impl BuiltinHost {
         Ok(decision.decision)
     }
 
+    pub(crate) async fn permission_request_hooks(
+        &self,
+        inv: &Invocation,
+        ask: &cyber_server::runtime::PermissionAsk,
+        cancel: CancellationToken,
+    ) -> Result<Option<HookAction>, ToolError> {
+        if self.hook_config.get().is_none() {
+            return Ok(None);
+        }
+        let event = event("PermissionRequest", inv, json!({"permission":ask}))?;
+        let decision = self.dispatch_tool_hooks(event, &inv.name, cancel).await?;
+        if matches!(
+            decision.decision,
+            Some(HookAction::Deny | HookAction::Block)
+        ) {
+            return Err(ToolError::Failed(format!(
+                "blocked by hook {}",
+                decision.reason.as_deref().unwrap_or("policy")
+            )));
+        }
+        Ok(decision.decision)
+    }
+
     pub(crate) async fn post_tool_hooks(
         &self,
         inv: &Invocation,

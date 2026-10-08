@@ -458,3 +458,158 @@ async fn once_command_runs_once_per_session_and_messages_stay_user_visible() {
             .contains("Checking once")
     );
 }
+
+#[tokio::test]
+async fn permission_request_command_answers_only_the_current_ask_without_rewriting_input() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":"docs/a.txt","content":"original"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.set_config(json!({"permissions":{"edit":"ask"}}));
+    std::fs::create_dir(f.f.repo.join("docs")).unwrap();
+    let mut allow =
+        command(r#"{"decision":"allow","updated_input":{"path":"wrong.txt","content":"changed"}}"#);
+    allow["command"] = json!(
+        "cat > permission.json; printf '%s' '{\"decision\":\"allow\",\"updated_input\":{\"path\":\"wrong.txt\",\"content\":\"changed\"}}'"
+    );
+    hooks(
+        &f,
+        json!({"PermissionRequest":[{"matcher":"write","paths":["docs/**"],"hooks":[allow]}]}),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("docs/a.txt")).unwrap(),
+        "original"
+    );
+    assert!(!f.f.repo.join("wrong.txt").exists());
+    assert!(f.runtime.pending_requests(Some(&session)).is_empty());
+    let input: Value =
+        serde_json::from_slice(&std::fs::read(f.f.repo.join("permission.json")).unwrap()).unwrap();
+    assert_eq!(input["event"], "PermissionRequest");
+    assert_eq!(input["permission"]["action"], "edit");
+    assert_eq!(input["tool_input"]["path"], "docs/a.txt");
+    assert_eq!(input["session_id"], session);
+    let saved: i64 =
+        f.f.store
+            .read(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM permission_saved", [], |row| {
+                        row.get(0)
+                    })?,
+                )
+            })
+            .unwrap();
+    assert_eq!(saved, 0, "hook allow must not become a saved approval");
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert!(receipts[0].io.is_none());
+    assert!(
+        receipts[0]
+            .decision
+            .as_ref()
+            .unwrap()
+            .updated_input
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn permission_request_deny_prevents_user_prompt_and_effect_even_for_explicit_hook_ask() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":"a.txt","content":"unsafe"}),
+            ),
+            text("done"),
+        ],
+        true,
+    );
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[command(r#"{"decision":"ask"}"#)]}],"PermissionRequest":[{"matcher":"write","hooks":[command(r#"{"decision":"deny","reason":"request guard"}"#)]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("a.txt").exists());
+    assert!(
+        f.output(&session, "call_write")
+            .await
+            .contains("request guard")
+    );
+    assert!(f.runtime.pending_requests(Some(&session)).is_empty());
+    assert_eq!(f.runtime.hook_executions(&session, 10).unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn permission_request_allow_cannot_override_hard_denials_and_is_not_run_for_allowed_calls() {
+    for mode in ["default", "plan", "bypass"] {
+        let f = Flow::new(
+            vec![
+                call(
+                    "call_write",
+                    "write",
+                    json!({"path":"a.txt","content":"safe"}),
+                ),
+                text("done"),
+            ],
+            false,
+        );
+        if mode == "default" {
+            f.f.set_config(json!({"permissions":{"edit":"deny"}}));
+        }
+        hooks(
+            &f,
+            json!({"PermissionRequest":[{"matcher":"write","hooks":[{"type":"command","command":"cat >/dev/null; printf x > unexpected-hook; printf '{\"decision\":\"allow\"}'"}]}]}),
+        );
+        let session = f.session(mode).await;
+        f.prompt(&session, "write").await;
+        f.settle(&session).await;
+        assert_eq!(f.f.repo.join("a.txt").exists(), mode == "bypass");
+        assert!(!f.f.repo.join("unexpected-hook").exists());
+        assert!(f.runtime.hook_executions(&session, 10).unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn explicit_pre_hook_ask_cannot_bypass_auto_always_block_through_request_allow() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":"a.txt","content":"unsafe"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.set_config(json!({"permissions":{"auto_mode":{"rules":{"always_block":[{"action":"edit","resource":"*"}]}}}}));
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[command(r#"{"decision":"ask"}"#)]}],"PermissionRequest":[{"matcher":"write","hooks":[command(r#"{"decision":"allow"}"#)]}]}),
+    );
+    let session = f.session("auto").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("a.txt").exists());
+    assert!(
+        f.output(&session, "call_write")
+            .await
+            .contains("Blocked by auto mode")
+    );
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].event, "PreToolUse");
+}

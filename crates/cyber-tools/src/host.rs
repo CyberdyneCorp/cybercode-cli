@@ -924,6 +924,9 @@ impl Ctx<'_> {
             return Err(ToolError::Failed(deny_message(&reason)));
         }
         if self.hook_decision == Some(cyber_core::hooks::HookAction::Ask) {
+            // Force the manual route without skipping current/ancestor auto blocks.
+            self.review_auto_permission(&req, &mut metadata, false)
+                .await?;
             return self.ask(req, always, metadata).await;
         }
         let needs_approval = decision == Decision::Ask
@@ -950,6 +953,16 @@ impl Ctx<'_> {
             always_patterns: always.clone(),
             metadata,
         };
+        // Bound stack usage in nested tool and child-setup futures.
+        if Box::pin(
+            self.host
+                .permission_request_hooks(self.inv, &ask, self.cancel.clone()),
+        )
+        .await?
+            == Some(cyber_core::hooks::HookAction::Allow)
+        {
+            return Ok(());
+        }
         let reply = tokio::select! {
             _ = self.cancel.cancelled() => return Err(ToolError::Aborted),
             reply = self.inv.asker.permission(ask) => reply,

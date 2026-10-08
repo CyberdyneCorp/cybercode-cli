@@ -29,8 +29,24 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  windows-lint:
+    name: Windows lint
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-lint
+      - name: Check native Windows lint
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
   windows:
     name: Windows build
+    needs: windows-lint
+    if: ${{ !cancelled() }}
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
@@ -40,8 +56,6 @@ jobs:
           key: windows-native
       - name: Check workspace and test compilation
         run: cargo check --locked --workspace --all-targets
-      - name: Check native Windows lint
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build workspace executables
         run: cargo build --locked --workspace --bins
       - name: Smoke test CLI
@@ -296,6 +310,9 @@ jobs:
       - name: Native CLI service shutdown
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test cli service_stop_uses_registered_http_shutdown
+      - name: Require native Windows lint success
+        if: ${{ !cancelled() && needs.windows-lint.result != 'success' }}
+        run: throw 'Native Windows lint failed; see the Windows lint job logs'
 
   sdk:
     name: TypeScript SDK
