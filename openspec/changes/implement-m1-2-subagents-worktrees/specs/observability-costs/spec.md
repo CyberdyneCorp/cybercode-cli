@@ -13,6 +13,13 @@
 - **AND** resuming SHALL capture a durable subtree baseline so previous attempts are not billed again
 - **AND** incomplete historical baselines or unpriced nested calls SHALL disclose uncertainty rather than inventing a complete zero cost
 
+#### Scenario: Durable descendant token classes
+- **WHEN** descendant visible or hidden provider usage is billed
+- **THEN** surviving ancestors SHALL retain separate input, output, reasoning, cache-read and cache-write token counts independently of their own usage
+- **AND** deleting a descendant SHALL preserve its token-class receipts on surviving ancestors
+- **AND** migration SHALL backfill surviving source evidence and disclose incomplete token-class attribution when historical source evidence is missing
+- **AND** Session detail/list and generated SDK contracts SHALL expose the known token classes and their completeness separately from combined token/cost attribution
+
 ### Requirement: Budgets
 (P0) A Budget SHALL be the object `{ max_turns?, max_tokens?, max_cost_usd?, max_wall_seconds?, enforcement?: "soft" | "reserved" }`. Every budgeted scope (Session, Workflow Run, Goal, Loop, Routine run, Team, `exec` run) SHALL accept exactly this object, extended only by scope-specific fields documented in the owning spec (for example workflow `max_agents`). Wherever a budget is accepted on the command line, the flags SHALL be `--max-turns <n>`, `--max-tokens <n>`, `--max-cost <usd>` and `--timeout <duration>`. Per-scope defaults SHALL come from `budgets.<scope>` in config with scopes `session`, `run`, `goal`, `loop`, `routine`, `team` and `daily` (a per-machine daily cap across all scopes). The system SHALL emit a warning at 80% and stop further provider Turns for the budgeted scope at 100%, publishing `budget.exceeded.1`.
 

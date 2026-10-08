@@ -20,6 +20,14 @@ Job settlement now reads own and descendant counters together from SQL, preservi
 
 Two durable-billing regressions fail on unchanged main 75d7a6b. All 65 focused Job/resume/isolated-child tests and workspace all-target Clippy pass after the fix, including descendant deletion, nested unpriced usage, resumed attempt deltas/restart persistence and legacy baseline uncertainty. Strict validation passes all 57 specs; generated contracts and formatting pass, and cross-spec lint reports zero errors and 21 warnings. Existing native Job/resume CI includes these regressions; native acceptance remains pending. Spending after Job settlement from independently running descendants, complete subtree cancellation with admission-generation fences, reservations, daily caps and the full P1 goal remain open. P0 artifacts are unchanged.
 
+## Durable descendant token-class accounting increment
+
+Ancestor billing now retains separate input, output, reasoning, cache-read and cache-write counters alongside existing combined tokens and cost. These counters and receipt evidence are written atomically and survive descendant deletion. Session detail/list responses and the generated SDK expose the class counters plus an independent completeness flag. Older client snapshots default to unknown class attribution rather than claiming a complete zero.
+
+The migration reconstructs classes from surviving source events without changing retained financial receipts. Missing/purged or sparse historical class evidence remains explicitly incomplete; new charges cannot erase that uncertainty. Fresh Sessions begin with complete zero counters. Malformed stored class projections fail the read rather than becoming zero. Sparse new reports retain known class amounts but cannot claim complete attribution.
+
+Two class-retention assertions fail on unchanged main 80049f3. Validation passes 88 focused Rust tests (64 server and 24 storage), workspace all-target Clippy, 47 SDK tests/type checking, generated contract consistency and all 57 strict specs. Cross-spec lint reports zero errors and 21 warnings. Native acceptance is pending. This supplies durable data for the required cost breakdown; TUI `/cost`, complete usage API/client presentation, reservations, daily caps and subtree ownership/cancellation remain required. No complete P1 milestone is accepted, and P0 artifacts are unchanged.
+
 ## Delivery sequence
 
 ### Ordinary exec subtree accounting increment

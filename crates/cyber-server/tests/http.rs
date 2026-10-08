@@ -1570,6 +1570,9 @@ async fn session_detail_and_listing_expose_separate_descendant_billing() {
     assert_eq!(response["data"]["children_tokens"], 110);
     assert_eq!(response["data"]["children_unpriced_steps"], 0);
     assert_eq!(response["data"]["children_usage_complete"], true);
+    assert_eq!(response["data"]["children_token_classes"]["input"], 100);
+    assert_eq!(response["data"]["children_token_classes"]["output"], 10);
+    assert_eq!(response["data"]["children_token_classes_complete"], true);
     let (status, response, _) = api
         .call(Method::GET, "/sessions?children=true", None, &[])
         .await;
@@ -1583,6 +1586,8 @@ async fn session_detail_and_listing_expose_separate_descendant_billing() {
     assert_eq!(listed["cost"], own);
     assert_eq!(listed["children_cost"], cost);
     assert_eq!(listed["children_tokens"], 110);
+    assert_eq!(listed["children_token_classes"]["input"], 100);
+    assert_eq!(listed["children_token_classes_complete"], true);
 }
 
 #[tokio::test]

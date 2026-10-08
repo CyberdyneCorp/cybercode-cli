@@ -64,6 +64,10 @@ async fn nested_live_usage_is_attributed_once_to_each_ancestor_without_changing_
     assert_eq!(total.children_tokens, 72);
     assert_eq!(total.children_unpriced_steps, 1);
     assert!(total.children_usage_complete);
+    let classes = serde_json::to_value(&total).unwrap();
+    assert_eq!(classes["children_token_classes"]["input"], 30);
+    assert_eq!(classes["children_token_classes"]["cache_write"], 15);
+    assert_eq!(classes["children_token_classes_complete"], true);
     assert_eq!(
         h.runtime.children_usage(&first.id).unwrap().children_tokens,
         24
@@ -113,6 +117,10 @@ async fn child_conversation_deletion_preserves_billing_on_surviving_ancestors() 
     let total = h.runtime.children_usage(&root).unwrap();
     h.runtime.delete(&direct.id).await.unwrap();
     assert_eq!(h.runtime.children_usage(&root).unwrap(), total);
+    assert_eq!(
+        serde_json::to_value(&total).unwrap()["children_token_classes"]["cache_write"],
+        10
+    );
     assert_eq!(
         h.restart().state(&root).await.unwrap().children_usage,
         total
@@ -256,7 +264,9 @@ async fn older_database_backfills_surviving_usage_without_claiming_deleted_histo
             ALTER TABLE session DROP COLUMN children_tokens;
             ALTER TABLE session DROP COLUMN children_unpriced_steps;
             ALTER TABLE session DROP COLUMN children_usage_complete;
-            DELETE FROM migration WHERE id IN ('20261007030000_children_usage','20261007040000_session_budgets');",
+            ALTER TABLE session DROP COLUMN children_token_classes;
+            ALTER TABLE session DROP COLUMN children_token_classes_complete;
+            DELETE FROM migration WHERE id IN ('20261007030000_children_usage','20261007040000_session_budgets','20261007050000_children_token_classes');",
         )
         .unwrap();
         conn.execute(
@@ -287,4 +297,95 @@ async fn older_database_backfills_surviving_usage_without_claiming_deleted_histo
             .unwrap()
             .children_usage_complete
     );
+}
+
+#[tokio::test]
+async fn token_class_migration_preserves_cost_receipts_and_discloses_purged_classes() {
+    let mut h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let retained = child(&h, &root).await;
+    let deleted = child(&h, &root).await;
+    charge(&h, &retained.id, Some(0.20));
+    charge(&h, &deleted.id, Some(0.30));
+    h.runtime.delete(&deleted.id).await.unwrap();
+    let backup = h.dir.path().join("before-token-classes.db");
+    cyber_store::backup::backup(&h.dir.path().join("cyber.db"), &backup).unwrap();
+    let db = rusqlite::Connection::open(&backup).unwrap();
+    db.execute_batch(
+        "ALTER TABLE session DROP COLUMN children_token_classes;
+        ALTER TABLE session DROP COLUMN children_token_classes_complete;
+        ALTER TABLE session_children_charge DROP COLUMN token_classes;
+        DELETE FROM migration WHERE id='20261007050000_children_token_classes';",
+    )
+    .unwrap();
+    drop(db);
+    h.store = std::sync::Arc::new(support::open_store(&backup));
+    let runtime = h.restart();
+    let usage = runtime.children_usage(&root).unwrap();
+    assert_eq!(usage.children_cost, 0.50);
+    assert_eq!(usage.children_tokens, 48);
+    assert!(usage.children_usage_complete);
+    assert_eq!(usage.children_token_classes.input, 10);
+    assert_eq!(usage.children_token_classes.cache_write, 5);
+    assert!(!usage.children_token_classes_complete);
+    charge(&h, &retained.id, Some(0.10));
+    assert_eq!(
+        runtime
+            .children_usage(&root)
+            .unwrap()
+            .children_token_classes
+            .input,
+        20
+    );
+    assert!(
+        !runtime
+            .children_usage(&root)
+            .unwrap()
+            .children_token_classes_complete
+    );
+    let fresh = runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        runtime
+            .children_usage(&fresh.id)
+            .unwrap()
+            .children_token_classes_complete
+    );
+}
+
+#[tokio::test]
+async fn malformed_token_class_projection_is_not_treated_as_zero() {
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let key = root.clone();
+    h.store
+        .transaction(move |db| {
+            db.execute(
+                "UPDATE session SET children_token_classes='invalid' WHERE id=?1",
+                [key],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(h.runtime.children_usage(&root).is_err());
+}
+
+#[tokio::test]
+async fn missing_reported_classes_do_not_claim_complete_attribution() {
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let direct = child(&h, &root).await;
+    h.store.append(&direct.id, Expected::Any, vec![NewEvent::new("usage.recorded.1",
+        json!({"provider":"test","model":"test/main","purpose":"web_summary","call_id":null,"duration_ms":1,"usage":{"input":10},"cost":0.1}))]).unwrap();
+    let usage = h.runtime.children_usage(&root).unwrap();
+    assert_eq!(usage.children_token_classes.input, 10);
+    assert!(!usage.children_token_classes_complete);
+    h.runtime.delete(&direct.id).await.unwrap();
+    assert_eq!(h.runtime.children_usage(&root).unwrap(), usage);
 }

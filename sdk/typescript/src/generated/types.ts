@@ -580,6 +580,9 @@ export type Session = {
   children_unpriced_steps: number;
   /** False when older purged child history cannot be reconstructed. */
   children_usage_complete: boolean;
+  children_token_classes?: Usage;
+  /** False when retained historical receipts lack source token-class evidence. */
+  children_token_classes_complete?: boolean;
   revert?: RevertState | null;
 };
 
@@ -605,6 +608,9 @@ export type SessionRow = {
   children_unpriced_steps: number;
   /** False when older purged child history cannot be reconstructed. */
   children_usage_complete: boolean;
+  children_token_classes?: Usage;
+  /** False when retained historical receipts lack source token-class evidence. */
+  children_token_classes_complete?: boolean;
 };
 
 export type SetupRecoveryRequest = {

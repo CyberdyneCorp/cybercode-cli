@@ -1060,7 +1060,7 @@ fn query_sessions(
 ) -> Result<Vec<SessionRow>, StoreError> {
     let (cursor_at, cursor_id) = cursor.unwrap_or((i64::MAX, String::new()));
     let mut stmt = conn.prepare(
-        "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost, children_cost, children_tokens, children_unpriced_steps, children_usage_complete FROM session
+        "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost, children_cost, children_tokens, children_unpriced_steps, children_usage_complete, children_token_classes, children_token_classes_complete FROM session
          WHERE (?1 IS NULL OR directory = ?1)
            AND (?2 IS NULL OR parent_id = ?2)
            AND (?3 = 0 OR parent_id IS NULL)

@@ -351,6 +351,21 @@
           "children_usage_complete": {
             "type": "boolean",
             "description": "False when older purged child history cannot be reconstructed."
+          },
+          "children_token_classes": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            }
+          },
+          "children_token_classes_complete": {
+            "type": "boolean",
+            "description": "False when retained historical receipts lack source token-class evidence.",
+            "default": false
           }
         },
         "required": [
@@ -367,6 +382,44 @@
           "children_unpriced_steps",
           "children_usage_complete"
         ]
+      },
+      "Usage": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "output": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "reasoning": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cache_read": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cache_write": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "reasoning",
+          "cache_read",
+          "cache_write"
+        ],
+        "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
       },
       "CreateWorktreeBody": {
         "type": "object",
@@ -680,6 +733,21 @@
             "type": "boolean",
             "description": "False when older purged child history cannot be reconstructed."
           },
+          "children_token_classes": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache_read": 0,
+              "cache_write": 0
+            }
+          },
+          "children_token_classes_complete": {
+            "type": "boolean",
+            "description": "False when retained historical receipts lack source token-class evidence.",
+            "default": false
+          },
           "revert": {
             "anyOf": [
               {
@@ -737,44 +805,6 @@
           "unpriced_steps",
           "steps"
         ]
-      },
-      "Usage": {
-        "type": "object",
-        "properties": {
-          "input": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "output": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "reasoning": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "cache_read": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "cache_write": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "input",
-          "output",
-          "reasoning",
-          "cache_read",
-          "cache_write"
-        ],
-        "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
       },
       "RevertState": {
         "type": "object",

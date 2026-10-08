@@ -68,6 +68,7 @@ impl Default for JobUsage {
             unpriced_steps: 0,
             children: Some(super::ChildrenUsage {
                 children_usage_complete: true,
+                children_token_classes_complete: true,
                 ..Default::default()
             }),
         }
@@ -172,7 +173,7 @@ impl Runtime {
         let id = id.to_owned();
         self.inner.store.read(move |db| {
             db.query_row(
-                "SELECT cost,input_tokens+output_tokens+reasoning_tokens+cache_read_tokens+cache_write_tokens,unpriced_steps,children_cost,children_tokens,children_unpriced_steps,children_usage_complete FROM session WHERE id=?1",
+                "SELECT cost,input_tokens+output_tokens+reasoning_tokens+cache_read_tokens+cache_write_tokens,unpriced_steps,children_cost,children_tokens,children_unpriced_steps,children_usage_complete,children_token_classes,children_token_classes_complete FROM session WHERE id=?1",
                 [id],
                 |row| Ok(JobUsage {
                     cost: row.get(0)?,
