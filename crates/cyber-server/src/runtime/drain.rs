@@ -71,6 +71,16 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
         }
         inner.settle_user_child(&id, &cancel, succeeded).await;
         if !inner.finish_pass(&id, &cancel) {
+            if succeeded
+                && !cancel.is_cancelled()
+                && let Ok(handle) = inner.handle(&id).await
+                && handle.state.lock().await.info.parent_id.is_some()
+            {
+                super::Runtime {
+                    inner: Arc::clone(&inner),
+                }
+                .dispatch_queued_child(&id);
+            }
             break;
         }
         forced = false;

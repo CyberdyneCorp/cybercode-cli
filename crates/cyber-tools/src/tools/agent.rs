@@ -419,7 +419,9 @@ async fn execute_child(
         result = finish_child(&weak, &id, &prompt, structured, bytes, dir) => result,
     };
     let result = attach_worktree_result(result, worktree.as_ref(), ctx.cancel.clone()).await;
-    guard.settle(result.is_err()).await;
+    guard
+        .settle_foreground(&runtime, &id, result.is_err())
+        .await;
     result
 }
 

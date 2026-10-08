@@ -69,8 +69,10 @@ existing inbox row. Wake takes no prompt body and resolves to `undefined`. Held 
 `client.session.inboxRelease(id, messageID, { delivery: "queue" })` instead. An idle child keeps
 its structured schema and starts a fresh attempt after verified checkout preparation;
 preparation refusal leaves the row pending or held. A completed child with no promotable
-input keeps its result without starting inference. Explicit wake currently dispatches one
-queued structured attempt; automatic handoff of subsequent structured attempts remains open.
+input keeps its result without starting inference. Explicit wake dispatches one
+deferred structured attempt. Prompts queued with `resume: true` during active child execution
+hand off automatically after result collection or Job settlement. Interruption preserves their
+rows and clears automatic wake intent; use an explicit wake to resume later.
 
 ## Session budgets
 

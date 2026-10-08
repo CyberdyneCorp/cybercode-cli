@@ -2604,3 +2604,88 @@ async fn held_child_release_preserves_input_when_checkout_preparation_is_refused
         }
     }
 }
+
+#[tokio::test]
+async fn structured_foreground_result_is_collected_before_automatic_queued_attempts() {
+    use cyber_server::runtime::{Admission, Delivery, InputStatus, PermissionReply};
+    for cleanup in ["keep", "auto"] {
+        let flow = flow(
+            vec![
+                call("read", "read", json!({"path":".env"})),
+                call("first", "return_result", json!(1)),
+                call("second", "return_result", json!(2)),
+                call("third", "return_result", json!(3)),
+            ],
+            true,
+        );
+        flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow","read":"ask"},"worktrees":{"cleanup":cleanup}}));
+        let parent = flow.session("default").await;
+        let (result, receipts) = tokio::join!(
+            invoke(
+                &flow,
+                &parent,
+                json!({"prompt":"inspect","name":"automatic-queue","isolation":"worktree","output_schema":{"type":"integer"}})
+            ),
+            async {
+                let request = flow.pending(&parent).await;
+                let child = &request.session_id;
+                let mut receipts = Vec::new();
+                for text in ["obsolete queued prompt", "last queued prompt"] {
+                    receipts.push(
+                        flow.runtime
+                            .admit_user(child, Admission::text(text, Delivery::Queue))
+                            .await
+                            .unwrap(),
+                    );
+                }
+                flow.runtime
+                    .edit_input(
+                        child,
+                        &receipts[0].message_id,
+                        Some(vec![cyber_llm::Content::Text {
+                            text: "edited queued prompt".into(),
+                        }]),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                assert!(flow.runtime.claim_child_execution(&parent, child).is_err());
+                flow.runtime
+                    .reply_permission(&request.id, PermissionReply::Once)
+                    .await
+                    .unwrap();
+                receipts
+            }
+        );
+        let result = result.unwrap();
+        assert_eq!(result["result"], 1);
+        assert_eq!(result["worktree"]["kept"], cleanup == "keep");
+        let child = result["id"].as_str().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if flow.runtime.state(child).await.unwrap().structured_result() == Some(&json!(3)) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("queued structured attempts should dispatch automatically after result collection");
+        flow.runtime.wait_idle(child).await;
+        let state = flow.runtime.state(child).await.unwrap();
+        for receipt in &receipts {
+            let row = state.input(&receipt.message_id).unwrap();
+            assert_eq!(row.status, InputStatus::Promoted);
+            assert_eq!(row.admitted_seq, receipt.admitted_seq);
+        }
+        assert!(
+            state.input(&receipts[0].message_id).unwrap().promoted_seq
+                < state.input(&receipts[1].message_id).unwrap().promoted_seq
+        );
+        let requests = flow.main.requests();
+        assert_eq!(requests.len(), 4);
+        let request = serde_json::to_string(&requests[2]).unwrap();
+        assert!(request.contains("edited queued prompt"));
+        assert!(!request.contains("obsolete queued prompt"));
+    }
+}

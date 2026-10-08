@@ -435,6 +435,7 @@ impl Runtime {
         self.refresh_job_usage(&mut job).await;
         // Suppressed notices (Session deletion) must not be resurrected by recovery.
         job.notified = !notify;
+        let child = job.child_id.clone();
         self.record_job(
             if status == JobStatus::Cancelled {
                 CANCELLED
@@ -446,6 +447,9 @@ impl Runtime {
         .await?;
         if notify && !self.is_shutting_down() {
             self.notify_job(job).await?;
+        }
+        if status == JobStatus::Completed {
+            self.dispatch_queued_child(&child);
         }
         Ok(())
     }

@@ -83,6 +83,13 @@ impl ChildGuard {
             let _ = owner.await;
         }
     }
+
+    pub async fn settle_foreground(self, runtime: &Runtime, id: &str, canceled: bool) {
+        self.settle(canceled).await;
+        if !canceled {
+            runtime.dispatch_queued_child(id);
+        }
+    }
 }
 
 impl Drop for ChildGuard {

@@ -259,6 +259,7 @@ impl Runtime {
                     },
                 ];
                 let admitted = Admitted {
+                    wake: false,
                     message_id: message_id.clone(),
                     digest: format!("shell:{message_id}"),
                     parts,

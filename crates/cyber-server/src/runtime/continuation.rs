@@ -74,6 +74,7 @@ impl Runtime {
                 event(
                     ADMITTED,
                     &Admitted {
+                        wake: true,
                         message_id: message.clone(),
                         parts: admission.parts,
                         delivery: admission.delivery,
@@ -126,6 +127,7 @@ impl Runtime {
         &self,
         id: &str,
         release: Option<(&str, Delivery)>,
+        requested_only: bool,
     ) -> Result<bool, RuntimeError> {
         drop(self.inner.open().await?);
         let handle = self.inner.handle(id).await?;
@@ -145,7 +147,7 @@ impl Runtime {
                 .input(message)
                 .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message}")))?;
             super::check_inbox_action(row, super::events::InboxAction::Released)?;
-        } else if !has_pending_input(&state) {
+        } else if !eligible_child_input(&state, requested_only) {
             return Ok(true);
         }
         let (owner, settlement) = self.prepare_user_child(&handle, &state).await?;
@@ -168,7 +170,7 @@ impl Runtime {
                     delivery: Some(delivery),
                 },
             ));
-        } else if !has_pending_input(&state) {
+        } else if !eligible_child_input(&state, requested_only) {
             return Ok(true);
         }
         if self.inner.closed.is_cancelled() {
@@ -259,6 +261,22 @@ fn has_pending_input(state: &SessionState) -> bool {
         || state.pending(Delivery::Queue).next().is_some()
 }
 
+fn has_requested_input(state: &SessionState) -> bool {
+    state.inbox.iter().any(|row| {
+        row.status == super::InputStatus::Pending
+            && row.delivery != Delivery::Hold
+            && state.child_requested_inputs.contains(&row.message_id)
+    })
+}
+
+fn eligible_child_input(state: &SessionState, requested_only: bool) -> bool {
+    if requested_only {
+        has_requested_input(state)
+    } else {
+        has_pending_input(state)
+    }
+}
+
 fn launch_child(
     inner: &Arc<super::Inner>,
     drains: &mut std::collections::HashMap<String, DrainEntry>,
@@ -278,6 +296,74 @@ fn launch_child(
         },
     );
     tokio::spawn(drain::run(Arc::clone(inner), id.into(), false, cancel));
+}
+
+impl Runtime {
+    /// Dispatch requested child input only after the previous result owner has settled.
+    /// Registration makes shutdown wait for preparation as well as any resulting Drain.
+    /// The returned token signals preparation-task completion, not cancellation of its work.
+    pub fn dispatch_queued_child(&self, id: &str) -> CancellationToken {
+        let done = CancellationToken::new();
+        let mut owners = self
+            .inner
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.inner.closed.is_cancelled() {
+            done.cancel();
+            return done;
+        }
+        let weak = self.downgrade();
+        let id = id.to_owned();
+        let on_done = done.clone().drop_guard();
+        let work: futures::future::BoxFuture<'static, ()> = Box::pin(async move {
+            let _on_done = on_done;
+            let Some(runtime) = weak.upgrade() else {
+                return;
+            };
+            let result = runtime.dispatch_requested_input(&id).await;
+            if let Err(error) = result
+                && !matches!(error, RuntimeError::Busy(_) | RuntimeError::ShuttingDown)
+            {
+                runtime.inner.bus.publish(super::bus::LiveEvent::Error {
+                    session_id: id,
+                    kind: "child_queue".into(),
+                    message: error.to_string(),
+                });
+            }
+        });
+        owners.retain(|owner| !owner.is_finished());
+        owners.push(tokio::spawn(work));
+        done
+    }
+
+    async fn dispatch_requested_input(&self, id: &str) -> Result<(), RuntimeError> {
+        let state = self.state(id).await?;
+        if state.info.parent_id.is_none() || !has_requested_input(&state) {
+            return Ok(());
+        }
+        self.continue_child_input(id, None, true).await?;
+        Ok(())
+    }
+
+    pub(super) async fn pause_requested_child_input(&self, id: &str) -> Result<(), RuntimeError> {
+        let handle = match self.inner.handle(id).await {
+            Ok(handle) => handle,
+            Err(RuntimeError::SessionNotFound(_)) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let mut state = handle.state.lock().await;
+        if !state.child_requested_inputs.is_empty() {
+            self.inner.commit_locked(
+                &mut state,
+                vec![event(
+                    super::events::CHILD_INPUT_PAUSED,
+                    &serde_json::json!({"reason":"interrupt"}),
+                )],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl super::Inner {

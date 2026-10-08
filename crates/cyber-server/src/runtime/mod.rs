@@ -526,6 +526,9 @@ impl Runtime {
                 return Err(RuntimeError::Busy(session_id.into()));
             }
             let payload = Admitted {
+                wake: state.info.parent_id.is_some()
+                    && admission.resume
+                    && admission.delivery != Delivery::Hold,
                 message_id: message_id.clone(),
                 parts: admission.parts,
                 delivery: admission.delivery,
@@ -585,7 +588,7 @@ impl Runtime {
             ));
         }
         if self
-            .continue_child_input(session_id, Some((message_id, delivery)))
+            .continue_child_input(session_id, Some((message_id, delivery)), false)
             .await?
         {
             return Ok(());
@@ -642,7 +645,7 @@ impl Runtime {
 
     /// Start a Drain when idle, or record one coalesced follow-up when one is running.
     pub async fn wake(&self, session_id: &str) -> Result<(), RuntimeError> {
-        if self.continue_child_input(session_id, None).await? {
+        if self.continue_child_input(session_id, None, false).await? {
             return Ok(());
         }
         let _admission = self.inner.open().await?;
@@ -679,6 +682,7 @@ impl Runtime {
 
     /// Stop the Drain and abandon owned requests, including idle host operations; inbox rows are kept.
     pub async fn interrupt(&self, session_id: &str) -> Result<(), RuntimeError> {
+        let paused = self.pause_requested_child_input(session_id).await;
         {
             let mut drains = self
                 .inner
@@ -692,7 +696,7 @@ impl Runtime {
         }
         self.wait_idle(session_id).await;
         self.inner.abandon_requests(session_id).await?;
-        Ok(())
+        paused
     }
 
     /// Wait until no Drain runs for the Session.

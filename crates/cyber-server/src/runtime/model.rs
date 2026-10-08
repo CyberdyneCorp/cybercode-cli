@@ -1,7 +1,7 @@
 //! Session state as a fold of durable events. Everything the runtime decides is derived
 //! from this state, so a restart rebuilds exactly what was acknowledged.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cyber_llm::{Content, Usage};
 use cyber_store::StoredEvent;
@@ -257,6 +257,8 @@ pub struct StepSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
     #[serde(skip)]
+    pub(crate) child_requested_inputs: BTreeSet<String>,
+    #[serde(skip)]
     pub(crate) child_continuation_error: Option<String>,
     #[serde(skip)]
     pub(crate) child_continuation_unknown: bool,
@@ -342,6 +344,7 @@ impl SessionState {
     }
     pub fn new(info: SessionInfo) -> Self {
         Self {
+            child_requested_inputs: BTreeSet::new(),
             child_continuation_error: None,
             child_continuation_unknown: false,
             child_worktree_setup_pending: false,
@@ -432,6 +435,7 @@ impl SessionState {
             .rsplit_once('.')
             .map_or(e.kind.as_str(), |(base, _)| base);
         match kind {
+            "session.child.input_paused" => self.child_requested_inputs.clear(),
             "session.prompt.admitted" => self.on_admitted(decode(e)?, e.seq),
             "session.inbox.updated" => self.on_inbox_updated(decode(e)?),
             "session.prompt.promoted" => self.on_promoted(decode::<Promoted>(e)?, e.seq),
@@ -654,6 +658,9 @@ impl SessionState {
     }
 
     fn on_admitted(&mut self, a: Admitted, seq: i64) {
+        if a.wake && self.info.parent_id.is_some() && a.delivery != Delivery::Hold {
+            self.child_requested_inputs.insert(a.message_id.clone());
+        }
         let status = if a.delivery == Delivery::Hold {
             InputStatus::Held
         } else {
@@ -677,10 +684,17 @@ impl SessionState {
         };
         match u.action {
             InboxAction::Removed => {
+                self.child_requested_inputs.remove(&u.message_id);
                 self.inbox.remove(index);
             }
-            InboxAction::Refused => self.inbox[index].status = InputStatus::Refused,
+            InboxAction::Refused => {
+                self.child_requested_inputs.remove(&u.message_id);
+                self.inbox[index].status = InputStatus::Refused;
+            }
             InboxAction::Edited | InboxAction::Released => {
+                if u.action == InboxAction::Released && self.info.parent_id.is_some() {
+                    self.child_requested_inputs.insert(u.message_id.clone());
+                }
                 let row = &mut self.inbox[index];
                 if let Some(parts) = u.parts {
                     row.parts = parts;
@@ -698,6 +712,7 @@ impl SessionState {
     }
 
     fn on_promoted(&mut self, p: Promoted, seq: i64) {
+        self.child_requested_inputs.remove(&p.message_id);
         let Some(row) = self.inbox.iter_mut().find(|r| r.message_id == p.message_id) else {
             return;
         };

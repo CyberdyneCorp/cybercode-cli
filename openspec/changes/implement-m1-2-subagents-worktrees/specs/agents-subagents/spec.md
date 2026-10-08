@@ -462,3 +462,20 @@
 #### Scenario: Denied agent omitted
 - **WHEN** the caller's rules deny `agent` for resource `general`
 - **THEN** `general` does not appear in the `agent` tool description
+
+## ADDED Requirements
+
+### Requirement: Requested child inbox handoff
+(P1) Requested queued child input SHALL continue in FIFO order through fresh schema-preserving attempts after the preceding result owner finishes collection. Foreground tool output and background Job result and billing SHALL preserve their original attempt. Handoff SHALL use exclusive child ownership and verified checkout preparation, retain original inbox identity and edited content, and recheck pending wake intent before committing the next attempt. `resume: false` and historical input without wake intent SHALL remain deferred. Interruption SHALL durably clear automatic intent without deleting pending input, permitting a later explicit wake. Runtime shutdown SHALL join owned handoff preparation tasks.
+
+#### Scenario: Foreground structured result followed by queued prompts
+- **WHEN** two requested prompts are queued while a foreground structured child runs
+- **THEN** the foreground tool receives its original result before the queued prompts run as separate attempts in admission order
+
+#### Scenario: Background result billing precedes handoff
+- **WHEN** a background structured child has requested queued input when its Job completes
+- **THEN** the Job persists its original result and usage before a new attempt adds usage to the child
+
+#### Scenario: Interrupted queued input remains deferred
+- **WHEN** a child is interrupted with requested pending input and the server restarts
+- **THEN** the input remains pending without automatic inference until an explicit wake

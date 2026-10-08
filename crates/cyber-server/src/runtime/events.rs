@@ -14,6 +14,7 @@ pub const CREATED: &str = "session.created.1";
 pub const WORKTREE_REBOUND: &str = "session.worktree.rebound.1";
 pub const WORKTREE_SETUP_READY: &str = "session.worktree.setup_ready.1";
 pub const CHILD_CONTINUATION_SETTLED: &str = "session.child.continuation_settled.1";
+pub const CHILD_INPUT_PAUSED: &str = "session.child.input_paused.1";
 pub const RESUMED: &str = "session.subagent.resumed.1";
 pub const ADMITTED: &str = "session.prompt.admitted.1";
 pub const INBOX_UPDATED: &str = "session.inbox.updated.1";
@@ -53,6 +54,7 @@ const ALL: &[&str] = &[
     ADMITTED,
     RESUMED,
     CHILD_CONTINUATION_SETTLED,
+    CHILD_INPUT_PAUSED,
     WORKTREE_REBOUND,
     WORKTREE_SETUP_READY,
     INBOX_UPDATED,
@@ -114,6 +116,9 @@ pub struct Created {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Admitted {
+    /// Child input requested dispatch; absent historical records remain explicitly deferred.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wake: bool,
     pub message_id: String,
     pub parts: Vec<Content>,
     pub delivery: Delivery,
