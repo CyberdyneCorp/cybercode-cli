@@ -457,3 +457,50 @@ fn verify_worktree_list_command(env: &Env, repo: &Path, target: &Path) {
         "setup"
     );
 }
+
+#[test]
+fn auto_statistics_show_and_reset_are_checkout_scoped_and_persisted() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    let show = env
+        .command(&["--format", "json", "permissions", "auto", "show"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "{}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let before: Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(
+        before["checkout_root"],
+        repo.canonicalize().unwrap().display().to_string()
+    );
+    assert_eq!(before["allowed"], 0);
+    assert!(before["recorded_since"].is_null());
+    let reset = env
+        .command(&["--format", "json", "permissions", "auto", "reset"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        reset.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reset.stderr)
+    );
+    let value: Value = serde_json::from_slice(&reset.stdout).unwrap();
+    assert!(value["reset_at"].is_i64());
+    let sub = repo.join("src");
+    std::fs::create_dir(&sub).unwrap();
+    let after = env
+        .command(&["--format", "json", "permissions", "auto", "show"])
+        .current_dir(sub)
+        .output()
+        .unwrap();
+    assert!(after.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&after.stdout).unwrap(),
+        value
+    );
+}

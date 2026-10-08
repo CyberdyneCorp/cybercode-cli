@@ -43,6 +43,8 @@ pub enum AutoEffect {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoDecision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout_root: Option<String>,
     pub call_id: String,
     pub action: String,
     pub resources: Vec<String>,
@@ -122,7 +124,11 @@ impl Inner {
             _ = cancel.cancelled() => return Err(RuntimeError::Invalid("Auto review cancelled".into())),
             blocks = handle.auto_blocks.lock() => blocks,
         };
+        let directory = handle.state.lock().await.info.directory.clone();
+        let root = cyber_core::config::project_root(std::path::Path::new(&directory));
+        let checkout_root = std::fs::canonicalize(&root).unwrap_or(root);
         let mut decision = AutoDecision {
+            checkout_root: Some(checkout_root.display().to_string()),
             call_id: asker.call_id.clone(),
             action: review.action.clone(),
             resources: review.resources.clone(),

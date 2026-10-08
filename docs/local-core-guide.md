@@ -85,7 +85,15 @@ Configure controls in trusted global or project configuration:
 }
 ```
 
-Block rules take precedence. Allow rules cover every resource and preserve hard denies, protected paths and parent manual approval. Read-only tools skip classification by default; set `classify_read_only` to true to review their approval-required requests. Set `fallback` to `deny` to refuse fallback even with a user attached. Project settings require trust. One-shot `/approve` and `cyber permissions auto show|reset` remain planned.
+Block rules take precedence. Allow rules cover every resource and preserve hard denies, protected paths and parent manual approval. Read-only tools skip classification by default; set `classify_read_only` to true to review their approval-required requests. Set `fallback` to `deny` to refuse fallback even with a user attached. Project settings require trust. Inspect or clear recorded decision counters for the current checkout:
+
+```bash
+cyber permissions auto show
+cyber permissions auto reset
+cyber --format json permissions auto show
+```
+
+Counters include allows, blocks, fallbacks and classifier/policy decisions. They start when checkout scope was first recorded (or at reset); historical unscoped events are excluded. Reset preserves decision history and spending records and leaves other checkouts unchanged. One-shot `/approve` remains planned.
 
 ## Budgets and deferred input
 

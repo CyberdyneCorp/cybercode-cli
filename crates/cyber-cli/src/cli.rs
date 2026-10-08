@@ -122,6 +122,11 @@ pub enum Command {
     },
     /// List models from the catalog, available first.
     Models(ModelsArgs),
+    /// Inspect or reset checkout-scoped auto-mode statistics.
+    Permissions {
+        #[command(subcommand)]
+        cmd: crate::commands::permissions::PermissionsCmd,
+    },
     /// Inspect the local database.
     Db {
         #[command(subcommand)]

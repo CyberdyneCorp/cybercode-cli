@@ -188,3 +188,9 @@
 - **WHEN** an eligible read-only tool requires approval and classify_read_only is false
 - **THEN** it skips inference with a durable policy decision while block rules retain precedence
 - **AND** fallback deny refuses execution without opening an interactive request
+
+#### Scenario: Checkout-scoped statistics reset
+- **WHEN** a user shows or resets auto-mode statistics from a checkout or its subdirectory
+- **THEN** the command reports the same scoped counters and clears only that checkout's recorded counts
+- **AND** decision history, billing and other checkouts remain preserved
+- **AND** the recording boundary is visible; historical events without recorded checkout identity SHALL NOT be attributed from a moved Session's current directory

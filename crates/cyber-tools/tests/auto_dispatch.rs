@@ -375,3 +375,66 @@ async fn mutating_tool_external_directory_check_cannot_use_read_only_skip() {
     assert_eq!(rows[0]["action"], "external_directory");
     assert_eq!(rows[0]["decision"], "block");
 }
+
+#[tokio::test]
+async fn checkout_statistics_reset_preserves_other_scopes_and_audit_history() {
+    use cyber_server::runtime::auto_statistics;
+    let f = Flow::with_models(
+        Fixture::new(),
+        vec![
+            call(
+                "first",
+                "write",
+                json!({"path":"first.txt","content":"one"}),
+            ),
+            text("done"),
+            call(
+                "second",
+                "write",
+                json!({"path":"second.txt","content":"two"}),
+            ),
+            text("done"),
+        ],
+        false,
+        Arc::new(NoSnapshots),
+        vec![(
+            "test/summary",
+            vec![verdict("allow")[0].clone(), verdict("block")[0].clone()],
+        )],
+    );
+    let first = f.session("auto").await;
+    f.prompt(&first, "Write a file").await;
+    f.settle(&first).await;
+    let other = f.f.dir.path().join("other-checkout");
+    std::fs::create_dir_all(other.join(".git")).unwrap();
+    let other = std::fs::canonicalize(other).unwrap();
+    let second = f
+        .runtime
+        .create_session(CreateSession {
+            directory: other.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("auto".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&second, "Write another file").await;
+    f.settle(&second).await;
+    let root = f.f.repo.display().to_string();
+    let other = other.display().to_string();
+    let a = auto_statistics::show(&f.f.store, &root).unwrap();
+    let b = auto_statistics::show(&f.f.store, &other).unwrap();
+    assert_eq!((a.allowed, a.blocked, a.classifier, a.policy), (1, 0, 1, 0));
+    assert_eq!((b.allowed, b.blocked, b.classifier, b.policy), (0, 1, 1, 0));
+    let events = f.f.store.read_events(&first, -1, 100).unwrap().events;
+    auto_statistics::reset(&f.f.store, &root).unwrap();
+    let reset = auto_statistics::show(&f.f.store, &root).unwrap();
+    assert_eq!((reset.allowed, reset.blocked, reset.classifier), (0, 0, 0));
+    assert!(reset.reset_at.is_some());
+    assert_eq!(auto_statistics::show(&f.f.store, &other).unwrap(), b);
+    assert_eq!(
+        f.f.store.read_events(&first, -1, 100).unwrap().events.len(),
+        events.len()
+    );
+}

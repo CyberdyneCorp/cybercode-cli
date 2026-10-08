@@ -262,7 +262,12 @@ fn disk_full_stops_mutations_without_acknowledging() {
         DatabaseLocation::File(dir.path().join("cyber.db")),
         registry(),
     );
-    options.max_page_count = Some(40);
+    let baseline = open(dir.path(), registry());
+    let pages: u32 = baseline
+        .read(|db| Ok(db.query_row("PRAGMA page_count", [], |row| row.get(0))?))
+        .unwrap();
+    drop(baseline);
+    options.max_page_count = Some(pages + 8);
     let store = Store::open(options).unwrap();
     let big = "x".repeat(16 * 1024);
     let mut acked = 0;
@@ -277,6 +282,10 @@ fn disk_full_stops_mutations_without_acknowledging() {
         }
         assert!(acked < 1000, "the page cap never filled the database");
     };
+    assert!(
+        acked > 0,
+        "the fixture must permit writes before the disk fills"
+    );
     assert!(
         failure.is_fatal(),
         "expected StorageUnavailableError, got {failure}"

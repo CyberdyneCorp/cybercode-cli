@@ -386,6 +386,9 @@ pub fn registry() -> EventRegistry {
     for kind in ALL {
         registry.register(kind).expect("valid event types");
     }
+    registry
+        .register(super::auto_statistics::RESET)
+        .expect("valid auto statistics reset event");
     super::budget::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
@@ -396,6 +399,7 @@ pub fn registry() -> EventRegistry {
 
 fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
     super::admission_authority::project(tx, e)?;
+    super::auto_statistics::project(tx, e)?;
     project_event(tx, e).map_err(|err| err.to_string())
 }
 

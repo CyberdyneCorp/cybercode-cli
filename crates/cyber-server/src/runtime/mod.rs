@@ -10,6 +10,7 @@ pub use admission_authority::AdmissionAuthority;
 mod ancestry;
 pub use ancestry::AncestorAuthority;
 mod auto;
+pub mod auto_statistics;
 mod budget;
 mod bus;
 mod child_ownership;

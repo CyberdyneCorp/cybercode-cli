@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod eval;
 pub mod exec;
 pub mod models;
+pub mod permissions;
 pub mod serve;
 pub mod trust;
 pub mod tui;
@@ -40,6 +41,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),
+        Command::Permissions { cmd } => permissions::run(cmd, &ctx, &cli.global),
         Command::Db { cmd } => db::run(cmd, &ctx, &cli.global),
         Command::Trust { cmd } => trust::run(cmd, &ctx, &cli.global),
         Command::Serve(args) => serve::serve(args, &ctx),

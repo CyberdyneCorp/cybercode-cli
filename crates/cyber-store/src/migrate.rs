@@ -53,6 +53,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261007050000_children_token_classes",
         sql: include_str!("../migrations/20261007050000_children_token_classes.sql"),
     },
+    Migration {
+        id: "20261008000000_auto_statistics",
+        sql: include_str!("../migrations/20261008000000_auto_statistics.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
