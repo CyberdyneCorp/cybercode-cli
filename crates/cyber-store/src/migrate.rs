@@ -61,6 +61,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261008010000_hook_executions",
         sql: include_str!("../migrations/20261008010000_hook_executions.sql"),
     },
+    Migration {
+        id: "20261008020000_hook_once",
+        sql: include_str!("../migrations/20261008020000_hook_once.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

@@ -57,10 +57,27 @@ impl HookCommandRunner<'_> {
         let log_io = self.resolved.value["telemetry"]["log_hook_io"]
             .as_bool()
             .unwrap_or(false);
-        let mut owner = runtime
-            .start_hook_execution(event, &definition, log_io)
+        let Some(mut owner) = runtime
+            .try_start_hook_execution(event, &definition, log_io)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(HookCommandReport {
+                outcome: super::HookOutcome::Skipped,
+                decision: Default::default(),
+                ignored_fields: Vec::new(),
+                diagnostic: None,
+                acknowledged: true,
+                must_stop: false,
+            });
+        };
+        if let Some(message) = &definition.handler.status_message {
+            runtime.hook_notice(
+                &event.identity().session_id,
+                &owner.record().hook_id,
+                message,
+            );
+        }
         let stop = owner.cancellation();
         let result = {
             let execution =
@@ -94,7 +111,12 @@ impl HookCommandRunner<'_> {
         };
         let fenced = owner.verify(runtime).is_err();
         report.must_stop |= fenced;
-        owner.finish(report).map_err(|error| error.to_string())?;
+        let record = owner.finish(report).map_err(|error| error.to_string())?;
+        if record.acknowledged == Some(true)
+            && let Some(message) = &definition.handler.system_message
+        {
+            runtime.hook_notice(&record.session_id, &record.hook_id, message);
+        }
         result.map(|mut report| {
             report.must_stop |= fenced;
             report
@@ -112,6 +134,9 @@ impl HookCommandRunner<'_> {
         )>,
     ) -> Result<HookCommandReport, String> {
         let (definition, sandbox_all) = self.authorize(pointer, event)?;
+        if definition.handler.once && owner.is_none() {
+            return Err("Once hooks require durable runtime admission".into());
+        }
         if cancel.is_cancelled() {
             return Err("hook command cancelled before launch".into());
         }

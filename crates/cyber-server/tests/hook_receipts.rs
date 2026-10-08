@@ -305,3 +305,93 @@ async fn oversized_opt_in_io_rolls_back_terminal_projection_and_preserves_unknow
     assert_eq!(events[1].data["status"], "unknown");
     assert!(events[1].data.get("io").is_none());
 }
+
+#[tokio::test]
+async fn once_admission_is_exclusive_across_runtimes_and_survives_unknown_restart() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let event = event(&h, &session).await;
+    let mut definition = definition(&h);
+    definition.handler.once = true;
+    definition.digest = definition.handler.digest().unwrap();
+    let peer = h.restart();
+    let (left, right) = tokio::join!(
+        h.runtime
+            .try_start_hook_execution(&event, &definition, false),
+        peer.try_start_hook_execution(&event, &definition, false)
+    );
+    let mut owners = [left.unwrap(), right.unwrap()];
+    assert_eq!(owners.iter().filter(|owner| owner.is_some()).count(), 1);
+    let mut owner = owners.iter_mut().find_map(Option::take).unwrap();
+    owner.mark_launch(&h.runtime).unwrap();
+    drop(owner);
+    let replay = h.restart();
+    assert!(
+        replay
+            .try_start_hook_execution(&event, &definition, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let receipts = replay.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert!(receipts[0].once);
+    assert_eq!(receipts[0].status, HookExecutionStatus::Unknown);
+    // The same inspected handler remains eligible in a different Session.
+    let other = h.session().await;
+    let other_event = self::event(&h, &other).await;
+    let owner = replay
+        .try_start_hook_execution(&other_event, &definition, false)
+        .await
+        .unwrap()
+        .unwrap();
+    owner.finish(result()).unwrap();
+}
+
+#[tokio::test]
+async fn once_receipt_cannot_change_its_claim_and_changed_digest_is_a_new_handler() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let event = event(&h, &session).await;
+    let mut definition = definition(&h);
+    definition.handler.once = true;
+    definition.digest = definition.handler.digest().unwrap();
+    let owner = h
+        .runtime
+        .start_hook_execution(&event, &definition, false)
+        .await
+        .unwrap();
+    let mut terminal = serde_json::to_value(owner.record()).unwrap();
+    terminal["once"] = json!(false);
+    terminal["status"] = json!("completed");
+    terminal["duration_ms"] = json!(1);
+    terminal["outcome"] = json!("ok");
+    terminal["decision"] = json!({});
+    terminal["acknowledged"] = json!(true);
+    assert!(
+        h.store
+            .append(
+                &owner.record().id,
+                Expected::Seq(0),
+                vec![NewEvent::new("hook.executed.1", terminal)]
+            )
+            .is_err()
+    );
+    owner.finish(result()).unwrap();
+    assert!(
+        h.runtime
+            .try_start_hook_execution(&event, &definition, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    definition.handler.command = Some("printf changed".into());
+    definition.digest = definition.handler.digest().unwrap();
+    h.runtime
+        .start_hook_execution(&event, &definition, false)
+        .await
+        .unwrap()
+        .finish(result())
+        .unwrap();
+    assert_eq!(h.runtime.hook_executions(&session, 10).unwrap().len(), 2);
+}

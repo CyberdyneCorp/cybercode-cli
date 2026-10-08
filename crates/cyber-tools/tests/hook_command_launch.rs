@@ -300,7 +300,14 @@ async fn mandatory_hook_sandbox_masks_credentials_and_denies_home_writes() {
         .run(POINTER, &f.event(), CancellationToken::new())
         .await;
     if cyber_sandbox::available() {
-        assert_eq!(result.unwrap().outcome, HookOutcome::Error);
+        let report = result.unwrap();
+        // Shells may return exit 2 for a refused redirection; the hook contract
+        // treats that as blocked, while other nonzero exits are errors.
+        assert!(
+            matches!(report.outcome, HookOutcome::Error | HookOutcome::Blocked),
+            "{:?}",
+            report.outcome
+        );
     } else {
         assert!(result.is_err());
     }
@@ -433,4 +440,29 @@ async fn disposed_execution_retains_scratch_while_acknowledged_cancellation_clea
     assert!(report.must_stop && report.acknowledged);
     // Only the unacknowledged disposal's scratch remains.
     assert_eq!(std::fs::read_dir(&f.temp).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn once_command_requires_recorded_admission_before_any_effect() {
+    let f = Fixture::new();
+    f.write(false, "printf unsafe > effect", false);
+    let file = f.paths.config.join("cyber.jsonc");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    value["hooks"]["PreToolUse"][0]["hooks"][0]["once"] = json!(true);
+    std::fs::write(file, value.to_string()).unwrap();
+    let resolved = f.load();
+    let error = f
+        .runner(&resolved)
+        .run(POINTER, &f.event(), CancellationToken::new())
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        error.contains("Once hooks require durable runtime admission"),
+        "{error}"
+    );
+    assert!(!f.location.join("effect").exists());
+    assert!(!f.temp.exists());
 }

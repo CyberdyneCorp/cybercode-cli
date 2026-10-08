@@ -22,3 +22,5 @@ Project executable configuration is currently withheld until checkout trust is a
 ## Validation
 
 Real configuration-loading tests cover rejection paths, all four handler definitions, defaults, invalid selectors, trust withholding and changed definitions. Later increments require actual dispatch/side effects, denial/rewrite/merge semantics, durability, client surfaces and native ownership/cancellation evidence. Passing configuration tests alone cannot accept hooks or M1.3.
+
+- Pin the command handler's `once` flag in its durable receipt. A partial unique index on Session/effective digest and a writer-side claim check make admission exclusive across runtimes. Completed and unknown receipts retain the claim; pre-launch failures also consume an admitted attempt, preserving at-most-once behavior without unsafe crash replay. Legacy receipts default to `once: false`. Unrecorded command launches refuse once handlers. Status/system messages use the existing transient user-notice channel after admission and acknowledged settlement, without model-context or raw-IO persistence.

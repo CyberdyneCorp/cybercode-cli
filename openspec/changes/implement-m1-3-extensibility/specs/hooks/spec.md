@@ -237,3 +237,21 @@
 - **THEN** terminal recording SHALL omit supplied raw stdin, stdout and stderr
 - **AND** an enabled execution MAY record bounded IO without changing its decision semantics
 - **AND** receipt projection and settlement SHALL commit together exactly once
+
+### Requirement: Conditional, one-shot and annotated handlers
+(P1) A handler MAY set `if` (`{ field, matches }`: a dotted payload field and a regex), `once: true` (run at most once per Session), `status_message` (shown in the client while the handler runs) and `system_message` (shown to the user, not the model, when the handler completes). A handler whose `if` does not match SHALL be skipped without logging an execution event.
+
+#### Scenario: Run only for one branch
+- **WHEN** a `Stop` hook has `if: { field: "git.branch", matches: "^release/" }` and the Session is on `main`
+- **THEN** the handler is skipped
+
+#### Scenario: Once command admission survives restart
+- **WHEN** a once command has been durably admitted for a Session and its process outcome is unknown
+- **THEN** another runtime SHALL skip the same effective handler digest without launching it again
+- **AND** terminal settlement SHALL NOT change the admitted once claim
+- **AND** a changed effective handler digest SHALL require its ordinary current trust checks before fresh admission
+
+#### Scenario: Once command messages stay user visible
+- **WHEN** a once command handler has status and completion messages and matches two built-in invocations in one Session
+- **THEN** it SHALL execute only once and publish each configured message once as a transient user notice
+- **AND** those messages SHALL NOT be admitted into the model context

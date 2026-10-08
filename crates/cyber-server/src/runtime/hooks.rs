@@ -15,6 +15,7 @@ use super::{AdmissionAuthority, Runtime, RuntimeError};
 
 pub(super) const STARTED: &str = "hook.started.1";
 const EXECUTED: &str = "hook.executed.1";
+const ONCE_ADMITTED: &str = "Hook once handler already admitted";
 const IO_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +49,8 @@ pub struct HookExecutionRecord {
     pub mode: String,
     pub started_ms: i64,
     pub log_io: bool,
+    #[serde(default)]
+    pub once: bool,
     pub status: HookExecutionStatus,
     pub duration_ms: Option<u64>,
     pub outcome: Option<HookOutcome>,
@@ -172,6 +175,19 @@ impl Runtime {
         definition: &HookDefinition,
         log_io: bool,
     ) -> Result<HookExecution, RuntimeError> {
+        self.try_start_hook_execution(event, definition, log_io)
+            .await?
+            .ok_or_else(|| RuntimeError::Invalid(ONCE_ADMITTED.into()))
+    }
+
+    /// Atomically claim a once handler at durable admission. An existing claim
+    /// remains consumed across completion, disposal, crashes and runtime restart.
+    pub async fn try_start_hook_execution(
+        &self,
+        event: &HookEvent,
+        definition: &HookDefinition,
+        log_io: bool,
+    ) -> Result<Option<HookExecution>, RuntimeError> {
         let _open = self.inner.open().await?;
         if definition.event != event.event()
             || definition
@@ -205,6 +221,7 @@ impl Runtime {
             mode: identity.mode.clone(),
             started_ms: chrono::Utc::now().timestamp_millis(),
             log_io,
+            once: definition.handler.once,
             status: HookExecutionStatus::Running,
             duration_ms: None,
             outcome: None,
@@ -216,19 +233,27 @@ impl Runtime {
         let mut data = serde_json::to_value(&record).expect("receipt serializes");
         data["admission_bindings"] =
             serde_json::to_value(&authority.bindings).expect("authority serializes");
-        self.inner.store.append(
+        match self.inner.store.append(
             &record.id,
             Expected::Seq(-1),
             vec![NewEvent::new(STARTED, data)],
-        )?;
-        Ok(HookExecution {
+        ) {
+            Ok(_) => {}
+            Err(StoreError::Projector { kind, reason })
+                if kind == STARTED && reason == ONCE_ADMITTED =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        }
+        Ok(Some(HookExecution {
             store: Arc::clone(&self.inner.store),
             authority,
             activity,
             record,
             started: Instant::now(),
             settled: false,
-        })
+        }))
     }
 
     pub fn hook_executions(
@@ -379,6 +404,15 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
             .map_err(|error| error.to_string())?;
         if directory != record.directory {
             return Err("Hook Location differs from Session".into());
+        }
+        if record.once {
+            let admitted: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM hook_execution WHERE session_id=?1 AND json_extract(data,'$.digest')=?2 AND json_extract(data,'$.once')=1)",
+                params![record.session_id,record.digest], |row| row.get(0),
+            ).map_err(|error| error.to_string())?;
+            if admitted {
+                return Err(ONCE_ADMITTED.into());
+            }
         }
         tx.execute("INSERT INTO hook_execution(id,session_id,status,started_ms,data) VALUES (?1,?2,'running',?3,?4)",params![record.id,record.session_id,record.started_ms,data]).map_err(|error|error.to_string())?;
     } else {

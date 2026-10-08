@@ -196,7 +196,6 @@ impl BuiltinHost {
         }
         let result = if definition.kind() != cyber_core::config::HookKind::Command
             || definition.handler.asynchronous
-            || definition.handler.once
         {
             let owner = runtime
                 .start_hook_execution(event, definition, false)
@@ -211,7 +210,7 @@ impl BuiltinHost {
                     io: None,
                 })
                 .map_err(|error| ToolError::Failed(error.to_string()))?;
-            Err("Hook handler type or async/once scheduling is not implemented".to_string())
+            Err("Hook handler type or async scheduling is not implemented".to_string())
         } else {
             if let Some(command) = &definition.handler.command
                 && !commands.insert(command.clone())

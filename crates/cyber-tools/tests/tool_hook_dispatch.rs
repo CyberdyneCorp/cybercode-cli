@@ -410,3 +410,51 @@ async fn unavailable_async_definition_does_not_deduplicate_a_supported_guard() {
             .any(|record| record.outcome == Some(cyber_core::hooks::HookOutcome::Error))
     );
 }
+
+#[tokio::test]
+async fn once_command_runs_once_per_session_and_messages_stay_user_visible() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_one",
+                "write",
+                json!({"path":"one.txt","content":"one"}),
+            ),
+            call(
+                "call_two",
+                "write",
+                json!({"path":"two.txt","content":"two"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    let handler = json!({"type":"command","command":"cat >/dev/null; printf x >> once-count; printf '{}'","id":"once-guard","once":true,"status_message":"Checking once","system_message":"Checked once"});
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[handler]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write twice").await;
+    f.settle(&session).await;
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("once-count")).unwrap(),
+        "x"
+    );
+    assert_eq!(f.runtime.hook_executions(&session, 10).unwrap().len(), 1);
+    assert!(f.f.repo.join("one.txt").exists() && f.f.repo.join("two.txt").exists());
+    let mut notices = Vec::new();
+    while let Ok(event) = live.try_recv() {
+        if let LiveEvent::HookNotice { message, .. } = event {
+            notices.push(message);
+        }
+    }
+    assert_eq!(notices, ["Checking once", "Checked once"]);
+    let state = f.runtime.state(&session).await.unwrap();
+    assert!(
+        !serde_json::to_string(&state)
+            .unwrap()
+            .contains("Checking once")
+    );
+}
