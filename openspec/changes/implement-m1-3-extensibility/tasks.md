@@ -1,0 +1,12 @@
+- [x] Add typed hook definitions, event/handler validation, defaults and selector checks through real configuration loading. Native acceptance and hook execution remain open.
+- [ ] Preserve all hook scopes, declared order and per-definition provenance; enforce managed-only policy.
+- [ ] Implement individual handler digest trust, invocation-scoped exec trust and changed-definition refusal.
+- [ ] Implement event envelopes and every P1 lifecycle event under durable runtime ownership.
+- [ ] Implement command, HTTP, prompt and MCP-tool handlers with required transport, sandbox and usage semantics.
+- [ ] Implement decision validation/ordered merging, rewrites, permissions, context admission and Stop continuation limits.
+- [ ] Implement bounded concurrency/deduplication, once/conditions, async contexts, deadlines and cancellation.
+- [ ] Persist hook executions and expose transcript/API/SDK/TUI observability and controls.
+- [ ] Implement `/hooks` and `cyber hooks list|trust|untrust|test` with synthetic/payload event testing.
+- [ ] Implement P1 JSON-RPC plugin host, package and required plugin lifecycle/capabilities.
+- [ ] Implement MCP OAuth and deferred tool discovery/search.
+- [ ] Validate full canonical P1 extensibility scenarios, native behavior, documentation and M1.3 acceptance.

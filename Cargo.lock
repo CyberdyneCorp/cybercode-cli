@@ -775,7 +775,9 @@ dependencies = [
  "chrono",
  "futures",
  "git2",
+ "globset",
  "ignore",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
@@ -784,6 +786,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "ulid",
+ "url",
 ]
 
 [[package]]

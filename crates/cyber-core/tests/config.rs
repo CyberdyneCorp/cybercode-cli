@@ -101,6 +101,146 @@ fn unknown_agent_fields_name_the_agent_and_field() {
 }
 
 #[test]
+fn hook_configuration_resolves_all_p1_handlers_and_defaults_without_execution() {
+    let f = Fixture::new();
+    f.write("global:cyber.json", &json!({"hooks":{"PreToolUse":[{"matcher":"/^mcp__github__.*/","paths":["src/**"],"hooks":[
+        {"type":"command","command":"touch hook-must-not-execute","id":"guard","once":true,"if":{"field":"git.branch","matches":"^release/"}},
+        {"type":"http","url":"https://policy.example/check","headers":{"x-policy":"test"},"timeout":600,"fail_closed":true},
+        {"type":"prompt","prompt":"Inspect the proposed action","async":true,"description":"review"},
+        {"type":"mcp_tool","server":"audit","tool":"record","arguments":{"event":"${event}"}}
+    ]}]}}).to_string());
+    let resolved = f.load().unwrap();
+    let settings = config::HookSettings::from_config(&resolved.value).unwrap();
+    assert_eq!(settings.concurrency, 8);
+    assert_eq!(settings.max_stop_continuations, 5);
+    assert!(!settings.sandbox_all);
+    let group = &settings.events["PreToolUse"][0];
+    assert_eq!(group.paths, ["src/**"]);
+    assert_eq!(group.hooks.len(), 4);
+    assert_eq!(group.hooks[0].timeout, 60);
+    assert_eq!(group.hooks[0].kind, config::HookKind::Command);
+    assert!(group.hooks[2].asynchronous);
+    assert!(!f.repo.join("hook-must-not-execute").exists());
+    let settings = config::HookSettings::from_config(
+        &json!({"hooks":{"concurrency":2,"max_stop_continuations":0,"sandbox_all":true}}),
+    )
+    .unwrap();
+    assert_eq!(settings.concurrency, 2);
+    assert_eq!(settings.max_stop_continuations, 0);
+    assert!(settings.sandbox_all);
+}
+
+#[test]
+fn hook_event_handler_and_selector_errors_name_the_definition_path() {
+    for (hooks, path) in [
+        (json!({"BeforeEverything":[]}), "hooks.BeforeEverything"),
+        (json!({"PreToolUse":{}}), "hooks.PreToolUse"),
+        (json!({"PreToolUse":[{}]}), "hooks.PreToolUse[0]"),
+        (
+            json!({"PreToolUse":[{"hooks":[{"type":"command"}]}]}),
+            "hooks.PreToolUse[0].hooks[0].command",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"unknown"}]}]}),
+            "hooks.Stop[0]",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"http","url":"file:///tmp/hook"}]}]}),
+            "hooks.Stop[0].hooks[0].url",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"prompt","prompt":"review","timeout":601}]}]}),
+            "hooks.Stop[0].hooks[0].timeout",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"command","command":"true","timeout":0}]}]}),
+            "hooks.Stop[0].hooks[0].timeout",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"mcp_tool","server":"audit"}]}]}),
+            "hooks.Stop[0].hooks[0].tool",
+        ),
+        (
+            json!({"Stop":[{"matcher":"/[broken/","hooks":[]}]}),
+            "hooks.Stop[0].matcher",
+        ),
+        (
+            json!({"Stop":[{"paths":["[broken"],"hooks":[]}]}),
+            "hooks.Stop[0].paths[0]",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"command","command":"true","url":"https://example.com"}]}]}),
+            "hooks.Stop[0].hooks[0].url",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"command","command":"true","async":"yes"}]}]}),
+            "hooks.Stop[0]",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"command","command":"true","if":{"field":"git..branch","matches":".*"}}]}]}),
+            "hooks.Stop[0].hooks[0].if.field",
+        ),
+        (
+            json!({"Stop":[{"hooks":[{"type":"command","command":"true","if":{"field":"git.branch","matches":"["}}]}]}),
+            "hooks.Stop[0].hooks[0].if.matches",
+        ),
+        (json!({"concurrency":0}), "hooks.concurrency"),
+        (json!({"concurrency":null}), "hooks.concurrency"),
+        (json!({"concurrency":"eight"}), "hooks.concurrency"),
+        (json!({"sandbox_all":"yes"}), "hooks.sandbox_all"),
+        (
+            json!({"max_stop_continuations":-1}),
+            "hooks.max_stop_continuations",
+        ),
+    ] {
+        let f = Fixture::new();
+        f.write("global:cyber.json", &json!({"hooks":hooks}).to_string());
+        let error = f.load().unwrap_err().to_string();
+        assert!(error.contains(path), "{path}: {error}");
+    }
+}
+
+#[test]
+fn project_hooks_remain_withheld_until_checkout_trust_and_changes_revoke_it() {
+    let f = Fixture::new();
+    f.write(
+        "cyber.jsonc",
+        r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo first"}]}]}}"#,
+    );
+    let resolved = f.load().unwrap();
+    assert!(
+        config::HookSettings::from_config(&resolved.value)
+            .unwrap()
+            .events
+            .is_empty()
+    );
+    f.approve_current();
+    assert_eq!(
+        config::HookSettings::from_config(&f.load().unwrap().value)
+            .unwrap()
+            .events
+            .len(),
+        1
+    );
+    f.write("cyber.jsonc", r#"{"hooks":{"BeforeEverything":[]}}"#);
+    let resolved = f.load().unwrap();
+    assert!(!resolved.trust.trusted);
+    assert!(
+        config::HookSettings::from_config(&resolved.value)
+            .unwrap()
+            .events
+            .is_empty()
+    );
+    f.approve_current();
+    assert!(
+        f.load()
+            .unwrap_err()
+            .to_string()
+            .contains("hooks.BeforeEverything")
+    );
+}
+
+#[test]
 fn agent_profile_fields_and_orchestration_limits_reject_invalid_values() {
     for (field, value) in [
         ("description", json!(true)),
