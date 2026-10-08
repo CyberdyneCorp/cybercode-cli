@@ -2721,7 +2721,11 @@ async fn interrupt_cancels_public_child_preparation_before_late_setup_or_input()
         .unwrap();
         let child = first["id"].as_str().unwrap().to_owned();
         let before = flow.runtime.state(&child).await.unwrap();
-        flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":["printf started > setup-started; while [ ! -f release-setup ]; do sleep 0.02; done; printf late > late-effect"]}}));
+        #[cfg(not(windows))]
+        let setup = "printf started > setup-started; while [ ! -f release-setup ]; do sleep 0.02; done; printf late > late-effect";
+        #[cfg(windows)]
+        let setup = "Set-Content -LiteralPath setup-started -Value started; while (-not (Test-Path -LiteralPath release-setup)) { Start-Sleep -Milliseconds 20 }; Set-Content -LiteralPath late-effect -Value late";
+        flow.f.set_config(json!({"permissions":{"agent":"allow","worktree":"allow"},"worktrees":{"setup":[setup]}}));
         let runtime = flow.runtime.clone();
         let id = child.clone();
         let mut continuation = tokio::spawn(async move {
