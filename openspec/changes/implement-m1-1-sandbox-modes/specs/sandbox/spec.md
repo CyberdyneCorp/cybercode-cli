@@ -55,6 +55,12 @@
 - **AND** stdin EOF, separate Unicode output and concurrent output exceeding pipe buffers SHALL be preserved
 - **AND** explicit termination SHALL retain the process handle for exit acknowledgement, while owner or wait-future disposal SHALL terminate the process tree and release its invocation-owned storage
 
+#### Scenario: Foreground AppContainer process adaptation
+- **WHEN** an authorized owned AppContainer process is passed to the foreground command interface
+- **THEN** stdout and stderr SHALL use the same asynchronous capture interface as ordinary shell commands, with native exit codes preserved
+- **AND** unused stdin SHALL close before output collection; dropping a borrowed wait SHALL leave process ownership in the caller until explicit termination or owner disposal
+- **AND** backend adaptation SHALL NOT substitute for complete permission, writable-root, protected-path or proxy-only network preparation
+
 #### Scenario: Windows private temporary storage
 - **WHEN** a Windows sandbox invocation prepares its temporary storage
 - **THEN** TEMP and TMP SHALL identify an invocation-owned directory beneath that profile's storage

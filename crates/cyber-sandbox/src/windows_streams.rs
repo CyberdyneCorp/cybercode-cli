@@ -114,7 +114,19 @@ impl PipedChild {
     /// Unused stdin closes before waiting. Take and drain stdout/stderr concurrently
     /// with this wait so pipe backpressure cannot prevent the child from exiting.
     pub async fn wait_owned(mut self) -> io::Result<u32> {
+        self.wait().await
+    }
+
+    /// Borrowed waiting retains ownership in the caller when this future is dropped.
+    pub async fn wait(&mut self) -> io::Result<u32> {
         drop(self.stdin.take());
-        self.child.wait_owned().await
+        loop {
+            match self.child.wait(std::time::Duration::ZERO) {
+                Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                result => return result,
+            }
+        }
     }
 }

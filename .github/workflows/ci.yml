@@ -78,6 +78,9 @@ jobs:
       - name: Native Windows AppContainer asynchronous command streams
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --features windows-test-controls --test windows_container_launch piped_ -- --nocapture
+      - name: Native Windows foreground AppContainer process adapter
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test windows_container_process -- --nocapture
       - name: Native tool proxy transport
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib sandboxing::tests

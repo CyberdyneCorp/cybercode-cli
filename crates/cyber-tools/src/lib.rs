@@ -17,5 +17,7 @@ mod worktrees;
 pub use budget::Budget;
 pub use host::{BuiltinHost, ConfigFn, HostOptions};
 pub use schema::validate as validate_input;
+#[cfg(windows)]
+pub use tools::process::Process as AppContainerProcess;
 
 pub use worktrees::{WorktreeListing, WorktreeSession, WorktreeSessionRequest};

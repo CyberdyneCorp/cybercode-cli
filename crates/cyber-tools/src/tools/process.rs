@@ -4,11 +4,20 @@ use std::io;
 use std::path::Path;
 use std::process::ExitStatus;
 
-use tokio::process::{ChildStderr, ChildStdout, Command};
+use tokio::process::Command;
 
-pub(crate) struct Process {
+/// A captured stream from either the ordinary or AppContainer command backend.
+pub type ReadStream = Box<dyn tokio::io::AsyncRead + Send + Unpin>;
+
+#[cfg(windows)]
+enum WindowsChild {
+    Ordinary(Box<cyber_sandbox::windows_process::OwnedChild>),
+    Container(Box<cyber_sandbox::windows_streams::PipedChild>),
+}
+
+pub struct Process {
     #[cfg(windows)]
-    child: cyber_sandbox::windows_process::OwnedChild,
+    child: WindowsChild,
     #[cfg(not(windows))]
     child: tokio::process::Child,
 }
@@ -29,7 +38,7 @@ impl Process {
                 cyber_sandbox::windows_process::OwnedCommand::new(helper, program, args);
             configure(command.command_mut());
             Ok(Self {
-                child: command.spawn().await?,
+                child: WindowsChild::Ordinary(Box::new(command.spawn().await?)),
             })
         }
         #[cfg(not(windows))]
@@ -45,28 +54,64 @@ impl Process {
         }
     }
 
-    fn raw(&mut self) -> &mut tokio::process::Child {
+    /// Adapt an already authorized native container into the foreground command loop.
+    /// Shell tools have no stdin producer, so close that endpoint immediately.
+    #[cfg(windows)]
+    pub fn from_container(mut child: cyber_sandbox::windows_streams::PipedChild) -> Self {
+        drop(child.take_stdin());
+        Self {
+            child: WindowsChild::Container(Box::new(child)),
+        }
+    }
+
+    pub fn stdout(&mut self) -> Option<ReadStream> {
         #[cfg(windows)]
-        return self.child.child_mut();
+        return match &mut self.child {
+            WindowsChild::Ordinary(child) => child
+                .child_mut()
+                .stdout
+                .take()
+                .map(|s| Box::new(s) as ReadStream),
+            WindowsChild::Container(child) => {
+                child.take_stdout().map(|s| Box::new(s) as ReadStream)
+            }
+        };
         #[cfg(not(windows))]
-        return &mut self.child;
+        self.child.stdout.take().map(|s| Box::new(s) as ReadStream)
     }
 
-    pub(crate) fn stdout(&mut self) -> Option<ChildStdout> {
-        self.raw().stdout.take()
+    pub fn stderr(&mut self) -> Option<ReadStream> {
+        #[cfg(windows)]
+        return match &mut self.child {
+            WindowsChild::Ordinary(child) => child
+                .child_mut()
+                .stderr
+                .take()
+                .map(|s| Box::new(s) as ReadStream),
+            WindowsChild::Container(child) => {
+                child.take_stderr().map(|s| Box::new(s) as ReadStream)
+            }
+        };
+        #[cfg(not(windows))]
+        self.child.stderr.take().map(|s| Box::new(s) as ReadStream)
     }
 
-    pub(crate) fn stderr(&mut self) -> Option<ChildStderr> {
-        self.raw().stderr.take()
-    }
-
-    pub(crate) async fn wait(&mut self) -> io::Result<ExitStatus> {
+    pub async fn wait(&mut self) -> io::Result<ExitStatus> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+            match &mut self.child {
+                WindowsChild::Ordinary(child) => child.wait().await,
+                WindowsChild::Container(child) => child.wait().await.map(ExitStatus::from_raw),
+            }
+        }
+        #[cfg(not(windows))]
         self.child.wait().await
     }
 
     /// Retain the Unix leader's PID until its descendants have been terminated.
     /// Windows wait already settles the owned Job Object.
-    pub(crate) async fn wait_tree(&mut self) -> io::Result<ExitStatus> {
+    pub async fn wait_tree(&mut self) -> io::Result<ExitStatus> {
         #[cfg(unix)]
         if let Some(pid) = self.child.id() {
             while !exited_without_reaping(pid)? {
@@ -77,9 +122,12 @@ impl Process {
         self.wait().await
     }
 
-    pub(crate) fn terminate(&mut self) {
+    pub fn terminate(&mut self) {
         #[cfg(windows)]
-        self.child.terminate();
+        match &mut self.child {
+            WindowsChild::Ordinary(child) => child.terminate(),
+            WindowsChild::Container(child) => child.terminate(),
+        }
         #[cfg(unix)]
         kill_group(self.child.id());
         #[cfg(not(any(unix, windows)))]
