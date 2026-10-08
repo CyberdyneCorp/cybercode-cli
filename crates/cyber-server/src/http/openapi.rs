@@ -98,6 +98,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
             "get",
+            "/usage",
+            "v1.usage.get",
+            "Read durable Session subtree usage",
+        )
+        .query(&["scope", "id"])
+        .ok::<Data<crate::runtime::UsageReport>>(g),
+        op(
+            "get",
             "/health",
             "v1.health.get",
             "Health and version (unauthenticated)",

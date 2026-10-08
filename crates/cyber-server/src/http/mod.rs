@@ -17,6 +17,7 @@ pub mod rpc;
 mod serve;
 mod service;
 mod sessions;
+mod usage;
 pub mod worktrees;
 
 use std::path::{Path, PathBuf};
@@ -206,6 +207,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
         .merge(jobs::routes())
+        .merge(usage::routes())
         .merge(worktrees::routes())
         .merge(events::routes())
         .merge(catalog::routes())

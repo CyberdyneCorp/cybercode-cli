@@ -20,6 +20,13 @@
 - **AND** migration SHALL backfill surviving source evidence and disclose incomplete token-class attribution when historical source evidence is missing
 - **AND** Session detail/list and generated SDK contracts SHALL expose the known token classes and their completeness separately from combined token/cost attribution
 
+#### Scenario: Durable Session usage API
+- **WHEN** a client requests `GET /api/v1/usage?scope=session&id=<session>`
+- **THEN** own, descendant and combined token classes, combined known tokens, known priced cost, unpriced calls and independent usage/class completeness SHALL come from one durable database snapshot
+- **AND** descendant deletion SHALL preserve charges attributed to surviving ancestors, and cached conversation state SHALL NOT replace the durable snapshot
+- **AND** invalid counters, overflowing totals or inconsistent complete class evidence SHALL fail rather than claim a complete zero
+- **AND** recognized unavailable scopes SHALL return `503 ServiceUnavailableError` naming `usage`, while malformed queries and unknown scopes SHALL return a tagged invalid-request error
+
 ### Requirement: Budgets
 (P0) A Budget SHALL be the object `{ max_turns?, max_tokens?, max_cost_usd?, max_wall_seconds?, enforcement?: "soft" | "reserved" }`. Every budgeted scope (Session, Workflow Run, Goal, Loop, Routine run, Team, `exec` run) SHALL accept exactly this object, extended only by scope-specific fields documented in the owning spec (for example workflow `max_agents`). Wherever a budget is accepted on the command line, the flags SHALL be `--max-turns <n>`, `--max-tokens <n>`, `--max-cost <usd>` and `--timeout <duration>`. Per-scope defaults SHALL come from `budgets.<scope>` in config with scopes `session`, `run`, `goal`, `loop`, `routine`, `team` and `daily` (a per-machine daily cap across all scopes). The system SHALL emit a warning at 80% and stop further provider Turns for the budgeted scope at 100%, publishing `budget.exceeded.1`.
 

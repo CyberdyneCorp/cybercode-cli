@@ -22,6 +22,120 @@
       }
     },
     "schemas": {
+      "Data_UsageReport": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UsageReport"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "UsageReport": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "own": {
+            "$ref": "#/components/schemas/UsageAmount"
+          },
+          "descendants": {
+            "$ref": "#/components/schemas/UsageAmount"
+          },
+          "total": {
+            "$ref": "#/components/schemas/UsageAmount"
+          }
+        },
+        "required": [
+          "scope",
+          "id",
+          "own",
+          "descendants",
+          "total"
+        ]
+      },
+      "UsageAmount": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Combined known tokens, including receipts whose class evidence was purged."
+          },
+          "cost": {
+            "type": "number",
+            "format": "double",
+            "description": "Known priced spending; unpriced calls and incomplete history make it a lower bound."
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "usage_complete": {
+            "type": "boolean"
+          },
+          "token_classes_complete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tokens",
+          "total_tokens",
+          "cost",
+          "unpriced_steps",
+          "usage_complete",
+          "token_classes_complete"
+        ]
+      },
+      "Usage": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "output": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "reasoning": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cache_read": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cache_write": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "reasoning",
+          "cache_read",
+          "cache_write"
+        ],
+        "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
+      },
       "Health": {
         "type": "object",
         "properties": {
@@ -382,44 +496,6 @@
           "children_unpriced_steps",
           "children_usage_complete"
         ]
-      },
-      "Usage": {
-        "type": "object",
-        "properties": {
-          "input": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "output": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "reasoning": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "cache_read": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          },
-          "cache_write": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "input",
-          "output",
-          "reasoning",
-          "cache_read",
-          "cache_write"
-        ],
-        "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
       },
       "CreateWorktreeBody": {
         "type": "object",
@@ -2740,6 +2816,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "service": {
+            "description": "Capability group unavailable in this host or phase.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2750,6 +2833,55 @@
     }
   },
   "paths": {
+    "/api/v1/usage": {
+      "get": {
+        "operationId": "v1.usage.get",
+        "summary": "Read durable Session subtree usage",
+        "tags": [
+          "usage"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_UsageReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "operationId": "v1.health.get",

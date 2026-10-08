@@ -20,6 +20,9 @@ pub struct ErrorBody {
     /// Paths for rewind conflicts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<String>>,
+    /// Capability group unavailable in this host or phase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<Box<str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +40,7 @@ impl ApiError {
                 message: message.into(),
                 reference: None,
                 paths: None,
+                service: None,
             },
         }
     }

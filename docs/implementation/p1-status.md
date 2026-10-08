@@ -34,6 +34,12 @@ Two class-retention assertions fail on unchanged main 80049f3. Validation passes
 
 Two behavior regressions fail on unchanged main 299fa1b. All 61 TUI tests and workspace all-target Clippy pass locally, including subtree rendering, legacy/unpriced uncertainty, snapshot replacement and invalid/zero-token cache states. Strict specs, generated contract consistency and formatting pass. Native acceptance remains pending. This completes the local cost snapshot increment; `/status`, `/usage`, complete `stats`, continuous descendant monitoring and budget presentation remain open. No full Usage commands requirement or P1 milestone is accepted. P0 artifacts are unchanged.
 
+## Durable Session usage API increment
+
+`GET /api/v1/usage?scope=session&id=…` now returns own, descendant and combined usage from one SQL snapshot, independently of cached conversation state. Each amount preserves all five token classes, combined known tokens, priced spending, unpriced calls and separate usage/class completeness. Surviving ancestor receipts remain available after descendant deletion. Missing Sessions receive the tagged not-found response; malformed queries/unknown scopes receive tagged invalid-request errors. Recognized unimplemented scopes return `503 ServiceUnavailableError` with `service: usage`. Negative, malformed, overflowing or inconsistent complete projections refuse reporting instead of fabricating complete zero totals.
+
+Two HTTP regressions fail on unchanged main cf5847b. Validation passes 43 focused server tests (33 HTTP and 10 billing), 48 SDK tests/type checking, workspace all-target Clippy, generated contracts and all 57 strict specs. Native acceptance is pending. The generated SDK exposes `client.usage.get({scope: "session", id})` without a Location override. Other usage scopes, complete `/status`, `/usage` and `stats` commands, atomic usage wiring into client views, continuous descendant monitoring and complete budget presentation remain required. No full P1 milestone is accepted, and P0 artifacts are unchanged.
+
 ## Delivery sequence
 
 ### Ordinary exec subtree accounting increment

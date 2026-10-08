@@ -122,3 +122,17 @@ test("durable delegation start, lookup and stop share a scoped client-selected i
   assert.deepEqual(JSON.parse(calls[0]!.body!), body);
   assert.equal(calls[2]?.headers.get("idempotency-key"), "stop-owned");
 });
+
+test("usage.get preserves scope identity and incomplete billing without a Location override", async () => {
+  const amount = { tokens: { input: 10, output: 2, reasoning: 3, cache_read: 4, cache_write: 5 },
+    total_tokens: 24, cost: 0.25, unpriced_steps: 1, usage_complete: false, token_classes_complete: false };
+  const report = { scope: "session", id: "ses/parent", own: amount, descendants: amount, total: amount };
+  const { client, calls } = mockClient(() => json(200, { data: report }), { directory: "/other" });
+  const result = await client.usage.get({ scope: "session", id: "ses/parent" });
+  assert.equal(result.total.token_classes_complete, false);
+  assert.equal(result.total.unpriced_steps, 1);
+  assert.equal(calls[0]?.url.pathname, "/api/v1/usage");
+  assert.equal(calls[0]?.url.searchParams.get("id"), "ses/parent");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
+  assert.ok(calls[0]?.headers.get("authorization"));
+});

@@ -376,6 +376,12 @@ async fn tcp_requires_the_password_except_for_health() {
             .status(),
         200
     );
+    let usage_denied = client
+        .get(format!("{base}/usage?scope=session&id=ses_missing"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(usage_denied.status(), 401);
     let denied = client.get(format!("{base}/sessions")).send().await.unwrap();
     assert_eq!(denied.status(), 401);
     let ok = client
@@ -1656,4 +1662,102 @@ async fn session_api_persists_budget_and_refuses_invalid_or_reserved_objects() {
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(refused["_tag"], "BudgetExceededError");
+}
+
+#[tokio::test]
+async fn session_usage_api_reads_durable_own_and_retained_descendant_totals() {
+    use cyber_server::runtime::CreateSession;
+    use cyber_store::{Expected, NewEvent};
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(root.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    h.state(&root).await;
+    for (id, cost) in [(&root, Some(0.25)), (&child.id, None)] {
+        h.store.append(id, Expected::Any, vec![NewEvent::new("usage.recorded.1", json!({
+            "provider":"test", "model":"test/main", "purpose":"web_summary", "call_id":null,"duration_ms":1,
+            "usage":{"input":10,"output":2,"reasoning":3,"cache_read":4,"cache_write":5}, "cost":cost
+        }))]).unwrap();
+    }
+    h.runtime.delete(&child.id).await.unwrap();
+    let (status, body) = Api::new(&h)
+        .get(&format!("/usage?scope=session&id={root}"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let report = &body["data"];
+    assert_eq!(report["scope"], "session");
+    assert_eq!(report["id"], root);
+    assert_eq!(report["own"]["tokens"]["input"], 10);
+    assert_eq!(report["descendants"]["tokens"]["cache_write"], 5);
+    assert_eq!(report["total"]["tokens"]["input"], 20);
+    assert_eq!(report["total"]["tokens"]["reasoning"], 6);
+    assert_eq!(report["total"]["total_tokens"], 48);
+    assert_eq!(report["total"]["cost"], 0.25);
+    assert_eq!(report["total"]["unpriced_steps"], 1);
+    assert_eq!(report["total"]["token_classes_complete"], true);
+    assert_eq!(report["total"]["usage_complete"], true);
+}
+
+#[tokio::test]
+async fn session_usage_api_rejects_missing_scope_and_preserves_unknown_history() {
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let api = Api::new(&h);
+    for query in ["", "?scope=session", "?scope=unknown&id=x"] {
+        let (status, body) = api.get(&format!("/usage{query}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["_tag"], "InvalidRequestError");
+    }
+    let (status, unavailable) = api.get("/usage?scope=run&id=x").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(unavailable["_tag"], "ServiceUnavailableError");
+    assert_eq!(unavailable["service"], "usage");
+    assert_eq!(
+        api.get("/usage?scope=session&id=ses_missing").await.0,
+        StatusCode::NOT_FOUND
+    );
+    let key = root.clone();
+    h.store.transaction(move |db| {
+        db.execute("UPDATE session SET children_usage_complete=0,children_token_classes_complete=0 WHERE id=?1", [key])?;
+        Ok(())
+    }).unwrap();
+    let (status, body) = api.get(&format!("/usage?scope=session&id={root}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["total"]["usage_complete"], false);
+    assert_eq!(body["data"]["total"]["token_classes_complete"], false);
+}
+
+#[tokio::test]
+async fn session_usage_api_refuses_corrupt_or_overflowing_projections() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    for corruption in [
+        "input_tokens=-1",
+        "children_token_classes='invalid'",
+        "children_tokens=1",
+        "input_tokens=9223372036854775807,output_tokens=9223372036854775807,reasoning_tokens=10",
+        "children_cost=-0.5",
+    ] {
+        let root = h.session().await;
+        let key = root.clone();
+        let sql = format!("UPDATE session SET {corruption} WHERE id=?1");
+        h.store
+            .transaction(move |db| {
+                db.execute(&sql, [key])?;
+                Ok(())
+            })
+            .unwrap();
+        let (status, body) = api.get(&format!("/usage?scope=session&id={root}")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{corruption}");
+        assert_eq!(body["_tag"], "UnknownError");
+        assert!(body.get("data").is_none());
+    }
 }

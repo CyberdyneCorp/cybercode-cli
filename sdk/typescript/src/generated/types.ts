@@ -209,6 +209,10 @@ export type Data_ShellResult = {
   data: ShellResult;
 };
 
+export type Data_UsageReport = {
+  data: UsageReport;
+};
+
 export type Delegation = {
   id: string;
   session_id: string;
@@ -241,6 +245,8 @@ export type ErrorBody = {
   ref?: string | null;
   /** Paths for rewind conflicts. */
   paths?: string[] | null;
+  /** Capability group unavailable in this host or phase. */
+  service?: string | null;
 };
 
 /** One event on any stream. */
@@ -712,6 +718,25 @@ export type Usage = {
   reasoning: number;
   cache_read: number;
   cache_write: number;
+};
+
+export type UsageAmount = {
+  tokens: Usage;
+  /** Combined known tokens, including receipts whose class evidence was purged. */
+  total_tokens: number;
+  /** Known priced spending; unpriced calls and incomplete history make it a lower bound. */
+  cost: number;
+  unpriced_steps: number;
+  usage_complete: boolean;
+  token_classes_complete: boolean;
+};
+
+export type UsageReport = {
+  scope: string;
+  id: string;
+  own: UsageAmount;
+  descendants: UsageAmount;
+  total: UsageAmount;
 };
 
 export type WorktreeEntry = {

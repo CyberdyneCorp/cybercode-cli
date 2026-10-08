@@ -34,7 +34,9 @@ mod shutdown;
 mod structured;
 pub use structured::StructuredSchema;
 mod title;
+mod usage;
 mod view;
+pub use usage::{UsageAmount, UsageReport};
 mod worktree_output;
 pub use worktree_output::{SessionSetupSink, SetupChannel, SetupUpdate};
 

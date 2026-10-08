@@ -390,6 +390,15 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_ToolInfo;
   };
+  "v1.usage.get": {
+    path: Record<string, never>;
+    query: {
+      scope?: QueryValue;
+      id?: QueryValue;
+    };
+    body: undefined;
+    response: S.UsageReport;
+  };
   "v1.worktree.create": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -1029,6 +1038,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.usage.get": {
+    tag: "usage",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/usage",
+    pathParams: [],
+    query: ["scope", "id"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.worktree.create": {
     tag: "worktree",
     name: "create",
@@ -1262,6 +1283,11 @@ export function createGroups(caller: Caller) {
       /** Built-in tool schema bundle (`GET /api/v1/tools/schema`) */
       schema: (options?: RequestOptions): Promise<Operations["v1.tool.schema"]["response"]> =>
         caller.call("v1.tool.schema", {}, options),
+    },
+    usage: {
+      /** Read durable Session subtree usage (`GET /api/v1/usage`) */
+      get: (query?: Operations["v1.usage.get"]["query"], options?: RequestOptions): Promise<Operations["v1.usage.get"]["response"]> =>
+        caller.call("v1.usage.get", { query }, options),
     },
     worktree: {
       /** Create a managed worktree Session and run setup (`POST /api/v1/worktrees`) */
