@@ -77,7 +77,8 @@
 
 #### Scenario: Session cost snapshot
 - **WHEN** a TUI user opens `/cost`
-- **THEN** it SHALL refresh the Session snapshot and show own, descendant and combined input, output, reasoning, cache-read and cache-write counts
+- **THEN** it SHALL refresh the atomic Session usage report and show own, descendant and combined input, output, reasoning, cache-read and cache-write counts
 - **AND** cache hit rate SHALL be cache-read tokens divided by all prompt tokens (input plus cache read plus cache write), with no-token and unknown attribution states shown explicitly
 - **AND** unpriced calls and incomplete historical attribution SHALL prevent known priced spending from being presented as a complete total
 - **AND** the user SHALL be able to refresh the open snapshot and dismiss it without sending a provider prompt
+- **AND** late or foreign refreshes SHALL NOT overwrite the current Session snapshot, ordinary conversation refreshes SHALL NOT replace atomic billing evidence, and malformed/failed reports SHALL retain prior evidence with an explicit refresh error

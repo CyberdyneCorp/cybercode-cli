@@ -933,18 +933,26 @@ fn admission_picker_updates_acknowledgement_without_changing_selected_request() 
 }
 
 fn cost_fixture() -> serde_json::Value {
-    json!({"id":"ses_1","totals":{"cost":0.25,"unpriced_steps":0,
-        "usage":{"input":100,"output":20,"reasoning":3,"cache_read":200,"cache_write":50}},
-        "children_cost":0.75,"children_unpriced_steps":0,"children_usage_complete":true,
-        "children_token_classes":{"input":400,"output":80,"reasoning":7,"cache_read":300,"cache_write":150},
-        "children_token_classes_complete":true})
+    json!({"scope":"session","id":"ses_1",
+        "own":{"tokens":{"input":100,"output":20,"reasoning":3,"cache_read":200,"cache_write":50},"cost":0.25,"unpriced_steps":0,"total_tokens":373,"usage_complete":true,"token_classes_complete":true},
+        "descendants":{"tokens":{"input":400,"output":80,"reasoning":7,"cache_read":300,"cache_write":150},"cost":0.75,"unpriced_steps":0,"total_tokens":937,"usage_complete":true,"token_classes_complete":true},
+        "total":{"tokens":{"input":500,"output":100,"reasoning":10,"cache_read":500,"cache_write":200},"cost":1.0,"unpriced_steps":0,"total_tokens":1310,"usage_complete":true,"token_classes_complete":true}})
+}
+
+fn apply_cost(app: &mut App, data: &serde_json::Value) {
+    let result = crate::cost::Cost::parse_report(data, &app.session.id);
+    app.cost.apply(&app.session.id, app.cost.generation, result);
 }
 
 #[test]
 fn cost_command_refreshes_and_renders_all_classes_for_the_subtree() {
-    let mut app = App::new(Session::parse(&cost_fixture()), Vec::new(), "cyber");
+    let mut app = App::new(session(false), Vec::new(), "cyber");
     typed(&mut app, "/cost");
-    assert_eq!(app.on_key(key(KeyCode::Enter)), vec![Action::Refresh]);
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::LoadCost { generation: 1 }]
+    );
+    apply_cost(&mut app, &cost_fixture());
     let rendered = screen(&app);
     for text in [
         "Session and descendants",
@@ -967,21 +975,18 @@ fn cost_command_refreshes_and_renders_all_classes_for_the_subtree() {
 }
 
 #[test]
-fn cost_command_discloses_unpriced_and_legacy_unknown_attribution() {
+fn cost_command_discloses_unpriced_and_incomplete_attribution() {
     let mut data = cost_fixture();
-    data["totals"]["unpriced_steps"] = json!(1);
-    data.as_object_mut()
-        .unwrap()
-        .remove("children_token_classes");
-    data.as_object_mut()
-        .unwrap()
-        .remove("children_usage_complete");
-    data.as_object_mut()
-        .unwrap()
-        .remove("children_token_classes_complete");
-    let mut app = App::new(Session::parse(&data), Vec::new(), "cyber");
+    data["own"]["unpriced_steps"] = json!(1);
+    data["total"]["unpriced_steps"] = json!(1);
+    for scope in ["descendants", "total"] {
+        data[scope]["usage_complete"] = json!(false);
+        data[scope]["token_classes_complete"] = json!(false);
+    }
+    let mut app = App::new(session(false), Vec::new(), "cyber");
     typed(&mut app, "/cost");
     app.on_key(key(KeyCode::Enter));
+    apply_cost(&mut app, &data);
     let rendered = screen(&app);
     assert!(rendered.contains("unpriced"));
     assert!(rendered.contains("incomplete"));
@@ -990,38 +995,154 @@ fn cost_command_discloses_unpriced_and_legacy_unknown_attribution() {
 }
 
 #[test]
-fn cost_refresh_replaces_the_snapshot_and_preserves_the_open_view() {
-    let mut app = App::new(Session::parse(&cost_fixture()), Vec::new(), "cyber");
+fn cost_refresh_replaces_the_snapshot_and_preserves_it_on_failure() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
     typed(&mut app, "/cost");
     app.on_key(key(KeyCode::Enter));
-    assert_eq!(app.on_key(key(KeyCode::Char('r'))), vec![Action::Refresh]);
+    apply_cost(&mut app, &cost_fixture());
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('r'))),
+        vec![Action::LoadCost { generation: 2 }]
+    );
     let mut next = cost_fixture();
-    next["children_cost"] = json!(1.75);
-    app.set_session(Session::parse(&next));
-    app.sync_overlay();
+    next["descendants"]["cost"] = json!(1.75);
+    next["total"]["cost"] = json!(2.0);
+    apply_cost(&mut app, &next);
     assert!(screen(&app).contains("Total cost: $2.0000"));
+    app.on_key(key(KeyCode::Char('r')));
+    next["descendants"]["tokens"]["input"] = json!(-1);
+    apply_cost(&mut app, &next);
+    let rendered = screen(&app);
+    assert!(rendered.contains("Total cost: $2.0000"));
+    assert!(rendered.contains("Refresh failed"));
 }
 
 #[test]
 fn cost_zero_prompt_and_invalid_classes_have_distinct_displays() {
     let mut data = cost_fixture();
-    for scope in ["totals", "children_token_classes"] {
-        let usage = if scope == "totals" {
-            &mut data[scope]["usage"]
-        } else {
-            &mut data[scope]
-        };
+    for scope in ["own", "descendants", "total"] {
         for class in ["input", "output", "reasoning", "cache_read", "cache_write"] {
-            usage[class] = json!(0);
+            data[scope]["tokens"][class] = json!(0);
         }
+        data[scope]["total_tokens"] = json!(0);
     }
-    let mut app = App::new(Session::parse(&data), Vec::new(), "cyber");
+    let mut app = App::new(session(false), Vec::new(), "cyber");
     typed(&mut app, "/cost");
     app.on_key(key(KeyCode::Enter));
+    apply_cost(&mut app, &data);
     assert!(screen(&app).contains("no prompt tokens"));
-    data["children_token_classes"]["input"] = json!(-1);
-    app.set_session(Session::parse(&data));
-    let rendered = screen(&app);
-    assert!(rendered.contains("Cache hit rate: unknown"));
-    assert!(rendered.contains("Attribution incomplete"));
+    data["descendants"]["tokens"]["input"] = json!(-1);
+    assert!(crate::cost::Cost::parse_report(&data, "ses_1").is_err());
+}
+
+#[tokio::test]
+async fn cost_command_requests_atomic_usage_instead_of_conversation_history() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0; 2048];
+        while !request.windows(4).any(|v| v == b"\r\n\r\n") {
+            let n = socket.read(&mut buffer).unwrap();
+            assert!(n > 0);
+            request.extend_from_slice(&buffer[..n]);
+        }
+        let header = String::from_utf8(request).unwrap();
+        let (status, body) = if header.starts_with("GET /api/v1/usage?") {
+            ("200 OK", json!({"data":cost_fixture()}).to_string())
+        } else {
+            (
+                "404 Not Found",
+                json!({"_tag":"SessionNotFoundError","message":"wrong endpoint"}).to_string(),
+            )
+        };
+        write!(socket,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+        header
+    });
+    let client = cyber_client::Client::http(&base, None);
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    typed(&mut app, "/cost");
+    let action = app.on_key(key(KeyCode::Enter)).remove(0);
+    let result = crate::perform::perform(&client, &app.session, action).await;
+    let request = server.join().unwrap();
+    assert!(
+        request.starts_with("GET /api/v1/usage?scope=session&id=ses_1 "),
+        "{request}"
+    );
+    let crate::perform::Msg::Cost {
+        session_id,
+        generation,
+        result,
+    } = result.unwrap()
+    else {
+        panic!("expected usage snapshot")
+    };
+    app.cost.apply(&session_id, generation, result);
+    assert!(screen(&app).contains("Total cost: $1.0000"));
+}
+
+#[test]
+fn cost_snapshot_refuses_foreign_missing_and_inconsistent_reports() {
+    let mut rounded = cost_fixture();
+    rounded["own"]["cost"] = json!(0.1);
+    rounded["descendants"]["cost"] = json!(0.2);
+    rounded["total"]["cost"] = json!(0.3);
+    assert!(crate::cost::Cost::parse_report(&rounded, "ses_1").is_ok());
+
+    for (path, value) in [
+        (vec!["id"], json!("ses_foreign")),
+        (vec!["scope"], json!("project")),
+        (vec!["own", "tokens", "input"], json!(null)),
+        (vec!["descendants", "usage_complete"], json!(null)),
+        (vec!["total", "cost"], json!(9.0)),
+        (vec!["total", "tokens", "input"], json!(501)),
+        (vec!["total", "unpriced_steps"], json!(1)),
+        (vec!["descendants", "total_tokens"], json!(0)),
+    ] {
+        let mut report = cost_fixture();
+        let mut field = &mut report;
+        for part in path {
+            field = &mut field[part];
+        }
+        *field = value;
+        assert!(crate::cost::Cost::parse_report(&report, "ses_1").is_err());
+    }
+}
+
+#[test]
+fn cost_refresh_ignores_superseded_responses_and_invalidates_on_session_switch() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    typed(&mut app, "/cost");
+    app.on_key(key(KeyCode::Enter));
+    let first = app.cost.generation;
+    app.on_key(key(KeyCode::Char('r')));
+    app.cost.apply(
+        "ses_1",
+        first,
+        crate::cost::Cost::parse_report(&cost_fixture(), "ses_1"),
+    );
+    assert!(!screen(&app).contains("Total cost: $1.0000"));
+    apply_cost(&mut app, &cost_fixture());
+    let mut stale = session(false);
+    stale.cost = 99.99;
+    app.set_session(stale);
+    assert!(screen(&app).contains("Total cost: $1.0000"));
+    let mut other = session(false);
+    other.id = "ses_other".into();
+    app.set_session(other);
+    assert!(matches!(app.overlay, Overlay::None));
+    app.set_session(session(false));
+    typed(&mut app, "/cost");
+    app.on_key(key(KeyCode::Enter));
+    app.cost.apply(
+        "ses_1",
+        first,
+        crate::cost::Cost::parse_report(&cost_fixture(), "ses_1"),
+    );
+    assert!(!screen(&app).contains("Total cost: $1.0000"));
 }

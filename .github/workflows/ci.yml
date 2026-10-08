@@ -138,6 +138,12 @@ jobs:
       - name: Native descendant billing API
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http session_detail_and_listing_expose_separate_descendant_billing
+      - name: Native durable Session usage API
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http session_usage_api
+      - name: Native TUI cost snapshots
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui cost_
       - name: Native explicit user subtasks
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subtasks --test delegations -p cyber-server --test subtask_cancellation

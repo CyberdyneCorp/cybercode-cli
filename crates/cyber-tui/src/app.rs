@@ -32,6 +32,9 @@ pub enum Action {
         stop: bool,
     },
     Refresh,
+    LoadCost {
+        generation: u64,
+    },
     Prompt {
         text: String,
         delivery: &'static str,
@@ -175,6 +178,7 @@ pub struct Completion {
 pub struct App {
     pub admissions: crate::admissions::Admissions,
     pub session: Session,
+    pub cost: crate::cost::CostView,
     pub(crate) mode_selection: Option<String>,
     pub items: Vec<Item>,
     /// Text streaming in for assistant messages not yet durable.
@@ -205,6 +209,7 @@ impl App {
         Self {
             admissions: Default::default(),
             session,
+            cost: Default::default(),
             mode_selection: None,
             items: Vec::new(),
             streaming: BTreeMap::new(),
@@ -230,6 +235,12 @@ impl App {
     }
 
     pub(crate) fn set_session(&mut self, session: Session) {
+        if session.id != self.session.id {
+            self.cost.invalidate();
+            if matches!(self.overlay, Overlay::Cost) {
+                self.overlay = Overlay::None;
+            }
+        }
         if session.id != self.session.id || self.mode_selection.as_deref() == Some(&session.mode) {
             self.mode_selection = None;
         }
@@ -337,7 +348,7 @@ impl App {
                 }
             }
             Overlay::Cost => match key.code {
-                KeyCode::Char('r' | 'R') => vec![Action::Refresh],
+                KeyCode::Char('r' | 'R') => self.load_cost(),
                 KeyCode::Esc | KeyCode::Enter => {
                     self.overlay = Overlay::None;
                     Vec::new()
@@ -615,7 +626,7 @@ impl App {
         match name {
             "cost" => {
                 self.overlay = Overlay::Cost;
-                vec![Action::Refresh]
+                self.load_cost()
             }
             "admissions" => {
                 let items = self.admissions.choices(&self.session.id);
@@ -674,6 +685,12 @@ impl App {
                 arguments: args.into(),
             }],
         }
+    }
+
+    fn load_cost(&mut self) -> Vec<Action> {
+        vec![Action::LoadCost {
+            generation: self.cost.start(&self.session.id),
+        }]
     }
 
     fn open_themes(&mut self) {

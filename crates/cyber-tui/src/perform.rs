@@ -22,6 +22,11 @@ pub enum Msg {
         queued: Vec<Queued>,
         requests: Vec<Request>,
     },
+    Cost {
+        session_id: String,
+        generation: u64,
+        result: Result<crate::cost::Cost, String>,
+    },
     Tasks {
         session_id: String,
         items: Vec<Choice>,
@@ -125,6 +130,18 @@ pub async fn perform_owned(
             Ok(crate::admissions::perform(client, request, stop).await)
         }
         Action::Refresh => snapshot(client, &session.id).await,
+        Action::LoadCost { generation } => {
+            let result = client
+                .get(&format!("/usage?scope=session&id={}", encode(&session.id)))
+                .await
+                .map_err(err)
+                .and_then(|value| crate::cost::Cost::parse_report(&value["data"], &session.id));
+            Ok(Msg::Cost {
+                session_id: session.id.clone(),
+                generation,
+                result,
+            })
+        }
         Action::SwitchModel(_)
         | Action::SwitchMode(_)
         | Action::Fork

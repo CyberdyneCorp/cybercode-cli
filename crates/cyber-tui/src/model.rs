@@ -15,7 +15,6 @@ pub struct Session {
     pub running: bool,
     pub seq: i64,
     pub cost: f64,
-    pub cost_snapshot: crate::cost::Cost,
     pub input_tokens: u64,
     pub output_tokens: u64,
 }
@@ -55,7 +54,6 @@ impl Session {
             running: v["status"] == "running",
             seq: v["seq"].as_i64().unwrap_or(-1),
             cost: v["totals"]["cost"].as_f64().unwrap_or(0.0),
-            cost_snapshot: crate::cost::Cost::parse(v),
             input_tokens: v["totals"]["usage"]["input"].as_u64().unwrap_or(0),
             output_tokens: v["totals"]["usage"]["output"].as_u64().unwrap_or(0),
         }

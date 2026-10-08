@@ -280,6 +280,15 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         Msg::ModeChanged { session_id, result } => {
             return mode_changed(app, refresh, session_id, result);
         }
+        Msg::Cost {
+            session_id,
+            generation,
+            result,
+        } => {
+            if session_id == app.session.id {
+                app.cost.apply(&session_id, generation, result);
+            }
+        }
         Msg::Tasks { session_id, items } => {
             if session_id == app.session.id {
                 app.open_picker(

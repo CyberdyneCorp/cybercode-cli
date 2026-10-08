@@ -1,8 +1,8 @@
 //! Cost snapshots retain missing attribution instead of converting it to zero.
 
+use serde::Deserialize;
 use serde_json::Value;
 
-const CLASSES: [&str; 5] = ["input", "output", "reasoning", "cache_read", "cache_write"];
 const LABELS: [&str; 5] = ["Input", "Output", "Reasoning", "Cache read", "Cache write"];
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -16,36 +16,110 @@ pub struct Cost {
     cost_complete: bool,
 }
 
-fn classes(value: &Value) -> Option<[u64; 5]> {
-    let values: Vec<u64> = CLASSES
-        .iter()
-        .map(|key| value[*key].as_u64())
-        .collect::<Option<_>>()?;
-    values.try_into().ok()
+#[derive(Debug, Deserialize)]
+struct Amount {
+    tokens: Tokens,
+    total_tokens: u64,
+    cost: f64,
+    unpriced_steps: u64,
+    usage_complete: bool,
+    token_classes_complete: bool,
 }
 
-fn price(value: &Value) -> Option<f64> {
-    value.as_f64().filter(|v| v.is_finite() && *v >= 0.0)
+#[derive(Debug, Deserialize)]
+struct Tokens {
+    input: u64,
+    output: u64,
+    reasoning: u64,
+    cache_read: u64,
+    cache_write: u64,
+}
+impl Tokens {
+    fn values(&self) -> [u64; 5] {
+        [
+            self.input,
+            self.output,
+            self.reasoning,
+            self.cache_read,
+            self.cache_write,
+        ]
+    }
+}
+impl Amount {
+    fn validate(&self) -> Result<(), String> {
+        let known: u128 = self.tokens.values().into_iter().map(u128::from).sum();
+        if !self.cost.is_finite()
+            || self.cost < 0.0
+            || known > u128::from(self.total_tokens)
+            || (self.token_classes_complete && known != u128::from(self.total_tokens))
+        {
+            return Err("Invalid usage amount".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct Report {
+    scope: String,
+    id: String,
+    own: Amount,
+    descendants: Amount,
+    total: Amount,
+}
+fn same_cost(a: f64, b: f64) -> bool {
+    a.is_finite()
+        && b.is_finite()
+        && (a - b).abs() <= 4.0 * f64::EPSILON * a.abs().max(b.abs()).max(f64::MIN_POSITIVE)
+}
+
+impl Report {
+    fn validate(&self, id: &str) -> Result<(), String> {
+        if self.scope != "session" || self.id != id {
+            return Err("Usage snapshot belongs to a different Session".into());
+        }
+        self.own.validate()?;
+        self.descendants.validate()?;
+        self.total.validate()?;
+        let a = &self.own;
+        let b = &self.descendants;
+        let sum_matches = a
+            .tokens
+            .values()
+            .into_iter()
+            .zip(b.tokens.values())
+            .zip(self.total.tokens.values())
+            .all(|((a, b), total)| u128::from(a) + u128::from(b) == u128::from(total));
+        if !sum_matches
+            || u128::from(a.total_tokens) + u128::from(b.total_tokens)
+                != u128::from(self.total.total_tokens)
+            || u128::from(a.unpriced_steps) + u128::from(b.unpriced_steps)
+                != u128::from(self.total.unpriced_steps)
+            || !same_cost(a.cost + b.cost, self.total.cost)
+            || (a.usage_complete && b.usage_complete) != self.total.usage_complete
+            || (a.token_classes_complete && b.token_classes_complete)
+                != self.total.token_classes_complete
+        {
+            return Err("Inconsistent usage totals".into());
+        }
+        Ok(())
+    }
 }
 
 impl Cost {
-    pub fn parse(value: &Value) -> Self {
-        let own = classes(&value["totals"]["usage"]);
-        let children = classes(&value["children_token_classes"]);
-        Self {
-            own,
-            children,
-            own_cost: price(&value["totals"]["cost"]),
-            children_cost: price(&value["children_cost"]),
-            unpriced: value["totals"]["unpriced_steps"]
-                .as_u64()
-                .zip(value["children_unpriced_steps"].as_u64())
-                .map(|(own, children)| u128::from(own) + u128::from(children)),
-            classes_complete: own.is_some()
-                && children.is_some()
-                && value["children_token_classes_complete"] == true,
-            cost_complete: value["children_usage_complete"] == true,
-        }
+    pub fn parse_report(value: &Value, id: &str) -> Result<Self, String> {
+        let report: Report = serde_json::from_value(value.clone())
+            .map_err(|_| "Malformed usage snapshot".to_string())?;
+        report.validate(id)?;
+        Ok(Self {
+            own: Some(report.own.tokens.values()),
+            children: Some(report.descendants.tokens.values()),
+            own_cost: Some(report.own.cost),
+            children_cost: Some(report.descendants.cost),
+            unpriced: Some(u128::from(report.total.unpriced_steps)),
+            classes_complete: report.total.token_classes_complete,
+            cost_complete: report.total.usage_complete,
+        })
     }
 
     pub fn lines(&self) -> Vec<String> {
@@ -116,5 +190,58 @@ impl Cost {
             "{:.1}% (cache read / input + cache read + cache write)",
             100.0 * read as f64 / prompt as f64
         )
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct CostView {
+    pub generation: u64,
+    session_id: String,
+    snapshot: Cost,
+    loading: bool,
+    error: Option<String>,
+}
+impl CostView {
+    pub fn invalidate(&mut self) {
+        self.session_id.clear();
+        self.snapshot = Cost::default();
+        self.loading = false;
+        self.error = None;
+    }
+    pub fn start(&mut self, id: &str) -> u64 {
+        if self.session_id != id {
+            self.snapshot = Cost::default();
+        }
+        self.session_id = id.into();
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("cost request generation exhausted");
+        self.loading = true;
+        self.error = None;
+        self.generation
+    }
+    pub fn apply(&mut self, id: &str, generation: u64, result: Result<Cost, String>) {
+        if self.session_id != id || self.generation != generation {
+            return;
+        }
+        self.loading = false;
+        match result {
+            Ok(snapshot) => {
+                self.snapshot = snapshot;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = self.snapshot.lines();
+        if self.loading {
+            lines.push("Refreshing…".into());
+        }
+        if let Some(error) = &self.error {
+            lines.push(format!("Refresh failed: {error}"));
+        }
+        lines
     }
 }
