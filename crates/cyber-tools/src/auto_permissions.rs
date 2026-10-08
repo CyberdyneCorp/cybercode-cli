@@ -14,9 +14,52 @@ impl Ctx<'_> {
         metadata: &mut Value,
         needs_approval: bool,
     ) -> Result<bool, ToolError> {
+        self.check_ancestor_auto_blocks(request).await?;
         if self.policy.mode != Mode::Auto {
             return Ok(false);
         }
+        self.review_local_auto_permission(request, metadata, needs_approval)
+            .await
+    }
+
+    async fn check_ancestor_auto_blocks(&self, request: &Request) -> Result<(), ToolError> {
+        let inherited = self
+            .host
+            .inherited_permissions(&self.inv.session_id)
+            .await
+            .map_err(ToolError::Failed)?;
+        if let Some((parent, _)) = inherited.auto_blocks.iter().find(|(_, rule)| {
+            request
+                .resources
+                .iter()
+                .any(|resource| rule.matches(&request.action, resource))
+        }) {
+            let reason =
+                format!("Matched ancestor {parent} permissions.auto_mode.rules.always_block");
+            let review = AutoReview {
+                action: request.action.clone(),
+                resources: request.resources.clone(),
+                tool: self.inv.name.clone(),
+                input: self.inv.input.clone(),
+                policy: String::new(),
+            };
+            tokio::select! {
+                _ = self.cancel.cancelled() => return Err(ToolError::Aborted),
+                result = self.inv.asker.decide_auto_rule(review, AutoEffect::Block, reason.clone(), self.cancel.clone()) => {
+                    result.map_err(|error| ToolError::Failed(format!("Auto review failed: {error}")))?;
+                }
+            }
+            return Err(ToolError::Failed(format!("Blocked by auto mode: {reason}")));
+        }
+        Ok(())
+    }
+
+    async fn review_local_auto_permission(
+        &self,
+        request: &Request,
+        metadata: &mut Value,
+        needs_approval: bool,
+    ) -> Result<bool, ToolError> {
         let (config, _) = (self.host.opts.config)(&self.location).map_err(ToolError::Failed)?;
         let settings = AutoModeSettings::from_config(&config).map_err(ToolError::Failed)?;
         let blocked = request.resources.iter().any(|resource| {

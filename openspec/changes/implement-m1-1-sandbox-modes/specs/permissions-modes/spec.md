@@ -194,3 +194,9 @@
 - **THEN** the command reports the same scoped counters and clears only that checkout's recorded counts
 - **AND** decision history, billing and other checkouts remain preserved
 - **AND** the recording boundary is visible; historical events without recorded checkout identity SHALL NOT be attributed from a moved Session's current directory
+
+#### Scenario: Ancestor auto block remains a ceiling
+- **WHEN** an effective auto-mode ancestor has an always_block rule matching a child request
+- **THEN** the request is blocked before effects even when the child's own Mode permits it
+- **AND** the durable policy decision identifies the ancestor without classifier inference or saved approval
+- **AND** an ancestor outside auto mode does not activate its auto-mode configuration

@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub use agent_profiles::{AgentProfile, AgentTools, resolve_agents};
-pub use auto_mode::{AutoFallback, AutoModeSettings};
+pub use auto_mode::{AutoFallback, AutoModeSettings, AutoPattern};
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
 pub use load::{LoadRequest, ensure_global_config, load, project_root, trust_report};

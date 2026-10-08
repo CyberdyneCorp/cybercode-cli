@@ -43,6 +43,97 @@ fn decisions(flow: &Flow, id: &str) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn ancestor_auto_block_precedes_child_accept_edits_without_classifier() {
+    let f = flow(1, verdict("allow"), false);
+    f.f.set_config(json!({"permissions":{"auto_mode":{"rules":{"always_block":[
+        {"action":"edit","resource":"*"}
+    ]}}}}));
+    let parent = f.session("auto").await;
+    let child = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("accept-edits".into()),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&child, "Write a file").await;
+    f.settle(&child).await;
+    assert!(!f.f.repo.join("result0.txt").exists());
+    let rows = decisions(&f, &child);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["decision"], "block");
+    assert!(rows[0]["reason"].as_str().unwrap().contains(&parent));
+    assert!(rows[0]["model"].is_null());
+    assert!(
+        f.output(&child, "c0")
+            .await
+            .contains("Blocked by auto mode:")
+    );
+}
+
+#[tokio::test]
+async fn non_auto_parent_does_not_activate_auto_configuration() {
+    let f = flow(1, verdict("block"), false);
+    f.f.set_config(json!({"permissions":{"auto_mode":{"rules":{"always_block":[
+        {"action":"edit","resource":"*"}
+    ]}}}}));
+    let parent = f.session("accept-edits").await;
+    let child = f
+        .runtime
+        .create_session(CreateSession {
+            directory: f.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("accept-edits".into()),
+            parent_id: Some(parent),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    f.prompt(&child, "Write a file").await;
+    f.settle(&child).await;
+    assert_eq!(f.f.read("result0.txt"), "approved");
+    assert!(decisions(&f, &child).is_empty());
+}
+
+#[tokio::test]
+async fn grandparent_auto_block_survives_an_intermediate_non_auto_parent() {
+    let f = flow(1, verdict("allow"), false);
+    f.f.set_config(json!({"permissions":{"auto_mode":{"rules":{"always_block":[
+        {"action":"edit","resource":"*"}
+    ]}}}}));
+    let grandparent = f.session("auto").await;
+    let mut parent = grandparent.clone();
+    for _ in 0..2 {
+        parent = f
+            .runtime
+            .create_session(CreateSession {
+                directory: f.f.repo.display().to_string(),
+                model: "test/main".into(),
+                mode: Some("accept-edits".into()),
+                parent_id: Some(parent),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+    }
+    f.prompt(&parent, "Write a file").await;
+    f.settle(&parent).await;
+    assert!(!f.f.repo.join("result0.txt").exists());
+    let rows = decisions(&f, &parent);
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0]["reason"].as_str().unwrap().contains(&grandparent));
+    assert_eq!(rows[0]["decision"], "block");
+    assert!(rows[0]["model"].is_null());
+}
+
+#[tokio::test]
 async fn classifier_allow_executes_the_actual_tool_without_an_attached_user() {
     let f = flow(1, verdict("allow"), false);
     let id = f.session("auto").await;
