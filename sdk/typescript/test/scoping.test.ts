@@ -171,3 +171,14 @@ test("session.stopSubtree retains Unknown evidence and scopes by Session identit
   assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
   assert.equal(calls[0]?.headers.get("idempotency-key"), "observed-stop");
 });
+
+test("session.reopenSubtree sends the reviewed receipt and retains response identity", async () => {
+  const report = { session_id: "ses/child", scope_id: "op_scope", stop_receipt_id: "evt_stopped", reopen_receipt_id: "evt_reopened" };
+  const review = { scope_id: "op_scope", stop_receipt_id: "evt_stopped" };
+  const { client, calls } = mockClient(() => json(200, { data: report }), { directory: "/other" });
+  assert.deepEqual(await client.session.reopenSubtree("ses/child", review, { idempotencyKey: "review" }), report);
+  assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fchild/reopen-subtree");
+  assert.deepEqual(JSON.parse(calls[0]!.body!), review);
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "review");
+});

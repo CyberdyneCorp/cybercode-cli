@@ -28,3 +28,15 @@
 - **WHEN** an unauthenticated caller requests subtree stop
 - **THEN** authentication fails before closure or cancellation
 - **AND** an authenticated request for a missing Session returns the tagged Session-not-found error
+
+### Requirement: Reviewed subtree reopening API
+(P1) Stop reports SHALL return their persisted receipt ID and owned sweep ID when recorded. The authenticated server SHALL expose POST `/api/v1/sessions/{sessionID}/reopen-subtree` and generated SDK `session.reopenSubtree`, taking the reviewed `scope_id` and `stop_receipt_id`. It SHALL perform matched durable/native verification, return the reopening receipt identity and leave queued input undispatched. Stale, Unknown or changed evidence SHALL return a conflict without opening admission. Idempotency replay SHALL preserve the original response without clearing a later close scope.
+
+#### Scenario: Reviewed local stop
+- **WHEN** a client submits the acknowledged stop report's scope and receipt to reopening
+- **THEN** the server verifies current evidence and returns the original identities plus a reopening receipt
+
+#### Scenario: Stale request after another stop
+- **WHEN** an earlier reopening review is submitted after a new close scope exists
+- **THEN** admission stays closed and the request is refused
+- **AND** replaying the original idempotency key returns only the historical response

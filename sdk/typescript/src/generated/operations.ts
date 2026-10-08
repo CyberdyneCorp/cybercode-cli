@@ -330,6 +330,12 @@ export interface Operations {
     body: S.PromptBody;
     response: S.Receipt;
   };
+  "v1.session.reopenSubtree": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.ReopenSubtreeBody;
+    response: S.SubtreeReopenReport;
+  };
   "v1.session.revertClear": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -939,6 +945,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.reopenSubtree": {
+    tag: "session",
+    name: "reopenSubtree",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/reopen-subtree",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.revertClear": {
     tag: "session",
     name: "revertClear",
@@ -1308,6 +1326,9 @@ export function createGroups(caller: Caller) {
       /** Durably admit a prompt (`POST /api/v1/sessions/{sessionID}/prompt`) */
       prompt: (sessionID: string, body: Operations["v1.session.prompt"]["body"], options?: RequestOptions): Promise<Operations["v1.session.prompt"]["response"]> =>
         caller.call("v1.session.prompt", { path: { sessionID }, body }, options),
+      /** Reopen a reviewed acknowledged scope with fresh durable and native proof (`POST /api/v1/sessions/{sessionID}/reopen-subtree`) */
+      reopenSubtree: (sessionID: string, body: Operations["v1.session.reopenSubtree"]["body"], options?: RequestOptions): Promise<Operations["v1.session.reopenSubtree"]["response"]> =>
+        caller.call("v1.session.reopenSubtree", { path: { sessionID }, body }, options),
       /** Undo a staged revert (`POST /api/v1/sessions/{sessionID}/revert/clear`) */
       revertClear: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.revertClear"]["response"]> =>
         caller.call("v1.session.revertClear", { path: { sessionID } }, options),

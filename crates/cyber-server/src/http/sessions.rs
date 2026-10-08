@@ -79,6 +79,12 @@ pub struct CreateBody {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReopenSubtreeBody {
+    pub scope_id: String,
+    pub stop_receipt_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateBody {
     pub title: Option<String>,
     pub archived: Option<bool>,
@@ -238,6 +244,7 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/prompt"), post(prompt))
         .route(&format!("{s}/interrupt"), post(interrupt))
         .route(&format!("{s}/stop-subtree"), post(stop_subtree))
+        .route(&format!("{s}/reopen-subtree"), post(reopen_subtree))
         .route(&format!("{s}/wake"), post(wake))
         .route(&format!("{s}/command"), post(command))
         .route(&format!("{s}/agent"), post(agent))
@@ -515,6 +522,18 @@ async fn stop_subtree(
     Path(id): Path<String>,
 ) -> Result<Json<Data<crate::runtime::SubtreeStopReport>>> {
     let report = state.runtime.stop_subtree(&id).await?;
+    Ok(Json(Data { data: report }))
+}
+
+async fn reopen_subtree(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(review): Json<ReopenSubtreeBody>,
+) -> Result<Json<Data<crate::runtime::SubtreeReopenReport>>> {
+    let report = state
+        .runtime
+        .reopen_subtree(&id, &review.scope_id, &review.stop_receipt_id)
+        .await?;
     Ok(Json(Data { data: report }))
 }
 

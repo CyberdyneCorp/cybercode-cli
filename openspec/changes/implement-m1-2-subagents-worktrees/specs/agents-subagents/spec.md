@@ -631,3 +631,30 @@
 - **WHEN** a host supplies retained acknowledged ownership
 - **THEN** the runtime preserves that guard until proof disposal
 - **AND** unmanaged Locations require no managed checkout lock
+
+### Requirement: Matched verified subtree reopening
+(P1) Explicit reopening SHALL require the current close scope and latest persisted Acknowledged stop receipt. It SHALL replay fresh durable Session state, refuse open Steps, unsettled tool outcomes, pending preparation, running Jobs and unresolved delegation, idle or result ownership. Native Location identity and retained settlement proof SHALL remain held through the writer commit. The writer SHALL recheck the descendant identities, Session revisions and scoped ownership evidence atomically; changed evidence SHALL refuse reopening. Only the matching scope SHALL reopen. Existing captured authority SHALL remain revoked, independently closed descendants SHALL remain closed and reopening SHALL NOT dispatch preserved input automatically. Unknown receipts require settlement or reviewed recovery, not reopening.
+
+#### Scenario: Matched acknowledged reopening
+- **WHEN** the reviewed close scope and latest acknowledged receipt still match and fresh actor/native evidence is settled
+- **THEN** the writer records reopening, retains input and allows fresh admission
+- **AND** captured authority from before the stop remains invalid across restart
+
+#### Scenario: Stale review or changed evidence
+- **WHEN** the receipt is Unknown, belongs to another scope, is superseded or actor evidence changes during native verification
+- **THEN** reopening is refused and admission stays closed
+
+#### Scenario: Nested scopes and repeated stops
+- **WHEN** an acknowledged ancestor scope reopens while a descendant has its own closed scope
+- **THEN** the descendant remains closed
+- **AND** a later stop creates a new close scope that an earlier reopening request cannot clear
+
+#### Scenario: Owned sweep still pending
+- **WHEN** another stop sweep has a durable start without its own terminal receipt, including after process loss
+- **THEN** an earlier acknowledged observation SHALL NOT authorize reopening
+- **AND** sweep settlement SHALL bind the original sweep and active close owner
+
+#### Scenario: Callback crosses to an unrelated Session
+- **WHEN** a callback captures authority for an unrelated Session before its original source hands off ownership
+- **THEN** the callback and its writer submissions retain the original source boundaries
+- **AND** stop and reopening audits retain the original operation scope after terminal records remove admission bindings

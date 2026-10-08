@@ -1827,6 +1827,55 @@
           "name"
         ]
       },
+      "ReopenSubtreeBody": {
+        "type": "object",
+        "properties": {
+          "scope_id": {
+            "type": "string"
+          },
+          "stop_receipt_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope_id",
+          "stop_receipt_id"
+        ]
+      },
+      "Data_SubtreeReopenReport": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SubtreeReopenReport"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SubtreeReopenReport": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "stop_receipt_id": {
+            "type": "string"
+          },
+          "reopen_receipt_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "scope_id",
+          "stop_receipt_id",
+          "reopen_receipt_id"
+        ]
+      },
       "Data_SubtreeStopReport": {
         "type": "object",
         "properties": {
@@ -1858,6 +1907,18 @@
           },
           "persisted": {
             "type": "boolean"
+          },
+          "receipt_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sweep_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4446,6 +4507,65 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CommandBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/reopen-subtree": {
+      "post": {
+        "operationId": "v1.session.reopenSubtree",
+        "summary": "Reopen a reviewed acknowledged scope with fresh durable and native proof",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SubtreeReopenReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReopenSubtreeBody"
               }
             }
           }

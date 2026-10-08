@@ -1390,3 +1390,55 @@ async fn retained_native_location_proof_prevents_checkout_removal_until_disposal
         .unwrap();
     assert!(!managed.path.exists());
 }
+
+#[tokio::test]
+async fn acknowledged_native_worktree_scope_reopens_with_original_checkout_identity() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, NoSnapshots, SubtreeStopStatus};
+    let (fixture, repository, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let old = flow.runtime.capture_child_admission(&info.id).unwrap();
+    let stopped = flow.runtime.stop_subtree(&info.id).await.unwrap();
+    assert_eq!(
+        stopped.status,
+        SubtreeStopStatus::Acknowledged,
+        "{:?}",
+        stopped.problems
+    );
+    flow.runtime
+        .reopen_subtree(
+            &info.id,
+            &stopped.scope_id,
+            stopped.receipt_id.as_deref().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        flow.runtime
+            .state(&info.id)
+            .await
+            .unwrap()
+            .info
+            .worktree_id
+            .as_deref(),
+        Some(managed.id.as_str())
+    );
+    assert!(flow.runtime.capture_child_admission(&info.id).is_ok());
+    assert!(old.verify(&flow.runtime, &info.id).is_err());
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+}

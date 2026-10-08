@@ -225,6 +225,10 @@ export type Data_ShellResult = {
   data: ShellResult;
 };
 
+export type Data_SubtreeReopenReport = {
+  data: SubtreeReopenReport;
+};
+
 export type Data_SubtreeStopReport = {
   data: SubtreeStopReport;
 };
@@ -533,6 +537,11 @@ export type ReleaseBody = {
   delivery?: Delivery | null;
 };
 
+export type ReopenSubtreeBody = {
+  scope_id: string;
+  stop_receipt_id: string;
+};
+
 export type ReplyKind = "once" | "always" | "reject";
 
 /** Server-derived child identity for approval prompts. */
@@ -721,12 +730,21 @@ export type SubtaskBody = {
   max_steps?: number | null;
 };
 
+export type SubtreeReopenReport = {
+  session_id: string;
+  scope_id: string;
+  stop_receipt_id: string;
+  reopen_receipt_id: string;
+};
+
 export type SubtreeStopReport = {
   session_id: string;
   scope_id: string;
   status: SubtreeStopStatus;
   problems: string[];
   persisted: boolean;
+  receipt_id?: string | null;
+  sweep_id?: string | null;
 };
 
 export type SubtreeStopStatus = "acknowledged" | "unknown";

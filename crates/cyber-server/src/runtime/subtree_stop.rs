@@ -8,6 +8,7 @@ use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+pub(super) const STARTED: &str = "session.subtree.stopping.1";
 pub(super) const SETTLED: &str = "session.subtree.stopped.1";
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -22,6 +23,10 @@ pub struct SubtreeStopReport {
     pub status: SubtreeStopStatus,
     pub problems: Vec<String>,
     pub persisted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep_id: Option<String>,
 }
 pub(super) struct Control {
     done: CancellationToken,
@@ -48,15 +53,26 @@ impl Runtime {
             self.inner.handle(id).await?;
             self.inner.descendants(id)?;
             let lookup = root.clone();
-            let scope=self.inner.store.read(move|db|{
-                use rusqlite::OptionalExtension;
-                Ok(db.query_row("SELECT json_extract(data,'$.scope_id') FROM event WHERE aggregate_id=?1 AND type='session.admission.fenced.1' AND json_extract(data,'$.closed')=1 ORDER BY seq DESC LIMIT 1",[lookup],|row|row.get::<_,String>(0)).optional()?)
-            })?;
+            let scope = self
+                .inner
+                .store
+                .read(move |db| super::subtree_reopen::active_scope(db, &lookup))?;
             let scope = match scope {
                 Some(scope) => scope,
                 None => self.close_subtree_admissions(id).await?,
             };
             let ids = self.inner.descendants(id)?;
+            let sweep = cyber_core::ids::new_id("op");
+            let handle = self.inner.handle(id).await?;
+            self.inner
+                .commit(
+                    &handle,
+                    vec![super::event(
+                        STARTED,
+                        &serde_json::json!({"scope_id":scope,"sweep_id":sweep}),
+                    )],
+                )
+                .await?;
             let control = Arc::new(Control {
                 done: CancellationToken::new(),
                 report: Default::default(),
@@ -71,7 +87,7 @@ impl Runtime {
             let task = tokio::spawn(async move {
                 let _done = owned.done.clone().drop_guard();
                 if let Some(runtime) = weak.upgrade() {
-                    let result = std::panic::AssertUnwindSafe(runtime.sweep_subtree(&ids))
+                    let result = std::panic::AssertUnwindSafe(runtime.sweep_subtree(&ids, &sweep))
                         .catch_unwind()
                         .await;
                     let mut problems = match result {
@@ -91,13 +107,18 @@ impl Runtime {
                         },
                         problems,
                         persisted: true,
+                        receipt_id: None,
+                        sweep_id: Some(sweep),
                     };
-                    if let Err(error) = runtime.record_subtree_stop(&report).await {
-                        report.persisted = false;
-                        report.status = SubtreeStopStatus::Unknown;
-                        report
-                            .problems
-                            .push(format!("Stop receipt could not be recorded: {error}"));
+                    match runtime.record_subtree_stop(&report).await {
+                        Ok(receipt) => report.receipt_id = Some(receipt),
+                        Err(error) => {
+                            report.persisted = false;
+                            report.status = SubtreeStopStatus::Unknown;
+                            report
+                                .problems
+                                .push(format!("Stop receipt could not be recorded: {error}"));
+                        }
                     }
                     *owned.report.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
                 }
@@ -124,14 +145,22 @@ impl Runtime {
                 )
             })
     }
-    async fn record_subtree_stop(&self, report: &SubtreeStopReport) -> Result<(), RuntimeError> {
+    async fn record_subtree_stop(
+        &self,
+        report: &SubtreeStopReport,
+    ) -> Result<String, RuntimeError> {
         let handle = self.inner.handle(&report.session_id).await?;
-        self.inner
+        let stored = self
+            .inner
             .commit(&handle, vec![super::event(SETTLED, report)])
             .await?;
-        Ok(())
+        Ok(stored[0].id.clone())
     }
-    async fn sweep_subtree(&self, ids: &[String]) -> Result<Vec<String>, RuntimeError> {
+    async fn sweep_subtree(
+        &self,
+        ids: &[String],
+        sweep: &str,
+    ) -> Result<Vec<String>, RuntimeError> {
         let ids: HashSet<String> = ids.iter().cloned().collect();
         self.inner.signal_subtree(&ids, &self.jobs(None)?);
         let attempt = async {
@@ -145,7 +174,7 @@ impl Runtime {
             while self.inner.subtree_actors_live(&ids) || self.scoped_jobs_live(&ids)? {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            self.audit_subtree_stop(&ids).await
+            self.audit_subtree_stop(&ids, sweep).await
         };
         match tokio::time::timeout(Duration::from_secs(2), attempt).await {
             Ok(result) => result,
@@ -155,7 +184,7 @@ impl Runtime {
             ]),
         }
     }
-    fn scoped_jobs_live(&self, ids: &HashSet<String>) -> Result<bool, RuntimeError> {
+    pub(super) fn scoped_jobs_live(&self, ids: &HashSet<String>) -> Result<bool, RuntimeError> {
         let jobs = self.jobs(None)?;
         let controls = self
             .inner
@@ -176,16 +205,38 @@ impl Runtime {
         ids: &HashSet<String>,
     ) -> Result<Vec<(String, String)>, RuntimeError> {
         let rows=self.inner.store.read(|db|{
-            let mut statement=db.prepare("SELECT aggregate_id,json_extract(data,'$.data.session_id') FROM event e WHERE type='delegation.changed.1' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)")?;
-            Ok(statement.query_map([],|row|Ok((row.get::<_,String>(1)?,row.get::<_,String>(0)?)))?.collect::<Result<Vec<_>,_>>()?)
+            let mut statement=db.prepare("SELECT aggregate_id,json_extract(data,'$.data.session_id'),(SELECT data FROM event origin WHERE origin.aggregate_id=e.aggregate_id ORDER BY seq LIMIT 1) FROM event e WHERE type='delegation.changed.1' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)")?;
+            Ok(statement.query_map([],|row|Ok((row.get::<_,String>(1)?,row.get::<_,String>(0)?,row.get::<_,String>(2)?)))?.collect::<Result<Vec<_>,_>>()?)
         })?;
-        Ok(rows
-            .into_iter()
-            .filter(|(source, _)| ids.contains(source))
-            .collect())
+        let mut scoped = Vec::new();
+        for (source, operation, origin) in rows {
+            let origin =
+                serde_json::from_str(&origin).map_err(|e| RuntimeError::Corrupt(e.to_string()))?;
+            if ids.contains(&source)
+                || super::admission_authority::origin_scoped(&origin, ids)
+                    .map_err(RuntimeError::Corrupt)?
+            {
+                scoped.push((source, operation));
+            }
+        }
+        Ok(scoped)
     }
-    async fn audit_subtree_stop(&self, ids: &HashSet<String>) -> Result<Vec<String>, RuntimeError> {
-        let mut problems = Vec::new();
+
+    async fn audit_subtree_stop(
+        &self,
+        ids: &HashSet<String>,
+        sweep: &str,
+    ) -> Result<Vec<String>, RuntimeError> {
+        let lookup_ids = ids.clone();
+        let lookup_sweep = sweep.to_owned();
+        let mut problems = self.inner.store.read(move |db| {
+            pending_sweeps(db, &lookup_ids, Some(&lookup_sweep)).map_err(|reason| {
+                cyber_store::StoreError::CorruptEvent {
+                    id: lookup_sweep,
+                    reason,
+                }
+            })
+        })?;
         for job in self.jobs(None)? {
             if (ids.contains(&job.session_id) || ids.contains(&job.child_id))
                 && job.status == JobStatus::Running
@@ -207,7 +258,12 @@ impl Runtime {
         }
         self.audit_idle_receipts(ids, &mut problems)?;
         for (operation, owner) in super::child_ownership::held(&self.inner.store)? {
-            if ids.contains(&owner.parent_id) || ids.contains(&owner.child_id) {
+            if ids.contains(&owner.parent_id)
+                || ids.contains(&owner.child_id)
+                || owner.admission_bindings.as_ref().is_some_and(|bindings| {
+                    !super::admission_authority::binding_sessions(bindings).is_disjoint(ids)
+                })
+            {
                 problems.push(format!(
                     "Child result owner {operation} requires acknowledgement or recovery"
                 ));
@@ -255,13 +311,17 @@ impl Runtime {
         problems: &mut Vec<String>,
     ) -> Result<(), RuntimeError> {
         let records=self.inner.store.read(|db|{
-            let mut statement=db.prepare("SELECT aggregate_id,data FROM event e WHERE type='native.activity.changed.1' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)")?;
-            Ok(statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<Result<Vec<_>,_>>()?)
+            let mut statement=db.prepare("SELECT aggregate_id,data,(SELECT data FROM event origin WHERE origin.aggregate_id=e.aggregate_id ORDER BY seq LIMIT 1) FROM event e WHERE type='native.activity.changed.1' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)")?;
+            Ok(statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?)))?.collect::<Result<Vec<_>,_>>()?)
         })?;
-        for (operation, data) in records {
+        for (operation, data, origin) in records {
+            let origin =
+                serde_json::from_str(&origin).map_err(|e| RuntimeError::Corrupt(e.to_string()))?;
+            let scoped = super::admission_authority::origin_scoped(&origin, ids)
+                .map_err(RuntimeError::Corrupt)?;
             let data: super::activity::Record = serde_json::from_str(&data)
                 .map_err(|error| RuntimeError::Corrupt(error.to_string()))?;
-            if ids.contains(&data.session_id) && data.status != "settled" {
+            if (ids.contains(&data.session_id) || scoped) && data.status != "settled" {
                 problems.push(format!(
                     "Idle operation {operation} retains {} evidence",
                     data.status
@@ -297,7 +357,7 @@ impl Inner {
             .unwrap_or_else(PoisonError::into_inner)
             .values()
         {
-            if ids.contains(&control.source) {
+            if ids.contains(&control.source) || !control.admission_sessions.is_disjoint(ids) {
                 control.stop.cancel();
             }
         }
@@ -307,7 +367,7 @@ impl Inner {
             .unwrap_or_else(PoisonError::into_inner)
             .values()
         {
-            if ids.contains(&control.source) {
+            if ids.contains(&control.source) || !control.admission_sessions.is_disjoint(ids) {
                 control.stop.cancel();
             }
         }
@@ -326,7 +386,7 @@ impl Inner {
             }
         }
     }
-    fn subtree_actors_live(&self, ids: &HashSet<String>) -> bool {
+    pub(super) fn subtree_actors_live(&self, ids: &HashSet<String>) -> bool {
         if self
             .drains
             .lock()
@@ -350,7 +410,10 @@ impl Inner {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .values()
-            .any(|c| ids.contains(&c.source) && !c.done.is_cancelled())
+            .any(|c| {
+                (ids.contains(&c.source) || !c.admission_sessions.is_disjoint(ids))
+                    && !c.done.is_cancelled()
+            })
         {
             return true;
         }
@@ -359,7 +422,10 @@ impl Inner {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .values()
-            .any(|c| ids.contains(&c.source) && !c.done.is_cancelled())
+            .any(|c| {
+                (ids.contains(&c.source) || !c.admission_sessions.is_disjoint(ids))
+                    && !c.done.is_cancelled()
+            })
         {
             return true;
         }
@@ -388,6 +454,37 @@ pub(super) fn project(
     {
         return Err("Invalid subtree stop receipt".into());
     }
+    let active =
+        super::subtree_reopen::active_scope(tx, &event.aggregate_id).map_err(|e| e.to_string())?;
+    if active.as_deref() != Some(&report.scope_id) {
+        return Err("Subtree stop receipt has a different active close owner".into());
+    }
+    let sweep = report
+        .sweep_id
+        .as_deref()
+        .ok_or("Missing subtree sweep ownership")?;
+    let valid: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type=?2
+         AND json_extract(data,'$.scope_id')=?3 AND json_extract(data,'$.sweep_id')=?4)",
+            rusqlite::params![event.aggregate_id, STARTED, report.scope_id, sweep],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !valid {
+        return Err("Subtree stop receipt has no owned sweep".into());
+    }
+    let terminal: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type=?2 AND seq<?3
+         AND json_extract(data,'$.sweep_id')=?4)",
+            rusqlite::params![event.aggregate_id, SETTLED, event.seq, sweep],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if terminal {
+        return Err("Subtree sweep already has a terminal receipt".into());
+    }
     let scope:Option<String>=tx.query_row(
         "SELECT json_extract(data,'$.scope_id') FROM event WHERE aggregate_id=?1 AND type='session.admission.fenced.1' AND json_extract(data,'$.closed')=1 ORDER BY seq DESC LIMIT 1",
         [&event.aggregate_id],|row|row.get(0),
@@ -396,4 +493,52 @@ pub(super) fn project(
         return Err("Subtree stop receipt has a different close owner".into());
     }
     Ok(())
+}
+
+pub(super) fn project_started(
+    tx: &rusqlite::Transaction<'_>,
+    event: &cyber_store::StoredEvent,
+) -> Result<(), String> {
+    let scope = event.data["scope_id"]
+        .as_str()
+        .ok_or("Missing sweep scope")?;
+    let sweep = event.data["sweep_id"]
+        .as_str()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or("Missing sweep identity")?;
+    if super::subtree_reopen::active_scope(tx, &event.aggregate_id)
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some(scope)
+    {
+        return Err("Sweep has a stale close scope".into());
+    }
+    let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM event WHERE type=?1 AND id!=?2 AND json_extract(data,'$.sweep_id')=?3)",
+        rusqlite::params![STARTED,event.id,sweep], |r|r.get(0)).map_err(|e|e.to_string())?;
+    if duplicate {
+        return Err("Sweep identity is already owned".into());
+    }
+    Ok(())
+}
+
+pub(super) fn pending_sweeps(
+    conn: &rusqlite::Connection,
+    ids: &HashSet<String>,
+    exclude: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut query = conn.prepare("SELECT aggregate_id,json_extract(data,'$.sweep_id') FROM event s WHERE type=?1
+        AND NOT EXISTS(SELECT 1 FROM event e WHERE e.aggregate_id=s.aggregate_id AND e.type=?2 AND e.seq>s.seq
+            AND json_extract(e.data,'$.sweep_id')=json_extract(s.data,'$.sweep_id'))").map_err(|e|e.to_string())?;
+    let rows = query
+        .query_map(rusqlite::params![STARTED, SETTLED], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .filter(|(source, sweep)| ids.contains(source) && Some(sweep.as_str()) != exclude)
+        .map(|(_, sweep)| format!("Subtree sweep {sweep} requires acknowledgement or recovery"))
+        .collect())
 }

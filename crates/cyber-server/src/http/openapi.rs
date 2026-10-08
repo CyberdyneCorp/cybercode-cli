@@ -294,6 +294,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<Receipt>>(g),
         op(
             "post",
+            "/sessions/{sessionID}/reopen-subtree",
+            "v1.session.reopenSubtree",
+            "Reopen a reviewed acknowledged scope with fresh durable and native proof",
+        )
+        .body::<ReopenSubtreeBody>(g)
+        .ok::<Data<crate::runtime::SubtreeReopenReport>>(g),
+        op(
+            "post",
             "/sessions/{sessionID}/stop-subtree",
             "v1.session.stopSubtree",
             "Close subtree admission and report bounded local stop acknowledgement",

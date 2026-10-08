@@ -2789,3 +2789,66 @@ async fn explicit_subtree_stop_api_requires_authentication_and_existing_session(
     let error: Value = response.json().await.unwrap();
     assert_eq!(error["_tag"], "SessionNotFoundError");
 }
+
+#[tokio::test]
+async fn reviewed_subtree_reopening_api_is_idempotent_and_preserves_later_closure() {
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let api = Api::new(&h);
+    let (_, stopped) = api
+        .post(&format!("/sessions/{root}/stop-subtree"), json!({}))
+        .await;
+    assert!(stopped["data"]["receipt_id"].is_string());
+    assert!(stopped["data"]["sweep_id"].is_string());
+    let review = json!({"scope_id":stopped["data"]["scope_id"],"stop_receipt_id":stopped["data"]["receipt_id"]});
+    let path = format!("/sessions/{root}/reopen-subtree");
+    let headers = [("idempotency-key", "reviewed-reopen")];
+    let (status, opened, _) = api
+        .call(Method::POST, &path, Some(review.clone()), &headers)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{opened}");
+    assert_eq!(opened["data"]["session_id"], root);
+    assert_eq!(opened["data"]["stop_receipt_id"], review["stop_receipt_id"]);
+    assert!(opened["data"]["reopen_receipt_id"].is_string());
+    assert!(h.runtime.capture_child_admission(&root).is_ok());
+    let (_, next) = api
+        .post(&format!("/sessions/{root}/stop-subtree"), json!({}))
+        .await;
+    assert_ne!(next["data"]["scope_id"], review["scope_id"]);
+    let (status, replay, _) = api
+        .call(Method::POST, &path, Some(review.clone()), &headers)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay, opened);
+    assert!(h.runtime.capture_child_admission(&root).is_err());
+    assert_eq!(
+        api.call(Method::POST, &path, Some(review), &[]).await.0,
+        StatusCode::CONFLICT
+    );
+    let current =
+        json!({"scope_id":next["data"]["scope_id"],"stop_receipt_id":next["data"]["receipt_id"]});
+    assert_eq!(api.post(&path, current).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn reviewed_subtree_reopening_requires_tcp_authentication() {
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let report = h.runtime.stop_subtree(&root).await.unwrap();
+    let review = json!({"scope_id":report.scope_id,"stop_receipt_id":report.receipt_id});
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{root}/reopen-subtree");
+    let response = client.post(&path).json(&review).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(h.runtime.capture_child_admission(&root).is_err());
+    let response = client
+        .post(&path)
+        .json(&review)
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(h.runtime.capture_child_admission(&root).is_ok());
+}

@@ -10,6 +10,7 @@ tokio::task_local! { static CANCEL: CancellationToken; }
 
 pub(super) struct Control {
     pub source: String,
+    pub admission_sessions: std::collections::HashSet<String>,
     pub stop: CancellationToken,
     pub done: CancellationToken,
 }
@@ -52,6 +53,7 @@ impl Scope {
             .append(&id, Expected::Seq(-1), vec![change(&record)])?;
         let control = Arc::new(Control {
             source: source.clone(),
+            admission_sessions: super::admission_authority::binding_sessions(&authority.bindings),
             stop: inner.closed.child_token(),
             done: CancellationToken::new(),
         });

@@ -33,6 +33,31 @@ pub(super) struct Binding {
     guards: Vec<Boundary>,
 }
 
+pub(super) fn binding_sessions(bindings: &[Binding]) -> HashSet<String> {
+    bindings
+        .iter()
+        .flat_map(|binding| {
+            std::iter::once(binding.id.clone())
+                .chain(binding.guards.iter().map(|guard| guard.id.clone()))
+        })
+        .collect()
+}
+
+pub(super) fn origin_scoped(
+    data: &serde_json::Value,
+    ids: &HashSet<String>,
+) -> Result<bool, String> {
+    let Some(value) = data
+        .get("admission_bindings")
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(false);
+    };
+    let bindings: Vec<Binding> =
+        serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+    Ok(!binding_sessions(&bindings).is_disjoint(ids))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Boundary {
     id: String,
@@ -173,8 +198,8 @@ impl Runtime {
             .expect("captured source")
             .id
             .as_str();
+        inherited.verify(self, inherited_source)?;
         if inherited_source == source {
-            inherited.verify(self, source)?;
             return Ok(Some(inherited));
         }
         let mut current = self.snapshot_child_admission(source)?;
@@ -183,17 +208,8 @@ impl Runtime {
             .iter()
             .position(|binding| binding.id == inherited_source)
         else {
-            if inherited
-                .bindings
-                .iter()
-                .any(|binding| binding.id == source)
-            {
-                inherited.verify(self, inherited_source)?;
-                return Ok(Some(current.with_target(inherited)));
-            }
-            return Ok(None);
+            return Ok(Some(current.with_target(inherited)));
         };
-        inherited.verify(self, inherited_source)?;
         // Until handoff, nested callback work still belongs to the original launch source.
         current
             .bindings
@@ -292,12 +308,7 @@ impl Inner {
 
 fn chain_is_open(conn: &Connection, bindings: &[Binding]) -> Result<bool, StoreError> {
     for binding in bindings {
-        let closed = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND type=?2
-             AND json_extract(data,'$.closed')=1)",
-            params![binding.id, FENCED],
-            |row| row.get::<_, bool>(0),
-        )?;
+        let closed = super::subtree_reopen::active_scope(conn, &binding.id)?.is_some();
         if closed {
             return Ok(false);
         }
@@ -320,7 +331,10 @@ pub(super) fn existing_target_open(conn: &Connection, id: &str) -> Result<bool, 
     chain_is_open(conn, &chain)
 }
 
-fn snapshot_chain(conn: &Connection, source: &str) -> Result<Option<Vec<Binding>>, StoreError> {
+pub(super) fn snapshot_chain(
+    conn: &Connection,
+    source: &str,
+) -> Result<Option<Vec<Binding>>, StoreError> {
     let mut next = Some(source.to_string());
     let mut seen = HashSet::new();
     let mut bindings = Vec::new();
@@ -451,6 +465,12 @@ fn operations_current(conn: &Connection, binding: &Binding) -> Result<bool, Stor
 }
 
 pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    if event.kind == super::subtree_stop::STARTED {
+        return super::subtree_stop::project_started(tx, event);
+    }
+    if event.kind == super::subtree_reopen::REOPENED {
+        return super::subtree_reopen::project(tx, event);
+    }
     if event.kind == super::child_ownership::CHANGED {
         return super::child_ownership::project(tx, event);
     }

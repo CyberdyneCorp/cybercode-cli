@@ -44,7 +44,7 @@ OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat endpoints are su
 | Clients | TUI, noninteractive `exec`, background service, HTTP/SSE/WebSocket/stdio API and generated TypeScript SDK | Available; complete P1 client surfaces remain |
 | Subagents | Foreground/background children, named resume, forked context, structured results, approvals and task controls | Partial P1 |
 | Worktrees | Managed startup and isolated children, setup journals, file summaries, cleanup and reviewed setup retry | Partial P1; public lifecycle and unknown-effect recovery remain |
-| Cancellation | Durable admission closure, exclusive child result ownership and bounded local subtree-stop reports | Partial P1; reopening, cross-process actor cancellation and exec/TUI adoption remain |
+| Cancellation | Durable admission closure, exclusive child result ownership, bounded stop reports and matched reopening | Partial P1; unknown-effect recovery, cross-process actor cancellation and exec/TUI adoption remain |
 | Spending | Durable own/descendant billing, atomic usage API, TUI `/cost` and soft Session budgets | Partial P1; reservations, daily caps and complete enforcement/displays remain |
 | Operations | Database-plus-artifact backup, verify/restore, retention, logs and diagnostics | Available; broader observability remains |
 

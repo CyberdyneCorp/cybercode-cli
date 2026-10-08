@@ -41,6 +41,7 @@ struct Record {
 }
 pub(super) struct Control {
     pub source: String,
+    pub admission_sessions: std::collections::HashSet<String>,
     pub stop: CancellationToken,
     pub done: CancellationToken,
 }
@@ -205,6 +206,7 @@ impl Runtime {
         };
         let control = Arc::new(Control {
             source: parent.into(),
+            admission_sessions: super::admission_authority::binding_sessions(&authority.bindings),
             stop: self.inner.closed.child_token(),
             done: CancellationToken::new(),
         });

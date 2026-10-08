@@ -59,6 +59,8 @@ const ALL: &[&str] = &[
     super::activity::CHANGED,
     super::child_ownership::CHANGED,
     super::subtree_stop::SETTLED,
+    super::subtree_stop::STARTED,
+    super::subtree_reopen::REOPENED,
     WORKTREE_REBOUND,
     WORKTREE_SETUP_READY,
     INBOX_UPDATED,
