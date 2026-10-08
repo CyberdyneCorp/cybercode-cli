@@ -13,6 +13,48 @@ pub fn merge_layer(base: &mut Value, overlay: &Value, source: &str, sources: &mu
     merge_value(base, overlay, "", source, sources);
 }
 
+pub fn merge_profile(base: &mut Value, overlay: &Value, name: &str, sources: &mut Sources) {
+    let origins = profile_hook_origins(base, overlay, name, sources);
+    merge_layer(base, overlay, &format!("profile:{name}"), sources);
+    sources.extend(origins);
+}
+
+fn profile_hook_origins(base: &Value, overlay: &Value, name: &str, sources: &Sources) -> Sources {
+    let mut origins = Sources::new();
+    let Some(events) = overlay.get("hooks").and_then(Value::as_object) else {
+        return origins;
+    };
+    let profile = child_pointer("/profiles", name);
+    for (event, groups) in events {
+        let Some(groups) = groups
+            .as_array()
+            .filter(|_| super::hooks::is_event_name(event))
+        else {
+            continue;
+        };
+        let target = child_pointer("/hooks", event);
+        let offset = base
+            .pointer(&target)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        for index in 0..groups.len() {
+            let original = format!("{profile}{target}/{index}");
+            let destination = format!("{target}/{}", offset + index);
+            let prefix = format!("{original}/");
+            for (pointer, source) in sources
+                .range(original.clone()..)
+                .take_while(|(pointer, _)| *pointer == &original || pointer.starts_with(&prefix))
+            {
+                origins.insert(
+                    format!("{destination}{}", &pointer[original.len()..]),
+                    source.clone(),
+                );
+            }
+        }
+    }
+    origins
+}
+
 fn merge_value(
     slot: &mut Value,
     overlay: &Value,
@@ -107,8 +149,13 @@ fn record(value: &Value, pointer: &str, source: &str, sources: &mut Sources) {
 }
 
 fn hook_event(pointer: &str) -> bool {
+    if let Some(event) = pointer.strip_prefix("/hooks/") {
+        return super::hooks::is_event_name(event);
+    }
     pointer
-        .strip_prefix("/hooks/")
+        .strip_prefix("/profiles/")
+        .and_then(|rest| rest.split_once('/'))
+        .and_then(|(_, rest)| rest.strip_prefix("hooks/"))
         .is_some_and(super::hooks::is_event_name)
 }
 

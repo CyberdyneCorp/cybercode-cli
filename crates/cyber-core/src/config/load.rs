@@ -331,7 +331,7 @@ fn apply_profile(
         map.remove("policy");
     }
     let label = format!("profile:{name}");
-    merge::merge_layer(value, &overlay, &label, sources);
+    merge::merge_profile(value, &overlay, &name, sources);
     Some(label)
 }
 

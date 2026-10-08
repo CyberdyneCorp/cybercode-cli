@@ -490,6 +490,91 @@ fn file_substitution_resolves_relative_to_declaring_document() {
 }
 
 #[test]
+fn selected_profile_hooks_keep_all_contributions_and_file_origins() {
+    let f = Fixture::new();
+    let name = "ci~/portable";
+    let group = |command: &str| json!({"hooks":[{"type":"command","command":command}]});
+    let global = f.write(
+        "global:cyber.jsonc",
+        &json!({"hooks":{"PostToolUse":[group("ordinary")]},
+            "profiles":{name:{"mode":"dont-ask","hooks":{
+                "PostToolUse":[group("global")],"PreToolUse":[group("second-event")]}}}})
+        .to_string(),
+    );
+    let project = f.write(
+        "cyber.jsonc",
+        &json!({"profiles":{name:{"hooks":{"PostToolUse":[group("project")]}}}}).to_string(),
+    );
+    let local = f.write(
+        ".cyber/cyber.local.jsonc",
+        &json!({"profiles":{name:{"hooks":{"PostToolUse":[group("local")]}}}}).to_string(),
+    );
+    let mut req = f.request(&f.repo, &[]);
+    req.profile = Some(name);
+    let untrusted = config::load(&req).unwrap();
+    assert_eq!(
+        untrusted.value["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    f.approve_current();
+    let resolved = config::load(&req).unwrap();
+    let settings = config::HookSettings::from_config(&resolved.value).unwrap();
+    let commands: Vec<_> = settings.events["PostToolUse"]
+        .iter()
+        .map(|group| group.hooks[0].command.as_deref().unwrap())
+        .collect();
+    assert_eq!(commands, ["ordinary", "global", "project", "local"]);
+    for (index, (path, scope)) in [
+        (&global, "global"),
+        (&global, "global"),
+        (&project, "project"),
+        (&local, "project"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let pointer = format!("/hooks/PostToolUse/{index}/hooks/0");
+        let origin = format!("{scope}:{}", path.display());
+        assert_eq!(resolved.sources[&pointer], origin);
+        assert_eq!(resolved.sources[&format!("{pointer}/command")], origin);
+    }
+    assert_eq!(resolved.sources["/mode"], format!("profile:{name}"));
+    assert_eq!(
+        resolved.sources["/hooks/PreToolUse/0/hooks/0"],
+        format!("global:{}", global.display())
+    );
+    f.write(
+        ".cyber/cyber.local.jsonc",
+        &json!({"profiles":{name:{"hooks":{"PostToolUse":[]}}}}).to_string(),
+    );
+    f.approve_current();
+    let resolved = config::load(&req).unwrap();
+    assert_eq!(
+        resolved.value["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    f.write(
+        "cyber.jsonc",
+        &json!({"profiles":{name:{"hooks":{"PostToolUse":[group("changed")]}}}}).to_string(),
+    );
+    let untrusted = config::load(&req).unwrap();
+    assert!(!untrusted.trust.trusted);
+    assert_eq!(
+        untrusted.value["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
 fn profile_is_merged_above_project_layers() {
     let f = Fixture::new();
     f.write(

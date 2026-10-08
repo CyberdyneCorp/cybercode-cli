@@ -1,6 +1,7 @@
 - [x] Add typed hook definitions, event/handler validation, defaults and selector checks through real configuration loading. Native acceptance and hook execution remain open.
 - [ ] Preserve all hook scopes, declared order and per-definition provenance; enforce managed-only policy.
-  - [x] Append top-level event groups from loaded global/project/local layers without configuration deduplication; retain indexed group, handler and leaf sources. Verify actual trust-gated configuration resolution and empty-array non-removal. Managed/plugin collection, final execution scope order, selected-profile origin retention and managed-only authority remain required.
+  - [x] Append top-level event groups from loaded global/project/local layers without configuration deduplication; retain indexed group, handler and leaf sources. Verify actual trust-gated configuration resolution and empty-array non-removal.
+  - [x] Accumulate profile event groups across files and preserve each selected group/handler/field origin after appending to ordinary definitions. Cover escaped profile names, initially absent events, empty later arrays and changed-checkout withholding. Managed/plugin collection, final execution scope order and managed-only authority remain required.
 - [ ] Implement individual handler digest trust, invocation-scoped exec trust and changed-definition refusal.
 - [ ] Implement event envelopes and every P1 lifecycle event under durable runtime ownership.
 - [ ] Implement command, HTTP, prompt and MCP-tool handlers with required transport, sandbox and usage semantics.

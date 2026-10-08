@@ -7,6 +7,7 @@ Project executable configuration is currently withheld until checkout trust is a
 - Start with one typed hook configuration model shared by validation and future execution. Validate known events, four P1 handler types, required handler fields, timeout/control types and selector syntax. Configuration validation performs no effects.
 - Keep untrusted project/local definitions withheld before interpretation. Checkout trust is not a substitute for the required individual handler-digest approvals.
 - Add ordered scope contributions with per-definition provenance before dispatch; ordinary last-value replacement must not discard earlier hooks.
+- Accumulate event arrays inside named profiles as well as top-level hooks. On profile selection, remap indexed hook origins into their new appended positions; ordinary profile settings retain their existing profile labels. Source paths remain necessary for later scope classification and individual handler trust.
 - Runtime admission owns prompt hooks; the tool host owns tool hooks and revalidation. Permission denies and protected ceilings remain independent of hook allows. Every execution needs a durable receipt and cancellation owner.
 - Implement process-tree ownership, sandbox selection and bounded IO before command execution. HTTP, evaluator and MCP handlers share the event and decision model while retaining their own authentication and usage boundaries.
 - Deliver the remaining lifecycle events, trust/viewer/test CLI, plugin process protocol/package and MCP OAuth/search as subsequent increments under this same change.

@@ -31,3 +31,9 @@
 #### Scenario: Managed-only policy
 - **WHEN** the organization policy sets `hooks.managed_only: true`
 - **THEN** project, local, global and plugin hooks SHALL be skipped and a single notice SHALL list how many were skipped
+
+#### Scenario: Selected profile preserves hook origins
+- **WHEN** global, project and local files contribute hooks to the same selected profile
+- **THEN** all contributions SHALL be appended to ordinary hook definitions
+- **AND** every selected group, handler and handler field SHALL retain its defining file origin rather than a generic profile label
+- **AND** untrusted or changed project definitions SHALL remain withheld and an empty later profile event array SHALL NOT erase earlier definitions
