@@ -250,7 +250,7 @@ fn roots(ctx: &Ctx<'_>, sandbox: &SandboxConfig, tmp: &Path, ambient_temp: bool)
     unique
 }
 
-fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
+pub(crate) fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
     let dir = ctx.host.opts.temp_dir.join(&ctx.inv.session_id);
     std::fs::create_dir_all(&dir)
         .map_err(|e| failed(format!("Could not create {}: {e}", dir.display())))?;

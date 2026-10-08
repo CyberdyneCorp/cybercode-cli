@@ -11,12 +11,24 @@ use super::{Name, RepositoryLock, Settings};
 
 pub type GitFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Output>> + Send + 'a>>;
 
+pub type InspectionFuture<'a> =
+    Pin<Box<dyn Future<Output = io::Result<super::inspection::Inspection>> + Send + 'a>>;
+
 /// Runtime implementations must provide sandboxed, cancellation-owned Git execution
 /// with ambient Git overrides removed. The core manager never spawns processes.
 /// On Windows, long linked worktrees execute from their verified metadata directory
 /// with an explicit checkout destination. Sandbox scope must follow that destination.
 pub trait GitExecution: Send + Sync {
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a>;
+
+    fn inspect<'a>(&'a self, _target: &'a super::inspection::Target) -> InspectionFuture<'a> {
+        Box::pin(async {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Owned repository inspection is unavailable",
+            ))
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +65,7 @@ pub enum ListedWorktree {
     Invalid { name: String, error: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorktreeStatus {
     pub dirty: bool,
     pub ahead: u64,
@@ -103,6 +115,15 @@ impl Repository {
         execution: &dyn GitExecution,
         managed: &Managed,
     ) -> io::Result<WorktreeStatus> {
+        if super::inspection::required(managed) {
+            return Ok(super::inspection::inspect(
+                execution,
+                managed,
+                super::inspection::Operation::Status,
+            )
+            .await?
+            .status);
+        }
         let dirty = !git(
             execution,
             &managed.path,

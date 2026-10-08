@@ -3,6 +3,7 @@
 mod activity;
 mod changes;
 mod includes;
+pub mod inspection;
 mod location;
 mod removal;
 mod repository;
@@ -12,7 +13,8 @@ pub use changes::{ChangedFile, Changes};
 pub use includes::IncludedFile;
 pub use removal::{RemovalActivity, RemovalPhase, RemovalRecord};
 pub use repository::{
-    Branch, GitExecution, GitFuture, ListedWorktree, Managed, Repository, WorktreeStatus,
+    Branch, GitExecution, GitFuture, InspectionFuture, ListedWorktree, Managed, Repository,
+    WorktreeStatus,
 };
 pub use setup::{SetupEvent, SetupExecution, SetupFuture, SetupOutcome, SetupSink, SetupStream};
 

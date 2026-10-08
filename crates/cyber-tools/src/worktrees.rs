@@ -1,6 +1,7 @@
 //! Owned sandboxed Git creation and journaled setup for managed worktree Sessions.
 
 mod child;
+mod inspection;
 mod recovery;
 pub(crate) use child::ChildWorktree;
 
@@ -713,6 +714,21 @@ impl Execution<'_> {
 }
 
 impl GitExecution for Execution<'_> {
+    fn inspect<'a>(
+        &'a self,
+        target: &'a cyber_core::worktrees::inspection::Target,
+    ) -> cyber_core::worktrees::InspectionFuture<'a> {
+        Box::pin(async move {
+            GitPort {
+                ctx: self.ctx,
+                writable: None,
+                credentials: &self.credentials,
+            }
+            .inspect(target)
+            .await
+        })
+    }
+
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a> {
         Box::pin(async move {
             GitPort {
@@ -744,6 +760,13 @@ impl cyber_server::runtime::LocationGuard for WorktreeLease {
 }
 
 impl GitExecution for GitPort<'_> {
+    fn inspect<'a>(
+        &'a self,
+        target: &'a cyber_core::worktrees::inspection::Target,
+    ) -> cyber_core::worktrees::InspectionFuture<'a> {
+        Box::pin(inspection::run(self, target))
+    }
+
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a> {
         Box::pin(async move {
             let mut arguments = vec![

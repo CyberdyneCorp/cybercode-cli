@@ -367,6 +367,12 @@ pub(super) async fn changed_ignored_files(
     execution: &dyn GitExecution,
     managed: &Managed,
 ) -> io::Result<Vec<PathBuf>> {
+    if super::inspection::required(managed) {
+        let report =
+            super::inspection::inspect(execution, managed, super::inspection::Operation::Ignored)
+                .await?;
+        return filter_ignored_files(managed, report.ignored);
+    }
     let paths = git(
         execution,
         &managed.path,
@@ -379,13 +385,26 @@ pub(super) async fn changed_ignored_files(
         ],
     )
     .await?;
-    let root = Dir::open_ambient_dir(&managed.path, cap_std::ambient_authority())?;
-    let mut changed = Vec::new();
-    for path in paths
+    let paths = paths
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
-    {
-        let path = Path::new(std::str::from_utf8(path).map_err(invalid)?);
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(PathBuf::from)
+                .map_err(invalid)
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    filter_ignored_files(managed, paths)
+}
+
+pub(super) fn filter_ignored_files(
+    managed: &Managed,
+    paths: Vec<PathBuf>,
+) -> io::Result<Vec<PathBuf>> {
+    let root = Dir::open_ambient_dir(&managed.path, cap_std::ambient_authority())?;
+    let mut changed = Vec::new();
+    for path in &paths {
+        let path = path.as_path();
         let Some(included) = managed.included.iter().find(|file| file.path == path) else {
             changed.push(path.to_owned());
             continue;

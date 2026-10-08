@@ -132,6 +132,9 @@ jobs:
       - name: Native auxiliary web model usage
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test web_skills
+      - name: Native repository inspection helper protocol
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-sandbox --test git_inspection
       - name: Native long-root library inspection candidate
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test worktree_repository library_status

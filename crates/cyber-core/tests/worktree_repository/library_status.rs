@@ -134,3 +134,181 @@ fn library_status_reads_long_worktrees_without_changing_repository_files() {
     assert!(changes[0].1.is_index_modified());
     assert!(changes[0].1.is_wt_deleted());
 }
+
+fn request(
+    fixture: &Fixture,
+    repository: &Repository,
+    managed: &cyber_core::worktrees::Managed,
+) -> cyber_core::worktrees::inspection::Request {
+    use cyber_core::worktrees::inspection::{OVERRIDES, Operation, Request, Target};
+    std::fs::write(&fixture.execution.config, OVERRIDES).unwrap();
+    let marker = std::fs::read_to_string(managed.path.join(".git")).unwrap();
+    Request {
+        target: Target {
+            metadata: Path::new(marker.trim_end().strip_prefix("gitdir: ").unwrap())
+                .canonicalize()
+                .unwrap(),
+            common_dir: repository.common_dir.clone(),
+            worktree: managed.path.clone(),
+            branch: managed.branch.clone(),
+            base: managed.base.clone(),
+            operation: Operation::Changes,
+        },
+        overrides: fixture.execution.config.clone(),
+    }
+}
+
+#[test]
+fn inspection_engine_reports_changes_and_ignored_without_writing_metadata() {
+    use cyber_core::worktrees::inspection::read;
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join(".gitignore"), ".env\n").unwrap();
+    fixture.git(&["add", ".gitignore"]);
+    fixture.git(&["commit", "--quiet", "-m", "ignore environment"]);
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("inspection").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let request = request(&fixture, &repository, &managed);
+    let paths = [
+        request.target.metadata.join("index"),
+        request.target.metadata.join("gitdir"),
+        repository.common_dir.join("config"),
+        managed.path.join(".git"),
+    ];
+    let before: Vec<_> = paths
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    assert!(!read(&request).unwrap().status.dirty);
+    std::fs::write(
+        managed.path.join("tracked.txt"),
+        "replacement\nsecond line\n",
+    )
+    .unwrap();
+    std::fs::write(managed.path.join("new.txt"), "untracked\n").unwrap();
+    std::fs::write(managed.path.join(".env"), "ignored secret\n").unwrap();
+    let report = read(&request).unwrap();
+    assert_eq!(report.target, request.target);
+    assert!(report.status.dirty);
+    assert_eq!(report.files.len(), 1);
+    assert_eq!(report.files[0].file, "tracked.txt");
+    assert_eq!(report.files[0].additions, Some(2));
+    assert_eq!(report.files[0].deletions, Some(1));
+    assert_eq!(report.untracked, [std::path::PathBuf::from("new.txt")]);
+    assert_eq!(report.ignored, [std::path::PathBuf::from(".env")]);
+    for (path, expected) in paths.iter().zip(before) {
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            expected,
+            "{} changed",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn inspection_engine_refuses_changed_identity_and_nonfixed_overrides() {
+    use cyber_core::worktrees::inspection::{OVERRIDES, read};
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("inspection-refusal").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let request = request(&fixture, &repository, &managed);
+    let mut changed = request.clone();
+    changed.target.branch = "foreign".into();
+    assert!(
+        read(&changed)
+            .unwrap_err()
+            .to_string()
+            .contains("branch identity")
+    );
+    changed = request.clone();
+    changed.target.common_dir = fixture.data.clone();
+    assert!(
+        read(&changed)
+            .unwrap_err()
+            .to_string()
+            .contains("repository identity")
+    );
+    std::fs::write(
+        &request.overrides,
+        format!("{OVERRIDES}[include]\npath = arbitrary\n"),
+    )
+    .unwrap();
+    assert!(
+        read(&request)
+            .unwrap_err()
+            .to_string()
+            .contains("fixed read-only policy")
+    );
+    std::fs::write(&request.overrides, OVERRIDES).unwrap();
+    std::fs::write(
+        request.target.metadata.join("gitdir"),
+        fixture.repo.join(".git").to_str().unwrap(),
+    )
+    .unwrap();
+    assert!(read(&request).is_err());
+}
+
+#[test]
+fn owned_inspection_helper_reads_long_worktree_changes_and_ignored_files() {
+    use super::{GitExecution, block_on};
+    use cyber_core::worktrees::inspection::Operation;
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join(".gitignore"), ".env\n").unwrap();
+    fixture.git(&["add", ".gitignore"]);
+    fixture.git(&["commit", "--quiet", "-m", "ignore environment"]);
+    let repository = fixture.repository();
+    let settings = Settings {
+        root: Some(
+            fixture
+                .data
+                .join("segment".repeat(15))
+                .join("another".repeat(15)),
+        ),
+        ..Default::default()
+    };
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("owned-inspection").unwrap(),
+            &settings,
+        )
+        .unwrap();
+    assert!(managed.path.as_os_str().len() > 260);
+    let mut request = request(&fixture, &repository, &managed);
+    let clean = block_on(fixture.execution.inspect(&request.target)).unwrap();
+    assert!(!clean.status.dirty);
+    std::fs::write(managed.path.join("tracked.txt"), "modified\n").unwrap();
+    std::fs::write(managed.path.join("new.txt"), "untracked\n").unwrap();
+    std::fs::write(managed.path.join(".env"), "ignored\n").unwrap();
+    let report = block_on(fixture.execution.inspect(&request.target)).unwrap();
+    assert!(report.status.dirty);
+    assert_eq!(report.files[0].file, "tracked.txt");
+    assert_eq!(report.untracked, [std::path::PathBuf::from("new.txt")]);
+    assert_eq!(report.ignored, [std::path::PathBuf::from(".env")]);
+    request.target.operation = Operation::Status;
+    let report = block_on(fixture.execution.inspect(&request.target)).unwrap();
+    assert!(report.status.dirty);
+    assert!(report.files.is_empty());
+    assert!(report.ignored.is_empty());
+    // On Windows these public reads exercise production routing to the helper.
+    assert!(
+        block_on(repository.status(&fixture.execution, &managed))
+            .unwrap()
+            .dirty
+    );
+    let changes = block_on(repository.changes(&fixture.execution, &managed)).unwrap();
+    assert!(changes.dirty);
+    assert_eq!(changes.files.len(), 3);
+}

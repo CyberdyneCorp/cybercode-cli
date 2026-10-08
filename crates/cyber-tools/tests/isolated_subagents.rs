@@ -2030,3 +2030,67 @@ async fn named_user_delegation_honors_profile_isolation_and_parent_mode() {
     assert_eq!(completed.result.as_ref().unwrap()["worktree"]["kept"], true);
     assert!(binding.path.join("tracked.txt").exists());
 }
+
+#[tokio::test]
+async fn long_root_child_reports_changes_lists_status_and_resumes_through_owned_execution() {
+    let flow = flow(
+        vec![
+            call(
+                "write",
+                "write",
+                json!({"path":"generated.txt","content":"child change\n"}),
+            ),
+            text("first findings"),
+            text("resumed findings"),
+        ],
+        false,
+    );
+    let root = flow
+        .f
+        .dir
+        .path()
+        .join("segment".repeat(15))
+        .join("another".repeat(15));
+    flow.f.set_config(
+        json!({"permissions":{"agent":"allow","worktree":"allow","edit":"allow"},
+        "worktrees":{"root":root,"keep":"always"}}),
+    );
+    let parent = flow.session("bypass").await;
+    let first = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"implement","name":"long-root",
+        "isolation":"worktree","model":"test/main"}),
+    )
+    .await
+    .unwrap();
+    let path = std::path::Path::new(first["worktree"]["path"].as_str().unwrap());
+    assert!(path.as_os_str().len() > 260);
+    assert_eq!(first["worktree"]["changes"]["additions"], 1);
+    assert_eq!(
+        first["worktree"]["changes"]["files"][0]["file"],
+        "generated.txt"
+    );
+    let listing = flow
+        .f
+        .host
+        .list_worktrees(&flow.f.repo, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(listing.len(), 1);
+    assert!(listing[0].status.as_ref().unwrap().dirty);
+    let resumed = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","resume":"long-root"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumed["worktree"]["id"], first["worktree"]["id"]);
+    assert_eq!(resumed["text"], "resumed findings");
+    assert_eq!(
+        std::fs::read_to_string(path.join("generated.txt")).unwrap(),
+        "child change\n"
+    );
+    assert!(!flow.f.repo.join("generated.txt").exists());
+}

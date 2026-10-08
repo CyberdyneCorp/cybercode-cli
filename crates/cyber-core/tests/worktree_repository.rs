@@ -69,6 +69,41 @@ impl Execution {
 }
 
 impl GitExecution for Execution {
+    fn inspect<'a>(
+        &'a self,
+        target: &'a cyber_core::worktrees::inspection::Target,
+    ) -> cyber_core::worktrees::InspectionFuture<'a> {
+        Box::pin(async move {
+            let helper = std::env::current_exe()?
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join(if cfg!(windows) {
+                    "cyber-sandbox-exec.exe"
+                } else {
+                    "cyber-sandbox-exec"
+                });
+            let overrides = self.config.with_file_name("inspection.config");
+            std::fs::write(&overrides, cyber_core::worktrees::inspection::OVERRIDES)?;
+            let request = cyber_core::worktrees::inspection::Request {
+                target: target.clone(),
+                overrides,
+            };
+            let output = Command::new(helper)
+                .current_dir(&target.metadata)
+                .arg("--git-inspect")
+                .arg(serde_json::to_string(&request)?)
+                .output()?;
+            if !output.status.success() {
+                return Err(io::Error::other(
+                    String::from_utf8_lossy(&output.stderr).into_owned(),
+                ));
+            }
+            Ok(serde_json::from_slice(&output.stdout)?)
+        })
+    }
+
     fn run<'a>(&'a self, directory: &'a Path, args: &'a [OsString]) -> GitFuture<'a> {
         Box::pin(async move {
             let checkout = args

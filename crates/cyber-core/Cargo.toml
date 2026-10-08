@@ -9,6 +9,7 @@ publish.workspace = true
 build = "build.rs"
 
 [dependencies]
+git2 = { version = "0.21.0", default-features = false }
 cap-std = "4.0"
 ignore = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -22,7 +23,6 @@ ulid.workspace = true
 
 [dev-dependencies]
 futures = "0.3"
-git2 = { version = "0.21.0", default-features = false }
 tempfile.workspace = true
 
 [lints]

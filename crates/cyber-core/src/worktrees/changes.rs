@@ -2,11 +2,11 @@
 use super::repository::git;
 use super::{GitExecution, Managed, Repository, RepositoryLock};
 use cap_std::fs::Dir;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangedFile {
     pub file: String,
     pub additions: Option<u64>,
@@ -34,6 +34,49 @@ impl Repository {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
         self.verify_owned(execution, managed).await?;
+        let (status, mut files, untracked, ignored) = if super::inspection::required(managed) {
+            let report = super::inspection::inspect(
+                execution,
+                managed,
+                super::inspection::Operation::Changes,
+            )
+            .await?;
+            let ignored = super::removal::filter_ignored_files(managed, report.ignored)?;
+            (report.status, report.files, report.untracked, ignored)
+        } else {
+            self.git_changes(execution, managed).await?
+        };
+        let root = Dir::open_ambient_dir(&managed.path, cap_std::ambient_authority())?;
+        for path in untracked {
+            files.push(untracked_stats(&root, &path)?);
+        }
+        let dirty_ignored = !ignored.is_empty();
+        for path in ignored {
+            files.push(untracked_stats(&root, &path)?);
+        }
+        files.sort_by(|a, b| a.file.cmp(&b.file));
+        Ok(Changes {
+            additions: files.iter().filter_map(|file| file.additions).sum(),
+            deletions: files.iter().filter_map(|file| file.deletions).sum(),
+            unknown_stats: files
+                .iter()
+                .any(|file| file.additions.is_none() || file.deletions.is_none()),
+            files,
+            dirty: status.dirty || dirty_ignored,
+            ahead: status.ahead,
+            behind: status.behind,
+        })
+    }
+    async fn git_changes(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+    ) -> io::Result<(
+        super::WorktreeStatus,
+        Vec<ChangedFile>,
+        Vec<PathBuf>,
+        Vec<PathBuf>,
+    )> {
         let status = self.git_status(execution, managed).await?;
         let diff = git(
             execution,
@@ -51,7 +94,7 @@ impl Repository {
             ],
         )
         .await?;
-        let mut files = numstat(&diff)?;
+        let files = numstat(&diff)?;
         let untracked = git(
             execution,
             &managed.path,
@@ -63,31 +106,17 @@ impl Repository {
             ],
         )
         .await?;
-        let root = Dir::open_ambient_dir(&managed.path, cap_std::ambient_authority())?;
-        for file in untracked
+        let untracked = untracked
             .split(|byte| *byte == 0)
-            .filter(|file| !file.is_empty())
-        {
-            let path = std::str::from_utf8(file).map_err(io::Error::other)?;
-            files.push(untracked_stats(&root, Path::new(path))?);
-        }
+            .filter(|path| !path.is_empty())
+            .map(|path| {
+                std::str::from_utf8(path)
+                    .map(PathBuf::from)
+                    .map_err(io::Error::other)
+            })
+            .collect::<io::Result<Vec<_>>>()?;
         let ignored = super::removal::changed_ignored_files(execution, managed).await?;
-        let dirty_ignored = !ignored.is_empty();
-        for path in ignored {
-            files.push(untracked_stats(&root, &path)?);
-        }
-        files.sort_by(|a, b| a.file.cmp(&b.file));
-        Ok(Changes {
-            additions: files.iter().filter_map(|file| file.additions).sum(),
-            deletions: files.iter().filter_map(|file| file.deletions).sum(),
-            unknown_stats: files
-                .iter()
-                .any(|file| file.additions.is_none() || file.deletions.is_none()),
-            files,
-            dirty: status.dirty || dirty_ignored,
-            ahead: status.ahead,
-            behind: status.behind,
-        })
+        Ok((status, files, untracked, ignored))
     }
 }
 
