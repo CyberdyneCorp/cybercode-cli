@@ -613,3 +613,184 @@ async fn explicit_pre_hook_ask_cannot_bypass_auto_always_block_through_request_a
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].event, "PreToolUse");
 }
+
+async fn wait_hook_condition(f: &Flow, session: &str, condition: impl Fn() -> bool) {
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !condition() {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    if ready.is_err() {
+        f.runtime.interrupt(session).await.unwrap();
+        f.settle(session).await;
+        panic!("hook concurrency barrier was not reached");
+    }
+}
+fn waiting_command(id: &str) -> Value {
+    json!({"type":"command","id":id,"timeout":10,"command":format!("cat >/dev/null; printf x >> count-{id}; touch started-{id}; while [ ! -f release ] && [ ! -f release-{id} ]; do sleep 0.02; done; printf '{{}}'")})
+}
+
+#[tokio::test]
+async fn post_commands_overlap_up_to_configured_limit_and_deduplicate_at_execution() {
+    let f = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.write("a.txt", "safe");
+    let a = waiting_command("a");
+    hooks(
+        &f,
+        json!({"concurrency":2,"PostToolUse":[{"matcher":"read","hooks":[a.clone(),waiting_command("b"),{"type":"command","command":"cat >/dev/null; touch started-c; printf '{}'"},a]}]}),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "read").await;
+    wait_hook_condition(&f, &session, || {
+        f.f.repo.join("started-a").exists() && f.f.repo.join("started-b").exists()
+    })
+    .await;
+    assert!(
+        !f.f.repo.join("started-c").exists(),
+        "third command exceeded the pool limit"
+    );
+    assert_eq!(f.runtime.hook_executions(&session, 10).unwrap().len(), 2);
+    f.f.write("release-b", "ready");
+    wait_hook_condition(&f, &session, || f.f.repo.join("started-c").exists()).await;
+    assert!(
+        f.runtime
+            .hook_executions(&session, 10)
+            .unwrap()
+            .iter()
+            .any(|record| record.hook_id == "a" && record.status == HookExecutionStatus::Running),
+        "a completed out-of-order result must free its slot before the first handler finishes"
+    );
+    f.f.write("release", "ready");
+    f.settle(&session).await;
+    assert!(f.f.repo.join("started-c").exists());
+    assert_eq!(f.f.read("count-a"), "x");
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 3);
+    assert!(
+        receipts
+            .iter()
+            .all(|record| record.outcome == Some(cyber_core::hooks::HookOutcome::Ok))
+    );
+}
+
+#[tokio::test]
+async fn concurrent_permission_decisions_merge_in_declared_order_after_reverse_completion() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":"a.txt","content":"unsafe"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    let first = json!({"type":"command","id":"first","timeout":10,"command":"cat >/dev/null; touch started-first; while [ ! -f release ]; do sleep 0.02; done; printf '{\"decision\":\"deny\",\"reason\":\"first declared\"}'"});
+    let second = json!({"type":"command","id":"second","command":"cat >/dev/null; printf '{\"decision\":\"deny\",\"reason\":\"second declared\"}'"});
+    hooks(
+        &f,
+        json!({"concurrency":2,"PermissionRequest":[{"matcher":"write","hooks":[first,second]}]}),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "write").await;
+    wait_hook_condition(&f, &session, || {
+        let records = f.runtime.hook_executions(&session, 10).unwrap();
+        records
+            .iter()
+            .any(|r| r.hook_id == "second" && r.status == HookExecutionStatus::Completed)
+            && records
+                .iter()
+                .any(|r| r.hook_id == "first" && r.status == HookExecutionStatus::Running)
+    })
+    .await;
+    f.f.write("release", "ready");
+    f.settle(&session).await;
+    assert!(
+        f.output(&session, "call_write")
+            .await
+            .contains("second: second declared")
+    );
+    assert!(!f.f.repo.join("a.txt").exists());
+    assert!(f.runtime.pending_requests(Some(&session)).is_empty());
+}
+
+#[tokio::test]
+async fn interrupted_concurrent_hooks_settle_launched_owners_without_launching_queued_commands() {
+    let f = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.write("a.txt", "safe");
+    hooks(
+        &f,
+        json!({"concurrency":2,"PostToolUse":[{"matcher":"read","hooks":[waiting_command("a"),waiting_command("b"),{"type":"command","command":"cat >/dev/null; touch queued-effect"}]}]}),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "read").await;
+    wait_hook_condition(&f, &session, || {
+        f.f.repo.join("started-a").exists() && f.f.repo.join("started-b").exists()
+    })
+    .await;
+    f.runtime.interrupt(&session).await.unwrap();
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("queued-effect").exists());
+    let records = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(
+        records
+            .iter()
+            .all(|record| record.status == HookExecutionStatus::Completed
+                && record.acknowledged == Some(true)
+                && record.must_stop)
+    );
+}
+
+#[tokio::test]
+async fn fail_closed_parallel_admission_cancels_siblings_and_retains_original_error() {
+    let f = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.write("a.txt", "safe");
+    let refusal = json!({"type":"command","id":"refusal","timeout":10,"fail_closed":true,"command":"cat >/dev/null; while [ ! -f started-a ]; do sleep 0.02; done; printf '{\"additional_context\":\"not admitted\"}'"});
+    hooks(
+        &f,
+        json!({"concurrency":2,"PostToolUse":[{"matcher":"read","hooks":[waiting_command("a"),refusal,{"type":"command","command":"cat >/dev/null; touch queued-effect"}]}]}),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "read").await;
+    f.settle(&session).await;
+    assert!(
+        f.output(&session, "call_read")
+            .await
+            .contains("hook context/continuation admission unavailable")
+    );
+    assert!(!f.f.repo.join("queued-effect").exists());
+    let records = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(
+        records
+            .iter()
+            .all(|record| record.status == HookExecutionStatus::Completed
+                && record.acknowledged == Some(true))
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.hook_id == "a" && record.must_stop)
+    );
+}

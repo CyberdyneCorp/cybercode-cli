@@ -280,3 +280,25 @@
 - **WHEN** a once command handler has status and completion messages and matches two built-in invocations in one Session
 - **THEN** it SHALL execute only once and publish each configured message once as a transient user notice
 - **AND** those messages SHALL NOT be admitted into the model context
+
+### Requirement: Parallel execution within a group
+(P1) Handlers matching the same event SHALL run concurrently up to `hooks.concurrency` (default 8). Decision merging SHALL still follow declared order, regardless of completion order. Identical `command` strings matched in multiple scopes SHALL run once per event.
+
+#### Scenario: Duplicate command deduplicated
+- **WHEN** the same `command` hook is defined in global and project scope
+- **THEN** it executes once for each event
+
+#### Scenario: Fixed-input pool reuses completed slots
+- **WHEN** two post-tool command handlers occupy a pool of two and the second finishes while the first still waits
+- **THEN** the next matching handler SHALL start in the freed slot without exceeding the configured limit
+- **AND** identical supported commands SHALL still execute once per event
+
+#### Scenario: Concurrent request decisions preserve declared order
+- **WHEN** two PermissionRequest handlers deny and the later declared handler finishes first
+- **THEN** the final merged denial SHALL retain the later declared handler's reason
+
+#### Scenario: Parallel interruption settles owned commands
+- **WHEN** interruption or a fail-closed admission error stops a fixed-input hook event
+- **THEN** launched sibling commands SHALL be cancelled and drained to their acknowledged or explicit unknown outcomes before dispatch returns
+- **AND** queued handlers SHALL NOT launch after event cancellation
+- **AND** a fail-closed error SHALL retain its original refusal rather than being replaced by a sibling's cancellation

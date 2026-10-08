@@ -25,6 +25,8 @@ At `1a2c586`, Linux job `113524213819` fails the command-hook home-write outcome
 
 At `80587be`, Linux job `113541744124` completes successfully, including durable once claims and corrected command/credential-directory confinement. Windows job `113541743939` reports native lint failure and remains running with logs unavailable. CI splits that lint command into a dedicated short job and retains its mandatory outcome in Windows build, so subsequent diagnostics need not wait for all native tests. The lint cause and full Windows acceptance remain open. Local PermissionRequest integration passes 1,148 Rust executions and all-target Clippy, preserving auto always-block gates even for an explicit pre-hook ask; it does not accept all hook lifecycle requirements.
 
+At `9094310`, standalone Windows lint job `113547414708` completes with an unused mutable DirBuilder binding in command scratch preparation. The fix confines mutability to Unix and retains its private directory mode; a portable scratch ownership regression and native CI gate are added. Bounded fixed-input command concurrency now has actual-process pool/refill/order/cancellation tests. Complete pre-tool concurrency, async contexts, remaining event/handler delivery and native acceptance remain open.
+
 Every entry starts unverified at the complete requirement scope; this does not imply its foundations are absent. Acceptance needs implementation links, scenario-level tests, public-client evidence and native gates where required. No percentage is inferred from this checklist.
 
 ### agents-subagents (14)

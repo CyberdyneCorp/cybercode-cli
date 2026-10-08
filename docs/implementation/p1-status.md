@@ -6,6 +6,16 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+## M1.3 bounded fixed-input command concurrency
+
+PermissionRequest and post-tool command handlers now execute through a per-event pool bounded by `hooks.concurrency`. Selection uses their fixed final input; per-event command deduplication remains synchronized. Out-of-order completion frees worker slots immediately, while results merge in declared order. Mandatory stop and fail-closed admission errors cancel event siblings and drain launched owners before returning the original refusal. Queued handlers check cancellation before admission and launch. PreToolUse remains sequential to preserve rewrite-dependent inputs and selectors; its full concurrency model remains required.
+
+Four real-process dispatch regressions prove simultaneous start at a limit of two, no third launch until a slot is free, immediate refill while an earlier handler remains running, duplicate execution once, reverse completion with declared-order denial, owned interruption with no queued effect, and fail-closed refusal that retains its reason while siblings acknowledge termination. This increment does not implement async hooks, other handler transports or all lifecycle owners.
+
+The dedicated [Windows lint job at `9094310`](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/37846150533/job/113547414708) now completes and exposes its exact failure: the scratch DirBuilder is unnecessarily mutable on Windows because only the Unix permission branch mutates it. The binding is now mutable only in that branch; Unix retains 0700. A portable scratch test and native CI step check unique paths, ordinary cleanup and retention for unknown owners. Native lint acceptance of the correction is still required; this does not establish the causes of earlier unavailable-log failures.
+
+Local concurrency validation passes 1,153 Rust workspace test executions (three ignored, 121 suites), workspace all-target Clippy with warnings denied, formatting, SDK generation consistency and all 58 strict specs. Cross-spec lint reports zero errors and 21 warnings. The portable scratch ownership case passes locally; native Windows lint and runtime acceptance remain required.
+
 ## M1.3 command permission-request dispatch
 
 Built-in approval now emits PermissionRequest immediately before publishing a pending user ask. Recorded command handlers receive captured invocation identity, final tool input and the current ask's action, resources, patterns and metadata. Allow answers only that ask without saving a permission rule; deny blocks without a user prompt or tool effect. Event parsing ignores input rewrites. Ordinary hard deny rules and Mode ceilings are evaluated before this boundary, and already allowed calls do not run request handlers.

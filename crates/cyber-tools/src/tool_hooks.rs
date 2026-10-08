@@ -1,7 +1,9 @@
 //! Command hooks at the built-in tool boundary. Other lifecycle owners follow separately.
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use futures::{FutureExt, StreamExt, stream};
 use std::time::Instant;
 
 use cyber_core::config::Resolved;
@@ -156,8 +158,14 @@ impl BuiltinHost {
             helper: self.opts.sandbox_helper.as_deref(),
             credential_env_names: &credentials,
         };
+        if !matches!(event.event(), "PreToolUse" | "PermissionDenied") {
+            return Box::pin(
+                self.dispatch_fixed_hooks(&runner, &runtime, &catalog, &event, subject, cancel),
+            )
+            .await;
+        }
         let mut decision = HookDecision::default();
-        let mut commands = HashSet::new();
+        let commands = Mutex::new(HashSet::new());
         for definition in catalog.definitions {
             if cancel.is_cancelled() {
                 return Err(ToolError::Aborted);
@@ -166,13 +174,13 @@ impl BuiltinHost {
             if !definition.matches_event(&event, subject, &paths) {
                 continue;
             }
-            let Some(mut report) = self
+            let Some(report) = self
                 .run_matching_hook(
                     &runner,
                     &runtime,
                     &definition,
                     &event,
-                    &mut commands,
+                    &commands,
                     cancel.clone(),
                 )
                 .await?
@@ -180,36 +188,99 @@ impl BuiltinHost {
                 continue;
             };
             self.observe_hook_report(&event, &definition, &report)?;
-            if matches!(
-                report.decision.decision,
-                Some(HookAction::Deny | HookAction::Block)
-            ) {
-                report.decision.reason = Some(format!(
-                    "{}: {}",
-                    definition
-                        .handler
-                        .id
-                        .as_deref()
-                        .unwrap_or(&definition.digest),
-                    report.decision.reason.as_deref().unwrap_or("policy")
-                ));
-            }
-            decision.merge(report.decision);
+            merge_decision(&definition, report, &mut decision);
             if let Some(input) = decision.updated_input.clone() {
                 event = event.with_tool_input(input).map_err(ToolError::Failed)?;
             }
         }
         Ok(decision)
     }
+    async fn dispatch_fixed_hooks(
+        &self,
+        runner: &HookCommandRunner<'_>,
+        runtime: &cyber_server::runtime::Runtime,
+        catalog: &HookCatalog,
+        event: &HookEvent,
+        subject: &str,
+        cancel: CancellationToken,
+    ) -> Result<HookDecision, ToolError> {
+        let stop = cancel.child_token();
+        let commands = Mutex::new(HashSet::new());
+        let failure = Mutex::new(None);
+        let paths = target_paths(event, &self.opts.home);
+        let definitions = catalog
+            .definitions
+            .iter()
+            .filter(|definition| definition.matches_event(event, subject, &paths));
+        let mut executions = Vec::new();
+        for (index, definition) in definitions.enumerate() {
+            let stop = &stop;
+            let commands = &commands;
+            let failure = &failure;
+            executions.push(
+                async move {
+                    let result = self
+                        .run_matching_hook(
+                            runner,
+                            runtime,
+                            definition,
+                            event,
+                            commands,
+                            stop.clone(),
+                        )
+                        .await
+                        .and_then(|report| {
+                            if let Some(report) = &report {
+                                self.observe_hook_report(event, definition, report)?;
+                            }
+                            Ok(report)
+                        });
+                    if let Err(error) = &result {
+                        let mut first = failure.lock().unwrap_or_else(|poison| poison.into_inner());
+                        if first.is_none() {
+                            *first = Some(error.clone());
+                            stop.cancel();
+                        }
+                    }
+                    (index, definition, result)
+                }
+                .boxed(),
+            );
+        }
+        let mut reports = stream::iter(executions)
+            .buffer_unordered(catalog.settings.concurrency)
+            .collect::<Vec<_>>()
+            .await;
+        // Drain all launched siblings before returning; never drop their native owners
+        // merely because an earlier ordered result refused admission.
+        if let Some(error) = failure
+            .into_inner()
+            .unwrap_or_else(|poison| poison.into_inner())
+        {
+            return Err(error);
+        }
+        reports.sort_by_key(|(index, _, _)| *index);
+        let mut decision = HookDecision::default();
+        for (_, definition, report) in reports {
+            if let Some(report) = report? {
+                merge_decision(definition, report, &mut decision);
+            }
+        }
+        Ok(decision)
+    }
+
     async fn run_matching_hook(
         &self,
         runner: &HookCommandRunner<'_>,
         runtime: &cyber_server::runtime::Runtime,
         definition: &HookDefinition,
         event: &HookEvent,
-        commands: &mut HashSet<String>,
+        commands: &Mutex<HashSet<String>>,
         cancel: CancellationToken,
     ) -> Result<Option<HookCommandReport>, ToolError> {
+        if cancel.is_cancelled() {
+            return Err(ToolError::Aborted);
+        }
         let trusted = definition
             .is_trusted(&runner.resolved.trust.checkout_root, runner.trust, None)
             .map_err(|error| ToolError::Failed(error.to_string()))?;
@@ -236,7 +307,10 @@ impl BuiltinHost {
             Err("Hook handler type or async scheduling is not implemented".to_string())
         } else {
             if let Some(command) = &definition.handler.command
-                && !commands.insert(command.clone())
+                && !commands
+                    .lock()
+                    .map_err(|_| ToolError::Failed("Hook command scheduling lock poisoned".into()))?
+                    .insert(command.clone())
             {
                 return Ok(None);
             }
@@ -313,6 +387,28 @@ impl BuiltinHost {
         }
         Ok(())
     }
+}
+
+fn merge_decision(
+    definition: &HookDefinition,
+    mut report: HookCommandReport,
+    decision: &mut HookDecision,
+) {
+    if matches!(
+        report.decision.decision,
+        Some(HookAction::Deny | HookAction::Block)
+    ) {
+        report.decision.reason = Some(format!(
+            "{}: {}",
+            definition
+                .handler
+                .id
+                .as_deref()
+                .unwrap_or(&definition.digest),
+            report.decision.reason.as_deref().unwrap_or("policy")
+        ));
+    }
+    decision.merge(report.decision);
 }
 
 fn event(kind: &str, inv: &Invocation, extra: Value) -> Result<HookEvent, ToolError> {

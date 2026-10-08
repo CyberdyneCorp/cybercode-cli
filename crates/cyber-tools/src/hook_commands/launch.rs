@@ -370,7 +370,9 @@ impl Scratch {
     fn new(parent: &Path) -> std::io::Result<Self> {
         std::fs::create_dir_all(parent)?;
         let path = parent.join(format!("hook-{}", ulid::Ulid::new()));
-        let mut builder = std::fs::DirBuilder::new();
+        let builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let mut builder = builder;
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
@@ -389,5 +391,38 @@ impl Drop for Scratch {
         if self.cleanup {
             let _ = std::fs::remove_dir_all(&self.path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Scratch;
+
+    #[test]
+    fn scratch_creation_and_cleanup_preserve_unknown_owner_evidence() {
+        let parent = tempfile::tempdir().unwrap();
+        let ordinary = Scratch::new(parent.path()).unwrap();
+        let mut unknown = Scratch::new(parent.path()).unwrap();
+        assert_ne!(ordinary.path, unknown.path);
+        assert_eq!(ordinary.path.parent(), Some(parent.path()));
+        assert_eq!(unknown.path.parent(), Some(parent.path()));
+        assert!(ordinary.path.is_dir() && unknown.path.is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [&ordinary.path, &unknown.path] {
+                assert_eq!(
+                    std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o700
+                );
+            }
+        }
+        let ordinary_path = ordinary.path.clone();
+        let unknown_path = unknown.path.clone();
+        unknown.cleanup = false;
+        drop(ordinary);
+        drop(unknown);
+        assert!(!ordinary_path.exists());
+        assert!(unknown_path.is_dir());
     }
 }

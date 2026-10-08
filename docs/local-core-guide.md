@@ -256,4 +256,6 @@ Matching command `PermissionRequest` hooks now receive the final tool input and 
 
 Command handlers with `once: true` claim their effective digest once per Session through durable receipt admission. Restart, cancellation and unknown outcomes retain the claim; changed definitions need fresh trust and have a new digest. `status_message` and `system_message` appear as transient user notices while running and after acknowledged settlement, without entering model context.
 
-Other lifecycle events, remote tools, HTTP/prompt/MCP handlers, async and concurrency scheduling, context admission, Windows command launch, `cyber hooks test`, the TUI viewer, public execution history and managed/plugin collection remain under implementation. These review commands execute no handlers.
+Command handlers for `PermissionRequest`, `PostToolUse` and `PostToolUseFailure` now share a per-event pool bounded by `hooks.concurrency`. Finished handlers free their slots immediately; decisions still merge in declared order. A mandatory stop or fail-closed admission error cancels siblings and waits for launched owners to settle. Pre-tool handlers remain sequential so rewrites can drive later input and selectors; complete pre-tool concurrency remains open.
+
+Other lifecycle events, remote tools, HTTP/prompt/MCP handlers, async scheduling, pre-tool concurrency, context admission, Windows command launch, `cyber hooks test`, the TUI viewer, public execution history and managed/plugin collection remain under implementation. These review commands execute no handlers.
