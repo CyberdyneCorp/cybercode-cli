@@ -3,7 +3,8 @@
   - [x] Add directory-bound existing/create admission, private Unix scopes/files, no-follow reads, bounded catalogs/index prefixes, exclusive per-scope claims and pending-transaction read fencing. Verify actual independent/cross-process ownership and process-death release, invalid entries and alias rejection. This read-side foundation does not implement note/index mutation or recovery; Windows permissions and full native acceptance remain open.
   - [x] Add Unix journaled write/update/delete with explicit recovery, synced preparation, before/after fingerprints, create-only installation, retained original inodes and conflict fencing. Verify abrupt owner death, partial installation, external edits, corrupt evidence and hard-link aliases locally. Windows privacy/durability, conflict-resolution controls and native acceptance remain open.
   - [ ] Implement private project/global storage with cross-process mutation ownership, atomic/recoverable note/index updates and path/symlink confinement.
-  - [ ] Add memory tool operations with permission, settings, hooks, cancellation and output boundaries.
+  - [x] Add local built-in memory tool operations with scope permissions, disabled/read-only/Plan admission, repeated settings validation, normal hooks, cancellation before mutation and joined blocking storage ownership, managed output budgets and a golden. Native Windows mutation support and complete runtime/client acceptance remain open.
+  - [ ] Complete memory tool native acceptance and reviewed unknown-effect reconciliation across platforms.
   - [ ] Add core/memory baseline and Safe Boundary reconciliation with generation, deduplication and staleness instructions.
   - [ ] Add CLI/TUI controls, authenticated HTTP operations/events and generated SDK coverage.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.

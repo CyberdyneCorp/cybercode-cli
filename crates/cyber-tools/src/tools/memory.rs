@@ -1,0 +1,218 @@
+//! Managed memory scopes through the normal permission and hook boundaries.
+use cyber_core::memory::{MemoryDocument, MemorySettings, MemoryStore};
+use cyber_server::runtime::{RetrySafety, ToolDef};
+use futures::future::BoxFuture;
+use serde_json::{Value, json};
+use std::path::Path;
+
+use super::{Tool, ToolError, def, failed, text};
+use crate::host::{BuiltinHost, Ctx};
+use crate::permissions::{Mode, Request};
+
+pub(crate) struct Memory;
+
+pub(crate) fn definition(writable: bool) -> ToolDef {
+    let operations = if writable {
+        vec!["list", "read", "write", "update", "delete"]
+    } else {
+        vec!["list", "read"]
+    };
+    def(
+        "memory",
+        "List or read durable project/global notes. Check existing names and descriptions before saving; write replaces a matching name. content is a complete Markdown document with YAML name, description and type fields. Feedback/project notes need Why and How to apply. Never save secrets or facts derivable from the repository.",
+        json!({"type":"object","required":["operation"],"additionalProperties":false,"properties":{
+            "operation":{"type":"string","enum":operations},
+            "scope":{"type":"string","enum":["project","global"]},
+            "name":{"type":"string"},"content":{"type":"string"}
+        }}),
+        if writable {
+            RetrySafety::Never
+        } else {
+            RetrySafety::ReadOnly
+        },
+        false,
+    )
+}
+
+pub(crate) fn settings(host: &BuiltinHost, location: &Path) -> Result<MemorySettings, ToolError> {
+    let (config, _) = (host.opts.config)(location).map_err(failed)?;
+    MemorySettings::from_config(&config, host.opts.env.as_ref()).map_err(|e| failed(e.to_string()))
+}
+
+impl Tool for Memory {
+    fn def(&self) -> ToolDef {
+        definition(true)
+    }
+
+    fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
+        Box::pin(async move {
+            let operation = text(&ctx.inv.input, "operation");
+            let writable = matches!(operation, "write" | "update" | "delete");
+            check_settings(ctx, writable)?;
+            let scope = ctx
+                .inv
+                .input
+                .get("scope")
+                .and_then(Value::as_str)
+                .unwrap_or("project");
+            validate_input(&ctx.inv.input, operation)?;
+            ctx.authorize(
+                Request {
+                    action: "memory".into(),
+                    resources: vec![scope.into()],
+                    read_only: !writable,
+                    ..Request::default()
+                },
+                vec![scope.into()],
+                json!({"operation":operation,"scope":scope}),
+            )
+            .await?;
+            check_settings(ctx, writable)?;
+            if ctx.cancel.is_cancelled() {
+                return Err(ToolError::Aborted);
+            }
+            let data = ctx
+                .host
+                .opts
+                .tool_output_dir
+                .parent()
+                .ok_or_else(|| failed("Missing memory data directory"))?
+                .to_owned();
+            let location = ctx.location.clone();
+            let input = ctx.inv.input.clone();
+            let cancel = ctx.cancel.clone();
+            let config = ctx.host.opts.config.clone();
+            let env = ctx.host.opts.env.clone();
+            let mode = Mode::parse(&ctx.inv.mode);
+            // Join the actual owner even after cancellation; never orphan a started commit.
+            tokio::task::spawn_blocking(move || {
+                if cancel.is_cancelled() {
+                    return Err(ToolError::Aborted);
+                }
+                let (resolved, _) = config(&location).map_err(failed)?;
+                let current = MemorySettings::from_config(&resolved, env.as_ref())
+                    .map_err(|e| failed(e.to_string()))?;
+                check_enabled(current, writable, mode)?;
+                let scope = input
+                    .get("scope")
+                    .and_then(Value::as_str)
+                    .unwrap_or("project");
+                let project = if scope == "global" {
+                    "global".into()
+                } else {
+                    cyber_core::project::identify(&location).id
+                };
+                if cancel.is_cancelled() {
+                    return Err(ToolError::Aborted);
+                }
+                operate(&data, &project, &input, &cancel)
+            })
+            .await
+            .map_err(|_| failed("Memory owner did not acknowledge completion"))?
+        })
+    }
+}
+
+fn check_settings(ctx: &Ctx<'_>, mutation: bool) -> Result<(), ToolError> {
+    check_enabled(
+        settings(ctx.host, &ctx.location)?,
+        mutation,
+        Mode::parse(&ctx.inv.mode),
+    )
+}
+
+fn check_enabled(settings: MemorySettings, mutation: bool, mode: Mode) -> Result<(), ToolError> {
+    if !settings.enabled {
+        return Err(failed("Memory is disabled"));
+    }
+    if mutation && (!settings.generate || mode == Mode::Plan) {
+        return Err(failed("Memory is read-only"));
+    }
+    Ok(())
+}
+
+fn validate_input(input: &Value, operation: &str) -> Result<(), ToolError> {
+    if matches!(operation, "read" | "update" | "delete") {
+        cyber_core::memory::validate_name(text(input, "name"))
+            .map_err(|e| failed(e.to_string()))?;
+    }
+    if matches!(operation, "write" | "update") {
+        let content = text(input, "content");
+        if content.len() > 1_048_576 {
+            return Err(failed("Memory file exceeds 1 MiB"));
+        }
+        let doc = MemoryDocument::for_write(content).map_err(|e| failed(e.to_string()))?;
+        if let Some(name) = input.get("name").and_then(Value::as_str)
+            && name != doc.metadata.name
+        {
+            return Err(failed("Memory name does not match frontmatter"));
+        }
+    }
+    Ok(())
+}
+
+fn operate(
+    data: &Path,
+    project: &str,
+    input: &Value,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<String, ToolError> {
+    let operation = text(input, "operation");
+    let mutation = matches!(operation, "write" | "update" | "delete");
+    if mutation && !cfg!(unix) {
+        return Err(failed(
+            "Memory mutations require platform privacy and durability support",
+        ));
+    }
+    let existing = MemoryStore::existing(data, project).map_err(|e| failed(e.to_string()))?;
+    if existing.is_none() && operation != "write" {
+        return if operation == "list" {
+            Ok("{\"memories\":[],\"invalid\":[]}".into())
+        } else {
+            Err(failed("Memory not found"))
+        };
+    }
+    if cancel.is_cancelled() {
+        return Err(ToolError::Aborted);
+    }
+    let store = match existing {
+        Some(store) => store,
+        None => MemoryStore::open(data, project).map_err(|e| failed(e.to_string()))?,
+    };
+    let mut owner = store.claim().map_err(|e| failed(e.to_string()))?;
+    if cancel.is_cancelled() {
+        return Err(ToolError::Aborted);
+    }
+    let value = match operation {
+        "list" => {
+            let catalog = owner.list().map_err(|e| failed(e.to_string()))?;
+            json!({"memories":catalog.memories,"invalid":catalog.invalid.into_iter().map(|entry|
+                json!({"filename":entry.filename,"diagnostic":entry.diagnostic})).collect::<Vec<_>>()})
+        }
+        "read" => {
+            let note = owner
+                .read(text(input, "name"))
+                .map_err(|e| failed(e.to_string()))?;
+            json!({"metadata":note.metadata,"body":note.body})
+        }
+        "write" | "update" => {
+            if operation == "update" {
+                owner
+                    .read(text(input, "name"))
+                    .map_err(|e| failed(e.to_string()))?;
+            }
+            json!(
+                owner
+                    .write(text(input, "content"))
+                    .map_err(|e| failed(e.to_string()))?
+            )
+        }
+        "delete" => json!(
+            owner
+                .delete(text(input, "name"))
+                .map_err(|e| failed(e.to_string()))?
+        ),
+        _ => return Err(failed("Unknown memory operation")),
+    };
+    serde_json::to_string(&value).map_err(|_| failed("Memory output encoding failed"))
+}

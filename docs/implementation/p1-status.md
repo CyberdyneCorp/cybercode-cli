@@ -1551,3 +1551,13 @@ Local macOS validation passes 110 Rust cases across core units, configuration, p
 Linux CI at 5b2ef2c failed eleven storage tests because capability directory handles use O_PATH, which rejects fchmod. The new mutation sync path would also reject fsync on that descriptor. Both operations now use a readable directory handle opened relative to retained authority. The added regression verifies the original directory remains authoritative after namespace replacement. The correction passes locally; native Linux acceptance is pending the next CI run.
 
 Workspace all-target Clippy with warnings denied, formatting, generated SDK consistency and all 59 strict OpenSpec items pass for this increment. Cross-spec lint reports zero errors and 21 warnings.
+
+## M1.4 built-in memory tool admission (2026-10-09)
+
+The actual built-in host now exposes memory list/read/write/update/delete with managed project/global scope selectors. Scope permission defaults are limited to those selectors and remain subordinate to configured, agent, Session, inherited and hook rules. Content, names and secrets are validated before storage admission. Disabled settings remove the definition and refuse direct dispatch; read-only settings and Plan Mode project list/read definitions and refuse stale mutation calls again at execution. Settings are revalidated after permission approval and inside the blocking worker. Write replaces an existing name; update requires an existing note. Normal output budgets retain bounded model output and managed overflow files.
+
+Blocking storage workers retain scope ownership and are joined through the actual result; cancellation is checked before admission, and completed effects return their receipt. Pending storage journals and cross-process contention refuse dispatch without automatic recovery or tool replay. Actual runtime tests verify permission-time configuration revocation and hook-denial receipts without memory effects. The tool has its own golden and a native Windows CI admission step; Windows mutations still refuse before memory storage creation pending privacy/durability implementation.
+
+Local macOS validation passes 88 Rust cases across memory, golden, built-in tools, ordered/inherited permissions and hook dispatch. All 59 strict OpenSpec items, generated SDK consistency, formatting and workflow YAML validation pass; cross-spec lint reports zero errors and 21 warnings. Memory Context Source baseline/Safe Boundary integration, CLI/TUI/HTTP/SDK/event delivery, reviewed unknown-effect reconciliation, Windows mutation support and full native acceptance remain required. The canonical memory tool contract and all P1 milestones remain unaccepted.
+
+Workspace all-target Clippy with warnings denied also passes for this revision.

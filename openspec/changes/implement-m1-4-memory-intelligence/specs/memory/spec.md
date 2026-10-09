@@ -64,3 +64,19 @@
 #### Scenario: Invalid memory toggle type
 - **WHEN** loaded configuration supplies nonboolean `memory.enabled` or `memory.generate`, or a nonobject `memory` value
 - **THEN** configuration loading SHALL fail with a memory validation error without echoing supplied values
+
+### Requirement: Memory tool
+(P1) The system SHALL provide a `memory` tool with operations `list`, `read`, `write`, `update`, and `delete`, gated by the `memory` permission (default `allow` for the memory directories). `write` and `update` SHALL keep the `MEMORY.md` index in sync with one line per memory (`- [Title](file.md) — hook`).
+
+#### Scenario: Write keeps the index in sync
+- **WHEN** the model writes a new `feedback` memory `prefers-small-prs`
+- **THEN** `prefers-small-prs.md` is created and a line linking it is appended to `MEMORY.md`
+
+#### Scenario: Disabled or read-only direct dispatch
+- **WHEN** a caller invokes memory despite disabled settings, or invokes a mutation while generation is disabled or Plan Mode is active
+- **THEN** dispatch SHALL refuse storage effects even if the caller retained an earlier tool definition
+
+#### Scenario: Scope authorization before storage effects
+- **WHEN** a memory operation is denied or its admission is cancelled
+- **THEN** the tool SHALL NOT create memory directories, journals or note files
+- **AND** a started mutation SHALL retain its owner until the actual storage outcome is acknowledged

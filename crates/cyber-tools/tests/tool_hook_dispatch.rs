@@ -848,3 +848,37 @@ async fn http_policy_decision_denies_real_builtin_write_before_effects() {
         Some(cyber_core::hooks::HookOutcome::Blocked)
     );
 }
+
+#[tokio::test]
+async fn memory_pre_hook_denial_preserves_normal_receipt_and_has_no_storage_effects() {
+    let content =
+        "---\nname: coding-policy\ndescription: Coding policy\ntype: reference\n---\nFact\n";
+    let f = Flow::new(
+        vec![
+            call(
+                "remember",
+                "memory",
+                json!({"operation":"write","scope":"global","content":content}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"memory","hooks":[command(r#"{"decision":"deny","reason":"memory policy"}"#)]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "remember").await;
+    f.settle(&session).await;
+    assert!(
+        f.output(&session, "remember")
+            .await
+            .contains("blocked by hook guard: memory policy")
+    );
+    assert!(!f.f.dir.path().join("memory").exists());
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].status, HookExecutionStatus::Completed);
+    assert_eq!(receipts[0].tool_name.as_deref(), Some("memory"));
+}

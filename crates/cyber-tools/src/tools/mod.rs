@@ -4,6 +4,7 @@ pub(crate) mod agent;
 pub(crate) mod bash;
 mod fs;
 mod mcp;
+pub(crate) mod memory;
 pub(crate) mod patch;
 pub(crate) mod powershell;
 pub(crate) mod process;
@@ -56,6 +57,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(agent::Agent),
         Box::new(task::TaskStop),
         Box::new(mcp::WaitForMcp),
+        Box::new(memory::Memory),
         Box::new(tool_search::ToolSearch),
     ];
     #[cfg(windows)]

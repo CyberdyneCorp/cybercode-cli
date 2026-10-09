@@ -194,6 +194,14 @@ impl BuiltinHost {
                 .map(|s| s.base),
         );
         let mut rules = permissions::defaults(&allowed, primary_agent);
+        for scope in ["project", "global"] {
+            rules.push(permissions::Rule::new(
+                "memory",
+                scope,
+                Effect::Allow,
+                "default",
+            ));
+        }
         rules.extend(permissions::parse_rules(&config["permissions"], sources));
         rules
     }
@@ -582,7 +590,16 @@ impl ToolHost for BuiltinHost {
         let mut tools: Vec<_> = self
             .tools
             .iter()
-            .map(|t| t.def())
+            .filter_map(|t| {
+                let definition = t.def();
+                if definition.spec.name != "memory" {
+                    return Some(definition);
+                }
+                let settings = tools::memory::settings(self, Path::new(&turn.directory)).ok()?;
+                settings
+                    .enabled
+                    .then(|| tools::memory::definition(settings.generate && mode != Mode::Plan))
+            })
             .filter(|d| offered(&d.spec.name, turn.prefers_apply_patch, mode, d.retry_safety))
             .filter(|d| !fully_denied(&rules, tools::action_of(&d.spec.name)))
             .filter(|d| {
