@@ -394,3 +394,29 @@ async fn concurrent_handlers_share_test_identity_but_retain_distinct_checkout_le
         .unwrap();
     f.assert_no_sessions();
 }
+
+#[tokio::test]
+async fn synthetic_timeout_includes_waiting_for_checkout_admission() {
+    let (fixture, repository, managed) = managed().await;
+    let mut f = TestRun::at(fixture, Some(&managed.path), "touch must-not-run", false);
+    f.resolved.value["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = json!(1);
+    let lock = cyber_core::worktrees::RepositoryLock::try_acquire(&managed.common_dir)
+        .unwrap()
+        .unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        f.runner()
+            .run_test(&f.fixture.host, POINTER, &f.event, CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(result.unwrap_err().contains("checkout admission timed out"));
+    assert!(!managed.path.join("must-not-run").exists());
+    assert_eq!(f.receipts()[0].status, HookExecutionStatus::Unknown);
+    drop(lock);
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, true)
+        .await
+        .unwrap();
+    f.assert_no_sessions();
+}

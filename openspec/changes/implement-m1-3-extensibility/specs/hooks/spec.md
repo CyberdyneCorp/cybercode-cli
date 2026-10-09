@@ -69,6 +69,15 @@
 - **WHEN** the user runs `cyber hooks test PreToolUse --payload ev.json`
 - **THEN** each matching handler runs and its parsed decision is printed
 
+#### Scenario: Bounded payload loading and explicit synthetic test outcomes
+- **WHEN** the user invokes `cyber hooks test <event>` with an optional payload file
+- **THEN** the CLI SHALL load a regular JSON file of at most 1 MiB containing an object of event-specific fields, or use an empty object when no file is supplied
+- **AND** malformed, oversized, nonobject, spoofed-envelope and unknown-event inputs SHALL be rejected before opening the execution database
+- **AND** the CLI SHALL use standalone host ownership without application startup, model calls or Session recovery
+- **AND** per-handler and merged decisions SHALL be reported in declared order, including explicit skipped/untrusted and unsupported/error outcomes
+- **AND** incomplete execution, unknown termination or unsupported handlers SHALL produce a nonzero exit status rather than claim successful execution
+- **AND** Ctrl-C SHALL signal cancellation and retain the execution future until launched process owners settle
+
 #### Scenario: Inspect and approve a resolved handler
 - **WHEN** a checkout's configuration is trusted and the user lists hooks
 - **THEN** resolved handlers SHALL show source, scope, definition digest and individual trust state with credentials redacted

@@ -3,9 +3,11 @@
 
 mod launch;
 mod results;
+mod testing;
 
 pub use launch::HookCommandRunner;
 pub use results::{HookCommandReport, HookOutcome, interpret_hook_command};
+pub use testing::{HookTestHandlerResult, HookTestRun};
 
 use std::io;
 use std::time::Duration;

@@ -19,6 +19,8 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "signal", "time", 
 cyber-app = { path = "../cyber-app" }
 cyber-client = { path = "../cyber-client" }
 cyber-tui = { path = "../cyber-tui" }
+cyber-tools = { path = "../cyber-tools" }
+tokio-util = "0.7"
 cyber-sandbox = { path = "../cyber-sandbox" }
 rusqlite.workspace = true
 cyber-server = { path = "../cyber-server" }
@@ -32,7 +34,6 @@ serde_json.workspace = true
 strsim.workspace = true
 
 [dev-dependencies]
-tokio-util = "0.7"
 rusqlite.workspace = true
 tempfile.workspace = true
 

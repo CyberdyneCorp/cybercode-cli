@@ -10,10 +10,19 @@ use crate::context::Context;
 use crate::error::CliError;
 use crate::output;
 
+mod testing;
+
 #[derive(Debug, Subcommand)]
 pub enum HooksCmd {
     /// List resolved definitions, file origins, digests and individual trust state.
     List,
+    /// Run matching hooks against a synthetic event without creating a Session.
+    Test {
+        event: String,
+        /// JSON object of event fields; trusted envelope fields cannot be supplied.
+        #[arg(long, value_name = "FILE")]
+        payload: Option<std::path::PathBuf>,
+    },
     /// Inspect committed Session execution receipts without running hooks or recovery.
     History {
         #[arg(long)]
@@ -45,6 +54,9 @@ struct ListedHook<'a> {
 }
 
 pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    if let HooksCmd::Test { event, payload } = &cmd {
+        return testing::run(event, payload.as_deref(), ctx, global);
+    }
     if let HooksCmd::History {
         session,
         limit,
@@ -74,7 +86,7 @@ pub fn run(cmd: HooksCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliE
             ctx,
         ),
         HooksCmd::Trust { digest } => approve(&catalog, &resolved, &store, &digest, global),
-        HooksCmd::Untrust { .. } | HooksCmd::History { .. } => {
+        HooksCmd::Untrust { .. } | HooksCmd::History { .. } | HooksCmd::Test { .. } => {
             unreachable!("handled before configuration loading")
         }
     }

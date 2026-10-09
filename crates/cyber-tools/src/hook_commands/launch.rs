@@ -75,6 +75,7 @@ enum Admission<'a> {
     Synthetic {
         log_io: bool,
         io: &'a mut Option<cyber_server::runtime::HookExecutionIo>,
+        deadline: tokio::time::Instant,
     },
 }
 
@@ -82,7 +83,7 @@ impl Admission<'_> {
     fn capture_io(&mut self, event: &HookEvent, capture: &super::HookCommandCapture) {
         let (enabled, target) = match self {
             Self::Session(owner, _, io) => (owner.record().log_io, io),
-            Self::Synthetic { log_io, io } => (*log_io, io),
+            Self::Synthetic { log_io, io, .. } => (*log_io, io),
         };
         if enabled {
             **target = Some(captured_io(event, capture));
@@ -137,6 +138,8 @@ impl HookCommandRunner<'_> {
         if cancel.is_cancelled() {
             return Err("hook test cancelled before admission".into());
         }
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(definition.handler.timeout.into());
         let log_io = self.resolved.value["telemetry"]["log_hook_io"]
             .as_bool()
             .unwrap_or(false);
@@ -150,9 +153,12 @@ impl HookCommandRunner<'_> {
         else {
             return Ok(skipped());
         };
-        let lease = host
-            .claim_hook_test_location(event, &owner.record().id, cancel.clone())
-            .await?;
+        let lease = tokio::time::timeout_at(
+            deadline,
+            host.claim_hook_test_location(event, &owner.record().id, cancel.clone()),
+        )
+        .await
+        .map_err(|_| "hook test checkout admission timed out".to_string())??;
         let mut io = None;
         let result = self
             .run_inner(
@@ -162,6 +168,7 @@ impl HookCommandRunner<'_> {
                 Some(Admission::Synthetic {
                     log_io: owner.record().log_io,
                     io: &mut io,
+                    deadline,
                 }),
             )
             .await;
@@ -274,7 +281,10 @@ impl HookCommandRunner<'_> {
             return Err("Windows hook command launch requires the trusted process helper".into());
         }
         let timeout = Duration::from_secs(definition.handler.timeout.into());
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = match &owner {
+            Some(Admission::Synthetic { deadline, .. }) => *deadline,
+            _ => tokio::time::Instant::now() + timeout,
+        };
         let mut prepared = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err("hook command cancelled before launch".into()),

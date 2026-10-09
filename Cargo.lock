@@ -739,6 +739,7 @@ dependencies = [
  "cyber-sandbox",
  "cyber-server",
  "cyber-store",
+ "cyber-tools",
  "cyber-tui",
  "futures",
  "rusqlite",

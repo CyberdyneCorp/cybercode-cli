@@ -433,7 +433,7 @@ impl BuiltinHost {
     }
 }
 
-fn merge_decision(
+pub(crate) fn merge_decision(
     definition: &HookDefinition,
     mut report: HookCommandReport,
     decision: &mut HookDecision,
@@ -487,8 +487,12 @@ fn event(kind: &str, inv: &Invocation, extra: Value) -> Result<HookEvent, ToolEr
     .map_err(ToolError::Failed)
 }
 
-fn target_paths(event: &HookEvent, home: &Path) -> Vec<String> {
-    let input = &event.as_json()["tool_input"];
+pub(crate) fn target_paths(event: &HookEvent, home: &Path) -> Vec<String> {
+    let input = if event.event() == "FileChanged" {
+        event.as_json()
+    } else {
+        &event.as_json()["tool_input"]
+    };
     let location = crate::host::canonical(&event.identity().location.directory);
     ["file_path", "path"]
         .into_iter()

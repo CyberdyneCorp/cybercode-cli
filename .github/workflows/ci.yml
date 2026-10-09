@@ -80,6 +80,9 @@ jobs:
       - name: Native CLI hook execution history
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test hook_history
+      - name: Native synthetic hook CLI validation and isolation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-cli --test hook_test_cli
       - name: Native TUI hook receipt history
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tui hook_history

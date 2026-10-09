@@ -7,6 +7,7 @@ use super::{HookCommandCapture, HookCommandEnd, HookCommandError};
 
 pub use cyber_core::hooks::HookOutcome;
 
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HookCommandReport {
     pub outcome: HookOutcome,
     pub decision: HookDecision,
