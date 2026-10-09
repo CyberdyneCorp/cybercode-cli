@@ -192,7 +192,10 @@ async fn event_stdin_route_preserves_bytes_eof_and_exit_after_assignment() {
         tokio::try_join!(
             async {
                 stdin.write_all(&expected).await?;
-                stdin.shutdown().await
+                stdin.shutdown().await?;
+                // Pipe shutdown does not close the retained Windows handle.
+                drop(stdin);
+                Ok::<(), std::io::Error>(())
             },
             stdout.read_to_end(&mut output),
             stderr.read_to_end(&mut errors),
