@@ -334,7 +334,9 @@ impl BuiltinHost {
         }
         let result = if !matches!(
             definition.kind(),
-            cyber_core::config::HookKind::Command | cyber_core::config::HookKind::Http
+            cyber_core::config::HookKind::Command
+                | cyber_core::config::HookKind::Http
+                | cyber_core::config::HookKind::Prompt
         ) || definition.handler.asynchronous
         {
             let owner = runtime
@@ -351,6 +353,15 @@ impl BuiltinHost {
                 })
                 .map_err(|error| ToolError::Failed(error.to_string()))?;
             Err("Hook handler type or async scheduling is not implemented".to_string())
+        } else if definition.kind() == cyber_core::config::HookKind::Prompt {
+            crate::hook_prompt::HookPromptRunner {
+                resolved: runner.resolved,
+                trust: runner.trust,
+                invocation_trust: runner.invocation_trust,
+                home: runner.home,
+            }
+            .run_recorded(runtime, &definition.pointer, event, cancel)
+            .await
         } else if definition.kind() == cyber_core::config::HookKind::Http {
             crate::hook_http::HookHttpRunner {
                 resolved: runner.resolved,

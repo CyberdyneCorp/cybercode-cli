@@ -1,4 +1,4 @@
-//! Local synthetic tests; no application startup, Session owners or model calls.
+//! Synthetic tests without application startup or Session ownership.
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
@@ -64,6 +64,41 @@ pub(super) fn run(
     let sources = resolved.sources.clone();
     let helper = cyber_sandbox::find_helper();
     let temp = ctx.paths.tmp.join("hook-tests");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let trust = cyber_core::trust::TrustStore::new(ctx.paths.trust_file());
+    let needs_models = cyber_core::hooks::HookCatalog::from_config(&resolved)
+        .map_err(CliError::runtime)?
+        .definitions
+        .iter()
+        .any(|definition| {
+            definition.event == event.event()
+                && definition.kind() == cyber_core::config::HookKind::Prompt
+                && !definition.handler.asynchronous
+                && definition
+                    .is_trusted(&resolved.trust.checkout_root, &trust, None)
+                    .unwrap_or(false)
+        });
+    let models: Option<Arc<dyn cyber_server::runtime::ModelResolver>> = if needs_models {
+        let mut source = cyber_llm::catalog::SourceOptions::from_env(&ctx.env, &ctx.paths.cache);
+        source.allow_fetch = false;
+        runtime
+            .block_on(cyber_llm::catalog::load_source(&source))
+            .ok()
+            .map(|loaded| {
+                Arc::new(cyber_server::runtime::CatalogResolver::new(
+                    &loaded.data,
+                    resolved.value.clone(),
+                    &ctx.env,
+                )) as Arc<dyn cyber_server::runtime::ModelResolver>
+            })
+    } else {
+        None
+    };
+    let credential_env_names = models
+        .as_ref()
+        .map_or_else(Vec::new, |models| models.credential_env_names());
     let host = BuiltinHost::new(HostOptions {
         store,
         tool_output_dir: ctx.paths.data.join("tool-output"),
@@ -73,12 +108,11 @@ pub(super) fn run(
         config: Arc::new(move |_| Ok((value.clone(), sources.clone()))),
         global_config_dir: ctx.paths.config.clone(),
         env: Arc::new(ProcessEnv),
-        models: None,
+        models,
         temp_dir: temp.clone(),
         sandbox_policy: None,
         sandbox_helper: helper.clone(),
     });
-    let trust = cyber_core::trust::TrustStore::new(ctx.paths.trust_file());
     let runner = HookCommandRunner {
         resolved: &resolved,
         trust: &trust,
@@ -87,11 +121,8 @@ pub(super) fn run(
         temp_dir: &temp,
         shell: &shell,
         helper: helper.as_deref(),
-        credential_env_names: &[],
+        credential_env_names: &credential_env_names,
     };
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
     let result = runtime
         .block_on(async {
             let cancel = CancellationToken::new();

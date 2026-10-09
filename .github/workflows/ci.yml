@@ -83,6 +83,9 @@ jobs:
       - name: Native synthetic hook CLI validation and isolation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test hook_test_cli
+      - name: Native prompt hook evaluator, metering and interruption ownership
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test hook_prompt
       - name: Native HTTP hook transport, policy and receipt ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test hook_http -p cyber-sandbox --test proxy_shutdown

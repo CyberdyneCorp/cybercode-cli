@@ -1,5 +1,24 @@
 ## MODIFIED Requirements
 
+### Requirement: Prompt handlers
+(P1) A `prompt` handler SHALL ask the `model_roles.evaluator` model (falling back to `small_model`) to judge the event using the handler's `prompt` text plus the event JSON. The judgement SHALL be returned as structured output `{ decision: allow|deny|ask, reason }`. Prompt handlers SHALL have no tools and SHALL count toward session cost.
+
+#### Scenario: LLM judges a bash command
+- **WHEN** a `PreToolUse` prompt hook asks "Deny commands that delete data outside the repo" and the model returns `deny`
+- **THEN** the bash call is denied with the model's reason
+
+#### Scenario: Evaluator overlays cannot grant tools or replace evidence
+- **WHEN** a trusted prompt handler uses a model with configured request overlays
+- **THEN** the request SHALL keep the trusted policy separate from protected flat event evidence and force tools disabled after overlays
+- **AND** the bounded response SHALL require a complete tool-free stream and strict decision/reason object
+- **AND** unexpected tool calls, incomplete finish and invalid decisions SHALL NOT authorize the guarded action
+
+#### Scenario: Observed prompt usage survives cancellation
+- **WHEN** a Session prompt evaluator reports usage before cancellation or timeout
+- **THEN** observed usage SHALL be billed through hidden Session and ancestor accounting
+- **AND** budget ceilings SHALL be checked before inference and before returning permission to proceed
+- **AND** missing provider-completion acknowledgement SHALL retain unknown receipt/activity evidence rather than assert remote completion or final billing
+
 ### Requirement: Hook configuration
 (P1) The system SHALL read hooks from the `hooks` config key as a map from event name to an ordered array of hook groups `{ matcher?, hooks: [handler, ...] }`, where each handler has a required `type` (`command`, `http`, `prompt`, or `mcp_tool`) and optional `timeout` (seconds), `async` (boolean), `id` and `description`. Unknown event names SHALL fail config validation with the path of the offending key.
 

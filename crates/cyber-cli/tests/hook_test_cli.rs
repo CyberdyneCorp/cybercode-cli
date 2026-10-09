@@ -72,6 +72,76 @@ fn body(output: &Output) -> Value {
     })
 }
 
+#[tokio::test]
+async fn synthetic_prompt_cli_uses_evaluator_without_tools_or_session_startup() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        let mut chunk = [0; 4096];
+        let request = loop {
+            let n = socket.read(&mut chunk).await.unwrap();
+            assert!(n > 0);
+            bytes.extend_from_slice(&chunk[..n]);
+            if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&bytes[..end]);
+                let length: usize = head
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|length| length.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                if bytes.len() >= end + 4 + length {
+                    break serde_json::from_slice::<Value>(&bytes[end + 4..end + 4 + length])
+                        .unwrap();
+                }
+            }
+        };
+        let reply = json!({"choices":[{"index":0,"delta":{"content":"{\"decision\":\"deny\",\"reason\":\"policy\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+        let body = format!("data: {reply}\n\ndata: [DONE]\n\n");
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+        request
+    });
+    let env =
+        Env::new(json!({"PreToolUse":[{"hooks":[{"type":"prompt","prompt":"judge the event"}]}]}));
+    std::fs::write(env.root.join("cyber/config/cyber.jsonc"), json!({
+        "hooks":{"PreToolUse":[{"hooks":[{"type":"prompt","prompt":"judge the event"}]}]},
+        "model_roles":{"evaluator":"corp/judge"},
+        "providers":{"corp":{"api":{"type":"openai-compatible","url":format!("http://{address}/v1")},"models":{"judge":{}}}}
+    }).to_string()).unwrap();
+    let pinned = env.root.join("models.json");
+    std::fs::write(&pinned, "{}").unwrap();
+    let mut command = env.command(&["hooks", "test", "PreToolUse", "--format", "json"]);
+    command.env("CYBER_MODELS_PATH", pinned);
+    let output = tokio::task::spawn_blocking(move || command.output().unwrap())
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(body(&output)["decision"]["decision"], "deny");
+    let request = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(request["model"], "judge");
+    assert_eq!(request["tool_choice"], "none");
+    assert!(request.get("tools").is_none());
+    assert!(
+        request["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("synthetic")
+    );
+    env.assert_no_sessions(1);
+}
+
 #[test]
 fn payload_validation_rejects_nonobjects_spoofing_and_unknown_events_before_database_creation() {
     let env = Env::new(json!({}));
@@ -123,7 +193,7 @@ fn oversized_and_invalid_json_payloads_are_usage_errors() {
 #[test]
 fn unsupported_matching_transports_report_errors_instead_of_success_or_session_work() {
     let env = Env::new(
-        json!({"Stop":[{"hooks":[{"type":"prompt","prompt":"review event","fail_closed":true}]}]}),
+        json!({"Stop":[{"hooks":[{"type":"mcp_tool","server":"audit","tool":"judge","fail_closed":true}]}]}),
     );
     let output = env.run(&["hooks", "test", "Stop", "--format", "json"]);
     assert_eq!(output.status.code(), Some(1));

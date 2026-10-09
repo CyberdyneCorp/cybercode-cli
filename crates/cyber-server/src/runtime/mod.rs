@@ -337,6 +337,11 @@ impl WeakRuntime {
 }
 
 impl Runtime {
+    /// Models for trusted host-owned hidden calls, without starting another Session.
+    pub fn model_resolver(&self) -> Arc<dyn ModelResolver> {
+        Arc::clone(&self.inner.resolver)
+    }
+
     pub fn downgrade(&self) -> WeakRuntime {
         WeakRuntime {
             inner: Arc::downgrade(&self.inner),

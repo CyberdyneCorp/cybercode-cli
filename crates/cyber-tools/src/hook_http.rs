@@ -14,9 +14,8 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use tokio_util::sync::CancellationToken;
 
 use crate::BuiltinHost;
-use crate::hook_commands::{
-    HookCommandError, HookCommandReport, HookOutcome, interpret_hook_command,
-};
+use crate::hook_commands::{HookCommandReport, HookOutcome};
+use crate::hook_reports::{failure, log_io, logged_io, skipped};
 
 const LIMIT: usize = 1024 * 1024;
 
@@ -404,12 +403,6 @@ struct Prepared {
     headers: HeaderMap,
 }
 
-fn log_io(resolved: &Resolved) -> bool {
-    resolved.value["telemetry"]["log_hook_io"]
-        .as_bool()
-        .unwrap_or(false)
-}
-
 fn headers(configured: &std::collections::BTreeMap<String, String>) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     for (name, value) in configured {
@@ -454,66 +447,4 @@ async fn read_body(response: reqwest::Response) -> Result<Vec<u8>, String> {
         bytes.extend_from_slice(&chunk);
     }
     Ok(bytes)
-}
-
-fn failure(
-    event: &HookEvent,
-    definition: Option<&HookDefinition>,
-    fail_closed: bool,
-    outcome: HookOutcome,
-    message: String,
-    acknowledged: bool,
-) -> HookCommandReport {
-    let id = definition
-        .map(|definition| {
-            definition
-                .handler
-                .id
-                .as_deref()
-                .unwrap_or(&definition.digest)
-        })
-        .unwrap_or("HTTP");
-    let mut report = interpret_hook_command(
-        event,
-        id,
-        fail_closed,
-        Err(HookCommandError {
-            message,
-            acknowledged,
-        }),
-    );
-    report.outcome = outcome;
-    report
-}
-
-fn skipped(must_stop: bool) -> HookCommandReport {
-    HookCommandReport {
-        outcome: HookOutcome::Skipped,
-        decision: Default::default(),
-        ignored_fields: Vec::new(),
-        diagnostic: None,
-        acknowledged: true,
-        must_stop,
-    }
-}
-
-fn logged_io(event: &HookEvent, bytes: &[u8]) -> cyber_server::runtime::HookExecutionIo {
-    let mut truncated = false;
-    let mut bound = |mut value: String| {
-        if value.len() > LIMIT {
-            truncated = true;
-            let mut end = LIMIT;
-            while !value.is_char_boundary(end) {
-                end -= 1;
-            }
-            value.truncate(end);
-        }
-        value
-    };
-    cyber_server::runtime::HookExecutionIo {
-        stdin: bound(format!("{}", event.as_json())),
-        stdout: bound(String::from_utf8_lossy(bytes).into_owned()),
-        stderr: String::new(),
-        truncated,
-    }
 }
