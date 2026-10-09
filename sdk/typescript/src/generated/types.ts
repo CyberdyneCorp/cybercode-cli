@@ -575,6 +575,12 @@ export type Located_MemoryDocument = {
 };
 
 /** A Location-scoped response. */
+export type Located_MemoryEditReview = {
+  location: LocationInfo;
+  data: MemoryEditReview;
+};
+
+/** A Location-scoped response. */
 export type Located_Nullable_MemoryRecoveryRequestStatus = {
   location: LocationInfo;
   data?: MemoryRecoveryRequestStatus | null;
@@ -653,6 +659,12 @@ export type MemoryChange = {
 export type MemoryDocument = {
   metadata: MemoryMetadata;
   body: string;
+};
+
+export type MemoryEditReview = {
+  name: string;
+  original?: string | null;
+  fingerprint: string;
 };
 
 export type MemoryJournalIdentity = {
@@ -808,6 +820,8 @@ export type PromptBody = {
 export type PutMemory = {
   /** Complete Markdown document with YAML name, description and type fields. */
   content: string;
+  /** Fingerprint returned by editReview; omit for an unconditional write. */
+  review_fingerprint?: string | null;
 };
 
 export type Question = {

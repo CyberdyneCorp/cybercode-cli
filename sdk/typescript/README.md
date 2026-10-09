@@ -76,6 +76,25 @@ rows and clears automatic wake intent; use an explicit wake to resume later. Int
 cancels owned checkout preparation, and late completion cannot admit or release input.
 Unacknowledged preparation requires recovery before execution can resume.
 
+## Reviewed memory edits
+
+On supported Unix storage, review the original note before saving a draft:
+
+```ts
+const { data: review } = await client.memory.editReview("global", "policy");
+await client.memory.put("global", "policy", {
+  content: editedMarkdown,
+  review_fingerprint: review.fingerprint,
+}, { idempotencyKey: retainedSaveKey });
+```
+
+A changed note, index, scope or valid catalog entry returns a conflict. Preserve the draft and
+obtain a fresh review before confirming another save. For a conditional delete, send
+`headers: { "x-cyber-memory-review": review.fingerprint }` in the options to
+`client.memory.delete(scope, name, options)`. Retain the exact key for an uncertain outcome;
+identical acknowledged retries return the original receipt. Review is read-only and does not
+create absent scopes. Windows memory mutations remain unavailable pending native acceptance.
+
 ## Session budgets
 
 `client.session.create({ budget: { max_tokens: 100000, max_cost_usd: 2, enforcement: "soft" } })`

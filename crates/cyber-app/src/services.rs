@@ -104,6 +104,20 @@ impl Services for AppServices {
         ))
     }
 
+    fn memory_edit_review(
+        &self,
+        directory: PathBuf,
+        scope: cyber_server::http::MemoryScope,
+        name: String,
+    ) -> BoxFuture<'_, Result<cyber_core::memory::MemoryEditReview, cyber_server::http::ApiError>>
+    {
+        Box::pin(memory::edit_review(
+            self.data.clone(),
+            directory,
+            scope,
+            name,
+        ))
+    }
     fn memory_edit(
         &self,
         runtime: cyber_server::runtime::Runtime,

@@ -125,3 +125,27 @@ test("retained recovery request lookup preserves key encoding and unresolved evi
   assert.equal(calls[0]?.headers.get("idempotency-key"), null);
   assert.equal(calls.length, 1);
 });
+
+test("memory edit review returns original Markdown and a typed conditional fingerprint", async () => {
+  const review: import("../src/index.js").MemoryEditReview = { name: "policy", original: "original Markdown", fingerprint: "a".repeat(64) };
+  const { client, calls } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: review }), { directory: "/repo" });
+  const result = await client.memory.editReview("global", "policy");
+  assert.deepEqual(result.data, review);
+  assert.equal(calls[0]?.url.pathname, "/api/v1/memory/edit/global/policy");
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
+  assert.equal(calls[0]?.headers.get("idempotency-key"), null);
+});
+
+test("conditional memory mutations carry reviewed fingerprints and refuse stale responses once", async () => {
+  const { client, calls } = mockClient(() => json(409, { _tag: "ConflictError", message: "Memory edit review is stale" }), { directory: "/repo" });
+  const fingerprint = "b".repeat(64);
+  await assert.rejects(client.memory.put("global", "policy", { content: "draft", review_fingerprint: fingerprint }, { idempotencyKey: "reviewed-save" }), isConflictError);
+  assert.deepEqual(JSON.parse(calls[0]?.body ?? "null"), { content: "draft", review_fingerprint: fingerprint });
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "reviewed-save");
+  await assert.rejects(client.memory.delete("global", "policy", { idempotencyKey: "reviewed-delete", headers: { "x-cyber-memory-review": fingerprint } }), isConflictError);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]?.headers.get("x-cyber-memory-review"), fingerprint);
+  assert.equal(calls[1]?.headers.get("idempotency-key"), "reviewed-delete");
+  assert.equal(calls[1]?.body, undefined);
+});

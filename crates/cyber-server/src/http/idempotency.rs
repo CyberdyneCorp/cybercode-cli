@@ -164,6 +164,11 @@ fn request_hash(
         hash.update((field.len() as u64).to_be_bytes());
         hash.update(field);
     }
+    for review in parts.headers.get_all("x-cyber-memory-review") {
+        hash.update(b"memory-edit-review-v1");
+        hash.update((review.as_bytes().len() as u64).to_be_bytes());
+        hash.update(review.as_bytes());
+    }
     format!("{:x}", hash.finalize())
 }
 

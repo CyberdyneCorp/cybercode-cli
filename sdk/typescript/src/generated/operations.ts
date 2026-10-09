@@ -162,6 +162,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_MemoryChange;
   };
+  "v1.memory.editReview": {
+    path: { scope: string; name: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_MemoryEditReview;
+  };
   "v1.memory.get": {
     path: { scope: string; name: string };
     query: Record<string, never>;
@@ -742,6 +748,18 @@ export const operations = {
     name: "delete",
     method: "DELETE",
     path: "/api/v1/memory/{scope}/{name}",
+    pathParams: ["scope", "name"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.editReview": {
+    tag: "memory",
+    name: "editReview",
+    method: "GET",
+    path: "/api/v1/memory/edit/{scope}/{name}",
     pathParams: ["scope", "name"],
     query: [],
     body: "none",
@@ -1508,6 +1526,9 @@ export function createGroups(caller: Caller) {
       /** Delete a memory note and publish its durable receipt (`DELETE /api/v1/memory/{scope}/{name}`) */
       delete: (scope: string, name: string, options?: RequestOptions): Promise<Operations["v1.memory.delete"]["response"]> =>
         caller.call("v1.memory.delete", { path: { scope, name } }, options),
+      /** Review original Markdown and a fingerprint for a conditional edit (`GET /api/v1/memory/edit/{scope}/{name}`) */
+      editReview: (scope: string, name: string, options?: RequestOptions): Promise<Operations["v1.memory.editReview"]["response"]> =>
+        caller.call("v1.memory.editReview", { path: { scope, name } }, options),
       /** Read a memory note (`GET /api/v1/memory/{scope}/{name}`) */
       get: (scope: string, name: string, options?: RequestOptions): Promise<Operations["v1.memory.get"]["response"]> =>
         caller.call("v1.memory.get", { path: { scope, name } }, options),

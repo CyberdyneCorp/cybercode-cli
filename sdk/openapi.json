@@ -22,25 +22,19 @@
       }
     },
     "schemas": {
-      "Located_Nullable_MemoryRecoveryRequestStatus": {
+      "Located_MemoryEditReview": {
         "type": "object",
         "properties": {
           "location": {
             "$ref": "#/components/schemas/LocationInfo"
           },
           "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/MemoryRecoveryRequestStatus"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/MemoryEditReview"
           }
         },
         "required": [
-          "location"
+          "location",
+          "data"
         ],
         "description": "A Location-scoped response."
       },
@@ -79,6 +73,50 @@
           "id",
           "directory"
         ]
+      },
+      "MemoryEditReview": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "original": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "fingerprint"
+        ]
+      },
+      "Located_Nullable_MemoryRecoveryRequestStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryRecoveryRequestStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "description": "A Location-scoped response."
       },
       "MemoryRecoveryRequestStatus": {
         "type": "object",
@@ -372,6 +410,13 @@
           "content": {
             "type": "string",
             "description": "Complete Markdown document with YAML name, description and type fields."
+          },
+          "review_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Fingerprint returned by editReview; omit for an unconditional write."
           }
         },
         "required": [
@@ -4317,6 +4362,71 @@
     }
   },
   "paths": {
+    "/api/v1/memory/edit/{scope}/{name}": {
+      "get": {
+        "operationId": "v1.memory.editReview",
+        "summary": "Review original Markdown and a fingerprint for a conditional edit",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_MemoryEditReview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/memory/recovery/requests": {
       "get": {
         "operationId": "v1.memory.recoveryRequest",
@@ -4615,6 +4725,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-memory-review",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
             }
           },
           {

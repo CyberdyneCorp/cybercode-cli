@@ -98,6 +98,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
             "get",
+            "/memory/edit/{scope}/{name}",
+            "v1.memory.editReview",
+            "Review original Markdown and a fingerprint for a conditional edit",
+        )
+        .located()
+        .ok::<Located<cyber_core::memory::MemoryEditReview>>(g),
+        op(
+            "get",
             "/memory/recovery/requests",
             "v1.memory.recoveryRequest",
             "Look up retained recovery request evidence without execution",
@@ -708,6 +716,9 @@ fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {
         .filter_map(|s| s.strip_prefix('{').and_then(|s| s.strip_suffix('}')))
         .map(|name| json!({ "name": name, "in": "path", "required": true, "schema": { "type": "string" } }))
         .collect();
+    if o.id == "v1.memory.delete" {
+        parameters.push(json!({ "name": "x-cyber-memory-review", "in": "header", "required": false, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }));
+    }
     parameters.extend(o.query.iter().map(|name| json!({ "name": name, "in": "query", "required": false, "schema": { "type": "string" } })));
     if o.located {
         parameters.push(json!({ "name": "location[directory]", "in": "query", "required": false, "schema": { "type": "string" } }));

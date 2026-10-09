@@ -41,6 +41,7 @@ pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
 pub use memory::{
     MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, RecoverMemory,
+    validate_edit_fingerprint,
 };
 #[cfg(unix)]
 pub use serve::serve_unix;
@@ -106,6 +107,14 @@ pub trait Services: Send + Sync {
         Box::pin(async { Err(memory::unavailable()) })
     }
 
+    fn memory_edit_review(
+        &self,
+        _directory: PathBuf,
+        _scope: MemoryScope,
+        _name: String,
+    ) -> BoxFuture<'_, Result<cyber_core::memory::MemoryEditReview, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
     fn memory_edit(
         &self,
         _runtime: Runtime,

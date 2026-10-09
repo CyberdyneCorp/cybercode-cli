@@ -35,6 +35,7 @@ impl MemoryScope {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/memory", get(list))
+        .route("/memory/edit/{scope}/{name}", get(edit_review))
         .route("/memory/recovery/{scope}", get(recovery).post(recover))
         .route("/memory/recovery/requests", get(recovery_request))
         .route("/memory/{scope}/{name}", get(read).put(put).delete(delete))
@@ -75,6 +76,39 @@ async fn read(
     }))
 }
 
+async fn edit_review(
+    State(state): State<AppState>,
+    Path((scope, name)): Path<(String, String)>,
+    parts: Parts,
+) -> Result<Json<Located<cyber_core::memory::MemoryEditReview>>, ApiError> {
+    let scope = MemoryScope::parse(&scope)?;
+    cyber_core::memory::validate_name(&name)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state
+        .services
+        .memory_edit_review(directory.clone(), scope, name)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
+}
+
+pub fn validate_edit_fingerprint(value: Option<&str>) -> Result<(), ApiError> {
+    if let Some(value) = value
+        && (value.len() != 64
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    {
+        return Err(ApiError::invalid(
+            "Memory edit fingerprint must be 64 lowercase hexadecimal characters",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn unavailable() -> ApiError {
     let mut error = ApiError::new(
         axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -90,6 +124,8 @@ pub(super) fn unavailable() -> ApiError {
 pub struct PutMemory {
     /// Complete Markdown document with YAML name, description and type fields.
     pub content: String,
+    /// Fingerprint returned by editReview; omit for an unconditional write.
+    pub review_fingerprint: Option<String>,
 }
 
 pub struct MemoryEdit {
@@ -97,6 +133,7 @@ pub struct MemoryEdit {
     pub scope: MemoryScope,
     pub name: String,
     pub content: Option<String>,
+    pub review_fingerprint: Option<String>,
     pub identity: Option<super::idempotency::MemoryHttpIdentity>,
 }
 
@@ -106,15 +143,18 @@ fn edit_request(
     scope: String,
     name: String,
     content: Option<String>,
+    review_fingerprint: Option<String>,
 ) -> Result<MemoryEdit, ApiError> {
     let scope = MemoryScope::parse(&scope)?;
     cyber_core::memory::validate_name(&name)
         .map_err(|error| ApiError::invalid(error.to_string()))?;
+    validate_edit_fingerprint(review_fingerprint.as_deref())?;
     Ok(MemoryEdit {
         directory: location(parts, &state.options.default_directory)?,
         scope,
         name,
         content,
+        review_fingerprint,
         identity: parts
             .extensions
             .get::<super::idempotency::MemoryHttpIdentity>()
@@ -130,7 +170,14 @@ async fn put(
 ) -> Result<Json<Located<crate::runtime::MemoryChange>>, ApiError> {
     let Json(body) =
         body.map_err(|_| ApiError::invalid("Expected JSON object with memory content"))?;
-    let edit = edit_request(&parts, &state, scope, name, Some(body.content))?;
+    let edit = edit_request(
+        &parts,
+        &state,
+        scope,
+        name,
+        Some(body.content),
+        body.review_fingerprint,
+    )?;
     let directory = edit.directory.clone();
     let data = state
         .services
@@ -150,7 +197,16 @@ async fn delete(
     if !body.is_empty() {
         return Err(ApiError::invalid("Memory delete takes no request body"));
     }
-    let edit = edit_request(&parts, &state, scope, name, None)?;
+    let mut reviews = parts.headers.get_all("x-cyber-memory-review").iter();
+    let review = reviews
+        .next()
+        .map(|value| value.to_str().map(str::to_owned))
+        .transpose()
+        .map_err(|_| ApiError::invalid("Invalid memory review header"))?;
+    if reviews.next().is_some() {
+        return Err(ApiError::invalid("Expected one memory review header"));
+    }
+    let edit = edit_request(&parts, &state, scope, name, None, review)?;
     let directory = edit.directory.clone();
     let data = state
         .services

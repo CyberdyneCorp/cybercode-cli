@@ -47,6 +47,26 @@ pub(super) async fn read(
     .map_err(ApiError::unknown)?
 }
 
+pub(super) async fn edit_review(
+    data: PathBuf,
+    directory: PathBuf,
+    scope: MemoryScope,
+    name: String,
+) -> Result<cyber_core::memory::MemoryEditReview, ApiError> {
+    cyber_core::memory::validate_name(&name)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        let project = project(&directory, scope);
+        let store = MemoryStore::existing(&data, &project)
+            .map_err(storage_error)?
+            .ok_or_else(|| storage_error(MemoryStorageError::NotFound))?;
+        let owner = store.claim().map_err(storage_error)?;
+        owner.inspect_edit(&name).map_err(storage_error)
+    })
+    .await
+    .map_err(ApiError::unknown)?
+}
+
 fn storage_error(error: MemoryStorageError) -> ApiError {
     match error {
         MemoryStorageError::NotFound => {
@@ -105,6 +125,7 @@ fn mutation_settings(config: &cyber_tools::ConfigFn, directory: &Path) -> Result
 }
 
 fn validate_edit(edit: &cyber_server::http::MemoryEdit) -> Result<(), ApiError> {
+    cyber_server::http::validate_edit_fingerprint(edit.review_fingerprint.as_deref())?;
     cyber_core::memory::validate_name(&edit.name)
         .map_err(|error| ApiError::invalid(error.to_string()))?;
     if let Some(content) = &edit.content {
@@ -159,6 +180,9 @@ fn mutate(
     mutation_settings(config, &edit.directory)?;
     let store = match MemoryStore::existing(data, &project).map_err(storage_error)? {
         Some(store) => store,
+        None if edit.review_fingerprint.is_some() => {
+            return Err(storage_error(MemoryStorageError::ReviewConflict));
+        }
         None if edit.content.is_some() => {
             MemoryStore::open(data, &project).map_err(storage_error)?
         }
@@ -166,6 +190,11 @@ fn mutate(
     };
     let mut scope = store.claim().map_err(mutation_storage_error)?;
     scope.list().map_err(storage_error)?;
+    if let Some(fingerprint) = edit.review_fingerprint.as_deref() {
+        scope
+            .verify_edit_review(&edit.name, fingerprint)
+            .map_err(storage_error)?;
+    }
     if edit.content.is_none() {
         scope.read(&edit.name).map_err(storage_error)?;
     }
@@ -174,9 +203,11 @@ fn mutate(
         MemoryAdmission::Replay(change) => return Ok(change),
         MemoryAdmission::Owned(owner) => *owner,
     };
-    let prepared = match edit.content {
-        Some(content) => scope.prepare_write(&content),
-        None => scope.prepare_delete(&edit.name),
+    let prepared = match (edit.content, edit.review_fingerprint) {
+        (Some(content), Some(review)) => scope.prepare_write_reviewed(&content, &review),
+        (None, Some(review)) => scope.prepare_delete_reviewed(&edit.name, &review),
+        (Some(content), None) => scope.prepare_write(&content),
+        (None, None) => scope.prepare_delete(&edit.name),
     }
     .map_err(storage_error)?;
     owner

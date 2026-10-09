@@ -1086,3 +1086,306 @@ async fn acknowledged_memory_retry_is_not_blocked_by_a_delayed_first_response() 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(actual, expected);
 }
+
+#[tokio::test]
+async fn edit_review_routing_and_authentication_do_not_create_missing_storage() {
+    let f = Fixture::new(true).await;
+    assert_eq!(
+        f.client
+            .get(format!("{}/memory/edit/global/policy", f.url))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    for (path, expected) in [
+        ("/memory/edit/global/policy", StatusCode::NOT_FOUND),
+        ("/memory/edit/project/policy", StatusCode::NOT_FOUND),
+        ("/memory/edit/invalid/policy", StatusCode::BAD_REQUEST),
+        ("/memory/edit/global/bad.name", StatusCode::BAD_REQUEST),
+    ] {
+        assert_eq!(f.get(path).send().await.unwrap().status(), expected);
+    }
+    assert_eq!(
+        std::fs::read_dir(f.app.paths.data.join("memory"))
+            .unwrap()
+            .count(),
+        0
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+impl Fixture {
+    fn reviewed_put(&self, name: &str, content: &str, review: &str) -> reqwest::RequestBuilder {
+        self.client
+            .put(format!("{}/memory/global/{name}", self.url))
+            .basic_auth("cyber", Some("memory-test"))
+            .json(&json!({"content": content, "review_fingerprint": review}))
+    }
+    async fn edit_review(&self, scope: &str, name: &str) -> Value {
+        let response = self
+            .get(&format!("/memory/edit/{scope}/{name}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.json::<Value>().await.unwrap()["data"].clone()
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conditional_edits_preserve_external_changes_without_durable_admission() {
+    let f = Fixture::new(true).await;
+    let store = f.store("global");
+    for target in ["policy.md", "MEMORY.md", "other.md"] {
+        {
+            let mut scope = store.claim().unwrap();
+            scope.write(&text("policy", "Original fact")).unwrap();
+            scope.write(&text("other", "Other fact")).unwrap();
+        }
+        let review = f.edit_review("global", "policy").await;
+        assert_eq!(review["original"], text("policy", "Original fact"));
+        let fingerprint = review["fingerprint"].as_str().unwrap();
+        let changed = if target == "MEMORY.md" {
+            "External index change".into()
+        } else {
+            text(target.trim_end_matches(".md"), "External fact")
+        };
+        std::fs::write(store.path().join(target), &changed).unwrap();
+        assert_eq!(
+            f.reviewed_put("policy", &text("policy", "Draft"), fingerprint)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            f.delete("policy")
+                .header("x-cyber-memory-review", fingerprint)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            std::fs::read_to_string(store.path().join(target)).unwrap(),
+            changed
+        );
+        assert!(!store.path().join(".memory-transaction").exists());
+    }
+    assert_eq!(
+        f.app
+            .store
+            .read(|db| db
+                .query_row("SELECT COUNT(*) FROM memory_mutation", [], |row| row
+                    .get::<_, i64>(0))
+                .map_err(Into::into))
+            .unwrap(),
+        0
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conditional_write_and_delete_replay_consumed_reviews_and_bind_header_identity() {
+    let f = Fixture::new(true).await;
+    let store = f.store("global");
+    store
+        .claim()
+        .unwrap()
+        .write(&text("policy", "Original fact"))
+        .unwrap();
+    let review = f.edit_review("global", "policy").await;
+    let fingerprint = review["fingerprint"].as_str().unwrap();
+    let content = text("policy", "Updated fact");
+    let saved = f
+        .reviewed_put("policy", &content, fingerprint)
+        .header("idempotency-key", "conditional-write")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK);
+    let saved = saved.json::<Value>().await.unwrap();
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let replay = f
+        .reviewed_put("policy", &content, fingerprint)
+        .header("idempotency-key", "conditional-write")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.json::<Value>().await.unwrap(), saved);
+    assert_eq!(
+        f.reviewed_put("policy", &content, &"a".repeat(64))
+            .header("idempotency-key", "conditional-write")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let review = f.edit_review("global", "policy").await;
+    let fingerprint = review["fingerprint"].as_str().unwrap();
+    let deleted = f
+        .delete("policy")
+        .header("x-cyber-memory-review", fingerprint)
+        .header("idempotency-key", "conditional-delete")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let deleted = deleted.json::<Value>().await.unwrap();
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let replay = f
+        .delete("policy")
+        .header("x-cyber-memory-review", fingerprint)
+        .header("idempotency-key", "conditional-delete")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.json::<Value>().await.unwrap(), deleted);
+    for review in [None, Some("a".repeat(64))] {
+        let request = f
+            .delete("policy")
+            .header("idempotency-key", "conditional-delete");
+        let request = match review {
+            Some(value) => request.header("x-cyber-memory-review", value),
+            None => request,
+        };
+        assert_eq!(request.send().await.unwrap().status(), StatusCode::CONFLICT);
+    }
+    assert_eq!(
+        f.app
+            .store
+            .read(|db| db
+                .query_row("SELECT COUNT(*) FROM memory_mutation", [], |row| row
+                    .get::<_, i64>(0))
+                .map_err(Into::into))
+            .unwrap(),
+        2
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn conditional_edit_validation_missing_scope_foreign_reviews_and_settings_are_fenced() {
+    let f = Fixture::new(true).await;
+    assert_eq!(
+        f.reviewed_put("policy", &text("policy", "Fact"), &"a".repeat(64))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        std::fs::read_dir(f.app.paths.data.join("memory"))
+            .unwrap()
+            .count(),
+        0
+    );
+    let store = f.store("global");
+    store
+        .claim()
+        .unwrap()
+        .write(&text("policy", "Original fact"))
+        .unwrap();
+    let project = f.store("project");
+    project
+        .claim()
+        .unwrap()
+        .write(&text("policy", "Original fact"))
+        .unwrap();
+    let foreign = f.edit_review("project", "policy").await;
+    assert_eq!(
+        f.reviewed_put(
+            "policy",
+            &text("policy", "Draft"),
+            foreign["fingerprint"].as_str().unwrap()
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        StatusCode::CONFLICT
+    );
+    for fingerprint in ["", "invalid", &"A".repeat(64)] {
+        assert_eq!(
+            f.reviewed_put("policy", &text("policy", "Draft"), fingerprint)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            f.delete("policy")
+                .header("x-cyber-memory-review", fingerprint)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        f.delete("policy")
+            .header("x-cyber-memory-review", "a".repeat(64))
+            .header("x-cyber-memory-review", "b".repeat(64))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    std::fs::write(
+        f.app.paths.config.join("cyber.json"),
+        r#"{"memory":{"enabled":false}}"#,
+    )
+    .unwrap();
+    let review = f.edit_review("global", "policy").await;
+    let fingerprint = review["fingerprint"].as_str().unwrap();
+    assert_eq!(
+        f.reviewed_put("policy", &text("policy", "Draft"), fingerprint)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.delete("policy")
+            .header("x-cyber-memory-review", fingerprint)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        store.claim().unwrap().read("policy").unwrap().body,
+        "Original fact"
+    );
+    assert!(!store.path().join(".memory-transaction").exists());
+    f.close().await;
+}
