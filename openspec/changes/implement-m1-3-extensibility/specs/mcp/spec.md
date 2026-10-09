@@ -160,6 +160,13 @@
 - **AND** old tool registrations SHALL remain stale and interrupted tool calls SHALL NOT be replayed
 - **AND** Location close and runtime shutdown SHALL cancel backoff/admission and join the original retained monitor
 
+#### Scenario: Named bounded startup wait
+- **WHEN** wait_for_mcp is called for configured named servers with an optional timeout from zero to sixty seconds
+- **THEN** the built-in SHALL wait only while requested servers are connecting, without starting servers or invoking peer RPCs
+- **AND** the result SHALL report redacted observations and whether the wait deadline expired
+- **AND** ordinary schema, agent, hook, permission and cancellation boundaries SHALL apply
+- **AND** unknown names SHALL fail before waiting and readiness SHALL NOT authorize calls against a previous Turn catalog
+
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
 

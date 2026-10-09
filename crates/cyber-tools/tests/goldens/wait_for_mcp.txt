@@ -1,0 +1,10 @@
+{
+  "servers": [
+    {
+      "name": "disabled",
+      "status": "disabled",
+      "error": "MCP server is disabled"
+    }
+  ],
+  "timed_out": false
+}

@@ -1307,3 +1307,155 @@ async fn reconnect_backoff_does_not_keep_host_alive() {
     drop(flow);
     assert!(host.upgrade().is_none());
 }
+
+#[tokio::test]
+async fn wait_tool_observes_delayed_startup_without_invoking_remote_tools() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    let mut inv = flow.f.invocation(
+        "plan",
+        "wait_for_mcp",
+        json!({"servers":["shared"],"timeout":3}),
+    );
+    inv.session_id = id.clone();
+    let host = flow.f.host.clone();
+    let task = tokio::spawn(async move { host.execute(inv, CancellationToken::new()).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!task.is_finished());
+    ready(&flow, &id).await;
+    let result: Value = serde_json::from_str(&support::ok(task.await.unwrap())).unwrap();
+    assert_eq!(result["servers"][0]["status"], "connected");
+    assert_eq!(result["timed_out"], false);
+    assert!(!flow.f.repo.join("calls").exists());
+    assert_eq!(
+        mcp_connections(&flow.f.store, &flow.f.repo).unwrap().len(),
+        1
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn wait_tool_timeout_and_cancellation_leave_startup_owned() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    let mut inv = flow.f.invocation(
+        "default",
+        "wait_for_mcp",
+        json!({"servers":["shared"],"timeout":0}),
+    );
+    inv.session_id = id.clone();
+    let result: Value = serde_json::from_str(&support::ok(
+        flow.f
+            .host
+            .execute(inv.clone(), CancellationToken::new())
+            .await,
+    ))
+    .unwrap();
+    assert_eq!(result["timed_out"], true);
+    assert_eq!(result["servers"][0]["status"], "connecting");
+    inv.input["timeout"] = json!(1);
+    let started = tokio::time::Instant::now();
+    let output = tokio::time::timeout(
+        Duration::from_secs(3),
+        flow.f.host.execute(inv.clone(), CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(started.elapsed() >= Duration::from_secs(1));
+    let result: Value = serde_json::from_str(&support::ok(output)).unwrap();
+    assert_eq!(result["timed_out"], true);
+    inv.input["timeout"] = json!(60);
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    let host = flow.f.host.clone();
+    let task = tokio::spawn(async move { host.execute(inv, token).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!task.is_finished());
+    cancel.cancel();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap(),
+        ToolOutcome::Aborted
+    );
+    ready(&flow, &id).await;
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn runtime_wait_makes_connected_tools_available_on_following_model_step() {
+    let flow = Flow::new(
+        vec![
+            call(
+                "wait",
+                "wait_for_mcp",
+                json!({"servers":["shared"],"timeout":3}),
+            ),
+            call("read", "mcp__shared__read", json!({})),
+            text("done"),
+        ],
+        false,
+    );
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    flow.prompt(&id, "wait then use the server").await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while flow.main.requests().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        flow.main.requests()[0]
+            .tools
+            .iter()
+            .any(|tool| tool.name == "wait_for_mcp")
+    );
+    assert!(
+        flow.main.requests()[0]
+            .tools
+            .iter()
+            .all(|tool| !tool.name.starts_with("mcp__"))
+    );
+    ready(&flow, &id).await;
+    flow.settle(&id).await;
+    assert!(
+        flow.main.requests()[1]
+            .tools
+            .iter()
+            .any(|tool| tool.name == "mcp__shared__read")
+    );
+    assert_eq!(flow.output(&id, "read").await, "remote read");
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn wait_tool_pre_hook_can_refuse_before_waiting_even_in_bypass_mode() {
+    let flow = Flow::new(vec![], false);
+    configure(
+        &flow,
+        json!({"PreToolUse":[{"matcher":"wait_for_mcp","hooks":[{
+            "type":"command","command":"echo '{\"decision\":\"deny\",\"reason\":\"wait denied by hook\"}'"
+        }]}]}),
+    );
+    let id = flow.session("default").await;
+    let mut inv = flow
+        .f
+        .invocation("bypass", "wait_for_mcp", json!({"servers":["shared"]}));
+    inv.session_id = id.clone();
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        flow.f.host.execute(inv, CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, ToolOutcome::Failed(error) if error.contains("wait denied by hook")));
+    assert!(!flow.f.repo.join("calls").exists());
+    ready(&flow, &id).await;
+    flow.runtime.shutdown().await;
+}

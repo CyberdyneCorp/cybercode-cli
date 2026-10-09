@@ -450,3 +450,6 @@ Owned MCP startup errors now carry retry-safety evidence only after native/proxy
 
 
 Retained local MCP reconnect now has evidence for exponential delays capped at sixty seconds and ten attempts per loss sequence, fresh configuration/authorization and independent identities, transient startup failure only after complete settlement, no interrupted-call replay, backoff close, failed settlement refusal and Unknown fencing during cancelled reconnect initialization. These local tests do not accept remote reconnect, manual controls, reconfiguration, managed recovery or the full canonical status/M1.3 requirements.
+
+
+The read-only wait_for_mcp built-in now covers named connecting servers with a zero-to-sixty-second timeout, ordinary schema/agent/hooks/permission/cancellation boundaries and redacted status results. Portable terminal/unknown/invalid-input/deny cases, a per-tool golden and real delayed startup, expiry, cancellation and following-step materialization tests accept this local wait boundary. Waiting never starts servers or grants invocation authority. Deferred tool loading/search, remote transports and full native acceptance remain unaccepted.

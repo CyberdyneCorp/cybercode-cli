@@ -123,6 +123,41 @@ impl Fixture {
         path
     }
 
+    pub fn configure_mcp_status(&self, entries: Value) {
+        use cyber_core::config::{self, LoadRequest};
+        use cyber_core::paths::Paths;
+        use cyber_core::trust::TrustStore;
+        let home = self.dir.path().join("home");
+        let env = HashMap::from([(
+            "CYBER_HOME".into(),
+            self.dir.path().join("cyber").display().to_string(),
+        )]);
+        let paths = Paths::resolve(&env, &home);
+        paths.ensure().unwrap();
+        std::fs::write(
+            paths.config.join("cyber.jsonc"),
+            serde_json::json!({"mcp":entries}).to_string(),
+        )
+        .unwrap();
+        self.host
+            .attach_hook_config(
+                Arc::new(move |directory| {
+                    config::load(&LoadRequest {
+                        location: directory,
+                        paths: &paths,
+                        env: &env,
+                        home: &home,
+                        profile: None,
+                        overrides: &[],
+                        flags: serde_json::json!({}),
+                    })
+                    .map_err(|error| error.to_string())
+                }),
+                TrustStore::new(self.dir.path().join("trust.json")),
+            )
+            .unwrap();
+    }
+
     pub fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.repo.join(rel)).unwrap()
     }

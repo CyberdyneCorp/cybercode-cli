@@ -149,6 +149,7 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
         "todo",
         "skill",
         "history_search",
+        "wait_for_mcp",
     ] {
         rules.push(Rule::new(action, "*", Effect::Allow, "default"));
     }

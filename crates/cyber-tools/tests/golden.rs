@@ -171,3 +171,15 @@ async fn skill_golden() {
             .await),
     );
 }
+
+#[tokio::test]
+async fn mcp_wait_golden() {
+    let f = Fixture::new();
+    f.configure_mcp_status(
+        json!({"disabled":{"type":"local","command":"not-installed","enabled":false}}),
+    );
+    let output = ok(f
+        .call("plan", "wait_for_mcp", json!({"servers":["disabled"]}))
+        .await);
+    support::golden(&f, "wait_for_mcp", &output);
+}

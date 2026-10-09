@@ -68,9 +68,9 @@ jobs:
           cargo test --locked -p cyber-server --test http worktree_request_validation_precedes_host_dispatch
       - name: Native worktree configuration, repository creation and lock ownership
         run: cargo test --locked -p cyber-core --lib --test worktrees --test worktree_lock --test worktree_repository --test config
-      - name: Native MCP configuration and bounded framed protocol
+      - name: Native MCP configuration, framed protocol and startup wait
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority --test mcp_discovery
+        run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority --test mcp_discovery --test mcp_wait
       - name: Native MCP passive transport and leader-exit observation
         if: ${{ !cancelled() }}
         run: |
