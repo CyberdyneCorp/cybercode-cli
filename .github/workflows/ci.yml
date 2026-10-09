@@ -70,7 +70,7 @@ jobs:
         run: cargo test --locked -p cyber-core --lib --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Native MCP configuration and bounded framed protocol
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority
+        run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority --test mcp_discovery
       - name: Native MCP retained proxy settlement
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib mcp::launch::tests

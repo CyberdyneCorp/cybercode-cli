@@ -52,6 +52,9 @@ pub struct LocalServer {
     tools: McpToolFilter,
     shutdown_acknowledged: bool,
     authority: ServerAuthority,
+    catalog: Vec<super::DiscoveredTool>,
+    metadata: Value,
+    aliases: super::discovery::ToolAliases,
 }
 
 struct ServerAuthority {
@@ -62,6 +65,52 @@ struct ServerAuthority {
 }
 
 impl LocalServer {
+    pub fn tools(&self) -> &[super::DiscoveredTool] {
+        &self.catalog
+    }
+
+    pub fn metadata(&self) -> &Value {
+        &self.metadata
+    }
+
+    pub async fn refresh_tools(&mut self, timeout: Duration) -> Result<(), McpError> {
+        self.authorize()?;
+        self.catalog.clear();
+        self.catalog = self
+            .connection
+            .discover_tools(&self.authority.name, &self.tools, timeout)
+            .await?;
+        self.aliases.retain(&self.authority.name, &mut self.catalog);
+        Ok(())
+    }
+
+    pub async fn call_exposed_tool(
+        &mut self,
+        name: &str,
+        arguments: Value,
+        timeout: Duration,
+    ) -> Result<Value, McpError> {
+        self.authorize()?;
+        let remote = self
+            .catalog
+            .iter()
+            .find(|tool| tool.exposed_name == name)
+            .map(|tool| tool.remote_name.clone())
+            .ok_or_else(|| McpError::StaleTool(name.into()))?;
+        self.call_tool(&remote, arguments, timeout).await
+    }
+
+    fn authorize(&self) -> Result<(), McpError> {
+        authorize_server(
+            &self.authority.resolved,
+            &self.authority.trust,
+            &self.authority.location,
+            &self.authority.name,
+        )
+        .map(|_| ())
+        .map_err(|_| McpError::Protocol("MCP server authorization is no longer valid"))
+    }
+
     pub fn scratch_path(&self) -> &Path {
         &self.resources.scratch.path
     }
@@ -76,19 +125,18 @@ impl LocalServer {
         arguments: Value,
         timeout: Duration,
     ) -> Result<Value, McpError> {
-        authorize_server(
-            &self.authority.resolved,
-            &self.authority.trust,
-            &self.authority.location,
-            &self.authority.name,
-        )
-        .map_err(|_| McpError::Protocol("MCP server authorization is no longer valid"))?;
+        self.authorize()?;
         if !self
             .tools
             .permits(name)
             .map_err(|_| McpError::Protocol("invalid tool filter"))?
         {
             return Err(McpError::Protocol("MCP tool is excluded by server filter"));
+        }
+        if !self.catalog.iter().any(|tool| tool.remote_name == name) {
+            return Err(McpError::Protocol(
+                "MCP tool is absent from connected server catalog",
+            ));
         }
         self.connection.call_tool(name, arguments, timeout).await
     }
@@ -204,24 +252,33 @@ impl LocalLauncher<'_> {
                 });
             }
         };
-        match StdioConnection::connect(
+        match StdioConnection::connect_with_tools(
             process,
+            name,
+            tools,
             deadline.saturating_duration_since(tokio::time::Instant::now()),
         )
         .await
         {
-            Ok(connection) => Ok(LocalServer {
-                connection,
-                resources,
-                tools: tools.clone(),
-                shutdown_acknowledged: false,
-                authority: ServerAuthority {
-                    resolved: self.resolved.clone(),
-                    trust: self.trust.clone(),
-                    location: self.location.into(),
-                    name: name.into(),
-                },
-            }),
+            Ok((connection, mut catalog)) => {
+                let mut aliases = super::discovery::ToolAliases::default();
+                aliases.retain(name, &mut catalog);
+                Ok(LocalServer {
+                    aliases,
+                    metadata: connection.metadata().cloned().unwrap_or(Value::Null),
+                    catalog,
+                    connection,
+                    resources,
+                    tools: tools.clone(),
+                    shutdown_acknowledged: false,
+                    authority: ServerAuthority {
+                        resolved: self.resolved.clone(),
+                        trust: self.trust.clone(),
+                        location: self.location.into(),
+                        name: name.into(),
+                    },
+                })
+            }
             Err(error) => {
                 let proxy = resources.stop_proxy().await;
                 let acknowledged = error.acknowledged && proxy;

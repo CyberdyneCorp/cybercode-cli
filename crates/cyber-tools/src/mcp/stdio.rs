@@ -16,6 +16,8 @@ pub enum McpError {
     Timeout,
     #[error("MCP server rejected request (code {0})")]
     Remote(i64),
+    #[error("Stale tool call: {0}")]
+    StaleTool(String),
 }
 impl From<std::io::Error> for McpError {
     fn from(error: std::io::Error) -> Self {
@@ -38,6 +40,7 @@ pub struct StdioClient<R, W> {
     initialization_started: bool,
     tools: bool,
     protocol_version: Option<String>,
+    metadata: Option<Value>,
 }
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
@@ -49,6 +52,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             initialization_started: false,
             tools: false,
             protocol_version: None,
+            metadata: None,
         }
     }
     pub fn unresolved(&self) -> bool {
@@ -57,6 +61,16 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
 
     pub fn protocol_version(&self) -> Option<&str> {
         self.protocol_version.as_deref()
+    }
+
+    pub fn metadata(&self) -> Option<&Value> {
+        self.metadata.as_ref()
+    }
+
+    pub fn supports(&self, capability: &str) -> bool {
+        self.metadata
+            .as_ref()
+            .is_some_and(|value| value["capabilities"][capability].is_object())
     }
 
     /// Signal cancellation without asserting remote effect/transport settlement.
@@ -90,9 +104,14 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         if !result["capabilities"].is_object()
             || !result["serverInfo"]["name"].is_string()
             || !result["serverInfo"]["version"].is_string()
-            || result["capabilities"]
-                .get("tools")
-                .is_some_and(|tools| !tools.is_object())
+            || ["tools", "resources", "prompts"].iter().any(|capability| {
+                result["capabilities"]
+                    .get(capability)
+                    .is_some_and(|value| !value.is_object())
+            })
+            || result
+                .get("instructions")
+                .is_some_and(|value| !value.is_string())
         {
             return Err(McpError::Protocol("invalid initialization result"));
         }
@@ -101,7 +120,31 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         self.protocol_version = Some(version.into());
         self.tools = result["capabilities"]["tools"].is_object();
         self.initialized = true;
+        self.metadata = Some(result.clone());
         Ok(result)
+    }
+
+    pub async fn list_tools(
+        &mut self,
+        cursor: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, McpError> {
+        if !self.initialized || !self.tools {
+            return Err(McpError::Protocol("server tools are unavailable"));
+        }
+        let params = cursor
+            .map(|cursor| json!({"cursor":cursor}))
+            .unwrap_or_else(|| json!({}));
+        self.request("tools/list", params, timeout).await
+    }
+
+    pub async fn discover_tools(
+        &mut self,
+        server: &str,
+        filter: &cyber_core::config::McpToolFilter,
+        timeout: Duration,
+    ) -> Result<Vec<super::DiscoveredTool>, McpError> {
+        super::discovery::discover(self, server, filter, timeout).await
     }
 
     pub async fn call_tool(

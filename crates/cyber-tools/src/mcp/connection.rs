@@ -35,6 +35,35 @@ pub struct StdioConnection {
 }
 
 impl StdioConnection {
+    /// One absolute deadline covers initialization and every initial listing page.
+    pub async fn connect_with_tools(
+        process: HookCommandProcess,
+        name: &str,
+        filter: &cyber_core::config::McpToolFilter,
+        timeout: Duration,
+    ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut connection = Self::connect(process, timeout).await?;
+        match connection
+            .discover_tools(
+                name,
+                filter,
+                deadline.saturating_duration_since(tokio::time::Instant::now()),
+            )
+            .await
+        {
+            Ok(tools) => Ok((connection, tools)),
+            Err(error) => {
+                let (acknowledged, stderr) = connection.shutdown().await;
+                Err(ConnectionError {
+                    error,
+                    acknowledged,
+                    stderr,
+                })
+            }
+        }
+    }
+
     /// Consume an authorized process, retain its streams and complete initialization.
     pub async fn connect(
         process: HookCommandProcess,
@@ -82,6 +111,23 @@ impl StdioConnection {
 
     pub fn unresolved(&self) -> bool {
         self.client.as_ref().is_some_and(StdioClient::unresolved)
+    }
+
+    pub fn metadata(&self) -> Option<&Value> {
+        self.client.as_ref().and_then(StdioClient::metadata)
+    }
+
+    pub async fn discover_tools(
+        &mut self,
+        name: &str,
+        filter: &cyber_core::config::McpToolFilter,
+        timeout: Duration,
+    ) -> Result<Vec<super::DiscoveredTool>, McpError> {
+        let client = self
+            .client
+            .as_mut()
+            .ok_or(McpError::Protocol("MCP transport is closed"))?;
+        client.discover_tools(name, filter, timeout).await
     }
 
     pub async fn call_tool(

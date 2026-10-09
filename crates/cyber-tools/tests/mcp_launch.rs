@@ -16,6 +16,8 @@ for line in sys.stdin:
     if 'id' not in request: continue
     if request['method'] == 'initialize':
         result = {'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'fixture','version':'1'}}
+    elif request['method'] == 'tools/list':
+        result = {'tools':[{'name':'record','inputSchema':{'type':'object'},'annotations':{'readOnlyHint':False}}, {'name':'denied','inputSchema':{'type':'object'}}]}
     else:
         writable = True
         try: pathlib.Path('called').write_text(request['params']['name'])
@@ -114,6 +116,9 @@ async fn configured_launch_enforces_environment_filters_confinement_and_cleanup(
     launcher.credential_env_names = &credentials;
     let mut server = launcher.connect("audit", || Ok(())).await.unwrap();
     let scratch = server.scratch_path().to_path_buf();
+    assert_eq!(server.tools().len(), 1);
+    assert_eq!(server.tools()[0].exposed_name, "mcp__audit__record");
+    assert_eq!(server.metadata()["serverInfo"]["name"], "fixture");
     assert!(
         server
             .settle_after_shutdown::<()>(|| panic!("unverified shutdown cannot commit cleanup"))
@@ -149,6 +154,197 @@ async fn configured_launch_enforces_environment_filters_confinement_and_cleanup(
     server.settle_after_shutdown(|| Ok(())).unwrap();
     drop(server);
     assert!(!scratch.exists());
+}
+
+#[tokio::test]
+async fn refresh_cannot_rebind_an_old_exposed_name_to_a_different_remote_tool() {
+    let fixture = Fixture::new("full-access");
+    let script = SERVER.replace("'name':'record'", "'name':'record.file'").replace("elif request['method'] == 'tools/list':", "elif request['method'] == 'tools/list':\n        if pathlib.Path('catalog.json').exists():\n            result = json.loads(pathlib.Path('catalog.json').read_text())\n            print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)\n            continue");
+    fixture.configure(|value| {
+        value["mcp"]["audit"]["args"] = json!(["-u", "-c", script]);
+        value["mcp"]["audit"]["tools"]["allow"] = json!(["*"]);
+    });
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let mut server = fixture
+        .launcher(&loaded, &trust, None)
+        .connect("audit", || Ok(()))
+        .await
+        .unwrap();
+    let original = server.tools()[0].exposed_name.clone();
+    std::fs::write(
+        fixture.repo.join("catalog.json"),
+        json!({"tools":[{"name":"record_file","inputSchema":{}}]}).to_string(),
+    )
+    .unwrap();
+    server.refresh_tools(Duration::from_secs(1)).await.unwrap();
+    let replacement = server.tools()[0].exposed_name.clone();
+    assert_ne!(replacement, original);
+    let stale = server
+        .call_exposed_tool(&original, json!({}), Duration::from_secs(1))
+        .await
+        .unwrap_err();
+    assert_eq!(stale.to_string(), format!("Stale tool call: {original}"));
+    assert!(!fixture.repo.join("called").exists());
+    server
+        .call_exposed_tool(&replacement, json!({}), Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("called")).unwrap(),
+        "record_file"
+    );
+    std::fs::remove_file(fixture.repo.join("catalog.json")).unwrap();
+    server.refresh_tools(Duration::from_secs(1)).await.unwrap();
+    assert_eq!(server.tools()[0].exposed_name, original);
+    assert!(
+        server
+            .call_exposed_tool(&replacement, json!({}), Duration::from_secs(1))
+            .await
+            .is_err()
+    );
+    assert!(server.shutdown().await.0);
+    server.settle_after_shutdown(|| Ok(())).unwrap();
+}
+
+#[tokio::test]
+async fn exposed_calls_route_to_original_names_and_refreshed_tools_become_stale() {
+    let fixture = Fixture::new("full-access");
+    let script = SERVER
+        .replace("'name':'record'", "'name':'record.file'")
+        .replace(
+            "result = {'tools':[",
+            "result = {'tools':([] if pathlib.Path('refresh-empty').exists() else [",
+        )
+        .replace(
+            "{'name':'denied','inputSchema':{'type':'object'}}]}",
+            "{'name':'denied','inputSchema':{'type':'object'}}])}",
+        );
+    fixture.configure(|value| {
+        value["mcp"]["audit"]["args"] = json!(["-u", "-c", script]);
+        value["mcp"]["audit"]["tools"]["allow"] = json!(["*"]);
+    });
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let mut server = fixture
+        .launcher(&loaded, &trust, None)
+        .connect("audit", || Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(server.tools()[0].exposed_name, "mcp__audit__record_file");
+    server
+        .call_exposed_tool("mcp__audit__record_file", json!({}), Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("called")).unwrap(),
+        "record.file"
+    );
+    std::fs::remove_file(fixture.repo.join("called")).unwrap();
+    std::fs::write(fixture.repo.join("refresh-empty"), "").unwrap();
+    server.refresh_tools(Duration::from_secs(1)).await.unwrap();
+    assert!(server.tools().is_empty());
+    let stale = server
+        .call_exposed_tool("mcp__audit__record_file", json!({}), Duration::from_secs(1))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        stale.to_string(),
+        "Stale tool call: mcp__audit__record_file"
+    );
+    assert!(!fixture.repo.join("called").exists());
+    assert!(server.shutdown().await.0);
+    server.settle_after_shutdown(|| Ok(())).unwrap();
+}
+
+#[tokio::test]
+async fn initialization_and_listing_share_the_configured_startup_deadline() {
+    let fixture = Fixture::new("full-access");
+    let script = SERVER
+        .replace(
+            "result = {'protocolVersion'",
+            "time.sleep(0.65)\n        result = {'protocolVersion'",
+        )
+        .replace(
+            "elif request['method'] == 'tools/list':",
+            "elif request['method'] == 'tools/list':\n        time.sleep(0.65)",
+        );
+    fixture.configure(|value| {
+        value["mcp"]["audit"]["timeout"] = json!(1);
+        value["mcp"]["audit"]["args"] = json!(["-u", "-c", script]);
+    });
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let started = tokio::time::Instant::now();
+    let error = match fixture
+        .launcher(&loaded, &trust, None)
+        .connect("audit", || Ok(()))
+        .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("listing received a fresh startup deadline"),
+    };
+    assert!(error.acknowledged);
+    assert!(error.diagnostic.contains("timed out"));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(error.scratch.unwrap().exists());
+}
+
+#[tokio::test]
+async fn invalid_initial_catalog_closes_native_server_and_retains_stderr_and_scratch() {
+    let fixture = Fixture::new("full-access");
+    let script = SERVER
+        .replace("for line in sys.stdin:", "pathlib.Path('server.pid').write_text(str(os.getpid()))\nfor line in sys.stdin:")
+        .replace("elif request['method'] == 'tools/list':", "elif request['method'] == 'tools/list':\n        print('listing diagnostic',file=sys.stderr,flush=True)\n        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'tools':'invalid'}}),flush=True)\n        continue\n    elif False:");
+    fixture.configure(|value| value["mcp"]["audit"]["args"] = json!(["-u", "-c", script]));
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let error = match fixture
+        .launcher(&loaded, &trust, None)
+        .connect("audit", || Ok(()))
+        .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("malformed listing entered ready state"),
+    };
+    assert!(error.acknowledged);
+    assert!(error.scratch.unwrap().exists());
+    assert!(
+        String::from_utf8(error.stderr.bytes)
+            .unwrap()
+            .contains("listing diagnostic")
+    );
+    let pid = std::fs::read_to_string(fixture.repo.join("server.pid")).unwrap();
+    let probe = std::process::Command::new("/bin/kill")
+        .args(["-0", &pid])
+        .output()
+        .unwrap();
+    assert!(
+        !probe.status.success(),
+        "acknowledged server must no longer exist"
+    );
+}
+
+#[tokio::test]
+async fn unlisted_tool_is_refused_before_peer_effects_even_when_filter_allows_it() {
+    let fixture = Fixture::new("full-access");
+    fixture.configure(|value| value["mcp"]["audit"]["tools"]["allow"] = json!(["*"]));
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let mut server = fixture
+        .launcher(&loaded, &trust, None)
+        .connect("audit", || Ok(()))
+        .await
+        .unwrap();
+    assert!(
+        server
+            .call_tool("unlisted", json!({}), Duration::from_secs(1))
+            .await
+            .is_err()
+    );
+    assert!(!fixture.repo.join("called").exists());
+    assert!(server.shutdown().await.0);
+    server.settle_after_shutdown(|| Ok(())).unwrap();
 }
 
 #[tokio::test]
