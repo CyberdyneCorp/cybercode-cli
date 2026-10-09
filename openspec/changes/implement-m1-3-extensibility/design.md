@@ -97,3 +97,7 @@ Runtime and public catalog composition now share one function. All current highe
 ### Retryable MCP startup joins
 
 Shared connection entries retain their startup JoinHandle behind an async mutex. Shutdown awaits the handle by mutable reference and removes it only after terminal completion. Disposing a shutdown future therefore releases the mutex without detaching ownership; a later shutdown joins the same startup before attempting native settlement. Connection cancellation also interrupts queued and active RPC waits independently of the Session token, so shutdown can acquire the native owner and persist actual termination evidence. This does not add the public Location-close API or reconcile unknown startup effects.
+
+### Location-scoped MCP close
+
+The shared host canonicalizes the selected Location and places an admission fence before selecting its entries. It cancels every selected connection, joins retained startup tasks, explicitly shuts down each retained native owner and disposes acknowledged owners only after durable settlement. All selected entries receive a stop attempt even if another fails. Errors or unsettled durable records preserve the admission fence and retained entries for retry/recovery; an absent live object never proves that prior native effects stopped. Successful close removes only the selected entry incarnations and permits a new open with new registration identities. Sibling Locations remain active. Public close API and user interface wiring, cross-process recovery and full native acceptance remain open.

@@ -1,12 +1,13 @@
 //! Shared Location connections with retained startup tasks and native owners.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use cyber_core::config::{McpServer, McpSettings};
 use cyber_server::runtime::{
-    Invocation, RetrySafety, SessionInfo, ToolDef, ToolOutcome, TurnContext,
+    Invocation, McpConnectionPhase, RetrySafety, SessionInfo, ToolDef, ToolOutcome, TurnContext,
+    mcp_connections,
 };
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
@@ -21,6 +22,7 @@ pub(crate) struct Pool(Mutex<State>);
 #[derive(Default)]
 struct State {
     closed: bool,
+    closing: BTreeSet<PathBuf>,
     entries: BTreeMap<(PathBuf, String), Arc<Entry>>,
 }
 struct Entry {
@@ -33,6 +35,26 @@ struct Entry {
 }
 
 impl Entry {
+    async fn stop(&self) -> Result<(), String> {
+        self.cancel.cancel();
+        self.clear_published();
+        self.join_startup().await;
+        self.clear_published();
+        let mut server = self.server.lock().await;
+        if let Some(owner) = server.as_mut() {
+            owner.shutdown().await.map_err(|error| error.diagnostic)?;
+            server.take();
+        }
+        Ok(())
+    }
+
+    fn clear_published(&self) {
+        *self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
     async fn join_startup(&self) {
         let mut task = self.task.lock().await;
         if let Some(handle) = task.as_mut() {
@@ -64,7 +86,7 @@ impl BuiltinHost {
             return;
         };
         let mut pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if pool.closed {
+        if pool.closed || pool.closing.contains(&directory) {
             return;
         }
         for (name, definition) in settings.servers {
@@ -150,7 +172,7 @@ impl BuiltinHost {
             return Vec::new();
         };
         let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if pool.closed {
+        if pool.closed || pool.closing.contains(&directory) {
             return Vec::new();
         }
         let mut definitions = Vec::new();
@@ -191,6 +213,57 @@ impl BuiltinHost {
         definitions
     }
 
+    /// Stop shared MCP actors for one canonical Location; unknown effects remain fenced.
+    /// Successful close permits a later open to create new connection identities.
+    pub async fn close_mcp_location(&self, directory: &Path) -> Result<(), String> {
+        let directory = directory
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let entries: Vec<_> = {
+            let mut pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+            pool.closing.insert(directory.clone());
+            pool.entries
+                .iter()
+                .filter(|((location, _), _)| location == &directory)
+                .map(|(key, entry)| (key.clone(), entry.clone()))
+                .collect()
+        };
+        for (_, entry) in &entries {
+            entry.cancel.cancel();
+        }
+        let mut failures = Vec::new();
+        for (_, entry) in &entries {
+            if let Err(error) = entry.stop().await {
+                failures.push(format!("{}: {error}", entry.name));
+            }
+        }
+        if !failures.is_empty() {
+            return Err(failures.join("; "));
+        }
+        let records =
+            mcp_connections(&self.opts.store, &directory).map_err(|error| error.to_string())?;
+        if records
+            .iter()
+            .any(|record| record.phase != McpConnectionPhase::Settled)
+        {
+            return Err(
+                "MCP Location has unresolved native ownership; recovery is required".into(),
+            );
+        }
+        let mut pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+        for (key, entry) in entries {
+            if pool
+                .entries
+                .get(&key)
+                .is_some_and(|current| Arc::ptr_eq(current, &entry))
+            {
+                pool.entries.remove(&key);
+            }
+        }
+        pool.closing.remove(&directory);
+        Ok(())
+    }
+
     pub(crate) async fn shutdown_mcp(&self) {
         let entries: Vec<_> = {
             let mut pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
@@ -201,23 +274,8 @@ impl BuiltinHost {
             entry.cancel.cancel();
         }
         for entry in entries {
-            *entry
-                .published
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) = None;
-            entry.join_startup().await;
-            let mut server = entry.server.lock().await;
-            if let Some(owner) = server.as_mut() {
-                match owner.shutdown().await {
-                    Ok(_) => {
-                        server.take();
-                    }
-                    Err(error) => cyber_core::log::error(
-                        "mcp",
-                        &error.diagnostic,
-                        json!({"server":entry.name,"acknowledged":error.acknowledged}),
-                    ),
-                }
+            if let Err(error) = entry.stop().await {
+                cyber_core::log::error("mcp", &error, json!({"server":entry.name}));
             }
         }
     }
@@ -316,7 +374,7 @@ impl BuiltinHost {
         let config = self.hook_config.get().ok_or_else(stale)?;
         let resolved = (config.resolve)(&directory).map_err(ToolError::Failed)?;
         let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if pool.closed {
+        if pool.closed || pool.closing.contains(&directory) {
             return Err(stale());
         }
         for ((location, _), entry) in &pool.entries {

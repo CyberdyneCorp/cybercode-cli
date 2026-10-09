@@ -496,6 +496,11 @@ async fn shared_runtime_pins_actual_managed_checkout_until_native_shutdown() {
     let record = &mcp_connections(&flow.f.store, &managed.path).unwrap()[0];
     assert_eq!(record.worktree_ids, vec![managed.id.clone()]);
     assert!(CheckoutActivity.reserve(&managed).is_err());
+    flow.f.host.close_mcp_location(&managed.path).await.unwrap();
+    assert_eq!(
+        mcp_connections(&flow.f.store, &managed.path).unwrap()[0].phase,
+        McpConnectionPhase::Settled
+    );
     flow.runtime.shutdown().await;
     assert_eq!(
         mcp_connections(&flow.f.store, &managed.path).unwrap()[0].phase,
@@ -506,4 +511,198 @@ async fn shared_runtime_pins_actual_managed_checkout_until_native_shutdown() {
         std::fs::read_to_string(managed.path.join("ready")).unwrap(),
         "ready"
     );
+}
+
+#[tokio::test]
+async fn location_close_reopens_with_new_identity_and_refuses_old_calls() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    let defs = ready(&flow, &id).await;
+    let old = defs
+        .iter()
+        .find(|def| def.spec.name == "mcp__shared__read")
+        .unwrap();
+    let mut inv = flow.f.invocation("default", &old.spec.name, json!({}));
+    inv.session_id = id.clone();
+    inv.registration = old.registration.clone();
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    assert!(
+        flow.f
+            .host
+            .definitions(&turn(&flow, &id))
+            .iter()
+            .all(|def| !def.spec.name.starts_with("mcp__"))
+    );
+    let before = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].phase, McpConnectionPhase::Settled);
+    assert_eq!(before[0].acknowledged, Some(true));
+    let other = flow.session("default").await;
+    let fresh = ready(&flow, &other).await;
+    let new = fresh
+        .iter()
+        .find(|def| def.spec.name == old.spec.name)
+        .unwrap();
+    assert_ne!(old.registration, new.registration);
+    assert!(
+        matches!(flow.f.host.execute(inv, CancellationToken::new()).await, ToolOutcome::Failed(error) if error.contains("Stale tool call"))
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    assert_eq!(
+        std::fs::read_to_string(flow.f.repo.join("spawned"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn location_close_during_startup_preserves_unknown_and_refuses_reopening() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !flow.f.repo.join("spawned").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let error = flow
+        .f
+        .host
+        .close_mcp_location(&flow.f.repo)
+        .await
+        .unwrap_err();
+    assert!(error.contains("unresolved native ownership"), "{error}");
+    flow.f.write("ready", "ready");
+    flow.session("default").await;
+    assert!(
+        flow.f
+            .host
+            .definitions(&turn(&flow, &id))
+            .iter()
+            .all(|def| !def.spec.name.starts_with("mcp__"))
+    );
+    let records = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].phase, McpConnectionPhase::Unknown);
+    assert_eq!(records[0].acknowledged, Some(false));
+    assert_eq!(
+        std::fs::read_to_string(flow.f.repo.join("spawned"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert!(flow.f.host.close_mcp_location(&flow.f.repo).await.is_err());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn location_close_interrupts_active_call_without_session_cancellation() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    let defs = ready(&flow, &id).await;
+    let def = defs
+        .iter()
+        .find(|def| def.spec.name == "mcp__shared__read")
+        .unwrap();
+    let mut inv = flow.f.invocation("default", &def.spec.name, json!({}));
+    inv.session_id = id.clone();
+    inv.registration = def.registration.clone();
+    flow.f.write("block-call", "block");
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    let host = flow.f.host.clone();
+    let task = tokio::spawn(async move { host.execute(inv, token).await });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !flow.f.repo.join("calls").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        flow.f.host.close_mcp_location(&flow.f.repo),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!cancel.is_cancelled());
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap(),
+        ToolOutcome::Aborted
+    );
+    assert!(
+        flow.f
+            .host
+            .definitions(&turn(&flow, &id))
+            .iter()
+            .all(|def| !def.spec.name.starts_with("mcp__"))
+    );
+    let record = &mcp_connections(&flow.f.store, &flow.f.repo).unwrap()[0];
+    assert_eq!(record.phase, McpConnectionPhase::Settled);
+    assert_eq!(record.acknowledged, Some(true));
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn location_close_keeps_sibling_connection_running() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let sibling = flow.f.repo.parent().unwrap().join("sibling");
+    std::fs::create_dir(&sibling).unwrap();
+    std::fs::write(sibling.join("ready"), "ready").unwrap();
+    let info = flow
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: sibling.display().to_string(),
+            mode: Some("default".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut context = turn(&flow, &info.id);
+    context.directory = info.directory.clone();
+    let defs = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let defs = flow.f.host.definitions(&context);
+            if defs.iter().any(|def| def.spec.name == "mcp__shared__read") {
+                break defs;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    assert_eq!(
+        mcp_connections(&flow.f.store, &sibling).unwrap()[0].phase,
+        McpConnectionPhase::Running
+    );
+    let def = defs
+        .iter()
+        .find(|def| def.spec.name == "mcp__shared__read")
+        .unwrap();
+    let mut inv = flow.f.invocation("default", &def.spec.name, json!({}));
+    inv.session_id = info.id;
+    inv.directory = info.directory;
+    inv.registration = def.registration.clone();
+    assert_eq!(
+        flow.f.host.execute(inv, CancellationToken::new()).await,
+        ToolOutcome::Ok("remote read".into())
+    );
+    flow.runtime.shutdown().await;
 }
