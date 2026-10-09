@@ -301,3 +301,214 @@ fn disabled_readonly_and_unsupported_mutations_refuse_editor_start() {
         assert!(!env.data().join("memory/global").exists());
     }
 }
+
+#[test]
+fn absent_recovery_and_invalid_review_create_no_scope_or_database() {
+    let env = Env::new();
+    assert_eq!(
+        body(env.run(&["memory", "recovery", "--global"])),
+        Value::Null
+    );
+    let output = env.run(&["memory", "recover", "--review", "unreviewed", "--global"]);
+    assert!(!output.status.success());
+    assert!(!env.data().join("memory/global").exists());
+    env.no_database();
+}
+
+#[cfg(unix)]
+fn prepare_recovery(env: &Env) -> cyber_core::memory::MemoryStore {
+    std::fs::create_dir_all(env.data()).unwrap();
+    let store = cyber_core::memory::MemoryStore::open(&env.data(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    scope.write(&note("Original fact")).unwrap();
+    drop(scope.prepare_write(&note("Proposed fact")).unwrap());
+    drop(scope);
+    store
+}
+
+#[cfg(unix)]
+#[test]
+fn reviewed_recovery_commits_once_without_creating_a_database() {
+    let env = Env::new();
+    let _store = prepare_recovery(&env);
+    let review = body(env.run(&["memory", "recovery", "--global"]));
+    assert_eq!(review["proposed_note"]["body"], "Proposed fact");
+    assert_eq!(review["completed"], false);
+    assert!(
+        std::fs::read_to_string(env.note_path())
+            .unwrap()
+            .contains("Original fact")
+    );
+    let fingerprint = review["fingerprint"].as_str().unwrap();
+    let receipt = body(env.run(&["memory", "recover", "--review", fingerprint, "--global"]));
+    assert_eq!(receipt, review["receipt"]);
+    assert_eq!(
+        body(env.run(&["memory", "show", "coding-policy", "--global"]))["body"],
+        "Proposed fact"
+    );
+    assert_eq!(
+        body(env.run(&["memory", "recovery", "--global"])),
+        Value::Null
+    );
+    assert!(
+        !env.run(&["memory", "recover", "--review", fingerprint, "--global"])
+            .status
+            .success()
+    );
+    env.no_database();
+}
+
+#[cfg(unix)]
+#[test]
+fn stale_recovery_and_fresh_settings_preserve_files_and_journal() {
+    for mode in ["stale", "disabled", "readonly"] {
+        let env = Env::new();
+        let _store = prepare_recovery(&env);
+        let review = body(env.run(&["memory", "recovery", "--global"]));
+        let fingerprint = review["fingerprint"].as_str().unwrap();
+        let mut command = env.command(&["memory", "recover", "--review", fingerprint, "--global"]);
+        match mode {
+            "stale" => std::fs::write(env.note_path(), note("External fact")).unwrap(),
+            "disabled" => {
+                command.env("CYBER_DISABLE_MEMORY", "1");
+            }
+            "readonly" => {
+                command.args(["-c", "memory.generate=false"]);
+            }
+            _ => unreachable!(),
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success(), "{mode}");
+        let current = std::fs::read_to_string(env.note_path()).unwrap();
+        assert!(current.contains(if mode == "stale" {
+            "External fact"
+        } else {
+            "Original fact"
+        }));
+        assert!(
+            env.data()
+                .join("memory/global/.memory-transaction/note.after")
+                .exists()
+        );
+        env.no_database();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_pending_admission_and_unverifiable_database_refuse_file_recovery() {
+    for mode in [
+        "pending",
+        "corrupt",
+        "memory",
+        "old-schema",
+        "completed",
+        "other-scope",
+    ] {
+        let env = Env::new();
+        let _store = prepare_recovery(&env);
+        let review = body(env.run(&["memory", "recovery", "--global"]));
+        let fingerprint = review["fingerprint"].as_str().unwrap();
+        let db_path = env.data().join("memory-test.db");
+        if mode == "corrupt" {
+            std::fs::write(&db_path, b"not a database").unwrap();
+        } else if mode != "memory" {
+            let db = rusqlite::Connection::open(&db_path).unwrap();
+            if mode != "old-schema" {
+                db.execute_batch("CREATE TABLE memory_mutation(project_id TEXT, result TEXT)")
+                    .unwrap();
+                db.execute(
+                    "INSERT INTO memory_mutation VALUES(?1,?2)",
+                    rusqlite::params![
+                        if mode == "other-scope" {
+                            "another"
+                        } else {
+                            "global"
+                        },
+                        if mode == "completed" {
+                            Some("completed")
+                        } else {
+                            None
+                        }
+                    ],
+                )
+                .unwrap();
+            }
+        }
+        let mut command = env.command(&["memory", "recover", "--review", fingerprint, "--global"]);
+        if mode == "memory" {
+            command.env("CYBER_DB", ":memory:");
+        }
+        let output = command.output().unwrap();
+        let allowed = matches!(mode, "old-schema" | "completed" | "other-scope");
+        assert_eq!(
+            output.status.success(),
+            allowed,
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if !allowed {
+            assert!(
+                std::fs::read_to_string(env.note_path())
+                    .unwrap()
+                    .contains("Original fact")
+            );
+            assert!(
+                env.data()
+                    .join("memory/global/.memory-transaction/note.after")
+                    .exists()
+            );
+        }
+        if mode == "pending" {
+            let db = rusqlite::Connection::open(&db_path).unwrap();
+            assert!(
+                db.query_row("SELECT result IS NULL FROM memory_mutation", [], |r| r
+                    .get::<_, bool>(0))
+                    .unwrap()
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn recovery_refuses_database_symlink_and_unknown_memory_schema() {
+    for alias in [false, true] {
+        let env = Env::new();
+        let _store = prepare_recovery(&env);
+        let review = body(env.run(&["memory", "recovery", "--global"]));
+        let db_path = env.data().join("memory-test.db");
+        if alias {
+            let target = env.root.join("aliased.db");
+            rusqlite::Connection::open(&target).unwrap();
+            std::os::unix::fs::symlink(target, &db_path).unwrap();
+        } else {
+            rusqlite::Connection::open(&db_path)
+                .unwrap()
+                .execute_batch("CREATE TABLE memory_mutation(unrecognized TEXT)")
+                .unwrap();
+        }
+        let output = env.run(&[
+            "memory",
+            "recover",
+            "--review",
+            review["fingerprint"].as_str().unwrap(),
+            "--global",
+        ]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("cannot verify database admission ownership")
+        );
+        assert!(
+            std::fs::read_to_string(env.note_path())
+                .unwrap()
+                .contains("Original fact")
+        );
+        assert!(
+            env.data()
+                .join("memory/global/.memory-transaction/note.after")
+                .exists()
+        );
+    }
+}

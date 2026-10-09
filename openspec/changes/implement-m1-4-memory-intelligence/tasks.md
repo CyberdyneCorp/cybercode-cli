@@ -12,6 +12,7 @@
   - [x] Add authenticated Location-scoped HTTP list/read through the shared bounded storage, safe diagnostics and generated SDK methods. Verify real TCP authentication, scope/project/global fallback, routing precedence, absent scopes, aliases and recovery fencing locally. Native acceptance remains open.
   - [x] Add local Unix authenticated HTTP PUT/DELETE with bounded document validation, repeated settings gates, retained lifecycle/scope ownership, shared durable admission/receipts/events, response-cache gap replay and global HTTP request identity protection. Verify actual TCP CRUD/SSE, no duplicate effects/notifications, settings/secret refusal, busy retry and shutdown ownership; generate typed SDK methods. Native acceptance and reviewed reconciliation remain open.
   - [x] Add read-only shared storage recovery inspection and fingerprint-bound recovery, with stale review and acknowledgement-failure regressions.
+  - [x] Add CLI recovery inspection and fingerprint-bound local recovery with fresh settings and pending-database admission refusal; verify actual subprocesses.
   - [ ] Add TUI controls, reviewed memory recovery and complete cross-platform HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.

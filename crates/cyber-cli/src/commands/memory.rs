@@ -1,5 +1,6 @@
-//! Explicit local memory management without model or database startup.
+//! Explicit local memory management without model work or database creation.
 mod editor;
+mod recovery;
 
 use crate::{cli::GlobalArgs, context::Context, error::CliError, output};
 use clap::{Args, Subcommand};
@@ -25,6 +26,13 @@ pub enum MemoryCmd {
     Edit { name: String },
     /// Delete a note and update its index through the recovery journal.
     Delete { name: String },
+    /// Inspect an interrupted transaction and its proposed content without recovery.
+    Recovery,
+    /// Recover local files only if the reviewed fingerprint still matches.
+    Recover {
+        #[arg(long)]
+        review: String,
+    },
     /// Print the memory directory without creating it.
     Path,
 }
@@ -32,10 +40,13 @@ pub enum MemoryCmd {
 pub fn run(args: MemoryArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     let mutation = matches!(
         args.command,
-        MemoryCmd::Edit { .. } | MemoryCmd::Delete { .. }
+        MemoryCmd::Edit { .. } | MemoryCmd::Delete { .. } | MemoryCmd::Recover { .. }
     );
     if mutation {
         mutation_admission(ctx)?;
+    }
+    if let MemoryCmd::Recover { review } = &args.command {
+        recovery::validate_review(review)?;
     }
     match &args.command {
         MemoryCmd::Show { name } | MemoryCmd::Edit { name } | MemoryCmd::Delete { name } => {
@@ -64,6 +75,9 @@ pub fn run(args: MemoryArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), C
         None if matches!(args.command, MemoryCmd::List) => {
             return report_catalog(MemoryCatalog::default(), global);
         }
+        None if matches!(args.command, MemoryCmd::Recovery) => {
+            return recovery::report(None, global);
+        }
         None if matches!(args.command, MemoryCmd::Edit { .. }) => {
             MemoryStore::open(&ctx.paths.data, &project).map_err(storage_error)?
         }
@@ -85,6 +99,17 @@ pub fn run(args: MemoryArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), C
             report_mutation(owner.delete(&name).map_err(storage_error)?, global)
         }
         MemoryCmd::Edit { name } => editor::edit(&mut owner, &name, ctx, global),
+        MemoryCmd::Recovery => {
+            recovery::report(owner.inspect_recovery().map_err(storage_error)?, global)
+        }
+        MemoryCmd::Recover { review } => {
+            mutation_admission(ctx)?;
+            recovery::database_admission(ctx, &project)?;
+            report_mutation(
+                owner.recover_reviewed(&review).map_err(storage_error)?,
+                global,
+            )
+        }
         MemoryCmd::Path => unreachable!("handled before storage admission"),
     }
 }

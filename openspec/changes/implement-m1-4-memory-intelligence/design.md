@@ -44,3 +44,6 @@ PUT /memory/{scope}/{name} accepts a strict JSON content object containing the c
 
 ### Explicit storage recovery review
 Expose read-only inspection and fingerprint-bound recovery in the shared core. Bind the scope and journal directory identities, intent, all known transaction artifacts, current note/index and catalog fingerprints. Validate desired content and preflight slots without normalizing links. Unsafe partial link states remain refused by this review interface pending dedicated alias review. Recapture before effects; acknowledgement uses the existing durable commit boundary. This does not reconcile database admission owners or enable automatic recovery.
+
+### Local CLI recovery controls
+`memory recovery` prints read-only review, including proposed note content and the fingerprint, with null for absent evidence. `memory recover --review` validates a SHA-256 fingerprint and repeats settings under the scope claim. Before file effects it checks an existing database through read-only SQLite for pending scope admissions, refusing unresolved ownership or unverifiable inspection; no database is created. In-memory databases cannot prove ownership absence and refuse. This prevents file-only recovery from releasing a journal fence belonging to a durable unknown request. Database reconciliation remains a separate required control.

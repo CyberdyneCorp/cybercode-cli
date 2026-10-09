@@ -175,3 +175,11 @@
 - **THEN** the scope SHALL recapture and compare the reviewed state before any normalization or installation
 - **AND** stale reviews, unsafe aliases and conflicting evidence SHALL refuse while preserving files and journal fencing
 - **AND** recovery acknowledgement SHALL retain the journal until the caller acknowledges completion, without granting authority over unresolved database admissions
+
+#### Scenario: Explicit CLI storage recovery
+- **WHEN** the user runs `cyber memory recovery [--global]`
+- **THEN** the CLI SHALL inspect recovery without starting model work or creating a memory scope or database, reporting proposed content and the review fingerprint
+- **WHEN** the user runs `cyber memory recover --review <fingerprint> [--global]`
+- **THEN** the CLI SHALL retain scope ownership, enforce fresh mutation settings and require an unchanged reviewed state
+- **AND** a pending database admission for that scope, unavailable database inspection or an in-memory database SHALL refuse before file effects
+- **AND** local file recovery SHALL NOT clear or adopt database admission ownership
