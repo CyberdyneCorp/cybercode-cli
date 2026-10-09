@@ -237,6 +237,16 @@ pub trait ToolHost: Send + Sync {
     /// Start shared Location services without waiting for their readiness.
     fn open_location(&self, _info: &SessionInfo) {}
 
+    /// Readiness of required Location services before this Session's first Turn.
+    /// Cancelling the wait does not assert shared native service shutdown.
+    fn wait_for_required_mcp(
+        &self,
+        _info: &SessionInfo,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), super::RuntimeError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     /// Join and settle shared native services after runtime work has stopped.
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})

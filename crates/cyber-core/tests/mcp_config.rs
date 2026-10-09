@@ -134,3 +134,41 @@ fn global_invalid_server_is_rejected_through_actual_config_loading() {
             .contains("mcp.audit")
     );
 }
+
+#[test]
+fn required_flags_are_typed_and_default_definition_digests_are_preserved() {
+    let settings = McpSettings::from_config(&json!({"mcp":{
+        "local":{"type":"local","command":"x"},
+        "remote":{"type":"remote","url":"https://example.test","required":true}
+    }}))
+    .unwrap();
+    assert!(!settings.servers["local"].required());
+    assert!(settings.servers["remote"].required());
+    let legacy = json!({"kind":"mcp_server","name":"local","server":{
+        "type":"local","command":"x","args":[],"env":{},"cwd":null,
+        "enabled":true,"timeout":30,"tools":{"allow":null,"deny":[]}
+    }});
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        settings.servers["local"].digest("local").unwrap(),
+        format!(
+            "sha256:{:x}",
+            Sha256::digest(config::canonical_json(&legacy))
+        )
+    );
+    let required = McpSettings::from_config(
+        &json!({"mcp":{"local":{"type":"local","command":"x","required":true}}}),
+    )
+    .unwrap();
+    assert_ne!(
+        settings.servers["local"].digest("local").unwrap(),
+        required.servers["local"].digest("local").unwrap()
+    );
+    for invalid in [json!("private secret"), json!(1), json!(null)] {
+        let error = McpSettings::from_config(
+            &json!({"mcp":{"local":{"type":"local","command":"x","required":invalid}}}),
+        )
+        .unwrap_err();
+        assert!(!error.contains("private secret"));
+    }
+}

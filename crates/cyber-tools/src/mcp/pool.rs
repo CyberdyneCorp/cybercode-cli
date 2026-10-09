@@ -577,6 +577,28 @@ impl BuiltinHost {
         definitions
     }
 
+    pub(super) fn mcp_is_published(&self, directory: &Path, name: &str, id: &str) -> bool {
+        let Ok(directory) = directory.canonicalize() else {
+            return false;
+        };
+        let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if pool.closed || pool.closing.contains(&directory) {
+            return false;
+        }
+        pool.entries
+            .get(&(directory, name.into()))
+            .is_some_and(|entry| {
+                !entry.cancel.is_cancelled()
+                    && !entry.lost.load(Ordering::Acquire)
+                    && entry
+                        .published
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .as_ref()
+                        .is_some_and(|published| published.id == id)
+            })
+    }
+
     /// Observe instructions only for effective, freshly authorized MCP registrations.
     pub(crate) fn mcp_instructions(
         &self,

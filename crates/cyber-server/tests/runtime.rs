@@ -1686,3 +1686,77 @@ async fn loaded_schema_writer_failure_does_not_change_session_or_report_success(
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn required_gate_keeps_input_pending_and_is_not_repeated_after_replay() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![text("one"), text("two"), text("after rewind")],
+        )],
+        ..Setup::default()
+    });
+    *h.tools.required_failure.lock().unwrap() = Some("db".into());
+    let id = h.session().await;
+    let receipt = h
+        .runtime
+        .admit(&id, admit("original input", Delivery::Queue))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert!(state.entries.is_empty() && state.epoch.is_none());
+    assert_eq!(state.inbox[0].status, InputStatus::Pending);
+    *h.tools.required_failure.lock().unwrap() = None;
+    h.runtime.wake(&id).await.unwrap();
+    h.settle(&id).await;
+    assert_eq!(h.state(&id).await.inbox[0].message_id, receipt.message_id);
+    *h.tools.required_failure.lock().unwrap() = Some("db".into());
+    let restarted = h.restart();
+    restarted
+        .admit(&id, admit("second input", Delivery::Queue))
+        .await
+        .unwrap();
+    restarted.wait_idle(&id).await;
+    assert_eq!(h.models.requests("test/main").len(), 2);
+    assert!(
+        restarted
+            .state(&id)
+            .await
+            .unwrap()
+            .inbox
+            .iter()
+            .all(|input| input.status == InputStatus::Promoted)
+    );
+    let fork = restarted.fork(&id, None).await.unwrap();
+    restarted
+        .admit(&fork.id, admit("fork input", Delivery::Queue))
+        .await
+        .unwrap();
+    restarted.wait_idle(&fork.id).await;
+    assert_eq!(
+        restarted.state(&fork.id).await.unwrap().inbox[0].status,
+        InputStatus::Pending
+    );
+    assert_eq!(h.models.requests("test/main").len(), 2);
+    restarted
+        .revert_stage(
+            &id,
+            &receipt.message_id,
+            cyber_server::runtime::RevertTarget::Conversation,
+        )
+        .await
+        .unwrap();
+    restarted.revert_commit(&id).await.unwrap();
+    let after_rewind = h.restart();
+    after_rewind
+        .admit(&id, admit("after rewind", Delivery::Queue))
+        .await
+        .unwrap();
+    after_rewind.wait_idle(&id).await;
+    assert_eq!(h.models.requests("test/main").len(), 3);
+    assert_eq!(
+        after_rewind.state(&id).await.unwrap().inbox[0].status,
+        InputStatus::Promoted
+    );
+}

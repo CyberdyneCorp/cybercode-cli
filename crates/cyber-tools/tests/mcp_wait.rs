@@ -81,3 +81,39 @@ async fn permission_denial_hides_and_refuses_wait_tool() {
         cyber_server::runtime::ToolOutcome::Failed(_)
     ));
 }
+
+#[tokio::test]
+async fn required_terminal_servers_fail_before_model_or_prompt_promotion() {
+    use cyber_server::runtime::{InputStatus, LiveEvent};
+    use support::flow::{Flow, text};
+    for server in [
+        json!({"type":"local","command":"not-installed","enabled":false,"required":true}),
+        json!({"type":"remote","url":"https://example.invalid/mcp","headers":{"Authorization":"private-secret"},"required":true}),
+    ] {
+        let flow = Flow::new(vec![text("should not run")], false);
+        flow.f.configure_mcp_status(json!({"db":server}));
+        let id = flow.session("default").await;
+        let mut live = flow.runtime.subscribe();
+        flow.prompt(&id, "keep pending").await;
+        flow.settle(&id).await;
+        assert!(flow.main.requests().is_empty());
+        assert_eq!(
+            flow.runtime.state(&id).await.unwrap().inbox[0].status,
+            InputStatus::Pending
+        );
+        let mut named = false;
+        while let Ok(event) = live.try_recv() {
+            if let LiveEvent::Error { kind, message, .. } = event {
+                assert!(!message.contains("private-secret"));
+                named |= kind == "mcp_required" && message == "McpRequiredError: db";
+            }
+        }
+        assert!(named);
+        assert!(
+            cyber_server::runtime::mcp_connections(&flow.f.store, &flow.f.repo)
+                .unwrap()
+                .is_empty()
+        );
+        flow.runtime.shutdown().await;
+    }
+}

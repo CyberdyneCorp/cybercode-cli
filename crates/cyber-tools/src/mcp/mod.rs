@@ -4,6 +4,7 @@ mod connection;
 mod discovery;
 mod launch;
 mod owned;
+mod required;
 mod roots;
 mod stdio;
 mod values;

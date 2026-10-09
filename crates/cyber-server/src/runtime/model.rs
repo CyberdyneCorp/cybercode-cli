@@ -259,6 +259,8 @@ pub struct SessionState {
     #[serde(skip)]
     pub(crate) loaded_tools: BTreeSet<String>,
     #[serde(skip)]
+    pub(crate) first_turn_started: bool,
+    #[serde(skip)]
     pub(crate) child_requested_inputs: BTreeSet<String>,
     #[serde(skip)]
     pub(super) child_pause_seq: i64,
@@ -354,6 +356,7 @@ impl SessionState {
     pub fn new(info: SessionInfo) -> Self {
         Self {
             loaded_tools: BTreeSet::new(),
+            first_turn_started: false,
             child_requested_inputs: BTreeSet::new(),
             child_pause_seq: -1,
             child_continuation_error: None,
@@ -791,6 +794,7 @@ impl SessionState {
     }
 
     fn on_step_started(&mut self, s: StepStarted) {
+        self.first_turn_started = true;
         self.turn_mode = Some(s.mode.unwrap_or_else(|| self.info.mode.clone()));
         self.turn_agent = Some(s.agent.unwrap_or_else(|| self.info.agent.clone()));
         self.open_step = Some(s.message_id.clone());

@@ -147,6 +147,7 @@ pub enum Behavior {
 
 pub struct Tools {
     pub inference: Mutex<AgentInference>,
+    pub required_failure: Mutex<Option<String>>,
     pub defs: Mutex<Vec<ToolDef>>,
     pub behavior: Mutex<HashMap<String, Behavior>>,
     pub executed: Mutex<Vec<Invocation>>,
@@ -186,6 +187,7 @@ impl Tools {
         ]);
         Arc::new(Self {
             inference: Mutex::new(AgentInference::default()),
+            required_failure: Mutex::new(None),
             defs: Mutex::new(defs),
             behavior: Mutex::new(behavior),
             executed: Mutex::default(),
@@ -218,6 +220,15 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn wait_for_required_mcp(
+        &self,
+        _: &SessionInfo,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), RuntimeError>> {
+        let failure = self.required_failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(()), |name| Err(RuntimeError::McpRequired(name))) })
+    }
+
     fn claim_location<'a>(
         &'a self,
         info: &'a SessionInfo,

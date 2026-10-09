@@ -120,6 +120,8 @@ pub enum RuntimeError {
     BudgetExceeded { scope: String, limit: String },
     #[error("ConflictError: {0}")]
     Conflict(String),
+    #[error("McpRequiredError: {0}")]
+    McpRequired(String),
     #[error("ContextInitializationBlocked: {}", .0.join(", "))]
     ContextBlocked(Vec<String>),
     #[error("{0}")]

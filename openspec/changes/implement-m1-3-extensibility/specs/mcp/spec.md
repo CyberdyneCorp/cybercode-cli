@@ -271,3 +271,25 @@
 #### Scenario: All instruction sources withdrawn
 - **WHEN** no connected authorized server has instructions and an effective MCP registration
 - **THEN** the source SHALL explicitly report absence so the runtime withdraws its applicability in a Mid-Conversation System Message
+
+### Requirement: Server options
+(P1) A server entry MAY set `required: true` (the Session's first Turn SHALL wait up to the connect `timeout` for it and fail with `McpRequiredError` naming the server if it is not connected), `headers_command` (a shell command, run outside the sandbox and outside project trust until approved, whose JSON stdout supplies `headers`, refreshed every `headers_refresh_seconds`, default 3600, and redacted from logs) and `output_token_limit` (per-server cap on model-visible tool output, default the global `tool_output` budget). `cyber mcp get <name>` SHALL display the resolved options with header values redacted.
+
+#### Scenario: Required server missing
+- **WHEN** server `db` has `required: true` and fails to connect within 30 seconds
+- **THEN** the first Turn fails with `McpRequiredError: db` and the prompt stays retryable in the inbox
+
+#### Scenario: Required local discovery precedes first prompt promotion
+- **WHEN** a Session's first Turn has an authorized required local server still connecting
+- **THEN** it SHALL await connected publication up to that server's configured timeout before promoting the prompt or calling the model
+- **AND** missing, disabled or failed required servers SHALL produce a named McpRequiredError while preserving the pending prompt
+
+#### Scenario: Cancellation preserves independently owned startup
+- **WHEN** the first-Turn readiness wait is cancelled
+- **THEN** it SHALL leave the prompt pending and SHALL NOT dispose the independently owned Location startup
+- **AND** a later wake MAY retry readiness without replaying an admitted model call
+
+#### Scenario: First-Turn readiness survives replay and rewind
+- **WHEN** an existing Session has durably started its first model step
+- **THEN** replay or conversation rewind SHALL NOT repeat the first-Turn readiness gate
+- **AND** a newly forked Session SHALL perform its own first-Turn readiness check

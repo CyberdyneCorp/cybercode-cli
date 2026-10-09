@@ -104,6 +104,9 @@ impl From<RuntimeError> for ApiError {
                 "ServerShuttingDownError",
                 message,
             ),
+            RuntimeError::McpRequired(_) => {
+                Self::new(StatusCode::CONFLICT, "McpRequiredError", message)
+            }
             RuntimeError::ContextBlocked(_) => Self::conflict(message),
             RuntimeError::RewindConflict(paths) => {
                 let mut err = Self::new(StatusCode::CONFLICT, "RewindConflictError", message);

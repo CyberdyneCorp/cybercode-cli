@@ -39,6 +39,14 @@ impl ToolHost for AppHost {
         self.builtin.open_location(info);
     }
 
+    fn wait_for_required_mcp(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), cyber_server::runtime::RuntimeError>> {
+        self.builtin.wait_for_required_mcp(info, cancel)
+    }
+
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         self.builtin.shutdown()
     }

@@ -1812,3 +1812,126 @@ async fn instructions_omit_agent_denied_and_disabled_servers_without_rpc() {
     assert_eq!(flow.f.read("spawned").lines().count(), 1);
     flow.runtime.shutdown().await;
 }
+
+fn require_server(flow: &Flow, path: &std::path::Path, timeout: u32) {
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    config["mcp"]["shared"]["required"] = json!(true);
+    config["mcp"]["shared"]["timeout"] = json!(timeout);
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+}
+
+async fn wait_for_spawn(flow: &Flow) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !flow.f.repo.join("spawned").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn required_server_waits_before_promoting_the_first_prompt() {
+    use cyber_server::runtime::InputStatus;
+    let flow = Flow::new(vec![text("done")], false);
+    let path = configure(&flow, json!({}));
+    require_server(&flow, &path, 3);
+    let id = flow.session("default").await;
+    let message = flow.prompt(&id, "first prompt").await;
+    wait_for_spawn(&flow).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert!(flow.main.requests().is_empty() && state.epoch.is_none());
+    assert_eq!(
+        state
+            .inbox
+            .iter()
+            .find(|input| input.message_id == message)
+            .unwrap()
+            .status,
+        InputStatus::Pending
+    );
+    ready(&flow, &id).await;
+    flow.settle(&id).await;
+    assert_eq!(flow.main.requests().len(), 1);
+    assert!(
+        flow.main.requests()[0]
+            .tools
+            .iter()
+            .any(|tool| tool.name == "mcp__shared__read")
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn required_timeout_leaves_prompt_retryable_with_named_error() {
+    use cyber_server::runtime::{InputStatus, LiveEvent};
+    let flow = Flow::new(vec![text("retried")], false);
+    let path = configure(&flow, json!({}));
+    require_server(&flow, &path, 1);
+    let id = flow.session("default").await;
+    let mut live = flow.runtime.subscribe();
+    let message = flow.prompt(&id, "preserve this prompt").await;
+    flow.settle(&id).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert!(flow.main.requests().is_empty() && state.entries.is_empty() && state.epoch.is_none());
+    assert_eq!(state.inbox[0].status, InputStatus::Pending);
+    let mut named = false;
+    while let Ok(event) = live.try_recv() {
+        named |= matches!(event, LiveEvent::Error {kind, message, ..} if kind == "mcp_required" && message == "McpRequiredError: shared");
+    }
+    assert!(named);
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while !mcp_connections(&flow.f.store, &flow.f.repo)
+            .unwrap()
+            .iter()
+            .all(|record| record.phase == McpConnectionPhase::Settled)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    require_server(&flow, &path, 3);
+    flow.f.write("ready", "ready");
+    flow.runtime.wake(&id).await.unwrap();
+    flow.settle(&id).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.inbox.len(), 1);
+    assert_eq!(state.inbox[0].message_id, message);
+    assert_eq!(state.inbox[0].status, InputStatus::Promoted);
+    assert_eq!(flow.main.requests().len(), 1);
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn required_wait_cancellation_keeps_shared_startup_owned_and_prompt_pending() {
+    use cyber_server::runtime::InputStatus;
+    let flow = Flow::new(vec![text("done")], false);
+    let path = configure(&flow, json!({}));
+    require_server(&flow, &path, 30);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "continue after interruption").await;
+    wait_for_spawn(&flow).await;
+    tokio::time::timeout(Duration::from_secs(1), flow.runtime.interrupt(&id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(flow.main.requests().is_empty());
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().inbox[0].status,
+        InputStatus::Pending
+    );
+    assert_eq!(
+        flow.f.host.mcp_status(&flow.f.repo).unwrap()[0].status,
+        cyber_server::runtime::McpConnectionStatus::Connecting
+    );
+    ready(&flow, &id).await;
+    flow.runtime.wake(&id).await.unwrap();
+    flow.settle(&id).await;
+    assert_eq!(flow.main.requests().len(), 1);
+    assert_eq!(flow.f.read("spawned").lines().count(), 1);
+    flow.runtime.shutdown().await;
+}

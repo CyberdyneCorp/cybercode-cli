@@ -21,6 +21,8 @@ pub enum McpServer {
         timeout: u32,
         #[serde(default)]
         tools: McpToolFilter,
+        #[serde(default, skip_serializing_if = "not_required")]
+        required: bool,
     },
     Remote {
         url: String,
@@ -33,7 +35,12 @@ pub enum McpServer {
         timeout: u32,
         #[serde(default)]
         tools: McpToolFilter,
+        #[serde(default, skip_serializing_if = "not_required")]
+        required: bool,
     },
+}
+fn not_required(value: &bool) -> bool {
+    !value
 }
 fn enabled() -> bool {
     true
@@ -86,6 +93,11 @@ impl McpServer {
     pub fn enabled(&self) -> bool {
         match self {
             Self::Local { enabled, .. } | Self::Remote { enabled, .. } => *enabled,
+        }
+    }
+    pub fn required(&self) -> bool {
+        match self {
+            Self::Local { required, .. } | Self::Remote { required, .. } => *required,
         }
     }
     pub fn timeout(&self) -> u32 {

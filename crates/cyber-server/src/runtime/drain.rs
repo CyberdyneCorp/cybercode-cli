@@ -90,6 +90,7 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
 fn error_kind(e: &RuntimeError) -> &'static str {
     match e {
         RuntimeError::BudgetExceeded { .. } => "budget_exceeded",
+        RuntimeError::McpRequired(_) => "mcp_required",
         RuntimeError::ContextBlocked(_) => "context_initialization_blocked",
         RuntimeError::Model(_) => "model",
         RuntimeError::Compaction(_) => "compaction_failed",
@@ -166,6 +167,18 @@ async fn prepare_pass(
     first: bool,
     cancel: &CancellationToken,
 ) -> Result<Option<PreparedModel>, RuntimeError> {
+    let initial = {
+        let state = handle.state.lock().await;
+        (!state.first_turn_started).then(|| state.info.clone())
+    };
+    if let Some(info) = initial {
+        inner.tools.open_location(&info);
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(None),
+            result = inner.tools.wait_for_required_mcp(&info, cancel.child_token()) => result?,
+        }
+    }
     let (resolved, promoted) = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Ok(None),

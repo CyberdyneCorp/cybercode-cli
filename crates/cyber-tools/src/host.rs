@@ -468,6 +468,15 @@ impl ToolHost for BuiltinHost {
         self.start_mcp(info);
     }
 
+    fn wait_for_required_mcp(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), cyber_server::runtime::RuntimeError>> {
+        let directory = info.directory.clone();
+        Box::pin(async move { self.wait_required_mcp(Path::new(&directory), cancel).await })
+    }
+
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(self.shutdown_mcp())
     }

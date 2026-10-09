@@ -311,3 +311,9 @@ Servers can request `roots/list` during initialization, tool execution or idle p
 Connected local servers can supply usage instructions during initialization. Eligible instructions appear in a `<mcp_instructions>` context block, ordered by server name and attributed to each server. Server text is escaped to preserve block boundaries. Guidance remains available when schemas are deferred, while agent, Mode, permission and server-authorization controls determine eligibility. Higher client registrations that shadow every MCP tool also remove that server's guidance.
 
 Instructions use the `mcp/instructions` Context Source. Reconnection changes, connection loss, Location close and visibility restrictions update its applicability through mid-conversation system messages. The Epoch baseline remains byte-stable. Reading this source uses cached discovery metadata and starts no servers or RPCs. Remote MCP instruction delivery remains incomplete.
+
+### Required local MCP startup
+
+Set `required: true` on a server entry to hold a Session's first Turn until the server connects and publishes discovery, up to its configured `timeout` (default 30 seconds). A disabled, failed or unavailable required server reports `McpRequiredError: <name>` before prompt promotion or a model call; the original prompt remains pending for retry. Cancelling the wait preserves independently owned Location startup. Retry after recovery by waking the Session; unresolved native ownership remains fenced.
+
+The requirement applies once per Session and survives replay and conversation rewind. A fork begins its own first Turn. The default is false and preserves existing server approval digests; enabling it changes the definition and requires matching authorization. Remote transports, dynamic header commands, per-server output caps and resolved-option CLI display remain incomplete.
