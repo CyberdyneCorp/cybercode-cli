@@ -16,7 +16,7 @@ use super::{AdmissionAuthority, Runtime, RuntimeError};
 
 pub(super) const STARTED: &str = "hook.started.1";
 pub(super) const EXECUTED: &str = "hook.executed.1";
-const ONCE_ADMITTED: &str = "Hook once handler already admitted";
+pub(super) const ONCE_ADMITTED: &str = "Hook once handler already admitted";
 const IO_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

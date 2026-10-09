@@ -29,7 +29,157 @@ pub struct HookCommandRunner<'a> {
     pub credential_env_names: &'a [String],
 }
 
+fn skipped() -> HookCommandReport {
+    HookCommandReport {
+        outcome: super::HookOutcome::Skipped,
+        decision: Default::default(),
+        ignored_fields: Vec::new(),
+        diagnostic: None,
+        acknowledged: true,
+        must_stop: false,
+    }
+}
+
+fn receipt_result(
+    result: &Result<HookCommandReport, String>,
+    stop: &CancellationToken,
+) -> cyber_server::runtime::HookExecutionResult {
+    match result {
+        Ok(report) => cyber_server::runtime::HookExecutionResult {
+            outcome: report.outcome,
+            decision: report.decision.clone(),
+            acknowledged: report.acknowledged,
+            must_stop: report.must_stop,
+            io: None,
+        },
+        Err(_) => cyber_server::runtime::HookExecutionResult {
+            outcome: if stop.is_cancelled() {
+                super::HookOutcome::Skipped
+            } else {
+                super::HookOutcome::Error
+            },
+            decision: Default::default(),
+            acknowledged: true,
+            must_stop: stop.is_cancelled(),
+            io: None,
+        },
+    }
+}
+
+enum Admission<'a> {
+    Session(
+        &'a mut cyber_server::runtime::HookExecution,
+        &'a cyber_server::runtime::Runtime,
+        &'a mut Option<cyber_server::runtime::HookExecutionIo>,
+    ),
+    Synthetic {
+        log_io: bool,
+        io: &'a mut Option<cyber_server::runtime::HookExecutionIo>,
+    },
+}
+
+impl Admission<'_> {
+    fn capture_io(&mut self, event: &HookEvent, capture: &super::HookCommandCapture) {
+        let (enabled, target) = match self {
+            Self::Session(owner, _, io) => (owner.record().log_io, io),
+            Self::Synthetic { log_io, io } => (*log_io, io),
+        };
+        if enabled {
+            **target = Some(captured_io(event, capture));
+        }
+    }
+}
+
+fn captured_io(
+    event: &HookEvent,
+    capture: &super::HookCommandCapture,
+) -> cyber_server::runtime::HookExecutionIo {
+    let mut truncated = capture.stdout.truncated || capture.stderr.truncated;
+    cyber_server::runtime::HookExecutionIo {
+        stdin: bounded_io(&format!("{}\n", event.as_json()), &mut truncated),
+        stdout: bounded_io(
+            &String::from_utf8_lossy(&capture.stdout.bytes),
+            &mut truncated,
+        ),
+        stderr: bounded_io(
+            &String::from_utf8_lossy(&capture.stderr.bytes),
+            &mut truncated,
+        ),
+        truncated,
+    }
+}
+
+fn bounded_io(value: &str, truncated: &mut bool) -> String {
+    let mut end = value.len().min(super::CAPTURE_LIMIT);
+    if end < value.len() {
+        *truncated = true;
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+    }
+    value[..end].into()
+}
+
 impl HookCommandRunner<'_> {
+    /// Execute a synthetic event without constructing or binding a Session.
+    /// Retain checkout ownership until native termination and receipt settlement.
+    pub async fn run_test(
+        &self,
+        host: &crate::BuiltinHost,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: CancellationToken,
+    ) -> Result<HookCommandReport, String> {
+        if !event.is_synthetic() {
+            return Err("hook test execution requires a synthetic event".into());
+        }
+        let (definition, _) = self.authorize(pointer, event)?;
+        if cancel.is_cancelled() {
+            return Err("hook test cancelled before admission".into());
+        }
+        let log_io = self.resolved.value["telemetry"]["log_hook_io"]
+            .as_bool()
+            .unwrap_or(false);
+        let Some(owner) = cyber_server::runtime::try_start_synthetic_hook_execution(
+            host.opts.store.clone(),
+            event,
+            &definition,
+            log_io,
+        )
+        .map_err(|error| error.to_string())?
+        else {
+            return Ok(skipped());
+        };
+        let lease = host
+            .claim_hook_test_location(event, &owner.record().id, cancel.clone())
+            .await?;
+        let mut io = None;
+        let result = self
+            .run_inner(
+                pointer,
+                event,
+                cancel.clone(),
+                Some(Admission::Synthetic {
+                    log_io: owner.record().log_io,
+                    io: &mut io,
+                }),
+            )
+            .await;
+        let mut settlement = receipt_result(&result, &cancel);
+        settlement.io = io;
+        let retained = if settlement.acknowledged {
+            Some(lease.settle_retained()?)
+        } else {
+            drop(lease);
+            None
+        };
+        owner
+            .finish(settlement)
+            .map_err(|error| error.to_string())?;
+        drop(retained);
+        result
+    }
+
     /// Select by indexed config pointer; never accept a caller-mutated definition.
     /// Unknown proxy domains are refused; interactive network asks require runtime wiring.
     pub async fn run(
@@ -38,6 +188,9 @@ impl HookCommandRunner<'_> {
         event: &HookEvent,
         cancel: CancellationToken,
     ) -> Result<HookCommandReport, String> {
+        if event.is_synthetic() {
+            return Err("Synthetic commands require durable test and checkout ownership".into());
+        }
         self.run_inner(pointer, event, cancel, None).await
     }
 
@@ -62,14 +215,7 @@ impl HookCommandRunner<'_> {
             .await
             .map_err(|error| error.to_string())?
         else {
-            return Ok(HookCommandReport {
-                outcome: super::HookOutcome::Skipped,
-                decision: Default::default(),
-                ignored_fields: Vec::new(),
-                diagnostic: None,
-                acknowledged: true,
-                must_stop: false,
-            });
+            return Ok(skipped());
         };
         if let Some(message) = &definition.handler.status_message {
             runtime.hook_notice(
@@ -79,9 +225,14 @@ impl HookCommandRunner<'_> {
             );
         }
         let stop = owner.cancellation();
+        let mut io = None;
         let result = {
-            let execution =
-                self.run_inner(pointer, event, stop.clone(), Some((&mut owner, runtime)));
+            let execution = self.run_inner(
+                pointer,
+                event,
+                stop.clone(),
+                Some(Admission::Session(&mut owner, runtime, &mut io)),
+            );
             tokio::pin!(execution);
             tokio::select! {
                 biased;
@@ -89,26 +240,8 @@ impl HookCommandRunner<'_> {
                 result = &mut execution => result,
             }
         };
-        let mut report = match &result {
-            Ok(report) => cyber_server::runtime::HookExecutionResult {
-                outcome: report.outcome,
-                decision: report.decision.clone(),
-                acknowledged: report.acknowledged,
-                must_stop: report.must_stop,
-                io: None,
-            },
-            Err(_) => cyber_server::runtime::HookExecutionResult {
-                outcome: if stop.is_cancelled() {
-                    super::HookOutcome::Skipped
-                } else {
-                    super::HookOutcome::Error
-                },
-                decision: Default::default(),
-                acknowledged: true,
-                must_stop: stop.is_cancelled(),
-                io: None,
-            },
-        };
+        let mut report = receipt_result(&result, &stop);
+        report.io = io;
         let fenced = owner.verify(runtime).is_err();
         report.must_stop |= fenced;
         let record = owner.finish(report).map_err(|error| error.to_string())?;
@@ -128,10 +261,7 @@ impl HookCommandRunner<'_> {
         pointer: &str,
         event: &HookEvent,
         cancel: CancellationToken,
-        mut owner: Option<(
-            &mut cyber_server::runtime::HookExecution,
-            &cyber_server::runtime::Runtime,
-        )>,
+        mut owner: Option<Admission<'_>>,
     ) -> Result<HookCommandReport, String> {
         let (definition, sandbox_all) = self.authorize(pointer, event)?;
         if definition.handler.once && owner.is_none() {
@@ -156,7 +286,7 @@ impl HookCommandRunner<'_> {
         if cancel.is_cancelled() || tokio::time::Instant::now() >= deadline {
             return Err("hook command cancelled or expired before launch".into());
         }
-        if let Some((owner, runtime)) = owner.as_mut() {
+        if let Some(Admission::Session(owner, runtime, _)) = owner.as_mut() {
             owner
                 .mark_launch(runtime)
                 .map_err(|error| error.to_string())?;
@@ -202,6 +332,9 @@ impl HookCommandRunner<'_> {
                 acknowledged: true,
             }),
         };
+        if let (Some(owner), Ok(capture)) = (owner.as_mut(), &capture) {
+            owner.capture_io(event, capture);
+        }
         Ok(interpret_hook_command(
             event,
             definition
@@ -405,6 +538,23 @@ impl Drop for Scratch {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn logged_io_bounds_utf8_expansion_and_incomplete_characters() {
+        let bytes = vec![0xff; super::super::CAPTURE_LIMIT];
+        let expanded = String::from_utf8_lossy(&bytes);
+        let mut truncated = false;
+        let logged = super::bounded_io(&expanded, &mut truncated);
+        assert!(truncated);
+        assert!(logged.len() <= super::super::CAPTURE_LIMIT);
+        assert!(logged.chars().all(|character| character == '\u{fffd}'));
+        let mut truncated = false;
+        assert_eq!(
+            super::bounded_io("ordinary text", &mut truncated),
+            "ordinary text"
+        );
+        assert!(!truncated);
+    }
+
     use super::Scratch;
 
     #[test]

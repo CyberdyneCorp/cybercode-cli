@@ -116,6 +116,15 @@
 - **AND** attempts to supply those protected fields SHALL be rejected, including attempts to set the synthetic marker on an ordinary event
 - **AND** chained tool-input rewrites SHALL preserve the generated identity and synthetic marker without modifying prior event input
 
+#### Scenario: Synthetic commands retain native checkout ownership
+- **WHEN** a trusted matching command handler runs against a synthetic event in a managed checkout
+- **THEN** it SHALL acquire a receipt-specific checkout lease before launch without constructing or binding a Session
+- **AND** concurrent handlers in the same test invocation SHALL use distinct lease identities
+- **AND** removal SHALL remain refused until native termination is acknowledged and ownership is settled
+- **AND** cancellation SHALL stop the owned process tree and record its acknowledged or unknown result
+- **AND** disposal without acknowledgement SHALL retain unknown receipt and checkout activity evidence, including when forced removal is requested
+- **AND** repeated once handlers SHALL be skipped within that test invocation without recording another admission or launching another command
+
 #### Scenario: Last-run observations match the current handler and checkout
 - **WHEN** a client inspects a loaded hook through API/SDK, CLI list or TUI
 - **THEN** the system SHALL show the latest recorded execution with the same effective handler digest, event and scope in the current canonical checkout

@@ -145,6 +145,29 @@ async fn actual_command_decision_has_a_durable_privacy_preserving_receipt() {
 }
 
 #[tokio::test]
+async fn actual_command_receipt_captures_io_only_when_admission_opts_in() {
+    let mut f = Recorded::new(
+        "cat >/dev/null; printf '{\"decision\":\"deny\"}'; printf 'private stderr' >&2",
+    )
+    .await;
+    f.resolved.value["telemetry"] = json!({"log_hook_io":true});
+    let report = f
+        .runner()
+        .run_recorded(&f.flow.runtime, POINTER, &f.event, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.outcome, HookOutcome::Blocked);
+    let receipt = f.receipt();
+    let io = receipt.io.unwrap();
+    assert!(receipt.log_io);
+    assert!(io.stdin.contains("private request"));
+    assert_eq!(io.stdout, "{\"decision\":\"deny\"}");
+    assert_eq!(io.stderr, "private stderr");
+    assert!(!io.truncated);
+    f.flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn subtree_stop_cancels_owned_hook_and_waits_for_native_acknowledgement() {
     let f = Recorded::new("printf running > started; sleep 30").await;
     let runner = f.runner();

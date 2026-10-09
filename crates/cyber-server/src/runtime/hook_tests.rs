@@ -4,10 +4,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use cyber_core::hooks::{HookDecision, HookDefinition, HookEvent, HookOutcome};
-use cyber_store::{Expected, NewEvent, Store, StoredEvent};
+use cyber_store::{Expected, NewEvent, Store, StoreError, StoredEvent};
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::hooks::{EXECUTED, STARTED, admission_record, elapsed, verify_settlement};
+use super::hooks::{
+    EXECUTED, ONCE_ADMITTED, STARTED, admission_record, elapsed, verify_settlement,
+};
 use super::{HookExecutionRecord, HookExecutionResult, HookExecutionStatus, RuntimeError};
 
 pub struct SyntheticHookExecution {
@@ -23,6 +25,16 @@ pub fn start_synthetic_hook_execution(
     definition: &HookDefinition,
     log_io: bool,
 ) -> Result<SyntheticHookExecution, RuntimeError> {
+    try_start_synthetic_hook_execution(store, event, definition, log_io)?
+        .ok_or_else(|| RuntimeError::Invalid(ONCE_ADMITTED.into()))
+}
+
+pub fn try_start_synthetic_hook_execution(
+    store: Arc<Store>,
+    event: &HookEvent,
+    definition: &HookDefinition,
+    log_io: bool,
+) -> Result<Option<SyntheticHookExecution>, RuntimeError> {
     if !event.is_synthetic()
         || definition.event != event.event()
         || definition
@@ -39,17 +51,25 @@ pub fn start_synthetic_hook_execution(
     record.synthetic = true;
     let mut data = serde_json::to_value(&record).expect("receipt serializes");
     data["admission_bindings"] = serde_json::json!([]);
-    store.append(
+    match store.append(
         &record.id,
         Expected::Seq(-1),
         vec![NewEvent::new(STARTED, data)],
-    )?;
-    Ok(SyntheticHookExecution {
+    ) {
+        Ok(_) => {}
+        Err(StoreError::Projector { kind, reason })
+            if kind == STARTED && reason == ONCE_ADMITTED =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(Some(SyntheticHookExecution {
         store,
         record,
         started: Instant::now(),
         settled: false,
-    })
+    }))
 }
 
 impl SyntheticHookExecution {
@@ -120,6 +140,15 @@ pub(super) fn project(
             .map_err(|error| error.to_string())?;
         if exists || event.data["admission_bindings"] != serde_json::json!([]) {
             return Err("Synthetic hook identity cannot bind or borrow a Session".into());
+        }
+        if record.once {
+            let admitted: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM hook_test_execution WHERE session_id=?1 AND json_extract(data,'$.digest')=?2 AND json_extract(data,'$.once')=1)",
+                params![record.session_id,record.digest], |row| row.get(0),
+            ).map_err(|error| error.to_string())?;
+            if admitted {
+                return Err(ONCE_ADMITTED.into());
+            }
         }
         tx.execute("INSERT INTO hook_test_execution(id,session_id,status,started_ms,data) VALUES (?1,?2,'running',?3,?4)",params![record.id,record.session_id,record.started_ms,data]).map_err(|error|error.to_string())?;
         return Ok(());

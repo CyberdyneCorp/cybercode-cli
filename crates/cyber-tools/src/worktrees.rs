@@ -68,23 +68,6 @@ impl BuiltinHost {
         creating: bool,
         cancel: CancellationToken,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
-        use cyber_server::runtime::LocationLease;
-        let locations = Repository::managed_locations_at(Path::new(&info.directory))
-            .map_err(|error| error.to_string())?;
-        let Some((_, managed)) = locations.first() else {
-            if info.worktree_id.is_some() {
-                return Err("Managed checkout ownership is missing; recovery is required".into());
-            }
-            return Ok(LocationLease::unmanaged());
-        };
-        match info.worktree_id.as_deref() {
-            Some(id) if id == managed.id => {}
-            None if creating => {}
-            _ => return Err(
-                "Managed checkout creation identity changed or is unbound; recovery is required"
-                    .into(),
-            ),
-        }
         let inv = Invocation {
             session_id: info.id.clone(),
             directory: info.directory.clone(),
@@ -99,12 +82,67 @@ impl BuiltinHost {
             attempt: 1,
             asker: Asker::detached(),
         };
+        self.claim_location(&inv, info.worktree_id.as_deref(), creating, cancel)
+            .await
+    }
+
+    pub(crate) async fn claim_hook_test_location(
+        &self,
+        event: &cyber_core::hooks::HookEvent,
+        receipt_id: &str,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        if !event.is_synthetic() || !cyber_core::ids::has_prefix(receipt_id, "hke") {
+            return Err("Hook test Location requires synthetic receipt ownership".into());
+        }
+        let identity = event.identity();
+        let inv = Invocation {
+            session_id: format!("ses_{receipt_id}"),
+            directory: identity.location.directory.display().to_string(),
+            agent: identity.agent.clone(),
+            mode: identity.mode.clone(),
+            rules: serde_json::Value::Null,
+            message_id: String::new(),
+            call_id: cyber_core::ids::new_id("call"),
+            operation_key: String::new(),
+            name: "hook_test".into(),
+            input: serde_json::Value::Null,
+            attempt: 1,
+            asker: Asker::detached(),
+        };
+        self.claim_location(&inv, None, true, cancel).await
+    }
+
+    async fn claim_location(
+        &self,
+        inv: &Invocation,
+        bound: Option<&str>,
+        creating: bool,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        use cyber_server::runtime::LocationLease;
+        let locations = Repository::managed_locations_at(Path::new(&inv.directory))
+            .map_err(|error| error.to_string())?;
+        let Some((_, managed)) = locations.first() else {
+            if bound.is_some() {
+                return Err("Managed checkout ownership is missing; recovery is required".into());
+            }
+            return Ok(LocationLease::unmanaged());
+        };
+        match bound {
+            Some(id) if id == managed.id => {}
+            None if creating => {}
+            _ => return Err(
+                "Managed checkout creation identity changed or is unbound; recovery is required"
+                    .into(),
+            ),
+        }
         let ctx = Ctx {
             hook_decision: None,
             host: self,
-            inv: &inv,
-            policy: self.policy(&inv).await?,
-            location: PathBuf::from(&info.directory),
+            inv,
+            policy: self.policy(inv).await?,
+            location: PathBuf::from(&inv.directory),
             cancel,
         };
         let execution = GitPort {
@@ -117,7 +155,7 @@ impl BuiltinHost {
         for (repository, managed) in locations {
             leases.push(
                 retry_repository_busy(&ctx.cancel, || {
-                    repository.claim(&execution, &managed, &info.id)
+                    repository.claim(&execution, &managed, &inv.session_id)
                 })
                 .await
                 .map_err(|error| error.to_string())?,

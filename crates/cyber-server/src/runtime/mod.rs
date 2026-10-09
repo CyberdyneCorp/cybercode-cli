@@ -27,7 +27,9 @@ mod events;
 mod fork;
 mod hook_tests;
 mod hooks;
-pub use hook_tests::{SyntheticHookExecution, start_synthetic_hook_execution};
+pub use hook_tests::{
+    SyntheticHookExecution, start_synthetic_hook_execution, try_start_synthetic_hook_execution,
+};
 pub use hooks::{
     HookExecution, HookExecutionIo, HookExecutionRecord, HookExecutionResult, HookExecutionStatus,
     hook_execution_page, hook_last_run,
