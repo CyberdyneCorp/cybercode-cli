@@ -566,7 +566,7 @@ async fn hidden_client_override_does_not_reveal_a_lower_read_only_mcp_registrati
 for line in sys.stdin:
  r=json.loads(line)
  if 'id' not in r: continue
- result=({'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'lower','version':'1'}} if r['method']=='initialize' else {'tools':[{'name':'read','inputSchema':{'type':'object'},'annotations':{'readOnlyHint':True}}]})
+ result=({'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'lower','version':'1'},'instructions':'Lower server guidance'} if r['method']=='initialize' else {'tools':[{'name':'read','inputSchema':{'type':'object'},'annotations':{'readOnlyHint':True}}]})
  print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}),flush=True)
 "#;
     f.configure(|config| {
@@ -587,6 +587,7 @@ for line in sys.stdin:
     })
     .await
     .unwrap();
+    assert!(f.host.context_sources(&f.turn)["mcp/instructions"].contains("Lower server guidance"));
     let native = f
         .host
         .definitions(&f.turn)
@@ -602,6 +603,15 @@ for line in sys.stdin:
             &[],
         )
         .unwrap();
+    assert!(
+        !f.host
+            .context_sources(&f.turn)
+            .contains_key("mcp/instructions")
+    );
+    assert_eq!(
+        f.host.context_observations(&f.turn)["mcp/instructions"],
+        cyber_server::runtime::ContextObservation::Absent
+    );
     let definitions = f.host.definitions(&f.turn);
     let effective: Vec<_> = definitions
         .iter()

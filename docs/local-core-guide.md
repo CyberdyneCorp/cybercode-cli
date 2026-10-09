@@ -304,3 +304,10 @@ Selections survive restart and compaction, while new Sessions and forks start in
 Configured local connections advertise MCP roots: the canonical Location and existing files or directories in `sandbox.writable_roots`, resolved relative to the Location and deduplicated. Read-only policy advertises the Location alone. Roots use percent-encoded `file://` URIs and describe a connection snapshot (`listChanged: false`); close and reopen the Location to capture configuration changes. An unavailable configured writable path refuses startup before native launch.
 
 Servers can request `roots/list` during initialization, tool execution or idle processing. The list describes the workspace and leaves process sandbox grants and tool permissions unchanged. Private scratch, unrelated read-only paths and sibling worktrees are not added implicitly. Sampling remains unadvertised and unsupported until its model, permission and billing path is implemented.
+
+
+## MCP server guidance
+
+Connected local servers can supply usage instructions during initialization. Eligible instructions appear in a `<mcp_instructions>` context block, ordered by server name and attributed to each server. Server text is escaped to preserve block boundaries. Guidance remains available when schemas are deferred, while agent, Mode, permission and server-authorization controls determine eligibility. Higher client registrations that shadow every MCP tool also remove that server's guidance.
+
+Instructions use the `mcp/instructions` Context Source. Reconnection changes, connection loss, Location close and visibility restrictions update its applicability through mid-conversation system messages. The Epoch baseline remains byte-stable. Reading this source uses cached discovery metadata and starts no servers or RPCs. Remote MCP instruction delivery remains incomplete.

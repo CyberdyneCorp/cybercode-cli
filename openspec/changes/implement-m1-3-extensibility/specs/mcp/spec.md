@@ -250,3 +250,24 @@
 - **WHEN** the connection advertises `roots.listChanged: false`
 - **THEN** its root selection SHALL remain an immutable connection snapshot
 - **AND** a fresh connection SHALL capture current authorized configuration
+
+### Requirement: Server instructions
+(P0) The system SHALL include each connected server's `instructions` in a `<mcp_instructions>` block as a Context Source keyed `mcp/instructions`, omitting servers whose tools are all denied for the agent. Instruction changes SHALL arrive as Mid-Conversation System Messages.
+
+#### Scenario: Instructions omitted when tools denied
+- **WHEN** an agent's permissions deny `mcp__db__*`
+- **THEN** the `db` server's instructions are not included for that agent
+
+#### Scenario: Effective registration controls source visibility
+- **WHEN** MCP registrations are filtered by agent or Mode controls, withdrawn, stale, or shadowed by higher client registrations
+- **THEN** those registrations SHALL NOT make their server instructions eligible for the current source observation
+- **AND** eligible deferred MCP registrations SHALL retain their server guidance without loading their schemas
+
+#### Scenario: Reconnection replaces instructions
+- **WHEN** a fresh authorized connection supplies different instructions
+- **THEN** the changed `mcp/instructions` source SHALL append a Mid-Conversation System Message
+- **AND** the existing Epoch baseline SHALL remain byte-stable
+
+#### Scenario: All instruction sources withdrawn
+- **WHEN** no connected authorized server has instructions and an effective MCP registration
+- **THEN** the source SHALL explicitly report absence so the runtime withdraws its applicability in a Mid-Conversation System Message

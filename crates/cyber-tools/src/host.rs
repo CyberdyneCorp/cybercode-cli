@@ -598,33 +598,14 @@ impl ToolHost for BuiltinHost {
     }
 
     fn context_sources(&self, turn: &TurnContext) -> BTreeMap<String, String> {
-        let location = Path::new(&turn.directory);
-        let budget = self.listing_budget(location);
-        let listing = skill_listing(&self.skills(location), &self.rules(location), budget);
-        listing
-            .map(|text| BTreeMap::from([("core/skills".to_string(), text)]))
-            .unwrap_or_default()
+        self.context_sources_for_tools(turn, &self.definitions(turn))
     }
 
     fn context_observations(
         &self,
         turn: &TurnContext,
     ) -> BTreeMap<String, cyber_server::runtime::ContextObservation> {
-        use cyber_server::runtime::ContextObservation;
-        let mut sources: BTreeMap<_, _> = self
-            .context_sources(turn)
-            .into_iter()
-            .map(|(key, value)| (key, ContextObservation::Value(value)))
-            .collect();
-        let agent = match self.agent_profile(Path::new(&turn.directory), &turn.agent) {
-            Ok(profile) => match profile.system.filter(|text| !text.is_empty()) {
-                Some(text) => ContextObservation::Value(text),
-                None => ContextObservation::Absent,
-            },
-            Err(error) => ContextObservation::Unavailable(error),
-        };
-        sources.insert("core/agent".into(), agent);
-        sources
+        self.context_observations_for_tools(turn, &self.definitions(turn))
     }
 
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
@@ -1074,4 +1055,50 @@ pub(crate) fn canonical(path: &Path) -> PathBuf {
         out.push(name);
     }
     out
+}
+
+impl BuiltinHost {
+    /// Context sources projected from an already effective tool catalog.
+    pub fn context_sources_for_tools(
+        &self,
+        turn: &TurnContext,
+        visible: &[ToolDef],
+    ) -> BTreeMap<String, String> {
+        let location = Path::new(&turn.directory);
+        let budget = self.listing_budget(location);
+        let listing = skill_listing(&self.skills(location), &self.rules(location), budget);
+        let mut sources = listing
+            .map(|text| BTreeMap::from([("core/skills".to_string(), text)]))
+            .unwrap_or_default();
+        if let Some(instructions) = self.mcp_instructions(turn, visible) {
+            sources.insert("mcp/instructions".into(), instructions);
+        }
+        sources
+    }
+
+    /// Typed observations include explicit withdrawal of absent MCP instructions.
+    pub fn context_observations_for_tools(
+        &self,
+        turn: &TurnContext,
+        visible: &[ToolDef],
+    ) -> BTreeMap<String, cyber_server::runtime::ContextObservation> {
+        use cyber_server::runtime::ContextObservation;
+        let mut sources: BTreeMap<_, _> = self
+            .context_sources_for_tools(turn, visible)
+            .into_iter()
+            .map(|(key, value)| (key, ContextObservation::Value(value)))
+            .collect();
+        sources
+            .entry("mcp/instructions".into())
+            .or_insert(ContextObservation::Absent);
+        let agent = match self.agent_profile(Path::new(&turn.directory), &turn.agent) {
+            Ok(profile) => match profile.system.filter(|text| !text.is_empty()) {
+                Some(text) => ContextObservation::Value(text),
+                None => ContextObservation::Absent,
+            },
+            Err(error) => ContextObservation::Unavailable(error),
+        };
+        sources.insert("core/agent".into(), agent);
+        sources
+    }
 }

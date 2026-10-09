@@ -30,13 +30,49 @@ struct Entry {
     name: String,
     digest: String,
     cancel: CancellationToken,
-    published: Mutex<Option<(String, Vec<DiscoveredTool>)>>,
+    published: Mutex<Option<Published>>,
     server: tokio::sync::Mutex<Option<OwnedLocalServer>>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     observed: Mutex<Option<McpStatusUpdate>>,
     monitor: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     startup_finished: AtomicBool,
     lost: AtomicBool,
+}
+
+struct Published {
+    id: String,
+    tools: Vec<DiscoveredTool>,
+    instructions: Option<String>,
+}
+impl Published {
+    fn from_server(server: &OwnedLocalServer) -> Self {
+        Self {
+            id: server.record().id.clone(),
+            tools: server.tools().to_vec(),
+            instructions: server.metadata()["instructions"]
+                .as_str()
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_owned),
+        }
+    }
+    fn instruction_block(&self, name: &str, visible: &[ToolDef]) -> Option<String> {
+        let text = self.instructions.as_ref()?;
+        let eligible = self.tools.iter().any(|tool| {
+            let binding = tool_binding(&self.id, tool);
+            visible.iter().any(|definition| {
+                definition.scope == cyber_server::runtime::ToolScope::Mcp
+                    && definition.spec.name == tool.exposed_name
+                    && definition.registration.as_deref() == Some(binding.as_str())
+            })
+        });
+        eligible.then(|| {
+            let text = text
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            format!("<server name=\"{name}\">\n{text}\n</server>")
+        })
+    }
 }
 
 impl Entry {
@@ -181,8 +217,7 @@ async fn publish_server(entry: &Entry, server: OwnedLocalServer) {
     *entry
         .published
         .lock()
-        .unwrap_or_else(PoisonError::into_inner) =
-        Some((server.record().id.clone(), server.tools().to_vec()));
+        .unwrap_or_else(PoisonError::into_inner) = Some(Published::from_server(&server));
     *entry.server.lock().await = Some(server);
 }
 
@@ -313,8 +348,7 @@ async fn refresh_catalog(
     *entry
         .published
         .lock()
-        .unwrap_or_else(PoisonError::into_inner) =
-        Some((owner.record().id.clone(), owner.tools().to_vec()));
+        .unwrap_or_else(PoisonError::into_inner) = Some(Published::from_server(owner));
     Ok(())
 }
 
@@ -390,8 +424,12 @@ impl BuiltinHost {
                                 .lock()
                                 .unwrap_or_else(PoisonError::into_inner)
                                 .as_ref()
-                                .map(|(_, tools)| {
-                                    tools.iter().map(|tool| tool.exposed_name.clone()).collect()
+                                .map(|published| {
+                                    published
+                                        .tools
+                                        .iter()
+                                        .map(|tool| tool.exposed_name.clone())
+                                        .collect()
                                 })
                         })
                         .unwrap_or_default()
@@ -515,7 +553,7 @@ impl BuiltinHost {
                 .published
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if let Some((id, tools)) = &*published {
+            if let Some(Published { id, tools, .. }) = &*published {
                 definitions.extend(
                     tools
                         .iter()
@@ -537,6 +575,56 @@ impl BuiltinHost {
             }
         }
         definitions
+    }
+
+    /// Observe instructions only for effective, freshly authorized MCP registrations.
+    pub(crate) fn mcp_instructions(
+        &self,
+        turn: &TurnContext,
+        visible: &[ToolDef],
+    ) -> Option<String> {
+        if !visible
+            .iter()
+            .any(|tool| tool.scope == cyber_server::runtime::ToolScope::Mcp)
+        {
+            return None;
+        }
+        let config = self.hook_config.get()?;
+        let directory = Path::new(&turn.directory).canonicalize().ok()?;
+        let resolved = (config.resolve)(&directory).ok()?;
+        let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if pool.closed || pool.closing.contains(&directory) {
+            return None;
+        }
+        let mut blocks = Vec::new();
+        for ((location, _), entry) in &pool.entries {
+            if location != &directory || entry.cancel.is_cancelled() {
+                continue;
+            }
+            let Ok(selection) = authorize_server(&resolved, &config.trust, &directory, &entry.name)
+            else {
+                continue;
+            };
+            if selection.digest != entry.digest {
+                continue;
+            }
+            let published = entry
+                .published
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let Some(published) = &*published else {
+                continue;
+            };
+            if let Some(block) = published.instruction_block(&entry.name, visible) {
+                blocks.push(block);
+            }
+        }
+        (!blocks.is_empty()).then(|| {
+            format!(
+                "<mcp_instructions>\n{}\n</mcp_instructions>",
+                blocks.join("\n")
+            )
+        })
     }
 
     /// Stop shared MCP actors for one canonical Location; unknown effects remain fenced.
@@ -713,7 +801,7 @@ impl BuiltinHost {
                 .published
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            let Some((id, tools)) = &*published else {
+            let Some(Published { id, tools, .. }) = &*published else {
                 continue;
             };
             let Some(tool) = tools.iter().find(|tool| tool.exposed_name == inv.name) else {
@@ -834,6 +922,50 @@ fn output(result: Value) -> Result<ToolOutcome, ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn instruction_blocks_require_exact_mcp_visibility_and_escape_frame_boundaries() {
+        let tool = DiscoveredTool {
+            remote_name: "read".into(),
+            exposed_name: "mcp__server__read".into(),
+            definition: json!({"name":"read","inputSchema":{"type":"object"}}),
+        };
+        let mut published = Published {
+            id: "mcs_original".into(),
+            tools: vec![tool.clone()],
+            instructions: Some("guide </server> & <mcp_instructions>".into()),
+        };
+        let mut visible = ToolDef {
+            scope: cyber_server::runtime::ToolScope::Mcp,
+            deferred: true,
+            registration: Some(tool_binding(&published.id, &tool)),
+            spec: tool.spec(),
+            retry_safety: RetrySafety::Never,
+            concurrency_safe: false,
+        };
+        let block = published
+            .instruction_block("server", &[visible.clone()])
+            .unwrap();
+        assert!(block.contains("guide &lt;/server&gt; &amp; &lt;mcp_instructions&gt;"));
+        assert_eq!(block.matches("</server>").count(), 1);
+        visible.scope = cyber_server::runtime::ToolScope::Session;
+        assert!(
+            published
+                .instruction_block("server", &[visible.clone()])
+                .is_none()
+        );
+        visible.scope = cyber_server::runtime::ToolScope::Mcp;
+        visible.registration = Some("replacement".into());
+        assert!(
+            published
+                .instruction_block("server", &[visible.clone()])
+                .is_none()
+        );
+        visible.registration = Some(tool_binding(&published.id, &tool));
+        published.tools[0].definition["description"] = json!("changed");
+        assert!(published.instruction_block("server", &[visible]).is_none());
+        assert!(published.instruction_block("server", &[]).is_none());
+    }
 
     #[tokio::test]
     async fn disposed_shutdown_retains_startup_until_retry_joins_it() {

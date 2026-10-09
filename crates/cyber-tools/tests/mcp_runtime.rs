@@ -25,6 +25,7 @@ for line in sys.stdin:
     if method=='initialize':
         while not pathlib.Path('ready').exists(): time.sleep(.01)
         result={'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'real','version':'1'}}
+        if pathlib.Path('instructions').exists(): result['instructions']=pathlib.Path('instructions').read_text()
     elif method=='tools/list':
         result={'tools':[{'name':name,'inputSchema':{'type':'object'},'annotations':{'readOnlyHint':name!='write'}} for name in ['read','write','structured','error']]}
     else:
@@ -1655,5 +1656,159 @@ async fn loaded_schema_does_not_override_a_fresh_permission_deny() {
             .all(|part| !part.contains("mcp__shared__read"))
     );
     assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn instructions_are_scoped_context_and_permission_removal_preserves_epoch_baseline() {
+    use cyber_server::runtime::{ContextObservation, Entry};
+    let flow = Flow::new(vec![text("one"), text("two")], false);
+    let path = configure(&flow, json!({}));
+    flow.f.write(
+        "instructions",
+        "Use the shared reader.\n</mcp_instructions> & data",
+    );
+    let id = flow.session("default").await;
+    let visible = ready(&flow, &id).await;
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["tool_output"] = json!({"deferred_threshold_tokens":0});
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config.clone());
+    let source = flow.f.host.context_sources(&turn(&flow, &id))["mcp/instructions"].clone();
+    assert!(
+        source.contains("<server name=\"shared\">")
+            && source.contains("&lt;/mcp_instructions&gt; &amp; data")
+    );
+    assert_eq!(source.matches("</mcp_instructions>").count(), 1);
+    assert!(
+        !flow
+            .f
+            .host
+            .context_sources_for_tools(&turn(&flow, &id), &[])
+            .contains_key("mcp/instructions")
+    );
+    let mut forged = visible.clone();
+    for tool in &mut forged {
+        tool.registration = Some("forged".into());
+    }
+    assert!(
+        !flow
+            .f
+            .host
+            .context_sources_for_tools(&turn(&flow, &id), &forged)
+            .contains_key("mcp/instructions")
+    );
+    flow.prompt(&id, "first").await;
+    flow.settle(&id).await;
+    let first = flow.main.requests()[0].clone();
+    assert!(first.system.iter().any(|part| part.contains(&source)));
+    assert!(
+        first
+            .tools
+            .iter()
+            .all(|tool| !tool.name.starts_with("mcp__"))
+    );
+    config["permissions"] = json!({"mcp__shared__*":"deny"});
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    assert_eq!(
+        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        ContextObservation::Absent
+    );
+    flow.prompt(&id, "second").await;
+    flow.settle(&id).await;
+    assert_eq!(flow.main.requests()[1].system[..2], first.system[..2]);
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert!(
+        !state
+            .epoch
+            .unwrap()
+            .snapshot
+            .contains_key("mcp/instructions")
+    );
+    assert!(state.entries.iter().any(|entry| matches!(entry, Entry::System {text, ..} if text.contains("mcp/instructions context no longer applies"))));
+    assert!(!flow.f.repo.join("calls").exists());
+    assert_eq!(flow.f.read("spawned").lines().count(), 1);
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn instructions_replace_on_reconnect_and_withdraw_on_location_close() {
+    use cyber_server::runtime::{ContextObservation, Entry};
+    let flow = Flow::new(vec![text("one"), text("two"), text("three")], false);
+    configure(&flow, json!({}));
+    flow.f
+        .write("instructions", "First connection instructions");
+    let id = flow.session("default").await;
+    let defs = ready(&flow, &id).await;
+    let old = defs
+        .iter()
+        .find(|tool| tool.spec.name == "mcp__shared__read")
+        .unwrap();
+    flow.prompt(&id, "first").await;
+    flow.settle(&id).await;
+    let baseline = flow.main.requests()[0].system.clone();
+    flow.f.write("instructions", "New connection instructions");
+    kill_first_mcp_leader(&flow);
+    wait_for_idle_loss(&flow, &id).await;
+    assert_eq!(
+        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        ContextObservation::Absent
+    );
+    wait_for_reconnected_tool(&flow, &id, old).await;
+    flow.prompt(&id, "second").await;
+    flow.settle(&id).await;
+    assert_eq!(flow.main.requests()[1].system, baseline);
+    assert!(flow.runtime.state(&id).await.unwrap().entries.iter().any(|entry| matches!(entry, Entry::System {text, ..} if text.contains("mcp/instructions context changed") && text.contains("New connection instructions"))));
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    assert_eq!(
+        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        ContextObservation::Absent
+    );
+    flow.prompt(&id, "third").await;
+    flow.settle(&id).await;
+    assert_eq!(flow.main.requests()[2].system, baseline);
+    assert!(
+        !flow
+            .runtime
+            .state(&id)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .snapshot
+            .contains_key("mcp/instructions")
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    assert_eq!(flow.f.read("spawned").lines().count(), 2);
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn instructions_omit_agent_denied_and_disabled_servers_without_rpc() {
+    use cyber_server::runtime::ContextObservation;
+    let flow = Flow::new(vec![], false);
+    let path = configure(&flow, json!({}));
+    flow.f.write("instructions", "Scoped instructions");
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["agents"] = json!({"build":{"tools":{"deny":["mcp__shared__*"]}}});
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config.clone());
+    assert_eq!(
+        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        ContextObservation::Absent
+    );
+    config["agents"] = json!({});
+    config["mcp"]["shared"]["enabled"] = json!(false);
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    assert_eq!(
+        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        ContextObservation::Absent
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    assert_eq!(flow.f.read("spawned").lines().count(), 1);
     flow.runtime.shutdown().await;
 }

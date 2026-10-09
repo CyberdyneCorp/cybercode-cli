@@ -165,14 +165,16 @@ impl ToolHost for AppHost {
     }
 
     fn context_sources(&self, turn: &TurnContext) -> BTreeMap<String, String> {
-        self.builtin.context_sources(turn)
+        self.builtin
+            .context_sources_for_tools(turn, &self.definitions(turn))
     }
 
     fn context_observations(
         &self,
         turn: &TurnContext,
     ) -> BTreeMap<String, cyber_server::runtime::ContextObservation> {
-        self.builtin.context_observations(turn)
+        self.builtin
+            .context_observations_for_tools(turn, &self.definitions(turn))
     }
 
     fn shell_owned(
