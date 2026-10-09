@@ -8,6 +8,15 @@ The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 c
 
 
 
+
+## M1.4 directory-bound memory reads and scope ownership (2026-10-09)
+
+Core memory storage now admits project/global directories through retained capability directory handles and no-follow opens. Explicit create admission uses private Unix directories; existing review creates no directories or note/index files. Scope claims create a private lock file and report contention without blocking, including across processes. Actual process-death tests verify OS lock release without adopting stored execution as live. Symlinked scope/note/index/lock paths and Unix hard-linked files are refused; private-file checks and filename/frontmatter identity checks precede content return. Invalid note records report safe diagnostics, while valid metadata is sorted.
+
+Index reads consume at most 25,004 bytes, producing the first 200 lines or 25,000 UTF-8 bytes with the canonical truncation notice; they never open individual note bodies. Note reads are bounded to 1 MiB; catalog metadata is bounded to 4 MiB and enumeration to 4096 directory entries, with explicit refusal rather than partial success. A retained .memory-transaction entry fences read/list/index and is left intact. This is a read-side ownership/fencing foundation: no transaction creation, note/index writes or automatic reconciliation is implemented yet. Unix permissions are enforced locally; Windows ACL privacy and complete native acceptance remain open.
+
+Local validation passes 94 Rust cases across core units, configuration, paths, memory documents and actual storage tests; workspace all-target Clippy with warnings denied, formatting, generated SDK consistency and 59 strict OpenSpec items pass. Cross-spec lint reports zero errors and 21 warnings. Windows CI now includes the portable memory/document/storage suites, including actual process-death lock release. Journaled mutation/recovery, memory tool permissions/toggles, Context Source reconciliation and HTTP/SDK/CLI/TUI integration remain required; all P1 milestones remain unaccepted.
+
 ## M1.4 memory document foundation (2026-10-09)
 
 The authorized `implement-m1-4-memory-intelligence` change covers the complete memory, code-intelligence and browser-verification milestone. The first core increment adds validated Markdown/YAML documents, kebab-case names, known memory types, one-line descriptions and mandatory nonempty Why/How to apply lines for feedback/project notes. Write admission scans frontmatter and body for credential assignments, known key prefixes, private keys and high-entropy strings longer than 32 Unicode characters; diagnostics omit supplied text. Serialization revalidates directly constructed documents. Deterministic index construction sorts unique names, escapes descriptions and refuses duplicate entries. Index snapshots use the first 200 lines or 25,000 UTF-8 bytes with the canonical truncation notice.

@@ -1,5 +1,6 @@
 - [ ] Implement the complete P1 memory lifecycle.
   - [x] Add shared document/frontmatter validation, secret-rejecting write admission, deterministic index construction, bounded index snapshots and typed settings/path derivation. Validate malformed fields, typed notes, duplicate names, Unicode boundaries and no-secret diagnostics; this foundation does not grant file authority.
+  - [x] Add directory-bound existing/create admission, private Unix scopes/files, no-follow reads, bounded catalogs/index prefixes, exclusive per-scope claims and pending-transaction read fencing. Verify actual independent/cross-process ownership and process-death release, invalid entries and alias rejection. This read-side foundation does not implement note/index mutation or recovery; Windows permissions and full native acceptance remain open.
   - [ ] Implement private project/global storage with cross-process mutation ownership, atomic/recoverable note/index updates and path/symlink confinement.
   - [ ] Add memory tool operations with permission, settings, hooks, cancellation and output boundaries.
   - [ ] Add core/memory baseline and Safe Boundary reconciliation with generation, deduplication and staleness instructions.

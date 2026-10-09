@@ -1,5 +1,7 @@
 //! Validated memory documents and index snapshots; storage authority is separate.
 mod secrets;
+mod storage;
+pub use storage::{InvalidMemory, MemoryCatalog, MemoryScope, MemoryStorageError, MemoryStore};
 
 use crate::env::EnvSource;
 use serde::{Deserialize, Serialize};
@@ -174,16 +176,19 @@ pub fn index_snapshot(text: &str) -> IndexSnapshot {
         end -= 1;
     }
     let truncated = end < text.len();
-    let mut snapshot = text[..end].to_string();
-    if truncated {
-        if !snapshot.ends_with('\n') {
-            snapshot.push('\n');
+    IndexSnapshot::from_prefix(&text[..end], truncated)
+}
+
+impl IndexSnapshot {
+    pub(crate) fn from_prefix(prefix: &str, truncated: bool) -> Self {
+        let mut text = prefix.to_string();
+        if truncated {
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(TRUNCATION_NOTICE);
         }
-        snapshot.push_str(TRUNCATION_NOTICE);
-    }
-    IndexSnapshot {
-        text: snapshot,
-        truncated,
+        Self { text, truncated }
     }
 }
 

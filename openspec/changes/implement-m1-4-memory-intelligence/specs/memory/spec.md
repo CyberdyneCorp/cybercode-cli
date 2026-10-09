@@ -33,6 +33,11 @@
 - **WHEN** a Session runs in a repository with project ID `prj_7f3a`
 - **THEN** project memories are read from and written to `~/.local/share/cyber/memory/prj_7f3a/`
 
+#### Scenario: Bound storage scope reads
+- **WHEN** a memory scope or note path is a symlink alias, or a read observes pending transaction evidence
+- **THEN** the system SHALL refuse the read without following the alias or removing recovery evidence
+- **AND** baseline index reads SHALL preserve the UTF-8 200-line/25,000-byte prefix without loading individual note bodies
+
 ### Requirement: Memory toggles
 (P1) The system SHALL honor `memory.enabled` (default true; when false, no memory is loaded and the tool is not offered) and `memory.generate` (when false, memory is loaded read-only and `write`, `update`, and `delete` are not offered), exposed through `/memory on|off|readonly` and the `CYBER_DISABLE_MEMORY` environment variable.
 

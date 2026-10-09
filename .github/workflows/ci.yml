@@ -111,6 +111,9 @@ jobs:
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test mcp_review
+      - name: Native memory documents and storage ownership
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test memory --test memory_storage
       - name: Native hook configuration validation and trust withholding
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test config hook
