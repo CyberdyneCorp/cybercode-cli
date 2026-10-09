@@ -58,7 +58,7 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     if bytes.len() > MAX_BODY {
         return ApiError::invalid("request body too large").into_response();
     }
-    let hash = request_hash(parts.method.as_str(), parts.uri.path(), &bytes);
+    let hash = request_hash(&parts, &state.options.default_directory, &bytes);
     match lookup(&state.store, &key).await {
         Ok(Some(stored)) if stored.hash == hash => return replay(stored),
         Ok(Some(_)) => {
@@ -87,14 +87,39 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     response
 }
 
-fn request_hash(method: &str, path: &str, body: &[u8]) -> String {
-    let mut h = Sha256::new();
-    h.update(method.as_bytes());
-    h.update([0]);
-    h.update(path.as_bytes());
-    h.update([0]);
-    h.update(body);
-    format!("{:x}", h.finalize())
+fn request_hash(
+    parts: &axum::http::request::Parts,
+    default: &std::path::Path,
+    body: &[u8],
+) -> String {
+    let directory = super::envelope::location(parts, default).unwrap_or_else(|_| {
+        // Invalid routing remains part of request identity; the handler reports it.
+        std::path::PathBuf::from(
+            parts
+                .uri
+                .query()
+                .and_then(|query| super::envelope::query_value(query, "location[directory]"))
+                .or_else(|| {
+                    parts
+                        .headers
+                        .get("x-cyber-directory")
+                        .and_then(|value| value.to_str().ok())
+                        .map(super::envelope::percent_decode)
+                })
+                .unwrap_or_else(|| default.display().to_string()),
+        )
+    });
+    let mut hash = Sha256::new();
+    for field in [
+        parts.method.as_str().as_bytes(),
+        parts.uri.to_string().as_bytes(),
+        directory.as_os_str().as_encoded_bytes(),
+        body,
+    ] {
+        hash.update((field.len() as u64).to_be_bytes());
+        hash.update(field);
+    }
+    format!("{:x}", hash.finalize())
 }
 
 fn replay(stored: Stored) -> Response {

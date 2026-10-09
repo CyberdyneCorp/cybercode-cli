@@ -13,6 +13,7 @@ mod guard;
 mod hooks;
 mod idempotency;
 mod jobs;
+mod mcp;
 pub mod openapi;
 pub mod remote_tools;
 pub mod rpc;
@@ -165,6 +166,15 @@ pub trait Services: Send + Sync {
             "Hook revocation is unavailable in this host",
         ))
     }
+    fn close_mcp(&self, _location: PathBuf) -> BoxFuture<'_, Result<(), ApiError>> {
+        Box::pin(async {
+            Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "MCP connection close is unavailable in this host",
+            ))
+        })
+    }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;
@@ -232,6 +242,7 @@ pub fn router(state: AppState) -> Router {
         .merge(children::router())
         .merge(jobs::routes())
         .merge(hooks::routes())
+        .merge(mcp::routes())
         .merge(usage::routes())
         .merge(worktrees::routes())
         .merge(events::routes())

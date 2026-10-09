@@ -130,6 +130,13 @@
 - **AND** its tools and calls SHALL remain unavailable while closing
 - **AND** retry SHALL NOT require a replacement native connection or owner
 
+#### Scenario: Authenticated public Location close
+- **WHEN** an authenticated client posts to `/api/v1/mcp/close` without a body
+- **THEN** the selected canonical Location's retained MCP owners SHALL settle before a Located `{closed:true}` response
+- **AND** unknown ownership SHALL return ConflictError without removing its admission fence
+- **AND** requests without valid authentication SHALL cause no MCP shutdown effects
+- **AND** hosts without the close capability SHALL return ServiceUnavailableError
+
 ### Requirement: Non-blocking concurrent startup
 (P0) The system SHALL start all enabled servers concurrently without blocking session start. A server's tools SHALL become available at the next Turn after it connects. The built-in tool `wait_for_mcp` SHALL let the model wait up to 60 s for named servers still connecting.
 

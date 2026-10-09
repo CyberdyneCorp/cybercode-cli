@@ -73,6 +73,27 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn close_mcp(
+        &self,
+        location: PathBuf,
+    ) -> BoxFuture<'_, Result<(), cyber_server::http::ApiError>> {
+        Box::pin(async move {
+            self.host
+                .close_mcp_location(&location)
+                .await
+                .map_err(|error| {
+                    cyber_core::log::error(
+                        "mcp",
+                        &error,
+                        serde_json::json!({"directory":location}),
+                    );
+                    cyber_server::http::ApiError::conflict(
+                        "MCP Location close requires retry or recovery",
+                    )
+                })
+        })
+    }
+
     fn review_hooks(
         &self,
         location: &Path,

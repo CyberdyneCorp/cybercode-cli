@@ -189,3 +189,6 @@ npm run build       # dist/
 (`x-websocket: true`, e.g. `GET /api/v1/ws`) get no typed method. Examples live in
 `examples/` (drive a session, stream events with resume, approve permissions, register an app
 tool).
+
+
+`await client.mcp.close()` stops shared MCP connections for the client's Location and returns a Location envelope with `{ closed: true }` after verified settlement. A later Session open may establish fresh connections. Unresolved ownership returns `ConflictError` and keeps the Location fenced for retry or recovery; the operation does not clear unknown effects. Requests use the ordinary authentication, Location routing and idempotency handling.

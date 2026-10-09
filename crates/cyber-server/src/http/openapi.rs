@@ -551,6 +551,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .located()
         .body::<super::hooks::HookTrustBody>(g)
         .ok::<Located<super::hooks::HookRevocation>>(g),
+        op(
+            "post",
+            "/mcp/close",
+            "v1.mcp.close",
+            "Close this Location's MCP connections; unresolved ownership returns conflict",
+        )
+        .located()
+        .ok::<Located<super::mcp::McpClosed>>(g),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),

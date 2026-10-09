@@ -3579,6 +3579,34 @@
           "revoked"
         ]
       },
+      "Located_McpClosed": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/McpClosed"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "McpClosed": {
+        "type": "object",
+        "properties": {
+          "closed": {
+            "type": "boolean",
+            "description": "All MCP owners observed for this Location have settled; a later open may reconnect."
+          }
+        },
+        "required": [
+          "closed"
+        ]
+      },
       "Located_Array_of_AgentInfo": {
         "type": "object",
         "properties": {
@@ -6980,6 +7008,63 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/HookTrustBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/close": {
+      "post": {
+        "operationId": "v1.mcp.close",
+        "summary": "Close this Location's MCP connections; unresolved ownership returns conflict",
+        "tags": [
+          "mcp"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_McpClosed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

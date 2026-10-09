@@ -144,6 +144,12 @@ export interface Operations {
     body: undefined;
     response: S.LocationInfo;
   };
+  "v1.mcp.close": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_McpClosed;
+  };
   "v1.message.get": {
     path: { sessionID: string; messageID: string };
     query: Record<string, never>;
@@ -652,6 +658,18 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: true,
+    stream: false,
+  },
+  "v1.mcp.close": {
+    tag: "mcp",
+    name: "close",
+    method: "POST",
+    path: "/api/v1/mcp/close",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
     stream: false,
   },
   "v1.message.get": {
@@ -1328,6 +1346,11 @@ export function createGroups(caller: Caller) {
       /** Resolve a Location (`GET /api/v1/location`) */
       get: (options?: RequestOptions): Promise<Operations["v1.location.get"]["response"]> =>
         caller.call("v1.location.get", {}, options),
+    },
+    mcp: {
+      /** Close this Location's MCP connections; unresolved ownership returns conflict (`POST /api/v1/mcp/close`) */
+      close: (options?: RequestOptions): Promise<Operations["v1.mcp.close"]["response"]> =>
+        caller.call("v1.mcp.close", {}, options),
     },
     message: {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */

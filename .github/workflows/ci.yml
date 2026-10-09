@@ -88,6 +88,9 @@ jobs:
       - name: Native application client-tool schema and permission boundaries
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --lib host::tests
+      - name: Native authenticated MCP Location-close API
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --test mcp
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test mcp_review

@@ -540,6 +540,12 @@ export type Located_HookRevocation = {
 };
 
 /** A Location-scoped response. */
+export type Located_McpClosed = {
+  location: LocationInfo;
+  data: McpClosed;
+};
+
+/** A Location-scoped response. */
 export type Located_Page_SessionRow = {
   location: LocationInfo;
   data: Page_SessionRow;
@@ -555,6 +561,11 @@ export type LocationInfo = {
   directory: string;
   workspace?: string | null;
   project: ProjectInfo;
+};
+
+export type McpClosed = {
+  /** All MCP owners observed for this Location have settled; a later open may reconnect. */
+  closed: boolean;
 };
 
 /** A history entry with the tool calls it made. */

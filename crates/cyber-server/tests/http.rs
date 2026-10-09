@@ -3365,3 +3365,12 @@ async fn hook_execution_api_is_authenticated_paginated_and_preserves_receipt_pri
     assert_eq!(absent.status(), StatusCode::NOT_FOUND);
     running.finish(result()).unwrap();
 }
+
+#[tokio::test]
+async fn mcp_close_without_host_capability_is_explicitly_unavailable() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let (status, body, _) = api.call(Method::POST, "/mcp/close", None, &[]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["_tag"], "ServiceUnavailableError");
+}
