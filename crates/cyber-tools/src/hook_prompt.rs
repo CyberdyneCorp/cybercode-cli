@@ -1,5 +1,7 @@
 //! Tool-free evaluator hooks with durable ownership and observed usage billing.
+use cyber_sandbox::proxy::{Endpoint, Proxy};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cyber_core::config::{HookKind, Resolved};
@@ -26,6 +28,13 @@ pub struct HookPromptRunner<'a> {
     pub trust: &'a TrustStore,
     pub invocation_trust: Option<&'a HookInvocationTrust>,
     pub home: &'a Path,
+}
+
+struct PromptCall<'a> {
+    event: &'a HookEvent,
+    definition: &'a HookDefinition,
+    deadline: tokio::time::Instant,
+    cancel: CancellationToken,
 }
 
 struct Capture {
@@ -198,7 +207,7 @@ impl HookPromptRunner<'_> {
         pointer: &str,
         event: &HookEvent,
         definition: &HookDefinition,
-        model: ResolvedModel,
+        mut model: ResolvedModel,
         deadline: tokio::time::Instant,
         cancel: CancellationToken,
         owner: Option<(
@@ -222,25 +231,70 @@ impl HookPromptRunner<'_> {
                 return error_capture(event, definition, error.to_string(), true);
             }
         }
-        if let Err(error) = self.authorize(pointer, event).and_then(|_| {
+        let proxy = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Capture { report: skipped(true), usage: None, io: None },
+            _ = tokio::time::sleep_until(deadline) => return timeout(event, definition, true),
+            result = prepare_transport(&mut model) => match result {
+                Ok(proxy) => proxy,
+                Err(error) => return error_capture(event, definition, error, true),
+            },
+        };
+        let authorization = self.authorize(pointer, event).and_then(|_| {
             if let Some((owner, runtime, _)) = owner {
                 owner
                     .mark_launch(runtime)
                     .map_err(|error| error.to_string())?;
             }
             Ok(())
-        }) {
-            return error_capture(event, definition, error, true);
+        });
+        if let Err(error) = authorization {
+            return settle_transport(
+                error_capture(event, definition, error, true),
+                proxy,
+                event,
+                definition,
+                false,
+            )
+            .await;
         }
+        self.capture_inference(
+            PromptCall {
+                event,
+                definition,
+                deadline,
+                cancel,
+            },
+            model,
+            request,
+            proxy,
+        )
+        .await
+    }
+
+    async fn capture_inference(
+        &self,
+        call: PromptCall<'_>,
+        model: ResolvedModel,
+        request: LlmRequest,
+        proxy: Option<Proxy>,
+    ) -> Capture {
+        let PromptCall {
+            event,
+            definition,
+            deadline,
+            cancel,
+        } = call;
         let started = Instant::now();
         let mut observed = Observed::default();
+        let mut cancelled = false;
         let result = tokio::select! {
             biased;
-            _ = cancel.cancelled() => Err("prompt hook cancelled; provider completion is unverified".into()),
+            _ = cancel.cancelled() => { cancelled = true; Err("prompt hook cancelled; provider completion is unverified".into()) },
             _ = tokio::time::sleep_until(deadline) => {
                 let mut capture = timeout(event, definition, false);
                 capture.usage = billing(&model, event, started, &observed);
-                return capture;
+                return settle_transport(capture, proxy, event, definition, false).await;
             }
             result = infer(&model, request, &mut observed) => result,
         };
@@ -265,8 +319,81 @@ impl HookPromptRunner<'_> {
             Err(error) => error_capture(event, definition, error, observed.ended),
         };
         capture.usage = billing(&model, event, started, &observed);
-        capture
+        settle_transport(capture, proxy, event, definition, cancelled).await
     }
+}
+
+async fn prepare_transport(model: &mut ResolvedModel) -> Result<Option<Proxy>, String> {
+    let proxy = Proxy::start(Arc::new(|_| Box::pin(async { true })))
+        .await
+        .map_err(|_| "could not start prompt hook transport".to_string())?;
+    let Endpoint::Tcp(port) = proxy.endpoint else {
+        return Err("prompt hook requires a TCP proxy".into());
+    };
+    let client = cyber_llm::adapters::Endpoint::client_builder()
+        .no_proxy()
+        .proxy(
+            reqwest::Proxy::all(format!("http://127.0.0.1:{port}"))
+                .map_err(|_| "invalid prompt hook proxy".to_string())?,
+        )
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .pool_max_idle_per_host(0)
+        .build()
+        .map_err(|_| "could not create prompt hook transport".to_string())?;
+    if let Some(adapter) = model.adapter.with_http_client(client, LIMIT) {
+        model.adapter = Arc::from(adapter);
+        Ok(Some(proxy))
+    } else {
+        proxy
+            .shutdown()
+            .await
+            .map_err(|_| "unused prompt hook transport shutdown failed".to_string())?;
+        Ok(None)
+    }
+}
+
+async fn settle_transport(
+    mut capture: Capture,
+    proxy: Option<Proxy>,
+    event: &HookEvent,
+    definition: &HookDefinition,
+    cancelled: bool,
+) -> Capture {
+    let Some(proxy) = proxy else {
+        return capture;
+    };
+    if !matches!(
+        tokio::time::timeout(Duration::from_secs(2), proxy.shutdown()).await,
+        Ok(Ok(()))
+    ) {
+        capture.report = failure(
+            event,
+            Some(definition),
+            true,
+            HookOutcome::Error,
+            "prompt hook local transport shutdown was not acknowledged".into(),
+            false,
+        );
+        capture.io = None;
+    } else if cancelled {
+        capture.report = skipped(true);
+        capture.report.diagnostic = Some("prompt hook cancelled; local transport closed, remote processing/final usage unverified".into());
+    } else if !capture.report.acknowledged {
+        capture.report = failure(
+            event,
+            Some(definition),
+            definition.handler.fail_closed,
+            capture.report.outcome,
+            capture
+                .report
+                .diagnostic
+                .take()
+                .unwrap_or_else(|| "prompt hook provider completion is unverified".into()),
+            true,
+        );
+    }
+    capture
 }
 
 fn resolve(models: &dyn ModelResolver) -> Result<ResolvedModel, String> {

@@ -76,6 +76,16 @@ impl ApiKind {
 /// One provider stream per call.
 pub trait Adapter: Send + Sync {
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>>;
+
+    /// Clone this protocol adapter onto a caller-owned HTTP transport.
+    /// Returning None leaves transport termination unverified on interruption.
+    fn with_http_client(
+        &self,
+        _client: reqwest::Client,
+        _response_limit: usize,
+    ) -> Option<Box<dyn Adapter>> {
+        None
+    }
 }
 
 /// Build the adapter for a protocol.
@@ -98,7 +108,18 @@ pub struct Endpoint {
 
 impl Endpoint {
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
-        let client = reqwest::Client::builder()
+        let client = Self::client_builder().build().unwrap_or_default();
+        Self {
+            base_url: base_url.into(),
+            api_key,
+            headers: Vec::new(),
+            client,
+        }
+    }
+
+    /// Default provider client identity/timeouts, extended by transport owners.
+    pub fn client_builder() -> reqwest::ClientBuilder {
+        reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(30))
             .user_agent(format!(
                 "cyber/{} ({}; {}; cli)",
@@ -106,14 +127,6 @@ impl Endpoint {
                 std::env::consts::OS,
                 std::env::consts::ARCH
             ))
-            .build()
-            .unwrap_or_default();
-        Self {
-            base_url: base_url.into(),
-            api_key,
-            headers: Vec::new(),
-            client,
-        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -135,6 +148,7 @@ impl Endpoint {
         body: &Value,
         auth: Vec<(String, String)>,
         extra: &[(String, String)],
+        response_limit: Option<usize>,
     ) -> Result<reqwest::Response, LlmError> {
         let mut req = self
             .client
@@ -153,7 +167,21 @@ impl Endpoint {
             return Ok(resp);
         }
         let headers = resp.headers().clone();
-        let text = resp.text().await.unwrap_or_default();
+        let text = if let Some(limit) = response_limit {
+            let mut bytes = Vec::new();
+            let mut chunks = resp.bytes_stream();
+            while let Some(chunk) = chunks.next().await {
+                let chunk =
+                    chunk.map_err(|error| LlmError::from_reqwest(&error, &self.secrets()))?;
+                if chunk.len() > limit.saturating_sub(bytes.len()) {
+                    return Err(response_too_large());
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            String::from_utf8_lossy(&bytes).into_owned()
+        } else {
+            resp.text().await.unwrap_or_default()
+        };
         Err(LlmError::from_http(
             status,
             &headers,
@@ -161,6 +189,13 @@ impl Endpoint {
             &self.secrets(),
         ))
     }
+}
+
+fn response_too_large() -> LlmError {
+    LlmError::new(
+        crate::error::ErrorKind::InvalidRequest,
+        "provider response exceeds the owned transport limit",
+    )
 }
 
 /// Protocol-specific translation of SSE events into provider-neutral events.
@@ -176,6 +211,8 @@ struct DecodeState<D> {
     decoder: D,
     queue: VecDeque<Result<LlmEvent, LlmError>>,
     finished: bool,
+    response_limit: Option<usize>,
+    response_bytes: usize,
     secrets: Vec<String>,
 }
 
@@ -184,6 +221,15 @@ impl<D: Decoder> DecodeState<D> {
         let mut out = Vec::new();
         match chunk {
             Some(Ok(bytes)) => {
+                if self
+                    .response_limit
+                    .is_some_and(|limit| bytes.len() > limit.saturating_sub(self.response_bytes))
+                {
+                    self.queue.push_back(Err(response_too_large()));
+                    self.finished = true;
+                    return;
+                }
+                self.response_bytes = self.response_bytes.saturating_add(bytes.len());
                 for event in self.parser.push(&bytes) {
                     self.decoder.on_event(event, &mut out);
                 }
@@ -218,6 +264,7 @@ pub(crate) fn decode_sse<D: Decoder>(
     resp: reqwest::Response,
     decoder: D,
     endpoint: &Endpoint,
+    response_limit: Option<usize>,
 ) -> EventStream {
     let state = DecodeState {
         body: resp.bytes_stream().boxed(),
@@ -225,6 +272,8 @@ pub(crate) fn decode_sse<D: Decoder>(
         decoder,
         queue: VecDeque::new(),
         finished: false,
+        response_limit,
+        response_bytes: 0,
         secrets: endpoint.api_key.iter().cloned().collect(),
     };
     stream::unfold(state, |mut s| async move {

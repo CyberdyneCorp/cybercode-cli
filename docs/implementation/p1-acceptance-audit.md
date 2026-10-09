@@ -29,7 +29,7 @@ Authenticated Location-scoped hook catalog access now uses the live full resolve
 
 ## Canonical contract checklist
 
-Synchronous prompt handlers now have local evaluator/small-model selection, tool-free strict bounded judgements, real built-in denial, synthetic CLI provider calls and hidden Session/ancestor billing of observed usage. Interrupted provider completion remains unknown and fences continuation; canonical nonblocking timeout settlement and native acceptance remain open. No complete hook contract is accepted by these local cases.
+Synchronous prompt handlers now have local evaluator/small-model selection, tool-free strict bounded judgements, real built-in denial, synthetic CLI provider calls and hidden Session/ancestor billing of observed usage. Native HTTP provider transports now acknowledge local proxy shutdown before nonblocking/fail-closed timeout settlement and subtree cancellation; custom adapters without that capability retain unknown outcomes. Remote processing/final billing, remaining lifecycle dispatch and native acceptance remain open. No complete hook contract is accepted by these local cases.
 
 Synchronous HTTP hooks now have Session and synthetic execution through the existing tool/permission and CLI dispatchers, explicit scoped network policy, strict bounded decisions and owned local proxy shutdown. Real TCP tests cover headers, denial, timeout, cancellation, once claims, privacy and unknown disposal. Prompt/MCP handlers, async scheduling, remaining lifecycle events and full native acceptance remain open; local transport acknowledgement does not prove remote POST rollback.
 

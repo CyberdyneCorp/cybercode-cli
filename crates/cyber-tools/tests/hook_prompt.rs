@@ -588,3 +588,192 @@ async fn completed_provider_without_usage_is_unpriced_rather_than_free() {
     assert_eq!(usage.own.unpriced_steps, 1);
     runtime.shutdown().await;
 }
+
+type Served = tokio::task::JoinHandle<(String, Value)>;
+async fn provider(
+    status: u16,
+    body: Vec<u8>,
+    stall: bool,
+) -> (String, tokio::sync::oneshot::Receiver<()>, Served) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (send, received) = tokio::sync::oneshot::channel();
+    let served = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let (head, request) = provider_request(&mut socket).await;
+        let length = if stall {
+            String::new()
+        } else {
+            format!("Content-Length: {}\r\n", body.len())
+        };
+        socket.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Type: text/event-stream\r\n{length}Connection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let _ = socket.write_all(&body).await;
+        let _ = send.send(());
+        if stall {
+            let mut byte = [0];
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(5), socket.read(&mut byte))
+                    .await
+                    .unwrap();
+            assert!(
+                matches!(result, Ok(0) | Err(_)),
+                "provider connection remained open"
+            );
+        }
+        (head, request)
+    });
+    (format!("http://{address}/v1"), received, served)
+}
+
+async fn provider_request(socket: &mut tokio::net::TcpStream) -> (String, Value) {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    let mut chunk = [0; 4096];
+    loop {
+        let n = socket.read(&mut chunk).await.unwrap();
+        assert!(n > 0);
+        bytes.extend_from_slice(&chunk[..n]);
+        if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&bytes[..end]).into_owned();
+            let length: usize = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|length| length.trim().parse().unwrap())
+                })
+                .unwrap();
+            if bytes.len() >= end + 4 + length {
+                return (
+                    head,
+                    serde_json::from_slice(&bytes[end + 4..end + 4 + length]).unwrap(),
+                );
+            }
+        }
+        assert!(bytes.len() <= 2 * 1024 * 1024);
+    }
+}
+
+fn native(kind: cyber_llm::adapters::ApiKind, url: &str) -> Arc<Models> {
+    let mut endpoint =
+        cyber_llm::adapters::Endpoint::new(url, Some("private provider credential".into()));
+    endpoint
+        .headers
+        .push(("x-custom-header".into(), "configured header".into()));
+    Arc::new(Models {
+        adapter: Arc::from(cyber_llm::adapters::adapter(kind, endpoint)),
+        evaluator: true,
+        resolved: Mutex::default(),
+    })
+}
+fn protocols() -> [cyber_llm::adapters::ApiKind; 3] {
+    use cyber_llm::adapters::ApiKind::*;
+    [OpenaiCompatible, OpenaiResponses, Anthropic]
+}
+
+#[tokio::test]
+async fn native_protocol_timeouts_close_provider_sockets_and_apply_fail_closed_policy() {
+    for kind in protocols() {
+        for fail_closed in [false, true] {
+            let (url, _, served) = provider(200, b": keepalive\n\n".to_vec(), true).await;
+            let mut f = Fixture::new(
+                json!({"type":"prompt","prompt":"judge","timeout":1,"fail_closed":fail_closed}),
+            );
+            f.f.renew_host_with_models(None, Some(native(kind, &url)));
+            let report = f
+                .runner()
+                .run_test(&f.f.host, POINTER, &f.event, CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(report.outcome, HookOutcome::Timeout);
+            assert!(report.acknowledged && !report.must_stop);
+            assert_eq!(report.decision.decision.is_some(), fail_closed);
+            let (head, body) = served.await.unwrap();
+            assert!(
+                head.contains("private provider credential") && head.contains("configured header")
+            );
+            assert!(body.get("tools").is_none());
+            assert_eq!(f.receipt()["status"], "completed");
+            assert!(
+                !f.receipt()
+                    .to_string()
+                    .contains("private provider credential")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_subtree_stop_acknowledges_local_provider_transport_before_receipt() {
+    for kind in protocols() {
+        let (url, received, served) = provider(200, b": keepalive\n\n".to_vec(), true).await;
+        let f = Fixture::new(handler());
+        let runtime = runtime(&f.f, native(kind, &url));
+        let event = session_event(&runtime, &f, None).await;
+        let runner = f.runner();
+        let mut running =
+            Box::pin(runner.run_recorded(&runtime, POINTER, &event, CancellationToken::new()));
+        tokio::select! { result = &mut running => panic!("request ended early: {result:?}"), result = received => result.unwrap() }
+        let (report, stopped) =
+            tokio::join!(running, runtime.stop_subtree(&event.identity().session_id));
+        let report = report.unwrap();
+        assert!(report.acknowledged && report.must_stop);
+        assert_eq!(
+            stopped.unwrap().status,
+            cyber_server::runtime::SubtreeStopStatus::Acknowledged
+        );
+        served.await.unwrap();
+        assert_eq!(
+            runtime
+                .hook_executions(&event.identity().session_id, 10)
+                .unwrap()[0]
+                .status,
+            HookExecutionStatus::Completed
+        );
+        assert_eq!(
+            runtime
+                .session_usage(&event.identity().session_id)
+                .unwrap()
+                .own
+                .unpriced_steps,
+            1
+        );
+        runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn native_disposal_closes_socket_but_retains_unknown_receipt_without_acknowledgement() {
+    let (url, received, served) = provider(200, b": keepalive\n\n".to_vec(), true).await;
+    let mut f = Fixture::new(handler());
+    f.f.renew_host_with_models(None, Some(native(protocols()[0], &url)));
+    let runner = f.runner();
+    let mut running =
+        Box::pin(runner.run_test(&f.f.host, POINTER, &f.event, CancellationToken::new()));
+    tokio::select! { result = &mut running => panic!("request ended early: {result:?}"), result = received => result.unwrap() }
+    drop(running);
+    served.await.unwrap();
+    assert_eq!(f.receipt()["status"], "unknown");
+    assert_eq!(f.receipt()["acknowledged"], false);
+}
+
+#[tokio::test]
+async fn native_raw_sse_and_error_bodies_are_bounded_before_decoder_buffering() {
+    for kind in protocols() {
+        for status in [200, 500] {
+            let (url, _, served) = provider(status, vec![b'x'; 1024 * 1024 + 1], false).await;
+            let mut f = Fixture::new(handler());
+            f.f.renew_host_with_models(None, Some(native(kind, &url)));
+            let report = f
+                .runner()
+                .run_test(&f.f.host, POINTER, &f.event, CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(report.outcome, HookOutcome::Error);
+            assert!(report.acknowledged && !report.must_stop);
+            assert!(report.decision.decision.is_none());
+            served.await.unwrap();
+        }
+    }
+}

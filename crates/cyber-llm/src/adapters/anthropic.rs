@@ -14,15 +14,32 @@ const DEFAULT_MAX_TOKENS: u32 = 8192;
 
 pub struct AnthropicAdapter {
     endpoint: Endpoint,
+    response_limit: Option<usize>,
 }
 
 impl AnthropicAdapter {
     pub fn new(endpoint: Endpoint) -> Self {
-        Self { endpoint }
+        Self {
+            endpoint,
+            response_limit: None,
+        }
     }
 }
 
 impl Adapter for AnthropicAdapter {
+    fn with_http_client(
+        &self,
+        client: reqwest::Client,
+        response_limit: usize,
+    ) -> Option<Box<dyn Adapter>> {
+        let mut endpoint = self.endpoint.clone();
+        endpoint.client = client;
+        Some(Box::new(Self {
+            endpoint,
+            response_limit: Some(response_limit),
+        }))
+    }
+
     fn stream(&self, request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
         Box::pin(async move {
             let body = build_body(&request);
@@ -35,12 +52,19 @@ impl Adapter for AnthropicAdapter {
             );
             let resp = self
                 .endpoint
-                .post_stream("messages", &body, auth, &request.headers)
+                .post_stream(
+                    "messages",
+                    &body,
+                    auth,
+                    &request.headers,
+                    self.response_limit,
+                )
                 .await?;
             Ok(decode_sse(
                 resp,
                 AnthropicDecoder::default(),
                 &self.endpoint,
+                self.response_limit,
             ))
         })
     }

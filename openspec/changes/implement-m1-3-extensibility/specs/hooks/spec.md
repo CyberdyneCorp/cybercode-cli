@@ -17,7 +17,16 @@
 - **WHEN** a Session prompt evaluator reports usage before cancellation or timeout
 - **THEN** observed usage SHALL be billed through hidden Session and ancestor accounting
 - **AND** budget ceilings SHALL be checked before inference and before returning permission to proceed
-- **AND** missing provider-completion acknowledgement SHALL retain unknown receipt/activity evidence rather than assert remote completion or final billing
+- **AND** missing local transport-shutdown acknowledgement SHALL retain unknown receipt/activity evidence rather than assert remote completion or final billing
+
+#### Scenario: Native prompt transport settlement and raw response bounds
+- **WHEN** a prompt hook uses a native OpenAI Responses, OpenAI-compatible or Anthropic adapter
+- **THEN** it SHALL use an explicit owned proxy/client with ambient proxies, redirects and automatic retries disabled
+- **AND** raw SSE and non-2xx bodies SHALL be bounded to 1 MiB before decoder/error buffering
+- **AND** timeout SHALL close and join local sockets before applying the configured nonblocking/fail-closed policy
+- **AND** subtree cancellation SHALL retain the execution until local transport shutdown is acknowledged
+- **AND** disposal SHALL close owned sockets while retaining unknown receipt/activity evidence
+- **AND** local acknowledgement SHALL NOT claim remote processing rollback or final provider usage
 
 ### Requirement: Hook configuration
 (P1) The system SHALL read hooks from the `hooks` config key as a map from event name to an ordered array of hook groups `{ matcher?, hooks: [handler, ...] }`, where each handler has a required `type` (`command`, `http`, `prompt`, or `mcp_tool`) and optional `timeout` (seconds), `async` (boolean), `id` and `description`. Unknown event names SHALL fail config validation with the path of the offending key.
