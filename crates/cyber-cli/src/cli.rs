@@ -10,6 +10,7 @@ use crate::commands::{
     debug::DebugCmd,
     exec::ExecArgs,
     hooks::HooksCmd,
+    mcp::McpCmd,
     models::ModelsArgs,
     serve::{ServeArgs, ServiceCmd},
     trust::TrustCmd,
@@ -111,6 +112,11 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Review MCP server definitions and individual server approvals.
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
+    },
     /// Inspect managed Git worktrees of the current repository.
     Worktree {
         #[command(subcommand)]

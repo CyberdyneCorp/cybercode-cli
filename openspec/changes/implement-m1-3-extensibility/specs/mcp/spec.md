@@ -22,3 +22,13 @@
 - **WHEN** a selected profile combines global MCP fields with project-controlled arguments
 - **THEN** effective field provenance SHALL preserve the original global/project origins, including escaped profile names
 - **AND** selecting the profile SHALL NOT remove the requirement for project server approval or confinement
+
+#### Scenario: Review and approve an exact named server
+- **WHEN** the user reviews `cyber mcp definitions` and approves `cyber mcp trust NAME --digest DIGEST`
+- **THEN** review SHALL preserve original field origins while redacting environment/header values, OAuth settings and URL queries without changing the effective digest
+- **AND** approval SHALL require the exact currently loaded project server definition and current checkout approval
+- **AND** review/approval SHALL NOT start servers or create Sessions
+
+#### Scenario: Revoke an obsolete server approval
+- **WHEN** the current configuration is invalid and the user runs `cyber mcp untrust --digest DIGEST`
+- **THEN** the individual approval SHALL remain revocable without interpreting the invalid configuration

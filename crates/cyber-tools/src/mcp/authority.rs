@@ -4,10 +4,11 @@ use std::path::Path;
 use cyber_core::config::{McpServer, McpSettings, Resolved};
 use cyber_core::trust::TrustStore;
 
-pub struct AuthorizedServer {
+pub struct ServerSelection {
     pub definition: McpServer,
     pub digest: String,
     pub requires_sandbox: bool,
+    pub requires_approval: bool,
 }
 
 /// Inspect all contributing leaves; a global command with project-controlled arguments
@@ -17,7 +18,37 @@ pub fn authorize_server(
     trust: &TrustStore,
     location: &Path,
     name: &str,
-) -> Result<AuthorizedServer, String> {
+) -> Result<ServerSelection, String> {
+    let selected = inspect_server(resolved, location, name)?;
+    if !selected.definition.enabled() {
+        return Err("MCP server is disabled".into());
+    }
+    let checkout = &resolved.trust.checkout_root;
+    if selected.requires_approval {
+        let approved = match &resolved.trust.digest {
+            Some(workspace) => trust.is_approved(checkout, workspace),
+            None => Ok(false),
+        }
+        .map_err(|_| "MCP trust storage unavailable")?;
+        if !resolved.trust.trusted || !approved {
+            return Err("MCP checkout configuration is untrusted".into());
+        }
+        if !trust
+            .is_mcp_approved(checkout, &selected.digest)
+            .map_err(|_| "MCP trust storage unavailable")?
+        {
+            return Err("MCP server definition digest is untrusted".into());
+        }
+    }
+    Ok(selected)
+}
+
+/// Side-effect-free review also includes disabled definitions; it grants no authority.
+pub fn inspect_server(
+    resolved: &Resolved,
+    location: &Path,
+    name: &str,
+) -> Result<ServerSelection, String> {
     let checkout = std::fs::canonicalize(cyber_core::config::project_root(location))
         .map_err(|_| "MCP checkout identity unavailable")?;
     if checkout != resolved.trust.checkout_root {
@@ -28,33 +59,15 @@ pub fn authorize_server(
         .servers
         .remove(name)
         .ok_or("MCP server is absent from loaded configuration")?;
-    if !definition.enabled() {
-        return Err("MCP server is disabled".into());
-    }
     let (project, requires_sandbox) = provenance(resolved, name)?;
     let digest = definition
         .digest(name)
         .map_err(|_| "MCP server digest unavailable")?;
-    if project {
-        let approved = match &resolved.trust.digest {
-            Some(workspace) => trust.is_approved(&checkout, workspace),
-            None => Ok(false),
-        }
-        .map_err(|_| "MCP trust storage unavailable")?;
-        if !resolved.trust.trusted || !approved {
-            return Err("MCP checkout configuration is untrusted".into());
-        }
-        if !trust
-            .is_mcp_approved(&checkout, &digest)
-            .map_err(|_| "MCP trust storage unavailable")?
-        {
-            return Err("MCP server definition digest is untrusted".into());
-        }
-    }
-    Ok(AuthorizedServer {
+    Ok(ServerSelection {
         definition,
         digest,
         requires_sandbox,
+        requires_approval: project,
     })
 }
 

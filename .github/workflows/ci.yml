@@ -71,6 +71,9 @@ jobs:
       - name: Native MCP configuration and bounded framed protocol
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority
+      - name: Native MCP definition review and trust CLI
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-cli --test mcp_review
       - name: Native hook configuration validation and trust withholding
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test config hook
