@@ -631,6 +631,7 @@ pub fn document(version: &str) -> Value {
     let error = g.subschema_for::<ErrorBody>();
     let envelope = g.subschema_for::<EventEnvelope>();
     let _ = g.subschema_for::<crate::runtime::McpStatusUpdate>();
+    let _ = g.subschema_for::<crate::runtime::MemoryChange>();
     let mut paths = Map::new();
     for o in &ops {
         let entry = paths

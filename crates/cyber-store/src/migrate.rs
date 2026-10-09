@@ -73,6 +73,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261008040000_mcp_connections",
         sql: include_str!("../migrations/20261008040000_mcp_connections.sql"),
     },
+    Migration {
+        id: "20261009000000_memory_mutations",
+        sql: include_str!("../migrations/20261009000000_memory_mutations.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

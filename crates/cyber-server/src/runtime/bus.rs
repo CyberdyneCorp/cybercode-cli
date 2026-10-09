@@ -9,6 +9,10 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
+    MemoryUpdated {
+        update: super::MemoryChange,
+        seq: i64,
+    },
     /// Committed independent MCP ownership observations, never Session events.
     McpStatusChanged {
         update: super::McpStatusUpdate,

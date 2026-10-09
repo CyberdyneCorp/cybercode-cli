@@ -307,3 +307,33 @@ fn editor_review_admits_repair_but_refuses_secret_and_identity_changes() {
         assert_eq!(owner.read("coding-policy").unwrap().body, "Fact");
     }
 }
+
+#[test]
+fn failed_external_acknowledgement_retains_completed_journal_and_read_fencing() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut owner = store.claim().unwrap();
+    let prepared = owner
+        .prepare_write(&note("policy", "durable fact"))
+        .unwrap();
+    let result = prepared.commit_with_acknowledgement(|_| {
+        Err(MemoryStorageError::Unsafe("acknowledgement unavailable"))
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read(store.path().join(".memory-transaction/completed")).unwrap(),
+        b"committed\n"
+    );
+    assert!(
+        std::fs::read_to_string(store.path().join("policy.md"))
+            .unwrap()
+            .contains("durable fact")
+    );
+    assert!(matches!(
+        owner.list(),
+        Err(MemoryStorageError::RecoveryRequired)
+    ));
+    let receipt = owner.recover().unwrap().unwrap();
+    assert_eq!(receipt.name, "policy");
+    assert_eq!(owner.read("policy").unwrap().body, "durable fact");
+}

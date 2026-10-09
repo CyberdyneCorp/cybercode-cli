@@ -90,6 +90,16 @@ fn durable(session_id: &str, seq: i64, kind: &str, data: Value) -> EventEnvelope
 
 /// The envelope for a live event; the session ID is kept inside `data`.
 pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
+    if let LiveEvent::MemoryUpdated { update, seq } = event {
+        let mut result = durable(
+            &update.id,
+            *seq,
+            "memory.updated.1",
+            serde_json::to_value(update).unwrap_or_default(),
+        );
+        result.location = Some(update.directory.display().to_string());
+        return result;
+    }
     if let LiveEvent::McpStatusChanged { update, seq } = event {
         let mut result = durable(
             &update.connection_id,
@@ -135,7 +145,7 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
 
 fn session_of(event: &LiveEvent) -> Option<&str> {
     match event {
-        LiveEvent::McpStatusChanged { .. } => None,
+        LiveEvent::McpStatusChanged { .. } | LiveEvent::MemoryUpdated { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }
         | LiveEvent::RequestRouted { session_id, .. }
@@ -236,6 +246,7 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
             };
             counter += 1;
             let dir = match &event {
+                LiveEvent::MemoryUpdated { update, .. } => update.directory.display().to_string(),
                 LiveEvent::McpStatusChanged { update, .. } => {
                     update.directory.display().to_string()
                 }

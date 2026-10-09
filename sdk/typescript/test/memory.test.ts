@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isConflictError, isMemoryNotFoundError } from "../src/index.js";
-import { json, mockClient } from "./support.js";
+import type { MemoryChange } from "../src/index.js";
+import { json, mockClient, sse, frame } from "./support.js";
 
 test("memory review preserves authenticated scope and Location routing", async () => {
   const location = { directory: "/repo A", project: { id: "prj_test", directory: "/repo A" } };
@@ -30,5 +31,18 @@ test("memory conflicts and missing notes use tagged errors without automatic rep
     const { client, calls } = mockClient(() => json(status, { _tag: tag, message: "Memory unavailable" }));
     await assert.rejects(client.memory.get("global", "policy"), guard);
     assert.equal(calls.length, 1);
+  }
+});
+
+
+test("memory updates carry independent durable receipt identity without note content", async () => {
+  const update: MemoryChange = { id: "mwr_request", directory: "/repo", project_id: "global", receipt: { id: "mem_committed", name: "policy", deleted: false } };
+  const { client } = mockClient(() => sse([frame({ id: "mwr_request:1", type: "memory.updated.1", data: update, location: "/repo", durable: { aggregateID: "mwr_request", seq: 1, version: 1 } })]), { directory: "/repo" });
+  for await (const event of client.events.subscribe()) {
+    assert.equal(event.type, "memory.updated.1");
+    assert.equal(event.durable?.aggregateID, update.id);
+    assert.equal(event.durable?.seq, 1);
+    assert.deepEqual(event.data, update);
+    break;
   }
 });

@@ -415,3 +415,83 @@ async fn plan_parent_prevents_generation_guidance_in_child_context() {
     assert!(source.contains("Memory is read-only"));
     assert!(!source.contains("Save durable user preferences"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn actual_memory_tool_publishes_one_independent_durable_change_after_note_and_index() {
+    use cyber_server::runtime::LiveEvent;
+    use support::flow::call;
+    let flow = Flow::new(
+        vec![
+            call(
+                "save",
+                "memory",
+                json!({"operation":"write","scope":"global","content":note("durable policy")}),
+            ),
+            text("saved"),
+        ],
+        false,
+    );
+    let mut live = flow.runtime.subscribe();
+    let id = flow.session("default").await;
+    flow.prompt(&id, "remember policy").await;
+    flow.settle(&id).await;
+    let mut changes = Vec::new();
+    while let Ok(event) = live.try_recv() {
+        if let LiveEvent::MemoryUpdated { update, seq } = event {
+            assert_eq!(seq, 1);
+            changes.push(update);
+        }
+    }
+    assert_eq!(changes.len(), 1);
+    let update = &changes[0];
+    assert_eq!(update.project_id, "global");
+    assert_eq!(update.receipt.name, "coding-policy");
+    assert_ne!(update.id, id);
+    let events = flow.f.store.read_events(&update.id, -1, 10).unwrap();
+    assert_eq!(events.events.len(), 2);
+    assert_eq!(events.events[1].kind, "memory.updated.1");
+    let store = cyber_core::memory::MemoryStore::existing(flow.f.dir.path(), "global")
+        .unwrap()
+        .unwrap();
+    let owner = store.claim().unwrap();
+    assert_eq!(owner.read("coding-policy").unwrap().body, "durable policy");
+    assert!(owner.index().unwrap().text.contains("coding-policy.md"));
+    assert!(!store.path().join(".memory-transaction").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn unknown_parent_mode_keeps_initial_memory_input_pending_before_model_dispatch() {
+    use cyber_server::runtime::{CreateSession, InputStatus};
+    let flow = Flow::new(vec![text("must not run")], false);
+    let parent = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: flow.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("unknown".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let child = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: flow.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            parent_id: Some(parent.id),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    flow.prompt(&child.id, "retain this prompt").await;
+    flow.settle(&child.id).await;
+    let state = flow.runtime.state(&child.id).await.unwrap();
+    assert!(flow.main.requests().is_empty());
+    assert!(state.calls.is_empty());
+    assert!(state.epoch.is_none());
+    assert_eq!(state.inbox[0].status, InputStatus::Pending);
+    flow.runtime.shutdown().await;
+}

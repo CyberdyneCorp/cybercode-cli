@@ -137,6 +137,8 @@ async fn an_active_parent_retains_its_pinned_plan_mode_after_a_bypass_selection(
 #[tokio::test]
 async fn an_unknown_parent_mode_refuses_child_dispatch() {
     let flow = write_flow();
+    // Exercise tool admission independently of the earlier memory context gate.
+    flow.f.set_config(json!({"memory":{"enabled":false}}));
     let parent = session(&flow, None, "unknown", Value::Null).await;
     let child = session(&flow, Some(parent), "bypass", Value::Null).await;
     let result = refused_write(&flow, &child).await;

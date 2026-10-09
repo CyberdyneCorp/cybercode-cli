@@ -4036,6 +4036,50 @@
           "_tag",
           "message"
         ]
+      },
+      "MemoryChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/MemoryMutation"
+          }
+        },
+        "required": [
+          "id",
+          "directory",
+          "project_id",
+          "receipt"
+        ],
+        "description": "Public acknowledged change, without note content or execution capabilities."
+      },
+      "MemoryMutation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "deleted"
+        ]
       }
     }
   },

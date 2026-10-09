@@ -1,6 +1,6 @@
 //! Managed memory scopes through the normal permission and hook boundaries.
-use cyber_core::memory::{MemoryDocument, MemorySettings, MemoryStore};
-use cyber_server::runtime::{RetrySafety, ToolDef};
+use cyber_core::memory::{MemoryDocument, MemorySettings, MemoryStorageError, MemoryStore};
+use cyber_server::runtime::{MemoryAdmission, MemoryWrite, RetrySafety, Runtime, ToolDef};
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -79,6 +79,11 @@ impl Tool for Memory {
             let config = ctx.host.opts.config.clone();
             let env = ctx.host.opts.env.clone();
             let mode = Mode::parse(&ctx.inv.mode);
+            let publication = Publication {
+                runtime: ctx.host.runtime(),
+                directory: location.clone(),
+                identity: format!("tool:{}:{}", ctx.inv.session_id, ctx.inv.operation_key),
+            };
             // Join the actual owner even after cancellation; never orphan a started commit.
             tokio::task::spawn_blocking(move || {
                 if cancel.is_cancelled() {
@@ -91,7 +96,7 @@ impl Tool for Memory {
                 if cancel.is_cancelled() {
                     return Err(ToolError::Aborted);
                 }
-                operate(&data, &project, &input, &cancel)
+                operate(&data, &project, &input, &cancel, publication)
             })
             .await
             .map_err(|_| failed("Memory owner did not acknowledge completion"))?
@@ -175,11 +180,18 @@ fn validate_input(input: &Value, operation: &str) -> Result<(), ToolError> {
     Ok(())
 }
 
+struct Publication {
+    runtime: Option<Runtime>,
+    directory: std::path::PathBuf,
+    identity: String,
+}
+
 fn operate(
     data: &Path,
     project: &str,
     input: &Value,
     cancel: &tokio_util::sync::CancellationToken,
+    publication: Publication,
 ) -> Result<String, ToolError> {
     let operation = text(input, "operation");
     let mutation = matches!(operation, "write" | "update" | "delete");
@@ -219,24 +231,88 @@ fn operate(
                 .map_err(|e| failed(e.to_string()))?;
             json!({"metadata":note.metadata,"body":note.body})
         }
-        "write" | "update" => {
-            if operation == "update" {
-                owner
-                    .read(text(input, "name"))
-                    .map_err(|e| failed(e.to_string()))?;
-            }
-            json!(
-                owner
-                    .write(text(input, "content"))
-                    .map_err(|e| failed(e.to_string()))?
-            )
+        "write" | "update" | "delete" => {
+            json!(mutate(&mut owner, project, input, &publication, cancel)?)
         }
-        "delete" => json!(
-            owner
-                .delete(text(input, "name"))
-                .map_err(|e| failed(e.to_string()))?
-        ),
         _ => return Err(failed("Unknown memory operation")),
     };
     serde_json::to_string(&value).map_err(|_| failed("Memory output encoding failed"))
+}
+
+fn mutate(
+    owner: &mut cyber_core::memory::MemoryScope<'_>,
+    project: &str,
+    input: &Value,
+    publication: &Publication,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<cyber_core::memory::MemoryMutation, ToolError> {
+    let operation = text(input, "operation");
+    let content = text(input, "content");
+    let name = if operation == "delete" {
+        text(input, "name").to_owned()
+    } else {
+        MemoryDocument::for_write(content)
+            .map_err(|error| failed(error.to_string()))?
+            .metadata
+            .name
+    };
+    let fingerprint = input.to_string();
+    let write = MemoryWrite {
+        directory: &publication.directory,
+        project_id: project,
+        name: &name,
+        deleted: operation == "delete",
+        identity: Some(&publication.identity),
+        content: &fingerprint,
+    };
+    if let Some(runtime) = &publication.runtime
+        && let Some(change) = runtime.memory_write_receipt(&write).map_err(|_| {
+            failed("Memory mutation requires reviewed recovery or a fresh request identity")
+        })?
+    {
+        return Ok(change.receipt);
+    }
+    owner.list().map_err(|error| failed(error.to_string()))?;
+    if matches!(operation, "update" | "delete") {
+        owner
+            .read(&name)
+            .map_err(|error| failed(error.to_string()))?;
+    }
+    if cancel.is_cancelled() {
+        return Err(ToolError::Aborted);
+    }
+    let admitted = publication
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.admit_memory_write(write))
+        .transpose()
+        .map_err(|_| {
+            failed("Memory mutation requires reviewed recovery or a fresh request identity")
+        })?;
+    let durable_owner = match admitted {
+        Some(MemoryAdmission::Replay(change)) => return Ok(change.receipt),
+        Some(MemoryAdmission::Owned(owner)) => Some(owner),
+        None => None,
+    };
+    let prepared = if operation == "delete" {
+        owner.prepare_delete(&name)
+    } else {
+        owner.prepare_write(content)
+    }
+    .map_err(|error| failed(error.to_string()))?;
+    prepared
+        .commit_with_acknowledgement(|receipt| {
+            if let Some(owner) = durable_owner {
+                (*owner).finish(receipt.clone()).map_err(|error| {
+                    cyber_core::log::error(
+                        "memory",
+                        &error.to_string(),
+                        json!({"mutation_id":receipt.id}),
+                    );
+                    MemoryStorageError::Unsafe("memory acknowledgement requires reviewed recovery")
+                })?;
+            }
+            Ok(())
+        })
+        .map_err(|error| failed(error.to_string()))
 }

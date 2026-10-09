@@ -24,7 +24,7 @@ struct Intent {
     catalog: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct MemoryMutation {
     pub id: String,
     pub name: String,
@@ -181,7 +181,16 @@ impl<'store> MemoryScope<'store> {
 }
 
 impl PreparedMemory<'_, '_> {
-    pub fn commit(mut self) -> Result<MemoryMutation, MemoryStorageError> {
+    pub fn commit(self) -> Result<MemoryMutation, MemoryStorageError> {
+        self.commit_with_acknowledgement(|_| Ok(()))
+    }
+
+    /// Publish acknowledgement after synced note/index verification but before releasing
+    /// journal fencing. Failure retains completed evidence for explicit reviewed recovery.
+    pub fn commit_with_acknowledgement(
+        mut self,
+        acknowledge: impl FnOnce(&MemoryMutation) -> Result<(), MemoryStorageError>,
+    ) -> Result<MemoryMutation, MemoryStorageError> {
         validate_intent(&self.intent)?;
         verify_private_directory(&self.scope.store.dir)?;
         verify_private_directory(&self.dir)?;
@@ -203,6 +212,12 @@ impl PreparedMemory<'_, '_> {
             create_file(&self.dir, "completed", b"committed\n")?;
         }
         sync_dir(&self.dir)?;
+        let receipt = MemoryMutation {
+            id: self.intent.id.clone(),
+            name: self.intent.name.clone(),
+            deleted: self.intent.after_note.is_none(),
+        };
+        acknowledge(&receipt)?;
         let history = private_directory(&self.scope.store.dir, HISTORY)?;
         match history.symlink_metadata(&self.intent.id) {
             Ok(_) => return Err(MemoryStorageError::Conflict),

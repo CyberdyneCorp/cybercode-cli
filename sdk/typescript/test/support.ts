@@ -42,7 +42,7 @@ export function json(status: number, body: unknown): Response {
 }
 
 /** An SSE frame for an envelope. */
-export function frame(event: { id: string; type: string; data?: unknown; durable?: { aggregateID: string; seq: number; version: number } }): string {
+export function frame(event: { id: string; type: string; data?: unknown; location?: string; durable?: { aggregateID: string; seq: number; version: number } }): string {
   return `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify({ data: {}, ...event })}\n\n`;
 }
 

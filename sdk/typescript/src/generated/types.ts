@@ -624,6 +624,14 @@ export type MemoryCatalog = {
   invalid: InvalidMemory[];
 };
 
+/** Public acknowledged change, without note content or execution capabilities. */
+export type MemoryChange = {
+  id: string;
+  directory: string;
+  project_id: string;
+  receipt: MemoryMutation;
+};
+
 export type MemoryDocument = {
   metadata: MemoryMetadata;
   body: string;
@@ -633,6 +641,12 @@ export type MemoryMetadata = {
   name: string;
   description: string;
   type: MemoryType;
+};
+
+export type MemoryMutation = {
+  id: string;
+  name: string;
+  deleted: boolean;
 };
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";

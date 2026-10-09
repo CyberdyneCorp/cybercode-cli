@@ -154,3 +154,9 @@
 - **AND** absent listing SHALL return an empty catalog without creating a memory directory
 - **AND** invalid scope/name, busy or pending storage and unsafe aliases SHALL refuse with tagged errors without echoing note content or automatically recovering transactions
 - **AND** explicit user review SHALL remain available when automatic model memory is disabled
+
+#### Scenario: Durable memory mutation replay
+- **WHEN** an identical memory mutation is retried with its original request identity after acknowledgement
+- **THEN** the server SHALL return the original receipt without another note/index mutation or change notification
+- **AND** a different request using that identity or an unresolved admission SHALL refuse without automatically executing retained intent
+- **AND** mutation completion SHALL require the retained unpublished owner capability and acknowledged shared storage receipt

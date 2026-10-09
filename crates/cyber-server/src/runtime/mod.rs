@@ -49,10 +49,12 @@ pub use subtree_reopen::SubtreeReopenReport;
 pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod location;
 mod mcp;
+mod memory;
 pub use mcp::{
     McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
     McpConnectionStatus, McpServerStatus, McpStatusUpdate, mcp_connections,
 };
+pub use memory::{MemoryAdmission, MemoryChange, MemoryWrite, MemoryWriteOwner};
 pub mod deferred_tools;
 mod model;
 mod requests;
@@ -410,6 +412,20 @@ impl Runtime {
         reply: QuestionReply,
     ) -> Result<(), RuntimeError> {
         self.inner.answer_question(request_id, reply).await
+    }
+
+    pub fn memory_write_receipt(
+        &self,
+        write: &MemoryWrite<'_>,
+    ) -> Result<Option<MemoryChange>, cyber_store::StoreError> {
+        memory::lookup(&self.inner.store, write)
+    }
+
+    pub fn admit_memory_write(
+        &self,
+        write: MemoryWrite<'_>,
+    ) -> Result<MemoryAdmission, cyber_store::StoreError> {
+        memory::admit(self.inner.store.clone(), self.inner.bus.clone(), write)
     }
 
     pub fn mcp_status_observer(&self) -> McpConnectionObserver {
