@@ -1,0 +1,10 @@
+- [ ] Implement the complete P1 memory lifecycle.
+  - [x] Add shared document/frontmatter validation, secret-rejecting write admission, deterministic index construction, bounded index snapshots and typed settings/path derivation. Validate malformed fields, typed notes, duplicate names, Unicode boundaries and no-secret diagnostics; this foundation does not grant file authority.
+  - [ ] Implement private project/global storage with cross-process mutation ownership, atomic/recoverable note/index updates and path/symlink confinement.
+  - [ ] Add memory tool operations with permission, settings, hooks, cancellation and output boundaries.
+  - [ ] Add core/memory baseline and Safe Boundary reconciliation with generation, deduplication and staleness instructions.
+  - [ ] Add CLI/TUI controls, authenticated HTTP operations/events and generated SDK coverage.
+  - [ ] Verify all canonical P1 memory scenarios and native behavior.
+- [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
+- [ ] Implement all P1 browser verification and revision-linked artifact contracts.
+- [ ] Validate documentation, native behavior and complete M1.4 acceptance.

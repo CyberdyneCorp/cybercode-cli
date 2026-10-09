@@ -111,6 +111,12 @@ pub fn validate(
     if let Err(error) = super::AutoModeSettings::from_config(value) {
         issues.push(error);
     }
+    if let Err(error) = crate::memory::MemorySettings::from_config(
+        value,
+        &std::collections::HashMap::<String, String>::new(),
+    ) {
+        issues.push(error.to_string());
+    }
     issues.extend(crate::budget::validate_config(value));
     if let Err(error) = super::DeferredToolSettings::from_config(value) {
         issues.push(error);

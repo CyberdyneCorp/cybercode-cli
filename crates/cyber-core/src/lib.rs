@@ -9,6 +9,7 @@ pub mod eval;
 pub mod hooks;
 pub mod ids;
 pub mod log;
+pub mod memory;
 pub mod paths;
 pub mod project;
 pub mod skills;

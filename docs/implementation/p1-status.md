@@ -7,6 +7,15 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
 
+
+## M1.4 memory document foundation (2026-10-09)
+
+The authorized `implement-m1-4-memory-intelligence` change covers the complete memory, code-intelligence and browser-verification milestone. The first core increment adds validated Markdown/YAML documents, kebab-case names, known memory types, one-line descriptions and mandatory nonempty Why/How to apply lines for feedback/project notes. Write admission scans frontmatter and body for credential assignments, known key prefixes, private keys and high-entropy strings longer than 32 Unicode characters; diagnostics omit supplied text. Serialization revalidates directly constructed documents. Deterministic index construction sorts unique names, escapes descriptions and refuses duplicate entries. Index snapshots use the first 200 lines or 25,000 UTF-8 bytes with the canonical truncation notice.
+
+Typed enabled/generate settings default true and honor EnvSource's CYBER_DISABLE_MEMORY flag. Actual configuration loading now rejects invalid memory object/boolean types. Path derivation uses the configured data directory and safe project/global identity components. These functions grant no filesystem authority, create no memory files and expose no memory tool or client route. The existing Paths initializer still creates the empty memory root. Private/recoverable storage, cross-process ownership, tool permissions and toggles, Session context/reconciliation, HTTP/SDK/CLI/TUI, LSP/formatters and browser verification remain required. No canonical requirement or milestone is accepted by this foundation.
+
+Local validation passes 76 Rust cases across core unit, configuration and memory tests, workspace all-target Clippy with warnings denied, formatting, generated SDK consistency and all 59 strict OpenSpec items. Cross-spec lint reports zero errors and 21 warnings. Native CI and all memory runtime/storage acceptance remain open.
+
 ## Synchronous local MCP-tool hooks (2026-10-09)
 
 Recorded tool/permission hook dispatch and synthetic CLI testing now support configured local `mcp_tool` handlers. Each receipt owns a separate native connection; it never borrows the shared RPC connection or a Session's callback authority. Fresh hook and server authorization precede launch and calls and withhold changed-definition results. Filtered discovery and schema validation precede tool effects. Event JSON and typed argument templates, strict unambiguous textual decisions, default-private receipts and per-Session/per-test once claims use existing hook contracts.
