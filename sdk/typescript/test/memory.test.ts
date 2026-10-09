@@ -71,3 +71,39 @@ test("memory deletes send no body and preserve the acknowledged deletion receipt
   assert.equal(calls[0]?.body, undefined);
   assert.equal(calls[0]?.headers.get("idempotency-key"), "memory-delete");
 });
+
+test("memory recovery inspection preserves nullable review and Location", async () => {
+  const { client, calls } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: null }), { directory: "/repo" });
+  const result = await client.memory.recovery("global");
+  assert.equal(result.data, null);
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/memory/recovery/global");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
+  assert.equal(calls[0]?.headers.get("idempotency-key"), null);
+});
+
+test("memory recovery confirms both fingerprints and refuses stale review without retry", async () => {
+  const { client, calls } = mockClient(() => json(409, { _tag: "ConflictError", message: "Memory recovery review is stale" }), { directory: "/repo" });
+  const review = { storage_fingerprint: "a".repeat(64), admission_fingerprint: `sha256:${"b".repeat(64)}` };
+  await assert.rejects(client.memory.recover("project", review, { idempotencyKey: "reviewed-recovery" }), isConflictError);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.method, "POST");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/memory/recovery/project");
+  assert.deepEqual(JSON.parse(calls[0]?.body ?? "null"), review);
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "reviewed-recovery");
+  assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+});
+
+test("memory recovery exposes typed paired journal and admission evidence", async () => {
+  const receipt = { id: "mem_prepared", name: "policy", deleted: false };
+  const journal = { receipt, intent_fingerprint: "c".repeat(64) };
+  const view: import("../src/index.js").MemoryRecoveryView = {
+    storage: { receipt, journal, completed: false, fingerprint: "a".repeat(64), proposed_note: { metadata: { name: "policy", description: "Policy", type: "reference" }, body: "Preference" } },
+    admission: { id: "mwr_pending", directory: "/repo", project_id: "global", journal, sequence: 1, fingerprint: `sha256:${"b".repeat(64)}`, completed: null },
+  };
+  const { client } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: view }));
+  const result = await client.memory.recovery("global");
+  assert.deepEqual(result.data, view);
+  assert.equal(result.data?.storage.proposed_note?.body, "Preference");
+  assert.deepEqual(result.data?.storage.journal, result.data?.admission.journal);
+});

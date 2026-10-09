@@ -182,6 +182,18 @@ export interface Operations {
     body: S.PutMemory;
     response: S.Located_MemoryChange;
   };
+  "v1.memory.recover": {
+    path: { scope: string };
+    query: Record<string, never>;
+    body: S.RecoverMemory;
+    response: S.Located_MemoryChange;
+  };
+  "v1.memory.recovery": {
+    path: { scope: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Nullable_MemoryRecoveryView;
+  };
   "v1.message.get": {
     path: { sessionID: string; messageID: string };
     query: Record<string, never>;
@@ -760,6 +772,30 @@ export const operations = {
     pathParams: ["scope", "name"],
     query: [],
     body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.recover": {
+    tag: "memory",
+    name: "recover",
+    method: "POST",
+    path: "/api/v1/memory/recovery/{scope}",
+    pathParams: ["scope"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.recovery": {
+    tag: "memory",
+    name: "recovery",
+    method: "GET",
+    path: "/api/v1/memory/recovery/{scope}",
+    pathParams: ["scope"],
+    query: [],
+    body: "none",
     located: true,
     unwrap: false,
     stream: false,
@@ -1460,6 +1496,12 @@ export function createGroups(caller: Caller) {
       /** Write a validated memory note and publish its durable receipt (`PUT /api/v1/memory/{scope}/{name}`) */
       put: (scope: string, name: string, body: Operations["v1.memory.put"]["body"], options?: RequestOptions): Promise<Operations["v1.memory.put"]["response"]> =>
         caller.call("v1.memory.put", { path: { scope, name }, body }, options),
+      /** Confirm both current memory recovery fingerprints (`POST /api/v1/memory/recovery/{scope}`) */
+      recover: (scope: string, body: Operations["v1.memory.recover"]["body"], options?: RequestOptions): Promise<Operations["v1.memory.recover"]["response"]> =>
+        caller.call("v1.memory.recover", { path: { scope }, body }, options),
+      /** Review matching interrupted memory storage and admission (`GET /api/v1/memory/recovery/{scope}`) */
+      recovery: (scope: string, options?: RequestOptions): Promise<Operations["v1.memory.recovery"]["response"]> =>
+        caller.call("v1.memory.recovery", { path: { scope } }, options),
     },
     message: {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */

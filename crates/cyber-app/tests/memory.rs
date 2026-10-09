@@ -536,3 +536,347 @@ async fn busy_http_mutation_remains_retryable_with_the_same_key() {
     );
     f.close().await;
 }
+
+#[tokio::test]
+async fn recovery_auth_absent_and_malformed_requests_create_no_scope() {
+    let f = Fixture::new(true).await;
+    assert_eq!(
+        f.client
+            .get(format!("{}/memory/recovery/project", f.url))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let response = f.get("/memory/recovery/project").send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let result: Value = response.json().await.unwrap();
+    assert!(result["data"].is_null());
+    assert_eq!(
+        result["location"]["directory"],
+        f.directory.to_str().unwrap()
+    );
+    for payload in [
+        json!({}),
+        json!({"storage_fingerprint":"bad","admission_fingerprint":"bad"}),
+        json!({"storage_fingerprint":"a".repeat(64),"admission_fingerprint":format!("sha256:{}","b".repeat(64)),"unexpected":true}),
+    ] {
+        assert_eq!(
+            f.client
+                .post(format!("{}/memory/recovery/project", f.url))
+                .basic_auth("cyber", Some("memory-test"))
+                .json(&payload)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        f.get("/memory/recovery/invalid")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        std::fs::read_dir(f.app.paths.data.join("memory"))
+            .unwrap()
+            .count(),
+        0
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+impl Fixture {
+    fn prepare_recovery(&self, scope: &str) -> cyber_core::memory::MemoryStore {
+        use cyber_server::runtime::{MemoryAdmission, MemoryWrite};
+        let memory = self.store(scope);
+        let project = memory.path().file_name().unwrap().to_str().unwrap();
+        let content = text("policy", "Recovered preference");
+        let MemoryAdmission::Owned(mut owner) = self
+            .app
+            .runtime
+            .admit_memory_write(MemoryWrite {
+                directory: &self.directory,
+                project_id: project,
+                name: "policy",
+                deleted: false,
+                identity: Some("http-recovery-fixture"),
+                content: &content,
+                http_hash: None,
+            })
+            .unwrap()
+        else {
+            panic!("owner")
+        };
+        let mut claim = memory.claim().unwrap();
+        let prepared = claim.prepare_write(&content).unwrap();
+        owner
+            .bind_journal(prepared.journal_identity().unwrap())
+            .unwrap();
+        drop(prepared);
+        drop(owner);
+        drop(claim);
+        memory
+    }
+    fn recover(&self, scope: &str, review: &Value) -> reqwest::RequestBuilder {
+        self.client
+            .post(format!("{}/memory/recovery/{scope}", self.url))
+            .basic_auth("cyber", Some("memory-test"))
+            .json(&json!({
+                "storage_fingerprint":review["storage"]["fingerprint"],
+                "admission_fingerprint":review["admission"]["fingerprint"],
+            }))
+    }
+    async fn recovery(&self, scope: &str) -> Value {
+        let response = self
+            .get(&format!("/memory/recovery/{scope}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.json::<Value>().await.unwrap()["data"].clone()
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn paired_recovery_acknowledges_once_and_cached_replay_preserves_receipt() {
+    use cyber_server::runtime::LiveEvent;
+    let f = Fixture::new(true).await;
+    let memory = f.prepare_recovery("project");
+    let review = f.recovery("project").await;
+    assert_eq!(
+        review["storage"]["proposed_note"]["body"],
+        "Recovered preference"
+    );
+    assert_eq!(review["storage"]["journal"], review["admission"]["journal"]);
+    assert!(!review.to_string().contains("mwo_"));
+    assert!(!memory.path().join("policy.md").exists());
+    let mut live = f.app.runtime.subscribe();
+    let response = f
+        .recover("project", &review)
+        .header("idempotency-key", "reviewed-recovery")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let change: Value = response.json().await.unwrap();
+    assert!(matches!(
+        live.try_recv().unwrap(),
+        LiveEvent::MemoryUpdated { seq: 3, .. }
+    ));
+    let replay = f
+        .recover("project", &review)
+        .header("idempotency-key", "reviewed-recovery")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.json::<Value>().await.unwrap(), change);
+    assert!(live.try_recv().is_err());
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        f.recover("project", &review)
+            .header("idempotency-key", "reviewed-recovery")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert!(live.try_recv().is_err());
+    assert!(f.recovery("project").await.is_null());
+    assert_eq!(
+        memory.claim().unwrap().read("policy").unwrap().body,
+        "Recovered preference"
+    );
+    assert_eq!(
+        f.app
+            .store
+            .read_events(review["admission"]["id"].as_str().unwrap(), -1, 20)
+            .unwrap()
+            .events
+            .len(),
+        4
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn recovery_rechecks_settings_and_preserves_stale_target_without_takeover() {
+    let f = Fixture::new(false).await;
+    let memory = f.prepare_recovery("global");
+    let review = f.recovery("global").await;
+    let config = f.app.paths.config.join("cyber.json");
+    for settings in [
+        json!({"memory":{"enabled":false}}),
+        json!({"memory":{"generate":false}}),
+    ] {
+        std::fs::write(&config, settings.to_string()).unwrap();
+        assert_eq!(f.recovery("global").await, review);
+        assert_eq!(
+            f.recover("global", &review).send().await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    std::fs::write(&config, "{}").unwrap();
+    let mut stale = review.clone();
+    stale["admission"]["fingerprint"] = json!(format!("sha256:{}", "0".repeat(64)));
+    assert_eq!(
+        f.recover("global", &stale).send().await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    let target = memory.path().join("policy.md");
+    std::fs::write(&target, text("policy", "User edit")).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        f.recover("global", &review).send().await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert!(
+        std::fs::read_to_string(target)
+            .unwrap()
+            .contains("User edit")
+    );
+    assert!(
+        memory
+            .path()
+            .join(".memory-transaction/note.after")
+            .exists()
+    );
+    assert_eq!(
+        f.app
+            .store
+            .aggregate_seq(review["admission"]["id"].as_str().unwrap())
+            .unwrap(),
+        Some(1)
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn recovery_busy_retry_and_closed_runtime_preserve_owned_fencing() {
+    let f = Fixture::new(false).await;
+    let memory = f.prepare_recovery("global");
+    let review = f.recovery("global").await;
+    let guard = memory.claim().unwrap();
+    assert_eq!(
+        f.recover("global", &review)
+            .header("idempotency-key", "busy-recovery")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    drop(guard);
+    assert_eq!(
+        f.recover("global", &review)
+            .header("idempotency-key", "busy-recovery")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    f.close().await;
+    let closed = Fixture::new(false).await;
+    let memory = closed.prepare_recovery("global");
+    let review = closed.recovery("global").await;
+    closed.app.runtime.shutdown().await;
+    assert_eq!(
+        closed
+            .recover("global", &review)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(!memory.path().join("policy.md").exists());
+    assert!(
+        memory
+            .path()
+            .join(".memory-transaction/note.after")
+            .exists()
+    );
+    closed.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn recovery_refuses_foreign_location_and_unbound_journal_without_releasing_evidence() {
+    let f = Fixture::new(false).await;
+    let memory = f.prepare_recovery("global");
+    let review = f.recovery("global").await;
+    let other = f.directory.join("other-location");
+    std::fs::create_dir(&other).unwrap();
+    assert_eq!(
+        f.get("/memory/recovery/global")
+            .header("x-cyber-directory", other.to_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        f.recover("global", &review)
+            .header("x-cyber-directory", other.to_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        f.app
+            .store
+            .aggregate_seq(review["admission"]["id"].as_str().unwrap())
+            .unwrap(),
+        Some(1)
+    );
+    assert!(!memory.path().join("policy.md").exists());
+    f.close().await;
+    let local = Fixture::new(false).await;
+    let memory = local.store("global");
+    let mut owner = memory.claim().unwrap();
+    drop(
+        owner
+            .prepare_write(&text("policy", "Unbound preference"))
+            .unwrap(),
+    );
+    drop(owner);
+    let response = local.get("/memory/recovery/global").send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(
+        !response
+            .text()
+            .await
+            .unwrap()
+            .contains("Unbound preference")
+    );
+    assert!(
+        memory
+            .path()
+            .join(".memory-transaction/note.after")
+            .exists()
+    );
+    assert!(!memory.path().join("policy.md").exists());
+    local.close().await;
+}

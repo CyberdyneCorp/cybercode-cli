@@ -97,6 +97,23 @@ impl Op {
 pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
+            "get",
+            "/memory/recovery/{scope}",
+            "v1.memory.recovery",
+            "Review matching interrupted memory storage and admission",
+        )
+        .located()
+        .ok::<Located<Option<super::memory::MemoryRecoveryView>>>(g),
+        op(
+            "post",
+            "/memory/recovery/{scope}",
+            "v1.memory.recover",
+            "Confirm both current memory recovery fingerprints",
+        )
+        .located()
+        .body::<super::memory::RecoverMemory>(g)
+        .ok::<Located<crate::runtime::MemoryChange>>(g),
+        op(
             "put",
             "/memory/{scope}/{name}",
             "v1.memory.put",

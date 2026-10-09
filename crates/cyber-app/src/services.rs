@@ -74,6 +74,40 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn memory_recovery(
+        &self,
+        runtime: cyber_server::runtime::Runtime,
+        directory: PathBuf,
+        scope: cyber_server::http::MemoryScope,
+    ) -> BoxFuture<
+        '_,
+        Result<Option<cyber_server::http::MemoryRecoveryView>, cyber_server::http::ApiError>,
+    > {
+        Box::pin(memory::recovery(
+            self.data.clone(),
+            runtime,
+            directory,
+            scope,
+        ))
+    }
+    fn memory_recover(
+        &self,
+        runtime: cyber_server::runtime::Runtime,
+        directory: PathBuf,
+        scope: cyber_server::http::MemoryScope,
+        review: cyber_server::http::RecoverMemory,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::MemoryChange, cyber_server::http::ApiError>>
+    {
+        Box::pin(memory::recover(
+            self.data.clone(),
+            self.config.clone(),
+            runtime,
+            directory,
+            scope,
+            review,
+        ))
+    }
+
     fn memory_edit(
         &self,
         runtime: cyber_server::runtime::Runtime,

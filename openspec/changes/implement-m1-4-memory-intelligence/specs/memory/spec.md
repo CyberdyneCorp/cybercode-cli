@@ -198,3 +198,12 @@
 - **AND** stale database/file reviews, mismatched journals and legacy unbound admissions SHALL refuse without changing files
 - **AND** owner disposal SHALL retain unknown fencing and require a fresh review
 - **AND** a durably acknowledged journal awaiting archival SHALL finish archival without duplicate acknowledgement or notification
+
+#### Scenario: Authenticated pinned memory recovery API
+- **WHEN** an authenticated caller reads `GET /api/v1/memory/recovery/{scope}` for project or global memory
+- **THEN** the response SHALL carry Location and matching current storage/database reviews without automatic recovery, creating a scope or exposing execution nonces
+- **WHEN** the caller posts both review fingerprints to the same route
+- **THEN** the server SHALL enforce fresh mutation settings and retain scope and shutdown ownership through reconciliation
+- **AND** stale, malformed, foreign, unbound or unverifiable reviews SHALL refuse before effects
+- **AND** the SDK SHALL expose typed recovery inspection and confirmation methods
+- **AND** ordinary response-cache replay SHALL return the acknowledged result without duplicate effects, while cache loss SHALL preserve stale-review refusal

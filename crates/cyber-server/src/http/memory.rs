@@ -35,6 +35,7 @@ impl MemoryScope {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/memory", get(list))
+        .route("/memory/recovery/{scope}", get(recovery).post(recover))
         .route("/memory/{scope}/{name}", get(read).put(put).delete(delete))
 }
 
@@ -153,6 +154,78 @@ async fn delete(
     let data = state
         .services
         .memory_edit(state.runtime.clone(), edit)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryRecoveryView {
+    pub storage: cyber_core::memory::MemoryRecoveryReview,
+    pub admission: crate::runtime::MemoryRecoveryAdmission,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverMemory {
+    pub storage_fingerprint: String,
+    pub admission_fingerprint: String,
+}
+
+impl RecoverMemory {
+    pub fn validate(&self) -> Result<(), ApiError> {
+        let valid = |s: &str| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+        };
+        if !valid(&self.storage_fingerprint)
+            || !self
+                .admission_fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(valid)
+        {
+            return Err(ApiError::invalid(
+                "Expected storage and admission review fingerprints",
+            ));
+        }
+        Ok(())
+    }
+}
+
+async fn recovery(
+    State(state): State<AppState>,
+    Path(scope): Path<String>,
+    parts: Parts,
+) -> Result<Json<Located<Option<MemoryRecoveryView>>>, ApiError> {
+    let scope = MemoryScope::parse(&scope)?;
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state
+        .services
+        .memory_recovery(state.runtime.clone(), directory.clone(), scope)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
+}
+
+async fn recover(
+    State(state): State<AppState>,
+    Path(scope): Path<String>,
+    parts: Parts,
+    body: Result<Json<RecoverMemory>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<Located<crate::runtime::MemoryChange>>, ApiError> {
+    let scope = MemoryScope::parse(&scope)?;
+    let Json(body) =
+        body.map_err(|_| ApiError::invalid("Expected storage and admission review fingerprints"))?;
+    body.validate()?;
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state
+        .services
+        .memory_recover(state.runtime.clone(), directory.clone(), scope, body)
         .await?;
     Ok(Json(Located {
         location: LocationInfo::of(&directory),

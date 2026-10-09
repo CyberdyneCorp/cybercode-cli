@@ -39,7 +39,7 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
-pub use memory::{MemoryEdit, MemoryScope};
+pub use memory::{MemoryEdit, MemoryRecoveryView, MemoryScope, RecoverMemory};
 #[cfg(unix)]
 pub use serve::serve_unix;
 pub use serve::{EmbeddedClient, serve_tcp};
@@ -88,6 +88,24 @@ pub struct AgentInfo {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn memory_recovery(
+        &self,
+        _runtime: Runtime,
+        _directory: PathBuf,
+        _scope: MemoryScope,
+    ) -> BoxFuture<'_, Result<Option<MemoryRecoveryView>, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
+    fn memory_recover(
+        &self,
+        _runtime: Runtime,
+        _directory: PathBuf,
+        _scope: MemoryScope,
+        _review: RecoverMemory,
+    ) -> BoxFuture<'_, Result<crate::runtime::MemoryChange, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
+
     fn memory_edit(
         &self,
         _runtime: Runtime,

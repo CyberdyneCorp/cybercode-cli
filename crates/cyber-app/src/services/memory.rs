@@ -216,3 +216,80 @@ fn mutation_storage_error(error: MemoryStorageError) -> ApiError {
         error => storage_error(error),
     }
 }
+
+fn inspect_recovery(
+    owner: &mut cyber_core::memory::MemoryScope<'_>,
+    runtime: &cyber_server::runtime::Runtime,
+    directory: &Path,
+    project: &str,
+) -> Result<Option<cyber_server::http::MemoryRecoveryView>, ApiError> {
+    let Some(storage) = owner.inspect_recovery().map_err(storage_error)? else {
+        return Ok(None);
+    };
+    let admission = runtime
+        .review_memory_recovery(directory, project, &storage.journal)
+        .map_err(|_| {
+            ApiError::conflict("Memory admission and journal require matching pinned evidence")
+        })?;
+    Ok(Some(cyber_server::http::MemoryRecoveryView {
+        storage,
+        admission,
+    }))
+}
+
+pub(super) async fn recovery(
+    data: PathBuf,
+    runtime: cyber_server::runtime::Runtime,
+    directory: PathBuf,
+    scope: MemoryScope,
+) -> Result<Option<cyber_server::http::MemoryRecoveryView>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let project = project(&directory, scope);
+        let Some(store) = MemoryStore::existing(&data, &project).map_err(storage_error)? else {
+            return Ok(None);
+        };
+        let mut owner = store.claim().map_err(storage_error)?;
+        inspect_recovery(&mut owner, &runtime, &directory, &project)
+    })
+    .await
+    .map_err(ApiError::unknown)?
+}
+
+pub(super) async fn recover(
+    data: PathBuf,
+    config: std::sync::Arc<cyber_tools::ConfigFn>,
+    runtime: cyber_server::runtime::Runtime,
+    directory: PathBuf,
+    scope: MemoryScope,
+    review: cyber_server::http::RecoverMemory,
+) -> Result<cyber_server::runtime::MemoryChange, ApiError> {
+    review.validate()?;
+    let lease = runtime
+        .memory_mutation_lease()
+        .await
+        .map_err(ApiError::from)?;
+    tokio::task::spawn_blocking(move || {
+        let _lease = lease;
+        mutation_settings(config.as_ref(), &directory)?;
+        let project = project(&directory, scope);
+        let store = MemoryStore::existing(&data, &project)
+            .map_err(storage_error)?
+            .ok_or_else(|| storage_error(MemoryStorageError::NotFound))?;
+        let mut owner = store.claim().map_err(mutation_storage_error)?;
+        let current = inspect_recovery(&mut owner, &runtime, &directory, &project)?
+            .ok_or_else(|| ApiError::conflict("No memory recovery pending"))?;
+        if current.storage.fingerprint != review.storage_fingerprint
+            || current.admission.fingerprint != review.admission_fingerprint
+        {
+            return Err(ApiError::conflict("Memory recovery review is stale"));
+        }
+        mutation_settings(config.as_ref(), &directory)?;
+        runtime
+            .recover_memory_write(&mut owner, &current.storage, &current.admission)
+            .map_err(|_| {
+                ApiError::conflict("Memory recovery retained unresolved evidence; review again")
+            })
+    })
+    .await
+    .map_err(ApiError::unknown)?
+}

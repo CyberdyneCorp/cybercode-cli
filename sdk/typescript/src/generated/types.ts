@@ -575,6 +575,12 @@ export type Located_MemoryDocument = {
 };
 
 /** A Location-scoped response. */
+export type Located_Nullable_MemoryRecoveryView = {
+  location: LocationInfo;
+  data?: MemoryRecoveryView | null;
+};
+
+/** A Location-scoped response. */
 export type Located_Page_SessionRow = {
   location: LocationInfo;
   data: Page_SessionRow;
@@ -643,6 +649,11 @@ export type MemoryDocument = {
   body: string;
 };
 
+export type MemoryJournalIdentity = {
+  receipt: MemoryMutation;
+  intent_fingerprint: string;
+};
+
 export type MemoryMetadata = {
   name: string;
   description: string;
@@ -653,6 +664,29 @@ export type MemoryMutation = {
   id: string;
   name: string;
   deleted: boolean;
+};
+
+export type MemoryRecoveryAdmission = {
+  id: string;
+  directory: string;
+  project_id: string;
+  journal: MemoryJournalIdentity;
+  sequence: number;
+  fingerprint: string;
+  completed?: MemoryChange | null;
+};
+
+export type MemoryRecoveryReview = {
+  receipt: MemoryMutation;
+  proposed_note?: MemoryDocument | null;
+  completed: boolean;
+  fingerprint: string;
+  journal: MemoryJournalIdentity;
+};
+
+export type MemoryRecoveryView = {
+  storage: MemoryRecoveryReview;
+  admission: MemoryRecoveryAdmission;
 };
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";
@@ -794,6 +828,11 @@ export type Receipt = {
   delivery: Delivery;
   admitted_seq: number;
   status: InputStatus;
+};
+
+export type RecoverMemory = {
+  storage_fingerprint: string;
+  admission_fingerprint: string;
 };
 
 export type ReleaseBody = {
