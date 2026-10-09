@@ -6,7 +6,7 @@ use std::sync::Arc;
 use cyber_llm::catalog::{Availability, default_model, recent_models};
 use cyber_server::http::remote_tools::RemoteTools;
 use cyber_server::http::{AgentInfo, CommandInfo, ModelInfo, Services};
-use cyber_server::runtime::{CatalogResolver, ToolDef, ToolHost, TurnContext};
+use cyber_server::runtime::{CatalogResolver, ToolDef, TurnContext};
 use cyber_tools::{BuiltinHost, ConfigFn};
 use futures::future::BoxFuture;
 
@@ -295,12 +295,7 @@ impl Services for AppServices {
 
     /// The tools a Turn would offer: built-ins plus client-registered tools.
     fn tools(&self, turn: &TurnContext) -> Vec<ToolDef> {
-        let mut defs = self.host.definitions(turn);
-        defs.extend(
-            self.host
-                .filter_agent_tools(turn, self.remote.definitions()),
-        );
-        defs
+        crate::host::materialize_tools(&self.host, &self.remote, turn)
     }
 
     fn commands(&self, location: &Path) -> Vec<CommandInfo> {

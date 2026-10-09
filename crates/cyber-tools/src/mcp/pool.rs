@@ -13,8 +13,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::{DiscoveredTool, LocalLauncher, OwnedLocalServer, authorize_server};
-use crate::host::{BuiltinHost, Ctx};
-use crate::permissions::{Effect, Request, Rule};
+use crate::host::BuiltinHost;
 use crate::tools::ToolError;
 
 #[derive(Default)]
@@ -220,96 +219,42 @@ impl BuiltinHost {
 
     pub(crate) async fn execute_mcp(
         &self,
-        mut inv: Invocation,
+        inv: Invocation,
         cancel: CancellationToken,
     ) -> ToolOutcome {
-        let started = std::time::Instant::now();
-        if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
-            return ToolOutcome::Failed(error.to_string());
-        }
-        let result = self.run_mcp(&mut inv, cancel.clone()).await;
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(ToolError::Aborted) => ToolOutcome::Aborted,
-            Err(ToolError::Failed(error)) => ToolOutcome::Failed(error),
+        let (entry, tool) = match self.mcp_binding(&inv) {
+            Ok(binding) => binding,
+            Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
+            Err(ToolError::Aborted) => return ToolOutcome::Aborted,
         };
-        match self.post_tool_hooks(&inv, &outcome, started, cancel).await {
-            Ok(()) => outcome,
-            Err(ToolError::Aborted) => ToolOutcome::Aborted,
-            Err(ToolError::Failed(error)) => ToolOutcome::Failed(error),
-        }
-    }
-
-    async fn run_mcp(
-        &self,
-        inv: &mut Invocation,
-        cancel: CancellationToken,
-    ) -> Result<ToolOutcome, ToolError> {
-        let (entry, tool) = self.mcp_binding(inv)?;
-        crate::schema::validate(&tool.spec().input_schema, &inv.input)
-            .map_err(ToolError::Failed)?;
-        self.check_agent_tool(inv).map_err(ToolError::Failed)?;
-        let hook_decision = self
-            .pre_tool_hooks(inv, &tool.spec().input_schema, cancel.clone())
-            .await?;
-        let mut policy = self.policy(inv).await.map_err(ToolError::Failed)?;
-        let index = policy
-            .rules
-            .iter()
-            .rposition(|rule| rule.source == "default")
-            .map_or(0, |index| index + 1);
-        policy.rules.insert(
-            index,
-            Rule::new(
-                &inv.name,
-                "*",
-                if tool.read_only_hint() {
-                    Effect::Allow
-                } else {
-                    Effect::Ask
-                },
-                "default",
-            ),
-        );
-        let ctx = Ctx {
-            host: self,
+        let definition = ToolDef {
+            registration: inv.registration.clone(),
+            spec: tool.spec(),
+            retry_safety: RetrySafety::Never,
+            concurrency_safe: false,
+        };
+        let metadata = json!({"server":entry.name,"annotations":tool.definition["annotations"]});
+        self.execute_registered(
             inv,
-            policy,
-            location: PathBuf::from(&inv.directory),
-            cancel: cancel.clone(),
-            hook_decision,
-        };
-        ctx.authorize(
-            Request {
-                action: inv.name.clone(),
-                resources: vec!["*".into()],
-                read_only: tool.read_only_hint(),
-                ..Default::default()
+            definition,
+            tool.read_only_hint(),
+            metadata,
+            cancel,
+            move |inv, cancel| {
+                Box::pin(async move {
+                    match self
+                        .invoke_mcp(&entry, &inv, &cancel)
+                        .await
+                        .and_then(output)
+                    {
+                        Ok(outcome) => outcome,
+                        Err(ToolError::Failed(error)) => ToolOutcome::Failed(error),
+                        Err(ToolError::Aborted) => ToolOutcome::Aborted,
+                    }
+                })
             },
-            vec!["*".into()],
-            json!({"server":entry.name,"annotations":tool.definition["annotations"]}),
         )
-        .await?;
-        // Approval and hooks may have awaited a definition change or shutdown.
-        self.mcp_binding(inv)?;
-        let result = self.invoke_mcp(&entry, inv, &cancel).await?;
-        let output = output(result)?;
-        let outcome = match output {
-            ToolOutcome::Ok(output) => ToolOutcome::Ok(
-                self.budget(&ctx.location)
-                    .apply(output, false)
-                    .map_err(ToolError::Failed)?,
-            ),
-            ToolOutcome::Structured { output, value } => ToolOutcome::Structured {
-                output: self
-                    .budget(&ctx.location)
-                    .apply(output, false)
-                    .map_err(ToolError::Failed)?,
-                value,
-            },
-            other => other,
-        };
-        Ok(outcome)
+        .await
     }
 
     async fn invoke_mcp(

@@ -14,6 +14,7 @@ pub mod mcp;
 mod parent_permissions;
 pub mod permissions;
 mod reconcile;
+mod registered;
 mod sandboxing;
 mod schema;
 mod subagents;

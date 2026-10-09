@@ -82,6 +82,9 @@ jobs:
         run: |
           cargo test --locked -p cyber-server --test runtime registration
           cargo test --locked -p cyber-server --lib http::remote_tools::tests
+      - name: Native application client-tool schema and permission boundaries
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --lib host::tests
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test mcp_review

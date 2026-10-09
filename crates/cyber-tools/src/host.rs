@@ -872,7 +872,7 @@ fn profile_allows_tool(profile: &cyber_core::config::AgentProfile, name: &str) -
 }
 
 /// Hidden when the last rule matching the action with resource `*` denies it.
-fn fully_denied(rules: &[permissions::Rule], action: &str) -> bool {
+pub(crate) fn fully_denied(rules: &[permissions::Rule], action: &str) -> bool {
     matches!(permissions::evaluate(rules, action, "*"), (Effect::Deny, Some(rule)) if rule.resource == "*")
 }
 

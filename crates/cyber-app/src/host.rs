@@ -19,6 +19,21 @@ pub struct AppHost {
     pub remote: Arc<RemoteTools>,
 }
 
+pub(crate) fn materialize_tools(
+    builtin: &BuiltinHost,
+    remote: &RemoteTools,
+    turn: &TurnContext,
+) -> Vec<ToolDef> {
+    let mut defs = builtin.definitions(turn);
+    let client = remote.definitions();
+    let names: std::collections::HashSet<_> =
+        client.iter().map(|def| def.spec.name.clone()).collect();
+    // A hidden higher registration does not reveal a lower executable by the same name.
+    defs.retain(|def| !names.contains(&def.spec.name));
+    defs.extend(builtin.filter_registered_tools(turn, client, false));
+    defs
+}
+
 impl ToolHost for AppHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
         self.builtin.open_location(info);
@@ -70,25 +85,29 @@ impl ToolHost for AppHost {
     }
 
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
-        let mut defs = self.builtin.definitions(turn);
-        defs.extend(
-            self.builtin
-                .filter_agent_tools(turn, self.remote.definitions()),
-        );
-        // Client registrations take precedence over shared native server names.
-        let mut names = std::collections::HashSet::new();
-        defs.reverse();
-        defs.retain(|def| names.insert(def.spec.name.clone()));
-        defs.reverse();
-        defs
+        materialize_tools(&self.builtin, &self.remote, turn)
     }
 
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         if self.remote.has(&call.name) {
-            if let Err(error) = self.builtin.check_agent_tool(&call) {
-                return Box::pin(async move { ToolOutcome::Failed(error) });
-            }
-            return Box::pin(self.remote.execute(call, cancel));
+            let Some(definition) = self
+                .remote
+                .definitions()
+                .into_iter()
+                .find(|def| def.spec.name == call.name)
+            else {
+                return Box::pin(async move {
+                    ToolOutcome::Failed(format!("Stale tool call: {}", call.name))
+                });
+            };
+            return self.builtin.execute_registered(
+                call,
+                definition,
+                false,
+                serde_json::json!({"source":"client"}),
+                cancel,
+                |call, cancel| Box::pin(self.remote.execute(call, cancel)),
+            );
         }
         self.builtin.execute(call, cancel)
     }

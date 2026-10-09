@@ -167,6 +167,8 @@ reconnect (500 ms → 15 s backoff), and closes after the last tool is unregiste
 mode the stdio channel is reused. Registrations disappear when the channel disconnects.
 Registration replies and execution requests carry `registration_id`; the SDK checks it against
 the exact channel and handler before execution, so stale calls cannot reach a replacement.
+Client tools use ordinary permission and hook checks and default to ask; plan mode hides them.
+Configure an allow rule for the exposed tool name or answer the current permission request.
 
 ## Browser-safe types
 
