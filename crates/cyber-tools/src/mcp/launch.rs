@@ -75,6 +75,7 @@ impl LocalServer {
 
     pub async fn refresh_tools(&mut self, timeout: Duration) -> Result<(), McpError> {
         self.authorize()?;
+        self.connection.clear_tools_changed();
         self.catalog.clear();
         self.catalog = self
             .connection
@@ -113,6 +114,10 @@ impl LocalServer {
 
     pub fn scratch_path(&self) -> &Path {
         &self.resources.scratch.path
+    }
+
+    pub async fn poll_idle(&mut self, timeout: Duration) -> Result<super::IdleUpdate, McpError> {
+        self.connection.poll_idle(timeout).await
     }
 
     pub async fn disconnected(&mut self) -> Result<bool, McpError> {

@@ -80,7 +80,8 @@ async fn join_retained(task: &tokio::sync::Mutex<Option<JoinHandle<()>>>) {
     }
 }
 
-fn start_monitor(entry: &Arc<Entry>) {
+fn start_monitor(host: &Arc<BuiltinHost>, entry: &Arc<Entry>) {
+    let host = Arc::downgrade(host);
     let weak = Arc::downgrade(entry);
     let cancel = entry.cancel.clone();
     let task = tokio::spawn(async move {
@@ -92,7 +93,7 @@ fn start_monitor(entry: &Arc<Entry>) {
             let Some(entry) = weak.upgrade() else {
                 return;
             };
-            if check_loss(&entry).await {
+            if check_loss(&host, &entry).await {
                 return;
             }
         }
@@ -103,15 +104,23 @@ fn start_monitor(entry: &Arc<Entry>) {
         .expect("MCP monitor not yet published") = Some(task);
 }
 
-async fn check_loss(entry: &Entry) -> bool {
+async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> bool {
     let Ok(mut server) = entry.server.try_lock() else {
         return false;
     };
     let Some(owner) = server.as_mut() else {
         return true;
     };
-    let lost = match owner.disconnected().await {
-        Ok(lost) => lost,
+    let lost = match owner.poll_idle(Duration::from_millis(100)).await {
+        Ok(update) if update.closed => true,
+        Ok(update) if update.tools_changed => match refresh_catalog(host, entry, owner).await {
+            Ok(()) => false,
+            Err(error) => {
+                cyber_core::log::error("mcp", &error, json!({"server":entry.name}));
+                true
+            }
+        },
+        Ok(_) => false,
         Err(error) => {
             cyber_core::log::error("mcp", &error.to_string(), json!({"server":entry.name}));
             true
@@ -134,6 +143,39 @@ async fn check_loss(entry: &Entry) -> bool {
         ),
     }
     true
+}
+
+async fn refresh_catalog(
+    host: &std::sync::Weak<BuiltinHost>,
+    entry: &Entry,
+    owner: &mut OwnedLocalServer,
+) -> Result<(), String> {
+    entry.clear_published();
+    let host = host.upgrade().ok_or("MCP host disposed")?;
+    let directory = &owner.record().directory;
+    let config = host.hook_config.get().ok_or("MCP resolver unavailable")?;
+    let resolved = (config.resolve)(directory)?;
+    let selected = authorize_server(&resolved, &config.trust, directory, &entry.name)?;
+    if selected.digest != entry.digest {
+        return Err("MCP definition changed".into());
+    }
+    let refresh = owner.refresh_tools(Duration::from_secs(selected.definition.timeout().into()));
+    tokio::select! {
+        result = refresh => result.map_err(|error| error.to_string())?,
+        _ = entry.cancel.cancelled() => return Err("MCP refresh interrupted".into()),
+    }
+    *entry
+        .published
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) =
+        Some((owner.record().id.clone(), owner.tools().to_vec()));
+    Ok(())
+}
+
+fn tool_binding(id: &str, tool: &DiscoveredTool) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(cyber_core::config::canonical_json(&tool.definition));
+    format!("{id}:{}:{digest:x}", tool.remote_name)
 }
 
 impl BuiltinHost {
@@ -322,7 +364,7 @@ impl BuiltinHost {
                             .unwrap_or_else(PoisonError::into_inner) =
                             Some((server.record().id.clone(), server.tools().to_vec()));
                         *owned.server.lock().await = Some(server);
-                        start_monitor(&owned);
+                        start_monitor(&host, &owned);
                     }
                     Some(Err(error)) => cyber_core::log::error(
                         "mcp",
@@ -379,7 +421,7 @@ impl BuiltinHost {
                                 || tool.read_only_hint()
                         })
                         .map(|tool| ToolDef {
-                            registration: Some(format!("{id}:{}", tool.remote_name)),
+                            registration: Some(tool_binding(id, tool)),
                             spec: tool.spec(),
                             // Annotations control permission defaults, not safe automatic retries.
                             retry_safety: RetrySafety::Never,
@@ -569,7 +611,7 @@ impl BuiltinHost {
             let Some(tool) = tools.iter().find(|tool| tool.exposed_name == inv.name) else {
                 continue;
             };
-            if inv.registration.as_deref() != Some(&format!("{id}:{}", tool.remote_name)) {
+            if inv.registration.as_deref() != Some(tool_binding(id, tool).as_str()) {
                 return Err(stale());
             }
             let selection = authorize_server(&resolved, &config.trust, &directory, &entry.name)

@@ -109,6 +109,28 @@ impl StdioConnection {
         Ok(())
     }
 
+    pub async fn poll_idle(&mut self, timeout: Duration) -> Result<super::IdleUpdate, McpError> {
+        if self.process.leader_exited()? {
+            return Ok(super::IdleUpdate {
+                closed: true,
+                tools_changed: false,
+            });
+        }
+        match self.client.as_mut() {
+            Some(client) => client.poll_idle(timeout).await,
+            None => Ok(super::IdleUpdate {
+                closed: true,
+                tools_changed: false,
+            }),
+        }
+    }
+
+    pub fn clear_tools_changed(&mut self) {
+        if let Some(client) = self.client.as_mut() {
+            client.clear_tools_changed();
+        }
+    }
+
     pub async fn disconnected(&mut self) -> Result<bool, McpError> {
         if self.process.leader_exited()? {
             return Ok(true);

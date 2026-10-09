@@ -85,6 +85,11 @@ impl OwnedLocalServer {
     pub fn metadata(&self) -> &Value {
         self.server.metadata()
     }
+    pub async fn poll_idle(&mut self, timeout: Duration) -> Result<super::IdleUpdate, McpError> {
+        self.running()?;
+        self.server.poll_idle(timeout).await
+    }
+
     pub async fn disconnected(&mut self) -> Result<bool, McpError> {
         self.running()?;
         self.server.disconnected().await

@@ -131,7 +131,20 @@
 - **THEN** the retained runtime monitor SHALL remove discovery without sending a tool call or heartbeat RPC
 - **AND** process-group/job ownership SHALL remain retained until explicit native settlement
 - **AND** acknowledged durable settlement SHALL precede owner disposal, while failed settlement remains retryable
-- **AND** passive inspection SHALL NOT consume buffered protocol frames or overlap an active call
+- **AND** native inspection SHALL NOT overlap an active call or lose incomplete protocol frames
+
+#### Scenario: Local catalog changes while idle or calling
+- **WHEN** a local server sends notifications/tools/list_changed while idle or during a tool call
+- **THEN** serialized runtime observation SHALL refresh the catalog after fresh configuration and server authorization checks
+- **AND** discovery SHALL be withdrawn during refresh and calls approved against changed metadata SHALL be refused as stale
+- **AND** removed aliases SHALL NOT be reassigned to different remote tools
+- **AND** Location close SHALL interrupt blocked refresh and retain native ownership until explicit settlement
+
+#### Scenario: Bounded idle frames and buffered EOF
+- **WHEN** idle notifications precede EOF or an incomplete frame spans multiple reads
+- **THEN** the reader SHALL preserve incomplete bytes across polling and future disposal within the frame limit
+- **AND** each idle pass SHALL consume a bounded number of ready messages and observe EOF behind them
+- **AND** unsolicited responses or malformed idle frames SHALL fail the connection without invoking tools
 
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).

@@ -122,8 +122,15 @@ Connected reports the retained actor's last committed connection observation, no
 
 ### Retained idle local loss monitoring
 
-Each ready local entry owns a retained monitor task that observes idle connections once per second. It uses try_lock on the native owner, so active RPCs keep exclusive protocol ownership. Native leader checks preserve the unreaped Unix leader/group identity; Windows retains the job or borrows the live container handle for zero-duration observation. A passive stdio fill-buffer poll detects ready EOF without consuming buffered data or sending an RPC.
+Each ready local entry owns a retained monitor task that observes idle connections once per second. It uses try_lock on the native owner, so active RPCs keep exclusive protocol ownership. Native leader checks preserve the unreaped Unix leader/group identity; Windows retains the job or borrows the live container handle for zero-duration observation. Bounded stdio polling processes ready notifications and observes EOF without issuing heartbeat or tool RPCs.
 
 On observed loss, discovery is removed and the existing owner explicitly shuts down process/proxy resources and commits settlement. Successful owners are disposed only afterward; failed settlement retains the object for public close retry. Close cancels and joins both startup and monitor handles by reference, preserving retry ownership after disposal. Monitor loops retain only a weak entry between checks; entry disposal cancels the monitor, avoiding a pool/native-owner cycle.
 
-Buffered notifications remain available for the next protocol read; detecting EOF behind those bytes and continuous notification handling require the future reader pump. Reconnect/backoff remains open and must never replace unknown ownership or replay a prior mutating call.
+Partial buffered frames remain available across polling and cancelled reads; ready notifications are processed as described below. Reconnect/backoff remains open and must never replace unknown ownership or replay a prior mutating call.
+
+
+### Bounded local MCP notification processing
+
+The serialized native owner processes up to 32 ready frames on each idle monitor tick, without waiting for future input or overlapping a tool RPC. Partial frame bytes belong to StdioClient rather than a read future, so dropping a waiting read preserves consumed prefixes. Input allocation remains bounded before JSON decoding. Idle unsolicited responses, malformed framing and truncated EOF fail the connection; ping requests receive replies and unadvertised callbacks receive method-not-supported errors. The existing active RPC reader records list-change notifications too.
+
+A dirty tool catalog triggers fresh full configuration resolution, exact definition digest and server approval checks before tools/list. Published discovery is withdrawn during listing. Location close cancels and joins a blocked refresh before explicit native/durable settlement. Successful refresh preserves remote alias history and republishes current metadata; registration identity includes the canonical complete tool definition hash, so old approvals cannot authorize a changed schema or annotation. Notifications received during listing remain dirty for a subsequent refresh. Catalog publication does not invent a durable owner transition or event sequence. Reconnect/backoff, additional callback capabilities, resources/prompts and remote transport remain open.

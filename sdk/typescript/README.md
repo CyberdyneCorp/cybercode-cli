@@ -197,4 +197,6 @@ MCP ownership changes arrive through `client.events.subscribe()` as `mcp.status.
 
 `await client.mcp.status()` reads fresh configured state and retained ownership observations without starting servers. It reports disabled/changed definitions and unresolved owners, including removed definitions that still need recovery. A persisted Running record without a retained actor reports failed. Discovery names still require ordinary tool authorization, and connected observations do not replace a fresh process health check.
 
-Idle local connections are monitored for leader exit and ready stdio EOF; observed loss removes discovery and attempts durable native settlement. Reconnect/backoff is still pending. Buffered protocol notifications remain available for later reads, and EOF behind those bytes awaits continuous notification pumping.
+Idle local connections are monitored for leader exit and ready stdio EOF; observed loss removes discovery and attempts durable native settlement. Reconnect/backoff is still pending. Bounded idle processing handles ready notifications and EOF behind them while retaining incomplete frames.
+
+Local MCP catalogs refresh automatically after server list-change notifications. Discovery is temporarily unavailable during refresh; changed tool metadata invalidates old registration identities. The status API remains read-only, and reconnect after connection loss is still manual.

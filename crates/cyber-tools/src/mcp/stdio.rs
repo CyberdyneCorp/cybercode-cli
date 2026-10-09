@@ -1,7 +1,7 @@
 //! Newline-framed JSON-RPC, initialization and bounded single-request ownership.
 use serde_json::{Value, json};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 const VERSION: &str = "2025-11-25";
 const VERSIONS: &[&str] = &[VERSION, "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -31,6 +31,18 @@ struct Pending {
     sent: bool,
 }
 
+#[derive(Debug, Default)]
+pub struct IdleUpdate {
+    pub closed: bool,
+    pub tools_changed: bool,
+}
+
+enum FrameRead {
+    Pending,
+    Closed,
+    Message(Value),
+}
+
 /// Own the IO until native stop/settlement; disposing a future does not prove server stop.
 pub struct StdioClient<R, W> {
     reader: BufReader<R>,
@@ -41,6 +53,8 @@ pub struct StdioClient<R, W> {
     tools: bool,
     protocol_version: Option<String>,
     metadata: Option<Value>,
+    incoming: Vec<u8>,
+    tools_changed: bool,
 }
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
@@ -53,6 +67,8 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             tools: false,
             protocol_version: None,
             metadata: None,
+            incoming: Vec::new(),
+            tools_changed: false,
         }
     }
     /// Observe a ready EOF without consuming buffered protocol data or sending requests.
@@ -64,6 +80,36 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             std::task::Poll::Ready(Err(error)) => Err(error.into()),
             std::task::Poll::Pending => Ok(false),
         }
+    }
+
+    /// Drain bounded ready messages while preserving incomplete frames across cancellation.
+    pub async fn poll_idle(&mut self, timeout: Duration) -> Result<IdleUpdate, McpError> {
+        if self.pending.is_some() {
+            return Err(McpError::Protocol("previous request is unresolved"));
+        }
+        for _ in 0..32 {
+            match self.read_frame(false).await? {
+                FrameRead::Pending => break,
+                FrameRead::Closed => {
+                    return Ok(IdleUpdate {
+                        closed: true,
+                        tools_changed: self.tools_changed,
+                    });
+                }
+                FrameRead::Message(message) => {
+                    validate_server_message(&message)?;
+                    self.server_message(&message, timeout).await?;
+                }
+            }
+        }
+        Ok(IdleUpdate {
+            closed: false,
+            tools_changed: self.tools_changed,
+        })
+    }
+
+    pub fn clear_tools_changed(&mut self) {
+        self.tools_changed = false;
     }
 
     pub fn unresolved(&self) -> bool {
@@ -254,6 +300,9 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
 
     async fn server_message(&mut self, message: &Value, timeout: Duration) -> Result<(), McpError> {
         let Some(id) = message.get("id") else {
+            if message["method"] == "notifications/tools/list_changed" {
+                self.tools_changed = true;
+            }
             return Ok(());
         };
         if !id.is_string() && !id.is_number() {
@@ -279,16 +328,57 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         Ok(())
     }
     async fn read(&mut self) -> Result<Value, McpError> {
-        let mut bytes = Vec::new();
-        (&mut self.reader)
-            .take((super::LIMIT + 2) as u64)
-            .read_until(b'\n', &mut bytes)
-            .await?;
-        if bytes.is_empty() || bytes.last() != Some(&b'\n') || bytes.len() > super::LIMIT + 1 {
-            return Err(McpError::Protocol("invalid or oversized message framing"));
+        match self.read_frame(true).await? {
+            FrameRead::Message(message) => Ok(message),
+            _ => Err(McpError::Protocol("invalid or oversized message framing")),
         }
-        serde_json::from_slice(&bytes).map_err(|_| McpError::Protocol("invalid incoming JSON"))
     }
+
+    async fn read_frame(&mut self, wait: bool) -> Result<FrameRead, McpError> {
+        loop {
+            let bytes = if wait {
+                self.reader.fill_buf().await?
+            } else {
+                let peek = self.reader.fill_buf();
+                tokio::pin!(peek);
+                match futures::poll!(peek.as_mut()) {
+                    std::task::Poll::Ready(result) => result?,
+                    std::task::Poll::Pending => return Ok(FrameRead::Pending),
+                }
+            };
+            if bytes.is_empty() {
+                return if self.incoming.is_empty() {
+                    Ok(FrameRead::Closed)
+                } else {
+                    Err(McpError::Protocol("invalid or oversized message framing"))
+                };
+            }
+            let newline = bytes.iter().position(|byte| *byte == b'\n');
+            let length = newline.map_or(bytes.len(), |position| position + 1);
+            if self.incoming.len() + length > super::LIMIT + usize::from(newline.is_some()) {
+                return Err(McpError::Protocol("invalid or oversized message framing"));
+            }
+            self.incoming.extend_from_slice(&bytes[..length]);
+            self.reader.consume(length);
+            if newline.is_some() {
+                let bytes = std::mem::take(&mut self.incoming);
+                return serde_json::from_slice(&bytes)
+                    .map(FrameRead::Message)
+                    .map_err(|_| McpError::Protocol("invalid incoming JSON"));
+            }
+        }
+    }
+}
+
+fn validate_server_message(message: &Value) -> Result<(), McpError> {
+    if message["jsonrpc"] != "2.0"
+        || !message["method"].is_string()
+        || message.get("result").is_some()
+        || message.get("error").is_some()
+    {
+        return Err(McpError::Protocol("invalid idle server message"));
+    }
+    Ok(())
 }
 
 fn response(message: Value) -> Result<Result<Value, McpError>, McpError> {
@@ -348,5 +438,115 @@ mod tests {
             json!({"jsonrpc":"2.0","method":"notice"})
         );
         assert!(client.transport_closed().await.unwrap());
+    }
+    #[tokio::test]
+    async fn idle_pump_retains_partial_frames_and_drains_notifications_before_eof() {
+        let (reader, mut peer) = tokio::io::duplex(1024);
+        let mut client = StdioClient::new(reader, tokio::io::sink());
+        peer.write_all(b"{\"jsonrpc\":").await.unwrap();
+        assert!(
+            !client
+                .poll_idle(Duration::from_secs(1))
+                .await
+                .unwrap()
+                .closed
+        );
+        peer.write_all(b"\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n")
+            .await
+            .unwrap();
+        drop(peer);
+        let update = client.poll_idle(Duration::from_secs(1)).await.unwrap();
+        assert!(update.closed && update.tools_changed);
+        client.clear_tools_changed();
+        assert!(
+            !client
+                .poll_idle(Duration::from_secs(1))
+                .await
+                .unwrap()
+                .tools_changed
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_pump_limits_each_batch_and_answers_server_ping() {
+        let (reader, mut peer) = tokio::io::duplex(8192);
+        let (writer, output) = tokio::io::duplex(1024);
+        let mut client = StdioClient::new(reader, writer);
+        for _ in 0..32 {
+            peer.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notice\"}\n")
+                .await
+                .unwrap();
+        }
+        peer.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":7}\n")
+            .await
+            .unwrap();
+        drop(peer);
+        assert!(
+            !client
+                .poll_idle(Duration::from_secs(1))
+                .await
+                .unwrap()
+                .closed
+        );
+        assert!(
+            client
+                .poll_idle(Duration::from_secs(1))
+                .await
+                .unwrap()
+                .closed
+        );
+        let mut line = String::new();
+        BufReader::new(output).read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&line).unwrap(),
+            json!({"jsonrpc":"2.0","id":7,"result":{}})
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_pump_refuses_unsolicited_responses_and_incomplete_eof() {
+        for bytes in [
+            b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n".as_slice(),
+            b"{\"jsonrpc\":".as_slice(),
+        ] {
+            let (reader, mut peer) = tokio::io::duplex(1024);
+            peer.write_all(bytes).await.unwrap();
+            drop(peer);
+            let mut client = StdioClient::new(reader, tokio::io::sink());
+            assert!(matches!(
+                client.poll_idle(Duration::from_secs(1)).await,
+                Err(McpError::Protocol(_))
+            ));
+        }
+    }
+    #[tokio::test]
+    async fn cancelled_frame_read_preserves_consumed_prefix() {
+        let (reader, mut peer) = tokio::io::duplex(1024);
+        let mut client = StdioClient::new(reader, tokio::io::sink());
+        peer.write_all(b"{\"jsonrpc\":").await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(5), client.read())
+                .await
+                .is_err()
+        );
+        assert!(!client.incoming.is_empty());
+        peer.write_all(b"\"2.0\",\"method\":\"notice\"}\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            client.read().await.unwrap(),
+            json!({"jsonrpc":"2.0","method":"notice"})
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_pump_bounds_partial_frame_before_allocating_past_limit() {
+        let reader = std::io::Cursor::new(vec![b'x'; super::super::LIMIT + 1]);
+        let mut client = StdioClient::new(reader, tokio::io::sink());
+        assert!(matches!(
+            client.poll_idle(Duration::from_secs(1)).await,
+            Err(McpError::Protocol(_))
+        ));
+        assert!(client.incoming.len() <= super::super::LIMIT);
     }
 }

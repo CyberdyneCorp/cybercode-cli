@@ -843,3 +843,188 @@ async fn idle_monitor_does_not_keep_a_dropped_host_alive() {
     drop(flow);
     assert!(host.upgrade().is_none());
 }
+
+#[tokio::test]
+async fn list_change_during_call_refreshes_metadata_and_rejects_old_registration() {
+    let flow = Flow::new(vec![], false);
+    let path = configure(&flow, json!({}));
+    let script = SERVER.replace("result={'tools':", "with open('lists','a') as f: f.write('list\\n')\n        result={'tools':")
+        .replace("['read','write','structured','error']", "(['read'] if pathlib.Path('changed').exists() else ['read','write','structured','error'])")
+        .replace("'inputSchema':{'type':'object'}", "'inputSchema':{'type':'object','description':('changed' if pathlib.Path('changed').exists() else 'initial')}")
+        .replace("with open('calls','a')", "pathlib.Path('changed').touch()\n        print(json.dumps({'jsonrpc':'2.0','method':'notifications/tools/list_changed'}),flush=True)\n        with open('calls','a')");
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["args"][2] = json!(script);
+    std::fs::write(&path, config.to_string()).unwrap();
+    let id = flow.session("default").await;
+    let original = ready(&flow, &id).await;
+    let old = original
+        .iter()
+        .find(|def| def.spec.name == "mcp__shared__read")
+        .unwrap();
+    assert_eq!(
+        invoke(&flow, &id, old, "default").await,
+        ToolOutcome::Ok("remote read".into())
+    );
+    let refreshed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let defs = flow.f.host.definitions(&turn(&flow, &id));
+            if let Some(def) = defs
+                .into_iter()
+                .find(|def| def.spec.name == old.spec.name && def.registration != old.registration)
+            {
+                break def;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(flow.f.read("lists"), "list\nlist\n");
+    assert!(
+        flow.f
+            .host
+            .definitions(&turn(&flow, &id))
+            .iter()
+            .all(|def| def.spec.name != "mcp__shared__write")
+    );
+    assert!(matches!(
+        invoke(&flow, &id, old, "default").await,
+        ToolOutcome::Failed(_)
+    ));
+    assert_eq!(flow.f.read("calls"), "read\n");
+    assert_eq!(
+        invoke(&flow, &id, &refreshed, "default").await,
+        ToolOutcome::Ok("remote read".into())
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn idle_notification_before_stdout_eof_still_settles_native_owner() {
+    let flow = Flow::new(vec![], false);
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["args"][2] = json!(format!(
+        "{SERVER}\n    if method=='tools/list':\n        print(json.dumps({{'jsonrpc':'2.0','method':'notifications/tools/list_changed'}}),flush=True)\n        os.close(1)\n        while True: time.sleep(1)\n"
+    ));
+    std::fs::write(&path, config.to_string()).unwrap();
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    wait_for_idle_loss(&flow, &id).await;
+    flow.runtime.shutdown().await;
+}
+
+fn configure_idle_notifications(flow: &Flow) -> PathBuf {
+    let path = configure(flow, json!({}));
+    let script = format!("{}{}", r#"
+import threading
+watching=False
+def notify():
+    while not pathlib.Path('notify').exists(): time.sleep(.01)
+    print(json.dumps({'jsonrpc':'2.0','method':'notifications/tools/list_changed'}),flush=True)
+    pathlib.Path('notified').touch()
+"#, SERVER.replace("result={'tools':", "with open('lists','a') as f: f.write('list\\n')\n        while pathlib.Path('block-list').exists(): time.sleep(.01)\n        result={'tools':")
+        .replace("['read','write','structured','error']", "(['read'] if pathlib.Path('notify').exists() else ['read','write','structured','error'])"));
+    let script = format!(
+        "{script}\n    if method=='tools/list' and not watching:\n        watching=True\n        threading.Thread(target=notify,daemon=True).start()\n"
+    );
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["args"][2] = json!(script);
+    std::fs::write(&path, config.to_string()).unwrap();
+    path
+}
+
+async fn wait_for_file(flow: &Flow, name: &str, expected: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while std::fs::read_to_string(flow.f.repo.join(name))
+            .ok()
+            .as_deref()
+            != Some(expected)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn idle_list_change_refreshes_without_a_tool_call() {
+    let flow = Flow::new(vec![], false);
+    configure_idle_notifications(&flow);
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    flow.f.write("notify", "notify");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let snapshot = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+            if snapshot[0].tools.len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(flow.f.read("lists"), "list\nlist\n");
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn idle_refresh_rechecks_configuration_before_peer_effects() {
+    let flow = Flow::new(vec![], false);
+    let path = configure_idle_notifications(&flow);
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["enabled"] = json!(false);
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.write("notify", "notify");
+    wait_for_file(&flow, "notified", "").await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if mcp_connections(&flow.f.store, &flow.f.repo).unwrap()[0].phase
+                == McpConnectionPhase::Settled
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(flow.f.read("lists"), "list\n");
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn close_interrupts_blocked_idle_refresh_and_joins_native_owner() {
+    let flow = Flow::new(vec![], false);
+    configure_idle_notifications(&flow);
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    flow.f.write("block-list", "blocked");
+    flow.f.write("notify", "notify");
+    wait_for_file(&flow, "lists", "list\nlist\n").await;
+    assert!(
+        flow.f
+            .host
+            .definitions(&turn(&flow, &id))
+            .iter()
+            .all(|def| !def.spec.name.starts_with("mcp__"))
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        flow.f.host.close_mcp_location(&flow.f.repo),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let record = &mcp_connections(&flow.f.store, &flow.f.repo).unwrap()[0];
+    assert_eq!(record.phase, McpConnectionPhase::Settled);
+    assert_eq!(record.acknowledged, Some(true));
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
