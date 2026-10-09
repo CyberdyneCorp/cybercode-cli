@@ -637,3 +637,206 @@ async fn initialization_progress_cannot_extend_absolute_configured_startup_deadl
     assert!(error.acknowledged);
     assert!(error.scratch.unwrap().exists());
 }
+
+fn ownership_store() -> std::sync::Arc<cyber_store::Store> {
+    std::sync::Arc::new(
+        cyber_store::Store::open(cyber_store::StoreOptions::new(
+            cyber_core::paths::DatabaseLocation::Memory,
+            cyber_server::runtime::Runtime::registry(),
+        ))
+        .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn owned_launch_records_preparation_and_settles_before_releasing_scratch() {
+    use cyber_server::runtime::{McpConnectionPhase, mcp_connections};
+    use cyber_tools::mcp::McpLocationPin;
+    let fixture = Fixture::new("full-access");
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let store = ownership_store();
+    let launcher = fixture.launcher(&loaded, &trust, None);
+    let mut server = launcher
+        .connect_owned("audit", store.clone(), |id| {
+            let store = &store;
+            let directory = &fixture.repo;
+            async move {
+                let records = mcp_connections(store, directory).unwrap();
+                assert_eq!(records[0].id, id);
+                assert_eq!(records[0].phase, McpConnectionPhase::Preparing);
+                Ok(McpLocationPin::unmanaged())
+            }
+        })
+        .await
+        .unwrap();
+    let id = server.record().id.clone();
+    assert!(id.starts_with("mcs_"));
+    assert_eq!(server.record().phase, McpConnectionPhase::Running);
+    assert!(
+        launcher
+            .connect_owned("audit", store.clone(), |_| async {
+                panic!("duplicate admission must refuse before native preparation")
+            })
+            .await
+            .is_err()
+    );
+    server
+        .call_exposed_tool("mcp__audit__record", json!({}), Duration::from_secs(2))
+        .await
+        .unwrap();
+    let scratch = server.scratch_path().to_path_buf();
+    let (record, _) = server.shutdown().await.unwrap();
+    assert_eq!(record.phase, McpConnectionPhase::Settled);
+    assert_eq!(record.acknowledged, Some(true));
+    assert_eq!(mcp_connections(&store, &fixture.repo).unwrap()[0], record);
+    assert!(server.tools().is_empty());
+    assert!(
+        server
+            .call_tool("record", json!({}), Duration::from_secs(1))
+            .await
+            .is_err()
+    );
+    let seq = store.aggregate_seq(&id).unwrap();
+    server.shutdown().await.unwrap();
+    assert_eq!(store.aggregate_seq(&id).unwrap(), seq);
+    assert!(scratch.exists());
+    drop(server);
+    assert!(!scratch.exists());
+    assert_eq!(
+        store
+            .read(|connection| connection
+                .query_row("SELECT COUNT(*) FROM session", [], |row| row
+                    .get::<_, i64>(0))
+                .map_err(Into::into))
+            .unwrap(),
+        0
+    );
+    let mut next = launcher
+        .connect_owned("audit", store.clone(), |_| async {
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await
+        .unwrap();
+    assert_ne!(next.record().id, id);
+    next.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn disposed_owned_launch_retains_unknown_receipt_and_scratch() {
+    use cyber_server::runtime::{McpConnectionPhase, mcp_connections};
+    use cyber_tools::mcp::McpLocationPin;
+    let fixture = Fixture::new("full-access");
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let store = ownership_store();
+    let launcher = fixture.launcher(&loaded, &trust, None);
+    let server = launcher
+        .connect_owned("audit", store.clone(), |_| async {
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await
+        .unwrap();
+    let scratch = server.scratch_path().to_path_buf();
+    drop(server);
+    let records = mcp_connections(&store, &fixture.repo).unwrap();
+    assert_eq!(records[0].phase, McpConnectionPhase::Unknown);
+    assert_eq!(records[0].acknowledged, Some(false));
+    assert!(scratch.exists());
+    assert!(
+        launcher
+            .connect_owned("audit", store, |_| async {
+                panic!("unknown owner must fence replacement")
+            })
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn owned_shutdown_retries_failed_durable_commit_without_reopening_calls() {
+    use cyber_tools::mcp::McpLocationPin;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let fixture = Fixture::new("full-access");
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let reject = Arc::new(AtomicBool::new(true));
+    let rejection = reject.clone();
+    let mut registry = cyber_server::runtime::Runtime::registry();
+    registry.projector(move |_, event| {
+        if event.kind == "mcp.status.changed.1"
+            && event.data["record"]["phase"] == "settled"
+            && rejection.swap(false, Ordering::SeqCst)
+        {
+            return Err("injected terminal commit failure".into());
+        }
+        Ok(())
+    });
+    let store = Arc::new(
+        cyber_store::Store::open(cyber_store::StoreOptions::new(
+            cyber_core::paths::DatabaseLocation::Memory,
+            registry,
+        ))
+        .unwrap(),
+    );
+    let mut server = fixture
+        .launcher(&loaded, &trust, None)
+        .connect_owned("audit", store.clone(), |_| async {
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await
+        .unwrap();
+    let scratch = server.scratch_path().to_path_buf();
+    let error = server.shutdown().await.unwrap_err();
+    assert!(error.acknowledged);
+    assert!(
+        error
+            .diagnostic
+            .contains("injected terminal commit failure")
+    );
+    assert!(scratch.exists());
+    assert!(server.tools().is_empty());
+    assert!(server.refresh_tools(Duration::from_secs(1)).await.is_err());
+    server.shutdown().await.unwrap();
+    drop(server);
+    assert!(!scratch.exists());
+}
+
+#[tokio::test]
+async fn owned_preparation_timeout_fences_replacement_without_spawning() {
+    use cyber_server::runtime::{McpConnectionPhase, mcp_connections};
+    use cyber_tools::mcp::McpLocationPin;
+    let fixture = Fixture::new("full-access");
+    fixture.configure(|value| value["mcp"]["audit"]["timeout"] = json!(1));
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let store = ownership_store();
+    let launcher = fixture.launcher(&loaded, &trust, None);
+    let error = launcher
+        .connect_owned("audit", store.clone(), |_| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await
+        .err()
+        .unwrap();
+    assert!(!error.acknowledged);
+    assert!(error.diagnostic.contains("preparation timed out"));
+    assert!(error.scratch.is_none());
+    assert!(!fixture.temp.exists());
+    assert_eq!(
+        mcp_connections(&store, &fixture.repo).unwrap()[0].phase,
+        McpConnectionPhase::Unknown
+    );
+    assert!(
+        launcher
+            .connect_owned("audit", store, |_| async {
+                panic!("timed-out preparation must fence replacement")
+            })
+            .await
+            .is_err()
+    );
+}

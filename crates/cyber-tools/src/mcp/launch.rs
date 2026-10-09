@@ -34,7 +34,7 @@ pub struct LocalLaunchError {
 }
 
 impl LocalLaunchError {
-    fn before_launch(diagnostic: impl Into<String>) -> Self {
+    pub(super) fn before_launch(diagnostic: impl Into<String>) -> Self {
         Self {
             diagnostic: diagnostic.into(),
             acknowledged: true,
@@ -175,6 +175,15 @@ impl LocalLauncher<'_> {
         name: &str,
         before_spawn: impl FnOnce() -> Result<(), String>,
     ) -> Result<LocalServer, LocalLaunchError> {
+        self.connect_before(name, before_spawn, None).await
+    }
+
+    pub(super) async fn connect_before(
+        &self,
+        name: &str,
+        before_spawn: impl FnOnce() -> Result<(), String>,
+        limit: Option<tokio::time::Instant>,
+    ) -> Result<LocalServer, LocalLaunchError> {
         let server = authorize_server(self.resolved, self.trust, self.location, name)
             .map_err(LocalLaunchError::before_launch)?;
         let McpServer::Local {
@@ -192,6 +201,7 @@ impl LocalLauncher<'_> {
             ));
         };
         let deadline = tokio::time::Instant::now() + Duration::from_secs((*timeout).into());
+        let deadline = limit.map_or(deadline, |limit| limit.min(deadline));
         let cwd = std::fs::canonicalize(
             cwd.as_ref()
                 .map(|path| {

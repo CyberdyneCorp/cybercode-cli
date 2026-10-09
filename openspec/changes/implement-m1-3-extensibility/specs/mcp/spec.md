@@ -91,3 +91,41 @@
 - **THEN** the new tool SHALL receive a distinct exposed alias
 - **AND** an older call to the removed alias SHALL remain stale rather than dispatch to the replacement
 - **AND** restoring the original remote tool within that connection SHALL restore its original alias
+
+### Requirement: Status model
+(P0) The system SHALL report each server's status as `connecting`, `connected`, `disabled`, `failed` (with error), `needs_auth`, or `needs_client_registration`. It SHALL publish `mcp.status.changed.1` on every transition, and on connection loss SHALL set `failed`, remove the server's tools and retry with exponential backoff (1 s to 60 s, at most 10 attempts).
+
+#### Scenario: Reconnect after drop
+- **WHEN** a connected remote server drops the connection
+- **THEN** its tools are removed, status becomes `failed`, and reconnection is retried with backoff
+
+#### Scenario: Independent durable local connection owner
+- **WHEN** a configured local server is admitted for a canonical Location and server name
+- **THEN** connection transitions SHALL have independent durable ownership without borrowing or creating a Session
+- **AND** another unsettled owner for that Location and name SHALL refuse duplicate native preparation
+- **AND** historical consumed owner capabilities SHALL NOT authorize the current transition
+
+#### Scenario: Unknown ownership survives disposal and restart
+- **WHEN** preparation or a running local owner is disposed without verified settlement
+- **THEN** durable ownership SHALL remain unresolved and fence replacement across database restart
+- **AND** persisted observations SHALL NOT be treated as proof of a live actor
+- **AND** late verified settlement SHALL require the same retained current owner capability
+
+### Requirement: Shutdown cleanup
+(P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
+
+#### Scenario: Orphaned child prevented
+- **WHEN** the server shuts down with a local MCP server that spawned children
+- **THEN** the whole process group is terminated
+
+#### Scenario: Local settlement preserves complete managed checkout ownership
+- **WHEN** a local server uses a managed Location
+- **THEN** its independent native owner SHALL pin all actual enclosing managed checkout identities before server spawn
+- **AND** verified native/proxy shutdown SHALL commit durable acknowledgement before settling checkout activity and enabling scratch cleanup
+- **AND** acknowledged checkout locks SHALL remain retained through scratch disposal
+
+#### Scenario: Failed durable settlement remains retryable
+- **WHEN** local native shutdown succeeds but its durable terminal commit fails
+- **THEN** the retained object SHALL preserve its checkout pins and scratch for settlement retry
+- **AND** its tools and calls SHALL remain unavailable while closing
+- **AND** retry SHALL NOT require a replacement native connection or owner

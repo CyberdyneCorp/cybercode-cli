@@ -48,6 +48,11 @@ pub use subtask::UserSubtask;
 pub use subtree_reopen::SubtreeReopenReport;
 pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod location;
+mod mcp;
+pub use mcp::{
+    McpConnectionOwner, McpConnectionPhase, McpConnectionRecord, McpConnectionStatus,
+    mcp_connections,
+};
 mod model;
 mod requests;
 mod rewind;

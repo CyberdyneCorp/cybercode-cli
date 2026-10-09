@@ -394,6 +394,7 @@ pub fn registry() -> EventRegistry {
     super::hooks::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
+    super::mcp::register(&mut registry);
     registry.projector(project);
     crate::worktrees::register(&mut registry);
     registry

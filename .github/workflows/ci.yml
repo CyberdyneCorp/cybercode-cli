@@ -74,6 +74,9 @@ jobs:
       - name: Native MCP retained proxy settlement
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib mcp::launch::tests
+      - name: Native independent MCP ownership and restart fencing
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test mcp_ownership
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test mcp_review

@@ -11,7 +11,8 @@ use super::{GitExecution, Managed, Name, RemovalActivity, Repository, Repository
 #[derive(Debug, Serialize, Deserialize)]
 struct UseRecord {
     worktree_id: String,
-    session_id: String,
+    #[serde(alias = "session_id")]
+    owner_id: String,
     settled: bool,
 }
 
@@ -23,6 +24,14 @@ pub struct CheckoutLease {
 }
 
 impl CheckoutLease {
+    pub fn worktree_id(&self) -> &str {
+        &self.record.worktree_id
+    }
+
+    pub fn owner_id(&self) -> &str {
+        &self.record.owner_id
+    }
+
     pub fn settle(self) -> io::Result<()> {
         self.settle_retained().map(drop)
     }
@@ -81,7 +90,7 @@ impl RemovalActivity for CheckoutActivity {
                 .file_stem()
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| invalid("Invalid activity filename"))?;
-            safe_id(session, "ses")?;
+            safe_owner_id(session)?;
             if path.extension().is_none_or(|extension| extension != "lock") {
                 return Err(invalid("Unexpected activity record"));
             }
@@ -111,6 +120,27 @@ impl Repository {
         session: &str,
     ) -> io::Result<CheckoutLease> {
         safe_id(session, "ses")?;
+        self.claim_owner(execution, managed, session).await
+    }
+
+    /// A shared MCP server owns checkout activity independently of any Session.
+    pub async fn claim_mcp(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        connection_id: &str,
+    ) -> io::Result<CheckoutLease> {
+        safe_id(connection_id, "mcs")?;
+        self.claim_owner(execution, managed, connection_id).await
+    }
+
+    async fn claim_owner(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        session: &str,
+    ) -> io::Result<CheckoutLease> {
+        safe_owner_id(session)?;
         safe_id(&managed.id, "wt")?;
         let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
@@ -148,7 +178,7 @@ impl Repository {
         }
         let record = UseRecord {
             worktree_id: managed.id.clone(),
-            session_id: session.into(),
+            owner_id: session.into(),
             settled: false,
         };
         write_record(&mut file, &record)?;
@@ -167,6 +197,15 @@ fn safe_id(id: &str, prefix: &str) -> io::Result<()> {
         return Err(invalid("Invalid activity identity"));
     }
     Ok(())
+}
+
+fn safe_owner_id(id: &str) -> io::Result<()> {
+    let prefix = if crate::ids::has_prefix(id, "mcs") {
+        "mcs"
+    } else {
+        "ses"
+    };
+    safe_id(id, prefix)
 }
 
 fn use_directory(managed: &Managed, create: bool) -> io::Result<PathBuf> {
@@ -227,7 +266,7 @@ fn read_record(file: &mut File) -> io::Result<UseRecord> {
 }
 
 fn check_record(record: &UseRecord, managed: &Managed, session: &str) -> io::Result<()> {
-    if record.worktree_id != managed.id || record.session_id != session {
+    if record.worktree_id != managed.id || record.owner_id != session {
         return Err(invalid("Activity record identity does not match"));
     }
     Ok(())
@@ -267,6 +306,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_session_activity_records_keep_their_original_identity() {
+        let record: UseRecord = serde_json::from_value(serde_json::json!({"worktree_id":"wt_legacy","session_id":"ses_legacy","settled":false})).unwrap();
+        assert_eq!(record.owner_id, "ses_legacy");
+        assert_eq!(record.worktree_id, "wt_legacy");
+        assert!(!record.settled);
+    }
+
+    #[test]
     fn retained_settlement_keeps_the_native_lock_until_proof_disposal() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("lease.lock");
@@ -274,7 +321,7 @@ mod tests {
         assert!(try_lock(&file).unwrap());
         let record = UseRecord {
             worktree_id: "wt_test".into(),
-            session_id: "ses_test".into(),
+            owner_id: "ses_test".into(),
             settled: false,
         };
         write_record(&mut file, &record).unwrap();
@@ -307,7 +354,7 @@ mod tests {
         let mut initial = open_record(&path, true).unwrap();
         let record = UseRecord {
             worktree_id: "wt_test".into(),
-            session_id: "ses_test".into(),
+            owner_id: "ses_test".into(),
             settled: false,
         };
         write_record(&mut initial, &record).unwrap();
@@ -359,7 +406,7 @@ mod tests {
             let duplicate = file.try_clone().unwrap();
             let record = UseRecord {
                 worktree_id: "wt_test".into(),
-                session_id: "ses_test".into(),
+                owner_id: "ses_test".into(),
                 settled: false,
             };
             write_record(&mut file, &record).unwrap();

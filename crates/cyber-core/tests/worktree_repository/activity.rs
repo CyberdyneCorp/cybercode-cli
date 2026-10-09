@@ -2,6 +2,59 @@ use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
 #[test]
+fn mcp_owner_is_independent_of_sessions_and_retains_the_lock_through_durable_settlement() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("mcp-owner").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    assert!(block_on(repository.claim(&fixture.execution, &managed, "mcs_server")).is_err());
+    assert!(block_on(repository.claim_mcp(&fixture.execution, &managed, "ses_user")).is_err());
+    let session = block_on(repository.claim(&fixture.execution, &managed, "ses_user")).unwrap();
+    let server =
+        block_on(repository.claim_mcp(&fixture.execution, &managed, "mcs_server")).unwrap();
+    session.settle().unwrap();
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    let retained = server.settle_retained().unwrap();
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    assert!(managed.path.join("tracked.txt").exists());
+    drop(retained);
+    block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
+    assert!(!managed.path.exists());
+}
+
+#[test]
+fn disposed_mcp_checkout_activity_remains_unknown_and_cannot_be_reclaimed() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("mcp-unknown").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let server =
+        block_on(repository.claim_mcp(&fixture.execution, &managed, "mcs_server")).unwrap();
+    drop(server);
+    assert!(block_on(repository.claim_mcp(&fixture.execution, &managed, "mcs_server")).is_err());
+    let error = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown"));
+    assert!(managed.path.join("tracked.txt").exists());
+}
+
+#[test]
 fn location_lookup_identifies_owned_subdirectories_without_adopting_primary_or_unmanaged_roots() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
