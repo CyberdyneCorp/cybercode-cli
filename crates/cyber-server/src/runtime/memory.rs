@@ -23,6 +23,8 @@ struct Request {
     deleted: bool,
     request_hash: String,
     owner_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    http_hash: Option<String>,
 }
 
 /// Public acknowledged change, without note content or execution capabilities.
@@ -49,6 +51,7 @@ pub struct MemoryWrite<'a> {
     pub deleted: bool,
     pub identity: Option<&'a str>,
     pub content: &'a str,
+    pub http_hash: Option<&'a str>,
 }
 
 pub enum MemoryAdmission {
@@ -104,6 +107,7 @@ pub(super) fn admit(
         deleted,
         identity,
         content,
+        http_hash,
     } = write;
     let key = cyber_core::ids::new_id("mwo");
     let id = identity
@@ -119,6 +123,7 @@ pub(super) fn admit(
         deleted,
         request_hash,
         owner_hash: hash(&key),
+        http_hash: http_hash.map(str::to_owned),
     };
     let expected = request.clone();
     let (_, replay) = store.append_checked(&id, Expected::Any, move |tx| {
@@ -197,6 +202,33 @@ pub(super) fn lookup(
     })
 }
 
+pub(super) fn http_identity(
+    store: &Store,
+    key: &str,
+    digest: &str,
+) -> Result<Option<bool>, StoreError> {
+    let id = format!("mwr_{:x}", Sha256::digest(format!("http:{key}").as_bytes()));
+    let digest = digest.to_owned();
+    store.read(move |db| {
+        let row: Option<(String, Option<String>)> = db
+            .query_row(
+                "SELECT data,result FROM memory_mutation WHERE id=?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((data, result)) = row else {
+            return Ok(None);
+        };
+        let request: Request = serde_json::from_str(&data)
+            .map_err(|_| refusal("Invalid persisted memory admission"))?;
+        if request.http_hash.as_deref() != Some(&digest) {
+            return Err(refusal("Idempotency-Key was used with a different request"));
+        }
+        Ok(Some(result.is_some()))
+    })
+}
+
 fn hash(value: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
 }
@@ -254,6 +286,13 @@ fn project_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), St
         || !valid_hash(&request.owner_hash)
     {
         return Err("Invalid memory admission identity".into());
+    }
+    if request
+        .http_hash
+        .as_deref()
+        .is_some_and(|digest| !valid_hash(&format!("sha256:{digest}")))
+    {
+        return Err("Invalid memory HTTP request digest".into());
     }
     cyber_core::memory::validate_name(&request.name).map_err(|e| e.to_string())?;
     cyber_core::memory::directory(Path::new("/"), &request.project_id)
@@ -328,6 +367,7 @@ mod tests {
             deleted: false,
             identity: Some("http:first"),
             content: "durable fact",
+            http_hash: None,
         }
     }
     fn owned(admission: MemoryAdmission) -> MemoryWriteOwner {
@@ -418,5 +458,27 @@ mod tests {
         bad.name = "other".into();
         assert!(owner.finish(bad).is_err());
         assert!(lookup(&store, &write(root.path())).is_err());
+    }
+    #[test]
+    fn http_identity_retains_pending_and_cross_endpoint_key_conflicts() {
+        let store = store();
+        let root = tempfile::tempdir().unwrap();
+        let bus = Bus::new();
+        let digest = "a".repeat(64);
+        let mut request = write(root.path());
+        request.identity = Some("http:request");
+        request.http_hash = Some(&digest);
+        let owner = owned(admit(store.clone(), bus, request).unwrap());
+        assert_eq!(
+            http_identity(&store, "request", &digest).unwrap(),
+            Some(false)
+        );
+        assert!(http_identity(&store, "request", &"b".repeat(64)).is_err());
+        owner.finish(receipt()).unwrap();
+        assert_eq!(
+            http_identity(&store, "request", &digest).unwrap(),
+            Some(true)
+        );
+        assert!(http_identity(&store, "request", &"b".repeat(64)).is_err());
     }
 }

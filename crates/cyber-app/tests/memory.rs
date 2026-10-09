@@ -257,3 +257,282 @@ async fn busy_pending_invalid_and_alias_review_preserve_evidence() {
     );
     f.close().await;
 }
+
+impl Fixture {
+    fn put(&self, name: &str, content: &str) -> reqwest::RequestBuilder {
+        self.client
+            .put(format!("{}/memory/global/{name}", self.url))
+            .basic_auth("cyber", Some("memory-test"))
+            .json(&json!({"content":content}))
+    }
+    #[cfg(unix)]
+    fn delete(&self, name: &str) -> reqwest::RequestBuilder {
+        self.client
+            .delete(format!("{}/memory/global/{name}", self.url))
+            .basic_auth("cyber", Some("memory-test"))
+    }
+}
+
+#[tokio::test]
+async fn mutation_validation_settings_and_shutdown_refuse_before_scope_creation() {
+    let f = Fixture::new(false).await;
+    let content =
+        "---\nname: policy\ndescription: Durable policy\ntype: reference\n---\n\nDurable fact\n";
+    for config in [
+        json!({"memory":{"enabled":false}}),
+        json!({"memory":{"generate":false}}),
+    ] {
+        std::fs::write(f.app.paths.config.join("cyber.json"), config.to_string()).unwrap();
+        let response = f.put("policy", content).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["_tag"],
+            "ForbiddenError"
+        );
+    }
+    std::fs::write(f.app.paths.config.join("cyber.json"), "{}").unwrap();
+    for (name, text) in [
+        ("Bad_Name", content),
+        ("other", content),
+        ("policy", "not frontmatter"),
+        (
+            "policy",
+            "---\nname: policy\ndescription: Durable policy\ntype: reference\n---\npassword=private-credential\n",
+        ),
+    ] {
+        let response = f.put(name, text).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.json::<Value>().await.unwrap();
+        assert_eq!(body["_tag"], "InvalidRequestError");
+        assert!(!body.to_string().contains("private-credential"));
+    }
+    let invalid = f
+        .client
+        .put(format!("{}/memory/global/policy", f.url))
+        .basic_auth("cyber", Some("memory-test"))
+        .json(&json!({"content":content,"force":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid.json::<Value>().await.unwrap()["_tag"],
+        "InvalidRequestError"
+    );
+    #[cfg(not(unix))]
+    assert_eq!(
+        f.put("policy", content).send().await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    f.app.runtime.shutdown().await;
+    assert_eq!(
+        f.put("policy", content).send().await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        std::fs::read_dir(f.app.paths.data.join("memory"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(
+        f.app
+            .store
+            .read(|db| db
+                .query_row("SELECT COUNT(*) FROM memory_mutation", [], |r| r
+                    .get::<_, i64>(0))
+                .map_err(Into::into))
+            .unwrap(),
+        0
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn actual_http_crud_publishes_once_and_replays_after_response_cache_disposal() {
+    use cyber_server::runtime::LiveEvent;
+    let f = Fixture::new(false).await;
+    let mut live = f.app.runtime.subscribe();
+    let mut stream = f
+        .client
+        .get(format!("{}/event", f.url))
+        .basic_auth("cyber", Some("memory-test"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), StatusCode::OK);
+    stream.chunk().await.unwrap().unwrap();
+    let content = text("policy", "durable preference");
+    let response = f
+        .put("policy", &content)
+        .header("idempotency-key", "memory-write")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved: Value = response.json().await.unwrap();
+    assert_eq!(saved["data"]["receipt"]["name"], "policy");
+    assert_eq!(saved["data"]["receipt"]["deleted"], false);
+    assert!(matches!(
+        live.try_recv().unwrap(),
+        LiveEvent::MemoryUpdated { seq: 1, .. }
+    ));
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut frame = String::new();
+        while !frame.contains("\n\n") {
+            let chunk = stream.chunk().await.unwrap().unwrap();
+            frame.push_str(std::str::from_utf8(&chunk).unwrap());
+        }
+        frame
+    })
+    .await
+    .unwrap();
+    let notification: Value = serde_json::from_str(
+        frame
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(notification["type"], "memory.updated.1");
+    assert_eq!(notification["data"], saved["data"]);
+    assert_eq!(notification["durable"]["aggregateID"], saved["data"]["id"]);
+    assert!(!frame.contains("previous_owner_key"));
+    assert!(!frame.contains("durable preference"));
+    drop(stream);
+    let again = f
+        .put("policy", &content)
+        .header("idempotency-key", "memory-write")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::OK);
+    assert_eq!(again.headers()["idempotent-replayed"], "true");
+    assert_eq!(again.json::<Value>().await.unwrap(), saved);
+    assert!(live.try_recv().is_err());
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let recovered = f
+        .put("policy", &content)
+        .header("idempotency-key", "memory-write")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(recovered.status(), StatusCode::OK);
+    assert_eq!(recovered.json::<Value>().await.unwrap(), saved);
+    assert!(live.try_recv().is_err());
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let conflict = f
+        .put("policy", &text("policy", "different preference"))
+        .header("idempotency-key", "memory-write")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    let elsewhere = f
+        .client
+        .post(format!("{}/sessions", f.url))
+        .basic_auth("cyber", Some("memory-test"))
+        .header("idempotency-key", "memory-write")
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(elsewhere.status(), StatusCode::CONFLICT);
+    let note: Value = f
+        .get("/memory/global/policy")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(note["data"]["body"], "durable preference");
+    let removed = f
+        .delete("policy")
+        .header("idempotency-key", "memory-delete")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::OK);
+    let deletion: Value = removed.json().await.unwrap();
+    assert_eq!(deletion["data"]["receipt"]["deleted"], true);
+    assert!(matches!(
+        live.try_recv().unwrap(),
+        LiveEvent::MemoryUpdated { seq: 1, .. }
+    ));
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let retry = f
+        .delete("policy")
+        .header("idempotency-key", "memory-delete")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), StatusCode::OK);
+    assert_eq!(retry.json::<Value>().await.unwrap(), deletion);
+    assert!(live.try_recv().is_err());
+    assert_eq!(
+        f.get("/memory/global/policy")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let store = f.store("global");
+    assert_eq!(store.claim().unwrap().index().unwrap().text, "");
+    assert_eq!(
+        std::fs::read_dir(store.path().join(".memory-history"))
+            .unwrap()
+            .count(),
+        2
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn busy_http_mutation_remains_retryable_with_the_same_key() {
+    let f = Fixture::new(false).await;
+    let store = f.store("global");
+    let owner = store.claim().unwrap();
+    let content = text("policy", "durable preference");
+    assert_eq!(
+        f.put("policy", &content)
+            .header("idempotency-key", "busy")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    drop(owner);
+    assert_eq!(
+        f.put("policy", &content)
+            .header("idempotency-key", "busy")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    f.close().await;
+}

@@ -10,7 +10,8 @@
   - [ ] Complete memory Context Source native acceptance, memory controls and full canonical scenario validation.
   - [x] Add local CLI list/show/path/edit/delete and debug memory without database/model startup. Private editor drafts, retained scope ownership and target/index review fingerprints preserve failed edits; shared journal validation handles commits. Verify real editor processes, malformed/secret drafts, aliases and concurrent edits locally. Native acceptance and draft retention controls remain open.
   - [x] Add authenticated Location-scoped HTTP list/read through the shared bounded storage, safe diagnostics and generated SDK methods. Verify real TCP authentication, scope/project/global fallback, routing precedence, absent scopes, aliases and recovery fencing locally. Native acceptance remains open.
-  - [ ] Add TUI controls, authenticated HTTP mutations/events and complete generated SDK coverage.
+  - [x] Add local Unix authenticated HTTP PUT/DELETE with bounded document validation, repeated settings gates, retained lifecycle/scope ownership, shared durable admission/receipts/events, response-cache gap replay and global HTTP request identity protection. Verify actual TCP CRUD/SSE, no duplicate effects/notifications, settings/secret refusal, busy retry and shutdown ownership; generate typed SDK methods. Native acceptance and reviewed reconciliation remain open.
+  - [ ] Add TUI controls, reviewed memory recovery and complete cross-platform HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.

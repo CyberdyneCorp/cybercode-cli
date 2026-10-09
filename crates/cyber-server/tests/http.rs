@@ -3392,3 +3392,31 @@ async fn memory_review_reports_unavailable_in_a_custom_host() {
     }
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn shutdown_waits_for_disposed_handler_memory_work_and_refuses_new_leases() {
+    let h = Harness::new(Setup::default());
+    let lease = h.runtime.memory_mutation_lease().await.unwrap();
+    let (release, released) = std::sync::mpsc::channel();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let worker = tokio::task::spawn_blocking(move || {
+        let _lease = lease;
+        started.send(()).unwrap();
+        released.recv().unwrap();
+    });
+    running.await.unwrap();
+    drop(worker);
+    let runtime = h.runtime.clone();
+    let mut shutdown = tokio::spawn(async move { runtime.shutdown().await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut shutdown)
+            .await
+            .is_err()
+    );
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), shutdown)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(h.runtime.memory_mutation_lease().await.is_err());
+}

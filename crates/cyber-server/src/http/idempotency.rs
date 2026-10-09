@@ -15,6 +15,12 @@ use sha2::{Digest, Sha256};
 use super::AppState;
 use super::error::ApiError;
 
+#[derive(Debug, Clone)]
+pub struct MemoryHttpIdentity {
+    pub key: String,
+    pub digest: String,
+}
+
 const RETENTION_MS: i64 = 24 * 3600 * 1000;
 const MAX_BODY: usize = 32 * 1024 * 1024;
 /// Single-user server: every authenticated caller is the same principal.
@@ -51,7 +57,7 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         return ApiError::invalid("Idempotency-Key must be 1-128 printable characters")
             .into_response();
     };
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
     let Ok(bytes) = body.collect().await.map(|b| b.to_bytes()) else {
         return ApiError::invalid("could not read the request body").into_response();
     };
@@ -68,6 +74,18 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         Ok(None) => {}
         Err(e) => return ApiError::unknown(e).into_response(),
     }
+    match memory_identity(&state, &key, &hash).await {
+        Ok(Some(false)) => {
+            return ApiError::conflict("Memory mutation requires reviewed recovery")
+                .into_response();
+        }
+        Err(error) => return error.into_response(),
+        _ => {}
+    }
+    parts.extensions.insert(MemoryHttpIdentity {
+        key: key.clone(),
+        digest: hash.clone(),
+    });
     if !in_flight()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -79,12 +97,34 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     let response = next
         .run(Request::from_parts(parts, Body::from(bytes)))
         .await;
-    let response = remember(&state.store, &key, hash, response).await;
+    let response = match memory_identity(&state, &key, &hash).await {
+        Ok(Some(false)) => response,
+        Ok(Some(true)) if !response.status().is_success() => response,
+        Err(error) => error.into_response(),
+        _ => remember(&state.store, &key, hash, response).await,
+    };
     in_flight()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .remove(&key);
     response
+}
+
+async fn memory_identity(
+    state: &AppState,
+    key: &str,
+    digest: &str,
+) -> Result<Option<bool>, ApiError> {
+    let runtime = state.runtime.clone();
+    let key = key.to_owned();
+    let digest = digest.to_owned();
+    tokio::task::spawn_blocking(move || runtime.memory_http_identity(&key, &digest))
+        .await
+        .map_err(ApiError::unknown)?
+        .map_err(|error| match error {
+            cyber_store::StoreError::Projector { reason, .. } => ApiError::conflict(reason),
+            error => ApiError::unknown(error),
+        })
 }
 
 fn request_hash(

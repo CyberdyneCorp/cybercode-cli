@@ -264,6 +264,7 @@ fn mutate(
         deleted: operation == "delete",
         identity: Some(&publication.identity),
         content: &fingerprint,
+        http_hash: None,
     };
     if let Some(runtime) = &publication.runtime
         && let Some(change) = runtime.memory_write_receipt(&write).map_err(|_| {

@@ -35,7 +35,7 @@ impl MemoryScope {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/memory", get(list))
-        .route("/memory/{scope}/{name}", get(read))
+        .route("/memory/{scope}/{name}", get(read).put(put).delete(delete))
 }
 
 async fn list(
@@ -81,4 +81,81 @@ pub(super) fn unavailable() -> ApiError {
     );
     error.body.service = Some("memory".into());
     error
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PutMemory {
+    /// Complete Markdown document with YAML name, description and type fields.
+    pub content: String,
+}
+
+pub struct MemoryEdit {
+    pub directory: std::path::PathBuf,
+    pub scope: MemoryScope,
+    pub name: String,
+    pub content: Option<String>,
+    pub identity: Option<super::idempotency::MemoryHttpIdentity>,
+}
+
+fn edit_request(
+    parts: &Parts,
+    state: &AppState,
+    scope: String,
+    name: String,
+    content: Option<String>,
+) -> Result<MemoryEdit, ApiError> {
+    let scope = MemoryScope::parse(&scope)?;
+    cyber_core::memory::validate_name(&name)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    Ok(MemoryEdit {
+        directory: location(parts, &state.options.default_directory)?,
+        scope,
+        name,
+        content,
+        identity: parts
+            .extensions
+            .get::<super::idempotency::MemoryHttpIdentity>()
+            .cloned(),
+    })
+}
+
+async fn put(
+    State(state): State<AppState>,
+    Path((scope, name)): Path<(String, String)>,
+    parts: Parts,
+    body: Result<Json<PutMemory>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<Located<crate::runtime::MemoryChange>>, ApiError> {
+    let Json(body) =
+        body.map_err(|_| ApiError::invalid("Expected JSON object with memory content"))?;
+    let edit = edit_request(&parts, &state, scope, name, Some(body.content))?;
+    let directory = edit.directory.clone();
+    let data = state
+        .services
+        .memory_edit(state.runtime.clone(), edit)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
+}
+async fn delete(
+    State(state): State<AppState>,
+    Path((scope, name)): Path<(String, String)>,
+    parts: Parts,
+    body: axum::body::Bytes,
+) -> Result<Json<Located<crate::runtime::MemoryChange>>, ApiError> {
+    if !body.is_empty() {
+        return Err(ApiError::invalid("Memory delete takes no request body"));
+    }
+    let edit = edit_request(&parts, &state, scope, name, None)?;
+    let directory = edit.directory.clone();
+    let data = state
+        .services
+        .memory_edit(state.runtime.clone(), edit)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
 }

@@ -307,7 +307,7 @@ pub(crate) struct Inner {
     sessions: StdMutex<HashMap<String, Arc<Handle>>>,
     drains: StdMutex<HashMap<String, DrainEntry>>,
     idle: Notify,
-    lifecycle: RwLock<()>,
+    lifecycle: Arc<RwLock<()>>,
     shutdown_lock: Mutex<()>,
     closed: CancellationToken,
     background: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
@@ -373,7 +373,7 @@ impl Runtime {
             sessions: StdMutex::default(),
             drains: StdMutex::default(),
             idle: Notify::new(),
-            lifecycle: RwLock::new(()),
+            lifecycle: Arc::new(RwLock::new(())),
             shutdown_lock: Mutex::new(()),
             closed: CancellationToken::new(),
             background: StdMutex::default(),
@@ -412,6 +412,14 @@ impl Runtime {
         reply: QuestionReply,
     ) -> Result<(), RuntimeError> {
         self.inner.answer_question(request_id, reply).await
+    }
+
+    pub fn memory_http_identity(
+        &self,
+        key: &str,
+        digest: &str,
+    ) -> Result<Option<bool>, cyber_store::StoreError> {
+        memory::http_identity(&self.inner.store, key, digest)
     }
 
     pub fn memory_write_receipt(

@@ -563,6 +563,12 @@ export type Located_MemoryCatalog = {
 };
 
 /** A Location-scoped response. */
+export type Located_MemoryChange = {
+  location: LocationInfo;
+  data: MemoryChange;
+};
+
+/** A Location-scoped response. */
 export type Located_MemoryDocument = {
   location: LocationInfo;
   data: MemoryDocument;
@@ -748,6 +754,11 @@ export type PromptBody = {
   resume?: boolean;
   /** `user` unless a client relays another source. */
   source?: string | null;
+};
+
+export type PutMemory = {
+  /** Complete Markdown document with YAML name, description and type fields. */
+  content: string;
 };
 
 export type Question = {

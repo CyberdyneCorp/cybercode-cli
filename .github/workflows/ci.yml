@@ -123,7 +123,10 @@ jobs:
       - name: Native durable memory mutation admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --lib runtime::memory::tests
-      - name: Native authenticated memory review API
+      - name: Native memory HTTP shutdown ownership
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http shutdown_waits_for_disposed_handler_memory_work_and_refuses_new_leases
+      - name: Native authenticated memory review and mutation admission API
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test memory
       - name: Native hook configuration validation and trust withholding

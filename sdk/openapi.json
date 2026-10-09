@@ -22,14 +22,27 @@
       }
     },
     "schemas": {
-      "Located_MemoryCatalog": {
+      "PutMemory": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Complete Markdown document with YAML name, description and type fields."
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "Located_MemoryChange": {
         "type": "object",
         "properties": {
           "location": {
             "$ref": "#/components/schemas/LocationInfo"
           },
           "data": {
-            "$ref": "#/components/schemas/MemoryCatalog"
+            "$ref": "#/components/schemas/MemoryChange"
           }
         },
         "required": [
@@ -73,6 +86,66 @@
           "id",
           "directory"
         ]
+      },
+      "MemoryChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/MemoryMutation"
+          }
+        },
+        "required": [
+          "id",
+          "directory",
+          "project_id",
+          "receipt"
+        ],
+        "description": "Public acknowledged change, without note content or execution capabilities."
+      },
+      "MemoryMutation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "deleted"
+        ]
+      },
+      "Located_MemoryCatalog": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MemoryCatalog"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
       },
       "MemoryCatalog": {
         "type": "object",
@@ -4036,66 +4109,30 @@
           "_tag",
           "message"
         ]
-      },
-      "MemoryChange": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "directory": {
-            "type": "string"
-          },
-          "project_id": {
-            "type": "string"
-          },
-          "receipt": {
-            "$ref": "#/components/schemas/MemoryMutation"
-          }
-        },
-        "required": [
-          "id",
-          "directory",
-          "project_id",
-          "receipt"
-        ],
-        "description": "Public acknowledged change, without note content or execution capabilities."
-      },
-      "MemoryMutation": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "deleted": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "deleted"
-        ]
       }
     }
   },
   "paths": {
-    "/api/v1/memory": {
-      "get": {
-        "operationId": "v1.memory.list",
-        "summary": "Review memory metadata and invalid notes",
+    "/api/v1/memory/{scope}/{name}": {
+      "put": {
+        "operationId": "v1.memory.put",
+        "summary": "Write a validated memory note and publish its durable receipt",
         "tags": [
           "memory"
         ],
         "parameters": [
           {
             "name": "scope",
-            "in": "query",
-            "required": false,
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -4115,6 +4152,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4123,7 +4168,88 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Located_MemoryCatalog"
+                  "$ref": "#/components/schemas/Located_MemoryChange"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutMemory"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.memory.delete",
+        "summary": "Delete a memory note and publish its durable receipt",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_MemoryChange"
                 }
               }
             }
@@ -4139,9 +4265,7 @@
             }
           }
         }
-      }
-    },
-    "/api/v1/memory/{scope}/{name}": {
+      },
       "get": {
         "operationId": "v1.memory.get",
         "summary": "Read a memory note",
@@ -4189,6 +4313,63 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_MemoryDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memory": {
+      "get": {
+        "operationId": "v1.memory.list",
+        "summary": "Review memory metadata and invalid notes",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_MemoryCatalog"
                 }
               }
             }

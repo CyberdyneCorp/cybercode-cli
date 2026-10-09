@@ -39,7 +39,7 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
-pub use memory::MemoryScope;
+pub use memory::{MemoryEdit, MemoryScope};
 #[cfg(unix)]
 pub use serve::serve_unix;
 pub use serve::{EmbeddedClient, serve_tcp};
@@ -88,6 +88,13 @@ pub struct AgentInfo {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn memory_edit(
+        &self,
+        _runtime: Runtime,
+        _edit: MemoryEdit,
+    ) -> BoxFuture<'_, Result<crate::runtime::MemoryChange, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
     fn memory_list(
         &self,
         _directory: PathBuf,

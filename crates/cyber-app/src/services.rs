@@ -74,6 +74,19 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn memory_edit(
+        &self,
+        runtime: cyber_server::runtime::Runtime,
+        edit: cyber_server::http::MemoryEdit,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::MemoryChange, cyber_server::http::ApiError>>
+    {
+        Box::pin(memory::edit(
+            self.data.clone(),
+            self.config.clone(),
+            runtime,
+            edit,
+        ))
+    }
     fn memory_list(
         &self,
         directory: PathBuf,

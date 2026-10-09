@@ -46,3 +46,28 @@ test("memory updates carry independent durable receipt identity without note con
     break;
   }
 });
+
+test("memory writes send complete documents and stable authenticated request identity", async () => {
+  const change: MemoryChange = { id: "mwr_request", directory: "/repo", project_id: "prj_test", receipt: { id: "mem_committed", name: "policy", deleted: false } };
+  const { client, calls } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "prj_test", directory: "/repo" } }, data: change }), { directory: "/repo" });
+  const content = "---\nname: policy\ndescription: Durable policy\ntype: reference\n---\nDurable fact\n";
+  const result = await client.memory.put("project", "policy", { content }, { idempotencyKey: "memory-write" });
+  assert.deepEqual(result.data, change);
+  assert.equal(calls[0]?.method, "PUT");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/memory/project/policy");
+  assert.deepEqual(JSON.parse(calls[0]?.body ?? "null"), { content });
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "memory-write");
+  assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
+});
+
+test("memory deletes send no body and preserve the acknowledged deletion receipt", async () => {
+  const change: MemoryChange = { id: "mwr_request", directory: "/repo", project_id: "global", receipt: { id: "mem_committed", name: "policy", deleted: true } };
+  const { client, calls } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: change }));
+  const result = await client.memory.delete("global", "policy", { idempotencyKey: "memory-delete" });
+  assert.deepEqual(result.data, change);
+  assert.equal(calls[0]?.method, "DELETE");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/memory/global/policy");
+  assert.equal(calls[0]?.body, undefined);
+  assert.equal(calls[0]?.headers.get("idempotency-key"), "memory-delete");
+});

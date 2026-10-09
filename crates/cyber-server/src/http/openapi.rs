@@ -97,6 +97,23 @@ impl Op {
 pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
+            "put",
+            "/memory/{scope}/{name}",
+            "v1.memory.put",
+            "Write a validated memory note and publish its durable receipt",
+        )
+        .located()
+        .body::<super::memory::PutMemory>(g)
+        .ok::<Located<crate::runtime::MemoryChange>>(g),
+        op(
+            "delete",
+            "/memory/{scope}/{name}",
+            "v1.memory.delete",
+            "Delete a memory note and publish its durable receipt",
+        )
+        .located()
+        .ok::<Located<crate::runtime::MemoryChange>>(g),
+        op(
             "get",
             "/memory",
             "v1.memory.list",

@@ -15,6 +15,17 @@ impl Inner {
 }
 
 impl Runtime {
+    /// Retain HTTP mutation work through shutdown, including after client disposal.
+    pub async fn memory_mutation_lease(
+        &self,
+    ) -> Result<tokio::sync::OwnedRwLockReadGuard<()>, RuntimeError> {
+        let lease = self.inner.lifecycle.clone().read_owned().await;
+        if self.inner.closed.is_cancelled() {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        Ok(lease)
+    }
+
     /// Close admission permanently, cancel every Drain and join its durable settlement.
     /// Pending inbox rows survive; a new runtime can resume them after restart.
     pub async fn shutdown(&self) {

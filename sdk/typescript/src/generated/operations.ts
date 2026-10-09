@@ -156,6 +156,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_McpServerStatus;
   };
+  "v1.memory.delete": {
+    path: { scope: string; name: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_MemoryChange;
+  };
   "v1.memory.get": {
     path: { scope: string; name: string };
     query: Record<string, never>;
@@ -169,6 +175,12 @@ export interface Operations {
     };
     body: undefined;
     response: S.Located_MemoryCatalog;
+  };
+  "v1.memory.put": {
+    path: { scope: string; name: string };
+    query: Record<string, never>;
+    body: S.PutMemory;
+    response: S.Located_MemoryChange;
   };
   "v1.message.get": {
     path: { sessionID: string; messageID: string };
@@ -704,6 +716,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.memory.delete": {
+    tag: "memory",
+    name: "delete",
+    method: "DELETE",
+    path: "/api/v1/memory/{scope}/{name}",
+    pathParams: ["scope", "name"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.memory.get": {
     tag: "memory",
     name: "get",
@@ -724,6 +748,18 @@ export const operations = {
     pathParams: [],
     query: ["scope"],
     body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.put": {
+    tag: "memory",
+    name: "put",
+    method: "PUT",
+    path: "/api/v1/memory/{scope}/{name}",
+    pathParams: ["scope", "name"],
+    query: [],
+    body: "required",
     located: true,
     unwrap: false,
     stream: false,
@@ -1412,12 +1448,18 @@ export function createGroups(caller: Caller) {
         caller.call("v1.mcp.status", {}, options),
     },
     memory: {
+      /** Delete a memory note and publish its durable receipt (`DELETE /api/v1/memory/{scope}/{name}`) */
+      delete: (scope: string, name: string, options?: RequestOptions): Promise<Operations["v1.memory.delete"]["response"]> =>
+        caller.call("v1.memory.delete", { path: { scope, name } }, options),
       /** Read a memory note (`GET /api/v1/memory/{scope}/{name}`) */
       get: (scope: string, name: string, options?: RequestOptions): Promise<Operations["v1.memory.get"]["response"]> =>
         caller.call("v1.memory.get", { path: { scope, name } }, options),
       /** Review memory metadata and invalid notes (`GET /api/v1/memory`) */
       list: (query?: Operations["v1.memory.list"]["query"], options?: RequestOptions): Promise<Operations["v1.memory.list"]["response"]> =>
         caller.call("v1.memory.list", { query }, options),
+      /** Write a validated memory note and publish its durable receipt (`PUT /api/v1/memory/{scope}/{name}`) */
+      put: (scope: string, name: string, body: Operations["v1.memory.put"]["body"], options?: RequestOptions): Promise<Operations["v1.memory.put"]["response"]> =>
+        caller.call("v1.memory.put", { path: { scope, name }, body }, options),
     },
     message: {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */

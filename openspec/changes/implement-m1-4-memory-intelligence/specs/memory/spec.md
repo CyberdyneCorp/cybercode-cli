@@ -160,3 +160,10 @@
 - **THEN** the server SHALL return the original receipt without another note/index mutation or change notification
 - **AND** a different request using that identity or an unresolved admission SHALL refuse without automatically executing retained intent
 - **AND** mutation completion SHALL require the retained unpublished owner capability and acknowledged shared storage receipt
+
+#### Scenario: HTTP write admission and shutdown ownership
+- **WHEN** an authenticated client puts a complete memory document or deletes an existing note
+- **THEN** enabled/generate settings, safe matching note identity and validated bounded content SHALL be checked before mutation
+- **AND** the owned worker SHALL retain scope and runtime shutdown ownership through durable acknowledgement, including after handler disposal
+- **AND** a completed request identity SHALL remain replayable without repeated effects after response-cache loss, and conflicting endpoint or body reuse SHALL refuse
+- **AND** pre-admission contention SHALL return a retryable unavailable error without caching that temporary refusal
