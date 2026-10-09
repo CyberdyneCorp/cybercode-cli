@@ -376,7 +376,7 @@ async fn actual_http_crud_publishes_once_and_replays_after_response_cache_dispos
     assert_eq!(saved["data"]["receipt"]["deleted"], false);
     assert!(matches!(
         live.try_recv().unwrap(),
-        LiveEvent::MemoryUpdated { seq: 1, .. }
+        LiveEvent::MemoryUpdated { seq: 2, .. }
     ));
     let frame = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         let mut frame = String::new();
@@ -471,7 +471,7 @@ async fn actual_http_crud_publishes_once_and_replays_after_response_cache_dispos
     assert_eq!(deletion["data"]["receipt"]["deleted"], true);
     assert!(matches!(
         live.try_recv().unwrap(),
-        LiveEvent::MemoryUpdated { seq: 1, .. }
+        LiveEvent::MemoryUpdated { seq: 2, .. }
     ));
     f.app
         .store

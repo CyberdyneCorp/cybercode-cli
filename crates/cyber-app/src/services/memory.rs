@@ -170,7 +170,7 @@ fn mutate(
         scope.read(&edit.name).map_err(storage_error)?;
     }
     mutation_settings(config, &edit.directory)?;
-    let owner = match runtime.admit_memory_write(write).map_err(admission_error)? {
+    let mut owner = match runtime.admit_memory_write(write).map_err(admission_error)? {
         MemoryAdmission::Replay(change) => return Ok(change),
         MemoryAdmission::Owned(owner) => *owner,
     };
@@ -179,6 +179,9 @@ fn mutate(
         None => scope.prepare_delete(&edit.name),
     }
     .map_err(storage_error)?;
+    owner
+        .bind_journal(prepared.journal_identity().map_err(storage_error)?)
+        .map_err(admission_error)?;
     let mut change = None;
     prepared
         .commit_with_acknowledgement(|receipt| {

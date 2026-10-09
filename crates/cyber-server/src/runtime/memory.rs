@@ -1,6 +1,6 @@
 //! Durable scope fencing and receipts; persisted admission never grants live write authority.
 use super::{Bus, LiveEvent};
-use cyber_core::memory::MemoryMutation;
+use cyber_core::memory::{MemoryJournalIdentity, MemoryMutation};
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,7 @@ use std::{
 
 const ADMITTED: &str = "memory.mutation.admitted.1";
 const UPDATED: &str = "memory.updated.1";
+const BOUND: &str = "memory.mutation.journal_bound.1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +26,8 @@ struct Request {
     owner_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     http_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    journal: Option<MemoryJournalIdentity>,
 }
 
 /// Public acknowledged change, without note content or execution capabilities.
@@ -42,6 +45,14 @@ pub struct MemoryChange {
 struct Completion {
     update: MemoryChange,
     previous_owner_key: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Binding {
+    journal: MemoryJournalIdentity,
+    previous_owner_key: String,
+    next_owner_hash: String,
 }
 
 pub struct MemoryWrite<'a> {
@@ -68,7 +79,48 @@ pub struct MemoryWriteOwner {
 }
 
 impl MemoryWriteOwner {
+    /// Persist correlation before storage effects; disposal still grants no recovery authority.
+    pub fn bind_journal(&mut self, journal: MemoryJournalIdentity) -> Result<(), StoreError> {
+        if let Some(previous) = &self.request.journal {
+            return if previous == &journal {
+                Ok(())
+            } else {
+                Err(refusal("Memory journal identity changed"))
+            };
+        }
+        let next_key = cyber_core::ids::new_id("mwo");
+        let next_owner_hash = hash(&next_key);
+        self.store.append(
+            &self.request.id,
+            Expected::Seq(0),
+            vec![NewEvent::new(
+                BOUND,
+                serde_json::to_value(Binding {
+                    journal: journal.clone(),
+                    previous_owner_key: self.key.clone(),
+                    next_owner_hash: next_owner_hash.clone(),
+                })
+                .expect("memory binding serializes"),
+            )],
+        )?;
+        self.request.journal = Some(journal);
+        self.request.owner_hash = next_owner_hash;
+        self.key = next_key;
+        Ok(())
+    }
+
     pub fn finish(self, receipt: MemoryMutation) -> Result<MemoryChange, StoreError> {
+        if self
+            .request
+            .journal
+            .as_ref()
+            .map(|journal| &journal.receipt)
+            != Some(&receipt)
+        {
+            return Err(refusal(
+                "Memory completion requires its bound journal receipt",
+            ));
+        }
         let update = MemoryChange {
             id: self.request.id.clone(),
             directory: self.request.directory.clone(),
@@ -81,7 +133,7 @@ impl MemoryWriteOwner {
         };
         let events = self.store.append(
             &update.id,
-            Expected::Seq(0),
+            Expected::Seq(1),
             vec![NewEvent::new(
                 UPDATED,
                 serde_json::to_value(completion).expect("memory receipt serializes"),
@@ -124,6 +176,7 @@ pub(super) fn admit(
         request_hash,
         owner_hash: hash(&key),
         http_hash: http_hash.map(str::to_owned),
+        journal: None,
     };
     let expected = request.clone();
     let (_, replay) = store.append_checked(&id, Expected::Any, move |tx| {
@@ -267,12 +320,14 @@ fn valid_hash(value: &str) -> bool {
 pub(super) fn register(registry: &mut EventRegistry) {
     registry.register(ADMITTED).expect("valid memory event");
     registry.register(UPDATED).expect("valid memory event");
+    registry.register(BOUND).expect("valid memory event");
     registry.projector(project);
 }
 fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
     match event.kind.as_str() {
         ADMITTED => project_admission(tx, event),
         UPDATED => project_completion(tx, event),
+        BOUND => project_binding(tx, event),
         _ => Ok(()),
     }
 }
@@ -284,6 +339,7 @@ fn project_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), St
         || !request.directory.is_absolute()
         || !valid_hash(&request.request_hash)
         || !valid_hash(&request.owner_hash)
+        || request.journal.is_some()
     {
         return Err("Invalid memory admission identity".into());
     }
@@ -322,7 +378,8 @@ fn project_completion(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         .map_err(|e| e.to_string())?;
     let request: Request = serde_json::from_str(&row.0).map_err(|e| e.to_string())?;
     let update = completed.update;
-    if event.seq != 1
+    let expected_seq = if request.journal.is_some() { 2 } else { 1 };
+    if event.seq != expected_seq
         || row.1.is_some()
         || hash(&completed.previous_owner_key) != request.owner_hash
         || update.id != request.id
@@ -331,6 +388,10 @@ fn project_completion(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         || update.receipt.name != request.name
         || update.receipt.deleted != request.deleted
         || !cyber_core::ids::has_prefix(&update.receipt.id, "mem")
+        || request
+            .journal
+            .as_ref()
+            .is_some_and(|journal| journal.receipt != update.receipt)
     {
         return Err(
             "Memory completion does not hold the admitted owner and receipt identity".into(),
@@ -341,6 +402,44 @@ fn project_completion(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         params![
             update.id,
             serde_json::to_string(&update).map_err(|e| e.to_string())?
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn project_binding(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
+    let binding: Binding = serde_json::from_value(event.data.clone()).map_err(|e| e.to_string())?;
+    let (data, result): (String, Option<String>) = tx
+        .query_row(
+            "SELECT data,result FROM memory_mutation WHERE id=?1",
+            [&event.aggregate_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let mut request: Request = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    let receipt = &binding.journal.receipt;
+    if event.seq != 1
+        || result.is_some()
+        || request.journal.is_some()
+        || hash(&binding.previous_owner_key) != request.owner_hash
+        || !valid_hash(&binding.next_owner_hash)
+        || binding.next_owner_hash == request.owner_hash
+        || receipt.name != request.name
+        || receipt.deleted != request.deleted
+        || !cyber_core::ids::has_prefix(&receipt.id, "mem")
+        || !valid_hash(&format!("sha256:{}", binding.journal.intent_fingerprint))
+    {
+        return Err("Memory journal binding does not hold the admitted owner and identity".into());
+    }
+    request.journal = Some(binding.journal);
+    request.owner_hash = binding.next_owner_hash;
+    tx.execute(
+        "UPDATE memory_mutation SET data=?2,owner_hash=?3 WHERE id=?1",
+        params![
+            request.id,
+            serde_json::to_string(&request).map_err(|e| e.to_string())?,
+            request.owner_hash
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -383,17 +482,26 @@ mod tests {
             deleted: false,
         }
     }
+    fn journal() -> MemoryJournalIdentity {
+        MemoryJournalIdentity {
+            receipt: receipt(),
+            intent_fingerprint: "a".repeat(64),
+        }
+    }
     #[test]
     fn committed_identity_replays_once_and_publishes_only_public_acknowledgement() {
         let store = store();
         let root = tempfile::tempdir().unwrap();
         let bus = Bus::new();
         let mut events = bus.subscribe();
-        let owner = owned(admit(store.clone(), bus.clone(), write(root.path())).unwrap());
+        let mut owner = owned(admit(store.clone(), bus.clone(), write(root.path())).unwrap());
         assert!(events.try_recv().is_err());
-        let result = owner.finish(receipt()).unwrap();
+        let journal = journal();
+        owner.bind_journal(journal.clone()).unwrap();
+        assert!(events.try_recv().is_err());
+        let result = owner.finish(journal.receipt).unwrap();
         assert!(
-            matches!(events.try_recv().unwrap(), LiveEvent::MemoryUpdated { update, seq: 1 } if update == result)
+            matches!(events.try_recv().unwrap(), LiveEvent::MemoryUpdated { update, seq: 2 } if update == result)
         );
         assert!(
             matches!(admit(store.clone(), bus.clone(), write(root.path())).unwrap(), MemoryAdmission::Replay(update) if update == result)
@@ -403,7 +511,7 @@ mod tests {
         changed.content = "different fact";
         assert!(admit(store.clone(), bus, changed).is_err());
         let page = store.read_events(&result.id, -1, 10).unwrap();
-        assert_eq!(page.events.len(), 2);
+        assert_eq!(page.events.len(), 3);
         assert!(
             !serde_json::to_string(&page.events)
                 .unwrap()
@@ -434,12 +542,14 @@ mod tests {
         let store = store();
         let root = tempfile::tempdir().unwrap();
         let bus = Bus::new();
-        let owner = owned(admit(store.clone(), bus, write(root.path())).unwrap());
+        let mut owner = owned(admit(store.clone(), bus, write(root.path())).unwrap());
+        let journal = journal();
+        owner.bind_journal(journal.clone()).unwrap();
         let update = MemoryChange {
             id: owner.request.id.clone(),
             directory: owner.request.directory.clone(),
             project_id: "global".into(),
-            receipt: receipt(),
+            receipt: journal.receipt,
         };
         let event = NewEvent::new(
             UPDATED,
@@ -451,7 +561,7 @@ mod tests {
         );
         assert!(
             store
-                .append(&owner.request.id, Expected::Seq(0), vec![event])
+                .append(&owner.request.id, Expected::Seq(1), vec![event])
                 .is_err()
         );
         let mut bad = receipt();
@@ -459,6 +569,136 @@ mod tests {
         assert!(owner.finish(bad).is_err());
         assert!(lookup(&store, &write(root.path())).is_err());
     }
+    #[test]
+    fn unbound_and_mismatched_journals_cannot_complete_or_publish() {
+        for bound in [false, true] {
+            let store = store();
+            let root = tempfile::tempdir().unwrap();
+            let bus = Bus::new();
+            let mut live = bus.subscribe();
+            let mut owner = owned(admit(store.clone(), bus, write(root.path())).unwrap());
+            if bound {
+                owner.bind_journal(journal()).unwrap();
+                assert!(owner.bind_journal(journal()).is_err());
+            }
+            assert!(owner.finish(receipt()).is_err());
+            assert!(lookup(&store, &write(root.path())).is_err());
+            assert!(live.try_recv().is_err());
+        }
+    }
+
+    #[test]
+    fn binding_requires_live_capability_and_survives_owner_disposal() {
+        let store = store();
+        let root = tempfile::tempdir().unwrap();
+        let bus = Bus::new();
+        let mut owner = owned(admit(store.clone(), bus.clone(), write(root.path())).unwrap());
+        let id = owner.request.id.clone();
+        let journal = journal();
+        let forged = NewEvent::new(
+            BOUND,
+            serde_json::to_value(Binding {
+                journal: journal.clone(),
+                previous_owner_key: "fabricated".into(),
+                next_owner_hash: hash("next-owner"),
+            })
+            .unwrap(),
+        );
+        assert!(store.append(&id, Expected::Seq(0), vec![forged]).is_err());
+        let old_key = owner.key.clone();
+        owner.bind_journal(journal.clone()).unwrap();
+        owner.bind_journal(journal.clone()).unwrap();
+        let leaked = store.read_events(&id, -1, 10).unwrap().events[1]
+            .data
+            .clone();
+        assert_eq!(leaked["previous_owner_key"], old_key);
+        assert!(!serde_json::to_string(&leaked).unwrap().contains(&owner.key));
+        let stale = NewEvent::new(
+            UPDATED,
+            serde_json::to_value(Completion {
+                update: MemoryChange {
+                    id: id.clone(),
+                    directory: owner.request.directory.clone(),
+                    project_id: "global".into(),
+                    receipt: journal.receipt.clone(),
+                },
+                previous_owner_key: old_key,
+            })
+            .unwrap(),
+        );
+        assert!(store.append(&id, Expected::Seq(1), vec![stale]).is_err());
+        drop(owner);
+        let persisted: Request = store
+            .read(move |db| {
+                let data: String = db.query_row(
+                    "SELECT data FROM memory_mutation WHERE id=?1",
+                    [&id],
+                    |row| row.get(0),
+                )?;
+                Ok(serde_json::from_str(&data).unwrap())
+            })
+            .unwrap();
+        assert_eq!(persisted.journal, Some(journal));
+        assert!(admit(store, bus, write(root.path())).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disposed_bound_owner_preserves_correlated_uninstalled_journal() {
+        let store = store();
+        let root = tempfile::tempdir().unwrap();
+        let memory = cyber_core::memory::MemoryStore::open(root.path(), "global").unwrap();
+        let mut scope = memory.claim().unwrap();
+        let mut owner = owned(admit(store.clone(), Bus::new(), write(root.path())).unwrap());
+        let id = owner.request.id.clone();
+        let prepared = scope
+            .prepare_write(
+                "---\nname: policy\ndescription: Durable policy\ntype: user\n---\nFact\n",
+            )
+            .unwrap();
+        let journal = prepared.journal_identity().unwrap();
+        owner.bind_journal(journal.clone()).unwrap();
+        drop(prepared);
+        drop(owner);
+        assert!(!memory.path().join("policy.md").exists());
+        assert!(!memory.path().join("MEMORY.md").exists());
+        let review = scope.inspect_recovery().unwrap().unwrap();
+        assert_eq!(review.journal, journal);
+        let events = store.read_events(&id, -1, 10).unwrap();
+        assert_eq!(
+            events.events[1].data["journal"],
+            serde_json::to_value(journal).unwrap()
+        );
+        assert!(lookup(&store, &write(root.path())).is_err());
+        assert!(admit(store, Bus::new(), write(root.path())).is_err());
+    }
+
+    #[test]
+    fn historical_unbound_completion_remains_projectable() {
+        let store = store();
+        let root = tempfile::tempdir().unwrap();
+        let bus = Bus::new();
+        let owner = owned(admit(store.clone(), bus, write(root.path())).unwrap());
+        let update = MemoryChange {
+            id: owner.request.id.clone(),
+            directory: owner.request.directory.clone(),
+            project_id: "global".into(),
+            receipt: receipt(),
+        };
+        let historical = NewEvent::new(
+            UPDATED,
+            serde_json::to_value(Completion {
+                update: update.clone(),
+                previous_owner_key: owner.key,
+            })
+            .unwrap(),
+        );
+        store
+            .append(&update.id, Expected::Seq(0), vec![historical])
+            .unwrap();
+        assert_eq!(lookup(&store, &write(root.path())).unwrap(), Some(update));
+    }
+
     #[test]
     fn http_identity_retains_pending_and_cross_endpoint_key_conflicts() {
         let store = store();
@@ -468,13 +708,15 @@ mod tests {
         let mut request = write(root.path());
         request.identity = Some("http:request");
         request.http_hash = Some(&digest);
-        let owner = owned(admit(store.clone(), bus, request).unwrap());
+        let mut owner = owned(admit(store.clone(), bus, request).unwrap());
         assert_eq!(
             http_identity(&store, "request", &digest).unwrap(),
             Some(false)
         );
         assert!(http_identity(&store, "request", &"b".repeat(64)).is_err());
-        owner.finish(receipt()).unwrap();
+        let journal = journal();
+        owner.bind_journal(journal.clone()).unwrap();
+        owner.finish(journal.receipt).unwrap();
         assert_eq!(
             http_identity(&store, "request", &digest).unwrap(),
             Some(true)

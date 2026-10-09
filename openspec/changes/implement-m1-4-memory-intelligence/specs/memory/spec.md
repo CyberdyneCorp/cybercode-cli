@@ -183,3 +183,10 @@
 - **THEN** the CLI SHALL retain scope ownership, enforce fresh mutation settings and require an unchanged reviewed state
 - **AND** a pending database admission for that scope, unavailable database inspection or an in-memory database SHALL refuse before file effects
 - **AND** local file recovery SHALL NOT clear or adopt database admission ownership
+
+#### Scenario: Durable journal identity before memory effects
+- **WHEN** an admitted model-tool or HTTP memory write prepares its retained journal
+- **THEN** the live admission owner SHALL durably bind its transaction receipt and complete intent digest before any note/index installation
+- **AND** completion SHALL require that exact bound receipt and the retained owner capability
+- **AND** interrupted binding SHALL retain pending admission and journal evidence without reconstructing authority or automatically replaying retained intent
+- **AND** historical acknowledged records SHALL remain readable and replayable without manufacturing a journal binding

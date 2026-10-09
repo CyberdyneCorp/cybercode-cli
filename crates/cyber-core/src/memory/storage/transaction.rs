@@ -33,6 +33,13 @@ pub struct MemoryMutation {
     pub deleted: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryJournalIdentity {
+    pub receipt: MemoryMutation,
+    pub intent_fingerprint: String,
+}
+
 /// Disposal retains the journal and does not acknowledge or roll back effects.
 pub struct PreparedMemory<'guard, 'store> {
     scope: &'guard mut MemoryScope<'store>,
@@ -183,6 +190,19 @@ impl<'store> MemoryScope<'store> {
 }
 
 impl PreparedMemory<'_, '_> {
+    pub fn journal_identity(&self) -> Result<MemoryJournalIdentity, MemoryStorageError> {
+        let bytes =
+            serde_json::to_vec(&self.intent).map_err(|_| MemoryStorageError::RecoveryRequired)?;
+        Ok(MemoryJournalIdentity {
+            receipt: MemoryMutation {
+                id: self.intent.id.clone(),
+                name: self.intent.name.clone(),
+                deleted: self.intent.after_note.is_none(),
+            },
+            intent_fingerprint: hash(&bytes),
+        })
+    }
+
     pub fn commit(self) -> Result<MemoryMutation, MemoryStorageError> {
         self.commit_with_acknowledgement(|_| Ok(()))
     }

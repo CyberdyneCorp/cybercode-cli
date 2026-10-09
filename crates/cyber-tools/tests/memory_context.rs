@@ -439,7 +439,7 @@ async fn actual_memory_tool_publishes_one_independent_durable_change_after_note_
     let mut changes = Vec::new();
     while let Ok(event) = live.try_recv() {
         if let LiveEvent::MemoryUpdated { update, seq } = event {
-            assert_eq!(seq, 1);
+            assert_eq!(seq, 2);
             changes.push(update);
         }
     }
@@ -449,8 +449,9 @@ async fn actual_memory_tool_publishes_one_independent_durable_change_after_note_
     assert_eq!(update.receipt.name, "coding-policy");
     assert_ne!(update.id, id);
     let events = flow.f.store.read_events(&update.id, -1, 10).unwrap();
-    assert_eq!(events.events.len(), 2);
-    assert_eq!(events.events[1].kind, "memory.updated.1");
+    assert_eq!(events.events.len(), 3);
+    assert_eq!(events.events[1].kind, "memory.mutation.journal_bound.1");
+    assert_eq!(events.events[2].kind, "memory.updated.1");
     let store = cyber_core::memory::MemoryStore::existing(flow.f.dir.path(), "global")
         .unwrap()
         .unwrap();
@@ -458,6 +459,24 @@ async fn actual_memory_tool_publishes_one_independent_durable_change_after_note_
     assert_eq!(owner.read("coding-policy").unwrap().body, "durable policy");
     assert!(owner.index().unwrap().text.contains("coding-policy.md"));
     assert!(!store.path().join(".memory-transaction").exists());
+    let journal = &events.events[1].data["journal"];
+    assert_eq!(
+        journal["receipt"],
+        serde_json::to_value(&update.receipt).unwrap()
+    );
+    let intent = std::fs::read(
+        store
+            .path()
+            .join(".memory-history")
+            .join(&update.receipt.id)
+            .join("intent.json"),
+    )
+    .unwrap();
+    use sha2::Digest;
+    assert_eq!(
+        journal["intent_fingerprint"],
+        format!("{:x}", sha2::Sha256::digest(intent))
+    );
     flow.runtime.shutdown().await;
 }
 

@@ -47,3 +47,8 @@ Expose read-only inspection and fingerprint-bound recovery in the shared core. B
 
 ### Local CLI recovery controls
 `memory recovery` prints read-only review, including proposed note content and the fingerprint, with null for absent evidence. `memory recover --review` validates a SHA-256 fingerprint and repeats settings under the scope claim. Before file effects it checks an existing database through read-only SQLite for pending scope admissions, refusing unresolved ownership or unverifiable inspection; no database is created. In-memory databases cannot prove ownership absence and refuse. This prevents file-only recovery from releasing a journal fence belonging to a durable unknown request. Database reconciliation remains a separate required control.
+
+### Admission-to-journal binding
+Before installation, persist an owner-authorized memory.mutation.journal_bound.1 event containing the exact core transaction receipt and a SHA-256 digest of the complete validated intent (before/after note/index hashes and catalog). Completion of new writes requires that bound receipt at the next sequence. Historical completion projection retains its original unbound sequence for event replay only; new live owners cannot complete unbound writes. This is evidence for later fresh reviewed reconciliation, not recovery authority; legacy pending admissions remain unproven.
+
+Journal binding rotates the admission nonce atomically in its projector. The binding event reveals only the superseded nonce and the new nonce hash; the new live key remains solely with the retained owner. Thus stored binding evidence cannot authorize completion after owner loss.

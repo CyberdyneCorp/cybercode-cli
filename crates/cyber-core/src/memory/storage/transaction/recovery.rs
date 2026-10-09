@@ -7,6 +7,7 @@ pub struct MemoryRecoveryReview {
     pub proposed_note: Option<MemoryDocument>,
     pub completed: bool,
     pub fingerprint: String,
+    pub journal: MemoryJournalIdentity,
 }
 
 impl<'store> MemoryScope<'store> {
@@ -35,6 +36,7 @@ impl<'store> MemoryScope<'store> {
             proposed_note: pending.desired_note()?,
             completed: marker.is_some(),
             fingerprint,
+            journal: pending.journal_identity()?,
         }))
     }
 
@@ -167,9 +169,11 @@ mod tests {
         let mut scope = store.claim().unwrap();
         scope.write(&note("Before")).unwrap();
         let mut pending = scope.prepare_write(&note("After")).unwrap();
+        let journal = pending.journal_identity().unwrap();
         pending.apply_note().unwrap();
         drop(pending);
         let review = scope.inspect_recovery().unwrap().unwrap();
+        assert_eq!(review.journal, journal);
         assert_eq!(review.proposed_note.unwrap().body, "After");
         assert!(!review.completed);
         assert!(store.path().join(TRANSACTION).join("index.after").exists());

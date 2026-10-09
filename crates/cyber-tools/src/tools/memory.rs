@@ -290,7 +290,7 @@ fn mutate(
         .map_err(|_| {
             failed("Memory mutation requires reviewed recovery or a fresh request identity")
         })?;
-    let durable_owner = match admitted {
+    let mut durable_owner = match admitted {
         Some(MemoryAdmission::Replay(change)) => return Ok(change.receipt),
         Some(MemoryAdmission::Owned(owner)) => Some(owner),
         None => None,
@@ -301,6 +301,15 @@ fn mutate(
         owner.prepare_write(content)
     }
     .map_err(|error| failed(error.to_string()))?;
+    if let Some(owner) = &mut durable_owner {
+        owner
+            .bind_journal(
+                prepared
+                    .journal_identity()
+                    .map_err(|error| failed(error.to_string()))?,
+            )
+            .map_err(|_| failed("Memory journal binding requires reviewed recovery"))?;
+    }
     prepared
         .commit_with_acknowledgement(|receipt| {
             if let Some(owner) = durable_owner {
