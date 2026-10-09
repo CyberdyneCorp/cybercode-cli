@@ -22,7 +22,7 @@
       }
     },
     "schemas": {
-      "Located_Nullable_MemoryRecoveryView": {
+      "Located_Nullable_MemoryRecoveryRequestStatus": {
         "type": "object",
         "properties": {
           "location": {
@@ -31,7 +31,7 @@
           "data": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/MemoryRecoveryView"
+                "$ref": "#/components/schemas/MemoryRecoveryRequestStatus"
               },
               {
                 "type": "null"
@@ -79,6 +79,125 @@
           "id",
           "directory"
         ]
+      },
+      "MemoryRecoveryRequestStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "mutation_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/MemoryJournalIdentity"
+          },
+          "completed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "mutation_id",
+          "directory",
+          "project_id",
+          "journal"
+        ]
+      },
+      "MemoryJournalIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/MemoryMutation"
+          },
+          "intent_fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt",
+          "intent_fingerprint"
+        ]
+      },
+      "MemoryMutation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "deleted"
+        ]
+      },
+      "MemoryChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/MemoryMutation"
+          }
+        },
+        "required": [
+          "id",
+          "directory",
+          "project_id",
+          "receipt"
+        ],
+        "description": "Public acknowledged change, without note content or execution capabilities."
+      },
+      "Located_Nullable_MemoryRecoveryView": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryRecoveryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "description": "A Location-scoped response."
       },
       "MemoryRecoveryView": {
         "type": "object",
@@ -128,25 +247,6 @@
           "journal"
         ]
       },
-      "MemoryMutation": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "deleted": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "deleted"
-        ]
-      },
       "MemoryDocument": {
         "type": "object",
         "properties": {
@@ -188,22 +288,6 @@
           "feedback",
           "project",
           "reference"
-        ]
-      },
-      "MemoryJournalIdentity": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "receipt": {
-            "$ref": "#/components/schemas/MemoryMutation"
-          },
-          "intent_fingerprint": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "receipt",
-          "intent_fingerprint"
         ]
       },
       "MemoryRecoveryAdmission": {
@@ -248,31 +332,6 @@
           "sequence",
           "fingerprint"
         ]
-      },
-      "MemoryChange": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "directory": {
-            "type": "string"
-          },
-          "project_id": {
-            "type": "string"
-          },
-          "receipt": {
-            "$ref": "#/components/schemas/MemoryMutation"
-          }
-        },
-        "required": [
-          "id",
-          "directory",
-          "project_id",
-          "receipt"
-        ],
-        "description": "Public acknowledged change, without note content or execution capabilities."
       },
       "RecoverMemory": {
         "type": "object",
@@ -4258,6 +4317,71 @@
     }
   },
   "paths": {
+    "/api/v1/memory/recovery/requests": {
+      "get": {
+        "operationId": "v1.memory.recoveryRequest",
+        "summary": "Look up retained recovery request evidence without execution",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Nullable_MemoryRecoveryRequestStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/memory/recovery/{scope}": {
       "get": {
         "operationId": "v1.memory.recovery",

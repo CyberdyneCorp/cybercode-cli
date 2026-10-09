@@ -206,4 +206,14 @@
 - **THEN** the server SHALL enforce fresh mutation settings and retain scope and shutdown ownership through reconciliation
 - **AND** stale, malformed, foreign, unbound or unverifiable reviews SHALL refuse before effects
 - **AND** the SDK SHALL expose typed recovery inspection and confirmation methods
-- **AND** ordinary response-cache replay SHALL return the acknowledged result without duplicate effects, while cache loss SHALL preserve stale-review refusal
+- **AND** ordinary response-cache replay SHALL return the acknowledged result without duplicate effects, while unkeyed cache loss SHALL preserve stale-review refusal
+
+#### Scenario: Durable keyed recovery receipt lookup
+- **WHEN** recovery uses a retained Idempotency-Key
+- **THEN** durable takeover SHALL atomically bind its request digest and key identity to the original memory mutation
+- **AND** identical completed retries after response-cache loss SHALL return that mutation's receipt without additional file effects or events
+- **AND** acknowledged receipt replay SHALL remain available while the original HTTP response is pending
+- **AND** conflicting body, endpoint or Location reuse SHALL refuse even after response-cache loss
+- **WHEN** an authenticated caller reads `GET /api/v1/memory/recovery/requests?scope=project|global&key=<retained-key>`
+- **THEN** the response SHALL carry Location and report an acknowledged result or unresolved evidence without reconstructing execution ownership
+- **AND** absent keys SHALL return null without creating storage

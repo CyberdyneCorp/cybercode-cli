@@ -74,22 +74,25 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         Ok(None) => {}
         Err(e) => return ApiError::unknown(e).into_response(),
     }
-    match memory_identity(&state, &key, &hash).await {
+    let completed_memory = match memory_identity(&state, &key, &hash).await {
         Ok(Some(false)) => {
             return ApiError::conflict("Memory mutation requires reviewed recovery")
                 .into_response();
         }
         Err(error) => return error.into_response(),
-        _ => {}
-    }
+        Ok(Some(true)) => true,
+        Ok(None) => false,
+    };
     parts.extensions.insert(MemoryHttpIdentity {
         key: key.clone(),
         digest: hash.clone(),
     });
-    if !in_flight()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(key.clone())
+    // A durable completion permits receipt replay even while the first response is pending.
+    if !completed_memory
+        && !in_flight()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key.clone())
     {
         return ApiError::conflict("a request with this Idempotency-Key is in progress")
             .into_response();
@@ -103,10 +106,12 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         Err(error) => error.into_response(),
         _ => remember(&state.store, &key, hash, response).await,
     };
-    in_flight()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .remove(&key);
+    if !completed_memory {
+        in_flight()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&key);
+    }
     response
 }
 

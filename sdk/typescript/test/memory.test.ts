@@ -107,3 +107,21 @@ test("memory recovery exposes typed paired journal and admission evidence", asyn
   assert.equal(result.data?.storage.proposed_note?.body, "Preference");
   assert.deepEqual(result.data?.storage.journal, result.data?.admission.journal);
 });
+
+test("retained recovery request lookup preserves key encoding and unresolved evidence", async () => {
+  const key = "recovery/request+key";
+  const status: import("../src/index.js").MemoryRecoveryRequestStatus = {
+    id: "mrr_key", mutation_id: "mwr_pending", directory: "/repo", project_id: "global",
+    journal: { receipt: { id: "mem_prepared", name: "policy", deleted: false }, intent_fingerprint: "a".repeat(64) }, completed: null,
+  };
+  const { client, calls } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: status }), { directory: "/repo" });
+  const result = await client.memory.recoveryRequest({ scope: "global", key });
+  assert.deepEqual(result.data, status);
+  assert.equal(result.data?.completed, null);
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/memory/recovery/requests");
+  assert.equal(calls[0]?.url.searchParams.get("key"), key);
+  assert.equal(calls[0]?.url.searchParams.get("scope"), "global");
+  assert.equal(calls[0]?.headers.get("idempotency-key"), null);
+  assert.equal(calls.length, 1);
+});

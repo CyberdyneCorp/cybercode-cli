@@ -575,6 +575,12 @@ export type Located_MemoryDocument = {
 };
 
 /** A Location-scoped response. */
+export type Located_Nullable_MemoryRecoveryRequestStatus = {
+  location: LocationInfo;
+  data?: MemoryRecoveryRequestStatus | null;
+};
+
+/** A Location-scoped response. */
 export type Located_Nullable_MemoryRecoveryView = {
   location: LocationInfo;
   data?: MemoryRecoveryView | null;
@@ -673,6 +679,15 @@ export type MemoryRecoveryAdmission = {
   journal: MemoryJournalIdentity;
   sequence: number;
   fingerprint: string;
+  completed?: MemoryChange | null;
+};
+
+export type MemoryRecoveryRequestStatus = {
+  id: string;
+  mutation_id: string;
+  directory: string;
+  project_id: string;
+  journal: MemoryJournalIdentity;
   completed?: MemoryChange | null;
 };
 

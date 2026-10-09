@@ -39,7 +39,9 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
-pub use memory::{MemoryEdit, MemoryRecoveryView, MemoryScope, RecoverMemory};
+pub use memory::{
+    MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, RecoverMemory,
+};
 #[cfg(unix)]
 pub use serve::serve_unix;
 pub use serve::{EmbeddedClient, serve_tcp};
@@ -99,9 +101,7 @@ pub trait Services: Send + Sync {
     fn memory_recover(
         &self,
         _runtime: Runtime,
-        _directory: PathBuf,
-        _scope: MemoryScope,
-        _review: RecoverMemory,
+        _confirmation: MemoryRecoveryConfirm,
     ) -> BoxFuture<'_, Result<crate::runtime::MemoryChange, ApiError>> {
         Box::pin(async { Err(memory::unavailable()) })
     }

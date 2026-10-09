@@ -1,9 +1,9 @@
 //! Durable scope fencing and receipts; persisted admission never grants live write authority.
-mod recovery;
+pub(super) mod recovery;
 use super::{Bus, LiveEvent};
 use cyber_core::memory::{MemoryJournalIdentity, MemoryMutation};
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
-pub use recovery::MemoryRecoveryAdmission;
+pub use recovery::{MemoryRecoveryAdmission, MemoryRecoveryIdentity, MemoryRecoveryRequestStatus};
 pub(super) use recovery::{recover, review};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -270,8 +270,9 @@ pub(super) fn http_identity(
     digest: &str,
 ) -> Result<Option<bool>, StoreError> {
     let id = format!("mwr_{:x}", Sha256::digest(format!("http:{key}").as_bytes()));
+    let recovery_digest = digest.to_owned();
     let digest = digest.to_owned();
-    store.read(move |db| {
+    let result = store.read(move |db| {
         let row: Option<(String, Option<String>)> = db
             .query_row(
                 "SELECT data,result FROM memory_mutation WHERE id=?1",
@@ -288,7 +289,11 @@ pub(super) fn http_identity(
             return Err(refusal("Idempotency-Key was used with a different request"));
         }
         Ok(Some(result.is_some()))
-    })
+    })?;
+    match result {
+        Some(_) => Ok(result),
+        None => recovery::http_identity(store, key, &recovery_digest),
+    }
 }
 
 fn hash(value: &str) -> String {
@@ -339,6 +344,7 @@ fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
         UPDATED => project_completion(tx, event),
         BOUND => project_binding(tx, event),
         recovery::REVIEWED => recovery::project_review(tx, event),
+        recovery::requests::LINKED => recovery::requests::project_linked(tx, event),
         _ => Ok(()),
     }
 }
@@ -365,6 +371,19 @@ fn project_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), St
     cyber_core::memory::validate_name(&request.name).map_err(|e| e.to_string())?;
     cyber_core::memory::directory(Path::new("/"), &request.project_id)
         .map_err(|e| e.to_string())?;
+    if request.http_hash.is_some() {
+        let key_hash = request.id.replacen("mwr_", "mrr_", 1);
+        let recovery: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM memory_recovery_request WHERE key_hash=?1)",
+                [key_hash],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if recovery {
+            return Err("Idempotency-Key was used with a different request".into());
+        }
+    }
     let pending: bool = tx
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM memory_mutation WHERE project_id=?1 AND result IS NULL)",

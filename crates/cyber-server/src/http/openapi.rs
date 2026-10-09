@@ -98,6 +98,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
             "get",
+            "/memory/recovery/requests",
+            "v1.memory.recoveryRequest",
+            "Look up retained recovery request evidence without execution",
+        )
+        .located()
+        .query(&["scope", "key"])
+        .ok::<Located<Option<crate::runtime::MemoryRecoveryRequestStatus>>>(g),
+        op(
+            "get",
             "/memory/recovery/{scope}",
             "v1.memory.recovery",
             "Review matching interrupted memory storage and admission",

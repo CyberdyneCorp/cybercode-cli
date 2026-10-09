@@ -259,11 +259,36 @@ pub(super) async fn recover(
     data: PathBuf,
     config: std::sync::Arc<cyber_tools::ConfigFn>,
     runtime: cyber_server::runtime::Runtime,
-    directory: PathBuf,
-    scope: MemoryScope,
-    review: cyber_server::http::RecoverMemory,
+    confirmation: cyber_server::http::MemoryRecoveryConfirm,
 ) -> Result<cyber_server::runtime::MemoryChange, ApiError> {
+    let cyber_server::http::MemoryRecoveryConfirm {
+        directory,
+        scope,
+        review,
+        identity,
+    } = confirmation;
     review.validate()?;
+    let identity = identity.map(|identity| cyber_server::runtime::MemoryRecoveryIdentity {
+        key: identity.key,
+        digest: identity.digest,
+    });
+    if let Some(identity) = &identity {
+        let runtime = runtime.clone();
+        let requested = cyber_server::runtime::MemoryRecoveryIdentity {
+            key: identity.key.clone(),
+            digest: identity.digest.clone(),
+        };
+        if let Some(change) =
+            tokio::task::spawn_blocking(move || runtime.memory_recovery_http_receipt(&requested))
+                .await
+                .map_err(ApiError::unknown)?
+                .map_err(|_| {
+                    ApiError::conflict("Recovery request conflicts or remains unresolved")
+                })?
+        {
+            return Ok(change);
+        }
+    }
     let lease = runtime
         .memory_mutation_lease()
         .await
@@ -285,7 +310,12 @@ pub(super) async fn recover(
         }
         mutation_settings(config.as_ref(), &directory)?;
         runtime
-            .recover_memory_write(&mut owner, &current.storage, &current.admission)
+            .recover_memory_write_with_identity(
+                &mut owner,
+                &current.storage,
+                &current.admission,
+                identity.as_ref(),
+            )
             .map_err(|_| {
                 ApiError::conflict("Memory recovery retained unresolved evidence; review again")
             })

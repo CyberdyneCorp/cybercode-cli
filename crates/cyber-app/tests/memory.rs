@@ -694,7 +694,7 @@ async fn paired_recovery_acknowledges_once_and_cached_replay_preserves_receipt()
             .await
             .unwrap()
             .status(),
-        StatusCode::CONFLICT
+        StatusCode::OK
     );
     assert!(live.try_recv().is_err());
     assert!(f.recovery("project").await.is_null());
@@ -879,4 +879,210 @@ async fn recovery_refuses_foreign_location_and_unbound_journal_without_releasing
     );
     assert!(!memory.path().join("policy.md").exists());
     local.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn durable_recovery_lookup_and_global_key_conflicts_survive_cache_loss() {
+    let f = Fixture::new(true).await;
+    let _memory = f.prepare_recovery("project");
+    let review = f.recovery("project").await;
+    let key = "durable/recovery+key";
+    let response = f
+        .recover("project", &review)
+        .header("idempotency-key", key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let change: Value = response.json().await.unwrap();
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let lookup = f
+        .get("/memory/recovery/requests")
+        .query(&[("scope", "project"), ("key", key)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(lookup.status(), StatusCode::OK);
+    let status: Value = lookup.json().await.unwrap();
+    assert_eq!(status["data"]["completed"], change["data"]);
+    assert_eq!(status["data"]["mutation_id"], review["admission"]["id"]);
+    let mut altered = review.clone();
+    altered["storage"]["fingerprint"] = json!("f".repeat(64));
+    assert_eq!(
+        f.recover("project", &altered)
+            .header("idempotency-key", key)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        f.put("policy", &text("policy", "Different fact"))
+            .header("idempotency-key", key)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        f.get("/memory/recovery/requests")
+            .query(&[("scope", "global"), ("key", key)])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let absent = f
+        .get("/memory/recovery/requests")
+        .query(&[("scope", "project"), ("key", "absent")])
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert!(absent["data"].is_null());
+    assert_eq!(
+        f.get("/memory/recovery/requests")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        f.app
+            .store
+            .read_events(review["admission"]["id"].as_str().unwrap(), -1, 20)
+            .unwrap()
+            .events
+            .len(),
+        4
+    );
+    f.close().await;
+}
+
+#[cfg(unix)]
+struct DelayedMemoryReply {
+    inner: std::sync::Arc<dyn cyber_server::http::Services>,
+    reached: std::sync::Arc<tokio::sync::Notify>,
+    release: std::sync::Arc<tokio::sync::Notify>,
+}
+#[cfg(unix)]
+impl cyber_server::http::Services for DelayedMemoryReply {
+    fn models(
+        &self,
+        location: &std::path::Path,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<cyber_server::http::ModelInfo>, String>> {
+        self.inner.models(location)
+    }
+    fn default_model(&self, location: &std::path::Path) -> Option<String> {
+        self.inner.default_model(location)
+    }
+    fn agents(&self, location: &std::path::Path) -> Vec<cyber_server::http::AgentInfo> {
+        self.inner.agents(location)
+    }
+    fn tools(
+        &self,
+        turn: &cyber_server::runtime::TurnContext,
+    ) -> Vec<cyber_server::runtime::ToolDef> {
+        self.inner.tools(turn)
+    }
+    fn commands(&self, location: &std::path::Path) -> Vec<cyber_server::http::CommandInfo> {
+        self.inner.commands(location)
+    }
+    fn find_files(&self, location: &std::path::Path, query: &str, limit: usize) -> Vec<String> {
+        self.inner.find_files(location, query, limit)
+    }
+    fn expand_command(
+        &self,
+        location: &std::path::Path,
+        name: &str,
+        arguments: &str,
+    ) -> Option<String> {
+        self.inner.expand_command(location, name, arguments)
+    }
+    fn memory_edit(
+        &self,
+        runtime: cyber_server::runtime::Runtime,
+        edit: cyber_server::http::MemoryEdit,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<cyber_server::runtime::MemoryChange, cyber_server::http::ApiError>,
+    > {
+        Box::pin(async move {
+            let result = self.inner.memory_edit(runtime, edit).await?;
+            self.reached.notify_one();
+            self.release.notified().await;
+            Ok(result)
+        })
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn acknowledged_memory_retry_is_not_blocked_by_a_delayed_first_response() {
+    let f = Fixture::new(false).await;
+    let reached = std::sync::Arc::new(tokio::sync::Notify::new());
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let mut state = f.app.state.clone();
+    state.services = std::sync::Arc::new(DelayedMemoryReply {
+        inner: state.services.clone(),
+        reached: reached.clone(),
+        release: release.clone(),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/api/v1/memory/global/policy",
+        listener.local_addr().unwrap()
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(state),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let content = text("policy", "Delayed response");
+    let key = "acknowledged-delayed-reply";
+    let first = tokio::spawn(
+        f.client
+            .put(url)
+            .basic_auth("cyber", Some("memory-test"))
+            .header("idempotency-key", key)
+            .json(&json!({"content":content}))
+            .send(),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), reached.notified())
+        .await
+        .unwrap();
+    let replay = f
+        .put("policy", &content)
+        .header("idempotency-key", key)
+        .send()
+        .await
+        .unwrap();
+    let status = replay.status();
+    // Always release the real first response before asserting the regression outcome.
+    release.notify_one();
+    let first = first.await.unwrap().unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    let expected: Value = first.json().await.unwrap();
+    let actual: Value = replay.json().await.unwrap();
+    f.close().await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(actual, expected);
 }

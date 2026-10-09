@@ -194,6 +194,15 @@ export interface Operations {
     body: undefined;
     response: S.Located_Nullable_MemoryRecoveryView;
   };
+  "v1.memory.recoveryRequest": {
+    path: Record<string, never>;
+    query: {
+      scope?: QueryValue;
+      key?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_Nullable_MemoryRecoveryRequestStatus;
+  };
   "v1.message.get": {
     path: { sessionID: string; messageID: string };
     query: Record<string, never>;
@@ -795,6 +804,18 @@ export const operations = {
     path: "/api/v1/memory/recovery/{scope}",
     pathParams: ["scope"],
     query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.recoveryRequest": {
+    tag: "memory",
+    name: "recoveryRequest",
+    method: "GET",
+    path: "/api/v1/memory/recovery/requests",
+    pathParams: [],
+    query: ["scope", "key"],
     body: "none",
     located: true,
     unwrap: false,
@@ -1502,6 +1523,9 @@ export function createGroups(caller: Caller) {
       /** Review matching interrupted memory storage and admission (`GET /api/v1/memory/recovery/{scope}`) */
       recovery: (scope: string, options?: RequestOptions): Promise<Operations["v1.memory.recovery"]["response"]> =>
         caller.call("v1.memory.recovery", { path: { scope } }, options),
+      /** Look up retained recovery request evidence without execution (`GET /api/v1/memory/recovery/requests`) */
+      recoveryRequest: (query?: Operations["v1.memory.recoveryRequest"]["query"], options?: RequestOptions): Promise<Operations["v1.memory.recoveryRequest"]["response"]> =>
+        caller.call("v1.memory.recoveryRequest", { query }, options),
     },
     message: {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */

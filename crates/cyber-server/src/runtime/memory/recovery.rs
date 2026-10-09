@@ -1,6 +1,9 @@
 //! Reviewed evidence grants fresh ownership; persisted nonces never do.
+pub(super) mod requests;
 use super::*;
 use cyber_core::memory::{MemoryRecoveryReview, MemoryScope, MemoryStorageError};
+pub use requests::{MemoryRecoveryIdentity, MemoryRecoveryRequestStatus};
+pub(crate) use requests::{http_identity, receipt, status};
 
 pub(super) const REVIEWED: &str = "memory.mutation.reviewed.1";
 
@@ -22,9 +25,12 @@ struct Reviewed {
     review: MemoryRecoveryAdmission,
     previous_owner_hash: String,
     next_owner_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    http_request: Option<requests::RequestIdentity>,
 }
 
 pub(super) fn register(registry: &mut EventRegistry) {
+    requests::register(registry);
     registry
         .register(REVIEWED)
         .expect("valid memory recovery event");
@@ -89,11 +95,24 @@ pub(crate) fn review(
     })
 }
 
+#[cfg(all(test, unix))]
 fn claim(
     store: Arc<Store>,
     bus: Bus,
     review: &MemoryRecoveryAdmission,
 ) -> Result<MemoryAdmission, StoreError> {
+    claim_with_identity(store, bus, review, None)
+}
+
+fn claim_with_identity(
+    store: Arc<Store>,
+    bus: Bus,
+    review: &MemoryRecoveryAdmission,
+    identity: Option<&MemoryRecoveryIdentity>,
+) -> Result<MemoryAdmission, StoreError> {
+    let http_request = identity
+        .map(requests::RequestIdentity::from_http)
+        .transpose()?;
     let expected = review.clone();
     let key = cyber_core::ids::new_id("mwo");
     let next_owner_hash = hash(&key);
@@ -115,7 +134,11 @@ fn claim(
                 return Err(refusal("Memory database review is stale"));
             }
             if let Some(completed) = current.completed {
-                return Ok((Vec::new(), (request, Some(completed))));
+                let events = match http_request {
+                    Some(identity) => vec![requests::linked_event(expected, identity)],
+                    None => Vec::new(),
+                };
+                return Ok((events, (request, Some(completed))));
             }
             let event = NewEvent::new(
                 REVIEWED,
@@ -123,6 +146,7 @@ fn claim(
                     review: expected,
                     previous_owner_hash: request.owner_hash.clone(),
                     next_owner_hash,
+                    http_request,
                 })
                 .expect("memory review serializes"),
             );
@@ -150,10 +174,33 @@ pub(crate) fn recover(
     storage: &MemoryRecoveryReview,
     admission: &MemoryRecoveryAdmission,
 ) -> Result<MemoryChange, StoreError> {
+    recover_with_identity(store, bus, scope, storage, admission, None)
+}
+
+pub(crate) fn recover_with_identity(
+    store: Arc<Store>,
+    bus: Bus,
+    scope: &mut MemoryScope<'_>,
+    storage: &MemoryRecoveryReview,
+    admission: &MemoryRecoveryAdmission,
+    identity: Option<&MemoryRecoveryIdentity>,
+) -> Result<MemoryChange, StoreError> {
     if scope.path().file_name().and_then(|name| name.to_str())
         != Some(admission.project_id.as_str())
     {
         return Err(refusal("Memory recovery scope does not match admission"));
+    }
+    if let Some(identity) = identity
+        && let Some(change) = receipt(&store, identity)?
+    {
+        if change.id != admission.id
+            || change.directory != admission.directory
+            || change.project_id != admission.project_id
+            || change.receipt != admission.journal.receipt
+        {
+            return Err(refusal("Recovery request does not match admitted mutation"));
+        }
+        return Ok(change);
     }
     let current = scope
         .inspect_recovery()
@@ -165,7 +212,7 @@ pub(crate) fn recover(
     {
         return Err(refusal("Memory storage review is stale or mismatched"));
     }
-    let ownership = claim(store, bus, admission)?;
+    let ownership = claim_with_identity(store, bus, admission, identity)?;
     let mut change = None;
     scope
         .recover_reviewed_with_acknowledgement(&current.fingerprint, |receipt| {
@@ -208,6 +255,9 @@ pub(super) fn project_review(tx: &Transaction<'_>, event: &StoredEvent) -> Resul
         || request.owner_hash == reviewed.next_owner_hash
     {
         return Err("Memory recovery review does not match pending evidence".into());
+    }
+    if let Some(identity) = &reviewed.http_request {
+        requests::project_identity(tx, &request.id, identity).map_err(|e| e.to_string())?;
     }
     request.owner_hash = reviewed.next_owner_hash;
     request.review_seq = Some(event.seq);
@@ -316,6 +366,60 @@ mod tests {
                 &admission
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn keyed_runtime_replay_returns_receipt_without_a_journal_or_duplicate_event() {
+        let f = Fixture::new();
+        let storage = f.prepare();
+        let admission = f.review(&storage);
+        let identity = MemoryRecoveryIdentity {
+            key: "runtime-replay".into(),
+            digest: "b".repeat(64),
+        };
+        let mut live = f.bus.subscribe();
+        let mut scope = f.memory.claim().unwrap();
+        let change = recover_with_identity(
+            f.db.clone(),
+            f.bus.clone(),
+            &mut scope,
+            &storage,
+            &admission,
+            Some(&identity),
+        )
+        .unwrap();
+        live.try_recv().unwrap();
+        assert!(scope.inspect_recovery().unwrap().is_none());
+        assert_eq!(
+            recover_with_identity(
+                f.db.clone(),
+                f.bus.clone(),
+                &mut scope,
+                &storage,
+                &admission,
+                Some(&identity)
+            )
+            .unwrap(),
+            change
+        );
+        let mut foreign = admission.clone();
+        foreign.directory = PathBuf::from("/");
+        assert!(
+            recover_with_identity(
+                f.db.clone(),
+                f.bus.clone(),
+                &mut scope,
+                &storage,
+                &foreign,
+                Some(&identity)
+            )
+            .is_err()
+        );
+        assert!(live.try_recv().is_err());
+        assert_eq!(
+            f.db.read_events(&change.id, -1, 20).unwrap().events.len(),
+            4
         );
     }
 

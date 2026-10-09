@@ -55,7 +55,8 @@ pub use mcp::{
     McpConnectionStatus, McpServerStatus, McpStatusUpdate, mcp_connections,
 };
 pub use memory::{
-    MemoryAdmission, MemoryChange, MemoryRecoveryAdmission, MemoryWrite, MemoryWriteOwner,
+    MemoryAdmission, MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryIdentity,
+    MemoryRecoveryRequestStatus, MemoryWrite, MemoryWriteOwner,
 };
 pub mod deferred_tools;
 mod model;
@@ -460,6 +461,35 @@ impl Runtime {
             scope,
             storage_review,
             admission_review,
+        )
+    }
+
+    pub fn memory_recovery_request_status(
+        &self,
+        key: &str,
+    ) -> Result<Option<MemoryRecoveryRequestStatus>, cyber_store::StoreError> {
+        memory::recovery::status(&self.inner.store, key)
+    }
+    pub fn memory_recovery_http_receipt(
+        &self,
+        identity: &MemoryRecoveryIdentity,
+    ) -> Result<Option<MemoryChange>, cyber_store::StoreError> {
+        memory::recovery::receipt(&self.inner.store, identity)
+    }
+    pub fn recover_memory_write_with_identity(
+        &self,
+        scope: &mut cyber_core::memory::MemoryScope<'_>,
+        storage: &cyber_core::memory::MemoryRecoveryReview,
+        admission: &MemoryRecoveryAdmission,
+        identity: Option<&MemoryRecoveryIdentity>,
+    ) -> Result<MemoryChange, cyber_store::StoreError> {
+        memory::recovery::recover_with_identity(
+            self.inner.store.clone(),
+            self.inner.bus.clone(),
+            scope,
+            storage,
+            admission,
+            identity,
         )
     }
 

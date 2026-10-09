@@ -93,18 +93,14 @@ impl Services for AppServices {
     fn memory_recover(
         &self,
         runtime: cyber_server::runtime::Runtime,
-        directory: PathBuf,
-        scope: cyber_server::http::MemoryScope,
-        review: cyber_server::http::RecoverMemory,
+        confirmation: cyber_server::http::MemoryRecoveryConfirm,
     ) -> BoxFuture<'_, Result<cyber_server::runtime::MemoryChange, cyber_server::http::ApiError>>
     {
         Box::pin(memory::recover(
             self.data.clone(),
             self.config.clone(),
             runtime,
-            directory,
-            scope,
-            review,
+            confirmation,
         ))
     }
 

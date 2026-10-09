@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/memory", get(list))
         .route("/memory/recovery/{scope}", get(recovery).post(recover))
+        .route("/memory/recovery/requests", get(recovery_request))
         .route("/memory/{scope}/{name}", get(read).put(put).delete(delete))
 }
 
@@ -223,10 +224,65 @@ async fn recover(
         body.map_err(|_| ApiError::invalid("Expected storage and admission review fingerprints"))?;
     body.validate()?;
     let directory = location(&parts, &state.options.default_directory)?;
+    let confirmation = MemoryRecoveryConfirm {
+        directory: directory.clone(),
+        scope,
+        review: body,
+        identity: parts
+            .extensions
+            .get::<super::idempotency::MemoryHttpIdentity>()
+            .cloned(),
+    };
     let data = state
         .services
-        .memory_recover(state.runtime.clone(), directory.clone(), scope, body)
+        .memory_recover(state.runtime.clone(), confirmation)
         .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
+}
+
+pub struct MemoryRecoveryConfirm {
+    pub directory: std::path::PathBuf,
+    pub scope: MemoryScope,
+    pub review: RecoverMemory,
+    pub identity: Option<super::idempotency::MemoryHttpIdentity>,
+}
+
+async fn recovery_request(
+    State(state): State<AppState>,
+    parts: Parts,
+) -> Result<Json<Located<Option<crate::runtime::MemoryRecoveryRequestStatus>>>, ApiError> {
+    let query = parts.uri.query().unwrap_or_default();
+    let scope = query_value(query, "scope")
+        .map(|value| MemoryScope::parse(&value))
+        .transpose()?
+        .unwrap_or_default();
+    let key = query_value(query, "key")
+        .ok_or_else(|| ApiError::invalid("Recovery request key is required"))?;
+    if !(1..=128).contains(&key.len()) || !key.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
+        return Err(ApiError::invalid("Invalid recovery request key"));
+    }
+    let directory = location(&parts, &state.options.default_directory)?;
+    let runtime = state.runtime.clone();
+    let data = tokio::task::spawn_blocking(move || runtime.memory_recovery_request_status(&key))
+        .await
+        .map_err(ApiError::unknown)?
+        .map_err(ApiError::unknown)?;
+    let project = match scope {
+        MemoryScope::Global => "global".into(),
+        MemoryScope::Project => cyber_core::project::identify(&directory).id,
+    };
+    if data
+        .as_ref()
+        .is_some_and(|status| status.directory != directory || status.project_id != project)
+    {
+        return Err(ApiError::not_found(
+            "MemoryNotFoundError",
+            "Recovery request not found for this Location",
+        ));
+    }
     Ok(Json(Located {
         location: LocationInfo::of(&directory),
         data,
