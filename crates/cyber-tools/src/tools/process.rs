@@ -143,6 +143,21 @@ impl Process {
         self.child.stderr.take().map(|s| Box::new(s) as ReadStream)
     }
 
+    /// Observe leader exit without consuming Unix process-group identity or Windows jobs.
+    pub fn leader_exited(&mut self) -> io::Result<bool> {
+        #[cfg(unix)]
+        return self.child.id().map_or(Ok(true), exited_without_reaping);
+        #[cfg(windows)]
+        return match &mut self.child {
+            WindowsChild::Ordinary(child) => {
+                child.child_mut().try_wait().map(|status| status.is_some())
+            }
+            WindowsChild::Container(child) => container_exited(child),
+        };
+        #[cfg(not(any(unix, windows)))]
+        self.child.try_wait().map(|status| status.is_some())
+    }
+
     pub async fn wait(&mut self) -> io::Result<ExitStatus> {
         #[cfg(windows)]
         {
@@ -205,6 +220,20 @@ fn exited_without_reaping(pid: u32) -> io::Result<bool> {
     }
 }
 
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn container_exited(child: &cyber_sandbox::windows_streams::PipedChild) -> io::Result<bool> {
+    use std::os::windows::io::{AsHandle, AsRawHandle};
+    use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+    // The borrowed native handle remains owned throughout this zero-duration observation.
+    match unsafe { WaitForSingleObject(child.as_handle().as_raw_handle(), 0) } {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
 impl Drop for Process {
     fn drop(&mut self) {
         self.terminate();
@@ -220,5 +249,41 @@ fn kill_group(pid: Option<u32>) {
     // The process group was created at spawn; the unreaped child retains its identity.
     unsafe {
         libc::killpg(pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn exit_observation_retains_unreaped_process_group_identity() {
+        let mut process = Process::spawn(
+            "/bin/sh",
+            &["-c".into(), "sleep 3600 & exit 0".into()],
+            None,
+            |command| {
+                command.kill_on_drop(true);
+            },
+        )
+        .await
+        .unwrap();
+        let leader = process.child.id().unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !process.leader_exited().unwrap() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(process.child.id(), Some(leader));
+        assert!(process.leader_exited().unwrap());
+        assert_eq!(process.child.id(), Some(leader));
+        process.terminate();
+        tokio::time::timeout(Duration::from_secs(2), process.wait_tree())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

@@ -85,6 +85,11 @@ impl OwnedLocalServer {
     pub fn metadata(&self) -> &Value {
         self.server.metadata()
     }
+    pub async fn disconnected(&mut self) -> Result<bool, McpError> {
+        self.running()?;
+        self.server.disconnected().await
+    }
+
     pub fn unresolved(&self) -> bool {
         self.server.unresolved()
     }

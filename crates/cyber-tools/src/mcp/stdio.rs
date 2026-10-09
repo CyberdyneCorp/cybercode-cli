@@ -55,6 +55,17 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             metadata: None,
         }
     }
+    /// Observe a ready EOF without consuming buffered protocol data or sending requests.
+    pub async fn transport_closed(&mut self) -> Result<bool, McpError> {
+        let peek = self.reader.fill_buf();
+        tokio::pin!(peek);
+        match futures::poll!(peek.as_mut()) {
+            std::task::Poll::Ready(Ok(bytes)) => Ok(bytes.is_empty()),
+            std::task::Poll::Ready(Err(error)) => Err(error.into()),
+            std::task::Poll::Pending => Ok(false),
+        }
+    }
+
     pub fn unresolved(&self) -> bool {
         self.pending.is_some() || (self.initialization_started && !self.initialized)
     }
@@ -314,4 +325,28 @@ pub(super) fn encode(message: &Value) -> Result<Vec<u8>, McpError> {
     serde_json::to_writer(&mut writer, message)
         .map_err(|_| McpError::Protocol("message exceeds 1 MiB"))?;
     Ok(writer.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn passive_probe_preserves_buffered_frames_and_observes_eof() {
+        let (reader, mut peer) = tokio::io::duplex(1024);
+        let mut client = StdioClient::new(reader, tokio::io::sink());
+        assert!(!client.transport_closed().await.unwrap());
+        peer.write_all(b"{\"jsonrpc\":").await.unwrap();
+        assert!(!client.transport_closed().await.unwrap());
+        peer.write_all(b"\"2.0\",\"method\":\"notice\"}\n")
+            .await
+            .unwrap();
+        drop(peer);
+        assert!(!client.transport_closed().await.unwrap());
+        assert_eq!(
+            client.read().await.unwrap(),
+            json!({"jsonrpc":"2.0","method":"notice"})
+        );
+        assert!(client.transport_closed().await.unwrap());
+    }
 }

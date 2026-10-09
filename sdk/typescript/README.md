@@ -196,3 +196,5 @@ tool).
 MCP ownership changes arrive through `client.events.subscribe()` as `mcp.status.changed.1`, with the exported `McpStatusUpdate` payload and an independent connection aggregate. The payload reports committed status, phase and settlement acknowledgement; it does not prove current process liveness. Unknown settlement requires recovery, and private launch details remain in local logs.
 
 `await client.mcp.status()` reads fresh configured state and retained ownership observations without starting servers. It reports disabled/changed definitions and unresolved owners, including removed definitions that still need recovery. A persisted Running record without a retained actor reports failed. Discovery names still require ordinary tool authorization, and connected observations do not replace a fresh process health check.
+
+Idle local connections are monitored for leader exit and ready stdio EOF; observed loss removes discovery and attempts durable native settlement. Reconnect/backoff is still pending. Buffered protocol notifications remain available for later reads, and EOF behind those bytes awaits continuous notification pumping.

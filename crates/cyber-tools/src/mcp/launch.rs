@@ -115,6 +115,10 @@ impl LocalServer {
         &self.resources.scratch.path
     }
 
+    pub async fn disconnected(&mut self) -> Result<bool, McpError> {
+        self.connection.disconnected().await
+    }
+
     pub fn unresolved(&self) -> bool {
         self.connection.unresolved()
     }

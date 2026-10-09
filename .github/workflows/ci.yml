@@ -71,6 +71,11 @@ jobs:
       - name: Native MCP configuration and bounded framed protocol
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority --test mcp_discovery
+      - name: Native MCP passive transport and leader-exit observation
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-tools --lib mcp::stdio::tests
+          cargo test --locked -p cyber-tools --lib tools::process::tests
       - name: Native MCP startup ownership through disposed shutdown
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib mcp::pool::tests

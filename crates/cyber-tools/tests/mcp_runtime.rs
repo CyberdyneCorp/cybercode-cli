@@ -761,3 +761,85 @@ async fn configured_snapshot_tracks_startup_and_fresh_definition_changes() {
     );
     flow.runtime.shutdown().await;
 }
+
+async fn wait_for_idle_loss(flow: &Flow, id: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let records = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
+            let snapshot = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+            if records[0].phase == McpConnectionPhase::Settled
+                && snapshot[0]
+                    .connection
+                    .as_ref()
+                    .is_some_and(|record| record.phase == McpConnectionPhase::Settled)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let records = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
+    assert_eq!(records[0].acknowledged, Some(true));
+    let snapshot = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+    assert_eq!(
+        snapshot[0].status,
+        cyber_server::runtime::McpConnectionStatus::Failed
+    );
+    assert!(snapshot[0].tools.is_empty());
+    assert!(snapshot[0].error.as_ref().unwrap().contains("reconnect"));
+    assert!(
+        flow.f
+            .host
+            .definitions(&turn(flow, id))
+            .iter()
+            .all(|def| !def.spec.name.starts_with("mcp__"))
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+}
+
+#[tokio::test]
+async fn idle_leader_death_removes_discovery_and_settles_without_a_tool_call() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let pid = flow.f.read("spawned").trim().parse::<u32>().unwrap();
+    assert!(
+        std::process::Command::new("/bin/kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    wait_for_idle_loss(&flow, &id).await;
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn idle_stdout_eof_stops_a_still_running_leader_without_an_rpc() {
+    let flow = Flow::new(vec![], false);
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["args"][2] = json!(format!(
+        "{SERVER}\n    if method=='tools/list':\n        os.close(1)\n        while True: time.sleep(1)\n"
+    ));
+    std::fs::write(&path, config.to_string()).unwrap();
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    wait_for_idle_loss(&flow, &id).await;
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn idle_monitor_does_not_keep_a_dropped_host_alive() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let host = Arc::downgrade(&flow.f.host);
+    drop(flow);
+    assert!(host.upgrade().is_none());
+}

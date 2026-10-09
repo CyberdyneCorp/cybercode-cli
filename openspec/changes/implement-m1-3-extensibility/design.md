@@ -119,3 +119,11 @@ Instance SSE serializes `mcp.status.changed.1` with its mcs aggregate and direct
 GET `/mcp` and SDK `mcp.status()` combine fresh trusted configuration with per-entry cached committed observations and unresolved durable owners. The cache observer holds only a weak entry reference, so retaining a native owner cannot create a pool/owner cycle. Snapshot reads never await the serialized RPC/native-owner mutex or start a server. A stale persisted Running record without this runtime's entry reports failed/recovery-required instead of connected; removed unresolved definitions remain visible with configured=false. Disabled, unauthorized, changed and unsupported definitions hide discovery names. Native launch details and credentials never enter the public snapshot.
 
 Connected reports the retained actor's last committed connection observation, not a fresh idle-process health check. Discovery names are not invocation authorization. Idle loss detection, reconfiguration/watchers, withheld definitions, authentication/client-registration lifecycles and reconnect remain open.
+
+### Retained idle local loss monitoring
+
+Each ready local entry owns a retained monitor task that observes idle connections once per second. It uses try_lock on the native owner, so active RPCs keep exclusive protocol ownership. Native leader checks preserve the unreaped Unix leader/group identity; Windows retains the job or borrows the live container handle for zero-duration observation. A passive stdio fill-buffer poll detects ready EOF without consuming buffered data or sending an RPC.
+
+On observed loss, discovery is removed and the existing owner explicitly shuts down process/proxy resources and commits settlement. Successful owners are disposed only afterward; failed settlement retains the object for public close retry. Close cancels and joins both startup and monitor handles by reference, preserving retry ownership after disposal. Monitor loops retain only a weak entry between checks; entry disposal cancels the monitor, avoiding a pool/native-owner cycle.
+
+Buffered notifications remain available for the next protocol read; detecting EOF behind those bytes and continuous notification handling require the future reader pump. Reconnect/backoff remains open and must never replace unknown ownership or replay a prior mutating call.

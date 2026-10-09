@@ -126,6 +126,13 @@
 - **AND** an unresolved persisted owner without a retained runtime actor SHALL report failed/recovery-required even if its last committed phase was Running
 - **AND** unconfigured unresolved owners SHALL remain visible for recovery without exposing private definitions or credentials
 
+#### Scenario: Idle local native loss
+- **WHEN** an idle local server leader exits or its ready stdio endpoint reaches EOF
+- **THEN** the retained runtime monitor SHALL remove discovery without sending a tool call or heartbeat RPC
+- **AND** process-group/job ownership SHALL remain retained until explicit native settlement
+- **AND** acknowledged durable settlement SHALL precede owner disposal, while failed settlement remains retryable
+- **AND** passive inspection SHALL NOT consume buffered protocol frames or overlap an active call
+
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
 

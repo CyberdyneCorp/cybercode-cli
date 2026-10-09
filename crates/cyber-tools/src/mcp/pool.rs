@@ -34,6 +34,7 @@ struct Entry {
     server: tokio::sync::Mutex<Option<OwnedLocalServer>>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     observed: Mutex<Option<McpStatusUpdate>>,
+    monitor: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     startup_finished: AtomicBool,
 }
 
@@ -42,6 +43,7 @@ impl Entry {
         self.cancel.cancel();
         self.clear_published();
         self.join_startup().await;
+        join_retained(&self.monitor).await;
         self.clear_published();
         let mut server = self.server.lock().await;
         if let Some(owner) = server.as_mut() {
@@ -59,13 +61,79 @@ impl Entry {
     }
 
     async fn join_startup(&self) {
-        let mut task = self.task.lock().await;
-        if let Some(handle) = task.as_mut() {
-            // Awaiting by reference keeps ownership available if shutdown is disposed.
-            let _ = handle.await;
-            task.take();
-        }
+        join_retained(&self.task).await;
     }
+}
+
+impl Drop for Entry {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
+async fn join_retained(task: &tokio::sync::Mutex<Option<JoinHandle<()>>>) {
+    let mut task = task.lock().await;
+    if let Some(handle) = task.as_mut() {
+        // Disposal releases the lock while retaining the original task for retry.
+        let _ = handle.await;
+        task.take();
+    }
+}
+
+fn start_monitor(entry: &Arc<Entry>) {
+    let weak = Arc::downgrade(entry);
+    let cancel = entry.cancel.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+            }
+            let Some(entry) = weak.upgrade() else {
+                return;
+            };
+            if check_loss(&entry).await {
+                return;
+            }
+        }
+    });
+    *entry
+        .monitor
+        .try_lock()
+        .expect("MCP monitor not yet published") = Some(task);
+}
+
+async fn check_loss(entry: &Entry) -> bool {
+    let Ok(mut server) = entry.server.try_lock() else {
+        return false;
+    };
+    let Some(owner) = server.as_mut() else {
+        return true;
+    };
+    let lost = match owner.disconnected().await {
+        Ok(lost) => lost,
+        Err(error) => {
+            cyber_core::log::error("mcp", &error.to_string(), json!({"server":entry.name}));
+            true
+        }
+    };
+    if !lost {
+        return false;
+    }
+    entry.cancel.cancel();
+    entry.clear_published();
+    cyber_core::log::error("mcp", "MCP connection lost", json!({"server":entry.name}));
+    match owner.shutdown().await {
+        Ok(_) => {
+            server.take();
+        }
+        Err(error) => cyber_core::log::error(
+            "mcp",
+            &error.diagnostic,
+            json!({"server":entry.name,"acknowledged":error.acknowledged}),
+        ),
+    }
+    true
 }
 
 impl BuiltinHost {
@@ -197,6 +265,7 @@ impl BuiltinHost {
                 server: tokio::sync::Mutex::new(None),
                 task: tokio::sync::Mutex::default(),
                 observed: Mutex::default(),
+                monitor: tokio::sync::Mutex::default(),
                 startup_finished: AtomicBool::new(false),
             });
             let owned = entry.clone();
@@ -253,6 +322,7 @@ impl BuiltinHost {
                             .unwrap_or_else(PoisonError::into_inner) =
                             Some((server.record().id.clone(), server.tools().to_vec()));
                         *owned.server.lock().await = Some(server);
+                        start_monitor(&owned);
                     }
                     Some(Err(error)) => cyber_core::log::error(
                         "mcp",
@@ -533,8 +603,20 @@ fn status_problem(
     if matches!(definition, McpServer::Remote { .. }) {
         return failed("Remote MCP transport is not available");
     }
-    if closing || entry.is_some_and(|entry| entry.cancel.is_cancelled()) {
+    if closing {
         return failed("MCP Location is closing or requires recovery");
+    }
+    if entry.is_some_and(|entry| entry.cancel.is_cancelled()) {
+        return failed(
+            if connection
+                .as_ref()
+                .is_some_and(|record| record.phase == McpConnectionPhase::Settled)
+            {
+                "MCP connection stopped; reopen or reconnect is required"
+            } else {
+                "MCP native settlement requires retry or recovery"
+            },
+        );
     }
     let Some(entry) = entry else {
         return failed(if connection.is_some() {
@@ -597,6 +679,7 @@ mod tests {
             published: Mutex::default(),
             server: tokio::sync::Mutex::default(),
             observed: Mutex::default(),
+            monitor: tokio::sync::Mutex::default(),
             startup_finished: AtomicBool::new(false),
             task: tokio::sync::Mutex::new(Some(tokio::spawn(async move {
                 let _ = blocked.await;

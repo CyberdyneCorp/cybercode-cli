@@ -109,6 +109,16 @@ impl StdioConnection {
         Ok(())
     }
 
+    pub async fn disconnected(&mut self) -> Result<bool, McpError> {
+        if self.process.leader_exited()? {
+            return Ok(true);
+        }
+        match self.client.as_mut() {
+            Some(client) => client.transport_closed().await,
+            None => Ok(true),
+        }
+    }
+
     pub fn unresolved(&self) -> bool {
         self.client.as_ref().is_some_and(StdioClient::unresolved)
     }
