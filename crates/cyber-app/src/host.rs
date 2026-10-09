@@ -185,6 +185,17 @@ impl ToolHost for AppHost {
             .context_observations_for_tools(turn, &self.definitions(turn))
     }
 
+    fn context_observations_owned<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+    ) -> BoxFuture<'a, BTreeMap<String, cyber_server::runtime::ContextObservation>> {
+        Box::pin(async move {
+            self.builtin
+                .context_observations_owned_for_tools(turn, &self.definitions(turn))
+                .await
+        })
+    }
+
     fn shell_owned(
         &self,
         directory: &str,

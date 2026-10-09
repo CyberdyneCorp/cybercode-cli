@@ -394,6 +394,14 @@ pub trait ToolHost: Send + Sync {
             .collect()
     }
 
+    /// Owned asynchronous observation for sources requiring authority or blocking IO.
+    fn context_observations_owned<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+    ) -> BoxFuture<'a, std::collections::BTreeMap<String, super::context::Observed>> {
+        Box::pin(async move { self.context_observations(turn) })
+    }
+
     /// Establish, without side effects, whether a dispatched call took effect.
     /// `directory` is the Session's Location, for resolving relative paths.
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {

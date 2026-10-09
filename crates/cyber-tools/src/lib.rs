@@ -12,6 +12,7 @@ pub mod hook_prompt;
 mod hook_reports;
 mod host;
 pub mod mcp;
+mod memory_context;
 mod parent_permissions;
 pub mod permissions;
 mod reconcile;

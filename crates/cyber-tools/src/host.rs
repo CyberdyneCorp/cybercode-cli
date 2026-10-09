@@ -634,6 +634,16 @@ impl ToolHost for BuiltinHost {
         self.context_observations_for_tools(turn, &self.definitions(turn))
     }
 
+    fn context_observations_owned<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+    ) -> BoxFuture<'a, BTreeMap<String, cyber_server::runtime::ContextObservation>> {
+        Box::pin(async move {
+            self.context_observations_owned_for_tools(turn, &self.definitions(turn))
+                .await
+        })
+    }
+
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         Box::pin(async move {
             if inv.name.starts_with("mcp__") {

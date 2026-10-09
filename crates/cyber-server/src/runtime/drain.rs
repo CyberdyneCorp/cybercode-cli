@@ -348,7 +348,7 @@ impl Inner {
         provider: &str,
     ) -> Result<(), RuntimeError> {
         let mut state = handle.state.lock().await;
-        let observed = self.observe(&state);
+        let observed = self.observe(&state).await;
         let snapshot = context::snapshot(&observed).map_err(RuntimeError::ContextBlocked)?;
         let system_prefix = snapshot
             .get("core/agent")
@@ -371,7 +371,7 @@ impl Inner {
         let Some(epoch) = state.epoch.as_ref().filter(|_| !state.epoch_stale) else {
             return Ok(());
         };
-        let observed = self.observe(&state);
+        let observed = self.observe(&state).await;
         let (snapshot, mut text) = context::reconcile(&epoch.snapshot, &observed);
         if epoch.snapshot.contains_key("core/agent")
             && matches!(observed.get("core/agent"), Some(context::Observed::Absent))
@@ -392,13 +392,13 @@ impl Inner {
     }
 
     /// Built-in sources plus those the tool host contributes.
-    fn observe(
+    async fn observe(
         &self,
         state: &SessionState,
     ) -> std::collections::BTreeMap<String, context::Observed> {
         let mut observed = context::observe(&self.context_inputs(&state.info.directory));
         let turn = turn_context_for(state, false);
-        for (key, value) in self.options.tools.context_observations(&turn) {
+        for (key, value) in self.options.tools.context_observations_owned(&turn).await {
             observed.insert(key, value);
         }
         observed

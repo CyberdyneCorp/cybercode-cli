@@ -5,7 +5,8 @@
   - [ ] Implement private project/global storage with cross-process mutation ownership, atomic/recoverable note/index updates and path/symlink confinement.
   - [x] Add local built-in memory tool operations with scope permissions, disabled/read-only/Plan admission, repeated settings validation, normal hooks, cancellation before mutation and joined blocking storage ownership, managed output budgets and a golden. Native Windows mutation support and complete runtime/client acceptance remain open.
   - [ ] Complete memory tool native acceptance and reviewed unknown-effect reconciliation across platforms.
-  - [ ] Add core/memory baseline and Safe Boundary reconciliation with generation, deduplication and staleness instructions.
+  - [x] Add owned asynchronous core/memory baseline and Safe Boundary observation with bounded project/global index prefixes, canonical scope permissions, ancestor deny/Plan ceilings, generation/deduplication/staleness guidance, typed unavailable/withdrawal behavior and durable immutable-baseline updates. Verify actual two-Session delivery, replay, interrupted preparation and recovery locally.
+  - [ ] Complete memory Context Source native acceptance, memory controls and full canonical scenario validation.
   - [ ] Add CLI/TUI controls, authenticated HTTP operations/events and generated SDK coverage.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.

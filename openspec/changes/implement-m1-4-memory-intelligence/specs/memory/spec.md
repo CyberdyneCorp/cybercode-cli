@@ -76,7 +76,50 @@
 - **WHEN** a caller invokes memory despite disabled settings, or invokes a mutation while generation is disabled or Plan Mode is active
 - **THEN** dispatch SHALL refuse storage effects even if the caller retained an earlier tool definition
 
+#### Scenario: Project fallback retains global scope permissions
+- **WHEN** project memory resolves to the global directory outside Git
+- **THEN** tool dispatch SHALL also require global scope authorization before storage effects
+- **AND** baseline observation SHALL not load the global index through a permitted project alias when global permission is denied or requires approval
+
 #### Scenario: Scope authorization before storage effects
 - **WHEN** a memory operation is denied or its admission is cancelled
 - **THEN** the tool SHALL NOT create memory directories, journals or note files
 - **AND** a started mutation SHALL retain its owner until the actual storage outcome is acknowledged
+
+### Requirement: Automatic memory generation
+(P1) When `memory.generate` is true (default true), the system SHALL instruct the model, through the `core/memory` source, to save durable user preferences, corrections, and non-obvious project facts, and SHALL NOT save content derivable from the repository, git history, or instruction files, or facts that matter only to the current conversation.
+
+#### Scenario: Correction becomes feedback memory
+- **WHEN** the user says "never use mocks for the database in tests" and explains why
+- **THEN** the model may write a `feedback` memory containing the rule, the reason, and when to apply it
+
+### Requirement: Deduplication and updates
+(P1) The system SHALL require the model to check existing memories (by name and description) before writing, update an existing file instead of creating a duplicate when the `name` matches, and delete memories the user identifies as wrong.
+
+#### Scenario: Duplicate name
+- **WHEN** the model writes memory `name: test-db-policy` and that name already exists
+- **THEN** the existing file is updated and no second file is created
+
+### Requirement: Staleness notice
+(P1) The system SHALL present loaded memories as background context reflecting what was true when written, and SHALL instruct the model to verify any file, function, or flag a memory names before recommending it.
+
+#### Scenario: Memory names a removed function
+- **WHEN** a memory references `utils/legacyAuth.ts` which no longer exists
+- **THEN** the model is expected to check the file before relying on it and update or delete the memory
+
+### Requirement: Memory changes during a Session
+(P1) The system SHALL treat memory index changes as Context Source changes reconciled at the next Safe Boundary, so a memory written in one Session reaches other active Sessions of the same project as a mid-conversation system message.
+
+#### Scenario: Two sessions in one project
+- **WHEN** Session A writes a project memory while Session B is active in the same project
+- **THEN** Session B receives the updated index at its next Safe Boundary
+
+#### Scenario: Temporarily unavailable memory index
+- **WHEN** a memory index is unsafe, unreadable, busy or fenced by a pending transaction
+- **THEN** the context observation SHALL be unavailable instead of absent
+- **AND** an initial Epoch SHALL remain retryable while an existing Epoch preserves its previous source
+
+#### Scenario: Memory withdrawal and immutable baseline
+- **WHEN** memory is disabled after a Session has loaded its index
+- **THEN** the next Safe Boundary SHALL record a withdrawal through Context Source reconciliation
+- **AND** the immutable baseline SHALL remain unchanged within its Epoch

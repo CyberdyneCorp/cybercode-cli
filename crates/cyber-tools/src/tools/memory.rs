@@ -56,17 +56,12 @@ impl Tool for Memory {
                 .and_then(Value::as_str)
                 .unwrap_or("project");
             validate_input(&ctx.inv.input, operation)?;
-            ctx.authorize(
-                Request {
-                    action: "memory".into(),
-                    resources: vec![scope.into()],
-                    read_only: !writable,
-                    ..Request::default()
-                },
-                vec![scope.into()],
-                json!({"operation":operation,"scope":scope}),
-            )
-            .await?;
+            authorize_scope(ctx, scope, writable, operation).await?;
+            check_settings(ctx, writable)?;
+            let project = project_id(ctx, scope).await?;
+            if scope != "global" && project == "global" {
+                authorize_scope(ctx, "global", writable, operation).await?;
+            }
             check_settings(ctx, writable)?;
             if ctx.cancel.is_cancelled() {
                 return Err(ToolError::Aborted);
@@ -93,15 +88,6 @@ impl Tool for Memory {
                 let current = MemorySettings::from_config(&resolved, env.as_ref())
                     .map_err(|e| failed(e.to_string()))?;
                 check_enabled(current, writable, mode)?;
-                let scope = input
-                    .get("scope")
-                    .and_then(Value::as_str)
-                    .unwrap_or("project");
-                let project = if scope == "global" {
-                    "global".into()
-                } else {
-                    cyber_core::project::identify(&location).id
-                };
                 if cancel.is_cancelled() {
                     return Err(ToolError::Aborted);
                 }
@@ -111,6 +97,44 @@ impl Tool for Memory {
             .map_err(|_| failed("Memory owner did not acknowledge completion"))?
         })
     }
+}
+
+async fn authorize_scope(
+    ctx: &Ctx<'_>,
+    scope: &str,
+    writable: bool,
+    operation: &str,
+) -> Result<(), ToolError> {
+    ctx.authorize(
+        Request {
+            action: "memory".into(),
+            resources: vec![scope.into()],
+            read_only: !writable,
+            ..Request::default()
+        },
+        vec![scope.into()],
+        json!({"operation":operation,"scope":scope}),
+    )
+    .await
+}
+
+async fn project_id(ctx: &Ctx<'_>, scope: &str) -> Result<String, ToolError> {
+    if ctx.cancel.is_cancelled() {
+        return Err(ToolError::Aborted);
+    }
+    if scope == "global" {
+        return Ok("global".into());
+    }
+    let location = ctx.location.clone();
+    let cancel = ctx.cancel.clone();
+    tokio::task::spawn_blocking(move || {
+        if cancel.is_cancelled() {
+            return Err(ToolError::Aborted);
+        }
+        Ok(cyber_core::project::identify(&location).id)
+    })
+    .await
+    .map_err(|_| failed("Memory identity owner did not acknowledge completion"))?
 }
 
 fn check_settings(ctx: &Ctx<'_>, mutation: bool) -> Result<(), ToolError> {

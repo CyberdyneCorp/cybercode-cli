@@ -367,3 +367,53 @@ async fn tool_refuses_symlinked_scope_without_outside_effects() {
     );
     assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn project_fallback_to_global_cannot_bypass_global_permission_denial() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions":{"memory":{"project":"allow","global":"deny"}}}));
+    let result = f
+        .call(
+            "default",
+            "memory",
+            json!({"operation":"write","content":note("fact")}),
+        )
+        .await;
+    assert!(matches!(result, ToolOutcome::Failed(_)), "{result:?}");
+    assert!(!f.dir.path().join("memory").exists());
+}
+
+#[tokio::test]
+async fn project_fallback_requests_global_authorization_before_storage() {
+    use cyber_server::runtime::{PendingKind, PermissionReply};
+    use support::flow::{Flow, call, text};
+    let flow = Flow::new(
+        vec![
+            call(
+                "remember",
+                "memory",
+                json!({"operation":"write","content":note("fact")}),
+            ),
+            text("done"),
+        ],
+        true,
+    );
+    flow.f
+        .set_config(json!({"permissions":{"memory":{"project":"allow","global":"ask"}}}));
+    let session = flow.session("default").await;
+    flow.prompt(&session, "remember").await;
+    let pending = flow.pending(&session).await;
+    let PendingKind::Permission(ask) = &pending.kind else {
+        panic!("expected global scope authorization")
+    };
+    assert_eq!(ask.resources, vec!["global"]);
+    assert!(!flow.f.dir.path().join("memory").exists());
+    flow.runtime
+        .reply_permission(&pending.id, PermissionReply::Reject { message: None })
+        .await
+        .unwrap();
+    flow.settle(&session).await;
+    assert_eq!(flow.output(&session, "remember").await, "Rejected by user");
+    assert!(!flow.f.dir.path().join("memory").exists());
+}

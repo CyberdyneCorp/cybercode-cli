@@ -187,8 +187,9 @@ async fn unavailable_parent_profile_refuses_child_dispatch() {
         json!({"edit":"allow"}),
     )
     .await;
+    // Keep this regression on dispatch; memory context checks ancestor authority earlier.
     flow.f
-        .set_config(json!({"agents":{"build":{"disabled":true}}}));
+        .set_config(json!({"memory":{"enabled":false},"agents":{"build":{"disabled":true}}}));
     flow.prompt(&child, "write child.txt").await;
     flow.settle(&child).await;
     assert!(!flow.f.repo.join("child.txt").exists());
