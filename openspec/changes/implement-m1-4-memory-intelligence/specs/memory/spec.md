@@ -140,3 +140,17 @@
 - **WHEN** edited content is malformed, contains secrets or changes the requested note identity
 - **THEN** no note/index mutation SHALL be admitted
 - **AND** diagnostics SHALL omit the supplied content while retaining the draft for the user
+
+### Requirement: Memory HTTP API
+(P1) The server SHALL expose `GET /api/v1/memory?scope=project|global`, `GET|PUT|DELETE /api/v1/memory/{scope}/{name}`, and publish `memory.updated` after each change.
+
+#### Scenario: Web client edits a memory
+- **WHEN** a web client sends `PUT /api/v1/memory/project/prefers-small-prs` with new content
+- **THEN** the file and index are updated and `memory.updated` is published
+
+#### Scenario: Authenticated explicit memory review
+- **WHEN** an authenticated user lists or reads project or global memory through HTTP
+- **THEN** the server SHALL use Location routing and the shared bounded directory-bound storage under a scope claim
+- **AND** absent listing SHALL return an empty catalog without creating a memory directory
+- **AND** invalid scope/name, busy or pending storage and unsafe aliases SHALL refuse with tagged errors without echoing note content or automatically recovering transactions
+- **AND** explicit user review SHALL remain available when automatic model memory is disabled

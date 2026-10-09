@@ -120,6 +120,9 @@ jobs:
       - name: Native memory CLI review and mutation admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test memory
+      - name: Native authenticated memory review API
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --test memory
       - name: Native hook configuration validation and trust withholding
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test config hook

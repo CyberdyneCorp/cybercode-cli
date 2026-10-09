@@ -571,22 +571,27 @@ for line in sys.stdin:
 "#;
     f.configure(|config| {
         config["mcp"] =
-            json!({"lower":{"type":"local","command":"/usr/bin/python3","args":["-u","-c",server]}})
+            json!({"lower":{"type":"local","command":"/usr/bin/python3","args":["-u","-c",server],"required":true}})
     });
     let info = f.app.runtime.state(&f.turn.session_id).await.unwrap().info;
     f.host.open_location(&info);
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !f
+    let ready = f
+        .host
+        .wait_for_required_mcp(&info, CancellationToken::new())
+        .await;
+    assert!(
+        ready.is_ok(),
+        "required MCP startup: {ready:?}; status: {:?}",
+        f.app
             .host
+            .mcp_status(std::path::Path::new(&f.turn.directory))
+    );
+    assert!(
+        f.host
             .definitions(&f.turn)
             .iter()
             .any(|def| def.spec.name == "mcp__lower__read")
-        {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
+    );
     assert!(f.host.context_sources(&f.turn)["mcp/instructions"].contains("Lower server guidance"));
     let native = f
         .host

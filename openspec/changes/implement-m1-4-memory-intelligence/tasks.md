@@ -8,7 +8,8 @@
   - [x] Add owned asynchronous core/memory baseline and Safe Boundary observation with bounded project/global index prefixes, canonical scope permissions, ancestor deny/Plan ceilings, generation/deduplication/staleness guidance, typed unavailable/withdrawal behavior and durable immutable-baseline updates. Verify actual two-Session delivery, replay, interrupted preparation and recovery locally.
   - [ ] Complete memory Context Source native acceptance, memory controls and full canonical scenario validation.
   - [x] Add local CLI list/show/path/edit/delete and debug memory without database/model startup. Private editor drafts, retained scope ownership and target/index review fingerprints preserve failed edits; shared journal validation handles commits. Verify real editor processes, malformed/secret drafts, aliases and concurrent edits locally. Native acceptance and draft retention controls remain open.
-  - [ ] Add TUI controls, authenticated HTTP operations/events and generated SDK coverage.
+  - [x] Add authenticated Location-scoped HTTP list/read through the shared bounded storage, safe diagnostics and generated SDK methods. Verify real TCP authentication, scope/project/global fallback, routing precedence, absent scopes, aliases and recovery fencing locally. Native acceptance remains open.
+  - [ ] Add TUI controls, authenticated HTTP mutations/events and complete generated SDK coverage.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.

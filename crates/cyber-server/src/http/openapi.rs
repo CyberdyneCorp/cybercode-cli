@@ -98,6 +98,23 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
             "get",
+            "/memory",
+            "v1.memory.list",
+            "Review memory metadata and invalid notes",
+        )
+        .query(&["scope"])
+        .located()
+        .ok::<Located<cyber_core::memory::MemoryCatalog>>(g),
+        op(
+            "get",
+            "/memory/{scope}/{name}",
+            "v1.memory.get",
+            "Read a memory note",
+        )
+        .located()
+        .ok::<Located<cyber_core::memory::MemoryDocument>>(g),
+        op(
+            "get",
             "/usage",
             "v1.usage.get",
             "Read durable Session subtree usage",

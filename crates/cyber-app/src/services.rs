@@ -1,4 +1,5 @@
 //! Catalog and Location lookups for the HTTP API.
+mod memory;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -73,6 +74,23 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn memory_list(
+        &self,
+        directory: PathBuf,
+        scope: cyber_server::http::MemoryScope,
+    ) -> BoxFuture<'_, Result<cyber_core::memory::MemoryCatalog, cyber_server::http::ApiError>>
+    {
+        Box::pin(memory::list(self.data.clone(), directory, scope))
+    }
+    fn memory_read(
+        &self,
+        directory: PathBuf,
+        scope: cyber_server::http::MemoryScope,
+        name: String,
+    ) -> BoxFuture<'_, Result<cyber_core::memory::MemoryDocument, cyber_server::http::ApiError>>
+    {
+        Box::pin(memory::read(self.data.clone(), directory, scope, name))
+    }
     fn mcp_status(
         &self,
         location: &Path,

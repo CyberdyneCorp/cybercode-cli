@@ -36,6 +36,7 @@ ERROR_TAGS = [
     "InvalidCursorError",
     "InvalidRequestError",
     "MessageNotFoundError",
+    "MemoryNotFoundError",
     "RequestNotFoundError",
     "RewindConflictError",
     "ServiceUnavailableError",

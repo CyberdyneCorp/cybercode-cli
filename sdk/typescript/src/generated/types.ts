@@ -456,6 +456,11 @@ export type InboxRow = {
 
 export type InputStatus = "pending" | "held" | "promoted" | "refused";
 
+export type InvalidMemory = {
+  filename: string;
+  diagnostic: string;
+};
+
 export type Job = {
   id: string;
   session_id: string;
@@ -552,6 +557,18 @@ export type Located_McpClosed = {
 };
 
 /** A Location-scoped response. */
+export type Located_MemoryCatalog = {
+  location: LocationInfo;
+  data: MemoryCatalog;
+};
+
+/** A Location-scoped response. */
+export type Located_MemoryDocument = {
+  location: LocationInfo;
+  data: MemoryDocument;
+};
+
+/** A Location-scoped response. */
 export type Located_Page_SessionRow = {
   location: LocationInfo;
   data: Page_SessionRow;
@@ -601,6 +618,24 @@ export type McpStatusUpdate = {
   /** Public diagnostic; private launch details remain in local logs. */
   error?: string | null;
 };
+
+export type MemoryCatalog = {
+  memories: MemoryMetadata[];
+  invalid: InvalidMemory[];
+};
+
+export type MemoryDocument = {
+  metadata: MemoryMetadata;
+  body: string;
+};
+
+export type MemoryMetadata = {
+  name: string;
+  description: string;
+  type: MemoryType;
+};
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
 
 /** A history entry with the tool calls it made. */
 export type Message = {

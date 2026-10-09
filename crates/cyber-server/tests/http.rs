@@ -3379,3 +3379,16 @@ async fn mcp_close_without_host_capability_is_explicitly_unavailable() {
     assert_eq!(body["_tag"], "ServiceUnavailableError");
     assert_eq!(body["service"], "mcp");
 }
+
+#[tokio::test]
+async fn memory_review_reports_unavailable_in_a_custom_host() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    for path in ["/memory", "/memory/project/policy"] {
+        let (status, value, _) = api.call(Method::GET, path, None, &[]).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(value["_tag"], "ServiceUnavailableError");
+        assert_eq!(value["service"], "memory");
+    }
+    h.runtime.shutdown().await;
+}

@@ -22,6 +22,153 @@
       }
     },
     "schemas": {
+      "Located_MemoryCatalog": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MemoryCatalog"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "LocationInfo": {
+        "type": "object",
+        "properties": {
+          "directory": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectInfo"
+          }
+        },
+        "required": [
+          "directory",
+          "project"
+        ]
+      },
+      "ProjectInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "directory"
+        ]
+      },
+      "MemoryCatalog": {
+        "type": "object",
+        "properties": {
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryMetadata"
+            }
+          },
+          "invalid": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvalidMemory"
+            }
+          }
+        },
+        "required": [
+          "memories",
+          "invalid"
+        ]
+      },
+      "MemoryMetadata": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/MemoryType"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "type"
+        ]
+      },
+      "MemoryType": {
+        "type": "string",
+        "enum": [
+          "user",
+          "feedback",
+          "project",
+          "reference"
+        ]
+      },
+      "InvalidMemory": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "diagnostic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "diagnostic"
+        ]
+      },
+      "Located_MemoryDocument": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MemoryDocument"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "MemoryDocument": {
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "$ref": "#/components/schemas/MemoryMetadata"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "metadata",
+          "body"
+        ]
+      },
       "Data_UsageReport": {
         "type": "object",
         "properties": {
@@ -593,42 +740,6 @@
         },
         "required": [
           "data"
-        ]
-      },
-      "LocationInfo": {
-        "type": "object",
-        "properties": {
-          "directory": {
-            "type": "string"
-          },
-          "workspace": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "project": {
-            "$ref": "#/components/schemas/ProjectInfo"
-          }
-        },
-        "required": [
-          "directory",
-          "project"
-        ]
-      },
-      "ProjectInfo": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "directory": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "directory"
         ]
       },
       "Located_Page_SessionRow": {
@@ -3929,6 +4040,128 @@
     }
   },
   "paths": {
+    "/api/v1/memory": {
+      "get": {
+        "operationId": "v1.memory.list",
+        "summary": "Review memory metadata and invalid notes",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_MemoryCatalog"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memory/{scope}/{name}": {
+      "get": {
+        "operationId": "v1.memory.get",
+        "summary": "Read a memory note",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_MemoryDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/usage": {
       "get": {
         "operationId": "v1.usage.get",

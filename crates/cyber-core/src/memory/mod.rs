@@ -7,6 +7,7 @@ pub use storage::{
 };
 
 use crate::env::EnvSource;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -22,7 +23,7 @@ pub enum MemoryError {
     Secret,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryType {
     User,
@@ -31,7 +32,7 @@ pub enum MemoryType {
     Reference,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryMetadata {
     pub name: String,
     pub description: String,
@@ -51,7 +52,7 @@ impl MemoryMetadata {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryDocument {
     pub metadata: MemoryMetadata,
     pub body: String,

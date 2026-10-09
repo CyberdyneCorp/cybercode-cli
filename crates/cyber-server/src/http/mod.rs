@@ -14,6 +14,7 @@ mod hooks;
 mod idempotency;
 mod jobs;
 mod mcp;
+mod memory;
 pub mod openapi;
 pub mod remote_tools;
 pub mod rpc;
@@ -38,6 +39,7 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
+pub use memory::MemoryScope;
 #[cfg(unix)]
 pub use serve::serve_unix;
 pub use serve::{EmbeddedClient, serve_tcp};
@@ -86,6 +88,21 @@ pub struct AgentInfo {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn memory_list(
+        &self,
+        _directory: PathBuf,
+        _scope: MemoryScope,
+    ) -> BoxFuture<'_, Result<cyber_core::memory::MemoryCatalog, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
+    fn memory_read(
+        &self,
+        _directory: PathBuf,
+        _scope: MemoryScope,
+        _name: String,
+    ) -> BoxFuture<'_, Result<cyber_core::memory::MemoryDocument, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
     fn inspect_child_setup(
         &self,
         parent: String,
@@ -257,6 +274,7 @@ pub fn router(state: AppState) -> Router {
         .merge(jobs::routes())
         .merge(hooks::routes())
         .merge(mcp::routes())
+        .merge(memory::routes())
         .merge(usage::routes())
         .merge(worktrees::routes())
         .merge(events::routes())

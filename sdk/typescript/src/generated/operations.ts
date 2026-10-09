@@ -156,6 +156,20 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_McpServerStatus;
   };
+  "v1.memory.get": {
+    path: { scope: string; name: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_MemoryDocument;
+  };
+  "v1.memory.list": {
+    path: Record<string, never>;
+    query: {
+      scope?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_MemoryCatalog;
+  };
   "v1.message.get": {
     path: { sessionID: string; messageID: string };
     query: Record<string, never>;
@@ -685,6 +699,30 @@ export const operations = {
     path: "/api/v1/mcp",
     pathParams: [],
     query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.get": {
+    tag: "memory",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/memory/{scope}/{name}",
+    pathParams: ["scope", "name"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.list": {
+    tag: "memory",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/memory",
+    pathParams: [],
+    query: ["scope"],
     body: "none",
     located: true,
     unwrap: false,
@@ -1373,6 +1411,14 @@ export function createGroups(caller: Caller) {
       status: (options?: RequestOptions): Promise<Operations["v1.mcp.status"]["response"]> =>
         caller.call("v1.mcp.status", {}, options),
     },
+    memory: {
+      /** Read a memory note (`GET /api/v1/memory/{scope}/{name}`) */
+      get: (scope: string, name: string, options?: RequestOptions): Promise<Operations["v1.memory.get"]["response"]> =>
+        caller.call("v1.memory.get", { path: { scope, name } }, options),
+      /** Review memory metadata and invalid notes (`GET /api/v1/memory`) */
+      list: (query?: Operations["v1.memory.list"]["query"], options?: RequestOptions): Promise<Operations["v1.memory.list"]["response"]> =>
+        caller.call("v1.memory.list", { query }, options),
+    },
     message: {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */
       get: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.message.get"]["response"]> =>
@@ -1556,6 +1602,7 @@ export const errorTags = [
   "InvalidCursorError",
   "InvalidRequestError",
   "MessageNotFoundError",
+  "MemoryNotFoundError",
   "RequestNotFoundError",
   "RewindConflictError",
   "ServiceUnavailableError",
@@ -1601,6 +1648,10 @@ export function isInvalidRequestError(err: unknown): err is TaggedError<"Invalid
 
 export function isMessageNotFoundError(err: unknown): err is TaggedError<"MessageNotFoundError"> {
   return hasTag(err, "MessageNotFoundError");
+}
+
+export function isMemoryNotFoundError(err: unknown): err is TaggedError<"MemoryNotFoundError"> {
+  return hasTag(err, "MemoryNotFoundError");
 }
 
 export function isRequestNotFoundError(err: unknown): err is TaggedError<"RequestNotFoundError"> {

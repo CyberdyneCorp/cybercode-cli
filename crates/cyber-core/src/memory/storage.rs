@@ -3,6 +3,8 @@ mod transaction;
 use super::{IndexSnapshot, MemoryDocument, MemoryError, MemoryMetadata, directory, validate_name};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, DirBuilder, OpenOptions};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::fs::{File, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -54,12 +56,12 @@ impl Drop for MemoryScope<'_> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct InvalidMemory {
     pub filename: String,
     pub diagnostic: String,
 }
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryCatalog {
     pub memories: Vec<MemoryMetadata>,
     pub invalid: Vec<InvalidMemory>,
