@@ -227,3 +227,13 @@
 - **WHEN** the user runs `cyber memory recovery-request --server --key <retained-key>`
 - **THEN** the CLI SHALL report the Location-bound durable receipt or unresolved evidence without replaying a mutation
 - **AND** missing registration, invalid fingerprints and missing confirmation identity SHALL refuse without creating a database, starting a server or acquiring memory storage
+
+#### Scenario: TUI memory review and explicit reconciliation
+- **WHEN** the user opens `/memory` or `/memory global`
+- **THEN** the TUI SHALL list validated note metadata and safe invalid-file diagnostics through the Location-scoped API and allow reading selected notes
+- **AND** deletion SHALL require review of the selected note and a separate explicit confirmation bound to its scope and Location
+- **WHEN** the user inspects a retained recovery journal
+- **THEN** the TUI SHALL display the proposed content, paired fingerprints and completion state before allowing explicit recovery confirmation
+- **AND** confirmed recovery SHALL retain a request key and offer read-only durable receipt lookup after an uncertain response without automatic effect replay
+- **AND** stale generations, changed Location/Session, closed panels and scope changes SHALL prevent applying unrelated responses or confirmations
+- **AND** the embedded client SHALL preserve explicit request headers and return actual response statuses for single raw requests

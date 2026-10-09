@@ -280,6 +280,14 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         Msg::ModeChanged { session_id, result } => {
             return mode_changed(app, refresh, session_id, result);
         }
+        Msg::Memory { request, result } => {
+            if request.session_id == app.session.id
+                && request.directory == app.session.directory
+                && matches!(app.overlay, crate::app::Overlay::Memory)
+            {
+                app.memory.apply(&request, result);
+            }
+        }
         Msg::HookDefinitions {
             session_id,
             directory,
@@ -512,6 +520,51 @@ fn set_title(app: &App) {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    #[test]
+    fn memory_panel_responses_cannot_cross_session_location_or_dismissal() {
+        let mut app = app();
+        let mut refresh = Refresh::default();
+        let request = app.memory.open(crate::memory::Scope::Global, &app.session);
+        app.overlay = crate::app::Overlay::Memory;
+        for foreign in ["session", "location"] {
+            let mut foreign_request = request.clone();
+            if foreign == "session" {
+                foreign_request.session_id = "previous".into();
+            } else {
+                foreign_request.directory = "/previous".into();
+            }
+            apply(
+                &mut app,
+                Ok(Msg::Memory {
+                    request: foreign_request,
+                    result: Err("foreign failure".into()),
+                }),
+                &mut refresh,
+            );
+            assert!(!app.memory.lines().join(" ").contains("foreign failure"));
+        }
+        app.overlay = crate::app::Overlay::None;
+        apply(
+            &mut app,
+            Ok(Msg::Memory {
+                request: request.clone(),
+                result: Err("dismissed failure".into()),
+            }),
+            &mut refresh,
+        );
+        assert!(!app.memory.lines().join(" ").contains("dismissed failure"));
+        app.overlay = crate::app::Overlay::Memory;
+        apply(
+            &mut app,
+            Ok(Msg::Memory {
+                request,
+                result: Err("current failure".into()),
+            }),
+            &mut refresh,
+        );
+        assert!(app.memory.lines().join(" ").contains("current failure"));
+    }
 
     #[test]
     fn hook_definitions_responses_cannot_cross_session_location_or_dismissal() {

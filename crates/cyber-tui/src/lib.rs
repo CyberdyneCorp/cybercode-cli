@@ -8,6 +8,7 @@ mod cost;
 mod fuzzy;
 mod hook_definitions;
 mod hooks;
+mod memory;
 mod model;
 mod perform;
 mod runner;

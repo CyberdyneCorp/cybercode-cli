@@ -944,8 +944,10 @@ name = "cyber-tui"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "cyber-app",
  "cyber-client",
  "cyber-core",
+ "cyber-server",
  "futures",
  "ratatui",
  "serde",

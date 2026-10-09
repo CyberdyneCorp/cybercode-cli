@@ -1805,3 +1805,223 @@ fn hook_definitions_last_run_distinguishes_unknown_and_running_without_raw_io() 
         assert!(!format!("{:?}", app.hook_definitions).contains("private"));
     }
 }
+
+fn open_memory(app: &mut App, global: bool) -> crate::memory::Request {
+    typed(app, if global { "/memory global" } else { "/memory" });
+    memory_request(app.on_key(key(KeyCode::Enter)))
+}
+
+fn memory_panel_catalog() -> (App, crate::memory::Request) {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let request = open_memory(&mut app, true);
+    app.memory.apply(
+        &request,
+        Ok(crate::memory::Data::Catalog(
+            cyber_core::memory::MemoryCatalog {
+                memories: vec![memory_panel_note().metadata],
+                invalid: vec![cyber_core::memory::InvalidMemory {
+                    filename: "bad.md".into(),
+                    diagnostic: "bad\u{1b}[31m".into(),
+                }],
+            },
+        )),
+    );
+    (app, request)
+}
+fn memory_panel_note() -> cyber_core::memory::MemoryDocument {
+    cyber_core::memory::MemoryDocument {
+        metadata: cyber_core::memory::MemoryMetadata {
+            name: "policy".into(),
+            description: "Policy".into(),
+            kind: cyber_core::memory::MemoryType::Reference,
+        },
+        body: "Private fact\n\u{1b}[31m terminal control".into(),
+    }
+}
+
+#[test]
+fn memory_panel_reads_selected_notes_and_sanitizes_control_text() {
+    use crate::memory::{Data, Operation, Scope};
+    let (mut app, request) = memory_panel_catalog();
+    assert_eq!(request.scope, Scope::Global);
+    assert_eq!(request.directory, "/repo");
+    assert!(screen(&app).contains("policy"));
+    assert!(app.on_key(key(KeyCode::Char('d'))).is_empty());
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+    let read = memory_request(app.on_key(key(KeyCode::Enter)));
+    assert!(matches!(read.operation, Operation::Read(_)));
+    app.memory.apply(&read, Ok(Data::Note(memory_panel_note())));
+    assert!(screen(&app).contains("Private fact"));
+    assert!(!app.memory.lines().join("\n").contains('\u{1b}'));
+}
+
+#[test]
+fn memory_panel_deletion_requires_confirmation_and_dismissal_fences_late_responses() {
+    use crate::memory::{Data, Operation};
+    let (mut app, _) = memory_panel_catalog();
+    let read = memory_request(app.on_key(key(KeyCode::Enter)));
+    app.memory.apply(&read, Ok(Data::Note(memory_panel_note())));
+    app.on_key(key(KeyCode::Char('d')));
+    assert!(screen(&app).contains("Delete policy from global memory?"));
+    assert!(app.on_key(key(KeyCode::Char('g'))).is_empty());
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.overlay, Overlay::Memory));
+    app.on_key(key(KeyCode::Char('d')));
+    let delete = memory_request(app.on_key(key(KeyCode::Char('y'))));
+    assert!(
+        matches!(&delete.operation, Operation::Delete { name, key } if name == "policy" && !key.is_empty())
+    );
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+    assert!(app.on_key(key(KeyCode::Char('g'))).is_empty());
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.overlay, Overlay::None));
+    app.memory
+        .apply(&read, Ok(Data::Catalog(Default::default())));
+    assert!(!app.memory.lines().join("\n").contains("Private fact"));
+}
+
+#[test]
+fn memory_scope_refresh_and_location_changes_drop_old_reviews() {
+    use crate::memory::{Data, Scope};
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let original = open_memory(&mut app, false);
+    app.memory
+        .apply(&original, Ok(Data::Catalog(Default::default())));
+    let actions = app.on_key(key(KeyCode::Char('g')));
+    let [Action::Memory(global)] = actions.as_slice() else {
+        panic!("scope")
+    };
+    assert_eq!(global.scope, Scope::Global);
+    app.memory
+        .apply(&original, Ok(Data::Catalog(Default::default())));
+    assert!(screen(&app).contains("Loading"));
+    app.memory.apply(global, Err("Unavailable".into()));
+    assert!(!screen(&app).contains("Loading"));
+    let mut changed = app.session.clone();
+    changed.directory = "/other".into();
+    app.set_session(changed);
+    assert!(matches!(app.overlay, Overlay::None));
+    assert!(!app.memory.lines().join("\n").contains("Unavailable"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_receipts() {
+    use cyber_core::paths::{DatabaseLocation, Paths};
+    use cyber_server::runtime::{MemoryAdmission, MemoryWrite};
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    let paths = Paths {
+        data: directory.join("data"),
+        config: directory.join("config"),
+        state: directory.join("state"),
+        cache: directory.join("cache"),
+        tmp: directory.join("tmp"),
+    };
+    paths.ensure().unwrap();
+    let host = cyber_app::App::build(cyber_app::AppOptions {
+        paths: paths.clone(),
+        home: directory.join("home"),
+        database: DatabaseLocation::File(directory.join("events.db")),
+        default_directory: directory.clone(),
+        sandbox_policy: None,
+        snapshots: false,
+        interactive: true,
+        password: Some("tui-memory-password".into()),
+    })
+    .await
+    .unwrap();
+    let content = "---\nname: policy\ndescription: Policy\ntype: reference\n---\nProposed fact\n";
+    let memory = cyber_core::memory::MemoryStore::open(&paths.data, "global").unwrap();
+    {
+        let mut scope = memory.claim().unwrap();
+        let MemoryAdmission::Owned(mut owner) = host
+            .runtime
+            .admit_memory_write(MemoryWrite {
+                directory: &directory,
+                project_id: "global",
+                name: "policy",
+                deleted: false,
+                identity: Some("tui-review-write"),
+                content,
+                http_hash: None,
+            })
+            .unwrap()
+        else {
+            panic!("owner")
+        };
+        let prepared = scope.prepare_write(content).unwrap();
+        owner
+            .bind_journal(prepared.journal_identity().unwrap())
+            .unwrap();
+        drop(prepared);
+        drop(owner);
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = cyber_client::Client::http(
+        &format!("http://{}", listener.local_addr().unwrap()),
+        Some("tui-memory-password".into()),
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(host.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let mut ui_session = session(false);
+    ui_session.directory = directory.display().to_string();
+    let mut app = App::new(ui_session, Vec::new(), "cyber");
+    let request = open_memory(&mut app, true);
+    apply_memory_response(&mut app, crate::memory::perform(&client, request).await);
+    assert!(screen(&app).contains("Unavailable"));
+    let action = app.on_key(key(KeyCode::Char('v'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    assert!(screen(&app).contains("Proposed fact"));
+    app.on_key(key(KeyCode::Char('c')));
+    assert!(screen(&app).contains("Apply this reviewed recovery?"));
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    assert!(screen(&app).contains("Recovered policy"));
+    let action = app.on_key(key(KeyCode::Char('k'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    assert!(screen(&app).contains("Acknowledged receipt"));
+    let action = app.on_key(key(KeyCode::Char('r'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    let action = app.on_key(key(KeyCode::Enter)).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    assert!(screen(&app).contains("Proposed fact"));
+    app.on_key(key(KeyCode::Char('d')));
+    app.on_key(key(KeyCode::Char('n')));
+    assert!(memory.claim().unwrap().read("policy").is_ok());
+    app.on_key(key(KeyCode::Char('d')));
+    let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    assert!(screen(&app).contains("Deleted policy"));
+    assert!(memory.claim().unwrap().read("policy").is_err());
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    host.runtime.shutdown().await;
+}
+
+fn apply_memory_response(app: &mut App, message: crate::perform::Msg) {
+    let crate::perform::Msg::Memory { request, result } = message else {
+        panic!("memory reply")
+    };
+    app.memory.apply(&request, result);
+}
+
+fn memory_request(actions: Vec<Action>) -> crate::memory::Request {
+    let Action::Memory(request) = actions.into_iter().next().unwrap() else {
+        panic!("memory action")
+    };
+    request
+}
+async fn perform_memory_action(client: &cyber_client::Client, app: &mut App, action: Action) {
+    let message = crate::perform::perform(client, &app.session, action)
+        .await
+        .unwrap();
+    apply_memory_response(app, message);
+}

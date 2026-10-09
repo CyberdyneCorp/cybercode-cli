@@ -156,6 +156,12 @@ jobs:
       - name: Native TUI hook definition and trust review
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tui hook_definitions
+      - name: Native TUI memory review and explicit confirmation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui memory
+      - name: Native embedded raw request identity
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-client --lib embedded_raw
       - name: Native authenticated hook definition catalog
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test server hook_catalog_api

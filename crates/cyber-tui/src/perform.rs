@@ -10,6 +10,10 @@ use crate::model::{Choice, Item, Queued, Request, Session};
 /// Results the runner applies to the App.
 #[derive(Debug, Clone)]
 pub enum Msg {
+    Memory {
+        request: crate::memory::Request,
+        result: Result<crate::memory::Data, String>,
+    },
     AdmissionStarted(crate::admissions::Request),
     AdmissionUpdated {
         stop: bool,
@@ -234,6 +238,7 @@ pub async fn perform_owned(
     let scoped = client.at(&session.directory);
     let client = &scoped;
     match action {
+        Action::Memory(request) => Ok(crate::memory::perform(client, request).await),
         Action::Admission { request, stop } => {
             Ok(crate::admissions::perform(client, request, stop).await)
         }

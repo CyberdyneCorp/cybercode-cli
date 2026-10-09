@@ -40,6 +40,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::Cost => overlays::cost(f, app, area),
         Overlay::HookDefinitions => overlays::hook_definitions(f, app, area),
         Overlay::HookHistory => overlays::hook_history(f, app, area),
+        Overlay::Memory => overlays::memory(f, app, area),
         Overlay::Help => overlays::help(f, app, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),

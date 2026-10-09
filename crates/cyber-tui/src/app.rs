@@ -27,6 +27,7 @@ const LEADER_TIMEOUT_MS: u128 = 2000;
 /// Work for the runner.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
+    Memory(crate::memory::Request),
     Admission {
         request: crate::admissions::Request,
         stop: bool,
@@ -180,6 +181,7 @@ pub enum Overlay {
     Cost,
     HookHistory,
     HookDefinitions,
+    Memory,
     ConfirmBypass,
     ConfirmStopTasks,
 }
@@ -198,6 +200,7 @@ pub struct App {
     pub cost: crate::cost::CostView,
     pub hooks: crate::hooks::View,
     pub hook_definitions: crate::hook_definitions::View,
+    pub memory: crate::memory::View,
     pub(crate) mode_selection: Option<String>,
     pub items: Vec<Item>,
     /// Text streaming in for assistant messages not yet durable.
@@ -232,6 +235,7 @@ impl App {
             cost: Default::default(),
             hooks: Default::default(),
             hook_definitions: Default::default(),
+            memory: Default::default(),
             mode_selection: None,
             items: Vec::new(),
             streaming: BTreeMap::new(),
@@ -258,6 +262,12 @@ impl App {
     }
 
     pub(crate) fn set_session(&mut self, session: Session) {
+        if session.id != self.session.id || session.directory != self.session.directory {
+            self.memory.forget_location();
+            if matches!(self.overlay, Overlay::Memory) {
+                self.overlay = Overlay::None;
+            }
+        }
         if session.id != self.session.id {
             self.cost.invalidate();
             self.hooks.invalidate();
@@ -384,6 +394,21 @@ impl App {
             }
             Overlay::HookHistory => self.hook_history_key(key),
             Overlay::HookDefinitions => self.hook_definitions_key(key),
+            Overlay::Memory => {
+                if key.code == KeyCode::Esc {
+                    if !self.memory.cancel_confirmation() {
+                        self.memory.invalidate();
+                        self.overlay = Overlay::None;
+                    }
+                    Vec::new()
+                } else {
+                    self.memory
+                        .key(key, &self.session)
+                        .map(Action::Memory)
+                        .into_iter()
+                        .collect()
+                }
+            }
             Overlay::Cost => match key.code {
                 KeyCode::Char('r' | 'R') => self.load_cost(),
                 KeyCode::Esc | KeyCode::Enter => {
@@ -738,6 +763,19 @@ impl App {
             .split_once(' ')
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
+            "memory" if args.is_empty() || args == "global" => {
+                self.overlay = Overlay::Memory;
+                let scope = if args == "global" {
+                    crate::memory::Scope::Global
+                } else {
+                    crate::memory::Scope::Project
+                };
+                vec![Action::Memory(self.memory.open(scope, &self.session))]
+            }
+            "memory" => {
+                self.toast("Use /memory or /memory global");
+                Vec::new()
+            }
             "hooks" if args == "history" => {
                 self.overlay = Overlay::HookHistory;
                 self.load_hook_history(None)

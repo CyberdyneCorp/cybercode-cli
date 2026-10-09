@@ -18,7 +18,8 @@
   - [x] Expose authenticated pinned-journal recovery GET/POST with typed SDK, owned lifecycle/settings gates and actual TCP tests.
   - [x] Add durable keyed recovery receipt/status lookup and cache-gap replay with cross-endpoint identity fencing and SDK methods.
   - [x] Add explicit CLI paired review/confirmation and durable receipt lookup through an existing registered server; verify real binary/API effects and refusal without startup.
-  - [ ] Add TUI controls, reviewed memory recovery and complete cross-platform HTTP/SDK acceptance.
+  - [x] Add TUI metadata/note review, explicit deletion and paired recovery with retained request lookup and generation/Location guards.
+  - [ ] Add TUI note editing and complete cross-platform HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.

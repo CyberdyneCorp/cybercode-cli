@@ -304,7 +304,7 @@ impl Client {
             http,
         } = &self.transport
         else {
-            return self.request(method, path, body).await.map(|v| (200, v));
+            return self.raw_embedded(method, path, body, headers).await;
         };
         let m = reqwest::Method::from_bytes(method.as_bytes())
             .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -328,6 +328,36 @@ impl Client {
             .bytes()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?;
+        let value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+        Ok((status, value))
+    }
+
+    async fn raw_embedded(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        headers: &[(String, String)],
+    ) -> Result<(u16, Value), ClientError> {
+        let Transport::Embedded(client) = &self.transport else {
+            unreachable!("embedded transport")
+        };
+        let mut request = self.embedded_request(method, path, body.as_ref(), None)?;
+        for (name, value) in headers {
+            request.headers_mut().insert(
+                axum::http::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|e| ClientError::Transport(e.to_string()))?,
+                axum::http::HeaderValue::from_str(value)
+                    .map_err(|e| ClientError::Transport(e.to_string()))?,
+            );
+        }
+        let response = client.request(request).await;
+        let status = response.status().as_u16();
+        let bytes = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .map_err(|e| ClientError::Transport(e.to_string()))?
+            .to_bytes();
         let value = serde_json::from_slice(&bytes)
             .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
         Ok((status, value))
@@ -446,6 +476,40 @@ mod tests {
             Err(ClientError::Malformed(_))
         ));
         assert!(matches!(decode(500, b""), Err(ClientError::Malformed(_))));
+    }
+
+    #[tokio::test]
+    async fn embedded_raw_preserves_explicit_headers_and_response_status() {
+        let router = axum::Router::new().route(
+            "/api/v1/check",
+            axum::routing::post(|headers: axum::http::HeaderMap| async move {
+                (
+                    axum::http::StatusCode::CONFLICT,
+                    axum::Json(serde_json::json!({
+                        "key": headers.get("idempotency-key").and_then(|v|v.to_str().ok()),
+                        "location": headers.get("x-cyber-directory").and_then(|v|v.to_str().ok()),
+                        "custom": headers.get("x-review").and_then(|v|v.to_str().ok())
+                    })),
+                )
+            }),
+        );
+        let client = Client::embedded(EmbeddedClient::new(router)).at("/repo space");
+        let (status, value) = client
+            .raw(
+                "POST",
+                "/check",
+                Some(serde_json::json!({})),
+                &[
+                    ("idempotency-key".into(), "retained-key".into()),
+                    ("x-review".into(), "pinned".into()),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(status, 409);
+        assert_eq!(value["key"], "retained-key");
+        assert_eq!(value["location"], "/repo%20space");
+        assert_eq!(value["custom"], "pinned");
     }
 
     #[test]

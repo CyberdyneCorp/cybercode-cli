@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 cyber-core.workspace = true
 cyber-client = { path = "../cyber-client" }
+cyber-server = { path = "../cyber-server" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = "0.3"
 ratatui = "0.30"
@@ -19,6 +20,7 @@ tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 unicode-width = "0.2"
 
 [dev-dependencies]
+cyber-app = { path = "../cyber-app" }
 tempfile.workspace = true
 
 [lints]
