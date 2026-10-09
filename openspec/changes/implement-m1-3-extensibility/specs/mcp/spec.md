@@ -205,6 +205,19 @@
 - **AND** requests without valid authentication SHALL cause no MCP shutdown effects
 - **AND** hosts without the close capability SHALL return ServiceUnavailableError
 
+#### Scenario: POSIX graceful Location shutdown
+- **WHEN** an idle connected local server is closed with its Location
+- **THEN** its client IO SHALL close and the owned process group SHALL receive SIGTERM
+- **AND** the unreaped leader identity SHALL remain retained for five seconds before SIGKILL and native acknowledgement
+- **AND** cooperative descendants SHALL have time to finish cleanup even if the leader exits first
+- **AND** stubborn descendants SHALL NOT survive acknowledged close
+
+#### Scenario: Retained grace deadline and concurrent owners
+- **WHEN** a graceful close future is cancelled and retried
+- **THEN** the same native actor SHALL retain its original grace deadline and admission fence
+- **AND** retry SHALL resume the remaining grace period
+- **AND** independent owners SHALL close concurrently without abandoning other owners when one fails
+
 ### Requirement: Non-blocking concurrent startup
 (P0) The system SHALL start all enabled servers concurrently without blocking session start. A server's tools SHALL become available at the next Turn after it connects. The built-in tool `wait_for_mcp` SHALL let the model wait up to 60 s for named servers still connecting.
 

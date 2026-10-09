@@ -18,7 +18,26 @@ use tokio_util::sync::CancellationToken;
 const SERVER: &str = r#"
 import json,sys,pathlib,time,os
 with open('spawned','a') as f: f.write(str(os.getpid())+'\n')
-for line in sys.stdin:
+if pathlib.Path('graceful').exists():
+    import signal
+    def stopped(signum, frame):
+        pathlib.Path('graceful-finished').write_text('SIGTERM cleanup')
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, stopped)
+
+if pathlib.Path('graceful-children').exists():
+    import subprocess
+    subprocess.Popen([sys.executable,'-c',"import signal,pathlib,time,sys; signal.signal(signal.SIGTERM, lambda a,b: (time.sleep(1),pathlib.Path('child-finished').write_text('cleanup'),sys.exit(0))); pathlib.Path('child-ready').write_text('ready'); time.sleep(30)"])
+    subprocess.Popen([sys.executable,'-c',"import signal,pathlib,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); pathlib.Path('stubborn-ready').write_text('ready'); time.sleep(7); pathlib.Path('escaped').write_text('must not survive')"])
+    while not pathlib.Path('child-ready').exists() or not pathlib.Path('stubborn-ready').exists(): time.sleep(.01)
+
+def lines():
+    while True:
+        line=sys.stdin.readline()
+        if line: yield line
+        elif pathlib.Path('graceful').exists(): time.sleep(.01)
+        else: return
+for line in lines():
     request=json.loads(line)
     if 'id' not in request: continue
     method=request['method']
@@ -1998,4 +2017,73 @@ async fn explicit_server_timeout_bounds_runtime_calls_and_settles_native_owner()
             .iter()
             .all(|owner| owner.phase == McpConnectionPhase::Settled)
     );
+}
+
+#[tokio::test]
+async fn location_close_allows_sigterm_cleanup_before_forcing_the_owned_group() {
+    let flow = Flow::new(vec![text("unused")], false);
+    flow.f.write("graceful", "enabled");
+    flow.f.write("graceful-children", "enabled");
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let started = tokio::time::Instant::now();
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    assert!(started.elapsed() >= Duration::from_secs(5));
+    assert_eq!(flow.f.read("graceful-finished"), "SIGTERM cleanup");
+    assert_eq!(flow.f.read("child-finished"), "cleanup");
+    tokio::time::sleep(Duration::from_millis(2250)).await;
+    assert!(!flow.f.repo.join("escaped").exists());
+    assert!(
+        mcp_connections(&flow.f.store, &flow.f.repo)
+            .unwrap()
+            .iter()
+            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn location_close_graces_multiple_servers_concurrently() {
+    let flow = Flow::new(vec![text("unused")], false);
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["other"] = config["mcp"]["shared"].clone();
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while flow
+            .f
+            .host
+            .definitions(&turn(&flow, &id))
+            .iter()
+            .filter(|tool| tool.spec.name.starts_with("mcp__"))
+            .count()
+            != 8
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_secs(8),
+        flow.f.host.close_mcp_location(&flow.f.repo),
+    )
+    .await;
+    // If the observation times out, finish the retained close before asserting.
+    if result.is_err() {
+        flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    }
+    assert!(result.is_ok());
+    result.unwrap().unwrap();
+    assert!(
+        mcp_connections(&flow.f.store, &flow.f.repo)
+            .unwrap()
+            .iter()
+            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+    );
+    flow.runtime.shutdown().await;
 }

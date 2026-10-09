@@ -329,3 +329,9 @@ Run `cyber mcp get <name>` to review one loaded server's definition, provenance,
 An explicit server `timeout` applies to both connection startup and tool-call inactivity. When omitted, connection startup defaults to 30 seconds and calls use `mcp.tool_timeout` (default 300 seconds). `cyber mcp get <name>` reports the resolved `call_timeout_seconds`. Definitions with an explicit timeout require fresh matching approval under these corrected call semantics; definitions with omitted defaults preserve existing approval digests.
 
 Valid progress for the active request resets inactivity. Values must advance, including fractional values; duplicate/regressive progress, foreign tokens, malformed optional fields and messages carrying a request identity do not extend the timer. A timeout leaves remote completion unverified until native ownership settles. Calls are not replayed automatically.
+
+### Graceful local MCP close
+
+Explicit Location close and runtime shutdown withdraw MCP tools before stopping shared servers. On POSIX, client IO closes and the owned group receives SIGTERM. The leader remains unreaped for the full five-second grace period so descendants can finish cleanup after the leader exits. SIGKILL then stops remaining group members, followed by native acknowledgement, local proxy shutdown and durable settlement before scratch/checkout cleanup. Windows uses owned Job Object termination.
+
+Independent servers close concurrently. An interrupted close retains its original grace deadline and Location admission fence; retry resumes that deadline. Unknown ownership or failed settlement remains fenced for recovery. Failed startup, cancelled calls, lost connections and owner disposal retain immediate cleanup, with disposal providing no durable acknowledgement. Remote shutdown and full native platform acceptance remain incomplete.

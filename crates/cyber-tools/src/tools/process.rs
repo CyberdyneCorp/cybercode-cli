@@ -184,6 +184,11 @@ impl Process {
         self.wait().await
     }
 
+    #[cfg(unix)]
+    pub(crate) fn request_graceful_stop(&mut self) -> io::Result<bool> {
+        signal_group(self.child.id(), libc::SIGTERM)
+    }
+
     pub fn terminate(&mut self) {
         #[cfg(windows)]
         match &mut self.child {
@@ -241,14 +246,25 @@ impl Drop for Process {
 }
 
 #[cfg(unix)]
-#[allow(unsafe_code)]
 fn kill_group(pid: Option<u32>) {
-    let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()) else {
-        return;
+    let _ = signal_group(pid, libc::SIGKILL);
+}
+
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn signal_group(pid: Option<u32>, signal: i32) -> io::Result<bool> {
+    let Some(pid) = pid.and_then(|pid| i32::try_from(pid).ok()) else {
+        return Ok(false);
     };
-    // The process group was created at spawn; the unreaped child retains its identity.
-    unsafe {
-        libc::killpg(pid, libc::SIGKILL);
+    // The unreaped child retains the identity of the group created at spawn.
+    if unsafe { libc::killpg(pid, signal) } == 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(false)
+    } else {
+        Err(error)
     }
 }
 

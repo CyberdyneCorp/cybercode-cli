@@ -32,6 +32,8 @@ pub struct StdioConnection {
     process: HookCommandProcess,
     client: Option<StdioClient<ReadStream, WriteStream>>,
     stderr: Option<JoinHandle<std::io::Result<StderrCapture>>>,
+    #[cfg(unix)]
+    grace_deadline: Option<tokio::time::Instant>,
 }
 
 impl StdioConnection {
@@ -91,6 +93,8 @@ impl StdioConnection {
             process,
             client: None,
             stderr: None,
+            #[cfg(unix)]
+            grace_deadline: None,
         };
         if let Err(error) = connection.initialize(timeout, roots).await {
             let (acknowledged, stderr) = connection.shutdown().await;
@@ -207,6 +211,24 @@ impl StdioConnection {
             .ok_or(McpError::Protocol("MCP transport is closed"))?
             .cancel_pending(timeout)
             .await
+    }
+
+    /// Give the retained POSIX process group five seconds after SIGTERM.
+    /// Keep the leader unreaped throughout, including when it exits before descendants.
+    pub async fn shutdown_gracefully(&mut self) -> (bool, StderrCapture) {
+        #[cfg(unix)]
+        {
+            drop(self.client.take());
+            if self.grace_deadline.is_none()
+                && self.process.request_graceful_stop().unwrap_or(false)
+            {
+                self.grace_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(5));
+            }
+            if let Some(deadline) = self.grace_deadline {
+                tokio::time::sleep_until(deadline).await;
+            }
+        }
+        self.shutdown().await
     }
 
     /// Acknowledge native tree termination separately from remote RPC/effect outcomes.
@@ -328,6 +350,28 @@ time.sleep(30)
         assert!(matches!(error.error, McpError::Protocol(_)));
         assert!(error.acknowledged);
         assert_eq!(error.stderr.bytes, b"fixture initialization rejected");
+    }
+
+    #[tokio::test]
+    async fn interrupted_graceful_shutdown_retains_the_original_deadline_and_owner() {
+        let mut connection = connect().await;
+        for _ in 0..2 {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), connection.shutdown_gracefully())
+                    .await
+                    .is_err()
+            );
+            assert!(connection.grace_deadline.is_some());
+        }
+        let deadline = connection.grace_deadline.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), connection.shutdown_gracefully())
+                .await
+                .is_err()
+        );
+        assert_eq!(connection.grace_deadline, Some(deadline));
+        // Explicit immediate cleanup still consumes native termination proof.
+        assert!(connection.shutdown().await.0);
     }
 
     #[tokio::test]

@@ -140,8 +140,25 @@ impl OwnedLocalServer {
     pub async fn shutdown(
         &mut self,
     ) -> Result<(McpConnectionRecord, StderrCapture), LocalLaunchError> {
+        self.shutdown_mode(false).await
+    }
+
+    pub async fn shutdown_gracefully(
+        &mut self,
+    ) -> Result<(McpConnectionRecord, StderrCapture), LocalLaunchError> {
+        self.shutdown_mode(true).await
+    }
+
+    async fn shutdown_mode(
+        &mut self,
+        graceful: bool,
+    ) -> Result<(McpConnectionRecord, StderrCapture), LocalLaunchError> {
         self.closing = true;
-        let (acknowledged, stderr) = self.server.shutdown().await;
+        let (acknowledged, stderr) = if graceful {
+            self.server.shutdown_gracefully().await
+        } else {
+            self.server.shutdown().await
+        };
         if !acknowledged {
             let _ = self
                 .owner

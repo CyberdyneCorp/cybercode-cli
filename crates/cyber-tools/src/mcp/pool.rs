@@ -84,7 +84,10 @@ impl Entry {
         self.clear_published();
         let mut server = self.server.lock().await;
         if let Some(owner) = server.as_mut() {
-            owner.shutdown().await.map_err(|error| error.diagnostic)?;
+            owner
+                .shutdown_gracefully()
+                .await
+                .map_err(|error| error.diagnostic)?;
             server.take();
         }
         Ok(())
@@ -673,12 +676,15 @@ impl BuiltinHost {
         for (_, entry) in &entries {
             entry.cancel.cancel();
         }
-        let mut failures = Vec::new();
-        for (_, entry) in &entries {
-            if let Err(error) = entry.stop().await {
-                failures.push(format!("{}: {error}", entry.name));
-            }
-        }
+        let results =
+            futures::future::join_all(entries.iter().map(|(_, entry)| entry.stop())).await;
+        let failures: Vec<_> = entries
+            .iter()
+            .zip(results)
+            .filter_map(|((_, entry), result)| {
+                result.err().map(|error| format!("{}: {error}", entry.name))
+            })
+            .collect();
         if !failures.is_empty() {
             return Err(failures.join("; "));
         }
@@ -715,8 +721,9 @@ impl BuiltinHost {
         for entry in &entries {
             entry.cancel.cancel();
         }
-        for entry in entries {
-            if let Err(error) = entry.stop().await {
+        let results = futures::future::join_all(entries.iter().map(|entry| entry.stop())).await;
+        for (entry, result) in entries.iter().zip(results) {
+            if let Err(error) = result {
                 cyber_core::log::error("mcp", &error, json!({"server":entry.name}));
             }
         }

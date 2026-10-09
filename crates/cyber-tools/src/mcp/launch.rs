@@ -163,7 +163,19 @@ impl LocalServer {
 
     /// Cleanup is authorized only after both the native tree and local proxy settle.
     pub async fn shutdown(&mut self) -> (bool, StderrCapture) {
-        let (native, stderr) = self.connection.shutdown().await;
+        self.shutdown_mode(false).await
+    }
+
+    pub async fn shutdown_gracefully(&mut self) -> (bool, StderrCapture) {
+        self.shutdown_mode(true).await
+    }
+
+    async fn shutdown_mode(&mut self, graceful: bool) -> (bool, StderrCapture) {
+        let (native, stderr) = if graceful {
+            self.connection.shutdown_gracefully().await
+        } else {
+            self.connection.shutdown().await
+        };
         let proxy = self.resources.stop_proxy().await;
         let acknowledged = native && proxy;
         self.shutdown_acknowledged = acknowledged;
