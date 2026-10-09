@@ -323,3 +323,15 @@ fn directory_entry_budget_counts_non_memory_entries_as_well() {
             .contains("too many entries")
     );
 }
+
+#[cfg(not(unix))]
+#[test]
+fn mutation_admission_refuses_until_platform_privacy_and_durability_are_integrated() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    assert!(scope.write(&note("rule")).is_err());
+    assert!(scope.delete("rule").is_err());
+    assert!(scope.recover().is_err());
+    assert!(!store.path().join(".memory-transaction").exists());
+}

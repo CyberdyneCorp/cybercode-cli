@@ -38,6 +38,22 @@
 - **THEN** the system SHALL refuse the read without following the alias or removing recovery evidence
 - **AND** baseline index reads SHALL preserve the UTF-8 200-line/25,000-byte prefix without loading individual note bodies
 
+#### Scenario: Interrupted note and index mutation
+- **WHEN** the storage owner exits after preparing or partially installing a note/index mutation
+- **THEN** ordinary reads SHALL remain fenced by retained transaction evidence
+- **AND** explicit recovery under exclusive scope ownership SHALL finish only fingerprint-matched effects without adopting the previous execution owner
+- **AND** the acknowledged result SHALL have matching note and generated index content
+
+#### Scenario: User edits conflict with recovery
+- **WHEN** a target, index, other valid note or archived original changes after preparation
+- **THEN** recovery SHALL preserve the changed files and transaction evidence and refuse acknowledgement
+- **AND** create-only installation SHALL refuse an unexpected destination instead of overwriting it
+
+#### Scenario: Interrupted staging link
+- **WHEN** interruption leaves an exact two-link staged/destination pair with the expected inode and content
+- **THEN** recovery SHALL remove only its staging alias before completing the mutation
+- **AND** an additional external hard-link alias SHALL cause refusal without deleting the alias
+
 ### Requirement: Memory toggles
 (P1) The system SHALL honor `memory.enabled` (default true; when false, no memory is loaded and the tool is not offered) and `memory.generate` (when false, memory is loaded read-only and `write`, `update`, and `delete` are not offered), exposed through `/memory on|off|readonly` and the `CYBER_DISABLE_MEMORY` environment variable.
 

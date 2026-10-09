@@ -1,7 +1,10 @@
 //! Validated memory documents and index snapshots; storage authority is separate.
 mod secrets;
 mod storage;
-pub use storage::{InvalidMemory, MemoryCatalog, MemoryScope, MemoryStorageError, MemoryStore};
+pub use storage::{
+    InvalidMemory, MemoryCatalog, MemoryMutation, MemoryScope, MemoryStorageError, MemoryStore,
+    PreparedMemory,
+};
 
 use crate::env::EnvSource;
 use serde::{Deserialize, Serialize};
@@ -34,6 +37,18 @@ pub struct MemoryMetadata {
     pub description: String,
     #[serde(rename = "type")]
     pub kind: MemoryType,
+}
+
+impl MemoryMetadata {
+    pub fn validate(&self) -> Result<(), MemoryError> {
+        validate_name(&self.name)?;
+        if self.description.trim().is_empty() || self.description.contains(['\n', '\r']) {
+            return Err(MemoryError::Invalid(
+                "description must be one nonempty line",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,12 +94,7 @@ impl MemoryDocument {
     }
 
     pub fn new(metadata: MemoryMetadata, body: String) -> Result<Self, MemoryError> {
-        validate_name(&metadata.name)?;
-        if metadata.description.trim().is_empty() || metadata.description.contains(['\n', '\r']) {
-            return Err(MemoryError::Invalid(
-                "description must be one nonempty line",
-            ));
-        }
+        metadata.validate()?;
         if body.trim().is_empty() {
             return Err(MemoryError::Invalid("body must be nonempty"));
         }
@@ -129,10 +139,19 @@ fn split_frontmatter(rest: &str) -> Option<(&str, &str)> {
 pub fn render_index<'a>(
     documents: impl IntoIterator<Item = &'a MemoryDocument>,
 ) -> Result<String, MemoryError> {
+    let documents: Vec<_> = documents.into_iter().collect();
+    for document in &documents {
+        MemoryDocument::new(document.metadata.clone(), document.body.clone())?;
+    }
+    render_metadata_index(documents.into_iter().map(|document| &document.metadata))
+}
+
+pub fn render_metadata_index<'a>(
+    metadata: impl IntoIterator<Item = &'a MemoryMetadata>,
+) -> Result<String, MemoryError> {
     let mut rows = BTreeMap::new();
-    for document in documents {
-        let metadata = &document.metadata;
-        MemoryDocument::new(metadata.clone(), document.body.clone())?;
+    for metadata in metadata {
+        metadata.validate()?;
         if rows.insert(metadata.name.as_str(), metadata).is_some() {
             return Err(MemoryError::Invalid("duplicate memory name"));
         }

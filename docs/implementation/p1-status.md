@@ -1541,3 +1541,13 @@ The native connection retains the original grace deadline across close-future di
 Local validation passes 172 distinct Rust cases across shared tools, actual runtime/launch, retained deadline/disposal, application host and authenticated MCP APIs. All 58 strict OpenSpec items, generated SDK consistency and formatting pass; cross-spec lint reports zero errors and 21 warnings. New POSIX graceful tests await native CI; Windows Job termination retains its existing native gate. Complete MCP and M1.3 acceptance remain open.
 
 Workspace all-target Clippy with warnings denied also passes for this revision.
+
+## M1.4 journaled Unix memory mutations (2026-10-09)
+
+Exclusive memory scope owners now prepare bounded note/index writes, updates and deletes in a private synced journal. Commit and explicit recovery verify before/after fingerprints and other valid notes, preflight both destinations before effects and use create-only installation. Exact same-inode two-link staging pairs can be normalized; third aliases, corrupt manifests and changed content retain evidence and refuse acknowledgement. Original note/index inodes remain named in private history, preserving late editor writes. Pending journals fence ordinary reads. Disposal does not imply rollback or successful completion, and process-death recovery acquires fresh scope ownership.
+
+Local macOS validation passes 110 Rust cases across core units, configuration, paths, memory documents, storage and mutation tests, including abrupt owner death, partial installation, user edits, corrupt evidence and alias refusal. Windows mutation admission remains explicitly refused until ACL privacy and durability are implemented. Reviewed conflict-resolution controls, history retention, memory tools/context/client integration and full native acceptance remain required; no canonical memory requirement or P1 milestone is accepted.
+
+Linux CI at 5b2ef2c failed eleven storage tests because capability directory handles use O_PATH, which rejects fchmod. The new mutation sync path would also reject fsync on that descriptor. Both operations now use a readable directory handle opened relative to retained authority. The added regression verifies the original directory remains authoritative after namespace replacement. The correction passes locally; native Linux acceptance is pending the next CI run.
+
+Workspace all-target Clippy with warnings denied, formatting, generated SDK consistency and all 59 strict OpenSpec items pass for this increment. Cross-spec lint reports zero errors and 21 warnings.

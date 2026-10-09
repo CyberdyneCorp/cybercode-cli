@@ -1,10 +1,12 @@
 //! Directory-bound memory reads and exclusive per-scope ownership.
+mod transaction;
 use super::{IndexSnapshot, MemoryDocument, MemoryError, MemoryMetadata, directory, validate_name};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, DirBuilder, OpenOptions};
 use std::fs::{File, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+pub use transaction::{MemoryMutation, PreparedMemory};
 
 const NOTE_LIMIT: u64 = 1_048_576;
 const ENTRY_LIMIT: usize = 4096;
@@ -24,6 +26,8 @@ pub enum MemoryStorageError {
     Unsafe(&'static str),
     #[error("Memory not found")]
     NotFound,
+    #[error("Memory changed during mutation; transaction evidence retained")]
+    Conflict,
     #[error("Memory file exceeds 1 MiB")]
     TooLarge,
 }
@@ -135,6 +139,10 @@ impl MemoryScope<'_> {
 
     pub fn read(&self, name: &str) -> Result<MemoryDocument, MemoryStorageError> {
         self.ready()?;
+        self.read_unchecked(name)
+    }
+
+    fn read_unchecked(&self, name: &str) -> Result<MemoryDocument, MemoryStorageError> {
         validate_name(name)?;
         let bytes = self.read_file(&format!("{name}.md"), NOTE_LIMIT)?;
         let text = std::str::from_utf8(&bytes)
@@ -150,6 +158,12 @@ impl MemoryScope<'_> {
 
     pub fn list(&self) -> Result<MemoryCatalog, MemoryStorageError> {
         self.ready()?;
+        let catalog = self.catalog_unchecked()?;
+        self.ready()?;
+        Ok(catalog)
+    }
+
+    fn catalog_unchecked(&self) -> Result<MemoryCatalog, MemoryStorageError> {
         let mut catalog = MemoryCatalog::default();
         let mut captured = 0usize;
         for (index, entry) in self.store.dir.entries()?.enumerate() {
@@ -163,7 +177,7 @@ impl MemoryScope<'_> {
                 continue;
             }
             let name = filename.strip_suffix(".md").expect("checked memory suffix");
-            match self.read(name) {
+            match self.read_unchecked(name) {
                 Ok(document) => {
                     captured += document.metadata.name.len() + document.metadata.description.len();
                     if captured > 4 * 1_048_576 {
@@ -271,9 +285,7 @@ fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        dir.try_clone()?
-            .into_std_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o700))?;
+        directory_file(&dir)?.set_permissions(std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(dir)
 }
@@ -351,4 +363,60 @@ fn verify_private_directory(dir: &Dir) -> Result<(), MemoryStorageError> {
     #[cfg(not(unix))]
     let _ = dir;
     Ok(())
+}
+
+#[cfg(unix)]
+fn directory_file(dir: &Dir) -> Result<File, MemoryStorageError> {
+    use cap_fs_ext::OpenOptionsMaybeDirExt;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .maybe_dir(true)
+        .follow(FollowSymlinks::No);
+    let file = dir.open_with(".", &options)?.into_std();
+    if !file.metadata()?.is_dir() {
+        return Err(MemoryStorageError::Unsafe("expected a directory handle"));
+    }
+    Ok(file)
+}
+
+#[cfg(all(test, unix))]
+mod directory_handle_tests {
+    use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn readable_handle_supports_chmod_and_sync_on_the_retained_directory_after_namespace_changes() {
+        let data = tempfile::tempdir().unwrap();
+        let original = data.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        let dir = Dir::open_ambient_dir(&original, cap_std::ambient_authority()).unwrap();
+        let identity = dir.try_clone().unwrap().into_std_file().metadata().unwrap();
+        std::fs::rename(&original, data.path().join("moved")).unwrap();
+        std::fs::create_dir(&original).unwrap();
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = directory_file(&dir).unwrap();
+        assert_eq!(
+            (
+                file.metadata().unwrap().dev(),
+                file.metadata().unwrap().ino()
+            ),
+            (identity.dev(), identity.ino())
+        );
+        file.set_permissions(std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        file.sync_all().unwrap();
+        assert_eq!(
+            std::fs::metadata(&original).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::metadata(data.path().join("moved"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+    }
 }
