@@ -10,6 +10,7 @@ pub mod hook_http;
 pub mod hook_prompt;
 mod hook_reports;
 mod host;
+pub mod mcp;
 mod parent_permissions;
 pub mod permissions;
 mod reconcile;

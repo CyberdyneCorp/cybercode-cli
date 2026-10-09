@@ -8,6 +8,7 @@ mod gate;
 mod hooks;
 mod jsonc;
 mod load;
+mod mcp;
 mod merge;
 mod subst;
 mod validate;
@@ -30,6 +31,7 @@ pub use load::{
     LoadRequest, RawHookSection, ensure_global_config, load, project_root, trust_report,
     withheld_hook_sections,
 };
+pub use mcp::{McpServer, McpSettings, McpToolFilter};
 pub use validate::redact_secrets;
 
 /// Published JSON Schema URL written into new config documents.

@@ -1,5 +1,26 @@
 ## MODIFIED Requirements
 
+### Requirement: MCP tool handlers
+(P1) An `mcp_tool` handler SHALL call `tool` on the configured MCP `server` with the event JSON as `input` (or the handler's `arguments` template with `${field}` substitution) and SHALL parse a JSON object in the result's text content as a decision.
+
+#### Scenario: Audit via MCP
+- **WHEN** a `PostToolUse` handler is `{ "type": "mcp_tool", "server": "audit", "tool": "record" }`
+- **THEN** the `audit` server's `record` tool is called with the event payload after each tool call
+
+#### Scenario: Typed templates and unambiguous textual policy
+- **WHEN** an MCP handler arguments template references protected event fields
+- **THEN** exact placeholders SHALL preserve JSON types and embedded placeholders SHALL become text
+- **AND** missing fields or a nonobject argument result SHALL be refused before the call
+- **AND** failed, missing, oversized or ambiguous text decision objects SHALL NOT authorize the guarded action
+
+#### Scenario: Framed MCP requests retain unresolved authority
+- **WHEN** a framed MCP request times out, is disposed or has invalid/partial framing
+- **THEN** pending identity SHALL remain unresolved and another request SHALL NOT borrow its execution
+- **AND** explicit cancellation SHALL reference only a sent pending non-initialize request without claiming remote/native acknowledgement
+- **AND** incoming/outgoing RPC messages SHALL remain bounded to 1 MiB
+- **AND** only matching numeric progress SHALL extend request inactivity
+- **AND** callbacks not advertised by the client SHALL NOT execute
+
 ### Requirement: Prompt handlers
 (P1) A `prompt` handler SHALL ask the `model_roles.evaluator` model (falling back to `small_model`) to judge the event using the handler's `prompt` text plus the event JSON. The judgement SHALL be returned as structured output `{ decision: allow|deny|ask, reason }`. Prompt handlers SHALL have no tools and SHALL count toward session cost.
 

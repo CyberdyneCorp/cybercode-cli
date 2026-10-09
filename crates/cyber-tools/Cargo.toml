@@ -41,7 +41,7 @@ tree-sitter-powershell = "0.26.4"
 [dev-dependencies]
 cyber-snapshot = { path = "../cyber-snapshot" }
 tempfile.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "sync", "fs", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "sync", "fs", "macros", "net", "test-util"] }
 
 [lints]
 workspace = true

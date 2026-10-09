@@ -112,6 +112,9 @@ pub fn validate(
         issues.push(error);
     }
     issues.extend(crate::budget::validate_config(value));
+    if let Err(error) = super::McpSettings::from_config(value) {
+        issues.push(error);
+    }
     if let Err(error) = super::HookSettings::from_config(value) {
         issues.push(error);
     }
