@@ -25,6 +25,8 @@ struct TrustFile {
     approvals: Vec<Approval>,
     #[serde(default)]
     hook_approvals: Vec<Approval>,
+    #[serde(default)]
+    mcp_approvals: Vec<Approval>,
 }
 
 /// Explicitly reviewed handler digests for one invocation; never persisted.
@@ -102,10 +104,14 @@ impl TrustStore {
     pub fn revoke(&self, root: &Path) -> io::Result<bool> {
         let key = root.to_string_lossy();
         self.update(|file| {
-            let before = file.approvals.len() + file.hook_approvals.len();
+            let before =
+                file.approvals.len() + file.hook_approvals.len() + file.mcp_approvals.len();
             file.approvals.retain(|a| a.checkout_root != key);
             file.hook_approvals.retain(|a| a.checkout_root != key);
-            let removed = file.approvals.len() + file.hook_approvals.len() != before;
+            file.mcp_approvals.retain(|a| a.checkout_root != key);
+            let removed =
+                file.approvals.len() + file.hook_approvals.len() + file.mcp_approvals.len()
+                    != before;
             (removed, removed)
         })
     }
@@ -148,6 +154,43 @@ impl TrustStore {
         })
     }
 
+    pub fn is_mcp_approved(&self, root: &Path, digest: &str) -> io::Result<bool> {
+        validate_mcp_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        Ok(self
+            .load()?
+            .mcp_approvals
+            .iter()
+            .any(|a| a.checkout_root == key && a.digest == digest))
+    }
+
+    pub fn approve_mcp(&self, root: &Path, digest: &str) -> io::Result<()> {
+        validate_mcp_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        self.update(|file| {
+            file.mcp_approvals
+                .retain(|a| a.checkout_root != key || a.digest != digest);
+            file.mcp_approvals.push(Approval {
+                checkout_root: key,
+                digest: digest.into(),
+                approved_at: unix_seconds(),
+            });
+            ((), true)
+        })
+    }
+
+    pub fn revoke_mcp(&self, root: &Path, digest: &str) -> io::Result<bool> {
+        validate_mcp_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        self.update(|file| {
+            let before = file.mcp_approvals.len();
+            file.mcp_approvals
+                .retain(|a| a.checkout_root != key || a.digest != digest);
+            let removed = file.mcp_approvals.len() != before;
+            (removed, removed)
+        })
+    }
+
     fn update<T>(&self, change: impl FnOnce(&mut TrustFile) -> (T, bool)) -> io::Result<T> {
         let lock_path = self.path.with_extension("lock");
         if let Some(parent) = lock_path.parent() {
@@ -178,6 +221,7 @@ impl TrustStore {
                 version: 1,
                 approvals: Vec::new(),
                 hook_approvals: Vec::new(),
+                mcp_approvals: Vec::new(),
             }),
             Err(e) => Err(e),
         }
@@ -202,6 +246,11 @@ fn validate_hook_digest(digest: &str) -> io::Result<()> {
         io::ErrorKind::InvalidInput,
         "Invalid hook SHA-256 digest",
     ))
+}
+
+fn validate_mcp_digest(digest: &str) -> io::Result<()> {
+    validate_hook_digest(digest)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid MCP SHA-256 digest"))
 }
 
 /// Write via a temporary file and rename, with mode 0600 on Unix.

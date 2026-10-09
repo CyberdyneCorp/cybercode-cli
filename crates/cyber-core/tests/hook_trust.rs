@@ -133,6 +133,7 @@ fn concurrent_processes_preserve_workspace_and_handler_approvals() {
             let hash =
                 digest(json!({"type":"command","command":format!("writer {index} item {item}")}));
             assert!(store.is_hook_approved(&root, &hash).unwrap());
+            assert!(store.is_mcp_approved(&root, &hash).unwrap());
         }
     }
 }
@@ -153,6 +154,7 @@ fn trust_writer_child() {
         let hash =
             digest(json!({"type":"command","command":format!("writer {index} item {item}")}));
         store.approve_hook(&root, &hash).unwrap();
+        store.approve_mcp(&root, &hash).unwrap();
     }
 }
 

@@ -74,6 +74,15 @@ impl McpToolFilter {
     }
 }
 impl McpServer {
+    /// Bind approval to the server name and every effective field, including defaults.
+    pub fn digest(&self, name: &str) -> Result<String, serde_json::Error> {
+        use sha2::{Digest, Sha256};
+        let definition = serde_json::json!({"kind":"mcp_server","name":name,"server":self});
+        Ok(format!(
+            "sha256:{:x}",
+            Sha256::digest(super::canonical_json(&definition))
+        ))
+    }
     pub fn enabled(&self) -> bool {
         match self {
             Self::Local { enabled, .. } | Self::Remote { enabled, .. } => *enabled,

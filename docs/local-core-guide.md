@@ -279,3 +279,5 @@ Synchronous prompt handlers use `model_roles.evaluator` with `small_model` fallb
 
 
 MCP definitions in `mcp` now validate typed local `{type:"local",command,args?,env?,cwd?,enabled?,timeout?,tools?}` and remote `{type:"remote",url,headers?,oauth?,enabled?,timeout?,tools?}` settings after workspace trust and substitution. Connection timeout defaults to 30 seconds; `mcp.tool_timeout` defaults to 300 seconds. Tool deny globs take precedence over allow globs. These settings and an internal framed protocol client are foundations: configured servers are not yet started, MCP tools are not yet registered, and `mcp_tool` hooks still report incomplete transport. Process/HTTP ownership, discovery/lifecycle, OAuth and deferred tool search remain open.
+
+MCP launch authorization now checks all contributing field origins and separate per-server approval of the effective definition, keyed by checkout. Workspace/hook approvals do not grant server approval, and a project override of global arguments remains project-controlled. These internal authorization checks are not yet connected to server startup or a user-facing server approval command.

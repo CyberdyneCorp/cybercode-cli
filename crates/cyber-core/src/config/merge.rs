@@ -14,9 +14,25 @@ pub fn merge_layer(base: &mut Value, overlay: &Value, source: &str, sources: &mu
 }
 
 pub fn merge_profile(base: &mut Value, overlay: &Value, name: &str, sources: &mut Sources) {
-    let origins = profile_hook_origins(base, overlay, name, sources);
+    let mut origins = profile_hook_origins(base, overlay, name, sources);
+    origins.extend(profile_mcp_origins(name, sources));
     merge_layer(base, overlay, &format!("profile:{name}"), sources);
     sources.extend(origins);
+}
+
+fn profile_mcp_origins(name: &str, sources: &Sources) -> Sources {
+    let original = format!("{}/mcp", child_pointer("/profiles", name));
+    let prefix = format!("{original}/");
+    sources
+        .range(original.clone()..)
+        .take_while(|(pointer, _)| *pointer == &original || pointer.starts_with(&prefix))
+        .map(|(pointer, source)| {
+            (
+                format!("/mcp{}", &pointer[original.len()..]),
+                source.clone(),
+            )
+        })
+        .collect()
 }
 
 fn profile_hook_origins(base: &Value, overlay: &Value, name: &str, sources: &Sources) -> Sources {

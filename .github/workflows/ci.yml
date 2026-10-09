@@ -70,7 +70,7 @@ jobs:
         run: cargo test --locked -p cyber-core --lib --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Native MCP configuration and bounded framed protocol
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test mcp_config -p cyber-tools --test mcp_protocol
+        run: cargo test --locked -p cyber-core --test mcp_config --test mcp_trust -p cyber-tools --test mcp_protocol --test mcp_authority
       - name: Native hook configuration validation and trust withholding
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test config hook
