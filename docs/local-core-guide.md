@@ -317,3 +317,9 @@ Instructions use the `mcp/instructions` Context Source. Reconnection changes, co
 Set `required: true` on a server entry to hold a Session's first Turn until the server connects and publishes discovery, up to its configured `timeout` (default 30 seconds). A disabled, failed or unavailable required server reports `McpRequiredError: <name>` before prompt promotion or a model call; the original prompt remains pending for retry. Cancelling the wait preserves independently owned Location startup. Retry after recovery by waking the Session; unresolved native ownership remains fenced.
 
 The requirement applies once per Session and survives replay and conversation rewind. A fork begins its own first Turn. The default is false and preserves existing server approval digests; enabling it changes the definition and requires matching authorization. Remote transports, dynamic header commands, per-server output caps and resolved-option CLI display remain incomplete.
+
+### MCP output budgets and resolved options
+
+Set a positive `output_token_limit` on an MCP server to cap its model-facing text using the four-Unicode-character token estimate. The global `tool_output.max_lines` and `max_bytes` ceilings still apply; an omitted cap inherits that global budget. The standard truncation notice follows the bounded payload and points to the managed file containing the full original text. Structured data is retained. This is an estimate rather than provider tokenizer accounting. Local success, error and structured results share this settlement path.
+
+Run `cyber mcp get <name>` to review one loaded server's definition, provenance, approval digest, authorization observations and output budget without connecting or creating a database. Header/environment values, OAuth details and URL query values are redacted; numeric output limits remain visible. Unknown or withheld names fail review. Dynamic header commands/refresh and remote MCP delivery remain incomplete.

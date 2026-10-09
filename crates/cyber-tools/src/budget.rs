@@ -16,8 +16,21 @@ impl Budget {
     /// write the full text to an exclusively created managed file, and say where it is.
     /// Failure to write the file fails the call rather than returning lossy output.
     pub fn apply(&self, text: String, keep_tail: bool) -> Result<String, String> {
+        self.apply_with_token_limit(text, keep_tail, None)
+    }
+
+    pub(crate) fn apply_with_token_limit(
+        &self,
+        text: String,
+        keep_tail: bool,
+        token_limit: Option<usize>,
+    ) -> Result<String, String> {
+        let char_limit = token_limit.map(|limit| limit.saturating_mul(4));
         let lines = text.lines().count();
-        if lines <= self.max_lines && text.len() <= self.max_bytes {
+        if lines <= self.max_lines
+            && text.len() <= self.max_bytes
+            && char_limit.is_none_or(|limit| text.chars().count() <= limit)
+        {
             return Ok(text);
         }
         let path = self.store(&text)?;
@@ -25,6 +38,14 @@ impl Budget {
             tail(&text, self.max_lines, self.max_bytes)
         } else {
             head(&text, self.max_lines, self.max_bytes)
+        };
+        let kept = match char_limit {
+            Some(limit) if keep_tail => {
+                let skip = kept.chars().count().saturating_sub(limit);
+                kept.chars().skip(skip).collect::<String>()
+            }
+            Some(limit) => kept.chars().take(limit).collect(),
+            None => kept,
         };
         let omitted_lines = lines.saturating_sub(kept.lines().count());
         let omitted_bytes = text.len() - kept.len();
@@ -119,5 +140,46 @@ mod tests {
             dir: "/nonexistent".into(),
         };
         assert_eq!(budget.apply("ok".into(), false).unwrap(), "ok");
+    }
+    #[test]
+    fn token_cap_counts_unicode_preserves_full_text_and_respects_global_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let budget = Budget {
+            max_lines: 100,
+            max_bytes: 1000,
+            dir: dir.path().into(),
+        };
+        let text = "🦀".repeat(20);
+        let output = budget
+            .apply_with_token_limit(text.clone(), false, Some(2))
+            .unwrap();
+        assert!(output.starts_with(&format!("{}\n[output truncated:", "🦀".repeat(8))));
+        let path = output
+            .rsplit("full output at ")
+            .next()
+            .unwrap()
+            .trim_end_matches(']');
+        assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert_eq!(
+            budget
+                .apply_with_token_limit("12345678".into(), false, Some(2))
+                .unwrap(),
+            "12345678"
+        );
+        let global = Budget {
+            max_lines: 1,
+            ..budget
+        };
+        let output = global
+            .apply_with_token_limit("first\nsecond".into(), false, Some(100))
+            .unwrap();
+        assert!(output.starts_with("first\n[output truncated:"));
+        let broken = Budget {
+            dir: dir.path().join("file"),
+            ..global
+        };
+        std::fs::write(&broken.dir, "not a directory").unwrap();
+        assert!(broken.apply_with_token_limit(text, false, Some(2)).is_err());
     }
 }

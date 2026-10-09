@@ -334,7 +334,10 @@ async fn refresh_catalog(
     entry.clear_published();
     let host = host.upgrade().ok_or("MCP host disposed")?;
     let directory = &owner.record().directory;
-    let config = host.hook_config.get().ok_or("MCP resolver unavailable")?;
+    let config = host
+        .hook_config
+        .get()
+        .ok_or_else(|| "MCP resolver unavailable".to_string())?;
     let resolved = (config.resolve)(directory)?;
     let selected = authorize_server(&resolved, &config.trust, directory, &entry.name)?;
     if selected.digest != entry.digest {
@@ -364,7 +367,10 @@ impl BuiltinHost {
         let directory = directory
             .canonicalize()
             .map_err(|error| error.to_string())?;
-        let config = self.hook_config.get().ok_or("MCP resolver unavailable")?;
+        let config = self
+            .hook_config
+            .get()
+            .ok_or_else(|| "MCP resolver unavailable".to_string())?;
         let resolved = (config.resolve)(&directory)?;
         let settings = McpSettings::from_config(&resolved.value)?;
         let records: BTreeMap<_, _> = mcp_connections(&self.opts.store, &directory)
@@ -735,11 +741,27 @@ impl BuiltinHost {
             concurrency_safe: false,
         };
         let metadata = json!({"server":entry.name,"annotations":tool.definition["annotations"]});
-        self.execute_registered(
+        let token_limit = match self
+            .hook_config
+            .get()
+            .ok_or_else(|| "MCP resolver unavailable".to_string())
+            .and_then(|config| (config.resolve)(Path::new(&inv.directory)))
+            .and_then(|resolved| McpSettings::from_config(&resolved.value))
+        {
+            Ok(settings) => settings
+                .servers
+                .get(&entry.name)
+                .and_then(McpServer::output_token_limit),
+            Err(error) => return ToolOutcome::Failed(error),
+        };
+        self.execute_registered_with_output_limit(
             inv,
             definition,
-            tool.read_only_hint(),
-            metadata,
+            crate::registered::RegisteredOptions {
+                read_only: tool.read_only_hint(),
+                metadata,
+                output_token_limit: token_limit,
+            },
             cancel,
             move |inv, cancel| {
                 Box::pin(async move {

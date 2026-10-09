@@ -172,3 +172,23 @@ fn required_flags_are_typed_and_default_definition_digests_are_preserved() {
         assert!(!error.contains("private secret"));
     }
 }
+
+#[test]
+fn per_server_output_limits_are_positive_typed_and_digest_bound() {
+    let default =
+        McpSettings::from_config(&json!({"mcp":{"db":{"type":"local","command":"x"}}})).unwrap();
+    let capped = McpSettings::from_config(
+        &json!({"mcp":{"db":{"type":"local","command":"x","output_token_limit":25}}}),
+    )
+    .unwrap();
+    assert_eq!(default.servers["db"].output_token_limit(), None);
+    assert_eq!(capped.servers["db"].output_token_limit(), Some(25));
+    assert_ne!(
+        default.servers["db"].digest("db").unwrap(),
+        capped.servers["db"].digest("db").unwrap()
+    );
+    for invalid in [json!(0), json!(-1), json!(1.5), json!("private-secret")] {
+        let error = McpSettings::from_config(&json!({"mcp":{"db":{"type":"remote","url":"https://example.test","output_token_limit":invalid}}})).unwrap_err();
+        assert!(!error.contains("private-secret"));
+    }
+}

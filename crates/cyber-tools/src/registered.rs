@@ -8,6 +8,12 @@ use serde_json::Value;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
+pub(crate) struct RegisteredOptions {
+    pub read_only: bool,
+    pub metadata: Value,
+    pub output_token_limit: Option<usize>,
+}
+
 impl BuiltinHost {
     /// Visibility does not grant execution authority; current policy is checked again on calls.
     pub fn filter_registered_tools(
@@ -38,13 +44,39 @@ impl BuiltinHost {
     /// The owner still verifies its native registration after all awaited admission checks.
     pub fn execute_registered<'a>(
         &'a self,
-        mut inv: Invocation,
+        inv: Invocation,
         definition: ToolDef,
         read_only: bool,
         metadata: Value,
         cancel: CancellationToken,
         execute: impl FnOnce(Invocation, CancellationToken) -> BoxFuture<'a, ToolOutcome> + Send + 'a,
     ) -> BoxFuture<'a, ToolOutcome> {
+        self.execute_registered_with_output_limit(
+            inv,
+            definition,
+            RegisteredOptions {
+                read_only,
+                metadata,
+                output_token_limit: None,
+            },
+            cancel,
+            execute,
+        )
+    }
+
+    pub(crate) fn execute_registered_with_output_limit<'a>(
+        &'a self,
+        mut inv: Invocation,
+        definition: ToolDef,
+        options: RegisteredOptions,
+        cancel: CancellationToken,
+        execute: impl FnOnce(Invocation, CancellationToken) -> BoxFuture<'a, ToolOutcome> + Send + 'a,
+    ) -> BoxFuture<'a, ToolOutcome> {
+        let RegisteredOptions {
+            read_only,
+            metadata,
+            output_token_limit,
+        } = options;
         Box::pin(async move {
             if inv.name != definition.spec.name || inv.registration != definition.registration {
                 return ToolOutcome::Failed(format!("Stale tool call: {}", inv.name));
@@ -105,9 +137,11 @@ impl BuiltinHost {
             let outcome = match ctx.authorize(request, vec!["*".into()], metadata).await {
                 Err(error) => failure(error),
                 Ok(()) if cancel.is_cancelled() => ToolOutcome::Aborted,
-                Ok(()) => {
-                    self.bound_registered_output(&ctx, execute(inv.clone(), cancel.clone()).await)
-                }
+                Ok(()) => self.bound_registered_output(
+                    &ctx,
+                    execute(inv.clone(), cancel.clone()).await,
+                    output_token_limit,
+                ),
             };
             match self.post_tool_hooks(&inv, &outcome, started, cancel).await {
                 Ok(()) => outcome,
@@ -119,21 +153,27 @@ impl BuiltinHost {
         })
     }
 
-    fn bound_registered_output(&self, ctx: &Ctx<'_>, outcome: ToolOutcome) -> ToolOutcome {
+    fn bound_registered_output(
+        &self,
+        ctx: &Ctx<'_>,
+        outcome: ToolOutcome,
+        token_limit: Option<usize>,
+    ) -> ToolOutcome {
         match outcome {
             ToolOutcome::Ok(output) => self
                 .budget(&ctx.location)
-                .apply(output, false)
+                .apply_with_token_limit(output, false, token_limit)
                 .map_or_else(ToolOutcome::Crashed, ToolOutcome::Ok),
-            ToolOutcome::Structured { output, value } => {
-                self.budget(&ctx.location).apply(output, false).map_or_else(
-                    ToolOutcome::Crashed,
-                    |output| ToolOutcome::Structured { output, value },
-                )
-            }
+            ToolOutcome::Structured { output, value } => self
+                .budget(&ctx.location)
+                .apply_with_token_limit(output, false, token_limit)
+                .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
+                    output,
+                    value,
+                }),
             ToolOutcome::Failed(output) => self
                 .budget(&ctx.location)
-                .apply(output, false)
+                .apply_with_token_limit(output, false, token_limit)
                 .map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed),
             other => other,
         }

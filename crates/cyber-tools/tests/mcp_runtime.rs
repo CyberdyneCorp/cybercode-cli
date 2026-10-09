@@ -32,7 +32,7 @@ for line in sys.stdin:
         name=request['params']['name']
         with open('calls','a') as f: f.write(name+'\n')
         while pathlib.Path('block-call').exists(): time.sleep(.01)
-        result={'content':[{'type':'text','text':'remote '+name}], 'isError':name=='error'}
+        result={'content':[{'type':'text','text':pathlib.Path('tool-text').read_text() if pathlib.Path('tool-text').exists() else 'remote '+name}], 'isError':name=='error'}
         if name=='structured': result['structuredContent']={'answer':42}
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
 "#;
@@ -1933,5 +1933,42 @@ async fn required_wait_cancellation_keeps_shared_startup_owned_and_prompt_pendin
     flow.settle(&id).await;
     assert_eq!(flow.main.requests().len(), 1);
     assert_eq!(flow.f.read("spawned").lines().count(), 1);
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn per_server_cap_bounds_success_error_and_structured_text_without_losing_full_output() {
+    let flow = Flow::new(vec![text("unused")], false);
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["output_token_limit"] = json!(2);
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    flow.f.write("tool-text", &"🦀".repeat(20));
+    let id = flow.session("default").await;
+    let defs = ready(&flow, &id).await;
+    for name in ["read", "error", "structured"] {
+        let def = defs
+            .iter()
+            .find(|def| def.spec.name == format!("mcp__shared__{name}"))
+            .unwrap();
+        let outcome = invoke(&flow, &id, def, "default").await;
+        let output = match outcome {
+            ToolOutcome::Ok(output) if name == "read" => output,
+            ToolOutcome::Failed(output) if name == "error" => output,
+            ToolOutcome::Structured { output, value } if name == "structured" => {
+                assert_eq!(value, json!({"answer":42}));
+                output
+            }
+            other => panic!("unexpected {name} outcome: {other:?}"),
+        };
+        assert!(output.starts_with(&format!("{}\n[output truncated:", "🦀".repeat(8))));
+        let path = output
+            .rsplit("full output at ")
+            .next()
+            .unwrap()
+            .trim_end_matches(']');
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "🦀".repeat(20));
+    }
     flow.runtime.shutdown().await;
 }

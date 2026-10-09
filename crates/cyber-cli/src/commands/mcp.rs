@@ -14,6 +14,8 @@ use crate::output;
 pub enum McpCmd {
     /// Review loaded server definitions, origins and digests without connecting.
     Definitions,
+    /// Display one loaded server and its resolved output options without connecting.
+    Get { name: String },
     /// Approve an inspected, currently loaded project server definition.
     Trust {
         name: String,
@@ -37,6 +39,18 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
     let resolved = ctx.config()?;
     match cmd {
         McpCmd::Definitions => definitions(&resolved, &store, ctx, global),
+        McpCmd::Get { name } => {
+            let mut value = server_report(&resolved, &store, ctx, &name)?;
+            let definition = &mut value["definition"];
+            definition["required"] = json!(definition["required"].as_bool().unwrap_or(false));
+            let output = resolved.value.get("tool_output");
+            value["output_budget"] = json!({
+                "output_token_limit":value["definition"]["output_token_limit"],
+                "max_lines":output.and_then(|o|o["max_lines"].as_u64()).unwrap_or(2000),
+                "max_bytes":output.and_then(|o|o["max_bytes"].as_u64()).unwrap_or(51200)
+            });
+            report(global, &value)
+        }
         McpCmd::Trust { name, digest } => {
             let server =
                 inspect_server(&resolved, &ctx.location, &name).map_err(CliError::usage)?;
@@ -73,18 +87,7 @@ fn definitions(
     let settings = McpSettings::from_config(&resolved.value).map_err(CliError::usage)?;
     let mut servers = Vec::new();
     for name in settings.servers.keys() {
-        let server = inspect_server(resolved, &ctx.location, name).map_err(CliError::usage)?;
-        let pointer = format!("/mcp/{name}");
-        let prefix = format!("{pointer}/");
-        let origins: std::collections::BTreeMap<_, _> = resolved
-            .sources
-            .iter()
-            .filter(|(key, _)| *key == &pointer || key.starts_with(&prefix))
-            .collect();
-        servers.push(json!({"name":name,"digest":server.digest,"definition":redacted(&serde_json::to_value(&server.definition).map_err(|error| CliError::runtime(error.to_string()))?),
-            "origins":origins,"requires_individual_approval":server.requires_approval,"sandbox_required":server.requires_sandbox,
-            "individually_approved":store.is_mcp_approved(&resolved.trust.checkout_root,&server.digest)?,
-            "authorized":authorize_server(resolved,store,&ctx.location,name).is_ok()}));
+        servers.push(server_report(resolved, store, ctx, name)?);
     }
     let withheld: Vec<_> = resolved
         .trust
@@ -98,8 +101,38 @@ fn definitions(
     )
 }
 
+fn server_report(
+    resolved: &Resolved,
+    store: &TrustStore,
+    ctx: &Context,
+    name: &str,
+) -> Result<Value, CliError> {
+    let server = inspect_server(resolved, &ctx.location, name).map_err(CliError::usage)?;
+    let pointer = format!("/mcp/{name}");
+    let prefix = format!("{pointer}/");
+    let origins: std::collections::BTreeMap<_, _> = resolved
+        .sources
+        .iter()
+        .filter(|(key, _)| *key == &pointer || key.starts_with(&prefix))
+        .collect();
+    Ok(
+        json!({"name":name,"digest":server.digest,"definition":redacted(&serde_json::to_value(&server.definition).map_err(|error| CliError::runtime(error.to_string()))?),
+            "origins":origins,"requires_individual_approval":server.requires_approval,"sandbox_required":server.requires_sandbox,
+            "individually_approved":store.is_mcp_approved(&resolved.trust.checkout_root,&server.digest)?,
+            "authorized":authorize_server(resolved,store,&ctx.location,name).is_ok()}),
+    )
+}
+
 fn redacted(definition: &Value) -> Value {
     let mut value = cyber_core::config::redact_secrets(definition);
+    // This numeric budget is not an authentication token.
+    if let Some(limit) = definition
+        .get("output_token_limit")
+        .filter(|limit| limit.is_u64())
+    {
+        value["output_token_limit"] = limit.clone();
+    }
+
     for key in ["env", "headers"] {
         if let Some(fields) = value.get_mut(key).and_then(Value::as_object_mut) {
             for field in fields.values_mut() {

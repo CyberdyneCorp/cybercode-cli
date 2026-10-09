@@ -23,6 +23,8 @@ pub enum McpServer {
         tools: McpToolFilter,
         #[serde(default, skip_serializing_if = "not_required")]
         required: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_token_limit: Option<usize>,
     },
     Remote {
         url: String,
@@ -37,6 +39,8 @@ pub enum McpServer {
         tools: McpToolFilter,
         #[serde(default, skip_serializing_if = "not_required")]
         required: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_token_limit: Option<usize>,
     },
 }
 fn not_required(value: &bool) -> bool {
@@ -100,6 +104,16 @@ impl McpServer {
             Self::Local { required, .. } | Self::Remote { required, .. } => *required,
         }
     }
+    pub fn output_token_limit(&self) -> Option<usize> {
+        match self {
+            Self::Local {
+                output_token_limit, ..
+            }
+            | Self::Remote {
+                output_token_limit, ..
+            } => *output_token_limit,
+        }
+    }
     pub fn timeout(&self) -> u32 {
         match self {
             Self::Local { timeout, .. } | Self::Remote { timeout, .. } => *timeout,
@@ -113,6 +127,9 @@ impl McpServer {
     fn validate(&self) -> Result<(), String> {
         if self.timeout() == 0 {
             return Err("timeout must be positive".into());
+        }
+        if self.output_token_limit() == Some(0) {
+            return Err("output_token_limit must be positive".into());
         }
         self.tools().validate()?;
         match self {

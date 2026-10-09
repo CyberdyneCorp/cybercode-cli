@@ -293,3 +293,14 @@
 - **WHEN** an existing Session has durably started its first model step
 - **THEN** replay or conversation rewind SHALL NOT repeat the first-Turn readiness gate
 - **AND** a newly forked Session SHALL perform its own first-Turn readiness check
+
+#### Scenario: Local per-server output settlement
+- **WHEN** a local MCP result exceeds a configured output_token_limit
+- **THEN** model-facing text SHALL use the four-character estimate and the global line/byte ceilings to bound its payload before appending the standard overflow notice
+- **AND** full original text SHALL be preserved in a managed overflow file and structured data SHALL remain unchanged
+- **AND** failed overflow persistence SHALL fail settlement instead of returning lossy success
+
+#### Scenario: Resolved server review has no effects
+- **WHEN** cyber mcp get <name> reviews a loaded server
+- **THEN** it SHALL display resolved required and output-budget settings, provenance and authorization observations with header values redacted
+- **AND** it SHALL NOT connect, execute commands, start model work or create a database

@@ -173,3 +173,34 @@ fn changed_definition_and_another_checkout_cannot_reuse_inspected_digest() {
         false
     );
 }
+
+#[test]
+fn get_displays_one_resolved_server_with_redacted_headers_and_no_effects() {
+    let env = Env::new();
+    std::fs::write(env.root.join("cyber/config/cyber.jsonc"),json!({
+        "tool_output":{"max_lines":42,"max_bytes":1234},
+        "mcp":{
+            "db":{"type":"remote","url":"https://example.test/mcp?key=private-url-secret","headers":{"custom":"private-header-secret"},"required":true,"output_token_limit":10},
+            "local":{"type":"local","command":"not-installed"}
+        }
+    }).to_string()).unwrap();
+    let output = env.run(&["mcp", "get", "db"]);
+    let value = body(&output);
+    assert_eq!(value["name"], "db");
+    assert_eq!(value["definition"]["headers"]["custom"], "***");
+    assert_eq!(value["definition"]["required"], true);
+    assert_eq!(
+        value["output_budget"],
+        json!({"output_token_limit":10,"max_lines":42,"max_bytes":1234})
+    );
+    assert!(
+        !String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("private-")
+    );
+    let local = body(&env.run(&["mcp", "get", "local"]));
+    assert_eq!(local["definition"]["required"], false);
+    assert_eq!(local["output_budget"]["output_token_limit"], Value::Null);
+    assert_eq!(env.run(&["mcp", "get", "missing"]).status.code(), Some(2));
+    env.assert_no_database();
+}
