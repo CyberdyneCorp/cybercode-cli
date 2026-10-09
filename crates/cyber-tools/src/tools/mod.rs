@@ -11,6 +11,7 @@ mod search;
 mod session;
 mod skill;
 mod task;
+mod tool_search;
 mod web;
 pub(crate) mod websearch;
 
@@ -55,6 +56,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(agent::Agent),
         Box::new(task::TaskStop),
         Box::new(mcp::WaitForMcp),
+        Box::new(tool_search::ToolSearch),
     ];
     #[cfg(windows)]
     let tools = {
@@ -83,6 +85,7 @@ pub(crate) fn def(
 ) -> ToolDef {
     ToolDef {
         scope: cyber_server::runtime::ToolScope::Builtin,
+        deferred: false,
         registration: None,
         spec: ToolSpec {
             name: name.into(),

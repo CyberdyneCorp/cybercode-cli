@@ -81,6 +81,10 @@ jobs:
         run: |
           cargo test --locked -p cyber-core --lib config::deferred_tools::tests
           cargo test --locked -p cyber-server --lib runtime::deferred_tools::tests
+          cargo test --locked -p cyber-server --test runtime loaded_
+          cargo test --locked -p cyber-server --test context_compaction loaded_schemas
+          cargo test --locked -p cyber-tools --lib tools::tool_search::tests
+          cargo test --locked -p cyber-tools --test golden tool_search_golden
       - name: Native MCP retained startup joins and bounded reconnect
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib mcp::pool::tests

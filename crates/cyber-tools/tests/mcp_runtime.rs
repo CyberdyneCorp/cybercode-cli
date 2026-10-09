@@ -1459,3 +1459,201 @@ async fn wait_tool_pre_hook_can_refuse_before_waiting_even_in_bypass_mode() {
     ready(&flow, &id).await;
     flow.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn deferred_search_loads_only_selected_schema_on_following_steps() {
+    let flow = Flow::new(
+        vec![
+            call("unloaded", "mcp__shared__read", json!({})),
+            call(
+                "search",
+                "tool_search",
+                json!({"select":["mcp__shared__read"]}),
+            ),
+            call("loaded", "mcp__shared__read", json!({})),
+            text("done"),
+        ],
+        false,
+    );
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["tool_output"] = json!({"deferred_threshold_tokens":0});
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "discover then read").await;
+    flow.settle(&id).await;
+    assert_eq!(
+        flow.output(&id, "unloaded").await,
+        "Tool mcp__shared__read is deferred. Load it with tool_search first."
+    );
+    let result: Value = serde_json::from_str(&flow.output(&id, "search").await).unwrap();
+    assert_eq!(result["tools"][0]["name"], "mcp__shared__read");
+    assert_eq!(result["tools"][0]["input_schema"]["type"], "object");
+    assert_eq!(flow.output(&id, "loaded").await, "remote read");
+    assert_eq!(flow.f.read("calls"), "read\n");
+    let requests = flow.main.requests();
+    for request in &requests[..2] {
+        assert!(
+            request
+                .tools
+                .iter()
+                .all(|tool| !tool.name.starts_with("mcp__"))
+        );
+        assert!(request.system.iter().any(|part| part.contains("<deferred_tools>") && part.contains("mcp__shared__read")));
+    }
+    assert!(
+        requests[2]
+            .tools
+            .iter()
+            .any(|tool| tool.name == "mcp__shared__read")
+    );
+    assert!(
+        requests[2]
+            .tools
+            .iter()
+            .all(|tool| tool.name != "mcp__shared__write")
+    );
+    let other = flow.session("default").await;
+    let mut inv = flow.f.invocation(
+        "default",
+        "tool_search",
+        json!({"select":["missing","mcp__shared__write"]}),
+    );
+    inv.session_id = other;
+    assert!(
+        matches!(flow.f.host.execute(inv, CancellationToken::new()).await,
+        ToolOutcome::Failed(error) if error.contains("Unavailable tool: missing"))
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn search_query_loads_without_rpc_and_does_not_load_another_session() {
+    let flow = Flow::new(
+        vec![
+            call("search", "tool_search", json!({"query":"SHARED read"})),
+            text("done"),
+            call("unloaded", "mcp__shared__read", json!({})),
+            text("done"),
+        ],
+        false,
+    );
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["tool_output"] = json!({"deferred_threshold_tokens":0});
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    let first = flow.session("default").await;
+    ready(&flow, &first).await;
+    flow.prompt(&first, "find the schema").await;
+    flow.settle(&first).await;
+    assert!(
+        flow.runtime
+            .state(&first)
+            .await
+            .unwrap()
+            .loaded_tool_names()
+            .contains("mcp__shared__read")
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    let second = flow.session("default").await;
+    flow.prompt(&second, "try without loading").await;
+    flow.settle(&second).await;
+    assert_eq!(
+        flow.output(&second, "unloaded").await,
+        "Tool mcp__shared__read is deferred. Load it with tool_search first."
+    );
+    assert!(
+        flow.runtime
+            .state(&second)
+            .await
+            .unwrap()
+            .loaded_tool_names()
+            .is_empty()
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn search_pre_hook_denial_preserves_empty_selection_even_in_bypass() {
+    let flow = Flow::new(vec![], false);
+    configure(
+        &flow,
+        json!({"PreToolUse":[{"matcher":"tool_search","hooks":[{
+            "type":"command","command":"echo '{\"decision\":\"deny\",\"reason\":\"search denied by hook\"}'"
+        }]}]}),
+    );
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let mut inv = flow.f.invocation(
+        "bypass",
+        "tool_search",
+        json!({"select":["mcp__shared__read"]}),
+    );
+    inv.session_id = id.clone();
+    assert!(
+        matches!(flow.f.host.execute(inv, CancellationToken::new()).await,
+        ToolOutcome::Failed(error) if error.contains("search denied by hook"))
+    );
+    assert!(
+        flow.runtime
+            .state(&id)
+            .await
+            .unwrap()
+            .loaded_tool_names()
+            .is_empty()
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn loaded_schema_does_not_override_a_fresh_permission_deny() {
+    let flow = Flow::new(
+        vec![call("denied", "mcp__shared__read", json!({})), text("done")],
+        false,
+    );
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["tool_output"] = json!({"deferred_threshold_tokens":0});
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config.clone());
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    let mut inv = flow.f.invocation(
+        "default",
+        "tool_search",
+        json!({"select":["mcp__shared__read"]}),
+    );
+    inv.session_id = id.clone();
+    assert!(matches!(
+        flow.f.host.execute(inv, CancellationToken::new()).await,
+        ToolOutcome::Ok(_)
+    ));
+    config["permissions"] = json!({"mcp__shared__read":"deny"});
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    flow.prompt(&id, "try the loaded tool").await;
+    flow.settle(&id).await;
+    assert_eq!(
+        flow.output(&id, "denied").await,
+        "Unknown tool: mcp__shared__read"
+    );
+    assert!(
+        flow.main.requests()[0]
+            .tools
+            .iter()
+            .all(|tool| tool.name != "mcp__shared__read")
+    );
+    assert!(
+        flow.main.requests()[0]
+            .system
+            .iter()
+            .all(|part| !part.contains("mcp__shared__read"))
+    );
+    assert!(!flow.f.repo.join("calls").exists());
+    flow.runtime.shutdown().await;
+}

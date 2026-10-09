@@ -84,6 +84,13 @@ impl ToolHost for AppHost {
             .prepare_child_continuation(parent, child, owner, cancel)
     }
 
+    fn deferred_tool_settings(
+        &self,
+        turn: &TurnContext,
+    ) -> Result<cyber_core::config::DeferredToolSettings, String> {
+        self.builtin.deferred_tool_settings(turn)
+    }
+
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         materialize_tools(&self.builtin, &self.remote, turn)
     }

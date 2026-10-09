@@ -526,6 +526,7 @@ impl BuiltinHost {
                         })
                         .map(|tool| ToolDef {
                             scope: cyber_server::runtime::ToolScope::Mcp,
+                            deferred: false,
                             registration: Some(tool_binding(id, tool)),
                             spec: tool.spec(),
                             // Annotations control permission defaults, not safe automatic retries.
@@ -617,6 +618,7 @@ impl BuiltinHost {
         };
         let definition = ToolDef {
             scope: cyber_server::runtime::ToolScope::Mcp,
+            deferred: false,
             registration: inv.registration.clone(),
             spec: tool.spec(),
             retry_safety: RetrySafety::Never,

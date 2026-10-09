@@ -463,3 +463,44 @@ async fn oversized_newest_entry_compacts_with_an_empty_tail() {
     assert_eq!(request.messages.len(), 2, "summary plus the new prompt");
     assert!(!transcript(&request).contains(&"y".repeat(400)));
 }
+
+#[tokio::test]
+async fn loaded_schemas_survive_compaction_and_restart() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            ("test/main", vec![text("one"), text("two")]),
+            ("test/summary", vec![text("preserved objective")]),
+        ],
+        compaction: small_tail(),
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime
+        .load_tool_schemas(
+            &id,
+            vec!["mcp__jira__read".into()],
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    for prompt in ["first", "second"] {
+        h.runtime.admit(&id, admit(prompt)).await.unwrap();
+        h.settle(&id).await;
+    }
+    h.runtime.compact(&id, None).await.unwrap();
+    assert!(h.state(&id).await.compacted.is_some());
+    assert!(
+        h.state(&id)
+            .await
+            .loaded_tool_names()
+            .contains("mcp__jira__read")
+    );
+    assert!(
+        h.restart()
+            .state(&id)
+            .await
+            .unwrap()
+            .loaded_tool_names()
+            .contains("mcp__jira__read")
+    );
+}

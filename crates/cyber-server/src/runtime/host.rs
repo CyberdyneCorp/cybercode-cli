@@ -166,6 +166,8 @@ impl ToolScope {
 #[derive(Debug, Clone)]
 pub struct ToolDef {
     pub scope: ToolScope,
+    /// Runtime projection marks an advertised name whose schema has not been loaded.
+    pub deferred: bool,
     /// Opaque native registration identity, retained from advertisement through dispatch.
     pub registration: Option<String>,
     pub spec: ToolSpec,
@@ -291,6 +293,13 @@ pub trait ToolHost: Send + Sync {
     }
 
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef>;
+
+    fn deferred_tool_settings(
+        &self,
+        _turn: &TurnContext,
+    ) -> Result<cyber_core::config::DeferredToolSettings, String> {
+        Ok(cyber_core::config::DeferredToolSettings::default())
+    }
 
     /// Run a call. Implementations stop within 2 s once `cancel` fires.
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome>;

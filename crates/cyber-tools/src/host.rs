@@ -555,6 +555,14 @@ impl ToolHost for BuiltinHost {
         })
     }
 
+    fn deferred_tool_settings(
+        &self,
+        turn: &TurnContext,
+    ) -> Result<cyber_core::config::DeferredToolSettings, String> {
+        let (config, _) = (self.opts.config)(Path::new(&turn.directory))?;
+        cyber_core::config::DeferredToolSettings::from_config(&config)
+    }
+
     fn definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
         let Ok(rules) =
             self.session_rules(Path::new(&turn.directory), Some(&turn.agent), &turn.rules)

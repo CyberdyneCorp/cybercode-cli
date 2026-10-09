@@ -67,6 +67,7 @@ const ALL: &[&str] = &[
     PROMOTED,
     EPOCH_STARTED,
     CONTEXT_UPDATED,
+    super::deferred_tools::LOADED,
     SYSTEM_ADDED,
     STEP_STARTED,
     TEXT_ENDED,
@@ -401,6 +402,7 @@ pub fn registry() -> EventRegistry {
 }
 
 fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
+    super::deferred_tools::validate_event(tx, e)?;
     super::admission_authority::project(tx, e)?;
     super::hooks::project(tx, e)?;
     super::auto_statistics::project(tx, e)?;

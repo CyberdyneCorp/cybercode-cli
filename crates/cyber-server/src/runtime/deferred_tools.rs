@@ -43,9 +43,14 @@ pub fn materialize(
     let encoded = serde_json::to_string(&specs).map_err(|_| "Tool catalog serialization failed")?;
     let estimated_tokens = encoded.chars().count().div_ceil(4);
     let should_defer = estimated_tokens > settings.threshold_tokens;
-    let (deferred, callable) = tools.into_iter().partition(|tool| {
-        should_defer && tool.scope.deferrable() && !loaded.contains(&tool.spec.name)
-    });
+    let (deferred, callable) = tools
+        .into_iter()
+        .map(|mut tool| {
+            tool.deferred =
+                should_defer && tool.scope.deferrable() && !loaded.contains(&tool.spec.name);
+            tool
+        })
+        .partition(|tool| tool.deferred);
     Ok(DeferredCatalog {
         callable,
         deferred,
@@ -61,6 +66,7 @@ mod tests {
     fn tool(name: &str, scope: ToolScope) -> ToolDef {
         ToolDef {
             scope,
+            deferred: false,
             registration: Some(format!("reg_{name}")),
             spec: ToolSpec {
                 name: name.into(),
@@ -164,5 +170,104 @@ mod tests {
         )
         .unwrap();
         assert!(empty.callable.is_empty() && empty.deferred.is_empty());
+    }
+}
+
+pub(super) const LOADED: &str = "session.tools.loaded.1";
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Loaded {
+    pub names: Vec<String>,
+}
+
+pub(super) fn validate_names(names: &[String]) -> Result<(), String> {
+    if names.is_empty()
+        || names.len() > 1000
+        || names.iter().any(|name| {
+            name.is_empty()
+                || name.len() > 64
+                || !name.as_bytes()[0].is_ascii_alphabetic()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+        || names.iter().collect::<BTreeSet<_>>().len() != names.len()
+    {
+        return Err("Invalid loaded tool names".into());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_event(
+    tx: &rusqlite::Transaction<'_>,
+    event: &cyber_store::StoredEvent,
+) -> Result<(), String> {
+    if event.kind != LOADED {
+        return Ok(());
+    }
+    if !event.aggregate_id.starts_with("ses_") {
+        return Err("Loaded tools require a Session".into());
+    }
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM session WHERE id = ?1)",
+            [&event.aggregate_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        return Err("Loaded tools require an existing Session".into());
+    }
+    let loaded: Loaded =
+        serde_json::from_value(event.data.clone()).map_err(|_| "Invalid loaded tools event")?;
+    validate_names(&loaded.names)
+}
+
+impl super::Runtime {
+    pub fn tool_catalog(&self, turn: &super::TurnContext) -> Vec<ToolDef> {
+        self.inner.tools.definitions(turn)
+    }
+
+    pub async fn load_tool_schemas(
+        &self,
+        session_id: &str,
+        names: Vec<String>,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<(), super::RuntimeError> {
+        if names.is_empty() {
+            return Ok(());
+        }
+        validate_names(&names).map_err(super::RuntimeError::Invalid)?;
+        self.inner.ensure_admission_open(session_id)?;
+        let interrupted = || super::RuntimeError::Invalid("Tool search interrupted".into());
+        let _admission = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(interrupted()),
+            admission = self.inner.open() => admission?,
+        };
+        let handle = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(interrupted()),
+            handle = self.inner.handle(session_id) => handle?,
+        };
+        let mut state = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(interrupted()),
+            state = handle.state.lock() => state,
+        };
+        if cancel.is_cancelled() {
+            return Err(interrupted());
+        }
+        let names: Vec<_> = names
+            .into_iter()
+            .filter(|name| !state.loaded_tools.contains(name))
+            .collect();
+        if !names.is_empty() {
+            self.inner.commit_locked(
+                &mut state,
+                vec![super::events::event(LOADED, &Loaded { names })],
+            )?;
+        }
+        Ok(())
     }
 }

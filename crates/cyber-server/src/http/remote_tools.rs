@@ -74,6 +74,7 @@ impl RemoteTools {
         };
         let def = ToolDef {
             scope: crate::runtime::ToolScope::Session,
+            deferred: false,
             registration: Some(cyber_core::ids::new_id("reg")),
             spec,
             retry_safety: RetrySafety::Never,

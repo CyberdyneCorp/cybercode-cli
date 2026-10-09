@@ -1556,3 +1556,133 @@ async fn changed_registration_scope_settles_as_stale_before_execution() {
     );
     assert!(!h.tools.executed_names().contains(&"write".to_string()));
 }
+
+#[tokio::test]
+async fn loaded_schemas_are_durable_additive_and_session_local() {
+    use tokio_util::sync::CancellationToken;
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let cancel = CancellationToken::new();
+    h.runtime
+        .load_tool_schemas(&id, vec!["mcp__one__read".into()], &cancel)
+        .await
+        .unwrap();
+    h.runtime
+        .load_tool_schemas(&id, vec!["mcp__one__read".into()], &cancel)
+        .await
+        .unwrap();
+    h.runtime
+        .load_tool_schemas(&id, vec!["plugin_write".into()], &cancel)
+        .await
+        .unwrap();
+    let events = h.store.read_events(&id, -1, 200).unwrap().events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "session.tools.loaded.1")
+            .count(),
+        2
+    );
+    let replay = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    assert_eq!(replay.loaded_tool_names().len(), 2);
+    let restarted = h.restart();
+    assert_eq!(
+        restarted.state(&id).await.unwrap().loaded_tool_names(),
+        replay.loaded_tool_names()
+    );
+    let other = h.session().await;
+    assert!(h.state(&other).await.loaded_tool_names().is_empty());
+    let fork = h.runtime.fork(&id, None).await.unwrap();
+    assert!(h.state(&fork.id).await.loaded_tool_names().is_empty());
+    assert!(h.tools.executed_names().is_empty());
+    cancel.cancel();
+    assert!(
+        h.runtime
+            .load_tool_schemas(&id, vec!["cancelled".into()], &cancel)
+            .await
+            .is_err()
+    );
+    assert!(!h.state(&id).await.loaded_tool_names().contains("cancelled"));
+}
+
+#[tokio::test]
+async fn malformed_loaded_schema_events_roll_back_before_append() {
+    use cyber_store::{Expected, NewEvent};
+    use serde_json::json;
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let before = h.store.read_events(&id, -1, 200).unwrap().events.len();
+    for data in [
+        json!({"names":[]}),
+        json!({"names":["bad.name"]}),
+        json!({"names":["read","read"]}),
+        json!({"names":["read"],"unknown":true}),
+    ] {
+        assert!(
+            h.store
+                .append(
+                    &id,
+                    Expected::Any,
+                    vec![NewEvent::new("session.tools.loaded.1", data)]
+                )
+                .is_err()
+        );
+    }
+    assert_eq!(
+        h.store.read_events(&id, -1, 200).unwrap().events.len(),
+        before
+    );
+    for aggregate in ["ses_missing", "mcs_other"] {
+        assert!(
+            h.store
+                .append(
+                    aggregate,
+                    Expected::Any,
+                    vec![NewEvent::new(
+                        "session.tools.loaded.1",
+                        json!({"names":["read"]})
+                    )]
+                )
+                .is_err()
+        );
+        assert!(
+            h.store
+                .read_events(aggregate, -1, 10)
+                .unwrap()
+                .events
+                .is_empty()
+        );
+    }
+    assert!(h.state(&id).await.loaded_tool_names().is_empty());
+}
+
+#[tokio::test]
+async fn loaded_schema_writer_failure_does_not_change_session_or_report_success() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let before = h.store.aggregate_seq(&id).unwrap();
+    h.store.transaction(|tx| {
+        tx.execute_batch("CREATE TRIGGER reject_tool_loading BEFORE INSERT ON event WHEN NEW.type = 'session.tools.loaded.1' BEGIN SELECT RAISE(ABORT, 'injected tool loading failure'); END")?;
+        Ok(())
+    }).unwrap();
+    assert!(
+        h.runtime
+            .load_tool_schemas(
+                &id,
+                vec!["mcp__one__read".into()],
+                &tokio_util::sync::CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert!(h.state(&id).await.loaded_tool_names().is_empty());
+    assert_eq!(h.store.aggregate_seq(&id).unwrap(), before);
+    assert!(
+        h.restart()
+            .state(&id)
+            .await
+            .unwrap()
+            .loaded_tool_names()
+            .is_empty()
+    );
+}

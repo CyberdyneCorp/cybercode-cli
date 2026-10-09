@@ -257,6 +257,8 @@ pub struct StepSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SessionState {
     #[serde(skip)]
+    pub(crate) loaded_tools: BTreeSet<String>,
+    #[serde(skip)]
     pub(crate) child_requested_inputs: BTreeSet<String>,
     #[serde(skip)]
     pub(super) child_pause_seq: i64,
@@ -344,8 +346,14 @@ impl SessionState {
             |(_, error)| error.as_str(),
         )
     }
+    /// Schemas selected in this Session; this does not grant execution permission.
+    pub fn loaded_tool_names(&self) -> &BTreeSet<String> {
+        &self.loaded_tools
+    }
+
     pub fn new(info: SessionInfo) -> Self {
         Self {
+            loaded_tools: BTreeSet::new(),
             child_requested_inputs: BTreeSet::new(),
             child_pause_seq: -1,
             child_continuation_error: None,
@@ -438,6 +446,11 @@ impl SessionState {
             .rsplit_once('.')
             .map_or(e.kind.as_str(), |(base, _)| base);
         match kind {
+            "session.tools.loaded" => {
+                let loaded: super::deferred_tools::Loaded = decode(e)?;
+                super::deferred_tools::validate_names(&loaded.names)?;
+                self.loaded_tools.extend(loaded.names);
+            }
             "session.child.input_paused" => {
                 self.child_requested_inputs.clear();
                 self.child_pause_seq = e.seq;

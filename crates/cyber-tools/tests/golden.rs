@@ -183,3 +183,10 @@ async fn mcp_wait_golden() {
         .await);
     support::golden(&f, "wait_for_mcp", &output);
 }
+
+#[tokio::test]
+async fn tool_search_golden() {
+    let f = Fixture::new();
+    let output = ok(f.call("plan", "tool_search", json!({})).await);
+    support::golden(&f, "tool_search", &output);
+}

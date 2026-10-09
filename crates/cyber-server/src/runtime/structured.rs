@@ -61,6 +61,7 @@ impl StructuredSchema {
     pub(crate) fn definition(&self) -> ToolDef {
         ToolDef {
             scope: crate::runtime::ToolScope::Session,
+            deferred: false,
             registration: None,
             spec: ToolSpec {
                 name: "return_result".into(),

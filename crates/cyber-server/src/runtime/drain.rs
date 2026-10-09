@@ -579,7 +579,18 @@ impl Inner {
             epoch.baseline.clone(),
         ];
         request.messages = view::messages(&state, &resolved.provider, &resolved.model);
-        request.tools = defs.iter().map(|d| d.spec.clone()).collect();
+        let settings = self
+            .tools
+            .deferred_tool_settings(&turn_context(&state, resolved))
+            .map_err(RuntimeError::Invalid)?;
+        let catalog = super::deferred_tools::materialize(defs, settings, &state.loaded_tools)
+            .map_err(RuntimeError::Invalid)?;
+        if !catalog.deferred.is_empty() {
+            request.system.push(format!("Deferred tool names and descriptions follow as JSON. Load full schemas with tool_search before calling them.\n<deferred_tools>\n{}\n</deferred_tools>", catalog.summary().map_err(RuntimeError::Invalid)?));
+        }
+        request.tools = catalog.callable.iter().map(|d| d.spec.clone()).collect();
+        let mut defs = catalog.callable;
+        defs.extend(catalog.deferred);
         request.tools_disabled |= limited;
         request.cache_key = Some(state.info.id.clone());
         let message_id = cyber_core::ids::new_id("msg");
@@ -993,6 +1004,15 @@ impl Inner {
         }
         let def = find_def(defs, &call.name)
             .ok_or_else(|| (CallStatus::Error, format!("Unknown tool: {}", call.name)))?;
+        if def.deferred {
+            return Err((
+                CallStatus::Error,
+                format!(
+                    "Tool {} is deferred. Load it with tool_search first.",
+                    def.spec.name
+                ),
+            ));
+        }
         let input = call
             .input
             .clone()
