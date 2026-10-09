@@ -2006,6 +2006,7 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
     host.runtime.shutdown().await;
 }
 
+#[cfg(unix)]
 fn apply_memory_response(app: &mut App, message: crate::perform::Msg) {
     let crate::perform::Msg::Memory { request, result } = message else {
         panic!("memory reply")
@@ -2019,6 +2020,7 @@ fn memory_request(actions: Vec<Action>) -> crate::memory::Request {
     };
     request
 }
+#[cfg(unix)]
 async fn perform_memory_action(client: &cyber_client::Client, app: &mut App, action: Action) {
     let message = crate::perform::perform(client, &app.session, action)
         .await
