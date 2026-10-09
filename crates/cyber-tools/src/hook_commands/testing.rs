@@ -216,10 +216,21 @@ impl BuiltinHost {
                 if let Some(message) = &definition.handler.status_message {
                     notice(id, message);
                 }
-                let report = match runner
+                let execution = if definition.kind() == HookKind::Http {
+                    crate::hook_http::HookHttpRunner {
+                        resolved: runner.resolved,
+                        trust: runner.trust,
+                        invocation_trust: runner.invocation_trust,
+                        home: runner.home,
+                    }
                     .run_test(self, &definition.pointer, event, stop.clone())
                     .await
-                {
+                } else {
+                    runner
+                        .run_test(self, &definition.pointer, event, stop.clone())
+                        .await
+                };
+                let report = match execution {
                     Ok(report) => report,
                     Err(error) => unavailable(event, definition, error, false),
                 };
@@ -255,7 +266,9 @@ fn prepare(
         Err(error) => return Prepared::Error(error.to_string()),
         Ok(true) => {}
     }
-    if definition.kind() != HookKind::Command || definition.handler.asynchronous {
+    if !matches!(definition.kind(), HookKind::Command | HookKind::Http)
+        || definition.handler.asynchronous
+    {
         return Prepared::Error(
             "Hook handler transport or async scheduling is not implemented".into(),
         );

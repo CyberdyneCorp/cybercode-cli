@@ -6,13 +6,15 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
+use futures::{Stream, StreamExt};
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinHandle;
+use tokio::sync::oneshot;
+use tokio::task::{JoinHandle, JoinSet};
 
 /// Decide whether a host may be reached.
 pub type Decide = Arc<dyn Fn(String) -> BoxFuture<'static, bool> + Send + Sync>;
@@ -28,15 +30,18 @@ pub enum Endpoint {
     Unix(PathBuf),
 }
 
-/// A running proxy; dropping it stops accepting connections.
+/// A running proxy with owned accepted connections. Shutdown waits for socket disposal.
 pub struct Proxy {
     pub endpoint: Endpoint,
-    task: JoinHandle<()>,
+    task: Option<JoinHandle<()>>,
+    stop: Option<oneshot::Sender<()>>,
 }
 
 impl Drop for Proxy {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -45,15 +50,11 @@ impl Proxy {
     pub async fn start(decide: Decide) -> std::io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
-        let task = tokio::spawn(async move {
-            while let Ok((client, _)) = listener.accept().await {
-                spawn_serve(client, Arc::clone(&decide));
-            }
+        let clients = futures::stream::unfold(listener, |listener| async move {
+            let (client, _) = listener.accept().await.ok()?;
+            Some((client, listener))
         });
-        Ok(Self {
-            endpoint: Endpoint::Tcp(port),
-            task,
-        })
+        Ok(Self::owned(Endpoint::Tcp(port), clients, decide))
     }
 
     /// Listen on a Unix socket at `path` (replaced if present).
@@ -61,22 +62,68 @@ impl Proxy {
     pub async fn start_unix(decide: Decide, path: &Path) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
         let listener = tokio::net::UnixListener::bind(path)?;
-        let task = tokio::spawn(async move {
-            while let Ok((client, _)) = listener.accept().await {
-                spawn_serve(client, Arc::clone(&decide));
-            }
+        let clients = futures::stream::unfold(listener, |listener| async move {
+            let (client, _) = listener.accept().await.ok()?;
+            Some((client, listener))
         });
-        Ok(Self {
-            endpoint: Endpoint::Unix(path.to_path_buf()),
-            task,
-        })
+        Ok(Self::owned(
+            Endpoint::Unix(path.to_path_buf()),
+            clients,
+            decide,
+        ))
+    }
+
+    fn owned<S, C>(endpoint: Endpoint, clients: C, decide: Decide) -> Self
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        C: Stream<Item = S> + Send + 'static,
+    {
+        let (stop, stopped) = oneshot::channel();
+        let task = tokio::spawn(serve_owned(clients, stopped, decide));
+        Self {
+            endpoint,
+            task: Some(task),
+            stop: Some(stop),
+        }
+    }
+
+    /// Close every accepted client/upstream transport and acknowledge their disposal.
+    /// This settles local sockets; it cannot undo remote application effects.
+    pub async fn shutdown(mut self) -> std::io::Result<()> {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(task) = self.task.as_mut() {
+            task.await.map_err(std::io::Error::other)?;
+        }
+        self.task.take();
+        Ok(())
     }
 }
 
-fn spawn_serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(client: S, decide: Decide) {
-    tokio::spawn(async move {
-        let _ = serve(client, decide).await;
-    });
+async fn serve_owned<S, C>(clients: C, mut stopped: oneshot::Receiver<()>, decide: Decide)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    C: Stream<Item = S>,
+{
+    futures::pin_mut!(clients);
+    let mut connections = JoinSet::new();
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut stopped => break,
+            _ = connections.join_next(), if !connections.is_empty() => {},
+            client = clients.next() => match client {
+                Some(client) => {
+                    let decide = Arc::clone(&decide);
+                    connections.spawn(async move { let _ = serve(client, decide).await; });
+                }
+                None => break,
+            },
+        }
+    }
+    connections.abort_all();
+    while connections.join_next().await.is_some() {}
 }
 
 async fn serve<S: AsyncRead + AsyncWrite + Unpin>(

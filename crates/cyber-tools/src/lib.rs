@@ -4,7 +4,9 @@
 mod auto_permissions;
 pub mod bash_analysis;
 mod budget;
+mod hook_authority;
 pub mod hook_commands;
+pub mod hook_http;
 mod host;
 mod parent_permissions;
 pub mod permissions;

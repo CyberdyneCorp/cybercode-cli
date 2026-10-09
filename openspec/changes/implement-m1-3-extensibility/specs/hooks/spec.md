@@ -405,3 +405,30 @@
 - **THEN** launched sibling commands SHALL be cancelled and drained to their acknowledged or explicit unknown outcomes before dispatch returns
 - **AND** queued handlers SHALL NOT launch after event cancellation
 - **AND** a fail-closed error SHALL retain its original refusal rather than being replaced by a sibling's cancellation
+
+### Requirement: HTTP handlers
+(P1) An `http` handler SHALL `POST` the event JSON to `url` with `content-type: application/json`, configured `headers` (supporting `{env:NAME}` substitution), and the handler timeout. A 2xx response with a JSON object body SHALL be parsed as a decision. A non-2xx response or a transport error SHALL be treated as a non-blocking error, unless `fail_closed: true` is set, in which case it SHALL block.
+
+#### Scenario: Remote policy server denies
+- **WHEN** an `http` `PreToolUse` hook returns `200 {"decision":"deny","reason":"blocked by policy"}`
+- **THEN** the tool call is denied with reason `blocked by policy`
+
+#### Scenario: Fail-closed timeout
+- **WHEN** an `http` hook with `fail_closed: true` times out
+- **THEN** the guarded action is blocked with reason `hook <id> unavailable`
+
+#### Scenario: HTTP transport respects explicit scope and authority
+- **WHEN** a project/local/plugin or sandbox-all HTTP hook executes
+- **THEN** network-off SHALL refuse before an upstream connection and proxy mode SHALL enforce the configured domain allowlist
+- **AND** POST requests SHALL use an owned explicit proxy rather than ambient environment proxies
+- **AND** redirect following and automatic retries SHALL be disabled
+- **AND** configured transport authority/framing headers SHALL be refused and content-type SHALL remain application/json
+- **AND** response bodies SHALL be bounded to 1 MiB and require a JSON object decision
+
+#### Scenario: HTTP receipts and cancellation preserve transport ownership
+- **WHEN** a recorded or synthetic HTTP hook completes, times out or is cancelled
+- **THEN** every accepted local proxy/request transport SHALL be closed and joined before acknowledgement and receipt settlement
+- **AND** Session subtree stop SHALL signal and await the owned HTTP execution
+- **AND** disposal without settlement SHALL retain unknown receipt/activity evidence
+- **AND** acknowledgement SHALL describe local transport disposal, not prove rollback of remote POST processing
+- **AND** raw IO SHALL remain absent by default, explicitly opted-in event/response IO SHALL remain bounded and configured header credentials SHALL never be recorded as IO

@@ -123,7 +123,7 @@ fn oversized_and_invalid_json_payloads_are_usage_errors() {
 #[test]
 fn unsupported_matching_transports_report_errors_instead_of_success_or_session_work() {
     let env = Env::new(
-        json!({"Stop":[{"hooks":[{"type":"http","url":"http://127.0.0.1:9/hook","fail_closed":true}]}]}),
+        json!({"Stop":[{"hooks":[{"type":"prompt","prompt":"review event","fail_closed":true}]}]}),
     );
     let output = env.run(&["hooks", "test", "Stop", "--format", "json"]);
     assert_eq!(output.status.code(), Some(1));
@@ -348,4 +348,43 @@ fn assert_absent(env: &Env, names: &[&str]) {
     for name in names {
         assert!(!env.root.join(name).exists(), "{name}");
     }
+}
+
+#[tokio::test]
+async fn http_hook_cli_posts_synthetic_event_and_prints_decision_without_sessions() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/policy", listener.local_addr().unwrap());
+    let served = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = [0; 8192];
+        assert!(socket.read(&mut bytes).await.unwrap() > 0);
+        let body = r#"{"decision":"deny","reason":"remote CLI policy"}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let env = Env::new(json!({"PreToolUse":[{"hooks":[{"type":"http","url":url,"id":"policy"}]}]}));
+    let output = tokio::task::spawn_blocking(move || {
+        let output = env.run(&["hooks", "test", "PreToolUse", "--format", "json"]);
+        env.assert_no_sessions(1);
+        output
+    })
+    .await
+    .unwrap();
+    served.await.unwrap();
+    assert!(output.status.success());
+    assert_eq!(body(&output)["results"][0]["kind"], "http");
+    assert_eq!(body(&output)["decision"]["decision"], "deny");
+    assert_eq!(
+        body(&output)["decision"]["reason"],
+        "policy: remote CLI policy"
+    );
 }

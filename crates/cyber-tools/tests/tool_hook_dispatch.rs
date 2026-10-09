@@ -796,3 +796,55 @@ async fn fail_closed_parallel_admission_cancels_siblings_and_retains_original_er
             .any(|record| record.hook_id == "a" && record.must_stop)
     );
 }
+
+#[tokio::test]
+async fn http_policy_decision_denies_real_builtin_write_before_effects() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/policy", listener.local_addr().unwrap());
+    let served = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = [0; 8192];
+        assert!(socket.read(&mut bytes).await.unwrap() > 0);
+        let body = r#"{"decision":"deny","reason":"HTTP policy"}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let f = Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":"a.txt","content":"unsafe"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[{"type":"http","url":url,"id":"policy"}]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    served.await.unwrap();
+    assert!(!f.f.repo.join("a.txt").exists());
+    assert!(
+        f.output(&session, "call_write")
+            .await
+            .contains("policy: HTTP policy")
+    );
+    assert_eq!(
+        f.runtime.hook_executions(&session, 10).unwrap()[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Blocked)
+    );
+}
