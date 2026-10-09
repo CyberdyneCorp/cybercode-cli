@@ -187,6 +187,7 @@ fn get_displays_one_resolved_server_with_redacted_headers_and_no_effects() {
     let output = env.run(&["mcp", "get", "db"]);
     let value = body(&output);
     assert_eq!(value["name"], "db");
+    assert_eq!(value["call_timeout_seconds"], 300);
     assert_eq!(value["definition"]["headers"]["custom"], "***");
     assert_eq!(value["definition"]["required"], true);
     assert_eq!(

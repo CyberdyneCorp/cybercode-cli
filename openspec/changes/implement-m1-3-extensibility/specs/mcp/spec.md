@@ -65,6 +65,18 @@
 - **AND** matching listing progress SHALL NOT extend that absolute deadline
 
 
+#### Scenario: Explicit server call timeout
+- **WHEN** a server explicitly configures timeout
+- **THEN** tool-call inactivity SHALL use that timeout instead of mcp.tool_timeout
+- **AND** an omitted server timeout SHALL retain the 30-second connect default and use mcp.tool_timeout for calls
+- **AND** approval identity SHALL distinguish an explicit call override from an omitted connect default
+
+#### Scenario: Invalid progress does not extend inactivity
+- **WHEN** progress repeats or regresses, has malformed optional fields, includes a request identity or refers to another token
+- **THEN** it SHALL NOT reset the active request's inactivity deadline
+- **AND** finite increasing fractional progress SHALL remain valid
+- **AND** timeout SHALL preserve unresolved RPC ownership until independent native settlement
+
 ### Requirement: Tool naming and schema
 (P0) The system SHALL expose each MCP tool as `mcp__<server>__<tool>`, replacing characters outside `[A-Za-z0-9_-]` with `_` and truncating to 64 characters with a stable hash suffix. Input schemas SHALL be forced to `type: "object"`, and tool annotations (`readOnlyHint`, `destructiveHint`) SHALL be retained for permission defaults.
 

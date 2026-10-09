@@ -1972,3 +1972,30 @@ async fn per_server_cap_bounds_success_error_and_structured_text_without_losing_
     }
     flow.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn explicit_server_timeout_bounds_runtime_calls_and_settles_native_owner() {
+    let flow = Flow::new(vec![text("unused")], false);
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["timeout"] = json!(1);
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    let id = flow.session("default").await;
+    let defs = ready(&flow, &id).await;
+    let def = defs
+        .iter()
+        .find(|def| def.spec.name == "mcp__shared__read")
+        .unwrap();
+    flow.f.write("block-call", "block");
+    let outcome =
+        tokio::time::timeout(Duration::from_secs(3), invoke(&flow, &id, def, "default")).await;
+    flow.runtime.shutdown().await;
+    assert!(matches!(outcome,Ok(ToolOutcome::Failed(error)) if error.contains("timed out")));
+    assert!(
+        mcp_connections(&flow.f.store, &flow.f.repo)
+            .unwrap()
+            .iter()
+            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+    );
+}

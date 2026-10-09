@@ -282,6 +282,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             pending.sent = true;
         }
         let mut deadline = tokio::time::Instant::now() + timeout;
+        let mut progress = None;
         loop {
             let message = tokio::time::timeout_at(deadline, self.read())
                 .await
@@ -297,9 +298,9 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
                     return Err(McpError::Protocol("invalid server request"));
                 }
                 if method == "notifications/progress"
-                    && message["params"]["progressToken"] == id
-                    && message["params"]["progress"].is_number()
+                    && let Some(value) = advancing_progress(&message, &id, progress)
                 {
+                    progress = Some(value);
                     deadline = tokio::time::Instant::now() + timeout;
                 }
                 tokio::time::timeout_at(deadline, self.server_message(&message, timeout))
@@ -397,6 +398,28 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             }
         }
     }
+}
+
+fn advancing_progress(message: &Value, token: &str, previous: Option<f64>) -> Option<f64> {
+    if message.get("id").is_some() || message["params"]["progressToken"] != token {
+        return None;
+    }
+    let params = message.get("params")?.as_object()?;
+    let progress = params
+        .get("progress")?
+        .as_f64()
+        .filter(|value| value.is_finite())?;
+    if previous.is_some_and(|previous| progress <= previous)
+        || params
+            .get("total")
+            .is_some_and(|total| total.as_f64().is_none_or(|value| !value.is_finite()))
+        || params
+            .get("message")
+            .is_some_and(|message| !message.is_string())
+    {
+        return None;
+    }
+    Some(progress)
 }
 
 fn validate_server_message(message: &Value) -> Result<(), McpError> {

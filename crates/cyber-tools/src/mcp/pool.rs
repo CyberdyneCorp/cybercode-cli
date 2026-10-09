@@ -802,7 +802,7 @@ impl BuiltinHost {
         let resolved = (config.resolve)(Path::new(&inv.directory)).map_err(ToolError::Failed)?;
         let timeout = McpSettings::from_config(&resolved.value)
             .map_err(ToolError::Failed)?
-            .tool_timeout;
+            .call_timeout(&entry.name);
         let result = tokio::select! {
             result = owner.call_exposed_tool(&inv.name, inv.input.clone(), Duration::from_secs(timeout.into())) => result.map_err(|error| ToolError::Failed(error.to_string())),
             _ = cancel.cancelled() => Err(ToolError::Aborted),

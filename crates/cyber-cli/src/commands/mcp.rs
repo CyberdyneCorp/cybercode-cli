@@ -108,6 +108,9 @@ fn server_report(
     name: &str,
 ) -> Result<Value, CliError> {
     let server = inspect_server(resolved, &ctx.location, name).map_err(CliError::usage)?;
+    let call_timeout = McpSettings::from_config(&resolved.value)
+        .map_err(CliError::usage)?
+        .call_timeout(name);
     let pointer = format!("/mcp/{name}");
     let prefix = format!("{pointer}/");
     let origins: std::collections::BTreeMap<_, _> = resolved
@@ -116,7 +119,7 @@ fn server_report(
         .filter(|(key, _)| *key == &pointer || key.starts_with(&prefix))
         .collect();
     Ok(
-        json!({"name":name,"digest":server.digest,"definition":redacted(&serde_json::to_value(&server.definition).map_err(|error| CliError::runtime(error.to_string()))?),
+        json!({"name":name,"digest":server.digest,"call_timeout_seconds":call_timeout,"definition":redacted(&serde_json::to_value(&server.definition).map_err(|error| CliError::runtime(error.to_string()))?),
             "origins":origins,"requires_individual_approval":server.requires_approval,"sandbox_required":server.requires_sandbox,
             "individually_approved":store.is_mcp_approved(&resolved.trust.checkout_root,&server.digest)?,
             "authorized":authorize_server(resolved,store,&ctx.location,name).is_ok()}),

@@ -192,3 +192,32 @@ fn per_server_output_limits_are_positive_typed_and_digest_bound() {
         assert!(!error.contains("private-secret"));
     }
 }
+
+#[test]
+fn tool_timeout_override_preserves_connect_defaults_and_approval_identity() {
+    let settings = McpSettings::from_config(&json!({"mcp":{
+        "tool_timeout":90,
+        "default":{"type":"local","command":"x"},
+        "explicit":{"type":"local","command":"x","timeout":7},
+        "thirty":{"type":"local","command":"x","timeout":30}
+    }}))
+    .unwrap();
+    assert_eq!(settings.servers["default"].timeout(), 30);
+    assert_eq!(settings.call_timeout("default"), 90);
+    assert_eq!(settings.call_timeout("explicit"), 7);
+    assert_eq!(settings.call_timeout("thirty"), 30);
+    assert_eq!(
+        McpSettings::from_config(&json!({"mcp":{"db":{"type":"local","command":"x"}}}))
+            .unwrap()
+            .call_timeout("db"),
+        300
+    );
+    for invalid in [json!(null), json!(0), json!(-1), json!("private-secret")] {
+        assert!(
+            McpSettings::from_config(
+                &json!({"mcp":{"db":{"type":"local","command":"x","timeout":invalid}}})
+            )
+            .is_err()
+        );
+    }
+}

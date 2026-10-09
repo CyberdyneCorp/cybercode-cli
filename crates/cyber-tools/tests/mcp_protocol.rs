@@ -96,6 +96,8 @@ async fn matching_progress_resets_request_inactivity() {
         tokio::time::sleep(Duration::from_millis(700)).await;
         send(&mut peer, json!({"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":pending["id"],"progress":1}})).await;
         tokio::time::sleep(Duration::from_millis(700)).await;
+        send(&mut peer, json!({"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":pending["id"],"progress":1.5,"total":2.5,"message":"working"}})).await;
+        tokio::time::sleep(Duration::from_millis(700)).await;
         send(
             &mut peer,
             json!({"jsonrpc":"2.0","id":pending["id"],"result":{}}),
@@ -543,4 +545,45 @@ async fn idle_roots_callback_uses_captured_snapshot_and_late_configuration_is_re
     .unwrap();
     server.await.unwrap();
     assert!(client.with_roots(roots).is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalid_or_nonincreasing_progress_cannot_extend_request_deadline() {
+    for invalid in [
+        json!({"progress":1}),
+        json!({"progress":0.5}),
+        json!({"progress":2,"total":"private-secret"}),
+        json!({"progress":2,"message":42}),
+        json!({"progress":2,"id":"callback"}),
+    ] {
+        let (mut client, mut peer) = pair();
+        let server = tokio::spawn(async move {
+            initialize_peer(&mut peer).await;
+            let pending = read(&mut peer).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            send(&mut peer,json!({"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":pending["id"],"progress":1}})).await;
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            let mut notification =
+                json!({"jsonrpc":"2.0","method":"notifications/progress","params":invalid});
+            notification["params"]["progressToken"] = pending["id"].clone();
+            if let Some(id) = notification["params"].as_object_mut().unwrap().remove("id") {
+                notification["id"] = id;
+            }
+            send(&mut peer, notification).await;
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            send(
+                &mut peer,
+                json!({"jsonrpc":"2.0","id":pending["id"],"result":{}}),
+            )
+            .await;
+        });
+        client.initialize(TIMEOUT).await.unwrap();
+        assert!(matches!(
+            client.call_tool("audit", json!({}), TIMEOUT).await,
+            Err(McpError::Timeout)
+        ));
+        assert!(client.unresolved());
+        server.abort();
+        let _ = server.await;
+    }
 }

@@ -207,7 +207,6 @@ impl LocalLauncher<'_> {
             args,
             env,
             cwd,
-            timeout,
             tools,
             ..
         } = &server.definition
@@ -216,7 +215,8 @@ impl LocalLauncher<'_> {
                 "MCP server requires remote transport",
             ));
         };
-        let deadline = tokio::time::Instant::now() + Duration::from_secs((*timeout).into());
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(server.definition.timeout().into());
         let deadline = limit.map_or(deadline, |limit| limit.min(deadline));
         let cwd = std::fs::canonicalize(
             cwd.as_ref()

@@ -17,11 +17,14 @@ fn effective_digest_binds_name_defaults_credentials_and_execution_fields() {
     assert_eq!(
         first,
         digest(
-            json!({"type":"local","command":"server","args":[],"env":{},"timeout":30,"enabled":true,"tools":{}}),
+            json!({"type":"local","command":"server","args":[],"env":{},"enabled":true,"tools":{}}),
             "audit"
         )
     );
     assert_ne!(first, digest(original.clone(), "other"));
+    let mut explicit_default = original.clone();
+    explicit_default["timeout"] = json!(30);
+    assert_ne!(first, digest(explicit_default, "audit"));
     for (key, value) in [
         ("command", json!("changed")),
         ("args", json!(["--changed"])),

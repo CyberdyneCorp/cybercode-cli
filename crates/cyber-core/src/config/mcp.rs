@@ -17,8 +17,12 @@ pub enum McpServer {
         cwd: Option<PathBuf>,
         #[serde(default = "enabled")]
         enabled: bool,
-        #[serde(default = "timeout")]
-        timeout: u32,
+        #[serde(
+            default,
+            deserialize_with = "explicit_timeout",
+            serialize_with = "normalized_timeout"
+        )]
+        timeout: Option<u32>,
         #[serde(default)]
         tools: McpToolFilter,
         #[serde(default, skip_serializing_if = "not_required")]
@@ -33,8 +37,12 @@ pub enum McpServer {
         oauth: Option<Value>,
         #[serde(default = "enabled")]
         enabled: bool,
-        #[serde(default = "timeout")]
-        timeout: u32,
+        #[serde(
+            default,
+            deserialize_with = "explicit_timeout",
+            serialize_with = "normalized_timeout"
+        )]
+        timeout: Option<u32>,
         #[serde(default)]
         tools: McpToolFilter,
         #[serde(default, skip_serializing_if = "not_required")]
@@ -49,8 +57,16 @@ fn not_required(value: &bool) -> bool {
 fn enabled() -> bool {
     true
 }
-fn timeout() -> u32 {
-    30
+fn explicit_timeout<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error> {
+    u32::deserialize(deserializer).map(Some)
+}
+fn normalized_timeout<S: serde::Serializer>(
+    timeout: &Option<u32>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    timeout.unwrap_or(30).serialize(serializer)
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -88,7 +104,10 @@ impl McpServer {
     /// Bind approval to the server name and every effective field, including defaults.
     pub fn digest(&self, name: &str) -> Result<String, serde_json::Error> {
         use sha2::{Digest, Sha256};
-        let definition = serde_json::json!({"kind":"mcp_server","name":name,"server":self});
+        let mut definition = serde_json::json!({"kind":"mcp_server","name":name,"server":self});
+        if let Some(timeout) = self.call_timeout() {
+            definition["call_timeout_override"] = serde_json::json!(timeout);
+        }
         Ok(format!(
             "sha256:{:x}",
             Sha256::digest(super::canonical_json(&definition))
@@ -115,6 +134,9 @@ impl McpServer {
         }
     }
     pub fn timeout(&self) -> u32 {
+        self.call_timeout().unwrap_or(30)
+    }
+    pub fn call_timeout(&self) -> Option<u32> {
         match self {
             Self::Local { timeout, .. } | Self::Remote { timeout, .. } => *timeout,
         }
@@ -195,6 +217,12 @@ pub struct McpSettings {
     pub tool_timeout: u32,
 }
 impl McpSettings {
+    pub fn call_timeout(&self, name: &str) -> u32 {
+        self.servers
+            .get(name)
+            .and_then(McpServer::call_timeout)
+            .unwrap_or(self.tool_timeout)
+    }
     pub fn from_config(config: &Value) -> Result<Self, String> {
         let mut settings = Self {
             servers: BTreeMap::new(),
