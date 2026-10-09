@@ -59,6 +59,26 @@ impl Context {
         Ok(config::load(&self.request())?)
     }
 
+    pub fn hook_resolver(&self) -> std::sync::Arc<cyber_tools::HookConfigFn> {
+        let paths = self.paths.clone();
+        let home = self.home.clone();
+        let profile = self.profile.clone();
+        let overrides = self.overrides.clone();
+        let flags = self.flags.clone();
+        std::sync::Arc::new(move |location| {
+            config::load(&LoadRequest {
+                location,
+                paths: &paths,
+                env: &ProcessEnv,
+                home: &home,
+                profile: profile.as_deref(),
+                overrides: &overrides,
+                flags: flags.clone(),
+            })
+            .map_err(|error| error.to_string())
+        })
+    }
+
     pub fn withheld_hooks(&self) -> Result<Vec<config::RawHookSection>, CliError> {
         Ok(config::withheld_hook_sections(&self.request())?)
     }

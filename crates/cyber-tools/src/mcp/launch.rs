@@ -237,6 +237,40 @@ impl LocalLauncher<'_> {
         before_spawn: impl FnOnce() -> Result<(), String>,
         limit: Option<tokio::time::Instant>,
     ) -> Result<LocalServer, LocalLaunchError> {
+        self.connect_options(name, before_spawn, limit, false, None)
+            .await
+    }
+
+    /// The caller owns a durable hook admission and retains this future through cancellation.
+    pub async fn connect_for_hook(
+        &self,
+        name: &str,
+        before_spawn: impl FnOnce() -> Result<(), String>,
+        deadline: tokio::time::Instant,
+        required_sandbox: bool,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<LocalServer, LocalLaunchError> {
+        self.connect_options(
+            name,
+            before_spawn,
+            Some(deadline),
+            required_sandbox,
+            Some(cancel),
+        )
+        .await
+    }
+
+    async fn connect_options(
+        &self,
+        name: &str,
+        before_spawn: impl FnOnce() -> Result<(), String>,
+        limit: Option<tokio::time::Instant>,
+        required_sandbox: bool,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> Result<LocalServer, LocalLaunchError> {
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            return Err(LocalLaunchError::before_launch("MCP startup cancelled"));
+        }
         let server = authorize_server(self.resolved, self.trust, self.location, name)
             .map_err(LocalLaunchError::before_launch)?;
         let McpServer::Local {
@@ -285,10 +319,15 @@ impl LocalLauncher<'_> {
         };
         let roots = super::McpRoots::new(self.location, writable)
             .map_err(|error| LocalLaunchError::before_launch(error.to_string()))?;
-        let mut resources = self.prepare(server.requires_sandbox).await?;
+        let mut resources = self
+            .prepare(server.requires_sandbox, required_sandbox)
+            .await?;
         resources.scratch.cleanup = false;
         let prepared = (|| {
             let wrapped = self.wrap(&resources, command, args)?;
+            if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+                return Err(LocalLaunchError::before_launch("MCP startup cancelled"));
+            }
             before_spawn().map_err(LocalLaunchError::before_launch)?;
             // Preparation and durable admission can await or revoke approval.
             authorize_server(self.resolved, self.trust, self.location, name)
@@ -336,15 +375,18 @@ impl LocalLauncher<'_> {
                 });
             }
         };
-        match StdioConnection::connect_with_tools_and_roots_and_sampling(
+        match StdioConnection::connect_with_options(
             process,
             name,
             tools,
             deadline.saturating_duration_since(tokio::time::Instant::now()),
-            Some(roots),
-            cyber_core::config::McpSettings::from_config(&self.resolved.value)
-                .map_err(LocalLaunchError::before_launch)?
-                .sampling_enabled,
+            super::StartupOptions {
+                roots: Some(roots),
+                sampling: cyber_core::config::McpSettings::from_config(&self.resolved.value)
+                    .map_err(LocalLaunchError::before_launch)?
+                    .sampling_enabled,
+                cancellation: cancel.cloned(),
+            },
         )
         .await
         {
@@ -381,14 +423,20 @@ impl LocalLauncher<'_> {
         }
     }
 
-    async fn prepare(&self, required: bool) -> Result<Resources, LocalLaunchError> {
+    async fn prepare(
+        &self,
+        required: bool,
+        required_sandbox: bool,
+    ) -> Result<Resources, LocalLaunchError> {
         let mut config = SandboxConfig::resolve(
             &self.resolved.value,
             &self.resolved.sources,
             None,
             self.home,
         );
-        if !required {
+        if required_sandbox {
+            config.policy = Policy::WorkspaceWrite;
+        } else if !required {
             config.policy = Policy::FullAccess;
         }
         let scratch = Scratch::new(self.temp_dir)

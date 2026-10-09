@@ -27,6 +27,14 @@
 - **AND** explicit shutdown SHALL close protocol IO and report bounded native tree termination acknowledgement separately from the RPC outcome
 - **AND** failed initialization SHALL retain stop evidence and disposal SHALL NOT imply acknowledgement
 
+#### Scenario: Dedicated local hook connection
+- **WHEN** a trusted synchronous local MCP-tool hook runs
+- **THEN** its hook receipt SHALL own a dedicated connection with current handler/server authorization and required scope sandboxing
+- **AND** discovered input schemas and server tool filters SHALL apply before tools/call
+- **AND** native/process/proxy shutdown SHALL be acknowledged before durable settlement permits scratch cleanup
+- **AND** startup/discovery and active-call cancellation SHALL NOT dispose native ownership without a verified or explicitly Unknown result
+- **AND** callbacks SHALL NOT borrow a Session's requester or private context
+
 ### Requirement: Prompt handlers
 (P1) A `prompt` handler SHALL ask the `model_roles.evaluator` model (falling back to `small_model`) to judge the event using the handler's `prompt` text plus the event JSON. The judgement SHALL be returned as structured output `{ decision: allow|deny|ask, reason }`. Prompt handlers SHALL have no tools and SHALL count toward session cost.
 

@@ -6,6 +6,15 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+
+## Synchronous local MCP-tool hooks (2026-10-09)
+
+Recorded tool/permission hook dispatch and synthetic CLI testing now support configured local `mcp_tool` handlers. Each receipt owns a separate native connection; it never borrows the shared RPC connection or a Session's callback authority. Fresh hook and server authorization precede launch and calls and withhold changed-definition results. Filtered discovery and schema validation precede tool effects. Event JSON and typed argument templates, strict unambiguous textual decisions, default-private receipts and per-Session/per-test once claims use existing hook contracts.
+
+Required hook scope confinement overrides ordinary MCP sandbox opt-out and full-access settings. One absolute handler deadline covers initialization, discovery and calls. Startup cancellation joins initialization/listing ownership; call cancellation or timeout closes the native tree and local proxy before durable receipt settlement and checkout/scratch cleanup. Unacknowledged owners retain unknown evidence. Actual tests prove built-in write denial, separate native connections, typed synthetic input and once behavior without Session admission, schema/filter refusal, malformed/error replies under both fail-closed settings, cancellation and live server/hook-definition changes. A reentrant sampling permission callback successfully calls the same configured server through its dedicated hook connection without a deadlock or human prompt. The real CLI exercises MCP effects and receipt creation without Session startup.
+
+Local validation passes 197 Rust cases across twelve hook/MCP and CLI integration suites, workspace all-target Clippy with warnings denied, all 62 TypeScript SDK tests/typecheck, generated SDK consistency, formatting and all 58 strict OpenSpec items. Cross-spec lint reports zero errors and 21 warnings. Remote MCP hooks, async scheduling, remaining lifecycle delivery, plugins and full native platform acceptance remain open. This is local implementation evidence; the canonical MCP-hook requirement and all P1 milestones remain unaccepted.
+
 ## M1.3 local MCP sampling
 
 Opt-in local stdio connections advertise basic sampling and route active-call requests through fresh native-definition authorization, `mcp_sampling` permission for the server name, configured small-model selection and Session/ancestor budgets. Bounded typed requests retain text/image content and supported sampling options, omit Session history/cache identity and strip conflicting provider overlays. Model hints cannot change the selected provider. Unsupported tools, audio and ambient-server context are refused. Startup/idle callbacks have no call owner and cannot invoke a model.

@@ -7,6 +7,7 @@ mod budget;
 mod hook_authority;
 pub mod hook_commands;
 pub mod hook_http;
+pub mod hook_mcp;
 pub mod hook_prompt;
 mod hook_reports;
 mod host;

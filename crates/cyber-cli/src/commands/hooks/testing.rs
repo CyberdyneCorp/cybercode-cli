@@ -113,6 +113,8 @@ pub(super) fn run(
         sandbox_policy: None,
         sandbox_helper: helper.clone(),
     });
+    host.attach_hook_config(ctx.hook_resolver(), trust.clone())
+        .map_err(CliError::runtime)?;
     let runner = HookCommandRunner {
         resolved: &resolved,
         trust: &trust,

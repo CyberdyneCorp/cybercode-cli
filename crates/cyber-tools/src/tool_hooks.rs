@@ -337,6 +337,7 @@ impl BuiltinHost {
             cyber_core::config::HookKind::Command
                 | cyber_core::config::HookKind::Http
                 | cyber_core::config::HookKind::Prompt
+                | cyber_core::config::HookKind::McpTool
         ) || definition.handler.asynchronous
         {
             let owner = runtime
@@ -353,6 +354,10 @@ impl BuiltinHost {
                 })
                 .map_err(|error| ToolError::Failed(error.to_string()))?;
             Err("Hook handler type or async scheduling is not implemented".to_string())
+        } else if definition.kind() == cyber_core::config::HookKind::McpTool {
+            crate::hook_mcp::HookMcpRunner { settings: runner }
+                .run_recorded(self, runtime, &definition.pointer, event, cancel)
+                .await
         } else if definition.kind() == cyber_core::config::HookKind::Prompt {
             crate::hook_prompt::HookPromptRunner {
                 resolved: runner.resolved,

@@ -216,7 +216,11 @@ impl BuiltinHost {
                 if let Some(message) = &definition.handler.status_message {
                     notice(id, message);
                 }
-                let execution = if definition.kind() == HookKind::Prompt {
+                let execution = if definition.kind() == HookKind::McpTool {
+                    crate::hook_mcp::HookMcpRunner { settings: runner }
+                        .run_test(self, &definition.pointer, event, stop.clone())
+                        .await
+                } else if definition.kind() == HookKind::Prompt {
                     crate::hook_prompt::HookPromptRunner {
                         resolved: runner.resolved,
                         trust: runner.trust,
@@ -277,7 +281,7 @@ fn prepare(
     }
     if !matches!(
         definition.kind(),
-        HookKind::Command | HookKind::Http | HookKind::Prompt
+        HookKind::Command | HookKind::Http | HookKind::Prompt | HookKind::McpTool
     ) || definition.handler.asynchronous
     {
         return Prepared::Error(

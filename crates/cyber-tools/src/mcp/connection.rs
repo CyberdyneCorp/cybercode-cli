@@ -36,6 +36,21 @@ pub struct StdioConnection {
     grace_deadline: Option<tokio::time::Instant>,
 }
 
+/// Immutable startup capabilities and optional ownership cancellation.
+#[derive(Default)]
+pub struct StartupOptions {
+    pub roots: Option<super::McpRoots>,
+    pub sampling: bool,
+    pub cancellation: Option<tokio_util::sync::CancellationToken>,
+}
+
+async fn startup_cancelled(cancel: Option<&tokio_util::sync::CancellationToken>) {
+    match cancel {
+        Some(cancel) => cancel.cancelled().await,
+        None => std::future::pending().await,
+    }
+}
+
 impl StdioConnection {
     /// One absolute deadline covers initialization and every initial listing page.
     pub async fn connect_with_tools(
@@ -68,17 +83,54 @@ impl StdioConnection {
         roots: Option<super::McpRoots>,
         sampling: bool,
     ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
+        Self::connect_with_options(
+            process,
+            name,
+            filter,
+            timeout,
+            StartupOptions {
+                roots,
+                sampling,
+                cancellation: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn connect_with_options(
+        process: HookCommandProcess,
+        name: &str,
+        filter: &cyber_core::config::McpToolFilter,
+        timeout: Duration,
+        options: StartupOptions,
+    ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
+        let StartupOptions {
+            roots,
+            sampling,
+            cancellation,
+        } = options;
         let deadline = tokio::time::Instant::now() + timeout;
-        let mut connection =
-            Self::connect_configured(process, timeout, roots, Some(name), sampling).await?;
-        match connection
+        let mut connection = Self::connect_configured(
+            process,
+            timeout,
+            roots,
+            Some(name),
+            sampling,
+            cancellation.as_ref(),
+        )
+        .await?;
+        let discovered = tokio::select! {
+            biased;
+            _ = startup_cancelled(cancellation.as_ref()) => Err(McpError::Protocol("MCP startup cancelled")),
+                result = connection
             .discover_tools(
                 name,
                 filter,
                 deadline.saturating_duration_since(tokio::time::Instant::now()),
             )
-            .await
-        {
+            => result,
+        };
+        match discovered {
             Ok(tools) => Ok((connection, tools)),
             Err(error) => {
                 let (acknowledged, stderr) = connection.shutdown().await;
@@ -104,7 +156,7 @@ impl StdioConnection {
         timeout: Duration,
         roots: Option<super::McpRoots>,
     ) -> Result<Self, ConnectionError> {
-        Self::connect_configured(process, timeout, roots, None, false).await
+        Self::connect_configured(process, timeout, roots, None, false, None).await
     }
 
     async fn connect_configured(
@@ -113,6 +165,7 @@ impl StdioConnection {
         roots: Option<super::McpRoots>,
         server: Option<&str>,
         sampling: bool,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
     ) -> Result<Self, ConnectionError> {
         let mut connection = Self {
             process,
@@ -121,10 +174,12 @@ impl StdioConnection {
             #[cfg(unix)]
             grace_deadline: None,
         };
-        if let Err(error) = connection
-            .initialize(timeout, roots, server, sampling)
-            .await
-        {
+        let initialized = tokio::select! {
+            biased;
+            _ = startup_cancelled(cancel) => Err(McpError::Protocol("MCP startup cancelled")),
+            result = connection.initialize(timeout, roots, server, sampling) => result,
+        };
+        if let Err(error) = initialized {
             let (acknowledged, stderr) = connection.shutdown().await;
             return Err(ConnectionError {
                 error,

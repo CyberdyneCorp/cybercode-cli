@@ -12,7 +12,7 @@ mod sampling;
 mod stdio;
 mod values;
 pub use authority::{ServerSelection, authorize_server, inspect_server};
-pub use connection::{ConnectionError, StderrCapture, StdioConnection};
+pub use connection::{ConnectionError, StartupOptions, StderrCapture, StdioConnection};
 pub use discovery::{DiscoveredTool, exposed_tool_name};
 pub use elicitation::ElicitationContext;
 pub use launch::{LocalLaunchError, LocalLauncher, LocalServer};

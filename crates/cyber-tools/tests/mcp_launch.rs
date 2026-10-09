@@ -1076,3 +1076,127 @@ async fn unavailable_writable_root_refuses_before_native_admission() {
     assert!(error.acknowledged && error.scratch.is_none());
     assert!(!admitted.get());
 }
+
+#[tokio::test]
+async fn hook_startup_cancellation_acknowledges_initialization_and_discovery_trees() {
+    use tokio_util::sync::CancellationToken;
+    for phase in ["initialize", "tools/list"] {
+        let fixture = Fixture::new("full-access");
+        let script = format!(
+            r#"
+import sys,json,pathlib,time,subprocess
+phase={phase:?}
+for line in sys.stdin:
+    request=json.loads(line)
+    if 'id' not in request: continue
+    if request['method']==phase:
+        pathlib.Path('hook-waiting').write_text('waiting')
+        subprocess.Popen([sys.executable,'-c',"import time,pathlib; time.sleep(1.5); pathlib.Path('hook-escape').write_text('escaped')"])
+        while True: time.sleep(.1)
+    result={{'protocolVersion':'2025-11-25','capabilities':{{'tools':{{}}}},'serverInfo':{{'name':'fixture','version':'1'}}}}
+    print(json.dumps({{'jsonrpc':'2.0','id':request['id'],'result':result}}),flush=True)
+"#
+        );
+        fixture.configure(|config| config["mcp"]["audit"]["args"] = json!(["-u", "-c", script]));
+        let resolved = fixture.load();
+        let trust = fixture.trust();
+        let cancel = CancellationToken::new();
+        let launcher = fixture.launcher(&resolved, &trust, None);
+        let started = tokio::time::Instant::now();
+        let (result, ()) = tokio::join!(
+            launcher.connect_for_hook(
+                "audit",
+                || Ok(()),
+                started + Duration::from_secs(30),
+                false,
+                &cancel
+            ),
+            async {
+                tokio::time::timeout(Duration::from_secs(3), async {
+                    while !fixture.repo.join("hook-waiting").exists() {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                cancel.cancel();
+            }
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("cancelled startup connected"),
+        };
+        assert!(error.acknowledged);
+        assert!(error.diagnostic.contains("startup cancelled"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let scratch = error.scratch.unwrap();
+        assert!(
+            scratch.exists(),
+            "caller must commit its receipt before cleanup"
+        );
+        tokio::time::sleep(Duration::from_millis(1600)).await;
+        assert!(!fixture.repo.join("hook-escape").exists());
+        std::fs::remove_dir_all(scratch).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn hook_required_sandbox_overrides_full_access_and_ordinary_mcp_opt_out() {
+    let fixture = Fixture::new("full-access");
+    fixture.configure(|config| config["sandbox"]["apply_to"] = json!([]));
+    let resolved = fixture.load();
+    let trust = fixture.trust();
+    let helper = cyber_sandbox::find_helper();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let mut server = fixture
+        .launcher(&resolved, &trust, helper.as_deref())
+        .connect_for_hook(
+            "audit",
+            || Ok(()),
+            tokio::time::Instant::now() + Duration::from_secs(3),
+            true,
+            &cancel,
+        )
+        .await
+        .unwrap();
+    let observed = result(
+        server
+            .call_tool("record", json!({}), Duration::from_secs(2))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(observed["credential_read"], false);
+    assert_eq!(observed["writable"], true);
+    assert!(server.shutdown().await.0);
+    server.settle_after_shutdown(|| Ok(())).unwrap();
+}
+
+#[tokio::test]
+async fn already_cancelled_hook_startup_refuses_before_native_admission_or_scratch() {
+    let fixture = Fixture::new("full-access");
+    let resolved = fixture.load();
+    let trust = fixture.trust();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    let admitted = std::cell::Cell::new(false);
+    let result = fixture
+        .launcher(&resolved, &trust, None)
+        .connect_for_hook(
+            "audit",
+            || {
+                admitted.set(true);
+                Ok(())
+            },
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            false,
+            &cancel,
+        )
+        .await;
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("cancelled startup connected"),
+    };
+    assert!(error.acknowledged && error.scratch.is_none());
+    assert!(!admitted.get());
+    assert!(!fixture.temp.exists());
+}

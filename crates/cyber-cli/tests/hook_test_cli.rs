@@ -191,7 +191,7 @@ fn oversized_and_invalid_json_payloads_are_usage_errors() {
 }
 
 #[test]
-fn unsupported_matching_transports_report_errors_instead_of_success_or_session_work() {
+fn missing_mcp_server_records_failure_without_session_work() {
     let env = Env::new(
         json!({"Stop":[{"hooks":[{"type":"mcp_tool","server":"audit","tool":"judge","fail_closed":true}]}]}),
     );
@@ -201,7 +201,7 @@ fn unsupported_matching_transports_report_errors_instead_of_success_or_session_w
     assert_eq!(value["complete"], false);
     assert_eq!(value["results"][0]["outcome"], "error");
     assert_eq!(value["decision"]["decision"], "block");
-    env.assert_no_sessions(0);
+    env.assert_no_sessions(1);
 }
 
 #[cfg(unix)]
@@ -457,4 +457,49 @@ async fn http_hook_cli_posts_synthetic_event_and_prints_decision_without_session
         body(&output)["decision"]["reason"],
         "policy: remote CLI policy"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn synthetic_local_mcp_cli_uses_live_configuration_and_receipt_without_session_startup() {
+    let hooks = json!({"PreToolUse":[{"matcher":"write","hooks":[{"type":"mcp_tool","server":"audit","tool":"record","arguments":{"input":"${tool_input}"}}]}]});
+    let env = Env::new(hooks.clone());
+    let server = r#"
+import json,sys,pathlib
+for line in sys.stdin:
+    request=json.loads(line)
+    if 'id' not in request: continue
+    if request['method']=='initialize': result={'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'audit','version':'1'}}
+    elif request['method']=='tools/list': result={'tools':[{'name':'record','inputSchema':{'type':'object','required':['input']}}]}
+    else:
+        pathlib.Path('actual-input.json').write_text(json.dumps(request['params']['arguments']))
+        result={'content':[{'type':'text','text':'{"decision":"deny","reason":"audit policy"}'}]}
+    print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
+"#;
+    std::fs::write(env.root.join("cyber/config/cyber.jsonc"), json!({"sandbox":{"policy":"full-access"},"hooks":hooks,"mcp":{"audit":{"type":"local","command":"/usr/bin/python3","args":["-u","-c",server]}}}).to_string()).unwrap();
+    let payload =
+        env.payload(json!({"tool_name":"write","tool_input":{"path":"private.txt","count":2}}));
+    let output = env.run(&[
+        "hooks",
+        "test",
+        "PreToolUse",
+        "--payload",
+        payload.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result = body(&output);
+    assert_eq!(result["complete"], true);
+    assert_eq!(result["results"][0]["acknowledged"], true);
+    assert_eq!(result["decision"]["decision"], "deny");
+    let actual: Value =
+        serde_json::from_slice(&std::fs::read(env.root.join("actual-input.json")).unwrap())
+            .unwrap();
+    assert_eq!(actual, json!({"input":{"path":"private.txt","count":2}}));
+    env.assert_no_sessions(1);
 }

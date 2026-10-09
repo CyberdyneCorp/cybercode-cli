@@ -2738,3 +2738,470 @@ async fn sampling_malformed_and_immediately_denied_callbacks_cannot_extend_call_
         flow.runtime.shutdown().await;
     }
 }
+
+const HOOK_AUDIT_SERVER: &str = r#"
+import json,sys,os,pathlib,time
+for line in sys.stdin:
+    request=json.loads(line)
+    if 'id' not in request: continue
+    if request['method']=='initialize':
+        with open('hook-servers','a') as f: f.write(str(os.getpid())+'\n')
+        result={'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'audit','version':'1'}}
+    elif request['method']=='tools/list':
+        schema=json.loads(pathlib.Path('hook-schema').read_text()) if pathlib.Path('hook-schema').exists() else {'type':'object'}
+        result={'tools':[{'name':'record','inputSchema':schema},{'name':'read','inputSchema':{'type':'object'},'annotations':{'readOnlyHint':True}}]}
+    else:
+        if request['params']['name']=='read':
+            print(json.dumps({'jsonrpc':'2.0','id':'sample','method':'sampling/createMessage','params':{'messages':[{'role':'user','content':{'type':'text','text':'audit sample'}}],'maxTokens':42}}),flush=True)
+            reply=json.loads(sys.stdin.readline())
+            pathlib.Path('sampling-reply').write_text(json.dumps(reply))
+            result={'content':[{'type':'text','text':json.dumps(reply)}]}
+        else:
+            pathlib.Path('hook-input').write_text(json.dumps(request['params']['arguments']))
+            while pathlib.Path('hook-block').exists(): time.sleep(.01)
+            result=json.loads(pathlib.Path('hook-answer').read_text())
+    print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
+"#;
+
+fn configure_mcp_hook(flow: &Flow, hooks: Value) -> config::Resolved {
+    let path = configure(flow, hooks);
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    value["mcp"]["shared"]["args"] = json!(["-u", "-c", HOOK_AUDIT_SERVER]);
+    std::fs::write(path, value.to_string()).unwrap();
+    flow.f.set_config(value);
+    reload_mcp_hook(flow)
+}
+
+fn reload_mcp_hook(flow: &Flow) -> config::Resolved {
+    let home = flow.f.dir.path();
+    let env = HashMap::from([(
+        "CYBER_HOME".into(),
+        home.join("cyber").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, home);
+    config::load(&LoadRequest {
+        location: &flow.f.repo,
+        paths: &paths,
+        env: &env,
+        home,
+        profile: None,
+        overrides: &[],
+        flags: json!({}),
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn mcp_hook_blocks_builtin_effects_through_a_dedicated_recorded_connection() {
+    let flow = Flow::new(
+        vec![
+            call(
+                "c1",
+                "write",
+                json!({"path":"blocked.txt","content":"unsafe"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    configure_mcp_hook(
+        &flow,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[{"type":"mcp_tool","server":"shared","tool":"record","fail_closed":true}]}]}),
+    );
+    flow.f.write("hook-answer",&json!({"content":[{"type":"text","text":"{\"decision\":\"deny\",\"reason\":\"audit policy\"}"}]}).to_string());
+    let id = flow.session("bypass").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "write").await;
+    flow.settle(&id).await;
+    assert!(!flow.f.repo.join("blocked.txt").exists());
+    let input: Value = serde_json::from_str(&flow.f.read("hook-input")).unwrap();
+    assert_eq!(input["tool_name"], "write");
+    assert_eq!(input["tool_input"]["path"], "blocked.txt");
+    let receipts = flow.runtime.hook_executions(&id, 20).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Blocked)
+    );
+    assert_eq!(receipts[0].acknowledged, Some(true));
+    assert!(receipts[0].io.is_none());
+    let servers = flow.f.read("hook-servers");
+    let pids: std::collections::HashSet<_> = servers.lines().collect();
+    assert!(
+        pids.len() >= 2,
+        "hook borrowed the shared native connection"
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn mcp_hook_synthetic_templates_preserve_types_and_once_without_session_admission() {
+    use cyber_core::hooks::{HookEvent, HookLocation};
+    use cyber_tools::hook_commands::HookCommandRunner;
+    let flow = Flow::new(vec![text("unused")], false);
+    let resolved = configure_mcp_hook(
+        &flow,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[{"type":"mcp_tool","server":"shared","tool":"record","once":true,"arguments":{"count":"${tool_input.count}","input":"${tool_input}","label":"call ${tool_name}"}}]}]}),
+    );
+    flow.f.write(
+        "hook-answer",
+        &json!({"content":[{"type":"text","text":"{\"decision\":\"allow\"}"}]}).to_string(),
+    );
+    let trust = TrustStore::new(flow.f.dir.path().join("trust.json"));
+    let settings = HookCommandRunner {
+        resolved: &resolved,
+        trust: &trust,
+        invocation_trust: None,
+        home: flow.f.dir.path(),
+        temp_dir: &flow.f.dir.path().join("hook-scratch"),
+        shell: "bash",
+        helper: None,
+        credential_env_names: &[],
+    };
+    let event = HookEvent::synthetic(
+        "PreToolUse",
+        HookLocation {
+            directory: flow.f.repo.clone(),
+            workspace: None,
+        },
+        "global".into(),
+        "build".into(),
+        "default".into(),
+        1,
+        json!({"tool_name":"write","tool_input":{"count":2}}),
+    )
+    .unwrap();
+    let first = flow
+        .f
+        .host
+        .test_hooks(
+            &settings,
+            event.clone(),
+            CancellationToken::new(),
+            &|_, _| {},
+        )
+        .await
+        .unwrap();
+    assert!(first.complete);
+    assert_eq!(
+        first.results[0].report.outcome,
+        cyber_core::hooks::HookOutcome::Ok
+    );
+    let input: Value = serde_json::from_str(&flow.f.read("hook-input")).unwrap();
+    assert_eq!(
+        input,
+        json!({"count":2,"input":{"count":2},"label":"call write"})
+    );
+    let second = flow
+        .f
+        .host
+        .test_hooks(&settings, event, CancellationToken::new(), &|_, _| {})
+        .await
+        .unwrap();
+    assert!(second.complete);
+    assert_eq!(
+        second.results[0].report.outcome,
+        cyber_core::hooks::HookOutcome::Skipped
+    );
+    assert_eq!(flow.f.read("hook-servers").lines().count(), 1);
+    assert_eq!(
+        flow.f
+            .store
+            .read(
+                |conn| Ok(conn.query_row("SELECT COUNT(*) FROM session", [], |row| row
+                    .get::<_, i64>(0))?)
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        std::fs::read_dir(flow.f.dir.path().join("hook-scratch"))
+            .unwrap()
+            .count(),
+        0
+    );
+    flow.runtime.shutdown().await;
+}
+
+fn mcp_hook_event(flow: &Flow) -> cyber_core::hooks::HookEvent {
+    cyber_core::hooks::HookEvent::synthetic(
+        "PreToolUse",
+        cyber_core::hooks::HookLocation {
+            directory: flow.f.repo.clone(),
+            workspace: None,
+        },
+        "global".into(),
+        "build".into(),
+        "default".into(),
+        1,
+        json!({"tool_name":"write","tool_input":{"private":"private hook input"}}),
+    )
+    .unwrap()
+}
+
+fn mcp_hook_settings<'a>(
+    flow: &'a Flow,
+    resolved: &'a config::Resolved,
+    trust: &'a TrustStore,
+    scratch: &'a std::path::Path,
+) -> cyber_tools::hook_commands::HookCommandRunner<'a> {
+    cyber_tools::hook_commands::HookCommandRunner {
+        resolved,
+        trust,
+        invocation_trust: None,
+        home: flow.f.dir.path(),
+        temp_dir: scratch,
+        shell: "bash",
+        helper: None,
+        credential_env_names: &[],
+    }
+}
+
+#[tokio::test]
+async fn mcp_hook_rejects_ambiguous_error_and_non_json_replies_without_retaining_private_io() {
+    use cyber_core::hooks::HookOutcome;
+    let replies = [
+        json!({"content":[]}),
+        json!({"content":[{"type":"text","text":"{}"},{"type":"text","text":"{}"}]}),
+        json!({"content":[{"type":"text","text":"private invalid output"}]}),
+        json!({"isError":true,"content":[{"type":"text","text":"{\"decision\":\"allow\"}"}]}),
+    ];
+    for fail_closed in [false, true] {
+        for reply in &replies {
+            let flow = Flow::new(vec![text("unused")], false);
+            let resolved = configure_mcp_hook(
+                &flow,
+                json!({"PreToolUse":[{"hooks":[{"type":"mcp_tool","server":"shared","tool":"record","fail_closed":fail_closed}]}]}),
+            );
+            flow.f.write("hook-answer", &reply.to_string());
+            let trust = TrustStore::new(flow.f.dir.path().join("trust.json"));
+            let scratch = flow.f.dir.path().join("hook-scratch");
+            let settings = mcp_hook_settings(&flow, &resolved, &trust, &scratch);
+            let result = flow
+                .f
+                .host
+                .test_hooks(
+                    &settings,
+                    mcp_hook_event(&flow),
+                    CancellationToken::new(),
+                    &|_, _| {},
+                )
+                .await
+                .unwrap();
+            assert!(!result.complete);
+            let report = &result.results[0].report;
+            assert_eq!(report.outcome, HookOutcome::Error);
+            assert!(report.acknowledged);
+            assert_eq!(
+                report.decision.decision,
+                fail_closed.then_some(cyber_core::hooks::HookAction::Deny)
+            );
+            let receipts: Vec<String> = flow
+                .f
+                .store
+                .read(|conn| {
+                    let mut query = conn.prepare("SELECT data FROM hook_test_execution")?;
+                    Ok(query
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<Result<_, _>>()?)
+                })
+                .unwrap();
+            assert_eq!(receipts.len(), 1);
+            for secret in ["private hook input", "private invalid output"] {
+                assert!(!receipts[0].contains(secret));
+            }
+            assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0);
+            flow.runtime.shutdown().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_hook_cancellation_and_live_server_changes_settle_before_scratch_cleanup() {
+    use cyber_core::hooks::HookOutcome;
+    for change in ["cancel", "server", "hook"] {
+        let revoke = change != "cancel";
+        let flow = Flow::new(vec![text("unused")], false);
+        let resolved = configure_mcp_hook(
+            &flow,
+            json!({"PreToolUse":[{"hooks":[{"type":"mcp_tool","server":"shared","tool":"record","fail_closed":true}]}]}),
+        );
+        flow.f.write("hook-block", "blocked");
+        flow.f.write(
+            "hook-answer",
+            &json!({"content":[{"type":"text","text":"{\"decision\":\"allow\"}"}]}).to_string(),
+        );
+        let trust = TrustStore::new(flow.f.dir.path().join("trust.json"));
+        let scratch = flow.f.dir.path().join("hook-scratch");
+        let settings = mcp_hook_settings(&flow, &resolved, &trust, &scratch);
+        let event = mcp_hook_event(&flow);
+        let stop = CancellationToken::new();
+        let execution = flow
+            .f
+            .host
+            .test_hooks(&settings, event, stop.clone(), &|_, _| {});
+        let mutate = async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !flow.f.repo.join("hook-input").exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(std::fs::read_dir(&scratch).unwrap().next().is_some());
+            if revoke {
+                let path = flow.f.dir.path().join("cyber/config/cyber.jsonc");
+                let mut config: Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                if change == "server" {
+                    config["mcp"]["shared"]["env"] = json!({"NEW_BINDING":"changed"});
+                } else {
+                    config["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = json!(2);
+                }
+                std::fs::write(path, config.to_string()).unwrap();
+                std::fs::remove_file(flow.f.repo.join("hook-block")).unwrap();
+            } else {
+                stop.cancel();
+            }
+        };
+        let (result, ()) = tokio::join!(execution, mutate);
+        let result = result.unwrap();
+        assert!(!result.complete);
+        let report = &result.results[0].report;
+        assert!(report.acknowledged);
+        assert_eq!(
+            report.outcome,
+            if revoke {
+                HookOutcome::Error
+            } else {
+                HookOutcome::Skipped
+            }
+        );
+        assert_ne!(
+            report.decision.decision,
+            Some(cyber_core::hooks::HookAction::Allow)
+        );
+        assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0);
+        let receipt: String = flow
+            .f
+            .store
+            .read(|conn| {
+                Ok(conn.query_row("SELECT data FROM hook_test_execution", [], |row| row.get(0))?)
+            })
+            .unwrap();
+        let receipt: cyber_server::runtime::HookExecutionRecord =
+            serde_json::from_str(&receipt).unwrap();
+        assert_eq!(receipt.acknowledged, Some(true));
+        assert_eq!(receipt.outcome, Some(report.outcome));
+        flow.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn mcp_hook_schema_filter_and_absolute_timeout_fail_before_accepting_a_decision() {
+    use cyber_core::hooks::HookOutcome;
+    for case in ["schema", "filter", "timeout"] {
+        let flow = Flow::new(vec![text("unused")], false);
+        let mut resolved = configure_mcp_hook(
+            &flow,
+            json!({"PreToolUse":[{"hooks":[{"type":"mcp_tool","server":"shared","tool":"record","timeout":1,"fail_closed":true}]}]}),
+        );
+        if case == "schema" {
+            flow.f.write("hook-schema", &json!({"type":"object","required":["required_argument"],"properties":{"required_argument":{"type":"string"}}}).to_string());
+        } else if case == "filter" {
+            let path = flow.f.dir.path().join("cyber/config/cyber.jsonc");
+            let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            config["mcp"]["shared"]["tools"] = json!({"deny":["record"]});
+            std::fs::write(path, config.to_string()).unwrap();
+            resolved = reload_mcp_hook(&flow);
+        } else {
+            flow.f.write("hook-block", "blocked");
+        }
+        flow.f.write(
+            "hook-answer",
+            &json!({"content":[{"type":"text","text":"{\"decision\":\"allow\"}"}]}).to_string(),
+        );
+        let trust = TrustStore::new(flow.f.dir.path().join("trust.json"));
+        let scratch = flow.f.dir.path().join("hook-scratch");
+        let settings = mcp_hook_settings(&flow, &resolved, &trust, &scratch);
+        let started = std::time::Instant::now();
+        let result = flow
+            .f
+            .host
+            .test_hooks(
+                &settings,
+                mcp_hook_event(&flow),
+                CancellationToken::new(),
+                &|_, _| {},
+            )
+            .await
+            .unwrap();
+        assert!(!result.complete);
+        let report = &result.results[0].report;
+        assert_eq!(
+            report.outcome,
+            if case == "timeout" {
+                HookOutcome::Timeout
+            } else {
+                HookOutcome::Error
+            }
+        );
+        assert!(report.acknowledged);
+        assert_eq!(
+            report.decision.decision,
+            Some(cyber_core::hooks::HookAction::Deny)
+        );
+        assert!(started.elapsed() < Duration::from_secs(4));
+        assert_eq!(flow.f.repo.join("hook-input").exists(), case == "timeout");
+        assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0);
+        flow.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn mcp_hook_permission_callback_uses_dedicated_connection_without_reentrant_deadlock() {
+    use cyber_server::runtime::NoSnapshots;
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+        true,
+        Arc::new(NoSnapshots),
+        vec![("test/summary", vec![text("approved nested answer")])],
+    );
+    configure_mcp_hook(
+        &flow,
+        json!({"PermissionRequest":[{"matcher":"mcp__shared__read","hooks":[{"type":"mcp_tool","server":"shared","tool":"record","fail_closed":true}]}]}),
+    );
+    let path = flow.f.dir.path().join("cyber/config/cyber.jsonc");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["sampling"] = json!({"enabled":true});
+    config["permissions"] = json!({"mcp_sampling":"ask"});
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    flow.f.write(
+        "hook-answer",
+        &json!({"content":[{"type":"text","text":"{\"decision\":\"allow\"}"}]}).to_string(),
+    );
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "read").await;
+    tokio::time::timeout(Duration::from_secs(5), flow.settle(&id))
+        .await
+        .unwrap();
+    assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+    assert_eq!(flow.requests("test/summary").len(), 1);
+    let reply: Value = serde_json::from_str(&flow.f.read("sampling-reply")).unwrap();
+    assert_eq!(reply["result"]["content"]["text"], "approved nested answer");
+    let receipts = flow.runtime.hook_executions(&id, 20).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].acknowledged, Some(true));
+    let servers = flow.f.read("hook-servers");
+    assert!(
+        servers
+            .lines()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            >= 2
+    );
+    flow.runtime.shutdown().await;
+}
