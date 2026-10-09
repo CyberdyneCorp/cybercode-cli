@@ -45,3 +45,22 @@ test("MCP status uses its own durable aggregate on the Location event stream", a
   assert.equal(calls[0]?.url.pathname, "/api/v1/event");
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
 });
+
+
+test("configured MCP snapshots retain unresolved observations without claiming a live actor", async () => {
+  const { client, calls } = mockClient(() => json(200, {
+    location: { directory: "/repo", project: { id: "global", directory: "/repo" } },
+    data: [{ name: "local", configured: true, status: "failed", tools: [],
+      error: "MCP ownership has no retained runtime actor; recovery is required",
+      connection: { connection_id: "mcs_old", directory: "/repo", name: "local", status: "connected", phase: "running", acknowledged: null, error: null },
+    }],
+  }), { directory: "/repo" });
+  const snapshot = await client.mcp.status();
+  assert.equal(snapshot.data[0]?.status, "failed");
+  assert.equal(snapshot.data[0]?.connection?.phase, "running");
+  assert.deepEqual(snapshot.data[0]?.tools, []);
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/mcp");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
+  assert.equal(calls[0]?.headers.get("idempotency-key"), null);
+});

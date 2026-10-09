@@ -73,6 +73,15 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn mcp_status(
+        &self,
+        location: &Path,
+    ) -> Result<Vec<cyber_server::runtime::McpServerStatus>, cyber_server::http::ApiError> {
+        self.host.mcp_status(location).map_err(|error| {
+            cyber_core::log::error("mcp", &error, serde_json::json!({"directory":location}));
+            cyber_server::http::ApiError::invalid("MCP status configuration is unavailable")
+        })
+    }
     fn close_mcp(
         &self,
         location: PathBuf,

@@ -166,13 +166,27 @@ pub trait Services: Send + Sync {
             "Hook revocation is unavailable in this host",
         ))
     }
+    fn mcp_status(
+        &self,
+        _location: &Path,
+    ) -> Result<Vec<crate::runtime::McpServerStatus>, ApiError> {
+        let mut error = ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceUnavailableError",
+            "MCP status is unavailable in this host",
+        );
+        error.body.service = Some("mcp".into());
+        Err(error)
+    }
     fn close_mcp(&self, _location: PathBuf) -> BoxFuture<'_, Result<(), ApiError>> {
         Box::pin(async {
-            Err(ApiError::new(
+            let mut error = ApiError::new(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "ServiceUnavailableError",
                 "MCP connection close is unavailable in this host",
-            ))
+            );
+            error.body.service = Some("mcp".into());
+            Err(error)
         })
     }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;

@@ -552,6 +552,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .body::<super::hooks::HookTrustBody>(g)
         .ok::<Located<super::hooks::HookRevocation>>(g),
         op(
+            "get",
+            "/mcp",
+            "v1.mcp.status",
+            "Inspect configured MCP state and retained ownership observations without startup",
+        )
+        .located()
+        .ok::<Located<Vec<crate::runtime::McpServerStatus>>>(g),
+        op(
             "post",
             "/mcp/close",
             "v1.mcp.close",

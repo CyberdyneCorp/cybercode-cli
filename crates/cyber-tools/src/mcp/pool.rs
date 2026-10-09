@@ -1,13 +1,14 @@
 //! Shared Location connections with retained startup tasks and native owners.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use cyber_core::config::{McpServer, McpSettings};
 use cyber_server::runtime::{
-    Invocation, McpConnectionPhase, RetrySafety, SessionInfo, ToolDef, ToolOutcome, TurnContext,
-    mcp_connections,
+    Invocation, McpConnectionPhase, McpConnectionStatus, McpServerStatus, McpStatusUpdate,
+    RetrySafety, SessionInfo, ToolDef, ToolOutcome, TurnContext, mcp_connections,
 };
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
@@ -32,6 +33,8 @@ struct Entry {
     published: Mutex<Option<(String, Vec<DiscoveredTool>)>>,
     server: tokio::sync::Mutex<Option<OwnedLocalServer>>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    observed: Mutex<Option<McpStatusUpdate>>,
+    startup_finished: AtomicBool,
 }
 
 impl Entry {
@@ -66,6 +69,91 @@ impl Entry {
 }
 
 impl BuiltinHost {
+    /// Side-effect-free configured status and retained ownership observations.
+    pub fn mcp_status(&self, directory: &Path) -> Result<Vec<McpServerStatus>, String> {
+        let directory = directory
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let config = self.hook_config.get().ok_or("MCP resolver unavailable")?;
+        let resolved = (config.resolve)(&directory)?;
+        let settings = McpSettings::from_config(&resolved.value)?;
+        let records: BTreeMap<_, _> = mcp_connections(&self.opts.store, &directory)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|record| record.phase != McpConnectionPhase::Settled)
+            .map(|record| (record.name.clone(), McpStatusUpdate::from(&record)))
+            .collect();
+        let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut names: BTreeSet<_> = settings
+            .servers
+            .keys()
+            .chain(records.keys())
+            .cloned()
+            .collect();
+        names.extend(
+            pool.entries
+                .keys()
+                .filter(|(location, _)| location == &directory)
+                .map(|(_, name)| name.clone()),
+        );
+        Ok(names
+            .into_iter()
+            .map(|name| {
+                let definition = settings.servers.get(&name);
+                let entry = pool.entries.get(&(directory.clone(), name.clone()));
+                let connection = entry
+                    .and_then(|entry| {
+                        entry
+                            .observed
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .clone()
+                    })
+                    .or_else(|| records.get(&name).cloned());
+                let problem = status_problem(
+                    definition,
+                    entry,
+                    &connection,
+                    pool.closed || pool.closing.contains(&directory),
+                    || authorize_server(&resolved, &config.trust, &directory, &name).is_ok(),
+                );
+                let (status, error) = match problem {
+                    Some((status, error)) => (status, Some(error.into())),
+                    None => (
+                        connection
+                            .as_ref()
+                            .map_or(McpConnectionStatus::Connecting, |record| record.status),
+                        connection.as_ref().and_then(|record| record.error.clone()),
+                    ),
+                };
+                let tools = if status == McpConnectionStatus::Connected {
+                    entry
+                        .and_then(|entry| {
+                            entry
+                                .published
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .as_ref()
+                                .map(|(_, tools)| {
+                                    tools.iter().map(|tool| tool.exposed_name.clone()).collect()
+                                })
+                        })
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                McpServerStatus {
+                    name,
+                    configured: definition.is_some(),
+                    status,
+                    error,
+                    tools,
+                    connection,
+                }
+            })
+            .collect())
+    }
+
     pub(crate) fn start_mcp(&self, info: &SessionInfo) {
         let Some(config) = self.hook_config.get() else {
             return;
@@ -108,6 +196,8 @@ impl BuiltinHost {
                 published: Mutex::default(),
                 server: tokio::sync::Mutex::new(None),
                 task: tokio::sync::Mutex::default(),
+                observed: Mutex::default(),
+                startup_finished: AtomicBool::new(false),
             });
             let owned = entry.clone();
             let host = host.clone();
@@ -131,11 +221,24 @@ impl BuiltinHost {
                     helper: host.opts.sandbox_helper.as_deref(),
                     credential_env_names: &credentials,
                 };
-                let observer = host.runtime().map(|runtime| runtime.mcp_status_observer());
+                let publish = host.runtime().map(|runtime| runtime.mcp_status_observer());
+                let weak = Arc::downgrade(&owned);
+                let observer: cyber_server::runtime::McpConnectionObserver =
+                    Arc::new(move |record, seq| {
+                        if let Some(entry) = weak.upgrade() {
+                            *entry
+                                .observed
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner) = Some(record.into());
+                        }
+                        if let Some(publish) = &publish {
+                            publish(record, seq);
+                        }
+                    });
                 let connect = launcher.connect_owned_observed(
                     &name,
                     host.opts.store.clone(),
-                    observer,
+                    Some(observer),
                     |id| host.claim_mcp_location(&info, id, owned.cancel.child_token()),
                 );
                 let result = tokio::select! {
@@ -158,6 +261,7 @@ impl BuiltinHost {
                     ),
                     None => {}
                 }
+                owned.startup_finished.store(true, Ordering::Release);
             });
             // The entry is not published until its startup handle is installed.
             *entry.task.try_lock().expect("unpublished MCP entry") = Some(task);
@@ -409,6 +513,45 @@ impl BuiltinHost {
     }
 }
 
+fn status_problem(
+    definition: Option<&McpServer>,
+    entry: Option<&Arc<Entry>>,
+    connection: &Option<McpStatusUpdate>,
+    closing: bool,
+    authorized: impl FnOnce() -> bool,
+) -> Option<(McpConnectionStatus, &'static str)> {
+    let failed = |message| Some((McpConnectionStatus::Failed, message));
+    let Some(definition) = definition else {
+        return failed("MCP server is absent from loaded configuration");
+    };
+    if !definition.enabled() {
+        return Some((McpConnectionStatus::Disabled, "MCP server is disabled"));
+    }
+    if !authorized() {
+        return failed("MCP server definition is not authorized");
+    }
+    if matches!(definition, McpServer::Remote { .. }) {
+        return failed("Remote MCP transport is not available");
+    }
+    if closing || entry.is_some_and(|entry| entry.cancel.is_cancelled()) {
+        return failed("MCP Location is closing or requires recovery");
+    }
+    let Some(entry) = entry else {
+        return failed(if connection.is_some() {
+            "MCP ownership has no retained runtime actor; recovery is required"
+        } else {
+            "MCP server has not started for this Location"
+        });
+    };
+    if definition.digest(&entry.name).ok().as_ref() != Some(&entry.digest) {
+        return failed("MCP definition changed; close and reopen the Location");
+    }
+    if connection.is_none() && entry.startup_finished.load(Ordering::Acquire) {
+        return failed("MCP startup failed; inspect local logs");
+    }
+    None
+}
+
 fn output(result: Value) -> Result<ToolOutcome, ToolError> {
     let content = result["content"]
         .as_array()
@@ -453,6 +596,8 @@ mod tests {
             cancel: CancellationToken::new(),
             published: Mutex::default(),
             server: tokio::sync::Mutex::default(),
+            observed: Mutex::default(),
+            startup_finished: AtomicBool::new(false),
             task: tokio::sync::Mutex::new(Some(tokio::spawn(async move {
                 let _ = blocked.await;
             }))),

@@ -150,6 +150,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_McpClosed;
   };
+  "v1.mcp.status": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Array_of_McpServerStatus;
+  };
   "v1.message.get": {
     path: { sessionID: string; messageID: string };
     query: Record<string, never>;
@@ -665,6 +671,18 @@ export const operations = {
     name: "close",
     method: "POST",
     path: "/api/v1/mcp/close",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.mcp.status": {
+    tag: "mcp",
+    name: "status",
+    method: "GET",
+    path: "/api/v1/mcp",
     pathParams: [],
     query: [],
     body: "none",
@@ -1351,6 +1369,9 @@ export function createGroups(caller: Caller) {
       /** Close this Location's MCP connections; unresolved ownership returns conflict (`POST /api/v1/mcp/close`) */
       close: (options?: RequestOptions): Promise<Operations["v1.mcp.close"]["response"]> =>
         caller.call("v1.mcp.close", {}, options),
+      /** Inspect configured MCP state and retained ownership observations without startup (`GET /api/v1/mcp`) */
+      status: (options?: RequestOptions): Promise<Operations["v1.mcp.status"]["response"]> =>
+        caller.call("v1.mcp.status", {}, options),
     },
     message: {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */

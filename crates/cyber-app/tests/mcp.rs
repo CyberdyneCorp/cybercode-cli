@@ -390,3 +390,132 @@ async fn independent_mcp_events_are_scoped_committed_and_redacted() {
     server.await.unwrap();
     app.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn configured_status_is_read_only_redacted_and_preserves_unknown_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    let sibling = directory.join("sibling");
+    std::fs::create_dir(&sibling).unwrap();
+    let app = application(&directory).await;
+    let config = app.paths.config.join("cyber.json");
+    std::fs::write(&config, json!({"mcp":{
+        "disabled":{"type":"local","command":"PRIVATE-command","enabled":false,"env":{"TOKEN":"PRIVATE-token"}},
+        "waiting":{"type":"local","command":"PRIVATE-command"},
+        "lost":{"type":"local","command":"PRIVATE-command"},
+        "foreign":{"type":"local","command":"PRIVATE-command"},
+        "remote":{"type":"remote","url":"http://127.0.0.1:9/mcp","headers":{"Authorization":"PRIVATE-token"}}
+    }}).to_string()).unwrap();
+    let digest = format!("sha256:{}", "a".repeat(64));
+    for name in ["lost", "removed"] {
+        let mut owner =
+            McpConnectionOwner::admit(app.store.clone(), &directory, &directory, name, &digest)
+                .unwrap();
+        owner.preparing().unwrap();
+        drop(owner);
+    }
+    let mut foreign = McpConnectionOwner::admit(
+        app.store.clone(),
+        &directory,
+        &directory,
+        "foreign",
+        &digest,
+    )
+    .unwrap();
+    foreign.preparing().unwrap();
+    foreign.launching(Vec::new()).unwrap();
+    foreign.connected().unwrap();
+    let before: i64 = app
+        .store
+        .read(|db| Ok(db.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    let (close_url, stop, server) = listener(&app).await;
+    let url = close_url.replace("/mcp/close", "/mcp");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let response = client
+        .get(&url)
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let text = response.text().await.unwrap();
+    assert!(!text.contains("PRIVATE"));
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let servers = body["data"].as_array().unwrap();
+    assert_eq!(servers.len(), 6);
+    let find = |name: &str| {
+        servers
+            .iter()
+            .find(|server| server["name"] == name)
+            .unwrap()
+    };
+    assert_eq!(find("disabled")["status"], "disabled");
+    assert_eq!(find("waiting")["status"], "failed");
+    assert!(find("waiting")["connection"].is_null());
+    assert_eq!(
+        find("remote")["error"],
+        "Remote MCP transport is not available"
+    );
+    assert_eq!(find("lost")["status"], "failed");
+    assert_eq!(find("foreign")["status"], "failed");
+    assert_eq!(find("foreign")["connection"]["phase"], "running");
+    assert!(
+        find("foreign")["error"]
+            .as_str()
+            .unwrap()
+            .contains("no retained runtime actor")
+    );
+    assert_eq!(find("lost")["connection"]["phase"], "unknown");
+    assert_eq!(find("removed")["configured"], false);
+    assert!(
+        servers
+            .iter()
+            .all(|server| server["tools"].as_array().unwrap().is_empty())
+    );
+    let other: serde_json::Value = client
+        .get(&url)
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .query(&[("location[directory]", sibling.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(other["data"].as_array().unwrap().len(), 5);
+    assert!(
+        other["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|server| server["connection"].is_null())
+    );
+    std::fs::write(&config, "{ invalid PRIVATE-config }").unwrap();
+    let invalid = client
+        .get(&url)
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert!(!invalid.text().await.unwrap().contains("PRIVATE"));
+    let after: i64 = app
+        .store
+        .read(|db| Ok(db.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    assert_eq!(before, after);
+    let sessions: i64 = app
+        .store
+        .read(|db| Ok(db.query_row("SELECT count(*) FROM session", [], |row| row.get(0))?))
+        .unwrap();
+    assert_eq!(sessions, 0);
+    drop(foreign);
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    app.runtime.shutdown().await;
+}

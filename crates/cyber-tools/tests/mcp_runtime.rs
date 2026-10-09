@@ -706,3 +706,58 @@ async fn location_close_keeps_sibling_connection_running() {
     );
     flow.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn configured_snapshot_tracks_startup_and_fresh_definition_changes() {
+    use cyber_server::runtime::McpConnectionStatus;
+    let flow = Flow::new(vec![], false);
+    let path = configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    let pending = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, McpConnectionStatus::Connecting);
+    assert!(pending[0].tools.is_empty());
+    ready(&flow, &id).await;
+    let connected = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+    assert_eq!(connected[0].status, McpConnectionStatus::Connected);
+    assert_eq!(connected[0].tools.len(), 4);
+    assert_eq!(
+        connected[0].connection.as_ref().unwrap().phase,
+        McpConnectionPhase::Running
+    );
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["enabled"] = json!(false);
+    std::fs::write(&path, config.to_string()).unwrap();
+    let disabled = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+    assert_eq!(disabled[0].status, McpConnectionStatus::Disabled);
+    assert!(disabled[0].tools.is_empty());
+    assert_eq!(disabled[0].connection, connected[0].connection);
+    config["mcp"]["shared"]["enabled"] = json!(true);
+    config["mcp"]["shared"]["args"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("changed"));
+    std::fs::write(&path, config.to_string()).unwrap();
+    let changed = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+    assert_eq!(changed[0].status, McpConnectionStatus::Failed);
+    assert!(
+        changed[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("definition changed")
+    );
+    assert!(changed[0].tools.is_empty());
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    let closed = flow.f.host.mcp_status(&flow.f.repo).unwrap();
+    assert_eq!(closed[0].status, McpConnectionStatus::Failed);
+    assert!(closed[0].connection.is_none());
+    assert_eq!(
+        std::fs::read_to_string(flow.f.repo.join("spawned"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    flow.runtime.shutdown().await;
+}

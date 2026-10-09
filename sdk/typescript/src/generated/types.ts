@@ -492,6 +492,12 @@ export type Located_Array_of_CommandInfo = {
 };
 
 /** A Location-scoped response. */
+export type Located_Array_of_McpServerStatus = {
+  location: LocationInfo;
+  data: McpServerStatus[];
+};
+
+/** A Location-scoped response. */
 export type Located_Array_of_ModelInfo = {
   location: LocationInfo;
   data: ModelInfo[];
@@ -571,6 +577,18 @@ export type McpClosed = {
 export type McpConnectionPhase = "admitted" | "preparing" | "launching" | "running" | "settled" | "unknown";
 
 export type McpConnectionStatus = "connecting" | "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration";
+
+/** Configured state and retained observations; status does not prove fresh native liveness. */
+export type McpServerStatus = {
+  name: string;
+  configured: boolean;
+  status: McpConnectionStatus;
+  error?: string | null;
+  /** Published discovery names; invoking them still requires ordinary tool authorization. */
+  tools: string[];
+  /** Last committed ownership observation; may require recovery without a retained actor. */
+  connection?: McpStatusUpdate | null;
+};
 
 /** A committed ownership observation, not fresh process liveness or recovery authority. */
 export type McpStatusUpdate = {

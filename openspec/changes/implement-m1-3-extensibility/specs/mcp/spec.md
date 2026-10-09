@@ -119,6 +119,13 @@
 - **AND** Session streams SHALL NOT adopt these independent events as Session history
 - **AND** public payloads SHALL omit native owner capabilities and private launch diagnostics
 
+#### Scenario: Read-only configured status snapshot
+- **WHEN** a client requests GET `/api/v1/mcp` for a canonical Location
+- **THEN** the snapshot SHALL combine freshly loaded configuration with retained runtime observations without starting servers or creating Sessions/events
+- **AND** disabled, changed, unstarted and unsupported definitions SHALL report explicit states with no advertised discovery names
+- **AND** an unresolved persisted owner without a retained runtime actor SHALL report failed/recovery-required even if its last committed phase was Running
+- **AND** unconfigured unresolved owners SHALL remain visible for recovery without exposing private definitions or credentials
+
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
 

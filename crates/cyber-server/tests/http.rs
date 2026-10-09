@@ -3373,4 +3373,9 @@ async fn mcp_close_without_host_capability_is_explicitly_unavailable() {
     let (status, body, _) = api.call(Method::POST, "/mcp/close", None, &[]).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["_tag"], "ServiceUnavailableError");
+    assert_eq!(body["service"], "mcp");
+    let (status, body, _) = api.call(Method::GET, "/mcp", None, &[]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["_tag"], "ServiceUnavailableError");
+    assert_eq!(body["service"], "mcp");
 }

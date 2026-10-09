@@ -3579,6 +3579,133 @@
           "revoked"
         ]
       },
+      "Located_Array_of_McpServerStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpServerStatus"
+            }
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "McpServerStatus": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/McpConnectionStatus"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Published discovery names; invoking them still requires ordinary tool authorization."
+          },
+          "connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpStatusUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last committed ownership observation; may require recovery without a retained actor."
+          }
+        },
+        "required": [
+          "name",
+          "configured",
+          "status",
+          "tools"
+        ],
+        "description": "Configured state and retained observations; status does not prove fresh native liveness."
+      },
+      "McpConnectionStatus": {
+        "type": "string",
+        "enum": [
+          "connecting",
+          "connected",
+          "disabled",
+          "failed",
+          "needs_auth",
+          "needs_client_registration"
+        ]
+      },
+      "McpStatusUpdate": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/McpConnectionStatus"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/McpConnectionPhase"
+          },
+          "acknowledged": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Public diagnostic; private launch details remain in local logs."
+          }
+        },
+        "required": [
+          "connection_id",
+          "directory",
+          "name",
+          "status",
+          "phase"
+        ],
+        "description": "A committed ownership observation, not fresh process liveness or recovery authority."
+      },
+      "McpConnectionPhase": {
+        "type": "string",
+        "enum": [
+          "admitted",
+          "preparing",
+          "launching",
+          "running",
+          "settled",
+          "unknown"
+        ]
+      },
       "Located_McpClosed": {
         "type": "object",
         "properties": {
@@ -3797,69 +3924,6 @@
         "required": [
           "_tag",
           "message"
-        ]
-      },
-      "McpStatusUpdate": {
-        "type": "object",
-        "properties": {
-          "connection_id": {
-            "type": "string"
-          },
-          "directory": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/McpConnectionStatus"
-          },
-          "phase": {
-            "$ref": "#/components/schemas/McpConnectionPhase"
-          },
-          "acknowledged": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Public diagnostic; private launch details remain in local logs."
-          }
-        },
-        "required": [
-          "connection_id",
-          "directory",
-          "name",
-          "status",
-          "phase"
-        ],
-        "description": "A committed ownership observation, not fresh process liveness or recovery authority."
-      },
-      "McpConnectionStatus": {
-        "type": "string",
-        "enum": [
-          "connecting",
-          "connected",
-          "disabled",
-          "failed",
-          "needs_auth",
-          "needs_client_registration"
-        ]
-      },
-      "McpConnectionPhase": {
-        "type": "string",
-        "enum": [
-          "admitted",
-          "preparing",
-          "launching",
-          "running",
-          "settled",
-          "unknown"
         ]
       }
     }
@@ -7071,6 +7135,55 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/HookTrustBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp": {
+      "get": {
+        "operationId": "v1.mcp.status",
+        "summary": "Inspect configured MCP state and retained ownership observations without startup",
+        "tags": [
+          "mcp"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Array_of_McpServerStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

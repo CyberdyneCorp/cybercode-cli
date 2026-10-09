@@ -1,5 +1,11 @@
 //! Authenticated Location-scoped MCP lifecycle operations.
-use axum::{Json, Router, body::Bytes, extract::State, http::request::Parts, routing::post};
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::State,
+    http::request::Parts,
+    routing::{get, post},
+};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -15,7 +21,21 @@ pub struct McpClosed {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/mcp/close", post(close))
+    Router::new()
+        .route("/mcp", get(status))
+        .route("/mcp/close", post(close))
+}
+
+async fn status(
+    State(state): State<AppState>,
+    parts: Parts,
+) -> Result<Json<Located<Vec<crate::runtime::McpServerStatus>>>, ApiError> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state.services.mcp_status(&directory)?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
 }
 
 async fn close(

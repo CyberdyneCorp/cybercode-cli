@@ -51,7 +51,7 @@ mod location;
 mod mcp;
 pub use mcp::{
     McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
-    McpConnectionStatus, McpStatusUpdate, mcp_connections,
+    McpConnectionStatus, McpServerStatus, McpStatusUpdate, mcp_connections,
 };
 mod model;
 mod requests;

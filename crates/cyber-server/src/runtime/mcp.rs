@@ -91,6 +91,19 @@ impl From<&McpConnectionRecord> for McpStatusUpdate {
     }
 }
 
+/// Configured state and retained observations; status does not prove fresh native liveness.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct McpServerStatus {
+    pub name: String,
+    pub configured: bool,
+    pub status: McpConnectionStatus,
+    pub error: Option<String>,
+    /// Published discovery names; invoking them still requires ordinary tool authorization.
+    pub tools: Vec<String>,
+    /// Last committed ownership observation; may require recovery without a retained actor.
+    pub connection: Option<McpStatusUpdate>,
+}
+
 /// A receipt is not execution authority or native proof; the caller retains both.
 /// Every transition consumes an unpublished owner key and installs a new commitment.
 pub struct McpConnectionOwner {
