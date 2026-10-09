@@ -447,3 +447,6 @@ Bounded local MCP notification processing and list-change refresh now have unit 
 
 
 Owned MCP startup errors now carry retry-safety evidence only after native/proxy acknowledgement, durable terminal persistence, actual lease settlement and scratch cleanup. Injected failed terminal persistence remains Unknown and refuses retry despite native acknowledgement. Prepared failures explicitly join proxies and retain scratch for caller commit. These tests cover the local settlement boundary; automatic reconnect/backoff and full native acceptance remain unaccepted.
+
+
+Retained local MCP reconnect now has evidence for exponential delays capped at sixty seconds and ten attempts per loss sequence, fresh configuration/authorization and independent identities, transient startup failure only after complete settlement, no interrupted-call replay, backoff close, failed settlement refusal and Unknown fencing during cancelled reconnect initialization. These local tests do not accept remote reconnect, manual controls, reconfiguration, managed recovery or the full canonical status/M1.3 requirements.

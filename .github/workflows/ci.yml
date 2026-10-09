@@ -76,7 +76,7 @@ jobs:
         run: |
           cargo test --locked -p cyber-tools --lib mcp::stdio::tests
           cargo test --locked -p cyber-tools --lib tools::process::tests
-      - name: Native MCP startup ownership through disposed shutdown
+      - name: Native MCP retained startup joins and bounded reconnect
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib mcp::pool::tests
       - name: Native MCP retained proxy settlement

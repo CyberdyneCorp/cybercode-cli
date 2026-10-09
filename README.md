@@ -49,7 +49,7 @@ OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat endpoints are su
 | Hooks | CLI/TUI definition and receipt review, exact handler trust, Unix command, HTTP and prompt tool hooks, plus synthetic `cyber hooks test` | Partial P1; other handlers/events, complete scheduling, Windows confinement and plugins remain |
 | Operations | Database-plus-artifact backup, verify/restore, retention, logs and diagnostics | Available; broader observability remains |
 
-MCP definition review and exact server approvals are available through `cyber mcp`; server startup and tool registration remain open. Remaining P1 scope includes hooks/plugins/MCP (M1.3), memory/code intelligence/browser verification (M1.4), migration/editor integration (M1.5), the local web client and the other P1-tagged APIs. Workflows, goals, loops, remote control and cloud runners belong to later phases. The [capability map](docs/local-core-guide.md#specification-capability-map) covers the full planned product; [OpenSpec](openspec/specs) defines the contracts by phase.
+Local MCP review, exact approvals, shared tool registration/status and bounded reconnect are implemented; remote transports and full native acceptance remain open. Remaining P1 scope includes hooks/plugins/MCP (M1.3), memory/code intelligence/browser verification (M1.4), migration/editor integration (M1.5), the local web client and the other P1-tagged APIs. Workflows, goals, loops, remote control and cloud runners belong to later phases. The [capability map](docs/local-core-guide.md#specification-capability-map) covers the full planned product; [OpenSpec](openspec/specs) defines the contracts by phase.
 
 ## Architecture
 

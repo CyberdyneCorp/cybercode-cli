@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::{DiscoveredTool, LocalLauncher, OwnedLocalServer, authorize_server};
+use super::{DiscoveredTool, LocalLaunchError, LocalLauncher, OwnedLocalServer, authorize_server};
 use crate::host::BuiltinHost;
 use crate::tools::ToolError;
 
@@ -36,6 +36,7 @@ struct Entry {
     observed: Mutex<Option<McpStatusUpdate>>,
     monitor: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     startup_finished: AtomicBool,
+    lost: AtomicBool,
 }
 
 impl Entry {
@@ -80,7 +81,7 @@ async fn join_retained(task: &tokio::sync::Mutex<Option<JoinHandle<()>>>) {
     }
 }
 
-fn start_monitor(host: &Arc<BuiltinHost>, entry: &Arc<Entry>) {
+fn start_monitor(host: &Arc<BuiltinHost>, entry: &Arc<Entry>, info: SessionInfo) {
     let host = Arc::downgrade(host);
     let weak = Arc::downgrade(entry);
     let cancel = entry.cancel.clone();
@@ -93,8 +94,14 @@ fn start_monitor(host: &Arc<BuiltinHost>, entry: &Arc<Entry>) {
             let Some(entry) = weak.upgrade() else {
                 return;
             };
-            if check_loss(&host, &entry).await {
-                return;
+            match check_loss(&host, &entry).await {
+                Health::Healthy => {}
+                Health::Stop => return,
+                Health::Retry => {
+                    if !retry_with_backoff(&cancel, || reconnect_once(&host, &entry, &info)).await {
+                        return;
+                    }
+                }
             }
         }
     });
@@ -104,12 +111,142 @@ fn start_monitor(host: &Arc<BuiltinHost>, entry: &Arc<Entry>) {
         .expect("MCP monitor not yet published") = Some(task);
 }
 
-async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> bool {
+enum Health {
+    Healthy,
+    Retry,
+    Stop,
+}
+enum Attempt {
+    Connected,
+    Retry,
+    Stop,
+}
+
+async fn retry_with_backoff<F, Fut>(cancel: &CancellationToken, mut attempt: F) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Attempt>,
+{
+    for index in 0..10 {
+        let delay = Duration::from_secs((1_u64 << index).min(60));
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return false,
+            _ = tokio::time::sleep(delay) => {},
+        }
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return false,
+            result = attempt() => result,
+        };
+        match result {
+            Attempt::Connected => return true,
+            Attempt::Retry => {}
+            Attempt::Stop => return false,
+        }
+    }
+    false
+}
+
+async fn reconnect_once(
+    host: &std::sync::Weak<BuiltinHost>,
+    entry: &Arc<Entry>,
+    info: &SessionInfo,
+) -> Attempt {
+    let Some(host) = host.upgrade() else {
+        return Attempt::Stop;
+    };
+    match connect_entry(&host, entry, info).await {
+        Ok(server) => {
+            publish_server(entry, server).await;
+            Attempt::Connected
+        }
+        Err(error) => {
+            cyber_core::log::error(
+                "mcp",
+                &error.diagnostic,
+                json!({"server":entry.name,"acknowledged":error.acknowledged,"retry_safe":error.retry_safe()}),
+            );
+            if error.retry_safe() {
+                Attempt::Retry
+            } else {
+                Attempt::Stop
+            }
+        }
+    }
+}
+
+async fn publish_server(entry: &Entry, server: OwnedLocalServer) {
+    entry.lost.store(false, Ordering::Release);
+    *entry
+        .published
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) =
+        Some((server.record().id.clone(), server.tools().to_vec()));
+    *entry.server.lock().await = Some(server);
+}
+
+async fn connect_entry(
+    host: &Arc<BuiltinHost>,
+    entry: &Arc<Entry>,
+    info: &SessionInfo,
+) -> Result<OwnedLocalServer, LocalLaunchError> {
+    let config = host
+        .hook_config
+        .get()
+        .ok_or_else(|| LocalLaunchError::before_launch("MCP resolver unavailable"))?;
+    let directory = Path::new(&info.directory)
+        .canonicalize()
+        .map_err(|error| LocalLaunchError::before_launch(error.to_string()))?;
+    let resolved = (config.resolve)(&directory).map_err(LocalLaunchError::before_launch)?;
+    let selected = authorize_server(&resolved, &config.trust, &directory, &entry.name)
+        .map_err(LocalLaunchError::before_launch)?;
+    if selected.digest != entry.digest {
+        return Err(LocalLaunchError::before_launch(
+            "MCP definition changed; close and reopen required",
+        ));
+    }
+    let credentials = host
+        .opts
+        .models
+        .as_ref()
+        .map(|models| models.credential_env_names())
+        .unwrap_or_default();
+    let launcher = LocalLauncher {
+        resolved: &resolved,
+        trust: &config.trust,
+        location: &directory,
+        home: &host.opts.home,
+        temp_dir: &host.opts.temp_dir,
+        helper: host.opts.sandbox_helper.as_deref(),
+        credential_env_names: &credentials,
+    };
+    let publish = host.runtime().map(|runtime| runtime.mcp_status_observer());
+    let weak = Arc::downgrade(entry);
+    let observer: cyber_server::runtime::McpConnectionObserver = Arc::new(move |record, seq| {
+        if let Some(entry) = weak.upgrade() {
+            *entry
+                .observed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(record.into());
+        }
+        if let Some(publish) = &publish {
+            publish(record, seq);
+        }
+    });
+    launcher
+        .connect_owned_observed(&entry.name, host.opts.store.clone(), Some(observer), |id| {
+            host.claim_mcp_location(info, id, entry.cancel.child_token())
+        })
+        .await
+}
+
+async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> Health {
     let Ok(mut server) = entry.server.try_lock() else {
-        return false;
+        return Health::Healthy;
     };
     let Some(owner) = server.as_mut() else {
-        return true;
+        return Health::Stop;
     };
     let lost = match owner.poll_idle(Duration::from_millis(100)).await {
         Ok(update) if update.closed => true,
@@ -127,22 +264,31 @@ async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> bool 
         }
     };
     if !lost {
-        return false;
+        return Health::Healthy;
     }
-    entry.cancel.cancel();
+    entry.lost.store(true, Ordering::Release);
     entry.clear_published();
     cyber_core::log::error("mcp", "MCP connection lost", json!({"server":entry.name}));
     match owner.shutdown().await {
         Ok(_) => {
+            if let Err(error) = std::fs::remove_dir_all(owner.scratch_path())
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                cyber_core::log::error("mcp", &error.to_string(), json!({"server":entry.name}));
+                return Health::Stop;
+            }
             server.take();
+            Health::Retry
         }
-        Err(error) => cyber_core::log::error(
-            "mcp",
-            &error.diagnostic,
-            json!({"server":entry.name,"acknowledged":error.acknowledged}),
-        ),
+        Err(error) => {
+            cyber_core::log::error(
+                "mcp",
+                &error.diagnostic,
+                json!({"server":entry.name,"acknowledged":error.acknowledged}),
+            );
+            Health::Stop
+        }
     }
-    true
 }
 
 async fn refresh_catalog(
@@ -309,62 +455,20 @@ impl BuiltinHost {
                 observed: Mutex::default(),
                 monitor: tokio::sync::Mutex::default(),
                 startup_finished: AtomicBool::new(false),
+                lost: AtomicBool::new(false),
             });
             let owned = entry.clone();
             let host = host.clone();
             let info = info.clone();
-            let resolved = resolved.clone();
-            let trust = config.trust.clone();
-            let directory = directory.clone();
             let task = executor.spawn(async move {
-                let credentials = host
-                    .opts
-                    .models
-                    .as_ref()
-                    .map(|models| models.credential_env_names())
-                    .unwrap_or_default();
-                let launcher = LocalLauncher {
-                    resolved: &resolved,
-                    trust: &trust,
-                    location: &directory,
-                    home: &host.opts.home,
-                    temp_dir: &host.opts.temp_dir,
-                    helper: host.opts.sandbox_helper.as_deref(),
-                    credential_env_names: &credentials,
-                };
-                let publish = host.runtime().map(|runtime| runtime.mcp_status_observer());
-                let weak = Arc::downgrade(&owned);
-                let observer: cyber_server::runtime::McpConnectionObserver =
-                    Arc::new(move |record, seq| {
-                        if let Some(entry) = weak.upgrade() {
-                            *entry
-                                .observed
-                                .lock()
-                                .unwrap_or_else(PoisonError::into_inner) = Some(record.into());
-                        }
-                        if let Some(publish) = &publish {
-                            publish(record, seq);
-                        }
-                    });
-                let connect = launcher.connect_owned_observed(
-                    &name,
-                    host.opts.store.clone(),
-                    Some(observer),
-                    |id| host.claim_mcp_location(&info, id, owned.cancel.child_token()),
-                );
                 let result = tokio::select! {
-                    result = connect => Some(result),
+                    result = connect_entry(&host, &owned, &info) => Some(result),
                     _ = owned.cancel.cancelled() => None,
                 };
                 match result {
                     Some(Ok(server)) => {
-                        *owned
-                            .published
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner) =
-                            Some((server.record().id.clone(), server.tools().to_vec()));
-                        *owned.server.lock().await = Some(server);
-                        start_monitor(&host, &owned);
+                        publish_server(&owned, server).await;
+                        start_monitor(&host, &owned, info);
                     }
                     Some(Err(error)) => cyber_core::log::error(
                         "mcp",
@@ -569,7 +673,7 @@ impl BuiltinHost {
             _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
         if owner.unresolved() {
-            entry.cancel.cancel();
+            entry.lost.store(true, Ordering::Release);
             *entry
                 .published
                 .lock()
@@ -670,6 +774,22 @@ fn status_problem(
     if definition.digest(&entry.name).ok().as_ref() != Some(&entry.digest) {
         return failed("MCP definition changed; close and reopen the Location");
     }
+    if entry.lost.load(Ordering::Acquire)
+        && connection.as_ref().is_some_and(|record| {
+            matches!(
+                record.phase,
+                McpConnectionPhase::Running | McpConnectionPhase::Unknown
+            )
+        })
+    {
+        return failed("MCP connection lost; native settlement requires retry or recovery");
+    }
+    if connection
+        .as_ref()
+        .is_some_and(|record| record.phase == McpConnectionPhase::Settled)
+    {
+        return failed("MCP connection stopped; reconnect pending or exhausted");
+    }
     if connection.is_none() && entry.startup_finished.load(Ordering::Acquire) {
         return failed("MCP startup failed; inspect local logs");
     }
@@ -723,6 +843,7 @@ mod tests {
             observed: Mutex::default(),
             monitor: tokio::sync::Mutex::default(),
             startup_finished: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
             task: tokio::sync::Mutex::new(Some(tokio::spawn(async move {
                 let _ = blocked.await;
             }))),
@@ -739,5 +860,67 @@ mod tests {
             .unwrap();
         assert!(entry.task.lock().await.is_none());
         entry.join_startup().await;
+    }
+    #[tokio::test(start_paused = true)]
+    async fn retry_driver_obeys_exponential_cap_and_ten_attempt_limit() {
+        let start = tokio::time::Instant::now();
+        let mut at = Vec::new();
+        assert!(
+            !retry_with_backoff(&CancellationToken::new(), || {
+                at.push(start.elapsed().as_secs());
+                std::future::ready(Attempt::Retry)
+            })
+            .await
+        );
+        assert_eq!(at, vec![1, 3, 7, 15, 31, 63, 123, 183, 243, 303]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_driver_stops_on_success_or_unsafe_failure() {
+        for success in [true, false] {
+            let start = tokio::time::Instant::now();
+            let mut calls = 0;
+            let result = retry_with_backoff(&CancellationToken::new(), || {
+                calls += 1;
+                std::future::ready(if success {
+                    Attempt::Connected
+                } else {
+                    Attempt::Stop
+                })
+            })
+            .await;
+            assert_eq!(result, success);
+            assert_eq!(calls, 1);
+            assert_eq!(start.elapsed().as_secs(), 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_driver_cancellation_prevents_attempts_and_disposes_pending_admission() {
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let task = tokio::spawn(async move {
+            retry_with_backoff(&token, || async {
+                panic!("backoff cancellation must prevent admission")
+            })
+            .await
+        });
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        assert!(!task.await.unwrap());
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let mut entered = Some(entered);
+        let task = tokio::spawn(async move {
+            retry_with_backoff(&token, || {
+                entered.take().unwrap().send(()).unwrap();
+                std::future::pending::<Attempt>()
+            })
+            .await
+        });
+        started.await.unwrap();
+        cancel.cancel();
+        assert!(!task.await.unwrap());
     }
 }

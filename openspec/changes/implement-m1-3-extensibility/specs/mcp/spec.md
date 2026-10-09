@@ -152,6 +152,14 @@
 - **AND** native acknowledgement alone SHALL NOT grant retry authority after failed durable persistence
 - **AND** pre-spawn prepared-resource failure SHALL explicitly join the proxy and preserve scratch until caller settlement
 
+#### Scenario: Local reconnect after fully settled loss
+- **WHEN** a retained local connection is lost and its native owner, durable receipt, checkout leases and scratch are fully settled
+- **THEN** the retained monitor SHALL retry with exponential delays from 1 to 60 seconds and at most ten attempts per loss sequence
+- **AND** every attempt SHALL freshly resolve configuration and authorization before claiming pins and admitting a new independent owner
+- **AND** unsafe settlement or disposed initialization SHALL stop automatic replacement and preserve recovery fences
+- **AND** old tool registrations SHALL remain stale and interrupted tool calls SHALL NOT be replayed
+- **AND** Location close and runtime shutdown SHALL cancel backoff/admission and join the original retained monitor
+
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
 
