@@ -55,6 +55,7 @@ pub struct StdioClient<R, W> {
     metadata: Option<Value>,
     incoming: Vec<u8>,
     tools_changed: bool,
+    roots: Option<super::McpRoots>,
 }
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
@@ -69,8 +70,20 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             metadata: None,
             incoming: Vec::new(),
             tools_changed: false,
+            roots: None,
         }
     }
+    /// Install roots before initialization; the connection snapshot stays immutable.
+    pub fn with_roots(mut self, roots: super::McpRoots) -> Result<Self, McpError> {
+        if self.initialization_started {
+            return Err(McpError::Protocol(
+                "roots must be configured before initialization",
+            ));
+        }
+        self.roots = Some(roots);
+        Ok(self)
+    }
+
     /// Observe a ready EOF without consuming buffered protocol data or sending requests.
     pub async fn transport_closed(&mut self) -> Result<bool, McpError> {
         let peek = self.reader.fill_buf();
@@ -153,7 +166,12 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             return Err(McpError::Protocol("already initialized"));
         }
         self.initialization_started = true;
-        let result = self.request("initialize", json!({"protocolVersion":VERSION,"capabilities":{},"clientInfo":{"name":"cyber","version":env!("CARGO_PKG_VERSION")}}), timeout).await?;
+        let capabilities = if self.roots.is_some() {
+            json!({"roots":{"listChanged":false}})
+        } else {
+            json!({})
+        };
+        let result = self.request("initialize", json!({"protocolVersion":VERSION,"capabilities":capabilities,"clientInfo":{"name":"cyber","version":env!("CARGO_PKG_VERSION")}}), timeout).await?;
         let version = result["protocolVersion"]
             .as_str()
             .filter(|version| VERSIONS.contains(version))
@@ -308,10 +326,21 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         if !id.is_string() && !id.is_number() {
             return Err(McpError::Protocol("invalid server request identity"));
         }
-        let response = if message["method"] == "ping" {
-            json!({"jsonrpc":"2.0","id":id,"result":{}})
-        } else {
-            json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not supported by this client"}})
+        let response = match (message["method"].as_str(), self.roots.as_ref()) {
+            (Some("roots/list"), Some(roots)) if self.initialization_started => {
+                if message
+                    .get("params")
+                    .is_some_and(|params| !params.is_object())
+                {
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Invalid roots/list parameters"}})
+                } else {
+                    json!({"jsonrpc":"2.0","id":id,"result":roots.result()})
+                }
+            }
+            (Some("ping"), _) => json!({"jsonrpc":"2.0","id":id,"result":{}}),
+            _ => {
+                json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not supported by this client"}})
+            }
         };
         tokio::time::timeout(timeout, self.write(&response))
             .await

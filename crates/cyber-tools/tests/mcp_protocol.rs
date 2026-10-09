@@ -451,3 +451,96 @@ fn textual_decisions_refuse_failed_ambiguous_missing_or_oversized_content() {
         assert!(decision(&event, &result).is_err());
     }
 }
+
+#[tokio::test]
+async fn roots_are_answered_during_initialization_and_active_rpc_without_sampling() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("extra")).unwrap();
+    let (client, mut peer) = pair();
+    let mut client = client
+        .with_roots(cyber_tools::mcp::McpRoots::new(directory.path(), &["extra".into()]).unwrap())
+        .unwrap();
+    let server = tokio::spawn(async move {
+        let initialize = read(&mut peer).await;
+        assert_eq!(
+            initialize["params"]["capabilities"],
+            json!({"roots":{"listChanged":false}})
+        );
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":"startup-roots","method":"roots/list"}),
+        )
+        .await;
+        let roots = read(&mut peer).await;
+        assert_eq!(roots["id"], "startup-roots");
+        assert_eq!(roots["result"]["roots"].as_array().unwrap().len(), 2);
+        send(&mut peer, json!({"jsonrpc":"2.0","id":initialize["id"],"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}})).await;
+        assert_eq!(read(&mut peer).await["method"], "notifications/initialized");
+        let call = read(&mut peer).await;
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":9,"method":"roots/list","params":{}}),
+        )
+        .await;
+        assert_eq!(read(&mut peer).await["result"], roots["result"]);
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":10,"method":"roots/list","params":[]}),
+        )
+        .await;
+        assert_eq!(read(&mut peer).await["error"]["code"], -32602);
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":11,"method":"sampling/createMessage","params":{}}),
+        )
+        .await;
+        assert_eq!(read(&mut peer).await["error"]["code"], -32601);
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":call["id"],"result":{"content":[]}}),
+        )
+        .await;
+    });
+    client.initialize(TIMEOUT).await.unwrap();
+    client.call_tool("read", json!({}), TIMEOUT).await.unwrap();
+    assert!(!client.unresolved());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn idle_roots_callback_uses_captured_snapshot_and_late_configuration_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let roots = cyber_tools::mcp::McpRoots::new(directory.path(), &[]).unwrap();
+    let (client, mut peer) = pair();
+    let mut client = client.with_roots(roots.clone()).unwrap();
+    let server = tokio::spawn(async move {
+        let initialize = read(&mut peer).await;
+        send(&mut peer, json!({"jsonrpc":"2.0","id":initialize["id"],"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}})).await;
+        read(&mut peer).await;
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":"idle","method":"roots/list"}),
+        )
+        .await;
+        let result = read(&mut peer).await;
+        assert_eq!(result["id"], "idle");
+        assert_eq!(result["result"]["roots"].as_array().unwrap().len(), 1);
+        assert!(
+            result["result"]["roots"][0]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("file://")
+        );
+    });
+    client.initialize(TIMEOUT).await.unwrap();
+    tokio::time::timeout(TIMEOUT, async {
+        while !server.is_finished() {
+            client.poll_idle(TIMEOUT).await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    server.await.unwrap();
+    assert!(client.with_roots(roots).is_err());
+}

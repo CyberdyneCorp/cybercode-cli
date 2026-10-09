@@ -75,6 +75,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked -p cyber-tools --lib mcp::stdio::tests
+          cargo test --locked -p cyber-tools --lib mcp::roots::tests
           cargo test --locked -p cyber-tools --lib tools::process::tests
       - name: Native scope-aware deferred tool materialization
         if: ${{ !cancelled() }}

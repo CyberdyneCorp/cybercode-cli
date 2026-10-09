@@ -970,3 +970,109 @@ async fn rejected_connected_commit_settles_native_resources_before_retry_permiss
         McpConnectionPhase::Settled
     );
 }
+
+#[tokio::test]
+async fn authorized_local_launch_advertises_roots_without_private_or_readonly_paths() {
+    const ROOT_SERVER: &str = r#"
+import json,sys
+roots = None
+for line in sys.stdin:
+    request = json.loads(line)
+    if 'id' not in request: continue
+    if request['method'] == 'initialize':
+        assert request['params']['capabilities'] == {'roots':{'listChanged':False}}
+        print(json.dumps({'jsonrpc':'2.0','id':'workspace-roots','method':'roots/list'}), flush=True)
+        reply = json.loads(sys.stdin.readline())
+        assert reply['id'] == 'workspace-roots'
+        roots = reply['result']
+        result = {'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'roots','version':'1'}}
+    elif request['method'] == 'tools/list':
+        result = {'tools':[{'name':'record','inputSchema':{'type':'object'}}]}
+    else:
+        result = {'content':[{'type':'text','text':json.dumps(roots)}]}
+    print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}), flush=True)
+"#;
+    for policy in ["workspace-write", "read-only", "full-access"] {
+        let fixture = Fixture::new(policy);
+        let extra = fixture.repo.join("extra # Δ");
+        std::fs::create_dir(&extra).unwrap();
+        let extra_file = fixture.repo.join("writable.txt");
+        std::fs::write(&extra_file, "contents").unwrap();
+        let cwd = fixture.repo.join("server-cwd");
+        std::fs::create_dir(&cwd).unwrap();
+        fixture.configure(|config| {
+            config["mcp"]["audit"]["args"] = json!(["-u", "-c", ROOT_SERVER]);
+            config["sandbox"]["writable_roots"] = json!([extra, extra_file, fixture.repo, extra]);
+            config["mcp"]["audit"]["cwd"] = json!(cwd);
+            config["sandbox"]["readable_paths"] = json!([fixture.home]);
+        });
+        let resolved = fixture.load();
+        let trust = fixture.trust();
+        let helper = cyber_sandbox::find_helper();
+        let mut server = fixture
+            .launcher(&resolved, &trust, helper.as_deref())
+            .connect("audit", || Ok(()))
+            .await
+            .unwrap();
+        let roots = result(
+            server
+                .call_tool("record", json!({}), Duration::from_secs(3))
+                .await
+                .unwrap(),
+        );
+        let roots = roots["roots"].as_array().unwrap();
+        assert_eq!(roots.len(), if policy == "read-only" { 1 } else { 3 });
+        assert_eq!(
+            roots[0]["uri"],
+            reqwest::Url::from_directory_path(fixture.repo.canonicalize().unwrap())
+                .unwrap()
+                .as_str()
+        );
+        if roots.len() == 3 {
+            assert_eq!(
+                roots[1]["uri"],
+                reqwest::Url::from_directory_path(extra.canonicalize().unwrap())
+                    .unwrap()
+                    .as_str()
+            );
+        }
+        if roots.len() == 3 {
+            assert_eq!(
+                roots[2]["uri"],
+                reqwest::Url::from_file_path(extra_file.canonicalize().unwrap())
+                    .unwrap()
+                    .as_str()
+            );
+        }
+        assert!(
+            roots
+                .iter()
+                .all(|root| root["name"] != "home" && root["name"] != "scratch")
+        );
+        assert!(server.shutdown().await.0);
+        server.settle_after_shutdown(|| Ok(())).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn unavailable_writable_root_refuses_before_native_admission() {
+    let fixture = Fixture::new("workspace-write");
+    fixture.configure(|config| config["sandbox"]["writable_roots"] = json!(["missing-root"]));
+    let resolved = fixture.load();
+    let trust = fixture.trust();
+    let admitted = std::cell::Cell::new(false);
+    let error = match fixture
+        .launcher(&resolved, &trust, None)
+        .connect("audit", || {
+            admitted.set(true);
+            Ok(())
+        })
+        .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("missing root accepted"),
+    };
+    assert_eq!(error.diagnostic, "MCP protocol error: MCP root unavailable");
+    assert!(error.acknowledged && error.scratch.is_none());
+    assert!(!admitted.get());
+}

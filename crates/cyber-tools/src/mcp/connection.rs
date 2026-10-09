@@ -42,8 +42,18 @@ impl StdioConnection {
         filter: &cyber_core::config::McpToolFilter,
         timeout: Duration,
     ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
+        Self::connect_with_tools_and_roots(process, name, filter, timeout, None).await
+    }
+
+    pub async fn connect_with_tools_and_roots(
+        process: HookCommandProcess,
+        name: &str,
+        filter: &cyber_core::config::McpToolFilter,
+        timeout: Duration,
+        roots: Option<super::McpRoots>,
+    ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
         let deadline = tokio::time::Instant::now() + timeout;
-        let mut connection = Self::connect(process, timeout).await?;
+        let mut connection = Self::connect_with_roots(process, timeout, roots).await?;
         match connection
             .discover_tools(
                 name,
@@ -69,12 +79,20 @@ impl StdioConnection {
         process: HookCommandProcess,
         timeout: Duration,
     ) -> Result<Self, ConnectionError> {
+        Self::connect_with_roots(process, timeout, None).await
+    }
+
+    pub async fn connect_with_roots(
+        process: HookCommandProcess,
+        timeout: Duration,
+        roots: Option<super::McpRoots>,
+    ) -> Result<Self, ConnectionError> {
         let mut connection = Self {
             process,
             client: None,
             stderr: None,
         };
-        if let Err(error) = connection.initialize(timeout).await {
+        if let Err(error) = connection.initialize(timeout, roots).await {
             let (acknowledged, stderr) = connection.shutdown().await;
             return Err(ConnectionError {
                 error,
@@ -85,7 +103,11 @@ impl StdioConnection {
         Ok(connection)
     }
 
-    async fn initialize(&mut self, timeout: Duration) -> Result<(), McpError> {
+    async fn initialize(
+        &mut self,
+        timeout: Duration,
+        roots: Option<super::McpRoots>,
+    ) -> Result<(), McpError> {
         let stdin = self
             .process
             .stdin()
@@ -99,7 +121,11 @@ impl StdioConnection {
             .stderr()
             .ok_or(McpError::Protocol("MCP stderr unavailable"))?;
         self.stderr = Some(tokio::spawn(drain(stderr)));
-        self.client = Some(StdioClient::new(stdout, stdin));
+        let client = StdioClient::new(stdout, stdin);
+        self.client = Some(match roots {
+            Some(roots) => client.with_roots(roots)?,
+            None => client,
+        });
         if timeout.is_zero() {
             return Err(McpError::Timeout);
         }

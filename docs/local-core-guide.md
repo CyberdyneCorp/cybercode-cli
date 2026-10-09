@@ -297,3 +297,10 @@ When the effective catalog exceeds `tool_output.deferred_threshold_tokens` (defa
 The model can call `tool_search` with `{"query":"jira issue"}` or `{"select":["mcp__github__create_issue"]}`. Search matches case-insensitive words in names/descriptions, returns full schemas sorted by name and loads them for subsequent steps in the same Session. `limit` defaults to five and accepts integers from zero to 1000. Exact selections reject unavailable names before loading anything; when both query and select are supplied, select takes precedence.
 
 Selections survive restart and compaction, while new Sessions and forks start independently. Calling an unloaded tool returns `Tool <name> is deferred. Load it with tool_search first.` Search is allowed by default, subject to `tool_search` permission rules, agent controls, hooks and ordinary output budgets. Loading a schema does not approve execution: fresh permissions, server authorization and registration identity still apply. Search neither starts servers nor invokes their tools. Plugin registration delivery remains incomplete.
+
+
+## MCP workspace roots
+
+Configured local connections advertise MCP roots: the canonical Location and existing files or directories in `sandbox.writable_roots`, resolved relative to the Location and deduplicated. Read-only policy advertises the Location alone. Roots use percent-encoded `file://` URIs and describe a connection snapshot (`listChanged: false`); close and reopen the Location to capture configuration changes. An unavailable configured writable path refuses startup before native launch.
+
+Servers can request `roots/list` during initialization, tool execution or idle processing. The list describes the workspace and leaves process sandbox grants and tool permissions unchanged. Private scratch, unrelated read-only paths and sibling worktrees are not added implicitly. Sampling remains unadvertised and unsupported until its model, permission and billing path is implemented.

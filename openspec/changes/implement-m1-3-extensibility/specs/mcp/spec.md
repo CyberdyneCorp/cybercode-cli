@@ -227,3 +227,26 @@
 - **WHEN** a dispatched local RPC is interrupted without a response establishing completion
 - **THEN** its registration SHALL be removed from subsequent materializations
 - **AND** the retained local native owner SHALL attempt explicit process/proxy shutdown with durable acknowledgement or unresolved evidence
+
+### Requirement: Roots and sampling
+(P1) The system SHALL advertise the `roots` capability, returning the Location directory and any additional writable roots. It SHALL advertise `sampling` only when `mcp.sampling.enabled` is true, routing sampling requests to `model_roles.small` after an `mcp_sampling` permission check and attributing cost to the server.
+
+#### Scenario: Sampling disabled by default
+- **WHEN** a server sends `sampling/createMessage` without sampling enabled
+- **THEN** the request fails with a method-not-supported error
+
+#### Scenario: Captured local roots
+- **WHEN** an authorized local connection initializes
+- **THEN** its roots capability SHALL describe the canonical Location and configured writable paths using deduplicated file URIs
+- **AND** private scratch, unrelated readable paths and sibling managed worktrees SHALL NOT be added implicitly
+- **AND** advertising roots SHALL NOT expand process sandbox grants or tool execution permission
+
+#### Scenario: Roots callback during an active request
+- **WHEN** a server requests `roots/list` during initialization, a tool call or idle processing
+- **THEN** the client SHALL return the captured connection roots with the server's request identity
+- **AND** invalid callback parameter shapes SHALL receive a JSON-RPC invalid-parameters response without losing the active client request
+
+#### Scenario: Immutable roots snapshot
+- **WHEN** the connection advertises `roots.listChanged: false`
+- **THEN** its root selection SHALL remain an immutable connection snapshot
+- **AND** a fresh connection SHALL capture current authorized configuration

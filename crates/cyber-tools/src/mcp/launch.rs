@@ -235,6 +235,19 @@ impl LocalLauncher<'_> {
                 "MCP working directory is not a directory",
             ));
         }
+        let roots_config = SandboxConfig::resolve(
+            &self.resolved.value,
+            &self.resolved.sources,
+            None,
+            self.home,
+        );
+        let writable = if roots_config.policy == Policy::ReadOnly {
+            &[][..]
+        } else {
+            roots_config.extra_writable.as_slice()
+        };
+        let roots = super::McpRoots::new(self.location, writable)
+            .map_err(|error| LocalLaunchError::before_launch(error.to_string()))?;
         let mut resources = self.prepare(server.requires_sandbox).await?;
         resources.scratch.cleanup = false;
         let prepared = (|| {
@@ -286,11 +299,12 @@ impl LocalLauncher<'_> {
                 });
             }
         };
-        match StdioConnection::connect_with_tools(
+        match StdioConnection::connect_with_tools_and_roots(
             process,
             name,
             tools,
             deadline.saturating_duration_since(tokio::time::Instant::now()),
+            Some(roots),
         )
         .await
         {
