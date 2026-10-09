@@ -1,6 +1,7 @@
 //! Explicit local memory management without model work or database creation.
 mod editor;
 mod recovery;
+mod server;
 
 use crate::{cli::GlobalArgs, context::Context, error::CliError, output};
 use clap::{Args, Subcommand};
@@ -12,6 +13,9 @@ pub struct MemoryArgs {
     /// Manage global memory instead of this repository's memory.
     #[arg(long, global = true)]
     pub global: bool,
+    /// Use the running registered server for paired recovery and receipt lookup.
+    #[arg(long, global = true)]
+    pub server: bool,
     #[command(subcommand)]
     pub command: MemoryCmd,
 }
@@ -32,12 +36,29 @@ pub enum MemoryCmd {
     Recover {
         #[arg(long)]
         review: String,
+        /// Database fingerprint from recovery --server.
+        #[arg(long, requires = "server")]
+        admission_review: Option<String>,
+        /// Retain this key for retries and durable receipt lookup.
+        #[arg(long, requires = "server")]
+        key: Option<String>,
+    },
+    /// Inspect a retained server recovery request without repeating its effects.
+    RecoveryRequest {
+        #[arg(long, requires = "server")]
+        key: String,
     },
     /// Print the memory directory without creating it.
     Path,
 }
 
 pub fn run(args: MemoryArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    if args.server {
+        return server::run(&args, ctx, global);
+    }
+    if matches!(args.command, MemoryCmd::RecoveryRequest { .. }) {
+        return Err(CliError::usage("Recovery request lookup requires --server"));
+    }
     let mutation = matches!(
         args.command,
         MemoryCmd::Edit { .. } | MemoryCmd::Delete { .. } | MemoryCmd::Recover { .. }
@@ -45,7 +66,7 @@ pub fn run(args: MemoryArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), C
     if mutation {
         mutation_admission(ctx)?;
     }
-    if let MemoryCmd::Recover { review } = &args.command {
+    if let MemoryCmd::Recover { review, .. } = &args.command {
         recovery::validate_review(review)?;
     }
     match &args.command {
@@ -102,7 +123,7 @@ pub fn run(args: MemoryArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), C
         MemoryCmd::Recovery => {
             recovery::report(owner.inspect_recovery().map_err(storage_error)?, global)
         }
-        MemoryCmd::Recover { review } => {
+        MemoryCmd::Recover { review, .. } => {
             mutation_admission(ctx)?;
             recovery::database_admission(ctx, &project)?;
             report_mutation(
@@ -110,6 +131,7 @@ pub fn run(args: MemoryArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), C
                 global,
             )
         }
+        MemoryCmd::RecoveryRequest { .. } => unreachable!("requires server"),
         MemoryCmd::Path => unreachable!("handled before storage admission"),
     }
 }
@@ -118,6 +140,7 @@ pub fn debug(ctx: &Context, global: &GlobalArgs, use_global: bool) -> Result<(),
     run(
         MemoryArgs {
             global: use_global,
+            server: false,
             command: MemoryCmd::List,
         },
         ctx,

@@ -17,6 +17,7 @@
   - [x] Add CLI recovery inspection and fingerprint-bound local recovery with fresh settings and pending-database admission refusal; verify actual subprocesses.
   - [x] Expose authenticated pinned-journal recovery GET/POST with typed SDK, owned lifecycle/settings gates and actual TCP tests.
   - [x] Add durable keyed recovery receipt/status lookup and cache-gap replay with cross-endpoint identity fencing and SDK methods.
+  - [x] Add explicit CLI paired review/confirmation and durable receipt lookup through an existing registered server; verify real binary/API effects and refusal without startup.
   - [ ] Add TUI controls, reviewed memory recovery and complete cross-platform HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.

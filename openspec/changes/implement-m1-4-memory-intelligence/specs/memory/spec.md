@@ -217,3 +217,13 @@
 - **WHEN** an authenticated caller reads `GET /api/v1/memory/recovery/requests?scope=project|global&key=<retained-key>`
 - **THEN** the response SHALL carry Location and report an acknowledged result or unresolved evidence without reconstructing execution ownership
 - **AND** absent keys SHALL return null without creating storage
+
+#### Scenario: CLI reconciliation through a running server
+- **WHEN** the user runs `cyber memory recovery --server [--global]`
+- **THEN** the CLI SHALL use the existing registered server to report the paired storage and admission review without starting a server or model work
+- **WHEN** the user explicitly confirms with `cyber memory recover --server --review <storage> --admission-review <database> --key <retained-key>`
+- **THEN** the CLI SHALL submit those exact fingerprints and retained key once through the authenticated recovery API and report the original change receipt
+- **AND** settings, scope ownership, stale review refusal and shutdown admission SHALL remain enforced by the server
+- **WHEN** the user runs `cyber memory recovery-request --server --key <retained-key>`
+- **THEN** the CLI SHALL report the Location-bound durable receipt or unresolved evidence without replaying a mutation
+- **AND** missing registration, invalid fingerprints and missing confirmation identity SHALL refuse without creating a database, starting a server or acquiring memory storage

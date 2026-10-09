@@ -512,3 +512,238 @@ fn recovery_refuses_database_symlink_and_unknown_memory_schema() {
         );
     }
 }
+
+#[test]
+fn server_recovery_requires_explicit_confirmation_and_existing_registration() {
+    let env = Env::new();
+    let fingerprint = "a".repeat(64);
+    for args in [
+        vec!["memory", "recovery", "--server"],
+        vec!["memory", "recover", "--server", "--review", &fingerprint],
+        vec![
+            "memory",
+            "recover",
+            "--server",
+            "--review",
+            &fingerprint,
+            "--admission-review",
+            &fingerprint,
+            "--key",
+            "retained",
+        ],
+        vec![
+            "memory",
+            "recovery-request",
+            "--server",
+            "--key",
+            "retained",
+        ],
+        vec!["memory", "recovery-request", "--key", "retained"],
+        vec!["memory", "list", "--server"],
+    ] {
+        assert!(!env.run(&args).status.success(), "{args:?}");
+        assert!(!env.data().join("memory/global").exists());
+        assert!(!env.root.join("cyber/state/server.json").exists());
+        assert!(!env.root.join("cyber/state/password").exists());
+        env.no_database();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_loss() {
+    use cyber_core::paths::{DatabaseLocation, Paths};
+    use cyber_server::runtime::{MemoryAdmission, MemoryWrite};
+    let env = Env::new();
+    let paths = Paths {
+        data: env.data(),
+        config: env.root.join("cyber/config"),
+        state: env.root.join("cyber/state"),
+        cache: env.root.join("cyber/cache"),
+        tmp: env.root.join("cyber/tmp"),
+    };
+    paths.ensure().unwrap();
+    let app = cyber_app::App::build(cyber_app::AppOptions {
+        paths: paths.clone(),
+        home: env.root.join("home"),
+        database: DatabaseLocation::File(env.data().join("memory-test.db")),
+        default_directory: env.root.clone(),
+        sandbox_policy: None,
+        snapshots: false,
+        interactive: true,
+        password: Some("cli-memory-existing-password".into()),
+    })
+    .await
+    .unwrap();
+    let memory = cyber_core::memory::MemoryStore::open(&env.data(), "global").unwrap();
+    {
+        let mut scope = memory.claim().unwrap();
+        scope.write(&note("Original fact")).unwrap();
+        let MemoryAdmission::Owned(mut owner) = app
+            .runtime
+            .admit_memory_write(MemoryWrite {
+                directory: &env.root,
+                project_id: "global",
+                name: "coding-policy",
+                deleted: false,
+                identity: Some("cli-pending-write"),
+                content: &note("Proposed fact"),
+                http_hash: None,
+            })
+            .unwrap()
+        else {
+            panic!("fresh admission")
+        };
+        let prepared = scope.prepare_write(&note("Proposed fact")).unwrap();
+        owner
+            .bind_journal(prepared.journal_identity().unwrap())
+            .unwrap();
+        drop(prepared);
+        drop(owner);
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registration = cyber_app::Registration {
+        id: "cli-memory-server".into(),
+        version: cyber_app::version().into(),
+        url: format!("http://{}", listener.local_addr().unwrap()),
+        socket: None,
+        pid: std::process::id(),
+    };
+    std::fs::write(
+        paths.state.join("server.json"),
+        serde_json::to_vec(&registration).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(paths.state.join("password"), "cli-memory-existing-password").unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(app.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    std::fs::write(paths.state.join("password"), "wrong-existing-password").unwrap();
+    assert!(
+        !env.run(&["memory", "recovery", "--server", "--global"])
+            .status
+            .success()
+    );
+    std::fs::write(paths.state.join("password"), "cli-memory-existing-password").unwrap();
+    let review = body(env.run(&["memory", "recovery", "--server", "--global"]));
+    assert_eq!(
+        review["data"]["storage"]["proposed_note"]["body"],
+        "Proposed fact"
+    );
+    let storage = review["data"]["storage"]["fingerprint"].as_str().unwrap();
+    let admission = review["data"]["admission"]["fingerprint"].as_str().unwrap();
+    let key = "cli/recovery+retained";
+    let confirm = [
+        "memory",
+        "recover",
+        "--server",
+        "--global",
+        "--review",
+        storage,
+        "--admission-review",
+        admission,
+        "--key",
+        key,
+    ];
+    let stale = format!("sha256:{}", "0".repeat(64));
+    assert!(
+        !env.run(&[
+            "memory",
+            "recover",
+            "--server",
+            "--global",
+            "--review",
+            storage,
+            "--admission-review",
+            &stale,
+            "--key",
+            "stale-cli-review"
+        ])
+        .status
+        .success()
+    );
+    let config = paths.config.join("cyber.jsonc");
+    std::fs::write(&config, json!({"memory":{"generate":false}}).to_string()).unwrap();
+    let mut readonly = confirm;
+    readonly[9] = "readonly-cli-review";
+    assert!(!env.run(&readonly).status.success());
+    assert!(
+        std::fs::read_to_string(env.note_path())
+            .unwrap()
+            .contains("Original fact")
+    );
+    assert_eq!(
+        app.store
+            .read_events(review["data"]["admission"]["id"].as_str().unwrap(), -1, 20)
+            .unwrap()
+            .events
+            .len(),
+        2
+    );
+    std::fs::write(config, "{}").unwrap();
+    let change = body(env.run(&confirm));
+    assert_eq!(
+        change["data"]["receipt"],
+        review["data"]["storage"]["receipt"]
+    );
+    app.store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(body(env.run(&confirm)), change);
+    let status = body(env.run(&[
+        "memory",
+        "recovery-request",
+        "--server",
+        "--global",
+        "--key",
+        key,
+    ]));
+    assert_eq!(status["data"]["completed"], change["data"]);
+    let foreign = env.root.join("foreign");
+    std::fs::create_dir(&foreign).unwrap();
+    assert!(
+        !env.command(&[
+            "memory",
+            "recovery-request",
+            "--server",
+            "--global",
+            "--key",
+            key
+        ])
+        .arg("--cwd")
+        .arg(&foreign)
+        .output()
+        .unwrap()
+        .status
+        .success()
+    );
+
+    assert_eq!(
+        body(env.run(&["memory", "recovery", "--server", "--global"]))["data"],
+        Value::Null
+    );
+    assert_eq!(
+        app.store
+            .read_events(change["data"]["id"].as_str().unwrap(), -1, 20)
+            .unwrap()
+            .events
+            .len(),
+        4
+    );
+    assert!(
+        std::fs::read_to_string(env.note_path())
+            .unwrap()
+            .contains("Proposed fact")
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    app.runtime.shutdown().await;
+}
