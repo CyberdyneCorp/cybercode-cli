@@ -3,6 +3,9 @@ mod client_state;
 pub use client_state::MemoryClientStore;
 mod secrets;
 mod storage;
+#[cfg(windows)]
+#[allow(unsafe_code)] // Owned, bounded native handle/security queries are isolated in this backend.
+pub mod windows;
 pub use storage::{
     InvalidMemory, MemoryCatalog, MemoryEditReview, MemoryJournalIdentity, MemoryMutation,
     MemoryRecoveryReview, MemoryScope, MemoryStorageError, MemoryStore, PreparedMemory,

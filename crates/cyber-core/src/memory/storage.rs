@@ -326,6 +326,8 @@ pub(super) fn verify_regular(file: &File) -> Result<(), MemoryStorageError> {
             return Err(MemoryStorageError::Unsafe("hard-linked memory file"));
         }
     }
+    #[cfg(windows)]
+    super::windows::verify_regular(file)?;
     Ok(())
 }
 fn make_private_file(file: &File) -> Result<(), MemoryStorageError> {
@@ -370,7 +372,9 @@ pub(super) fn verify_private_directory(dir: &Dir) -> Result<(), MemoryStorageErr
             ));
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    super::windows::identity(&dir.try_clone()?.into_std_file())?;
+    #[cfg(not(any(unix, windows)))]
     let _ = dir;
     Ok(())
 }

@@ -335,3 +335,21 @@ fn mutation_admission_refuses_until_platform_privacy_and_durability_are_integrat
     assert!(scope.recover().is_err());
     assert!(!store.path().join(".memory-transaction").exists());
 }
+
+#[cfg(windows)]
+#[test]
+fn native_memory_reads_refuse_hard_link_alias_before_note_access() {
+    let root = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(root.path(), "global").unwrap();
+    let path = store.path().join("policy.md");
+    std::fs::write(
+        &path,
+        "---\nname: policy\ndescription: Policy\ntype: reference\n---\nPrivate text\n",
+    )
+    .unwrap();
+    std::fs::hard_link(&path, root.path().join("alias.md")).unwrap();
+    assert!(matches!(
+        store.claim().unwrap().read("policy"),
+        Err(MemoryStorageError::Unsafe(_))
+    ));
+}

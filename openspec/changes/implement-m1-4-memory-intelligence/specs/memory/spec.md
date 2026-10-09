@@ -270,6 +270,15 @@
 - **AND** restored bytes SHALL grant no memory mutation or recovery authority; callers SHALL validate versions and scoped identities and obtain fresh reviews before new effects
 - **AND** unsupported native privacy/durability SHALL refuse before creating client storage
 
+#### Scenario: Native Windows memory handle evidence
+- **WHEN** native memory verifies a Windows file handle
+- **THEN** regular-file admission SHALL refuse directories, reparse points and multiple file links before note access
+- **AND** object identity SHALL preserve the full volume and 128-bit file identifiers without a truncated fallback or path-based reopening
+- **WHEN** native private-object verification reviews an existing handle
+- **THEN** it SHALL require the current process user as owner and a protected non-null valid DACL granting only that user or SYSTEM
+- **AND** foreign grants, unsupported ACE types, malformed or out-of-bounds token/SID evidence and unprotected or null DACLs SHALL refuse without changing permissions
+- **AND** these checks SHALL NOT enable mutation or checkpoints until private creation, identity binding, durable updates and native acceptance are implemented
+
 
 #### Scenario: Durable TUI memory draft and request retention
 - **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
