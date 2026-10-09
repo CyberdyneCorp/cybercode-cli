@@ -608,6 +608,31 @@ for line in sys.stdin:
         .filter(|def| def.spec.name == "mcp__lower__read")
         .collect();
     assert_eq!(effective.len(), 1);
+    assert_eq!(native.scope, cyber_server::runtime::ToolScope::Mcp);
+    assert_eq!(
+        effective[0].scope,
+        cyber_server::runtime::ToolScope::Session
+    );
+    let partition = cyber_server::runtime::deferred_tools::materialize(
+        definitions.clone(),
+        cyber_core::config::DeferredToolSettings {
+            threshold_tokens: 0,
+        },
+        &std::collections::BTreeSet::new(),
+    )
+    .unwrap();
+    assert!(
+        partition
+            .callable
+            .iter()
+            .any(|tool| tool.spec.name == "mcp__lower__read")
+    );
+    assert!(
+        partition
+            .deferred
+            .iter()
+            .all(|tool| tool.spec.name != "mcp__lower__read")
+    );
     assert_ne!(effective[0].registration, native.registration);
     let mut old = f.call();
     old.name = native.spec.name;

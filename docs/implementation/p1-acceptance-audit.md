@@ -453,3 +453,6 @@ Retained local MCP reconnect now has evidence for exponential delays capped at s
 
 
 The read-only wait_for_mcp built-in now covers named connecting servers with a zero-to-sixty-second timeout, ordinary schema/agent/hooks/permission/cancellation boundaries and redacted status results. Portable terminal/unknown/invalid-input/deny cases, a per-tool golden and real delayed startup, expiry, cancellation and following-step materialization tests accept this local wait boundary. Waiting never starts servers or grants invocation authority. Deferred tool loading/search, remote transports and full native acceptance remain unaccepted.
+
+
+Explicit registration scopes and shared deferred materialization now have evidence for the sole typed threshold, actual configuration validation, four-character Unicode token estimates, exact threshold boundaries, loaded selections, schema-free summaries and MCP-looking client precedence. Runtime preflight also rejects changed scope before effects. These are tested registry foundations; Session-persistent selections, tool_search and model request projection are not yet implemented, so deferred-loading parent requirements remain unchecked.

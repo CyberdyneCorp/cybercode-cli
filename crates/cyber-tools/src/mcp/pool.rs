@@ -525,6 +525,7 @@ impl BuiltinHost {
                                 || tool.read_only_hint()
                         })
                         .map(|tool| ToolDef {
+                            scope: cyber_server::runtime::ToolScope::Mcp,
                             registration: Some(tool_binding(id, tool)),
                             spec: tool.spec(),
                             // Annotations control permission defaults, not safe automatic retries.
@@ -615,6 +616,7 @@ impl BuiltinHost {
             Err(ToolError::Aborted) => return ToolOutcome::Aborted,
         };
         let definition = ToolDef {
+            scope: cyber_server::runtime::ToolScope::Mcp,
             registration: inv.registration.clone(),
             spec: tool.spec(),
             retry_safety: RetrySafety::Never,

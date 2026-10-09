@@ -76,6 +76,11 @@ jobs:
         run: |
           cargo test --locked -p cyber-tools --lib mcp::stdio::tests
           cargo test --locked -p cyber-tools --lib tools::process::tests
+      - name: Native scope-aware deferred tool materialization
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --lib config::deferred_tools::tests
+          cargo test --locked -p cyber-server --lib runtime::deferred_tools::tests
       - name: Native MCP retained startup joins and bounded reconnect
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib mcp::pool::tests

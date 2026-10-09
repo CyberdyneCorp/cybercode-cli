@@ -148,9 +148,24 @@ impl ModelResolver for CatalogResolver {
     }
 }
 
+/// Scope is assigned by registration authority, never inferred from a tool name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ToolScope {
+    Builtin,
+    Plugin,
+    Mcp,
+    Session,
+}
+impl ToolScope {
+    pub fn deferrable(self) -> bool {
+        matches!(self, Self::Plugin | Self::Mcp)
+    }
+}
+
 /// A tool offered to the model for one Turn.
 #[derive(Debug, Clone)]
 pub struct ToolDef {
+    pub scope: ToolScope,
     /// Opaque native registration identity, retained from advertisement through dispatch.
     pub registration: Option<String>,
     pub spec: ToolSpec,

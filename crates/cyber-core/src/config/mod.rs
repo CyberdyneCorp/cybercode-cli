@@ -4,6 +4,7 @@
 mod agent_profiles;
 mod agents;
 mod auto_mode;
+mod deferred_tools;
 mod gate;
 mod hooks;
 mod jsonc;
@@ -24,6 +25,7 @@ use serde_json::Value;
 
 pub use agent_profiles::{AgentProfile, AgentTools, resolve_agents};
 pub use auto_mode::{AutoFallback, AutoModeSettings, AutoPattern};
+pub use deferred_tools::DeferredToolSettings;
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};
 pub use hooks::{HookCondition, HookGroup, HookHandler, HookKind, HookSettings};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};

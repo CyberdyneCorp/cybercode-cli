@@ -73,6 +73,7 @@ impl RemoteTools {
                 .unwrap_or_else(|| json!({ "type": "object" })),
         };
         let def = ToolDef {
+            scope: crate::runtime::ToolScope::Session,
             registration: Some(cyber_core::ids::new_id("reg")),
             spec,
             retry_safety: RetrySafety::Never,
@@ -301,5 +302,22 @@ mod tests {
         assert!(tools.pending.lock().unwrap().is_empty());
         frames.recv().await.unwrap();
         assert_eq!(frames.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    }
+    #[test]
+    fn client_registration_scope_comes_from_authority_not_name_or_payload() {
+        let tools = RemoteTools::default();
+        let (out, _frames) = mpsc::channel(1);
+        tools
+            .register(
+                tools.owner(),
+                out,
+                &json!({"name":"mcp__shared__read","scope":"mcp","registration_id":"mcs_forged"}),
+                &[],
+            )
+            .unwrap();
+        let definition = tools.definitions().pop().unwrap();
+        assert_eq!(definition.scope, crate::runtime::ToolScope::Session);
+        assert!(!definition.scope.deferrable());
+        assert_ne!(definition.registration.as_deref(), Some("mcs_forged"));
     }
 }

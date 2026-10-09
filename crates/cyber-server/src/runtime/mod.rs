@@ -53,6 +53,7 @@ pub use mcp::{
     McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
     McpConnectionStatus, McpServerStatus, McpStatusUpdate, mcp_connections,
 };
+pub mod deferred_tools;
 mod model;
 mod requests;
 mod rewind;
@@ -86,7 +87,7 @@ pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, ChildContinuation, FileDiff, Invocation, LocationGuard,
     LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
-    RestoreError, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, TurnContext,
+    RestoreError, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,

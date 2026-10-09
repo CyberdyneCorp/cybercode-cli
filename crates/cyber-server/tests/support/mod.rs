@@ -157,6 +157,7 @@ pub struct Tools {
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
     ToolDef {
+        scope: cyber_server::runtime::ToolScope::Builtin,
         registration: None,
         spec: ToolSpec {
             name: name.into(),

@@ -24,6 +24,7 @@ struct Clock;
 impl ToolHost for Clock {
     fn definitions(&self, _turn: &TurnContext) -> Vec<ToolDef> {
         vec![ToolDef {
+            scope: cyber_server::runtime::ToolScope::Builtin,
             registration: None,
             spec: ToolSpec {
                 name: "clock".into(),

@@ -1009,9 +1009,11 @@ impl Inner {
         // The registration may have been removed or replaced since it was advertised.
         let current = self.tools.definitions(turn);
         if def.spec.name != "return_result"
-            && !current
-                .iter()
-                .any(|d| d.spec.name == def.spec.name && d.registration == def.registration)
+            && !current.iter().any(|d| {
+                d.spec.name == def.spec.name
+                    && d.registration == def.registration
+                    && d.scope == def.scope
+            })
         {
             return Err((CallStatus::Error, format!("Stale tool call: {}", call.name)));
         }

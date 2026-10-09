@@ -60,3 +60,15 @@
 - **THEN** the declared schema SHALL be checked before client channel effects
 - **AND** a valid rewrite SHALL become the input for subsequent permission and client execution
 - **AND** the exact original registration identity SHALL remain retained through those checks
+
+
+### Requirement: Scope-aware deferred materialization
+(P1) Deferred materialization SHALL use explicit registration scope rather than name prefixes, after precedence and visibility filtering. The sole threshold SHALL be tool_output.deferred_threshold_tokens, default 10000, measured as four Unicode characters per estimated token with rounding up. Unloaded MCP/plugin tools SHALL be partitioned only when the total strictly exceeds the threshold; loaded selections, builtins and Session registrations SHALL retain full definitions. Deferred summaries SHALL contain only names and one-line descriptions and SHALL NOT disclose parameter schemas or registration capabilities.
+
+#### Scenario: Client with MCP-looking name
+- **WHEN** a higher Session client tool is named mcp__shared__read and the definition threshold is exceeded
+- **THEN** its actual Session scope SHALL preserve its full definition without revealing a lower MCP registration
+
+#### Scenario: Threshold and loaded selection
+- **WHEN** an already effective catalog exceeds the configured threshold and a Session has loaded one MCP name
+- **THEN** that name SHALL retain its full definition while other unloaded MCP/plugin schemas remain deferred

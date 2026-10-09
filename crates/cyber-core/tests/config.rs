@@ -1046,3 +1046,26 @@ fn withheld_hook_review_honors_disabled_project_config_and_reports_jsonc_errors(
             .is_empty()
     );
 }
+
+#[test]
+fn deferred_threshold_is_validated_through_real_configuration_loading() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        r#"{"tool_output":{"deferred_threshold_tokens":0,"max_bytes":51200}}"#,
+    );
+    let loaded = f.load().unwrap();
+    assert_eq!(
+        config::DeferredToolSettings::from_config(&loaded.value)
+            .unwrap()
+            .threshold_tokens,
+        0
+    );
+    f.write(
+        "global:cyber.jsonc",
+        r#"{"tool_output":{"deferred_threshold_tokens":"private-invalid-value"}}"#,
+    );
+    let error = f.load().unwrap_err().to_string();
+    assert!(error.contains("tool_output.deferred_threshold_tokens"));
+    assert!(!error.contains("private-invalid-value"));
+}

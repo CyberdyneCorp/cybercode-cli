@@ -1519,3 +1519,40 @@ async fn delete_refuses_cyclic_child_graph_without_mutation() {
     assert_eq!(remaining, 2);
     assert_eq!(history(), before);
 }
+
+#[tokio::test]
+async fn changed_registration_scope_settles_as_stale_before_execution() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "clock", "{}"), ("c2", "write", "{}")]),
+                text("ok"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("clock", Behavior::Gated);
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    h.tools
+        .defs
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|tool| tool.spec.name == "write")
+        .unwrap()
+        .scope = cyber_server::runtime::ToolScope::Plugin;
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_eq!(
+        state.calls["c2"].output.as_deref(),
+        Some("Stale tool call: write")
+    );
+    assert!(!h.tools.executed_names().contains(&"write".to_string()));
+}

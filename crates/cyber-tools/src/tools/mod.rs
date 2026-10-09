@@ -82,6 +82,7 @@ pub(crate) fn def(
     parallel: bool,
 ) -> ToolDef {
     ToolDef {
+        scope: cyber_server::runtime::ToolScope::Builtin,
         registration: None,
         spec: ToolSpec {
             name: name.into(),
