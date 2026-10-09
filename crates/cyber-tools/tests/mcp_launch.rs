@@ -549,8 +549,9 @@ async fn project_approval_is_rechecked_after_durable_admission_before_spawn() {
     };
     assert!(error.acknowledged);
     assert!(called.get());
+    assert!(!error.retry_safe());
     assert!(!fixture.repo.join("called").exists());
-    assert_eq!(std::fs::read_dir(&fixture.temp).unwrap().count(), 0);
+    assert!(error.scratch.unwrap().exists());
 }
 
 #[tokio::test]
@@ -792,6 +793,7 @@ async fn owned_shutdown_retries_failed_durable_commit_without_reopening_calls() 
     let scratch = server.scratch_path().to_path_buf();
     let error = server.shutdown().await.unwrap_err();
     assert!(error.acknowledged);
+    assert!(!error.retry_safe());
     assert!(
         error
             .diagnostic
@@ -838,5 +840,133 @@ async fn owned_preparation_timeout_fences_replacement_without_spawning() {
             })
             .await
             .is_err()
+    );
+}
+
+fn malformed_owned_fixture() -> Fixture {
+    let fixture = Fixture::new("full-access");
+    let script = SERVER.replace(
+        "elif request['method'] == 'tools/list':",
+        "elif request['method'] == 'tools/list':\n        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'tools':'invalid'}}),flush=True)\n        continue\n    elif False:",
+    );
+    fixture.configure(|value| value["mcp"]["audit"]["args"] = json!(["-u", "-c", script]));
+    fixture
+}
+
+#[tokio::test]
+async fn owned_failed_discovery_is_retry_safe_only_after_all_settlement_and_cleanup() {
+    use cyber_server::runtime::{McpConnectionPhase, mcp_connections};
+    use cyber_tools::mcp::McpLocationPin;
+    let fixture = malformed_owned_fixture();
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let store = ownership_store();
+    let error = match fixture
+        .launcher(&loaded, &trust, None)
+        .connect_owned("audit", store.clone(), |_| async {
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("invalid catalog accepted"),
+    };
+    assert!(error.acknowledged);
+    assert!(error.retry_safe());
+    assert!(!error.scratch.as_ref().unwrap().exists());
+    assert_eq!(
+        mcp_connections(&store, &fixture.repo).unwrap()[0].phase,
+        McpConnectionPhase::Settled
+    );
+    let next = fixture
+        .launcher(&loaded, &trust, None)
+        .connect_owned("audit", store.clone(), |_| async {
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await;
+    assert!(match next {
+        Err(error) => error.retry_safe(),
+        Ok(_) => false,
+    });
+    assert_eq!(mcp_connections(&store, &fixture.repo).unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn native_acknowledgement_without_failed_launch_commit_is_not_retry_safe() {
+    use cyber_server::runtime::{McpConnectionPhase, mcp_connections};
+    use cyber_tools::mcp::McpLocationPin;
+    let fixture = malformed_owned_fixture();
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let mut registry = cyber_server::runtime::Runtime::registry();
+    registry.projector(|_, event| {
+        if event.kind == "mcp.status.changed.1" && event.data["record"]["phase"] == "settled" {
+            return Err("injected failed startup settlement".into());
+        }
+        Ok(())
+    });
+    let store = std::sync::Arc::new(
+        cyber_store::Store::open(cyber_store::StoreOptions::new(
+            cyber_core::paths::DatabaseLocation::Memory,
+            registry,
+        ))
+        .unwrap(),
+    );
+    let error = match fixture
+        .launcher(&loaded, &trust, None)
+        .connect_owned("audit", store.clone(), |_| async {
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("invalid catalog accepted"),
+    };
+    assert!(error.acknowledged);
+    assert!(!error.retry_safe());
+    assert!(error.scratch.as_ref().unwrap().exists());
+    assert_eq!(
+        mcp_connections(&store, &fixture.repo).unwrap()[0].phase,
+        McpConnectionPhase::Unknown
+    );
+}
+
+#[tokio::test]
+async fn rejected_connected_commit_settles_native_resources_before_retry_permission() {
+    use cyber_server::runtime::{McpConnectionPhase, mcp_connections};
+    use cyber_tools::mcp::McpLocationPin;
+    let fixture = Fixture::new("full-access");
+    let loaded = fixture.load();
+    let trust = fixture.trust();
+    let mut registry = cyber_server::runtime::Runtime::registry();
+    registry.projector(|_, event| {
+        if event.kind == "mcp.status.changed.1" && event.data["record"]["phase"] == "running" {
+            return Err("injected connected commit failure".into());
+        }
+        Ok(())
+    });
+    let store = std::sync::Arc::new(
+        cyber_store::Store::open(cyber_store::StoreOptions::new(
+            cyber_core::paths::DatabaseLocation::Memory,
+            registry,
+        ))
+        .unwrap(),
+    );
+    let error = match fixture
+        .launcher(&loaded, &trust, None)
+        .connect_owned("audit", store.clone(), |_| async {
+            Ok(McpLocationPin::unmanaged())
+        })
+        .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("rejected connected commit accepted"),
+    };
+    assert!(error.acknowledged);
+    assert!(error.retry_safe());
+    assert!(!error.scratch.as_ref().unwrap().exists());
+    assert_eq!(
+        mcp_connections(&store, &fixture.repo).unwrap()[0].phase,
+        McpConnectionPhase::Settled
     );
 }

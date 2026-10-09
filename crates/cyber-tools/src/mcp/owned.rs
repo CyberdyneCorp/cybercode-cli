@@ -147,6 +147,7 @@ impl OwnedLocalServer {
                 .owner
                 .finish(false, "MCP native shutdown is unverified".into());
             return Err(LocalLaunchError {
+                settled: false,
                 diagnostic: "MCP native shutdown is unverified".into(),
                 acknowledged: false,
                 stderr,
@@ -174,6 +175,7 @@ impl OwnedLocalServer {
                 Ok((self.owner.record().clone(), stderr))
             }
             Err(error) => Err(LocalLaunchError {
+                settled: false,
                 diagnostic: error,
                 acknowledged: true,
                 stderr,
@@ -231,12 +233,14 @@ impl LocalLauncher<'_> {
         let pin = tokio::time::timeout_at(deadline, claim(owner.record().id.clone()))
             .await
             .map_err(|_| LocalLaunchError {
+                settled: false,
                 diagnostic: "MCP native preparation timed out; settlement is unverified".into(),
                 acknowledged: false,
                 stderr: StderrCapture::default(),
                 scratch: None,
             })?
             .map_err(|diagnostic| LocalLaunchError {
+                settled: false,
                 diagnostic,
                 acknowledged: false,
                 stderr: StderrCapture::default(),
@@ -244,6 +248,7 @@ impl LocalLauncher<'_> {
             })?;
         pin.verify(self.location, &owner.record().id)
             .map_err(|diagnostic| LocalLaunchError {
+                settled: false,
                 diagnostic,
                 acknowledged: false,
                 stderr: StderrCapture::default(),
@@ -261,9 +266,22 @@ impl LocalLauncher<'_> {
             Ok(mut server) => {
                 if let Err(error) = owner.connected() {
                     let (acknowledged, stderr) = server.shutdown().await;
-                    let _ =
-                        owner.finish(acknowledged, "MCP connected receipt commit failed".into());
+                    let settled = if acknowledged {
+                        match server.settle_after_shutdown(|| {
+                            owner
+                                .finish(true, "MCP connected receipt commit failed".into())
+                                .map_err(|failure| failure.to_string())?;
+                            pin.settle_retained()
+                        }) {
+                            Ok(_retained) => std::fs::remove_dir_all(server.scratch_path()).is_ok(),
+                            Err(_) => false,
+                        }
+                    } else {
+                        let _ = owner.finish(false, "MCP connected receipt commit failed".into());
+                        false
+                    };
                     return Err(LocalLaunchError {
+                        settled,
                         diagnostic: error.to_string(),
                         acknowledged,
                         stderr,
@@ -278,11 +296,12 @@ impl LocalLauncher<'_> {
                     closing: false,
                 })
             }
-            Err(error) => {
+            Err(mut error) => {
                 // Acknowledged preparation/spawn failure still needs durable settlement.
                 owner
                     .finish(error.acknowledged, error.diagnostic.clone())
                     .map_err(|failure| LocalLaunchError {
+                        settled: false,
                         diagnostic: failure.to_string(),
                         acknowledged: error.acknowledged,
                         stderr: StderrCapture::default(),
@@ -292,6 +311,16 @@ impl LocalLauncher<'_> {
                     let _retained = pin
                         .settle_retained()
                         .map_err(LocalLaunchError::before_launch)?;
+                    if let Some(scratch) = &error.scratch {
+                        std::fs::remove_dir_all(scratch).map_err(|failure| LocalLaunchError {
+                            diagnostic: failure.to_string(),
+                            acknowledged: true,
+                            settled: false,
+                            stderr: StderrCapture::default(),
+                            scratch: Some(scratch.clone()),
+                        })?;
+                    }
+                    error.settled = true;
                 }
                 Err(error)
             }

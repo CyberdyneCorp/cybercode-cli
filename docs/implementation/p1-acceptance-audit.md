@@ -444,3 +444,6 @@ Synthetic hook executions now have independent durable receipt ownership/project
 
 
 Bounded local MCP notification processing and list-change refresh now have unit and actual-process evidence for partial/cancelled framing, idle/active notifications, changed-definition refusal before listing, metadata-bound stale registrations, blocked-refresh close and notification-buffered EOF. These tests accept those local boundaries only; reconnect/backoff, resources/prompts, remote transport, complete status behavior and native platform acceptance remain open. The canonical parent requirements remain unchecked.
+
+
+Owned MCP startup errors now carry retry-safety evidence only after native/proxy acknowledgement, durable terminal persistence, actual lease settlement and scratch cleanup. Injected failed terminal persistence remains Unknown and refuses retry despite native acknowledgement. Prepared failures explicitly join proxies and retain scratch for caller commit. These tests cover the local settlement boundary; automatic reconnect/backoff and full native acceptance remain unaccepted.

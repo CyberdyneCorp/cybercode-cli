@@ -146,6 +146,12 @@
 - **AND** each idle pass SHALL consume a bounded number of ready messages and observe EOF behind them
 - **AND** unsolicited responses or malformed idle frames SHALL fail the connection without invoking tools
 
+#### Scenario: Retry safety after failed local startup
+- **WHEN** local startup fails after preparation or native launch
+- **THEN** retry safety SHALL require actual native/proxy acknowledgement, durable terminal settlement, checkout lease settlement and scratch cleanup
+- **AND** native acknowledgement alone SHALL NOT grant retry authority after failed durable persistence
+- **AND** pre-spawn prepared-resource failure SHALL explicitly join the proxy and preserve scratch until caller settlement
+
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
 

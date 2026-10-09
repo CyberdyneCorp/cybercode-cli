@@ -31,11 +31,18 @@ pub struct LocalLaunchError {
     pub acknowledged: bool,
     pub stderr: StderrCapture,
     pub scratch: Option<PathBuf>,
+    pub(super) settled: bool,
 }
 
 impl LocalLaunchError {
+    /// True only after the owned caller settles native resources, its durable receipt and pins.
+    pub fn retry_safe(&self) -> bool {
+        self.settled
+    }
+
     pub(super) fn before_launch(diagnostic: impl Into<String>) -> Self {
         Self {
+            settled: false,
             diagnostic: diagnostic.into(),
             acknowledged: true,
             stderr: StderrCapture::default(),
@@ -229,18 +236,25 @@ impl LocalLauncher<'_> {
             ));
         }
         let mut resources = self.prepare(server.requires_sandbox).await?;
-        let wrapped = self.wrap(&resources, command, args)?;
-        let environment = self.environment(&resources, &wrapped.env, env);
-        before_spawn().map_err(LocalLaunchError::before_launch)?;
-        // Preparation and durable admission can await or revoke approval.
-        authorize_server(self.resolved, self.trust, self.location, name)
-            .map_err(LocalLaunchError::before_launch)?;
-        if tokio::time::Instant::now() >= deadline {
-            return Err(LocalLaunchError::before_launch(
-                "MCP launch expired before spawn",
-            ));
-        }
         resources.scratch.cleanup = false;
+        let prepared = (|| {
+            let wrapped = self.wrap(&resources, command, args)?;
+            before_spawn().map_err(LocalLaunchError::before_launch)?;
+            // Preparation and durable admission can await or revoke approval.
+            authorize_server(self.resolved, self.trust, self.location, name)
+                .map_err(LocalLaunchError::before_launch)?;
+            if tokio::time::Instant::now() >= deadline {
+                return Err(LocalLaunchError::before_launch(
+                    "MCP launch expired before spawn",
+                ));
+            }
+            Ok(wrapped)
+        })();
+        let wrapped = match prepared {
+            Ok(wrapped) => wrapped,
+            Err(error) => return Err(resources.fail(error.diagnostic).await),
+        };
+        let environment = self.environment(&resources, &wrapped.env, env);
         let process = tokio::time::timeout_at(
             deadline,
             HookCommandProcess::spawn_with_stdin(
@@ -264,6 +278,7 @@ impl LocalLauncher<'_> {
             Ok(Ok(process)) => process,
             _ => {
                 return Err(LocalLaunchError {
+                    settled: false,
                     diagnostic: "MCP native launch failed; completion is unverified".into(),
                     acknowledged: false,
                     stderr: StderrCapture::default(),
@@ -302,6 +317,7 @@ impl LocalLauncher<'_> {
                 let proxy = resources.stop_proxy().await;
                 let acknowledged = error.acknowledged && proxy;
                 Err(LocalLaunchError {
+                    settled: false,
                     diagnostic: error.error.to_string(),
                     acknowledged,
                     stderr: error.stderr,
@@ -421,6 +437,16 @@ struct Resources {
     proxy_acknowledged: bool,
 }
 impl Resources {
+    async fn fail(&mut self, diagnostic: String) -> LocalLaunchError {
+        let acknowledged = self.stop_proxy().await;
+        LocalLaunchError {
+            diagnostic,
+            acknowledged,
+            settled: false,
+            stderr: StderrCapture::default(),
+            scratch: Some(self.scratch.path.clone()),
+        }
+    }
     async fn stop_proxy(&mut self) -> bool {
         if let Some(proxy) = self.proxy.take() {
             self.proxy_acknowledged = matches!(
@@ -484,5 +510,27 @@ mod tests {
         drop(shutdown);
         assert!(resources.proxy.is_none());
         assert!(!resources.stop_proxy().await);
+    }
+    #[tokio::test]
+    async fn prepared_failure_joins_proxy_and_retains_scratch_for_caller_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let config =
+            SandboxConfig::resolve(&serde_json::json!({}), &BTreeMap::new(), None, root.path());
+        let proxy = Proxy::start(Arc::new(|_| Box::pin(async { false })))
+            .await
+            .unwrap();
+        let mut resources = Resources {
+            config,
+            scratch: Scratch::new(root.path()).unwrap(),
+            proxy: Some(proxy),
+            proxy_acknowledged: false,
+        };
+        resources.scratch.cleanup = false;
+        let error = resources.fail("injected admission failure".into()).await;
+        assert!(error.acknowledged);
+        assert!(!error.retry_safe());
+        assert!(resources.proxy.is_none());
+        drop(resources);
+        assert!(error.scratch.unwrap().exists());
     }
 }
