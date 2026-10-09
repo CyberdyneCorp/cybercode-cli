@@ -21,6 +21,12 @@
 - **AND** only matching numeric progress SHALL extend request inactivity
 - **AND** callbacks not advertised by the client SHALL NOT execute
 
+#### Scenario: Native stdio ownership survives protocol interruption
+- **WHEN** an already authorized stdio server writes excess stderr or its request/initialization is interrupted
+- **THEN** stderr SHALL drain concurrently with at most 1 MiB retained
+- **AND** explicit shutdown SHALL close protocol IO and report bounded native tree termination acknowledgement separately from the RPC outcome
+- **AND** failed initialization SHALL retain stop evidence and disposal SHALL NOT imply acknowledgement
+
 ### Requirement: Prompt handlers
 (P1) A `prompt` handler SHALL ask the `model_roles.evaluator` model (falling back to `small_model`) to judge the event using the handler's `prompt` text plus the event JSON. The judgement SHALL be returned as structured output `{ decision: allow|deny|ask, reason }`. Prompt handlers SHALL have no tools and SHALL count toward session cost.
 
