@@ -9,7 +9,8 @@ use std::fs::{File, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 pub use transaction::{
-    MemoryJournalIdentity, MemoryMutation, MemoryRecoveryReview, PreparedMemory, ReviewedMemory,
+    MemoryEditReview, MemoryJournalIdentity, MemoryMutation, MemoryRecoveryReview, PreparedMemory,
+    ReviewedMemory,
 };
 
 const NOTE_LIMIT: u64 = 1_048_576;

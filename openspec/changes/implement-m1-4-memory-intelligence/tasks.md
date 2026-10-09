@@ -19,6 +19,8 @@
   - [x] Add durable keyed recovery receipt/status lookup and cache-gap replay with cross-endpoint identity fencing and SDK methods.
   - [x] Add explicit CLI paired review/confirmation and durable receipt lookup through an existing registered server; verify real binary/API effects and refusal without startup.
   - [x] Add TUI metadata/note review, explicit deletion and paired recovery with retained request lookup and generation/Location guards.
+  - [x] Add detached read-only core edit snapshots and fingerprint-bound write/delete preparation; verify stale content, replacement files, foreign scopes/names, catalog edits, bounded admission and no pre-journal effects.
+  - [ ] Expose read-only edit reviews and conditional HTTP/SDK mutations to preserve changed user files.
   - [ ] Add TUI note editing and complete cross-platform HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.

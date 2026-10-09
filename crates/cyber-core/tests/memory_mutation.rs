@@ -337,3 +337,145 @@ fn failed_external_acknowledgement_retains_completed_journal_and_read_fencing() 
     assert_eq!(receipt.name, "policy");
     assert_eq!(owner.read("policy").unwrap().body, "durable fact");
 }
+
+#[test]
+fn detached_edit_review_survives_scope_release_and_permits_explicit_write_and_delete() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let original = note("rule", "Original fact");
+    let review = {
+        let mut scope = store.claim().unwrap();
+        scope.write(&original).unwrap();
+        scope.inspect_edit("rule").unwrap()
+    };
+    assert_eq!(
+        review.original,
+        Some(std::fs::read_to_string(store.path().join("rule.md")).unwrap())
+    );
+    assert_eq!(review.fingerprint.len(), 64);
+    assert!(!store.path().join(".memory-transaction").exists());
+    let mut scope = store.claim().unwrap();
+    scope
+        .prepare_write_reviewed(&note("rule", "Updated fact"), &review.fingerprint)
+        .unwrap()
+        .commit()
+        .unwrap();
+    assert_eq!(scope.read("rule").unwrap().body, "Updated fact");
+    assert!(matches!(
+        scope.prepare_delete_reviewed("rule", &review.fingerprint),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    let fresh = scope.inspect_edit("rule").unwrap();
+    scope
+        .prepare_delete_reviewed("rule", &fresh.fingerprint)
+        .unwrap()
+        .commit()
+        .unwrap();
+    assert!(scope.list().unwrap().memories.is_empty());
+}
+
+#[test]
+fn detached_edit_review_preserves_changed_note_index_and_catalog_before_preparation() {
+    for target in ["rule.md", "MEMORY.md", "other.md"] {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        let mut scope = store.claim().unwrap();
+        scope.write(&note("rule", "Original fact")).unwrap();
+        scope.write(&note("other", "Other fact")).unwrap();
+        let review = scope.inspect_edit("rule").unwrap();
+        let changed = if target == "MEMORY.md" {
+            "External index edit".into()
+        } else {
+            note(target.trim_end_matches(".md"), "External fact")
+        };
+        std::fs::write(store.path().join(target), &changed).unwrap();
+        assert!(matches!(
+            scope.prepare_write_reviewed(&note("rule", "Draft"), &review.fingerprint),
+            Err(MemoryStorageError::ReviewConflict)
+        ));
+        assert!(matches!(
+            scope.prepare_delete_reviewed("rule", &review.fingerprint),
+            Err(MemoryStorageError::ReviewConflict)
+        ));
+        assert_eq!(
+            std::fs::read_to_string(store.path().join(target)).unwrap(),
+            changed
+        );
+        assert!(!store.path().join(".memory-transaction").exists());
+    }
+}
+
+#[test]
+fn detached_edit_review_rejects_replaced_files_and_foreign_scope_or_note() {
+    use std::os::unix::fs::PermissionsExt;
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let original = note("rule", "Original fact");
+    scope.write(&original).unwrap();
+    scope.write(&note("other", "Other fact")).unwrap();
+    let review = scope.inspect_edit("rule").unwrap();
+    assert!(matches!(
+        scope.prepare_delete_reviewed("other", &review.fingerprint),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    let foreign = MemoryStore::open(data.path(), "prj_other").unwrap();
+    let mut foreign_scope = foreign.claim().unwrap();
+    foreign_scope.write(&original).unwrap();
+    assert!(matches!(
+        foreign_scope.prepare_delete_reviewed("rule", &review.fingerprint),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    for target in ["rule.md", "MEMORY.md"] {
+        let fresh = scope.inspect_edit("rule").unwrap();
+        let path = store.path().join(target);
+        let bytes = std::fs::read(&path).unwrap();
+        let replacement = store.path().join("replacement");
+        std::fs::write(&replacement, bytes).unwrap();
+        std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::rename(replacement, path).unwrap();
+        assert!(matches!(
+            scope.prepare_delete_reviewed("rule", &fresh.fingerprint),
+            Err(MemoryStorageError::ReviewConflict)
+        ));
+        assert!(!store.path().join(".memory-transaction").exists());
+    }
+}
+
+#[test]
+fn detached_edit_review_of_missing_note_is_read_only_and_bounds_write_admission() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let entries_before: Vec<_> = std::fs::read_dir(store.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    let review = scope.inspect_edit("rule").unwrap();
+    assert!(review.original.is_none());
+    let entries_after: Vec<_> = std::fs::read_dir(store.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries_before, entries_after);
+    assert!(matches!(
+        scope.prepare_write_reviewed(&note("rule", "Fact"), "invalid"),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(
+        scope
+            .prepare_write_reviewed(&note("rule", "password=private"), &review.fingerprint)
+            .is_err()
+    );
+    assert!(matches!(
+        scope.prepare_write_reviewed(&"x".repeat(1_048_577), &review.fingerprint),
+        Err(MemoryStorageError::TooLarge)
+    ));
+    assert!(!store.path().join(".memory-transaction").exists());
+    scope
+        .prepare_write_reviewed(&note("rule", "Fact"), &review.fingerprint)
+        .unwrap()
+        .commit()
+        .unwrap();
+    assert_eq!(scope.read("rule").unwrap().body, "Fact");
+}

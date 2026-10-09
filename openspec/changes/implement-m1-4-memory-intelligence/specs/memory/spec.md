@@ -237,3 +237,12 @@
 - **AND** confirmed recovery SHALL retain a request key and offer read-only durable receipt lookup after an uncertain response without automatic effect replay
 - **AND** stale generations, changed Location/Session, closed panels and scope changes SHALL prevent applying unrelated responses or confirmations
 - **AND** the embedded client SHALL preserve explicit request headers and return actual response statuses for single raw requests
+
+#### Scenario: Reviewed memory edit API
+- **WHEN** an authenticated user requests `GET /api/v1/memory/edit/{scope}/{name}`
+- **THEN** the API SHALL return bounded original Markdown and a fingerprint bound to the existing scope, note, index and catalog without creating memory storage
+- **WHEN** PUT supplies `review_fingerprint` or DELETE supplies `X-Cyber-Memory-Review`
+- **THEN** mutation SHALL verify the current fingerprint under retained scope ownership before durable admission and again before journal preparation
+- **AND** changed note/index content, replaced scope or files and foreign note/scope reviews SHALL refuse without overwriting user edits
+- **AND** valid edits SHALL retain ordinary settings, validation, durable acknowledgement, notifications and identical completed request replay
+- **AND** the SDK SHALL expose typed edit review and optional conditional PUT

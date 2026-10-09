@@ -121,12 +121,12 @@ impl PreparedMemory<'_, '_> {
 }
 
 #[derive(Serialize)]
-struct ReviewedFile {
-    digest: String,
+pub(super) struct ReviewedFile {
+    pub(super) digest: String,
     identity: Option<(u64, u64)>,
 }
 
-fn reviewed_file(
+pub(super) fn reviewed_file(
     dir: &Dir,
     name: &str,
     limit: u64,
@@ -141,7 +141,7 @@ fn reviewed_file(
     }))
 }
 
-fn directory_identity(dir: &Dir) -> Result<Option<(u64, u64)>, MemoryStorageError> {
+pub(super) fn directory_identity(dir: &Dir) -> Result<Option<(u64, u64)>, MemoryStorageError> {
     Ok(file_identity(&dir.dir_metadata()?))
 }
 

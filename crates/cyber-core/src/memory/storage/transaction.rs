@@ -71,6 +71,7 @@ impl<'store> MemoryScope<'store> {
             &document.metadata.name.clone(),
             Some((document, rendered)),
             None,
+            None,
         )
     }
     pub fn prepare_delete<'guard>(
@@ -81,13 +82,14 @@ impl<'store> MemoryScope<'store> {
         validate_name(name)?;
         self.ready()?;
         self.read_file(&format!("{name}.md"), NOTE_LIMIT)?;
-        self.prepare(name, None, None)
+        self.prepare(name, None, None, None)
     }
     fn prepare<'guard>(
         &'guard mut self,
         name: &str,
         desired: Option<(MemoryDocument, String)>,
         expected: Option<&EditBefore>,
+        expected_review: Option<&str>,
     ) -> Result<PreparedMemory<'guard, 'store>, MemoryStorageError> {
         self.ready()?;
         verify_private_directory(&self.store.dir)?;
@@ -108,6 +110,9 @@ impl<'store> MemoryScope<'store> {
         let index = self.desired_index(name, desired.as_ref().map(|(doc, _)| &doc.metadata))?;
         if index.len() as u64 > INDEX_LIMIT {
             return Err(MemoryStorageError::TooLarge);
+        }
+        if let Some(fingerprint) = expected_review {
+            self.verify_edit_review(name, fingerprint)?;
         }
         let intent = Intent {
             version: 1,
@@ -811,6 +816,91 @@ fn verify_history(root: &Dir) -> Result<(), MemoryStorageError> {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryEditReview {
+    pub name: String,
+    pub original: Option<String>,
+    pub fingerprint: String,
+}
+
+impl<'store> MemoryScope<'store> {
+    /// Read-only snapshot; the fingerprint grants no mutation or database authority.
+    pub fn inspect_edit(&self, name: &str) -> Result<MemoryEditReview, MemoryStorageError> {
+        validate_name(name)?;
+        self.ready()?;
+        verify_private_directory(&self.store.dir)?;
+        let reviewed_note =
+            recovery::reviewed_file(&self.store.dir, &format!("{name}.md"), NOTE_LIMIT)?;
+        let original = optional_bytes(&self.store.dir, &format!("{name}.md"), NOTE_LIMIT)?
+            .map(String::from_utf8)
+            .transpose()
+            .map_err(|_| MemoryStorageError::Unsafe("invalid UTF-8 memory note"))?;
+        if original.as_deref().map(|text| hash(text.as_bytes()))
+            != reviewed_note.as_ref().map(|file| file.digest.clone())
+        {
+            return Err(MemoryStorageError::ReviewConflict);
+        }
+        let snapshot = serde_json::to_vec(&(
+            "memory-edit-review-v1",
+            &self.store.path,
+            recovery::directory_identity(&self.store.dir)?,
+            name,
+            reviewed_note,
+            recovery::reviewed_file(&self.store.dir, "MEMORY.md", INDEX_LIMIT)?,
+            self.fingerprints(name)?,
+        ))
+        .map_err(|_| MemoryStorageError::ReviewConflict)?;
+        Ok(MemoryEditReview {
+            name: name.into(),
+            original,
+            fingerprint: hash(&snapshot),
+        })
+    }
+    pub fn verify_edit_review(
+        &self,
+        name: &str,
+        fingerprint: &str,
+    ) -> Result<(), MemoryStorageError> {
+        if self.inspect_edit(name)?.fingerprint != fingerprint {
+            return Err(MemoryStorageError::ReviewConflict);
+        }
+        Ok(())
+    }
+    pub fn prepare_write_reviewed<'guard>(
+        &'guard mut self,
+        text: &str,
+        fingerprint: &str,
+    ) -> Result<PreparedMemory<'guard, 'store>, MemoryStorageError> {
+        mutation_platform()?;
+        if text.len() as u64 > NOTE_LIMIT {
+            return Err(MemoryStorageError::TooLarge);
+        }
+        let document = MemoryDocument::for_write(text)?;
+        self.verify_edit_review(&document.metadata.name, fingerprint)?;
+        let rendered = document.render_for_write()?;
+        if rendered.len() as u64 > NOTE_LIMIT {
+            return Err(MemoryStorageError::TooLarge);
+        }
+        self.prepare(
+            &document.metadata.name.clone(),
+            Some((document, rendered)),
+            None,
+            Some(fingerprint),
+        )
+    }
+    pub fn prepare_delete_reviewed<'guard>(
+        &'guard mut self,
+        name: &str,
+        fingerprint: &str,
+    ) -> Result<PreparedMemory<'guard, 'store>, MemoryStorageError> {
+        mutation_platform()?;
+        self.verify_edit_review(name, fingerprint)?;
+        self.read_file(&format!("{name}.md"), NOTE_LIMIT)?;
+        self.prepare(name, None, None, Some(fingerprint))
+    }
+}
+
 struct EditBefore {
     note: Option<String>,
     index: Option<String>,
@@ -871,7 +961,12 @@ impl ReviewedMemory<'_, '_> {
             return Err(MemoryStorageError::TooLarge);
         }
         self.scope
-            .prepare(&self.name, Some((document, rendered)), Some(&self.before))?
+            .prepare(
+                &self.name,
+                Some((document, rendered)),
+                Some(&self.before),
+                None,
+            )?
             .commit()
     }
 }
