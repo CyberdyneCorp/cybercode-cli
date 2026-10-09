@@ -246,3 +246,14 @@
 - **AND** changed note/index content, replaced scope or files and foreign note/scope reviews SHALL refuse without overwriting user edits
 - **AND** valid edits SHALL retain ordinary settings, validation, durable acknowledgement, notifications and identical completed request replay
 - **AND** the SDK SHALL expose typed edit review and optional conditional PUT
+
+
+#### Scenario: Reviewed TUI memory draft
+- **WHEN** the user opens a note and requests editing in `/memory`
+- **THEN** the TUI SHALL fetch the bounded original Markdown and conditional edit fingerprint and provide multiline Unicode typing and paste
+- **WHEN** the user reviews a save and separately confirms it
+- **THEN** the TUI SHALL send one conditional PUT with a retained request key and accept only a matching Location/scope/note write receipt
+- **AND** validation, stale-review, transport or response errors SHALL retain the draft and refuse a new save until fresh review
+- **AND** refreshing the review SHALL display the current original while preserving draft changes
+- **AND** dismissal or Session/Location/scope changes SHALL retain the process-local draft without foreign save authority; discarding SHALL require explicit confirmation
+- **AND** terminal controls SHALL be escaped, input SHALL be bounded, and confirmation controls SHALL remain visible while scrolling

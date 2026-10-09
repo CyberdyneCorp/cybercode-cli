@@ -1,7 +1,9 @@
 //! Location-bound manual review. A request key reports evidence, never execution authority.
-use crossterm::event::{KeyCode, KeyEvent};
+mod editor;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cyber_core::memory::{MemoryCatalog, MemoryDocument, MemoryRecoveryReview};
 use cyber_server::runtime::{MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryRequestStatus};
+use editor::{Draft, Save};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -24,6 +26,8 @@ pub enum Operation {
     List,
     Read(String),
     Review,
+    EditReview(String),
+    Save(Box<Save>),
     Delete {
         name: String,
         key: String,
@@ -54,17 +58,22 @@ pub struct Review {
 pub enum Data {
     Catalog(MemoryCatalog),
     Note(MemoryDocument),
+    EditReview(cyber_core::memory::MemoryEditReview),
     Review(Option<Box<Review>>),
     Change(MemoryChange),
     Receipt(Option<Box<MemoryRecoveryRequestStatus>>),
 }
 #[derive(Debug, Clone)]
 enum Confirmation {
+    Save(Box<Save>),
+    DiscardDraft,
     Delete(String),
     Recover(Box<Review>),
 }
 #[derive(Debug, Default)]
 pub struct View {
+    draft: Option<Draft>,
+    editing: bool,
     scope: Scope,
     generation: u64,
     pending: bool,
@@ -82,6 +91,7 @@ impl View {
     pub fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.pending = false;
+        self.editing = false;
         self.catalog = None;
         self.note = None;
         self.review = None;
@@ -120,18 +130,50 @@ impl View {
         }
         self.pending = false;
         match result {
-            Ok(data) => self.apply_data(data),
+            Ok(data) => self.apply_data(data, request),
             Err(error) => {
                 self.confirmation = None;
                 self.note = None;
                 self.review = None;
                 self.catalog = None;
+                if matches!(
+                    request.operation,
+                    Operation::Save(_) | Operation::EditReview(_)
+                ) && let Some(draft) = &mut self.draft
+                {
+                    draft.review = None;
+                }
                 self.error = Some(error);
             }
         }
     }
-    fn apply_data(&mut self, data: Data) {
+    fn apply_data(&mut self, data: Data, request: &Request) {
         match data {
+            Data::EditReview(review) => {
+                if let Some(draft) = &mut self.draft {
+                    if draft.scope == request.scope
+                        && draft.directory == request.directory
+                        && draft.name == review.name
+                    {
+                        draft.review = Some(review);
+                    } else {
+                        self.error = Some(
+                            "A draft for another note is retained; discard it explicitly first"
+                                .into(),
+                        );
+                        return;
+                    }
+                } else {
+                    let session = crate::model::Session {
+                        id: request.session_id.clone(),
+                        directory: request.directory.clone(),
+                        ..Default::default()
+                    };
+                    self.draft = Some(Draft::new(request.scope, &session, review));
+                }
+                self.editing = true;
+                self.follow_cursor();
+            }
             Data::Catalog(catalog) => {
                 self.selected = self.selected.min(catalog.memories.len().saturating_sub(1));
                 self.catalog = Some(catalog);
@@ -150,6 +192,11 @@ impl View {
                 }
             }
             Data::Change(change) => {
+                let saved = matches!(request.operation, Operation::Save(_));
+                if saved {
+                    self.draft = None;
+                    self.editing = false;
+                }
                 self.note = None;
                 self.review = None;
                 self.catalog = None;
@@ -157,6 +204,8 @@ impl View {
                     "{} {} · receipt {}",
                     if change.receipt.deleted {
                         "Deleted"
+                    } else if saved {
+                        "Saved"
                     } else {
                         "Recovered"
                     },
@@ -180,10 +229,39 @@ impl View {
         if self.pending {
             return None;
         }
+        if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            self.scroll = if key.code == KeyCode::PageUp {
+                self.scroll.saturating_sub(5)
+            } else {
+                self.scroll
+                    .saturating_add(5)
+                    .min(self.lines().len().saturating_sub(1).min(u16::MAX as usize) as u16)
+            };
+            return None;
+        }
         if self.confirmation.is_some() {
             return self.confirmation_key(key, session);
         }
+        if self.editing {
+            return self.editor_key(key, session);
+        }
         match key.code {
+            KeyCode::Char('e' | 'E') => {
+                if let Some(draft) = &self.draft {
+                    if draft.belongs(self.scope, session) {
+                        self.editing = true;
+                    } else {
+                        self.error = Some("Draft retained for another Session/Location/scope; return there or X to discard".into());
+                    }
+                    return None;
+                }
+                let name = self.note.as_ref()?.metadata.name.clone();
+                Some(self.request(Operation::EditReview(name), session))
+            }
+            KeyCode::Char('x' | 'X') if self.draft.is_some() => {
+                self.confirmation = Some(Confirmation::DiscardDraft);
+                None
+            }
             KeyCode::Char('r' | 'R') => Some(self.request(Operation::List, session)),
             KeyCode::Char('g' | 'G') => {
                 let scope = if self.scope == Scope::Project {
@@ -261,6 +339,19 @@ impl View {
             KeyCode::Char('y' | 'Y') => {
                 let key = cyber_core::ids::new_id("mrq");
                 let operation = match self.confirmation.take()? {
+                    Confirmation::DiscardDraft => {
+                        self.draft = None;
+                        self.editing = false;
+                        return None;
+                    }
+                    Confirmation::Save(save) => {
+                        let draft = self.draft.as_mut()?;
+                        if !draft.belongs(self.scope, session) {
+                            return None;
+                        }
+                        draft.retained_key = Some(save.key.clone());
+                        Operation::Save(save)
+                    }
                     Confirmation::Delete(name) => Operation::Delete { name, key },
                     Confirmation::Recover(review) => {
                         self.recovery_key = Some((self.scope, key.clone()));
@@ -282,11 +373,89 @@ impl View {
             _ => None,
         }
     }
+    fn editor_key(&mut self, key: KeyEvent, session: &crate::model::Session) -> Option<Request> {
+        let draft = self.draft.as_mut()?;
+        if !draft.belongs(self.scope, session) {
+            self.editing = false;
+            return None;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('s') => match draft.snapshot() {
+                    Ok(save) => self.confirmation = Some(Confirmation::Save(Box::new(save))),
+                    Err(error) => self.error = Some(error),
+                },
+                KeyCode::Char('r') => {
+                    let name = draft.name.clone();
+                    return Some(self.request(Operation::EditReview(name), session));
+                }
+                _ => {}
+            }
+        } else if let Err(error) = draft.key(key) {
+            self.error = Some(error);
+        }
+        self.follow_cursor();
+        None
+    }
+    pub fn paste(&mut self, text: &str) {
+        if !self.editing || self.pending || self.confirmation.is_some() {
+            return;
+        }
+        if let Some(draft) = &mut self.draft
+            && let Err(error) = draft.paste(text)
+        {
+            self.error = Some(error);
+        }
+        self.follow_cursor();
+    }
+    fn follow_cursor(&mut self) {
+        let Some(draft) = &self.draft else {
+            return;
+        };
+        let original = draft.review.as_ref().map_or(0, |review| {
+            review
+                .original
+                .as_deref()
+                .unwrap_or_default()
+                .lines()
+                .count()
+                + 1
+        });
+        let row = original + 2 + draft.composer.cursor().0;
+        self.scroll = row.saturating_sub(10).min(u16::MAX as usize) as u16;
+    }
+    pub fn horizontal_scroll(&self, width: u16) -> u16 {
+        use unicode_width::UnicodeWidthStr;
+        if !self.editing {
+            return 0;
+        }
+        let Some(draft) = &self.draft else {
+            return 0;
+        };
+        let (row, col) = draft.composer.cursor();
+        let prefix: String = draft.composer.lines()[row].chars().take(col).collect();
+        safe(&prefix)
+            .width()
+            .saturating_sub(width.saturating_sub(3) as usize)
+            .min(u16::MAX as usize) as u16
+    }
+    pub fn leave_editor(&mut self) -> bool {
+        if !self.editing || self.confirmation.is_some() {
+            return false;
+        }
+        self.editing = false;
+        true
+    }
     pub fn cancel_confirmation(&mut self) -> bool {
         self.confirmation.take().is_some()
     }
     pub fn lines(&self) -> Vec<String> {
-        let mut lines = vec![format!("{} memory · Enter read · G scope · R refresh · V recovery", self.scope.label()), "D delete reviewed note · C confirm recovery · K receipt · PgUp/PgDn scroll · Esc close".into()];
+        let mut lines = self.header_lines();
+        self.content_lines(&mut lines);
+        lines
+    }
+    pub fn header_lines(&self) -> Vec<String> {
+        let mut lines = vec![format!("{} memory · Enter read · G scope · R refresh · V recovery", self.scope.label()), "E edit/resume draft · X discard draft · D delete reviewed note · C confirm recovery · K receipt · PgUp/PgDn scroll · Esc close".into()];
         if self.pending {
             lines.push("Loading…".into());
         }
@@ -295,6 +464,20 @@ impl View {
         }
         if let Some(notice) = &self.notice {
             lines.push(notice.clone());
+        }
+        if let Some(draft) = &self.draft {
+            lines.push(format!(
+                "Retained {} draft: {} · {}",
+                draft.scope.label(),
+                safe(&draft.name),
+                safe(&draft.directory)
+            ));
+            if let Some(key) = &draft.retained_key {
+                lines.push(format!(
+                    "Save request key: {} · verify outcome before another save",
+                    safe(key)
+                ));
+            }
         }
         if let Some((scope, key)) = &self.recovery_key {
             lines.push(format!(
@@ -305,6 +488,14 @@ impl View {
         }
         if let Some(confirmation) = &self.confirmation {
             lines.push(match confirmation {
+                Confirmation::Save(save) => format!(
+                    "Save {} to {} memory? Y confirms · N returns to draft",
+                    safe(&save.name),
+                    self.scope.label()
+                ),
+                Confirmation::DiscardDraft => {
+                    "Discard the retained unsaved draft? Y confirms · N cancels".into()
+                }
                 Confirmation::Delete(name) => format!(
                     "Delete {} from {} memory? Y confirms · N cancels",
                     safe(name),
@@ -315,10 +506,15 @@ impl View {
                 }
             });
         }
-        self.content_lines(&mut lines);
         lines
     }
     fn content_lines(&self, lines: &mut Vec<String>) {
+        if self.editing
+            && let Some(draft) = &self.draft
+        {
+            lines.extend(draft.lines());
+            return;
+        }
         if let Some(note) = &self.note {
             lines.push(format!(
                 "{} · {}",
@@ -399,6 +595,21 @@ async fn execute(client: &cyber_client::Client, request: &Request) -> Result<Dat
             ("GET", format!("/memory/{scope}/{name}"), None, None)
         }
         Operation::Review => ("GET", recovery, None, None),
+        Operation::EditReview(name) => {
+            cyber_core::memory::validate_name(name).map_err(|e| e.to_string())?;
+            ("GET", format!("/memory/edit/{scope}/{name}"), None, None)
+        }
+        Operation::Save(save) => {
+            cyber_core::memory::validate_name(&save.name).map_err(|e| e.to_string())?;
+            cyber_server::http::validate_edit_fingerprint(Some(&save.fingerprint))
+                .map_err(|e| e.body.message)?;
+            (
+                "PUT",
+                format!("/memory/{scope}/{}", save.name),
+                Some(json!({"content":save.content,"review_fingerprint":save.fingerprint})),
+                Some(&save.key),
+            )
+        }
         Operation::Delete { name, key } => {
             cyber_core::memory::validate_name(name).map_err(|e| e.to_string())?;
             ("DELETE", format!("/memory/{scope}/{name}"), None, Some(key))
@@ -472,6 +683,20 @@ fn parse(value: &Value, request: &Request) -> Result<Data, String> {
             }
             Ok(Data::Catalog(catalog))
         }
+        Operation::EditReview(name) => {
+            let review: cyber_core::memory::MemoryEditReview = decode(data)?;
+            if review.name != *name
+                || review
+                    .original
+                    .as_ref()
+                    .is_some_and(|text| text.len() > 1024 * 1024)
+            {
+                return Err("Invalid memory edit review identity or size".into());
+            }
+            cyber_server::http::validate_edit_fingerprint(Some(&review.fingerprint))
+                .map_err(|_| "Invalid memory edit fingerprint")?;
+            Ok(Data::EditReview(review))
+        }
         Operation::Read(name) => {
             let note: MemoryDocument = decode(data)?;
             if note.metadata.name != *name
@@ -504,9 +729,14 @@ fn parse(value: &Value, request: &Request) -> Result<Data, String> {
             }
             Ok(Data::Review(review.map(Box::new)))
         }
-        Operation::Delete { .. } | Operation::Recover { .. } => {
+        Operation::Delete { .. } | Operation::Recover { .. } | Operation::Save(_) => {
             let change: MemoryChange = decode(data)?;
             check_identity(request, &change.directory, &change.project_id)?;
+            if let Operation::Save(save) = &request.operation
+                && (change.receipt.deleted || change.receipt.name != save.name)
+            {
+                return Err("Memory save receipt does not match the draft".into());
+            }
             if let Operation::Delete { name, .. } = &request.operation
                 && (!change.receipt.deleted || change.receipt.name != *name)
             {
@@ -649,6 +879,56 @@ mod receipt_tests {
         assert!(parse(&value, &request).is_err());
         value["data"]["id"] = json!("mwr_original");
         value["data"]["receipt"]["name"] = json!("other");
+        assert!(parse(&value, &request).is_err());
+    }
+}
+
+#[cfg(test)]
+mod editor_response_tests {
+    use super::*;
+    fn request(operation: Operation) -> Request {
+        Request {
+            generation: 1,
+            scope: Scope::Global,
+            directory: "/repo".into(),
+            session_id: "session".into(),
+            operation,
+        }
+    }
+    #[test]
+    fn edit_reviews_refuse_foreign_names_locations_invalid_fingerprints_and_oversized_originals() {
+        let request = request(Operation::EditReview("policy".into()));
+        let mut value = json!({"location":{"directory":"/repo"},"data":{"name":"policy","original":null,"fingerprint":"a".repeat(64)}});
+        assert!(matches!(parse(&value, &request), Ok(Data::EditReview(_))));
+        value["data"]["name"] = json!("foreign");
+        assert!(parse(&value, &request).is_err());
+        value["data"]["name"] = json!("policy");
+        value["data"]["fingerprint"] = json!("invalid");
+        assert!(parse(&value, &request).is_err());
+        value["data"]["fingerprint"] = json!("a".repeat(64));
+        value["data"]["original"] = json!("x".repeat(1024 * 1024 + 1));
+        assert!(parse(&value, &request).is_err());
+        value["data"]["original"] = json!("Fact");
+        value["location"]["directory"] = json!("/foreign");
+        assert!(parse(&value, &request).is_err());
+    }
+    #[test]
+    fn save_completion_must_match_the_pinned_note_scope_and_operation() {
+        let request = request(Operation::Save(Box::new(Save {
+            name: "policy".into(),
+            content: "Fact".into(),
+            fingerprint: "a".repeat(64),
+            key: "retained".into(),
+        })));
+        let mut value = json!({"location":{"directory":"/repo"},"data":{"id":"mwr_saved","directory":"/repo","project_id":"global","receipt":{"id":"mem_saved","name":"policy","deleted":false}}});
+        assert!(matches!(parse(&value, &request), Ok(Data::Change(_))));
+        value["data"]["receipt"]["deleted"] = json!(true);
+        assert!(parse(&value, &request).is_err());
+        value["data"]["receipt"]["deleted"] = json!(false);
+        value["data"]["receipt"]["name"] = json!("foreign");
+        assert!(parse(&value, &request).is_err());
+        value["data"]["receipt"]["name"] = json!("policy");
+        value["data"]["project_id"] = json!("foreign");
         assert!(parse(&value, &request).is_err());
     }
 }

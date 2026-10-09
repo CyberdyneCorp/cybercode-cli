@@ -481,12 +481,32 @@ pub fn hook_definitions(f: &mut Frame, app: &App, area: Rect) {
 
 pub fn memory(f: &mut Frame, app: &App, area: Rect) {
     let rect = centered(area, 110, 30);
-    let lines: Vec<Line> = app.memory.lines().into_iter().map(Line::from).collect();
+    let header = app.memory.header_lines();
+    let lines: Vec<Line> = app
+        .memory
+        .lines()
+        .into_iter()
+        .skip(header.len())
+        .map(Line::from)
+        .collect();
+    let block = frame(app, "Memory");
+    let inner = block.inner(rect);
+    let header_height = (header.len() as u16).min(inner.height.saturating_sub(1));
+    let top = Rect::new(inner.x, inner.y, inner.width, header_height);
+    let body = Rect::new(
+        inner.x,
+        inner.y + header_height,
+        inner.width,
+        inner.height.saturating_sub(header_height),
+    );
     f.render_widget(Clear, rect);
+    f.render_widget(block, rect);
     f.render_widget(
-        Paragraph::new(lines)
-            .scroll((app.memory.scroll, 0))
-            .block(frame(app, "Memory")),
-        rect,
+        Paragraph::new(header.into_iter().map(Line::from).collect::<Vec<_>>()),
+        top,
+    );
+    f.render_widget(
+        Paragraph::new(lines).scroll((app.memory.scroll, app.memory.horizontal_scroll(body.width))),
+        body,
     );
 }

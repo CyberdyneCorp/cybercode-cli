@@ -21,7 +21,8 @@
   - [x] Add TUI metadata/note review, explicit deletion and paired recovery with retained request lookup and generation/Location guards.
   - [x] Add detached read-only core edit snapshots and fingerprint-bound write/delete preparation; verify stale content, replacement files, foreign scopes/names, catalog edits, bounded admission and no pre-journal effects.
   - [x] Expose read-only edit reviews and conditional HTTP/SDK mutations to preserve changed user files; verify authenticated TCP stale refusal before durable admission, settings, scope isolation, header identity and consumed-review cache-gap replay. Complete native acceptance remains open.
-  - [ ] Add TUI note editing and complete cross-platform HTTP/SDK acceptance.
+  - [x] Add local TUI multiline drafts, typed edit review, explicit conditional save confirmation, process-local retention across dismissal/Location changes and refusal before fresh review after errors; verify actual TCP saves and stale user-file preservation.
+  - [ ] Add persistent client draft/request-key retention and complete cross-platform TUI/HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.

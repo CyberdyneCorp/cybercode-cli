@@ -1993,6 +1993,57 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
     let action = app.on_key(key(KeyCode::Enter)).remove(0);
     perform_memory_action(&client, &mut app, action).await;
     assert!(screen(&app).contains("Proposed fact"));
+    let action = app.on_key(key(KeyCode::Char('e'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    app.on_paste("Edited Unicode 🦀 fact");
+    app.on_key(memory_control('s'));
+    app.on_key(key(KeyCode::Char('n')));
+    assert_eq!(
+        memory.claim().unwrap().read("policy").unwrap().body,
+        "Proposed fact"
+    );
+    app.on_key(memory_control('s'));
+    let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    assert!(screen(&app).contains("Saved policy"));
+    assert!(
+        memory
+            .claim()
+            .unwrap()
+            .read("policy")
+            .unwrap()
+            .body
+            .contains("Edited Unicode 🦀 fact")
+    );
+    let action = app.on_key(key(KeyCode::Char('r'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    let action = app.on_key(key(KeyCode::Enter)).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    let action = app.on_key(key(KeyCode::Char('e'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    app.on_paste("Stale local draft");
+    memory
+        .claim()
+        .unwrap()
+        .write(
+            "---\nname: policy\ndescription: Policy\ntype: reference\n---\n\nExternal user edit\n",
+        )
+        .unwrap();
+    app.on_key(memory_control('s'));
+    let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    assert_eq!(
+        memory.claim().unwrap().read("policy").unwrap().body,
+        "External user edit"
+    );
+    assert!(app.memory.lines().join("\n").contains("Stale local draft"));
+    app.on_key(key(KeyCode::Esc));
+    app.on_key(key(KeyCode::Char('x')));
+    app.on_key(key(KeyCode::Char('y')));
+    let action = app.on_key(key(KeyCode::Char('r'))).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
+    let action = app.on_key(key(KeyCode::Enter)).remove(0);
+    perform_memory_action(&client, &mut app, action).await;
     app.on_key(key(KeyCode::Char('d')));
     app.on_key(key(KeyCode::Char('n')));
     assert!(memory.claim().unwrap().read("policy").is_ok());
@@ -2026,4 +2077,129 @@ async fn perform_memory_action(client: &cyber_client::Client, app: &mut App, act
         .await
         .unwrap();
     apply_memory_response(app, message);
+}
+
+fn memory_control(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+}
+
+fn memory_panel_edit() -> App {
+    use crate::memory::Data;
+    let (mut app, _) = memory_panel_catalog();
+    let read = memory_request(app.on_key(key(KeyCode::Enter)));
+    app.memory.apply(&read, Ok(Data::Note(memory_panel_note())));
+    let review = memory_request(app.on_key(key(KeyCode::Char('e'))));
+    app.memory.apply(
+        &review,
+        Ok(Data::EditReview(cyber_core::memory::MemoryEditReview {
+            name: "policy".into(),
+            original: Some(
+                "---\nname: policy\ndescription: Policy\ntype: reference\n---\n\nFact\n".into(),
+            ),
+            fingerprint: "a".repeat(64),
+        })),
+    );
+    app
+}
+
+#[test]
+fn memory_editor_requires_explicit_confirmation_and_retains_failed_drafts() {
+    use crate::memory::Operation;
+    let mut app = memory_panel_edit();
+    app.on_paste("Unicode 🦀\r\nupdated");
+    assert!(app.on_key(memory_control('s')).is_empty());
+    assert!(screen(&app).contains("Save policy"));
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert!(app.on_key(key(KeyCode::Char('n'))).is_empty());
+    assert!(app.memory.lines().join("\n").contains("updated"));
+    app.on_key(memory_control('s'));
+    let save = memory_request(app.on_key(key(KeyCode::Char('y'))));
+    let Operation::Save(snapshot) = &save.operation else {
+        panic!("save action")
+    };
+    assert!(snapshot.content.ends_with("Unicode 🦀\nupdated"));
+    assert_eq!(snapshot.fingerprint, "a".repeat(64));
+    app.on_paste("ignored while pending");
+    app.memory.apply(&save, Err("stale review".into()));
+    assert!(app.memory.lines().join("\n").contains("updated"));
+    assert!(app.memory.lines().join("\n").contains(&snapshot.key));
+    app.on_key(memory_control('s'));
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+}
+
+#[test]
+fn memory_editor_fresh_review_preserves_draft_and_requires_new_confirmation() {
+    use crate::memory::Operation;
+    let mut app = memory_panel_edit();
+    app.on_paste("updated");
+    app.on_key(memory_control('s'));
+    let save = memory_request(app.on_key(key(KeyCode::Char('y'))));
+    app.memory.apply(&save, Err("stale review".into()));
+    let review = memory_request(app.on_key(memory_control('r')));
+    app.memory.apply(
+        &review,
+        Ok(crate::memory::Data::EditReview(
+            cyber_core::memory::MemoryEditReview {
+                name: "policy".into(),
+                original: Some("Current user fact".into()),
+                fingerprint: "b".repeat(64),
+            },
+        )),
+    );
+    assert!(app.memory.lines().join("\n").contains("Current user fact"));
+    assert!(app.memory.lines().join("\n").contains("updated"));
+    app.on_key(memory_control('s'));
+    let save = memory_request(app.on_key(key(KeyCode::Char('y'))));
+    assert!(
+        matches!(save.operation, Operation::Save(ref snapshot) if snapshot.fingerprint == "b".repeat(64))
+    );
+}
+
+#[test]
+fn memory_drafts_survive_dismissal_and_location_changes_without_foreign_save_authority() {
+    let mut app = memory_panel_edit();
+    app.on_paste("retained fact");
+    app.on_key(key(KeyCode::Esc));
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.overlay, Overlay::None));
+    let request = open_memory(&mut app, true);
+    app.memory.apply(
+        &request,
+        Ok(crate::memory::Data::Catalog(Default::default())),
+    );
+    assert!(app.on_key(key(KeyCode::Char('e'))).is_empty());
+    assert!(app.memory.lines().join("\n").contains("retained fact"));
+    let mut foreign = app.session.clone();
+    foreign.directory = "/foreign".into();
+    app.set_session(foreign);
+    let request = open_memory(&mut app, true);
+    app.memory.apply(
+        &request,
+        Ok(crate::memory::Data::Catalog(Default::default())),
+    );
+    app.on_key(key(KeyCode::Char('e')));
+    assert!(app.on_key(memory_control('s')).is_empty());
+    assert!(app.on_key(key(KeyCode::Char('y'))).is_empty());
+    assert!(
+        app.memory
+            .lines()
+            .join("\n")
+            .contains("Draft retained for another")
+    );
+    app.on_key(key(KeyCode::Char('x')));
+    app.on_key(key(KeyCode::Char('n')));
+    assert!(
+        app.memory
+            .lines()
+            .join("\n")
+            .contains("Retained global draft")
+    );
+    app.on_key(key(KeyCode::Char('x')));
+    app.on_key(key(KeyCode::Char('y')));
+    assert!(
+        !app.memory
+            .lines()
+            .join("\n")
+            .contains("Retained global draft")
+    );
 }

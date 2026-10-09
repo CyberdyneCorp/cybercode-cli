@@ -396,7 +396,7 @@ impl App {
             Overlay::HookDefinitions => self.hook_definitions_key(key),
             Overlay::Memory => {
                 if key.code == KeyCode::Esc {
-                    if !self.memory.cancel_confirmation() {
+                    if !self.memory.cancel_confirmation() && !self.memory.leave_editor() {
                         self.memory.invalidate();
                         self.overlay = Overlay::None;
                     }
@@ -502,6 +502,10 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
+        if let Overlay::Memory = self.overlay {
+            self.memory.paste(text);
+            return;
+        }
         if let Overlay::None = self.overlay {
             self.composer.insert_str(text);
         }
