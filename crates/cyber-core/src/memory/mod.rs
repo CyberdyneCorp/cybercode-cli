@@ -3,7 +3,7 @@ mod secrets;
 mod storage;
 pub use storage::{
     InvalidMemory, MemoryCatalog, MemoryMutation, MemoryScope, MemoryStorageError, MemoryStore,
-    PreparedMemory,
+    PreparedMemory, ReviewedMemory,
 };
 
 use crate::env::EnvSource;

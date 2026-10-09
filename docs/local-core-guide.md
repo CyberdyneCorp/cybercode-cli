@@ -353,3 +353,18 @@ Set `mcp.sampling.enabled` to `true` to advertise basic sampling on newly connec
 Each active-call request checks `mcp_sampling` permission for the server name, selects `model_roles.small`, and checks Session and ancestor budgets after approval. Model hints cannot select another provider. Sampling receives only the server's input, with tools disabled and no Session history or cache identity. Usage records use `mcp_sampling:<server>` and the originating call ID. Soft budget overrun records usage and withholds the response; it is not a token reservation.
 
 Human approval and nested sampling pause outer MCP call inactivity; the provider call has its own configured call timeout. Cancellation retains the nested task until local provider transport shutdown and observed billing settle. Native OpenAI-compatible, OpenAI Responses and Anthropic socket tests cover timeout and Location close. Local socket closure does not prove remote rollback or final usage; unsupported custom transport cancellation remains unverified. Sampling input and credentials are excluded from Session events. Remote MCP sampling and complete native platform acceptance remain open.
+
+## Memory management (partial P1)
+
+```bash
+cyber memory path                 # this project's directory; global outside Git
+cyber memory list --global        # metadata and invalid-file diagnostics
+cyber memory show coding-policy
+EDITOR='code --wait' cyber memory edit coding-policy
+cyber memory delete coding-policy
+cyber debug memory --global
+```
+
+`edit` opens a private draft using EDITOR, or VISUAL when EDITOR is unset. It validates the note and updates its index through the memory journal after the editor exits successfully. Changes to the original note or index during editing refuse the commit. Drafts remain in private `<data>/.memory-edit-*/note.md` directories, including after success; errors identify the retained draft. An unchanged new template creates no note. The draft must remain a private regular file without symlink or hard-link aliases. Memory commands open no database and start no model work.
+
+Disabled or read-only settings refuse mutations; list/show/path/debug remain explicit manual review. Unix mutation support is implemented locally. Windows privacy/durability, TUI/API controls, durable event delivery and complete native acceptance remain open. Sessions receive committed index changes at their next Safe Boundary.

@@ -257,3 +257,53 @@ fn changed_scope_or_staging_privacy_refuses_before_installation() {
         assert!(store.path().join(".memory-transaction").exists());
     }
 }
+
+#[test]
+fn editor_review_refuses_changed_target_or_index_before_journal_creation() {
+    for target in ["coding-policy.md", "MEMORY.md"] {
+        let data = tempfile::tempdir().unwrap();
+        let store = cyber_core::memory::MemoryStore::open(data.path(), "global").unwrap();
+        let text = "---\nname: coding-policy\ndescription: Coding policy\ntype: reference\n---\nOriginal fact\n";
+        let mut owner = store.claim().unwrap();
+        owner.write(text).unwrap();
+        let review = owner.review_edit("coding-policy").unwrap();
+        std::fs::write(store.path().join(target), "external user edit").unwrap();
+        assert!(matches!(
+            review.commit(&text.replace("Original fact", "Updated fact")),
+            Err(cyber_core::memory::MemoryStorageError::ReviewConflict)
+        ));
+        assert_eq!(
+            std::fs::read_to_string(store.path().join(target)).unwrap(),
+            "external user edit"
+        );
+        assert!(!store.path().join(".memory-transaction").exists());
+    }
+}
+
+#[test]
+fn editor_review_admits_repair_but_refuses_secret_and_identity_changes() {
+    let data = tempfile::tempdir().unwrap();
+    let store = cyber_core::memory::MemoryStore::open(data.path(), "global").unwrap();
+    let mut owner = store.claim().unwrap();
+    let text = "---\nname: coding-policy\ndescription: Coding policy\ntype: reference\n---\nFact\n";
+    owner.write(text).unwrap();
+    std::fs::write(store.path().join("coding-policy.md"), "invalid frontmatter").unwrap();
+    let review = owner.review_edit("coding-policy").unwrap();
+    assert_eq!(review.original(), Some("invalid frontmatter"));
+    review.commit(text).unwrap();
+    assert_eq!(owner.read("coding-policy").unwrap().body, "Fact");
+    for content in [
+        text.replace("Fact", "password = never-store-this"),
+        text.replace("coding-policy", "different-name"),
+    ] {
+        assert!(
+            owner
+                .review_edit("coding-policy")
+                .unwrap()
+                .commit(&content)
+                .is_err()
+        );
+        assert!(!store.path().join(".memory-transaction").exists());
+        assert_eq!(owner.read("coding-policy").unwrap().body, "Fact");
+    }
+}

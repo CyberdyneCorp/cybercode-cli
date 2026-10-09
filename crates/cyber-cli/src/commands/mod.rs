@@ -8,6 +8,7 @@ pub mod eval;
 pub mod exec;
 pub mod hooks;
 pub mod mcp;
+pub mod memory;
 pub mod models;
 pub mod permissions;
 pub mod serve;
@@ -40,6 +41,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     let ctx = Context::new(&cli.global)?;
     start_logging(&ctx, &cli.global)?;
     match command {
+        Command::Memory(args) => memory::run(args, &ctx, &cli.global),
         Command::Mcp { cmd } => mcp::run(cmd, &ctx, &cli.global),
         Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),

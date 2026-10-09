@@ -58,7 +58,11 @@ impl<'store> MemoryScope<'store> {
         if rendered.len() as u64 > NOTE_LIMIT {
             return Err(MemoryStorageError::TooLarge);
         }
-        self.prepare(&document.metadata.name.clone(), Some((document, rendered)))
+        self.prepare(
+            &document.metadata.name.clone(),
+            Some((document, rendered)),
+            None,
+        )
     }
     pub fn prepare_delete<'guard>(
         &'guard mut self,
@@ -68,17 +72,24 @@ impl<'store> MemoryScope<'store> {
         validate_name(name)?;
         self.ready()?;
         self.read_file(&format!("{name}.md"), NOTE_LIMIT)?;
-        self.prepare(name, None)
+        self.prepare(name, None, None)
     }
     fn prepare<'guard>(
         &'guard mut self,
         name: &str,
         desired: Option<(MemoryDocument, String)>,
+        expected: Option<&EditBefore>,
     ) -> Result<PreparedMemory<'guard, 'store>, MemoryStorageError> {
         self.ready()?;
         verify_private_directory(&self.store.dir)?;
         let before_note = optional_bytes(&self.store.dir, &format!("{name}.md"), NOTE_LIMIT)?;
         let before_index = optional_bytes(&self.store.dir, "MEMORY.md", INDEX_LIMIT)?;
+        if let Some(expected) = expected
+            && (before_note.as_deref().map(hash) != expected.note
+                || before_index.as_deref().map(hash) != expected.index)
+        {
+            return Err(MemoryStorageError::ReviewConflict);
+        }
         reserve_entries(
             &self.store.dir,
             before_note.is_none(),
@@ -760,5 +771,70 @@ fn verify_history(root: &Dir) -> Result<(), MemoryStorageError> {
         Ok(dir) => verify_private_directory(&dir),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
+    }
+}
+
+struct EditBefore {
+    note: Option<String>,
+    index: Option<String>,
+}
+
+/// The scope claim remains owned while an interactive editor operates on a separate draft.
+pub struct ReviewedMemory<'guard, 'store> {
+    scope: &'guard mut MemoryScope<'store>,
+    name: String,
+    original: Option<String>,
+    before: EditBefore,
+}
+
+impl<'store> MemoryScope<'store> {
+    pub fn review_edit<'guard>(
+        &'guard mut self,
+        name: &str,
+    ) -> Result<ReviewedMemory<'guard, 'store>, MemoryStorageError> {
+        mutation_platform()?;
+        validate_name(name)?;
+        self.ready()?;
+        let note = optional_bytes(&self.store.dir, &format!("{name}.md"), NOTE_LIMIT)?;
+        let index = optional_bytes(&self.store.dir, "MEMORY.md", INDEX_LIMIT)?;
+        let before = EditBefore {
+            note: note.as_deref().map(hash),
+            index: index.as_deref().map(hash),
+        };
+        let original = note
+            .map(String::from_utf8)
+            .transpose()
+            .map_err(|_| MemoryStorageError::Unsafe("invalid UTF-8 memory note"))?;
+        Ok(ReviewedMemory {
+            scope: self,
+            name: name.into(),
+            original,
+            before,
+        })
+    }
+}
+
+impl ReviewedMemory<'_, '_> {
+    pub fn original(&self) -> Option<&str> {
+        self.original.as_deref()
+    }
+
+    pub fn commit(self, text: &str) -> Result<MemoryMutation, MemoryStorageError> {
+        if text.len() as u64 > NOTE_LIMIT {
+            return Err(MemoryStorageError::TooLarge);
+        }
+        let document = MemoryDocument::for_write(text)?;
+        if document.metadata.name != self.name {
+            return Err(MemoryStorageError::Unsafe(
+                "edited memory name does not match requested note",
+            ));
+        }
+        let rendered = document.render_for_write()?;
+        if rendered.len() as u64 > NOTE_LIMIT {
+            return Err(MemoryStorageError::TooLarge);
+        }
+        self.scope
+            .prepare(&self.name, Some((document, rendered)), Some(&self.before))?
+            .commit()
     }
 }

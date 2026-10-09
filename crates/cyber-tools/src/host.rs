@@ -476,6 +476,10 @@ impl ToolHost for BuiltinHost {
         self.start_mcp(info);
     }
 
+    fn refresh_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.refresh_mcp(info);
+    }
+
     fn wait_for_required_mcp(
         &self,
         info: &cyber_server::runtime::SessionInfo,

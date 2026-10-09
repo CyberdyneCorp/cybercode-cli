@@ -2,8 +2,10 @@
 mod support;
 use cyber_server::runtime::{ContextObservation, ToolHost, TurnContext};
 use serde_json::{Value, json};
+use support::Fixture;
 use support::flow::{Flow, text};
-use support::{Fixture, ok};
+#[cfg(unix)]
+use support::ok;
 
 fn turn(f: &Fixture) -> TurnContext {
     TurnContext {
@@ -28,6 +30,7 @@ fn value(observation: ContextObservation) -> String {
     };
     text
 }
+#[cfg(unix)]
 fn note(body: &str) -> String {
     format!("---\nname: coding-policy\ndescription: Small patches\ntype: reference\n---\n{body}\n")
 }

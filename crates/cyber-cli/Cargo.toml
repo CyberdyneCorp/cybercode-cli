@@ -33,6 +33,12 @@ serde.workspace = true
 serde_json.workspace = true
 strsim.workspace = true
 
+cap-std = "4.0"
+cap-fs-ext = "4.0"
+shell-words = "1.1"
+libc = "0.2"
+tempfile.workspace = true
+
 [dev-dependencies]
 rusqlite.workspace = true
 tempfile.workspace = true

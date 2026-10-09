@@ -237,6 +237,11 @@ pub trait ToolHost: Send + Sync {
     /// Start shared Location services without waiting for their readiness.
     fn open_location(&self, _info: &SessionInfo) {}
 
+    /// Refresh services within a Turn without reopening explicitly closed actors.
+    fn refresh_location(&self, info: &SessionInfo) {
+        self.open_location(info);
+    }
+
     /// Readiness of required Location services before this Session's first Turn.
     /// Cancelling the wait does not assert shared native service shutdown.
     fn wait_for_required_mcp(

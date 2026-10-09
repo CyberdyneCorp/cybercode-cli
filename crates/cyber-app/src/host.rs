@@ -39,6 +39,10 @@ impl ToolHost for AppHost {
         self.builtin.open_location(info);
     }
 
+    fn refresh_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.builtin.refresh_location(info);
+    }
+
     fn wait_for_required_mcp(
         &self,
         info: &cyber_server::runtime::SessionInfo,

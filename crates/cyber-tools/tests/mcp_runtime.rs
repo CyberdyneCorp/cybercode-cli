@@ -2028,11 +2028,16 @@ async fn explicit_server_timeout_bounds_runtime_calls_and_settles_native_owner()
         tokio::time::timeout(Duration::from_secs(3), invoke(&flow, &id, def, "default")).await;
     flow.runtime.shutdown().await;
     assert!(matches!(outcome,Ok(ToolOutcome::Failed(error)) if error.contains("timed out")));
+    let owners = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
     assert!(
-        mcp_connections(&flow.f.store, &flow.f.repo)
-            .unwrap()
+        owners
             .iter()
-            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+            .all(|owner| owner.phase == McpConnectionPhase::Settled),
+        "connection phases: {:?}",
+        owners
+            .iter()
+            .map(|owner| (&owner.id, &owner.phase))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -2051,11 +2056,16 @@ async fn location_close_allows_sigterm_cleanup_before_forcing_the_owned_group() 
     assert_eq!(flow.f.read("child-finished"), "cleanup");
     tokio::time::sleep(Duration::from_millis(2250)).await;
     assert!(!flow.f.repo.join("escaped").exists());
+    let owners = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
     assert!(
-        mcp_connections(&flow.f.store, &flow.f.repo)
-            .unwrap()
+        owners
             .iter()
-            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+            .all(|owner| owner.phase == McpConnectionPhase::Settled),
+        "connection phases: {:?}",
+        owners
+            .iter()
+            .map(|owner| (&owner.id, &owner.phase))
+            .collect::<Vec<_>>()
     );
     flow.runtime.shutdown().await;
 }
@@ -2096,11 +2106,16 @@ async fn location_close_graces_multiple_servers_concurrently() {
     }
     assert!(result.is_ok());
     result.unwrap().unwrap();
+    let owners = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
     assert!(
-        mcp_connections(&flow.f.store, &flow.f.repo)
-            .unwrap()
+        owners
             .iter()
-            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+            .all(|owner| owner.phase == McpConnectionPhase::Settled),
+        "connection phases: {:?}",
+        owners
+            .iter()
+            .map(|owner| (&owner.id, &owner.phase))
+            .collect::<Vec<_>>()
     );
     flow.runtime.shutdown().await;
 }
@@ -2111,7 +2126,11 @@ fn form_params() -> Value {
 
 async fn elicitation_flow(interactive: bool) -> (Flow, String, PathBuf) {
     let flow = Flow::new(
-        vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+        vec![
+            call("c1", "mcp__shared__read", json!({})),
+            text("done"),
+            text("later"),
+        ],
         interactive,
     );
     let path = configure(&flow, json!({}));
@@ -2215,12 +2234,38 @@ async fn location_close_cancels_owned_elicitation_questions_and_settles_native_o
     flow.settle(&id).await;
     assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
     assert!(!flow.f.repo.join("elicitation-reply").exists());
+    let owners = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
     assert!(
-        mcp_connections(&flow.f.store, &flow.f.repo)
-            .unwrap()
+        owners
             .iter()
-            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+            .all(|owner| owner.phase == McpConnectionPhase::Settled),
+        "connection phases: {:?}",
+        owners
+            .iter()
+            .map(|owner| (&owner.id, &owner.phase))
+            .collect::<Vec<_>>()
     );
+    flow.prompt(&id, "open the next Turn").await;
+    flow.settle(&id).await;
+    ready(&flow, &id).await;
+    let next_turn = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
+    assert!(
+        next_turn
+            .iter()
+            .any(|owner| !owners.iter().any(|old| old.id == owner.id)
+                && owner.phase != McpConnectionPhase::Settled)
+    );
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    let later = flow.session("default").await;
+    ready(&flow, &later).await;
+    let reopened = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
+    assert!(
+        reopened
+            .iter()
+            .any(|owner| !owners.iter().any(|old| old.id == owner.id)
+                && owner.phase != McpConnectionPhase::Settled)
+    );
+    assert!(!flow.f.repo.join("elicitation-reply").exists());
     flow.runtime.shutdown().await;
 }
 

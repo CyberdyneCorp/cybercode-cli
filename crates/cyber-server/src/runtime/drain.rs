@@ -167,23 +167,18 @@ async fn prepare_pass(
     first: bool,
     cancel: &CancellationToken,
 ) -> Result<Option<PreparedModel>, RuntimeError> {
-    let initial = {
-        let state = handle.state.lock().await;
-        (!state.first_turn_started).then(|| state.info.clone())
-    };
-    if let Some(info) = initial {
-        inner.tools.open_location(&info);
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Ok(None),
-            result = inner.tools.wait_for_required_mcp(&info, cancel.child_token()) => result?,
-        }
+    if !prepare_location(inner, handle, cancel).await? {
+        return Ok(None);
     }
     let (resolved, promoted) = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Ok(None),
         result = boundary(inner, handle, continue_tools) => result?,
     };
+    if promoted {
+        let info = handle.state.lock().await.info.clone();
+        inner.tools.open_location(&info);
+    }
     if !(continue_tools || promoted || first) {
         return Ok(None);
     }
@@ -195,6 +190,27 @@ async fn prepare_pass(
         }
     }
     Ok(Some(resolved))
+}
+
+/// Initial service admission owns its readiness wait before input promotion.
+async fn prepare_location(
+    inner: &Arc<Inner>,
+    handle: &Arc<Handle>,
+    cancel: &CancellationToken,
+) -> Result<bool, RuntimeError> {
+    let initial = {
+        let state = handle.state.lock().await;
+        (!state.first_turn_started).then(|| state.info.clone())
+    };
+    if let Some(info) = initial {
+        inner.tools.open_location(&info);
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(false),
+            result = inner.tools.wait_for_required_mcp(&info, cancel.child_token()) => result?,
+        }
+    }
+    Ok(true)
 }
 
 async fn eligible(
@@ -572,7 +588,7 @@ impl Inner {
         let mut defs = if limited {
             Vec::new()
         } else {
-            self.tools.open_location(&state.info);
+            self.tools.refresh_location(&state.info);
             self.tools.definitions(&turn_context(&state, resolved))
         };
         defs.retain(|def| def.spec.name != "return_result");

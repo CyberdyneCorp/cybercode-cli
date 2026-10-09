@@ -123,3 +123,20 @@
 - **WHEN** memory is disabled after a Session has loaded its index
 - **THEN** the next Safe Boundary SHALL record a withdrawal through Context Source reconciliation
 - **AND** the immutable baseline SHALL remain unchanged within its Epoch
+
+### Requirement: Memory command
+(P1) The system SHALL provide `/memory` in the TUI and `cyber memory list|show|edit|delete|path [--global]` on the CLI, where `edit` opens the file in `$EDITOR` and `path` prints the directory.
+
+#### Scenario: Open project memory folder
+- **WHEN** the user runs `cyber memory path`
+- **THEN** the project memory directory path is printed
+
+
+#### Scenario: Editor review preserves concurrent edits
+- **WHEN** an external edit changes a target or its index while the user edits a private draft
+- **THEN** CLI commit SHALL refuse memory effects and preserve the draft and changed files
+
+#### Scenario: Editor content requires write validation
+- **WHEN** edited content is malformed, contains secrets or changes the requested note identity
+- **THEN** no note/index mutation SHALL be admitted
+- **AND** diagnostics SHALL omit the supplied content while retaining the draft for the user

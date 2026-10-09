@@ -198,6 +198,11 @@
 - **AND** its tools and calls SHALL remain unavailable while closing
 - **AND** retry SHALL NOT require a replacement native connection or owner
 
+#### Scenario: Explicit close survives current Turn catalog refresh
+- **WHEN** a shared Location is explicitly closed during a native tool callback
+- **THEN** subsequent tool catalog refresh in that Turn SHALL NOT start a replacement connection
+- **AND** a later explicit Session or Turn open MAY reconnect with a fresh identity and authorization
+
 #### Scenario: Authenticated public Location close
 - **WHEN** an authenticated client posts to `/api/v1/mcp/close` without a body
 - **THEN** the selected canonical Location's retained MCP owners SHALL settle before a Located `{closed:true}` response

@@ -11,6 +11,7 @@ use crate::commands::{
     exec::ExecArgs,
     hooks::HooksCmd,
     mcp::McpCmd,
+    memory::MemoryArgs,
     models::ModelsArgs,
     serve::{ServeArgs, ServiceCmd},
     trust::TrustCmd,
@@ -112,6 +113,8 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Review and edit durable project/global memory.
+    Memory(MemoryArgs),
     /// Review MCP server definitions and individual server approvals.
     Mcp {
         #[command(subcommand)]

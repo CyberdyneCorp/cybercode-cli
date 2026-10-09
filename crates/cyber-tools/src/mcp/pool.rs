@@ -24,8 +24,22 @@ pub(crate) struct Pool(Mutex<State>);
 struct State {
     closed: bool,
     closing: BTreeSet<PathBuf>,
+    paused: BTreeSet<PathBuf>,
     entries: BTreeMap<(PathBuf, String), Arc<Entry>>,
 }
+impl State {
+    fn admits_start(&mut self, directory: &Path, reopen: bool) -> bool {
+        if self.closed || self.closing.contains(directory) {
+            return false;
+        }
+        if reopen {
+            self.paused.remove(directory);
+            return true;
+        }
+        !self.paused.contains(directory)
+    }
+}
+
 struct Entry {
     name: String,
     digest: String,
@@ -458,6 +472,13 @@ impl BuiltinHost {
     }
 
     pub(crate) fn start_mcp(&self, info: &SessionInfo) {
+        self.admit_mcp(info, true);
+    }
+    pub(crate) fn refresh_mcp(&self, info: &SessionInfo) {
+        self.admit_mcp(info, false);
+    }
+
+    fn admit_mcp(&self, info: &SessionInfo, reopen: bool) {
         let Some(config) = self.hook_config.get() else {
             return;
         };
@@ -477,7 +498,7 @@ impl BuiltinHost {
             return;
         };
         let mut pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if pool.closed || pool.closing.contains(&directory) {
+        if !pool.admits_start(&directory, reopen) {
             return;
         }
         for (name, definition) in settings.servers {
@@ -708,6 +729,7 @@ impl BuiltinHost {
                 pool.entries.remove(&key);
             }
         }
+        pool.paused.insert(directory.clone());
         pool.closing.remove(&directory);
         Ok(())
     }

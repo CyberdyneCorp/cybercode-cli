@@ -6,7 +6,7 @@ use cap_std::fs::{Dir, DirBuilder, OpenOptions};
 use std::fs::{File, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-pub use transaction::{MemoryMutation, PreparedMemory};
+pub use transaction::{MemoryMutation, PreparedMemory, ReviewedMemory};
 
 const NOTE_LIMIT: u64 = 1_048_576;
 const ENTRY_LIMIT: usize = 4096;
@@ -28,6 +28,8 @@ pub enum MemoryStorageError {
     NotFound,
     #[error("Memory changed during mutation; transaction evidence retained")]
     Conflict,
+    #[error("Memory changed since editor review")]
+    ReviewConflict,
     #[error("Memory file exceeds 1 MiB")]
     TooLarge,
 }

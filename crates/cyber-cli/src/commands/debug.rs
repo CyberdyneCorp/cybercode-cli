@@ -12,6 +12,11 @@ use crate::output;
 
 #[derive(Debug, Subcommand)]
 pub enum DebugCmd {
+    /// List memory metadata and invalid-file diagnostics.
+    Memory {
+        #[arg(long)]
+        global: bool,
+    },
     /// Print resolved directories and the database location.
     Paths,
     /// Print the resolved configuration with secrets redacted.
@@ -26,6 +31,7 @@ pub enum DebugCmd {
 
 pub fn run(cmd: DebugCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     match cmd {
+        DebugCmd::Memory { global: use_global } => super::memory::debug(ctx, global, use_global),
         DebugCmd::Paths => paths(ctx, global),
         DebugCmd::Config { sources } => config(ctx, sources),
         DebugCmd::Info => info(ctx),
