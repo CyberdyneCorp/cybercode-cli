@@ -73,12 +73,14 @@ impl RemoteTools {
                 .unwrap_or_else(|| json!({ "type": "object" })),
         };
         let def = ToolDef {
+            registration: Some(cyber_core::ids::new_id("reg")),
             spec,
             retry_safety: RetrySafety::Never,
             concurrency_safe: false,
         };
+        let identity = def.registration.clone();
         tools.insert(name.into(), Registration { def, owner, out });
-        Ok(json!({ "registered": name }))
+        Ok(json!({ "registered": name, "registration_id": identity }))
     }
 
     /// Drop every tool a disconnected client registered; its calls in flight fail.
@@ -117,26 +119,40 @@ impl RemoteTools {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&inv.name)
+            .filter(|r| r.def.registration == inv.registration)
             .map(|r| r.out.clone())
         else {
-            return ToolOutcome::Failed(format!("Unknown tool: {}", inv.name));
+            return ToolOutcome::Failed(format!("Stale tool call: {}", inv.name));
+        };
+        let permit = tokio::select! {
+            _ = cancel.cancelled() => return ToolOutcome::Aborted,
+            permit = out.reserve_owned() => match permit {
+                Ok(permit) => permit,
+                Err(_) => return ToolOutcome::Failed("the client that registered this tool disconnected".into()),
+            },
         };
         let request = cyber_core::ids::new_id("rpc");
         let (tx, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(request.clone(), tx);
         let call = json!({
             "jsonrpc": "2.0", "id": request, "method": "tool.execute",
-            "params": { "name": inv.name, "input": inv.input, "session_id": inv.session_id, "call_id": inv.call_id },
+            "params": { "name": inv.name, "registration_id": inv.registration, "input": inv.input, "session_id": inv.session_id, "call_id": inv.call_id },
         });
-        if out.send(call).await.is_err() {
+        {
+            let tools = self.tools.lock().unwrap_or_else(PoisonError::into_inner);
+            if cancel.is_cancelled() {
+                return ToolOutcome::Aborted;
+            }
+            if !tools
+                .get(&inv.name)
+                .is_some_and(|registration| registration.def.registration == inv.registration)
+            {
+                return ToolOutcome::Failed(format!("Stale tool call: {}", inv.name));
+            }
             self.pending
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .remove(&request);
-            return ToolOutcome::Failed("the client that registered this tool disconnected".into());
+                .insert(request.clone(), tx);
+            permit.send(call);
         }
         let outcome = tokio::select! {
             _ = cancel.cancelled() => ToolOutcome::Aborted,
@@ -177,5 +193,113 @@ impl RemoteTools {
             (other, _) => Ok(other.to_string()),
         };
         let _ = tx.send(result);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::Asker;
+
+    fn invocation(registration: Option<String>) -> Invocation {
+        Invocation {
+            registration,
+            session_id: "ses_test".into(),
+            directory: "/tmp".into(),
+            agent: "build".into(),
+            mode: "default".into(),
+            message_id: "msg_test".into(),
+            call_id: "call_test".into(),
+            name: "mcp__shared__read".into(),
+            input: json!({}),
+            attempt: 1,
+            operation_key: "op_test".into(),
+            asker: Asker::detached(),
+            rules: Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_client_registration_cannot_receive_an_old_native_binding() {
+        let tools = RemoteTools::default();
+        let (out, mut frames) = mpsc::channel(1);
+        let owner = tools.owner();
+        tools
+            .register(
+                owner,
+                out.clone(),
+                &json!({"name":"mcp__shared__read"}),
+                &[],
+            )
+            .unwrap();
+        let old = tools.definitions()[0].registration.clone();
+        tools
+            .register(owner, out, &json!({"name":"mcp__shared__read"}), &[])
+            .unwrap();
+        assert_ne!(tools.definitions()[0].registration, old);
+        let invocation = invocation(old);
+        assert_eq!(
+            tools.execute(invocation, CancellationToken::new()).await,
+            ToolOutcome::Failed("Stale tool call: mcp__shared__read".into())
+        );
+        assert_eq!(frames.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    }
+    #[tokio::test]
+    async fn queued_client_dispatch_rechecks_its_registration_before_channel_effects() {
+        let tools = RemoteTools::default();
+        let (out, mut frames) = mpsc::channel(1);
+        let owner = tools.owner();
+        tools
+            .register(
+                owner,
+                out.clone(),
+                &json!({"name":"mcp__shared__read"}),
+                &[],
+            )
+            .unwrap();
+        out.send(json!({"occupied":true})).await.unwrap();
+        let running = tools.execute(
+            invocation(tools.definitions()[0].registration.clone()),
+            CancellationToken::new(),
+        );
+        tokio::pin!(running);
+        assert!(futures::poll!(&mut running).is_pending());
+        tools
+            .register(owner, out, &json!({"name":"mcp__shared__read"}), &[])
+            .unwrap();
+        frames.recv().await.unwrap();
+        assert_eq!(
+            running.await,
+            ToolOutcome::Failed("Stale tool call: mcp__shared__read".into())
+        );
+        assert_eq!(frames.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        assert!(tools.pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn queued_client_dispatch_cancellation_does_not_enqueue_or_leave_pending_ownership() {
+        let tools = RemoteTools::default();
+        let (out, mut frames) = mpsc::channel(1);
+        tools
+            .register(
+                tools.owner(),
+                out.clone(),
+                &json!({"name":"mcp__shared__read"}),
+                &[],
+            )
+            .unwrap();
+        out.send(json!({"occupied":true})).await.unwrap();
+        let cancel = CancellationToken::new();
+        let running = tools.execute(
+            invocation(tools.definitions()[0].registration.clone()),
+            cancel.clone(),
+        );
+        tokio::pin!(running);
+        assert!(futures::poll!(&mut running).is_pending());
+        cancel.cancel();
+        assert_eq!(running.await, ToolOutcome::Aborted);
+        assert!(tools.pending.lock().unwrap().is_empty());
+        frames.recv().await.unwrap();
+        assert_eq!(frames.try_recv(), Err(mpsc::error::TryRecvError::Empty));
     }
 }

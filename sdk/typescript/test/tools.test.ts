@@ -13,7 +13,9 @@ interface Frame {
 }
 
 /** One fake server connection: answers register/unregister and records every frame from the client. */
+let nextRegistration = 0;
 class FakePeer {
+  readonly registrations = new Map<string, string>();
   readonly received: Frame[] = [];
   readonly lines = new AsyncQueue<string>();
   private readonly waiters = new Map<string, (frame: Frame) => void>();
@@ -28,6 +30,7 @@ class FakePeer {
 
   /** Send a server→client `tool.execute` request and resolve with the client's reply. */
   execute(id: string, params: Record<string, unknown>): Promise<Frame> {
+    if (!("registration_id" in params)) params = { ...params, registration_id: this.registrations.get(String(params.name)) };
     const reply = new Promise<Frame>((resolve) => this.waiters.set(id, resolve));
     this.lines.push(JSON.stringify({ jsonrpc: "2.0", id, method: "tool.execute", params }));
     return reply;
@@ -40,10 +43,12 @@ class FakePeer {
   private receive(frame: Frame): void {
     this.received.push(frame);
     if (frame.method === undefined) return this.waiters.get(String(frame.id))?.(frame);
+    const registration = `reg_${++nextRegistration}`;
+    if (frame.method === "v1.tool.register") this.registrations.set(String(frame.params?.name), registration);
     const reply =
       frame.params?.name === "bash"
         ? { error: { code: -32602, message: "bash is a built-in tool" } }
-        : { result: frame.method === "v1.tool.register" ? { registered: frame.params?.name } : { unregistered: true } };
+        : { result: frame.method === "v1.tool.register" ? { registered: frame.params?.name, registration_id: registration } : { unregistered: true } };
     queueMicrotask(() => this.lines.push(JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...reply })));
   }
 }
@@ -135,4 +140,25 @@ test("a refused registration rejects and closes the idle channel", async () => {
   await new Promise((r) => setTimeout(r, 10));
   assert.ok(closed, "the channel is closed so the process can exit");
   assert.equal(peers.length, 1, "and it is not redialed");
+});
+
+test("old and missing registration identities cannot reach a replacement executor", async () => {
+  const { registry, peers, closeHandle } = setup();
+  let executions = 0;
+  const remove = await registry.register({ ...lookup, execute: () => { executions++; return "old"; } });
+  await registry.register({ ...lookup, name: "keep_channel" });
+  const peer = peers[0]!;
+  const old = peer.registrations.get(lookup.name);
+  await remove();
+  await registry.register({ ...lookup, execute: () => { executions++; return "replacement"; } });
+  assert.notEqual(peer.registrations.get(lookup.name), old);
+  const stale = await peer.execute("old_registration", { name: lookup.name, registration_id: old });
+  assert.equal(stale.error?.message, `Stale tool call: ${lookup.name}`);
+  const missing = await peer.execute("missing_registration", { name: lookup.name, registration_id: undefined });
+  assert.equal(missing.error?.message, `Stale tool call: ${lookup.name}`);
+  assert.equal(executions, 0);
+  const fresh = await peer.execute("fresh_registration", { name: lookup.name });
+  assert.equal(fresh.result, "replacement");
+  assert.equal(executions, 1);
+  closeHandle();
 });

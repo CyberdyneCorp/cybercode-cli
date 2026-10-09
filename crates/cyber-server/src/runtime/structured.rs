@@ -60,6 +60,7 @@ impl StructuredSchema {
 
     pub(crate) fn definition(&self) -> ToolDef {
         ToolDef {
+            registration: None,
             spec: ToolSpec {
                 name: "return_result".into(),
                 description: "Return the final validated structured result and end this subagent. No tools run after a valid result.".into(),

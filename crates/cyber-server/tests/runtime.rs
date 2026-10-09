@@ -464,6 +464,44 @@ async fn removed_registration_settles_as_stale() {
 }
 
 #[tokio::test]
+async fn replacement_registration_with_the_same_name_settles_as_stale() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "clock", "{}"), ("c2", "write", "{}")]),
+                text("ok"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("clock", Behavior::Gated);
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("go", Delivery::Steer))
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    // The same visible name now belongs to a different native registration.
+    h.tools
+        .defs
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|d| d.spec.name == "write")
+        .unwrap()
+        .registration = Some("replacement-native-owner".into());
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let s = h.state(&id).await;
+    assert_eq!(
+        s.calls["c2"].output.as_deref(),
+        Some("Stale tool call: write")
+    );
+    assert!(!h.tools.executed_names().contains(&"write".to_string()));
+}
+
+#[tokio::test]
 async fn crashed_tools_never_leak_details_to_the_model() {
     let h = Harness::new(Setup {
         scripts: vec![(

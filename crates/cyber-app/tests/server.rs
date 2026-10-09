@@ -1024,6 +1024,7 @@ async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
         .await
         .unwrap();
     let result = application.host.execute(Invocation {
+        registration: None,
         session_id:parent.id.clone(),directory:parent.directory.clone(),agent:parent.agent.clone(),mode:parent.mode.clone(),rules:parent.rules.clone(),
         message_id:"msg_setup".into(),call_id:"call_setup".into(),operation_key:"call_setup".into(),name:"agent".into(),
         input:serde_json::json!({"prompt":"inspect","name":"api-retry","isolation":"worktree"}),attempt:1,asker:Asker::detached(),
@@ -1150,6 +1151,7 @@ async fn application_reloads_command_hooks_at_the_builtin_boundary() {
         .host
         .execute(
             Invocation {
+                registration: None,
                 session_id: session.id.clone(),
                 directory: session.directory.clone(),
                 agent: session.agent.clone(),
@@ -1525,4 +1527,49 @@ async fn hook_catalog_api_last_run_preserves_outcome_without_opted_in_io() {
     assert_eq!(before, after);
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn application_runtime_owns_configured_mcp_startup_and_shutdown() {
+    use cyber_server::runtime::{CreateSession, McpConnectionPhase, mcp_connections};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let application = app(&root).await;
+    let server = r#"import json,sys
+for line in sys.stdin:
+ r=json.loads(line)
+ if 'id' not in r: continue
+ result=({'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'app','version':'1'}} if r['method']=='initialize' else {'tools':[{'name':'read','inputSchema':{'type':'object'}}]})
+ print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}),flush=True)
+"#;
+    std::fs::write(application.paths.config.join("cyber.json"),serde_json::json!({"sandbox":{"policy":"full-access"},"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{}}}},"mcp":{"app":{"type":"local","command":"/usr/bin/python3","args":["-u","-c",server]}}}).to_string()).unwrap();
+    application
+        .runtime
+        .create_session(CreateSession {
+            directory: root.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if mcp_connections(&application.state.store, &root)
+                .unwrap()
+                .iter()
+                .any(|record| record.phase == McpConnectionPhase::Running)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    application.runtime.shutdown().await;
+    assert_eq!(
+        mcp_connections(&application.state.store, &root).unwrap()[0].phase,
+        McpConnectionPhase::Settled
+    );
 }

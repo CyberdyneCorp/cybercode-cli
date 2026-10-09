@@ -33,6 +33,7 @@ impl BuiltinHost {
         let source = runtime.state(parent).await.map_err(io::Error::other)?.info;
         let call_id = cyber_core::ids::new_id("call");
         let inv = Invocation {
+            registration: None,
             session_id: source.id,
             directory: source.directory,
             agent: source.agent,

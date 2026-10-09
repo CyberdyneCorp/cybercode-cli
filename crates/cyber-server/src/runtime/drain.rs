@@ -559,6 +559,7 @@ impl Inner {
         let mut defs = if limited {
             Vec::new()
         } else {
+            self.tools.open_location(&state.info);
             self.tools.definitions(&turn_context(&state, resolved))
         };
         defs.retain(|def| def.spec.name != "return_result");
@@ -1007,7 +1008,10 @@ impl Inner {
         }
         // The registration may have been removed or replaced since it was advertised.
         let current = self.tools.definitions(turn);
-        if def.spec.name != "return_result" && !current.iter().any(|d| d.spec.name == def.spec.name)
+        if def.spec.name != "return_result"
+            && !current
+                .iter()
+                .any(|d| d.spec.name == def.spec.name && d.registration == def.registration)
         {
             return Err((CallStatus::Error, format!("Stale tool call: {}", call.name)));
         }
@@ -1043,6 +1047,7 @@ impl Inner {
             .await?;
         let inner = self.me.upgrade().expect("runtime alive");
         Ok(Invocation {
+            registration: def.registration.clone(),
             session_id: turn.session_id.clone(),
             directory: turn.directory.clone(),
             agent: turn.agent.clone(),

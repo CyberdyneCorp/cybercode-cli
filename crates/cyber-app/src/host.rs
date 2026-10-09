@@ -20,6 +20,13 @@ pub struct AppHost {
 }
 
 impl ToolHost for AppHost {
+    fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.builtin.open_location(info);
+    }
+
+    fn shutdown(&self) -> BoxFuture<'_, ()> {
+        self.builtin.shutdown()
+    }
     fn session_budget(
         &self,
         directory: &str,
@@ -68,6 +75,11 @@ impl ToolHost for AppHost {
             self.builtin
                 .filter_agent_tools(turn, self.remote.definitions()),
         );
+        // Client registrations take precedence over shared native server names.
+        let mut names = std::collections::HashSet::new();
+        defs.reverse();
+        defs.retain(|def| names.insert(def.spec.name.clone()));
+        defs.reverse();
         defs
     }
 

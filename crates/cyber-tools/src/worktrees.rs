@@ -62,6 +62,60 @@ struct SetupAdmission<'a> {
 }
 
 impl BuiltinHost {
+    pub(crate) async fn claim_mcp_location(
+        &self,
+        info: &SessionInfo,
+        owner: String,
+        cancel: CancellationToken,
+    ) -> Result<crate::mcp::McpLocationPin, String> {
+        let locations = Repository::managed_locations_at(Path::new(&info.directory))
+            .map_err(|error| error.to_string())?;
+        if info.worktree_id.as_deref() != locations.first().map(|(_, managed)| managed.id.as_str())
+        {
+            return Err(
+                "MCP startup requires the Session's verified managed creation identity".into(),
+            );
+        }
+        let inv = Invocation {
+            registration: None,
+            session_id: info.id.clone(),
+            directory: info.directory.clone(),
+            agent: info.agent.clone(),
+            mode: info.mode.clone(),
+            rules: info.rules.clone(),
+            message_id: String::new(),
+            call_id: cyber_core::ids::new_id("call"),
+            operation_key: String::new(),
+            name: "worktree".into(),
+            input: serde_json::Value::Null,
+            attempt: 1,
+            asker: Asker::detached(),
+        };
+        let ctx = Ctx {
+            hook_decision: None,
+            host: self,
+            inv: &inv,
+            policy: self.policy(&inv).await?,
+            location: PathBuf::from(&info.directory),
+            cancel,
+        };
+        let execution = GitPort {
+            ctx: &ctx,
+            writable: Some(Vec::new()),
+            credentials: &[],
+        };
+        let mut leases = Vec::with_capacity(locations.len());
+        for (repository, managed) in locations {
+            leases.push(
+                retry_repository_busy(&ctx.cancel, || {
+                    repository.claim_mcp(&execution, &managed, &owner)
+                })
+                .await
+                .map_err(|error| error.to_string())?,
+            );
+        }
+        Ok(crate::mcp::McpLocationPin::managed(leases))
+    }
     pub(crate) async fn claim_worktree_location(
         &self,
         info: &SessionInfo,
@@ -69,6 +123,7 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
         let inv = Invocation {
+            registration: None,
             session_id: info.id.clone(),
             directory: info.directory.clone(),
             agent: info.agent.clone(),
@@ -97,6 +152,7 @@ impl BuiltinHost {
         }
         let identity = event.identity();
         let inv = Invocation {
+            registration: None,
             session_id: format!("ses_{receipt_id}"),
             directory: identity.location.directory.display().to_string(),
             agent: identity.agent.clone(),
@@ -174,6 +230,7 @@ impl BuiltinHost {
             .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
         let id = cyber_core::ids::new_id("call");
         let inv = Invocation {
+            registration: None,
             session_id: cyber_core::ids::new_id("ses"),
             directory: directory.canonicalize()?.display().to_string(),
             agent: "build".into(),
@@ -309,6 +366,7 @@ impl BuiltinHost {
             .runtime()
             .ok_or_else(|| io::Error::other("Runtime is not attached"))?;
         let inv = Invocation {
+            registration: None,
             session_id: cyber_core::ids::new_id("ses"),
             directory: directory.canonicalize()?.display().to_string(),
             agent: request

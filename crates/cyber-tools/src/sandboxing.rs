@@ -425,6 +425,7 @@ mod tests {
             sandbox_helper: cyber_sandbox::find_helper(),
         });
         let inv = Invocation {
+            registration: None,
             session_id: "ses_scope".into(),
             directory: source.display().to_string(),
             agent: "build".into(),

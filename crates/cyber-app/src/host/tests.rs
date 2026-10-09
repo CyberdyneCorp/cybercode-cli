@@ -30,6 +30,7 @@ async fn application(root: &std::path::Path) -> App {
 
 fn invocation(turn: &TurnContext) -> Invocation {
     Invocation {
+        registration: None,
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),
         agent: turn.agent.clone(),
@@ -76,7 +77,9 @@ async fn agent_tool_restrictions_refuse_client_dispatch_without_sending_a_reques
             .any(|def| def.spec.name == "client_write")
     );
     // A real client request/reply first proves the registered dispatch route works.
-    let mut running = host.execute(invocation(&turn), CancellationToken::new());
+    let mut call = invocation(&turn);
+    call.registration = host.remote.definitions()[0].registration.clone();
+    let mut running = host.execute(call, CancellationToken::new());
     let frame = tokio::select! {
         outcome = &mut running => panic!("client dispatch ended before its reply: {outcome:?}"),
         frame = tokio::time::timeout(std::time::Duration::from_secs(2), frames.recv()) => frame.unwrap().unwrap(),

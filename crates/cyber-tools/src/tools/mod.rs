@@ -80,6 +80,7 @@ pub(crate) fn def(
     parallel: bool,
 ) -> ToolDef {
     ToolDef {
+        registration: None,
         spec: ToolSpec {
             name: name.into(),
             description: description.into(),

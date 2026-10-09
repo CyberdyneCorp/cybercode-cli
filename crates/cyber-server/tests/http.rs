@@ -1065,6 +1065,7 @@ async fn clients_register_tools_that_the_model_can_call() {
     let reply: Value =
         serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
     assert_eq!(reply["result"]["registered"], "lookup_ticket");
+    let registration_identity = reply["result"]["registration_id"].clone();
     let bad = json!({"jsonrpc": "2.0", "id": 2, "method": "v1.tool.register", "params": {"name": "shell"}});
     ws.send(send(bad)).await.unwrap();
     let reply: Value =
@@ -1104,6 +1105,13 @@ async fn clients_register_tools_that_the_model_can_call() {
         }
     };
     assert_eq!(call["params"]["input"]["id"], "T-1");
+    assert_eq!(call["params"]["registration_id"], registration_identity);
+    assert!(
+        call["params"]["registration_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("reg_")
+    );
     ws.send(send(
         json!({"jsonrpc": "2.0", "id": call["id"], "result": "T-1: login page broken"}),
     ))

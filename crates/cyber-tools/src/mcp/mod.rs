@@ -14,3 +14,4 @@ pub use owned::{McpLocationPin, OwnedLocalServer};
 pub use stdio::{McpError, StdioClient};
 pub use values::{decision, render_arguments};
 pub(crate) const LIMIT: usize = 1024 * 1024;
+pub(crate) mod pool;

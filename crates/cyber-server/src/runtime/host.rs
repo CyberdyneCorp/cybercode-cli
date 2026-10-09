@@ -151,6 +151,8 @@ impl ModelResolver for CatalogResolver {
 /// A tool offered to the model for one Turn.
 #[derive(Debug, Clone)]
 pub struct ToolDef {
+    /// Opaque native registration identity, retained from advertisement through dispatch.
+    pub registration: Option<String>,
     pub spec: ToolSpec,
     pub retry_safety: RetrySafety,
     pub concurrency_safe: bool,
@@ -171,6 +173,7 @@ pub struct TurnContext {
 /// The invocation context (`tool-registry` → Invocation context).
 #[derive(Debug, Clone)]
 pub struct Invocation {
+    pub registration: Option<String>,
     pub session_id: String,
     pub directory: String,
     pub agent: String,
@@ -214,6 +217,13 @@ pub enum Reconciliation {
 }
 
 pub trait ToolHost: Send + Sync {
+    /// Start shared Location services without waiting for their readiness.
+    fn open_location(&self, _info: &SessionInfo) {}
+
+    /// Join and settle shared native services after runtime work has stopped.
+    fn shutdown(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
     fn session_budget(
         &self,
         _directory: &str,

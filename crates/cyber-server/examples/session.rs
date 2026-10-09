@@ -24,6 +24,7 @@ struct Clock;
 impl ToolHost for Clock {
     fn definitions(&self, _turn: &TurnContext) -> Vec<ToolDef> {
         vec![ToolDef {
+            registration: None,
             spec: ToolSpec {
                 name: "clock".into(),
                 description: "Return the current UTC time as an ISO-8601 string.".into(),

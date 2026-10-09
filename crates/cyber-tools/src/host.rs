@@ -58,12 +58,14 @@ pub struct BuiltinHost {
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
     pub(crate) subagents: crate::subagents::Slots,
+    pub(crate) mcp: crate::mcp::pool::Pool,
 }
 
 impl BuiltinHost {
     pub fn new(opts: HostOptions) -> Arc<Self> {
         Arc::new_cyclic(|weak| Self {
             weak: weak.clone(),
+            mcp: Default::default(),
             opts,
             tools: tools::all(),
             reads: Mutex::default(),
@@ -462,6 +464,13 @@ fn shortened(listed: &[&skills::Skill], budget: usize) -> Vec<String> {
 }
 
 impl ToolHost for BuiltinHost {
+    fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
+        self.start_mcp(info);
+    }
+
+    fn shutdown(&self) -> BoxFuture<'_, ()> {
+        Box::pin(self.shutdown_mcp())
+    }
     fn session_budget(
         &self,
         directory: &str,
@@ -522,6 +531,7 @@ impl ToolHost for BuiltinHost {
             };
             let info = &child.info;
             let inv = Invocation {
+                registration: None,
                 session_id: info.id.clone(),
                 directory: parent.directory.clone(),
                 agent: info.agent.clone(),
@@ -552,7 +562,7 @@ impl ToolHost for BuiltinHost {
             return Vec::new();
         };
         let mode = Mode::parse(&turn.mode);
-        let tools = self
+        let mut tools: Vec<_> = self
             .tools
             .iter()
             .map(|t| t.def())
@@ -566,6 +576,11 @@ impl ToolHost for BuiltinHost {
                     || tools::powershell::installed(Path::new(&turn.directory)).is_some()
             })
             .collect();
+        tools.extend(
+            self.mcp_definitions(turn)
+                .into_iter()
+                .filter(|d| !fully_denied(&rules, &d.spec.name)),
+        );
         self.filter_agent_tools(turn, tools)
     }
 
@@ -606,6 +621,9 @@ impl ToolHost for BuiltinHost {
 
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         Box::pin(async move {
+            if inv.name.starts_with("mcp__") {
+                return self.execute_mcp(inv, cancel).await;
+            }
             let mut inv = inv;
             if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
                 return ToolOutcome::Failed(error.to_string());
@@ -724,6 +742,7 @@ impl ToolHost for BuiltinHost {
                 input["agent"] = agent.into();
             }
             let inv = Invocation {
+                registration: None,
                 session_id: turn.session_id,
                 directory: turn.directory,
                 agent: turn.agent,
@@ -778,6 +797,7 @@ impl ToolHost for BuiltinHost {
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<String, String>> {
         let inv = Invocation {
+            registration: None,
             session_id: session_id.into(),
             directory: directory.into(),
             agent: "user".into(),

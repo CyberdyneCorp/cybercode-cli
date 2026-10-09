@@ -157,6 +157,7 @@ pub struct Tools {
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
     ToolDef {
+        registration: None,
         spec: ToolSpec {
             name: name.into(),
             description: format!("{name} tool"),

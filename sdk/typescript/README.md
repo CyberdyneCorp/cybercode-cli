@@ -165,6 +165,8 @@ WebSocket to `/api/v1/ws` (global `WebSocket`, Node ≥ 22, or pass `webSocket` 
 `Cyber.connect`) that opens on the first registration, re-registers every tool after a
 reconnect (500 ms → 15 s backoff), and closes after the last tool is unregistered. In embedded
 mode the stdio channel is reused. Registrations disappear when the channel disconnects.
+Registration replies and execution requests carry `registration_id`; the SDK checks it against
+the exact channel and handler before execution, so stale calls cannot reach a replacement.
 
 ## Browser-safe types
 

@@ -1337,7 +1337,9 @@ impl Inner {
             }
         }
         lease.settle().map_err(RuntimeError::Invalid)?;
-        Ok(self.handle(&id).await?.state.lock().await.info.clone())
+        let info = self.handle(&id).await?.state.lock().await.info.clone();
+        self.tools.open_location(&info);
+        Ok(info)
     }
 
     /// Append events with optimistic concurrency, fold them into state, then publish.

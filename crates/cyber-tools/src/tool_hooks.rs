@@ -22,8 +22,8 @@ use crate::tools::ToolError;
 
 pub type HookConfigFn = dyn Fn(&Path) -> Result<Resolved, String> + Send + Sync;
 pub(crate) struct HooksConfig {
-    resolve: Arc<HookConfigFn>,
-    trust: TrustStore,
+    pub(crate) resolve: Arc<HookConfigFn>,
+    pub(crate) trust: TrustStore,
 }
 
 impl BuiltinHost {

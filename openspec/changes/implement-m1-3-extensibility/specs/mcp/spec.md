@@ -129,3 +129,38 @@
 - **THEN** the retained object SHALL preserve its checkout pins and scratch for settlement retry
 - **AND** its tools and calls SHALL remain unavailable while closing
 - **AND** retry SHALL NOT require a replacement native connection or owner
+
+### Requirement: Non-blocking concurrent startup
+(P0) The system SHALL start all enabled servers concurrently without blocking session start. A server's tools SHALL become available at the next Turn after it connects. The built-in tool `wait_for_mcp` SHALL let the model wait up to 60 s for named servers still connecting.
+
+#### Scenario: Slow server
+- **WHEN** a server takes 20 s to connect and the user prompts immediately
+- **THEN** the first Turn runs without its tools and the model can call `wait_for_mcp` with that server name
+
+#### Scenario: Shared independent local startup
+- **WHEN** multiple Sessions open the same canonical Location with a configured local server
+- **THEN** startup SHALL NOT await that server's initialization
+- **AND** those Sessions SHALL share one independent native connection and verified managed checkout pins
+- **AND** ready tools SHALL become available only through later Turn materialization
+
+### Requirement: Tool execution and permissions
+(P0) MCP tool calls SHALL pass through hooks and the permission engine with permission action equal to the exposed tool name and resource `*`. Tools annotated `readOnlyHint: true` SHALL default to `allow`, and other tools SHALL default to `ask`. Text content SHALL become tool output subject to the tool output budget, images SHALL become attachments, `structuredContent` SHALL be retained as structured output, and `isError` SHALL fail the call with the joined error text.
+
+#### Scenario: Read-only tool auto-allowed
+- **WHEN** an MCP tool annotated `readOnlyHint: true` is called with no matching permission rule
+- **THEN** it runs without prompting
+
+#### Scenario: Explicit policy remains above annotation defaults
+- **WHEN** a read-only annotated tool is denied by current explicit policy or a tool hook
+- **THEN** annotation defaults SHALL NOT authorize its RPC effects
+- **AND** non-read-only tools SHALL be omitted in plan Turns and still refused by plan permission checks
+
+#### Scenario: Native registration changes while approval is pending
+- **WHEN** a tool's advertised connection or remote identity changes before RPC dispatch
+- **THEN** the old invocation SHALL settle as stale rather than reach a replacement owner
+- **AND** current configuration and trust SHALL be rechecked after hooks, approval and native queueing
+
+#### Scenario: Interrupted unresolved local call
+- **WHEN** a dispatched local RPC is interrupted without a response establishing completion
+- **THEN** its registration SHALL be removed from subsequent materializations
+- **AND** the retained local native owner SHALL attempt explicit process/proxy shutdown with durable acknowledgement or unresolved evidence

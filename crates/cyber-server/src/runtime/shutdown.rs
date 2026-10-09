@@ -62,6 +62,7 @@ impl Runtime {
         for task in tasks {
             let _ = task.await;
         }
+        self.inner.tools.shutdown().await;
     }
 
     /// Whether this runtime has permanently closed admission.

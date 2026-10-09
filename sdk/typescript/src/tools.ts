@@ -23,6 +23,7 @@ export interface AppTool<Input = any> {
 }
 
 interface ExecuteParams {
+  registration_id?: string;
   name?: string;
   input?: unknown;
   session_id?: string;
@@ -43,6 +44,7 @@ export type ChannelFactory = (attach: (channel: RpcChannel) => Promise<void>) =>
  */
 export class ToolRegistry {
   private readonly tools = new Map<string, AppTool>();
+  private readonly registrations = new WeakMap<RpcChannel, Map<string, { tool: AppTool; id: string }>>();
   private handle: ChannelHandle | undefined;
 
   constructor(
@@ -57,7 +59,7 @@ export class ToolRegistry {
     this.handle ??= this.factory((channel) => this.attach(channel));
     try {
       const channel = await this.handle.current();
-      await channel.request("v1.tool.register", spec(tool));
+      await this.bind(channel, tool);
     } catch (err) {
       this.closeIfIdle();
       throw err;
@@ -84,15 +86,30 @@ export class ToolRegistry {
 
   /** Serve `tool.execute` on a new connection and restore the registrations it lost. */
   private async attach(channel: RpcChannel): Promise<void> {
-    channel.handle("tool.execute", (params) => this.execute(params as ExecuteParams));
+    this.registrations.set(channel, new Map());
+    channel.handle("tool.execute", (params) => this.execute(channel, params as ExecuteParams));
     for (const tool of this.tools.values()) {
-      await channel.request("v1.tool.register", spec(tool)).catch(this.report);
+      await this.bind(channel, tool).catch(this.report);
     }
   }
 
-  private async execute(params: ExecuteParams): Promise<unknown> {
-    const tool = this.tools.get(params.name ?? "");
-    if (!tool) throw new Error(`tool "${params.name}" is not registered by this client`);
+  private async bind(channel: RpcChannel, tool: AppTool): Promise<void> {
+    const result = await channel.request("v1.tool.register", spec(tool)) as { registered?: string; registration_id?: string };
+    if (result?.registered !== tool.name || typeof result.registration_id !== "string" || !result.registration_id.startsWith("reg_")) {
+      throw new Error("server did not return a tool registration identity");
+    }
+    this.registrations.get(channel)!.set(tool.name, { tool, id: result.registration_id });
+  }
+
+  private async execute(channel: RpcChannel, params: ExecuteParams): Promise<unknown> {
+    const name = params.name ?? "";
+    const current = this.tools.get(name);
+    if (!current) throw new Error(`tool "${params.name}" is not registered by this client`);
+    const registration = this.registrations.get(channel)?.get(name);
+    if (!registration || registration.tool !== current || registration.id !== params.registration_id) {
+      throw new Error(`Stale tool call: ${name}`);
+    }
+    const tool = registration.tool;
     const output = await tool.execute(params.input ?? {}, { sessionID: params.session_id ?? "", callID: params.call_id ?? "" });
     return output ?? "";
   }

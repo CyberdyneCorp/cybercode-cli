@@ -77,6 +77,11 @@ jobs:
       - name: Native independent MCP ownership and restart fencing
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test mcp_ownership
+      - name: Native tool registration identity through dispatch
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-server --test runtime registration
+          cargo test --locked -p cyber-server --lib http::remote_tools::tests
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test mcp_review

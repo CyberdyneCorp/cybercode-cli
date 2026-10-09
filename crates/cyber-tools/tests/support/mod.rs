@@ -129,6 +129,7 @@ impl Fixture {
 
     pub fn invocation(&self, mode: &str, name: &str, input: Value) -> Invocation {
         Invocation {
+            registration: None,
             session_id: "ses_test".into(),
             directory: self.repo.display().to_string(),
             agent: "build".into(),
