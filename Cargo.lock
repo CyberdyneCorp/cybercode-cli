@@ -899,6 +899,7 @@ dependencies = [
  "htmd",
  "html2text",
  "ignore",
+ "jsonschema",
  "libc",
  "regex",
  "reqwest",

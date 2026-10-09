@@ -980,7 +980,7 @@ for line in sys.stdin:
     request = json.loads(line)
     if 'id' not in request: continue
     if request['method'] == 'initialize':
-        assert request['params']['capabilities'] == {'roots':{'listChanged':False}}
+        assert request['params']['capabilities'] == {'roots':{'listChanged':False},'elicitation':{'form':{}}}
         print(json.dumps({'jsonrpc':'2.0','id':'workspace-roots','method':'roots/list'}), flush=True)
         reply = json.loads(sys.stdin.readline())
         assert reply['id'] == 'workspace-roots'

@@ -56,6 +56,7 @@ pub struct StdioClient<R, W> {
     incoming: Vec<u8>,
     tools_changed: bool,
     roots: Option<super::McpRoots>,
+    form_server: Option<String>,
 }
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
@@ -71,6 +72,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             incoming: Vec::new(),
             tools_changed: false,
             roots: None,
+            form_server: None,
         }
     }
     /// Install roots before initialization; the connection snapshot stays immutable.
@@ -81,6 +83,20 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             ));
         }
         self.roots = Some(roots);
+        Ok(self)
+    }
+
+    pub fn with_form_elicitation(mut self, server: &str) -> Result<Self, McpError> {
+        if self.initialization_started
+            || server.is_empty()
+            || server.len() > 48
+            || !server
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        {
+            return Err(McpError::Protocol("invalid elicitation configuration"));
+        }
+        self.form_server = Some(server.into());
         Ok(self)
     }
 
@@ -111,7 +127,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
                 }
                 FrameRead::Message(message) => {
                     validate_server_message(&message)?;
-                    self.server_message(&message, timeout).await?;
+                    self.server_message(&message, timeout, None).await?;
                 }
             }
         }
@@ -166,11 +182,14 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             return Err(McpError::Protocol("already initialized"));
         }
         self.initialization_started = true;
-        let capabilities = if self.roots.is_some() {
+        let mut capabilities = if self.roots.is_some() {
             json!({"roots":{"listChanged":false}})
         } else {
             json!({})
         };
+        if self.form_server.is_some() {
+            capabilities["elicitation"] = json!({"form":{}});
+        }
         let result = self.request("initialize", json!({"protocolVersion":VERSION,"capabilities":capabilities,"clientInfo":{"name":"cyber","version":env!("CARGO_PKG_VERSION")}}), timeout).await?;
         let version = result["protocolVersion"]
             .as_str()
@@ -228,16 +247,28 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         arguments: Value,
         timeout: Duration,
     ) -> Result<Value, McpError> {
+        self.call_tool_with_elicitation(name, arguments, timeout, None)
+            .await
+    }
+
+    pub async fn call_tool_with_elicitation(
+        &mut self,
+        name: &str,
+        arguments: Value,
+        timeout: Duration,
+        context: Option<&super::ElicitationContext<'_>>,
+    ) -> Result<Value, McpError> {
         if !self.initialized || !self.tools {
             return Err(McpError::Protocol("server tools are unavailable"));
         }
         if name.trim().is_empty() || !arguments.is_object() {
             return Err(McpError::Protocol("invalid tool call"));
         }
-        self.request(
+        self.request_with_elicitation(
             "tools/call",
             json!({"name":name,"arguments":arguments}),
             timeout,
+            context,
         )
         .await
     }
@@ -260,8 +291,19 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
     async fn request(
         &mut self,
         method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, McpError> {
+        self.request_with_elicitation(method, params, timeout, None)
+            .await
+    }
+
+    async fn request_with_elicitation(
+        &mut self,
+        method: &str,
         mut params: Value,
         timeout: Duration,
+        context: Option<&super::ElicitationContext<'_>>,
     ) -> Result<Value, McpError> {
         if self.pending.is_some() {
             return Err(McpError::Protocol("previous request is unresolved"));
@@ -303,9 +345,19 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
                     progress = Some(value);
                     deadline = tokio::time::Instant::now() + timeout;
                 }
-                tokio::time::timeout_at(deadline, self.server_message(&message, timeout))
-                    .await
-                    .map_err(|_| McpError::Timeout)??;
+                if method == "elicitation/create"
+                    && self.form_server.is_some()
+                    && message.get("id").is_some()
+                {
+                    let started = tokio::time::Instant::now();
+                    if self.server_message(&message, timeout, context).await? {
+                        deadline += started.elapsed();
+                    }
+                } else {
+                    tokio::time::timeout_at(deadline, self.server_message(&message, timeout, None))
+                        .await
+                        .map_err(|_| McpError::Timeout)??;
+                }
                 continue;
             }
             if message["id"] != id {
@@ -317,15 +369,32 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         }
     }
 
-    async fn server_message(&mut self, message: &Value, timeout: Duration) -> Result<(), McpError> {
+    async fn server_message(
+        &mut self,
+        message: &Value,
+        timeout: Duration,
+        context: Option<&super::ElicitationContext<'_>>,
+    ) -> Result<bool, McpError> {
         let Some(id) = message.get("id") else {
             if message["method"] == "notifications/tools/list_changed" {
                 self.tools_changed = true;
             }
-            return Ok(());
+            return Ok(false);
         };
         if !id.is_string() && !id.is_number() {
             return Err(McpError::Protocol("invalid server request identity"));
+        }
+        if message["method"] == "elicitation/create"
+            && let Some(server) = self.form_server.as_deref()
+        {
+            let (mut response, interacted) =
+                super::elicitation::reply(server, &message["params"], context).await;
+            response["jsonrpc"] = json!("2.0");
+            response["id"] = id.clone();
+            tokio::time::timeout(timeout, self.write(&response))
+                .await
+                .map_err(|_| McpError::Timeout)??;
+            return Ok(interacted);
         }
         let response = match (message["method"].as_str(), self.roots.as_ref()) {
             (Some("roots/list"), Some(roots)) if self.initialization_started => {
@@ -345,7 +414,8 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         };
         tokio::time::timeout(timeout, self.write(&response))
             .await
-            .map_err(|_| McpError::Timeout)?
+            .map_err(|_| McpError::Timeout)??;
+        Ok(false)
     }
 
     async fn write(&mut self, message: &Value) -> Result<(), McpError> {

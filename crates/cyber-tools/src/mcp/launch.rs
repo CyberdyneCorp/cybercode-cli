@@ -98,6 +98,17 @@ impl LocalServer {
         arguments: Value,
         timeout: Duration,
     ) -> Result<Value, McpError> {
+        self.call_exposed_tool_with_elicitation(name, arguments, timeout, None)
+            .await
+    }
+
+    pub async fn call_exposed_tool_with_elicitation(
+        &mut self,
+        name: &str,
+        arguments: Value,
+        timeout: Duration,
+        context: Option<&super::ElicitationContext<'_>>,
+    ) -> Result<Value, McpError> {
         self.authorize()?;
         let remote = self
             .catalog
@@ -105,7 +116,8 @@ impl LocalServer {
             .find(|tool| tool.exposed_name == name)
             .map(|tool| tool.remote_name.clone())
             .ok_or_else(|| McpError::StaleTool(name.into()))?;
-        self.call_tool(&remote, arguments, timeout).await
+        self.call_tool_with_elicitation(&remote, arguments, timeout, context)
+            .await
     }
 
     fn authorize(&self) -> Result<(), McpError> {
@@ -141,6 +153,17 @@ impl LocalServer {
         arguments: Value,
         timeout: Duration,
     ) -> Result<Value, McpError> {
+        self.call_tool_with_elicitation(name, arguments, timeout, None)
+            .await
+    }
+
+    pub async fn call_tool_with_elicitation(
+        &mut self,
+        name: &str,
+        arguments: Value,
+        timeout: Duration,
+        context: Option<&super::ElicitationContext<'_>>,
+    ) -> Result<Value, McpError> {
         self.authorize()?;
         if !self
             .tools
@@ -154,7 +177,9 @@ impl LocalServer {
                 "MCP tool is absent from connected server catalog",
             ));
         }
-        self.connection.call_tool(name, arguments, timeout).await
+        self.connection
+            .call_tool_with_elicitation(name, arguments, timeout, context)
+            .await
     }
 
     pub async fn cancel_pending(&mut self, timeout: Duration) -> Result<(), McpError> {

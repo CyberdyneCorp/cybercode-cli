@@ -810,8 +810,10 @@ impl BuiltinHost {
         let timeout = McpSettings::from_config(&resolved.value)
             .map_err(ToolError::Failed)?
             .call_timeout(&entry.name);
+        let authorize = || self.mcp_binding(inv).is_ok();
+        let context = super::ElicitationContext::new(&inv.asker, &authorize);
         let result = tokio::select! {
-            result = owner.call_exposed_tool(&inv.name, inv.input.clone(), Duration::from_secs(timeout.into())) => result.map_err(|error| ToolError::Failed(error.to_string())),
+            result = owner.call_exposed_tool_with_elicitation(&inv.name, inv.input.clone(), Duration::from_secs(timeout.into()), &context) => result.map_err(|error| ToolError::Failed(error.to_string())),
             _ = cancel.cancelled() => Err(ToolError::Aborted),
             _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
@@ -829,6 +831,10 @@ impl BuiltinHost {
                 );
             }
         }
+        inv.asker
+            .cancel_questions()
+            .await
+            .map_err(|_| ToolError::Failed("MCP question cleanup failed".into()))?;
         drop(server);
         result
     }

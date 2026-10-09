@@ -587,3 +587,71 @@ async fn invalid_or_nonincreasing_progress_cannot_extend_request_deadline() {
         let _ = server.await;
     }
 }
+
+#[tokio::test]
+async fn form_elicitation_is_explicit_and_unowned_callbacks_decline_with_exact_ids() {
+    let (client, mut peer) = pair();
+    let mut client = client.with_form_elicitation("db").unwrap();
+    let params = json!({"message":"Choose environment","requestedSchema":{"type":"object","properties":{"environment":{"type":"string","enum":["staging","prod"]}},"required":["environment"]}});
+    let server = tokio::spawn(async move {
+        let initialize = read(&mut peer).await;
+        assert_eq!(
+            initialize["params"]["capabilities"],
+            json!({"elicitation":{"form":{}}})
+        );
+        send(&mut peer,json!({"jsonrpc":"2.0","id":"startup-form","method":"elicitation/create","params":params})).await;
+        assert_eq!(
+            read(&mut peer).await,
+            json!({"jsonrpc":"2.0","id":"startup-form","result":{"action":"decline"}})
+        );
+        send(&mut peer,json!({"jsonrpc":"2.0","id":initialize["id"],"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}})).await;
+        assert_eq!(read(&mut peer).await["method"], "notifications/initialized");
+        let pending = read(&mut peer).await;
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":42,"method":"elicitation/create","params":params}),
+        )
+        .await;
+        assert_eq!(
+            read(&mut peer).await,
+            json!({"jsonrpc":"2.0","id":42,"result":{"action":"decline"}})
+        );
+        send(&mut peer,json!({"jsonrpc":"2.0","id":"url","method":"elicitation/create","params":{"mode":"url","url":"https://example.invalid/private-secret"}})).await;
+        let rejected = read(&mut peer).await;
+        assert_eq!(rejected["id"], "url");
+        assert_eq!(rejected["error"]["code"], -32602);
+        assert!(!rejected.to_string().contains("private-secret"));
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":pending["id"],"result":{"content":[]}}),
+        )
+        .await;
+    });
+    client.initialize(TIMEOUT).await.unwrap();
+    client.call_tool("audit", json!({}), TIMEOUT).await.unwrap();
+    assert!(!client.unresolved());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn unadvertised_form_elicitation_is_refused_without_losing_the_active_request() {
+    let (mut client, mut peer) = pair();
+    let server = tokio::spawn(async move {
+        initialize_peer(&mut peer).await;
+        let pending = read(&mut peer).await;
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":"form","method":"elicitation/create","params":{}}),
+        )
+        .await;
+        assert_eq!(read(&mut peer).await["error"]["code"], -32601);
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":pending["id"],"result":{"content":[]}}),
+        )
+        .await;
+    });
+    client.initialize(TIMEOUT).await.unwrap();
+    client.call_tool("audit", json!({}), TIMEOUT).await.unwrap();
+    server.await.unwrap();
+}

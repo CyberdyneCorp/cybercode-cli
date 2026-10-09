@@ -191,6 +191,32 @@ impl Asker {
         })
     }
 
+    /// Cancel questions owned by this exact call without halting unrelated Session work.
+    pub async fn cancel_questions(&self) -> Result<(), RuntimeError> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Ok(());
+        };
+        for request in inner
+            .owned_pending(&self.session_id)
+            .into_iter()
+            .filter(|request| {
+                request.call_id == self.call_id
+                    && request.message_id == self.message_id
+                    && matches!(request.kind, PendingKind::Question { .. })
+            })
+        {
+            if let Some(waiter) = inner.take_waiter(&request.id)
+                && let Reply::Question(sender) = waiter.reply
+            {
+                inner
+                    .record_question_reply(&request, &QuestionReply::Dismissed)
+                    .await?;
+                let _ = sender.send(QuestionReply::Dismissed);
+            }
+        }
+        Ok(())
+    }
+
     pub async fn question(&self, questions: Vec<Question>) -> QuestionReply {
         let Some(inner) = self.inner.upgrade() else {
             return QuestionReply::Unattended;

@@ -329,3 +329,32 @@
 - **WHEN** cyber mcp get <name> reviews a loaded server
 - **THEN** it SHALL display resolved required and output-budget settings, provenance and authorization observations with header values redacted
 - **AND** it SHALL NOT connect, execute commands, start model work or create a database
+
+### Requirement: Elicitation
+(P1) The system SHALL support MCP elicitation by presenting the server's requested schema as a question form through the question flow. It SHALL return `accept` with the values, `decline`, or `cancel`. In non-interactive sessions it SHALL answer `decline` and log the request.
+
+#### Scenario: Form requested
+- **WHEN** a server elicits `{ environment: enum[staging, prod] }`
+- **THEN** the user sees a choice question and the selection is returned to the server
+
+#### Scenario: Call-bound form ownership and authorization
+- **WHEN** a configured local tool call receives a form elicitation request
+- **THEN** its question flow SHALL identify the requesting server and use only that call's captured Session/message ownership
+- **AND** fresh native registration/server authorization SHALL be checked before presentation and before returning accepted content
+- **AND** changed authorization SHALL cancel without forwarding answers
+
+#### Scenario: Unowned or unattended callback
+- **WHEN** a valid form arrives during initialization, idle processing or a non-interactive call
+- **THEN** it SHALL receive decline without creating a Session question
+- **AND** non-interactive decline logging SHALL omit form text and answers
+
+#### Scenario: Typed form settlement and cancellation
+- **WHEN** the user completes a form and accepts sharing
+- **THEN** typed fields, enumerated values, optional omission, defaults, constraints and formats SHALL validate before values are sent
+- **AND** decline/cancel or invalid answers SHALL send no content
+- **AND** native Location close SHALL clear the exact call's pending questions while preserving unrelated requests
+
+#### Scenario: Human interaction pauses inactivity
+- **WHEN** an attended form waits for the user
+- **THEN** that actual interaction time SHALL pause tool-call inactivity
+- **AND** invalid, unowned and unattended callbacks SHALL NOT extend the timer

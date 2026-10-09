@@ -6,6 +6,12 @@ Current work connects agent model/variant defaults, starting Mode, step limits, 
 
 The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
+## M1.3 local MCP form elicitation
+
+Configured local stdio MCP connections now advertise form elicitation and route active-call requests through the durable question flow with explicit server attribution and final Accept/Decline/Cancel consent. Answers retain primitive/enum-array JSON types, validate constraints/formats and support explicit defaults and optional omission. A transient call-owned Asker and fresh authorization checks prevent cached connections from retaining Session identity or sending answers after definition revocation. Startup, idle and unattended callbacks decline without question admission or payload logging. Human question time pauses inactivity; interrupt and Location close clean up the exact call's questions after native shutdown.
+
+Local validation passes all 229 Rust cases across tools, request handling and public App MCP boundaries, workspace all-target Clippy with warnings denied, formatting, generated SDK consistency, SDK type checking and all 62 SDK tests. All 58 strict OpenSpec validations pass; cross-spec lint reports zero errors and 21 warnings. Workflow YAML and diff checks pass. Windows CI now explicitly runs form-schema unit tests alongside the existing protocol gate. Remote transport, URL elicitation and full native acceptance remain open; no complete P1 requirement or milestone is accepted by this increment.
+
 ## M1.3 authenticated hook definition catalog
 
 GET `/hooks` now returns a typed, Location-scoped review from the host’s full provenance-aware resolver. Each request reloads configuration and exact individual approvals, retains original digests/source/scope and sandbox requirements, redacts headers/recognized secrets and reports withheld checkout paths separately. Inspection creates no Session or hook execution. Generated OpenAPI/SDK access exposes `client.hook.list()` with its Location envelope. Withheld raw review and the full TUI definition/trust viewer remain required.

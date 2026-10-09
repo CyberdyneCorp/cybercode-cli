@@ -114,6 +114,19 @@ impl OwnedLocalServer {
             .await
     }
 
+    pub async fn call_exposed_tool_with_elicitation(
+        &mut self,
+        name: &str,
+        arguments: Value,
+        timeout: Duration,
+        context: &super::ElicitationContext<'_>,
+    ) -> Result<Value, McpError> {
+        self.running()?;
+        self.server
+            .call_exposed_tool_with_elicitation(name, arguments, timeout, Some(context))
+            .await
+    }
+
     pub async fn call_tool(
         &mut self,
         name: &str,

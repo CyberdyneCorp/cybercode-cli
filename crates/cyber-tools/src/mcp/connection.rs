@@ -55,7 +55,7 @@ impl StdioConnection {
         roots: Option<super::McpRoots>,
     ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
         let deadline = tokio::time::Instant::now() + timeout;
-        let mut connection = Self::connect_with_roots(process, timeout, roots).await?;
+        let mut connection = Self::connect_configured(process, timeout, roots, Some(name)).await?;
         match connection
             .discover_tools(
                 name,
@@ -89,6 +89,15 @@ impl StdioConnection {
         timeout: Duration,
         roots: Option<super::McpRoots>,
     ) -> Result<Self, ConnectionError> {
+        Self::connect_configured(process, timeout, roots, None).await
+    }
+
+    async fn connect_configured(
+        process: HookCommandProcess,
+        timeout: Duration,
+        roots: Option<super::McpRoots>,
+        server: Option<&str>,
+    ) -> Result<Self, ConnectionError> {
         let mut connection = Self {
             process,
             client: None,
@@ -96,7 +105,7 @@ impl StdioConnection {
             #[cfg(unix)]
             grace_deadline: None,
         };
-        if let Err(error) = connection.initialize(timeout, roots).await {
+        if let Err(error) = connection.initialize(timeout, roots, server).await {
             let (acknowledged, stderr) = connection.shutdown().await;
             return Err(ConnectionError {
                 error,
@@ -111,6 +120,7 @@ impl StdioConnection {
         &mut self,
         timeout: Duration,
         roots: Option<super::McpRoots>,
+        server: Option<&str>,
     ) -> Result<(), McpError> {
         let stdin = self
             .process
@@ -126,8 +136,12 @@ impl StdioConnection {
             .ok_or(McpError::Protocol("MCP stderr unavailable"))?;
         self.stderr = Some(tokio::spawn(drain(stderr)));
         let client = StdioClient::new(stdout, stdin);
-        self.client = Some(match roots {
+        let client = match roots {
             Some(roots) => client.with_roots(roots)?,
+            None => client,
+        };
+        self.client = Some(match server {
+            Some(server) => client.with_form_elicitation(server)?,
             None => client,
         });
         if timeout.is_zero() {
@@ -198,10 +212,21 @@ impl StdioConnection {
         arguments: Value,
         timeout: Duration,
     ) -> Result<Value, McpError> {
+        self.call_tool_with_elicitation(name, arguments, timeout, None)
+            .await
+    }
+
+    pub async fn call_tool_with_elicitation(
+        &mut self,
+        name: &str,
+        arguments: Value,
+        timeout: Duration,
+        context: Option<&super::ElicitationContext<'_>>,
+    ) -> Result<Value, McpError> {
         self.client
             .as_mut()
             .ok_or(McpError::Protocol("MCP transport is closed"))?
-            .call_tool(name, arguments, timeout)
+            .call_tool_with_elicitation(name, arguments, timeout, context)
             .await
     }
 

@@ -42,6 +42,7 @@ for line in lines():
     if 'id' not in request: continue
     method=request['method']
     if method=='initialize':
+        if pathlib.Path('elicitation.json').exists(): pathlib.Path('elicitation-capabilities').write_text(json.dumps(request['params']['capabilities']))
         while not pathlib.Path('ready').exists(): time.sleep(.01)
         result={'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'real','version':'1'}}
         if pathlib.Path('instructions').exists(): result['instructions']=pathlib.Path('instructions').read_text()
@@ -53,6 +54,11 @@ for line in lines():
         while pathlib.Path('block-call').exists(): time.sleep(.01)
         result={'content':[{'type':'text','text':pathlib.Path('tool-text').read_text() if pathlib.Path('tool-text').exists() else 'remote '+name}], 'isError':name=='error'}
         if name=='structured': result['structuredContent']={'answer':42}
+        if pathlib.Path('elicitation.json').exists():
+            print(json.dumps({'jsonrpc':'2.0','id':'form','method':'elicitation/create','params':json.loads(pathlib.Path('elicitation.json').read_text())}),flush=True)
+            reply=json.loads(sys.stdin.readline())
+            pathlib.Path('elicitation-reply').write_text(json.dumps(reply))
+            result['content'][0]['text']=json.dumps(reply.get('result',reply.get('error')))
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
 "#;
 
@@ -2085,5 +2091,170 @@ async fn location_close_graces_multiple_servers_concurrently() {
             .iter()
             .all(|owner| owner.phase == McpConnectionPhase::Settled)
     );
+    flow.runtime.shutdown().await;
+}
+
+fn form_params() -> Value {
+    json!({"message":"Choose the deployment environment","requestedSchema":{"type":"object","properties":{"environment":{"type":"string","enum":["staging","prod"]}},"required":["environment"]}})
+}
+
+async fn elicitation_flow(interactive: bool) -> (Flow, String, PathBuf) {
+    let flow = Flow::new(
+        vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+        interactive,
+    );
+    let path = configure(&flow, json!({}));
+    flow.f.write("elicitation.json", &form_params().to_string());
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "use the server").await;
+    (flow, id, path)
+}
+
+#[tokio::test]
+async fn elicitation_unattended_declines_without_pending_question_or_values() {
+    let (flow, id, _) = elicitation_flow(false).await;
+    flow.settle(&id).await;
+    let reply: Value = serde_json::from_str(&flow.f.read("elicitation-reply")).unwrap();
+    assert_eq!(
+        reply,
+        json!({"jsonrpc":"2.0","id":"form","result":{"action":"decline"}})
+    );
+    assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+    let capabilities: Value =
+        serde_json::from_str(&flow.f.read("elicitation-capabilities")).unwrap();
+    assert_eq!(capabilities["elicitation"], json!({"form":{}}));
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn elicitation_question_flow_accepts_declines_and_cancels_with_server_attribution() {
+    use cyber_server::runtime::{PendingKind, QuestionReply};
+    for action in ["Accept", "Decline", "Cancel"] {
+        let (flow, id, _) = elicitation_flow(true).await;
+        let pending = flow.pending(&id).await;
+        let PendingKind::Question { questions } = pending.kind else {
+            panic!("expected form");
+        };
+        assert_eq!(pending.call_id, "c1");
+        assert!(
+            questions
+                .iter()
+                .all(|question| question.question.contains("MCP server shared"))
+        );
+        flow.runtime
+            .answer_question(
+                &pending.id,
+                QuestionReply::Answers {
+                    answers: vec![
+                        vec![questions[0].options[0].label.clone()],
+                        vec![action.into()],
+                    ],
+                },
+            )
+            .await
+            .unwrap();
+        flow.settle(&id).await;
+        let reply: Value = serde_json::from_str(&flow.f.read("elicitation-reply")).unwrap();
+        assert_eq!(reply["result"]["action"], action.to_lowercase());
+        if action == "Accept" {
+            assert_eq!(reply["result"]["content"], json!({"environment":"staging"}));
+        } else {
+            assert!(reply["result"].get("content").is_none());
+        }
+        assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+        flow.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn elicitation_revoked_definition_cancels_before_sending_answers() {
+    use cyber_server::runtime::{PendingKind, QuestionReply};
+    let (flow, id, path) = elicitation_flow(true).await;
+    let pending = flow.pending(&id).await;
+    let PendingKind::Question { questions } = pending.kind else {
+        panic!("expected form");
+    };
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["shared"]["enabled"] = json!(false);
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.runtime
+        .answer_question(
+            &pending.id,
+            QuestionReply::Answers {
+                answers: vec![
+                    vec![questions[0].options[0].label.clone()],
+                    vec!["Accept".into()],
+                ],
+            },
+        )
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+    let reply: Value = serde_json::from_str(&flow.f.read("elicitation-reply")).unwrap();
+    assert_eq!(reply["result"], json!({"action":"cancel"}));
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn location_close_cancels_owned_elicitation_questions_and_settles_native_owner() {
+    let (flow, id, _) = elicitation_flow(true).await;
+    flow.pending(&id).await;
+    flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    flow.settle(&id).await;
+    assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+    assert!(!flow.f.repo.join("elicitation-reply").exists());
+    assert!(
+        mcp_connections(&flow.f.store, &flow.f.repo)
+            .unwrap()
+            .iter()
+            .all(|owner| owner.phase == McpConnectionPhase::Settled)
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn elicitation_human_time_pauses_call_inactivity_and_session_interrupt_cleans_requests() {
+    use cyber_server::runtime::{PendingKind, QuestionReply};
+    let flow = Flow::new(
+        vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+        true,
+    );
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["tool_timeout"] = json!(1);
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    flow.f.write("elicitation.json", &form_params().to_string());
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "ask").await;
+    let request = flow.pending(&id).await;
+    let PendingKind::Question { questions } = request.kind else {
+        panic!("expected form");
+    };
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(flow.runtime.pending_requests(Some(&id)).len(), 1);
+    flow.runtime
+        .answer_question(
+            &request.id,
+            QuestionReply::Answers {
+                answers: vec![
+                    vec![questions[0].options[0].label.clone()],
+                    vec!["Accept".into()],
+                ],
+            },
+        )
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+    assert!(flow.output(&id, "c1").await.contains("accept"));
+    flow.runtime.shutdown().await;
+    let (flow, id, _) = elicitation_flow(true).await;
+    flow.pending(&id).await;
+    flow.runtime.interrupt(&id).await.unwrap();
+    flow.settle(&id).await;
+    assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+    assert!(!flow.f.repo.join("elicitation-reply").exists());
     flow.runtime.shutdown().await;
 }

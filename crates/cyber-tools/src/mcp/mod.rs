@@ -2,6 +2,7 @@
 mod authority;
 mod connection;
 mod discovery;
+mod elicitation;
 mod launch;
 mod owned;
 mod required;
@@ -11,6 +12,7 @@ mod values;
 pub use authority::{ServerSelection, authorize_server, inspect_server};
 pub use connection::{ConnectionError, StderrCapture, StdioConnection};
 pub use discovery::{DiscoveredTool, exposed_tool_name};
+pub use elicitation::ElicitationContext;
 pub use launch::{LocalLaunchError, LocalLauncher, LocalServer};
 pub use owned::{McpLocationPin, OwnedLocalServer};
 pub use roots::McpRoots;
