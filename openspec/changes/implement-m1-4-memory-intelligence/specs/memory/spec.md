@@ -257,3 +257,15 @@
 - **AND** refreshing the review SHALL display the current original while preserving draft changes
 - **AND** dismissal or Session/Location/scope changes SHALL retain the process-local draft without foreign save authority; discarding SHALL require explicit confirmation
 - **AND** terminal controls SHALL be escaped, input SHALL be bounded, and confirmation controls SHALL remain visible while scrolling
+
+
+#### Scenario: Private memory client checkpoints
+- **WHEN** client draft/request retention opens existing state
+- **THEN** absent storage SHALL remain absent and unsafe file aliases or non-private existing storage SHALL refuse without permission repair
+- **WHEN** a client owns checkpoint storage
+- **THEN** another owner SHALL refuse; checkpoint bytes SHALL be bounded, written through a private exclusive temporary file, synced, atomically installed and directory-synced
+- **AND** changed checkpoint bytes or replaced checkpoint/lock/state directory identities SHALL refuse without overwriting user edits
+- **WHEN** the owner dies abruptly and another client opens storage
+- **THEN** only the installed checkpoint SHALL load; staged files SHALL remain evidence and SHALL NOT be automatically adopted
+- **AND** restored bytes SHALL grant no memory mutation or recovery authority; callers SHALL validate versions and scoped identities and obtain fresh reviews before new effects
+- **AND** unsupported native privacy/durability SHALL refuse before creating client storage

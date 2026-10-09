@@ -300,7 +300,7 @@ fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError
     Ok(dir)
 }
 
-fn private_builder() -> DirBuilder {
+pub(super) fn private_builder() -> DirBuilder {
     #[cfg(unix)]
     {
         use cap_std::fs::DirBuilderExt;
@@ -314,7 +314,7 @@ fn private_builder() -> DirBuilder {
     }
 }
 
-fn verify_regular(file: &File) -> Result<(), MemoryStorageError> {
+pub(super) fn verify_regular(file: &File) -> Result<(), MemoryStorageError> {
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(MemoryStorageError::Unsafe("expected a regular file"));
@@ -338,7 +338,7 @@ fn make_private_file(file: &File) -> Result<(), MemoryStorageError> {
     let _ = file;
     Ok(())
 }
-fn verify_private_file(file: &File) -> Result<(), MemoryStorageError> {
+pub(super) fn verify_private_file(file: &File) -> Result<(), MemoryStorageError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -352,7 +352,7 @@ fn verify_private_file(file: &File) -> Result<(), MemoryStorageError> {
     let _ = file;
     Ok(())
 }
-fn verify_private_directory(dir: &Dir) -> Result<(), MemoryStorageError> {
+pub(super) fn verify_private_directory(dir: &Dir) -> Result<(), MemoryStorageError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -376,7 +376,7 @@ fn verify_private_directory(dir: &Dir) -> Result<(), MemoryStorageError> {
 }
 
 #[cfg(unix)]
-fn directory_file(dir: &Dir) -> Result<File, MemoryStorageError> {
+pub(super) fn directory_file(dir: &Dir) -> Result<File, MemoryStorageError> {
     use cap_fs_ext::OpenOptionsMaybeDirExt;
     let mut options = OpenOptions::new();
     options

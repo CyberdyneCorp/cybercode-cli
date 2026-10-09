@@ -126,6 +126,9 @@ jobs:
       - name: Native memory HTTP shutdown ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http shutdown_waits_for_disposed_handler_memory_work_and_refuses_new_leases
+      - name: Native client checkpoint privacy refusal
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test memory_client_state
       - name: Native authenticated memory review and mutation admission API
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test memory

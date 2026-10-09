@@ -1,4 +1,6 @@
 //! Validated memory documents and index snapshots; storage authority is separate.
+mod client_state;
+pub use client_state::MemoryClientStore;
 mod secrets;
 mod storage;
 pub use storage::{

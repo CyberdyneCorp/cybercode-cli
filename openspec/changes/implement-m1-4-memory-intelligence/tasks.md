@@ -22,7 +22,8 @@
   - [x] Add detached read-only core edit snapshots and fingerprint-bound write/delete preparation; verify stale content, replacement files, foreign scopes/names, catalog edits, bounded admission and no pre-journal effects.
   - [x] Expose read-only edit reviews and conditional HTTP/SDK mutations to preserve changed user files; verify authenticated TCP stale refusal before durable admission, settings, scope isolation, header identity and consumed-review cache-gap replay. Complete native acceptance remains open.
   - [x] Add local TUI multiline drafts, typed edit review, explicit conditional save confirmation, process-local retention across dismissal/Location changes and refusal before fresh review after errors; verify actual TCP saves and stale user-file preservation.
-  - [ ] Add persistent client draft/request-key retention and complete cross-platform TUI/HTTP/SDK acceptance.
+  - [x] Add a separate private client checkpoint storage primitive with bounded no-follow reads, retained exclusive ownership, synced atomic installs, changed-content/inode refusal and restart/abrupt-owner-death regressions. It grants no mutation authority and is not yet wired into the TUI.
+  - [ ] Integrate validated persistent TUI draft/request intent before dispatch, restore without review authority, and complete cross-platform TUI/HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.
