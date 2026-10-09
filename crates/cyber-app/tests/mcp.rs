@@ -155,6 +155,7 @@ async fn authorized_public_close_settles_actual_native_mcp_process() {
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().canonicalize().unwrap();
     let app = application(&directory).await;
+    let mut updates = app.runtime.subscribe();
     let script = r#"
 import json,sys
 for line in sys.stdin:
@@ -220,6 +221,24 @@ for line in sys.stdin:
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].phase, McpConnectionPhase::Settled);
     assert_eq!(records[0].acknowledged, Some(true));
+    let mut phases = Vec::new();
+    while let Ok(event) = updates.try_recv() {
+        if let cyber_server::runtime::LiveEvent::McpStatusChanged { update, seq } = event {
+            assert_eq!(update.connection_id, records[0].id);
+            assert_eq!(seq, phases.len() as i64);
+            phases.push(update.phase);
+        }
+    }
+    assert_eq!(
+        phases,
+        vec![
+            McpConnectionPhase::Admitted,
+            McpConnectionPhase::Preparing,
+            McpConnectionPhase::Launching,
+            McpConnectionPhase::Running,
+            McpConnectionPhase::Settled
+        ]
+    );
     app.runtime
         .create_session(CreateSession {
             directory: directory.display().to_string(),
@@ -275,6 +294,98 @@ for line in sys.stdin:
             .all(|record| record.phase == McpConnectionPhase::Settled
                 && record.acknowledged == Some(true))
     );
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn independent_mcp_events_are_scoped_committed_and_redacted() {
+    use futures::StreamExt;
+    use std::time::Duration;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    let sibling = directory.join("sibling");
+    std::fs::create_dir(&sibling).unwrap();
+    let app = application(&directory).await;
+    let (close_url, stop, server) = listener(&app).await;
+    let url = close_url.replace("/mcp/close", "/event");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut streams = Vec::new();
+    for location in [&directory, &sibling] {
+        let response = client
+            .get(&url)
+            .basic_auth("cyber", Some("mcp-test-password"))
+            .query(&[("location[directory]", location.to_str().unwrap())])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let mut stream = response.bytes_stream();
+        tokio::time::timeout(Duration::from_secs(2), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        streams.push(stream);
+    }
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let mut ids = Vec::new();
+    for location in [&directory, &sibling] {
+        let mut owner = McpConnectionOwner::admit_observed(
+            app.store.clone(),
+            location,
+            location,
+            "observed",
+            &digest,
+            Some(app.runtime.mcp_status_observer()),
+        )
+        .unwrap();
+        ids.push(owner.record().id.clone());
+        owner.preparing().unwrap();
+        owner
+            .finish(false, "PRIVATE credential and command".into())
+            .unwrap();
+    }
+    for (index, stream) in streams.iter_mut().enumerate() {
+        let mut text = String::new();
+        let frames = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                text.push_str(std::str::from_utf8(&stream.next().await.unwrap().unwrap()).unwrap());
+                let frames: Vec<serde_json::Value> = text
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data: "))
+                    .filter_map(|line| serde_json::from_str(line).ok())
+                    .collect();
+                if frames.len() >= 3 {
+                    break frames;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!text.contains("PRIVATE"));
+        assert!(!text.contains("owner_key"));
+        for (seq, frame) in frames.iter().enumerate() {
+            assert_eq!(frame["type"], "mcp.status.changed.1");
+            assert_eq!(frame["durable"]["aggregateID"], ids[index]);
+            assert_eq!(frame["durable"]["seq"], seq);
+            assert_eq!(frame["data"]["connection_id"], ids[index]);
+            assert_eq!(
+                frame["location"],
+                [&directory, &sibling][index].to_str().unwrap()
+            );
+            assert!(frame["data"].get("session_id").is_none());
+        }
+        assert_eq!(frames[2]["data"]["phase"], "unknown");
+        assert_eq!(frames[2]["data"]["acknowledged"], false);
+    }
+    let sessions: i64 = app
+        .store
+        .read(|db| Ok(db.query_row("SELECT count(*) FROM session", [], |row| row.get(0))?))
+        .unwrap();
+    assert_eq!(sessions, 0);
+    drop(streams);
     stop.send(()).unwrap();
     server.await.unwrap();
     app.runtime.shutdown().await;

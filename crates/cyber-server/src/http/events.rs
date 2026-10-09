@@ -90,6 +90,16 @@ fn durable(session_id: &str, seq: i64, kind: &str, data: Value) -> EventEnvelope
 
 /// The envelope for a live event; the session ID is kept inside `data`.
 pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
+    if let LiveEvent::McpStatusChanged { update, seq } = event {
+        let mut result = durable(
+            &update.connection_id,
+            *seq,
+            "mcp.status.changed.1",
+            serde_json::to_value(update).unwrap_or_default(),
+        );
+        result.location = Some(update.directory.display().to_string());
+        return result;
+    }
     if let LiveEvent::Durable {
         session_id,
         seq,
@@ -123,8 +133,9 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
     }
 }
 
-fn session_of(event: &LiveEvent) -> &str {
+fn session_of(event: &LiveEvent) -> Option<&str> {
     match event {
+        LiveEvent::McpStatusChanged { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }
         | LiveEvent::RequestRouted { session_id, .. }
@@ -136,7 +147,7 @@ fn session_of(event: &LiveEvent) -> &str {
         | LiveEvent::Usage { session_id, .. }
         | LiveEvent::Error { session_id, .. }
         | LiveEvent::Idle { session_id }
-        | LiveEvent::Deleted { session_id } => session_id,
+        | LiveEvent::Deleted { session_id } => Some(session_id),
     }
 }
 
@@ -224,10 +235,21 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
                 Err(broadcast::error::RecvError::Closed) => return,
             };
             counter += 1;
-            let session = session_of(&event).to_string();
-            let Ok(dir) = event_location::live(&state, &mut directories, &session, &event).await
-            else {
-                return;
+            let dir = match &event {
+                LiveEvent::McpStatusChanged { update, .. } => {
+                    update.directory.display().to_string()
+                }
+                _ => {
+                    let Some(session) = session_of(&event) else {
+                        continue;
+                    };
+                    let Ok(directory) =
+                        event_location::live(&state, &mut directories, session, &event).await
+                    else {
+                        return;
+                    };
+                    directory
+                }
             };
             if !all
                 && dir != directory
@@ -324,7 +346,7 @@ async fn follow(
             Ok(event @ LiveEvent::HookNotice { .. })
             | Ok(event @ LiveEvent::RequestRouted { .. })
             | Ok(event @ LiveEvent::WorktreeSetup { .. })
-                if session_of(&event) == id =>
+                if session_of(&event) == Some(id.as_str()) =>
             {
                 counter += 1;
                 let mut e = envelope(&event, counter);

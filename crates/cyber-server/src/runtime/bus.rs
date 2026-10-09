@@ -9,6 +9,11 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
+    /// Committed independent MCP ownership observations, never Session events.
+    McpStatusChanged {
+        update: super::McpStatusUpdate,
+        seq: i64,
+    },
     /// Transient hook diagnostics; raw IO is not persisted by the live bus.
     HookNotice {
         session_id: String,

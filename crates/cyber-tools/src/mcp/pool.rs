@@ -131,9 +131,13 @@ impl BuiltinHost {
                     helper: host.opts.sandbox_helper.as_deref(),
                     credential_env_names: &credentials,
                 };
-                let connect = launcher.connect_owned(&name, host.opts.store.clone(), |id| {
-                    host.claim_mcp_location(&info, id, owned.cancel.child_token())
-                });
+                let observer = host.runtime().map(|runtime| runtime.mcp_status_observer());
+                let connect = launcher.connect_owned_observed(
+                    &name,
+                    host.opts.store.clone(),
+                    observer,
+                    |id| host.claim_mcp_location(&info, id, owned.cancel.child_token()),
+                );
                 let result = tokio::select! {
                     result = connect => Some(result),
                     _ = owned.cancel.cancelled() => None,

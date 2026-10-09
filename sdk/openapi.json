@@ -3798,6 +3798,69 @@
           "_tag",
           "message"
         ]
+      },
+      "McpStatusUpdate": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/McpConnectionStatus"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/McpConnectionPhase"
+          },
+          "acknowledged": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Public diagnostic; private launch details remain in local logs."
+          }
+        },
+        "required": [
+          "connection_id",
+          "directory",
+          "name",
+          "status",
+          "phase"
+        ],
+        "description": "A committed ownership observation, not fresh process liveness or recovery authority."
+      },
+      "McpConnectionStatus": {
+        "type": "string",
+        "enum": [
+          "connecting",
+          "connected",
+          "disabled",
+          "failed",
+          "needs_auth",
+          "needs_client_registration"
+        ]
+      },
+      "McpConnectionPhase": {
+        "type": "string",
+        "enum": [
+          "admitted",
+          "preparing",
+          "launching",
+          "running",
+          "settled",
+          "unknown"
+        ]
       }
     }
   },

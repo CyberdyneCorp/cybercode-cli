@@ -568,6 +568,22 @@ export type McpClosed = {
   closed: boolean;
 };
 
+export type McpConnectionPhase = "admitted" | "preparing" | "launching" | "running" | "settled" | "unknown";
+
+export type McpConnectionStatus = "connecting" | "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration";
+
+/** A committed ownership observation, not fresh process liveness or recovery authority. */
+export type McpStatusUpdate = {
+  connection_id: string;
+  directory: string;
+  name: string;
+  status: McpConnectionStatus;
+  phase: McpConnectionPhase;
+  acknowledged?: boolean | null;
+  /** Public diagnostic; private launch details remain in local logs. */
+  error?: string | null;
+};
+
 /** A history entry with the tool calls it made. */
 export type Message = {
   tools: CallState[];

@@ -192,3 +192,5 @@ tool).
 
 
 `await client.mcp.close()` stops shared MCP connections for the client's Location and returns a Location envelope with `{ closed: true }` after verified settlement. A later Session open may establish fresh connections. Unresolved ownership returns `ConflictError` and keeps the Location fenced for retry or recovery; the operation does not clear unknown effects. Requests use the ordinary authentication, Location routing and idempotency handling.
+
+MCP ownership changes arrive through `client.events.subscribe()` as `mcp.status.changed.1`, with the exported `McpStatusUpdate` payload and an independent connection aggregate. The payload reports committed status, phase and settlement acknowledgement; it does not prove current process liveness. Unknown settlement requires recovery, and private launch details remain in local logs.

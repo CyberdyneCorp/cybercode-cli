@@ -50,8 +50,8 @@ pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod location;
 mod mcp;
 pub use mcp::{
-    McpConnectionOwner, McpConnectionPhase, McpConnectionRecord, McpConnectionStatus,
-    mcp_connections,
+    McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
+    McpConnectionStatus, McpStatusUpdate, mcp_connections,
 };
 mod model;
 mod requests;
@@ -407,6 +407,16 @@ impl Runtime {
         reply: QuestionReply,
     ) -> Result<(), RuntimeError> {
         self.inner.answer_question(request_id, reply).await
+    }
+
+    pub fn mcp_status_observer(&self) -> McpConnectionObserver {
+        let bus = self.inner.bus.clone();
+        Arc::new(move |record, seq| {
+            bus.publish(LiveEvent::McpStatusChanged {
+                update: record.into(),
+                seq,
+            });
+        })
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<LiveEvent> {

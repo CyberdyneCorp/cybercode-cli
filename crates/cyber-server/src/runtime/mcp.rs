@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 const CHANGED: &str = "mcp.status.changed.1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum McpConnectionStatus {
     Connecting,
@@ -20,7 +20,7 @@ pub enum McpConnectionStatus {
     NeedsClientRegistration,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum McpConnectionPhase {
     Admitted,
@@ -54,6 +54,43 @@ struct Change {
     next_owner_hash: String,
 }
 
+/// Observes only successfully committed records, without private owner capabilities.
+pub type McpConnectionObserver = Arc<dyn Fn(&McpConnectionRecord, i64) + Send + Sync>;
+
+/// A committed ownership observation, not fresh process liveness or recovery authority.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct McpStatusUpdate {
+    pub connection_id: String,
+    pub directory: PathBuf,
+    pub name: String,
+    pub status: McpConnectionStatus,
+    pub phase: McpConnectionPhase,
+    pub acknowledged: Option<bool>,
+    /// Public diagnostic; private launch details remain in local logs.
+    pub error: Option<String>,
+}
+
+impl From<&McpConnectionRecord> for McpStatusUpdate {
+    fn from(record: &McpConnectionRecord) -> Self {
+        Self {
+            connection_id: record.id.clone(),
+            directory: record.directory.clone(),
+            name: record.name.clone(),
+            status: record.status,
+            phase: record.phase,
+            acknowledged: record.acknowledged,
+            error: record.error.as_ref().map(|_| {
+                match record.phase {
+                    McpConnectionPhase::Settled => "MCP connection stopped",
+                    McpConnectionPhase::Unknown => "MCP native settlement is unverified",
+                    _ => "MCP connection failed; inspect local logs",
+                }
+                .into()
+            }),
+        }
+    }
+}
+
 /// A receipt is not execution authority or native proof; the caller retains both.
 /// Every transition consumes an unpublished owner key and installs a new commitment.
 pub struct McpConnectionOwner {
@@ -62,6 +99,7 @@ pub struct McpConnectionOwner {
     key: String,
     seq: i64,
     terminal: bool,
+    observer: Option<McpConnectionObserver>,
 }
 
 impl McpConnectionOwner {
@@ -71,6 +109,17 @@ impl McpConnectionOwner {
         checkout_root: &Path,
         name: &str,
         digest: &str,
+    ) -> Result<Self, StoreError> {
+        Self::admit_observed(store, directory, checkout_root, name, digest, None)
+    }
+
+    pub fn admit_observed(
+        store: Arc<Store>,
+        directory: &Path,
+        checkout_root: &Path,
+        name: &str,
+        digest: &str,
+        observer: Option<McpConnectionObserver>,
     ) -> Result<Self, StoreError> {
         let record = McpConnectionRecord {
             id: cyber_core::ids::new_id("mcs"),
@@ -90,13 +139,16 @@ impl McpConnectionOwner {
             Expected::Seq(-1),
             vec![change(&record, None, &key)],
         )?;
-        Ok(Self {
+        let owner = Self {
             store,
             record,
             key,
             seq: 0,
             terminal: false,
-        })
+            observer,
+        };
+        owner.notify();
+        Ok(owner)
     }
 
     pub fn record(&self) -> &McpConnectionRecord {
@@ -145,6 +197,12 @@ impl McpConnectionOwner {
         Ok(self.record.clone())
     }
 
+    fn notify(&self) {
+        if let Some(observer) = &self.observer {
+            observer(&self.record, self.seq);
+        }
+    }
+
     fn commit(&mut self, record: McpConnectionRecord) -> Result<(), StoreError> {
         let next = new_key();
         self.store.append(
@@ -155,6 +213,7 @@ impl McpConnectionOwner {
         self.record = record;
         self.key = next;
         self.seq += 1;
+        self.notify();
         Ok(())
     }
 }

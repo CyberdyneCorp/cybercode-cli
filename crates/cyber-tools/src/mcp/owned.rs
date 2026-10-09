@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use cyber_core::config::McpServer;
 use cyber_core::worktrees::{CheckoutLease, Repository};
-use cyber_server::runtime::{McpConnectionOwner, McpConnectionPhase, McpConnectionRecord};
+use cyber_server::runtime::{
+    McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
+};
 use cyber_store::Store;
 use serde_json::Value;
 
@@ -182,6 +184,19 @@ impl LocalLauncher<'_> {
     where
         F: Future<Output = Result<McpLocationPin, String>>,
     {
+        self.connect_owned_observed(name, store, None, claim).await
+    }
+
+    pub async fn connect_owned_observed<F>(
+        &self,
+        name: &str,
+        store: Arc<Store>,
+        observer: Option<McpConnectionObserver>,
+        claim: impl FnOnce(String) -> F,
+    ) -> Result<OwnedLocalServer, LocalLaunchError>
+    where
+        F: Future<Output = Result<McpLocationPin, String>>,
+    {
         let selected = authorize_server(self.resolved, self.trust, self.location, name)
             .map_err(LocalLaunchError::before_launch)?;
         if !matches!(selected.definition, McpServer::Local { .. }) {
@@ -191,12 +206,13 @@ impl LocalLauncher<'_> {
         }
         let deadline =
             tokio::time::Instant::now() + Duration::from_secs(selected.definition.timeout().into());
-        let mut owner = McpConnectionOwner::admit(
+        let mut owner = McpConnectionOwner::admit_observed(
             store,
             self.location,
             &self.resolved.trust.checkout_root,
             name,
             &selected.digest,
+            observer,
         )
         .map_err(|error| LocalLaunchError::before_launch(error.to_string()))?;
         owner

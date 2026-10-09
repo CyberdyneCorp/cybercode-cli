@@ -111,6 +111,14 @@
 - **AND** persisted observations SHALL NOT be treated as proof of a live actor
 - **AND** late verified settlement SHALL require the same retained current owner capability
 
+#### Scenario: Committed local status delivery
+- **WHEN** a shared local owner commits a connection transition
+- **THEN** the instance event stream SHALL publish `mcp.status.changed.1` with its independent connection aggregate and committed sequence
+- **AND** failed commits SHALL NOT publish a transition
+- **AND** Location filtering SHALL NOT query or fabricate a Session for the connection
+- **AND** Session streams SHALL NOT adopt these independent events as Session history
+- **AND** public payloads SHALL omit native owner capabilities and private launch diagnostics
+
 ### Requirement: Shutdown cleanup
 (P0) When a Location closes or the server stops, the system SHALL close all MCP clients and terminate local servers and their process groups (SIGTERM, then SIGKILL after 5 s on POSIX; job object termination on Windows).
 

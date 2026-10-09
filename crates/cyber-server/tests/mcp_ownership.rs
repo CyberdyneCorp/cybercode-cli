@@ -239,3 +239,59 @@ fn unknown_ownership_survives_database_restart_without_claiming_a_live_server() 
             .is_err()
     );
 }
+
+#[test]
+fn observers_see_committed_records_and_skip_failed_terminal_commit() {
+    use std::sync::Mutex;
+    let mut registry = Runtime::registry();
+    registry.projector(|_, event| {
+        if event.kind == "mcp.status.changed.1" && event.data["record"]["phase"] == "settled" {
+            return Err("terminal commit rejected".into());
+        }
+        Ok(())
+    });
+    let store =
+        Arc::new(Store::open(StoreOptions::new(DatabaseLocation::Memory, registry)).unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let changes = observed.clone();
+    let database = store.clone();
+    let observer = Arc::new(
+        move |record: &cyber_server::runtime::McpConnectionRecord, seq| {
+            assert_eq!(
+                mcp_connections(&database, &record.directory)
+                    .unwrap()
+                    .into_iter()
+                    .find(|row| row.id == record.id)
+                    .as_ref(),
+                Some(record)
+            );
+            changes.lock().unwrap().push((record.phase, seq));
+        },
+    );
+    let mut owner = McpConnectionOwner::admit_observed(
+        store,
+        root.path(),
+        root.path(),
+        "observed",
+        DIGEST,
+        Some(observer),
+    )
+    .unwrap();
+    owner.preparing().unwrap();
+    owner.launching(Vec::new()).unwrap();
+    owner.connected().unwrap();
+    assert!(owner.finish(true, "private credential".into()).is_err());
+    assert_eq!(observed.lock().unwrap().len(), 4);
+    drop(owner);
+    assert_eq!(
+        *observed.lock().unwrap(),
+        vec![
+            (McpConnectionPhase::Admitted, 0),
+            (McpConnectionPhase::Preparing, 1),
+            (McpConnectionPhase::Launching, 2),
+            (McpConnectionPhase::Running, 3),
+            (McpConnectionPhase::Unknown, 4)
+        ]
+    );
+}
