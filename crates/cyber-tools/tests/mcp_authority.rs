@@ -100,7 +100,7 @@ fn selected_profile_preserves_global_and_project_server_field_origins() {
         .unwrap();
     fixture.trust().approve_mcp(&fixture.repo, &hash).unwrap();
     assert!(
-        authorize_server(&project, &fixture.trust(), &fixture.repo, "audit")
+        !authorize_server(&project, &fixture.trust(), &fixture.repo, "audit")
             .unwrap()
             .requires_sandbox
     );
@@ -135,9 +135,25 @@ fn project_arguments_cannot_inherit_global_command_trust() {
     assert!(authorize_server(&loaded, &fixture.trust(), &fixture.repo, "audit").is_err());
     fixture.trust().approve_mcp(&fixture.repo, &digest).unwrap();
     let server = authorize_server(&loaded, &fixture.trust(), &fixture.repo, "audit").unwrap();
-    assert!(server.requires_sandbox);
+    assert!(!server.requires_sandbox);
     fixture.trust().revoke_mcp(&fixture.repo, &digest).unwrap();
     assert!(authorize_server(&loaded, &fixture.trust(), &fixture.repo, "audit").is_err());
+}
+
+#[test]
+fn missing_project_field_origin_cannot_downgrade_an_approved_server_to_global() {
+    let fixture = Fixture::new();
+    fixture.project_args("--project");
+    fixture.approve_workspace();
+    let loaded = fixture.resolved();
+    let hash = McpSettings::from_config(&loaded.value).unwrap().servers["audit"]
+        .digest("audit")
+        .unwrap();
+    fixture.trust().approve_mcp(&fixture.repo, &hash).unwrap();
+    assert!(authorize_server(&loaded, &fixture.trust(), &fixture.repo, "audit").is_ok());
+    let mut partial = loaded;
+    partial.sources.remove("/mcp/audit/args");
+    assert!(authorize_server(&partial, &fixture.trust(), &fixture.repo, "audit").is_err());
 }
 
 #[test]

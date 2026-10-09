@@ -60,6 +60,7 @@ impl Drop for TrustWriteLock {
     }
 }
 
+#[derive(Clone)]
 pub struct TrustStore {
     path: PathBuf,
 }

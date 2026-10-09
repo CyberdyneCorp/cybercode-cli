@@ -15,13 +15,13 @@
 
 #### Scenario: A project field overrides a global server
 - **WHEN** a project layer overrides arguments or another field of a globally defined server
-- **THEN** every contributing origin SHALL be checked and the effective definition SHALL require project server approval and confinement
+- **THEN** every contributing origin SHALL be checked and the effective definition SHALL require project server approval
 - **AND** missing or unsupported provenance and malformed trust storage SHALL refuse authorization
 
 #### Scenario: Selected profile retains MCP ownership
 - **WHEN** a selected profile combines global MCP fields with project-controlled arguments
 - **THEN** effective field provenance SHALL preserve the original global/project origins, including escaped profile names
-- **AND** selecting the profile SHALL NOT remove the requirement for project server approval or confinement
+- **AND** selecting the profile SHALL NOT remove the requirement for project server approval or change the configured sandbox scope
 
 #### Scenario: Review and approve an exact named server
 - **WHEN** the user reviews `cyber mcp definitions` and approves `cyber mcp trust NAME --digest DIGEST`

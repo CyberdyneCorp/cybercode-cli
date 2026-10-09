@@ -71,7 +71,12 @@ impl StdioConnection {
             .ok_or(McpError::Protocol("MCP stderr unavailable"))?;
         self.stderr = Some(tokio::spawn(drain(stderr)));
         self.client = Some(StdioClient::new(stdout, stdin));
-        self.client.as_mut().unwrap().initialize(timeout).await?;
+        if timeout.is_zero() {
+            return Err(McpError::Timeout);
+        }
+        tokio::time::timeout(timeout, self.client.as_mut().unwrap().initialize(timeout))
+            .await
+            .map_err(|_| McpError::Timeout)??;
         Ok(())
     }
 
