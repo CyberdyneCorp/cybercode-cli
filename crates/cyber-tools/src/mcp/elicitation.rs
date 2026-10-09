@@ -6,10 +6,22 @@ use serde_json::{Map, Value, json};
 pub struct ElicitationContext<'a> {
     asker: &'a Asker,
     authorize: &'a (dyn Fn() -> bool + Send + Sync),
+    pub(super) sampling: Option<&'a dyn super::sampling::SamplingHandler>,
 }
 impl<'a> ElicitationContext<'a> {
     pub fn new(asker: &'a Asker, authorize: &'a (dyn Fn() -> bool + Send + Sync)) -> Self {
-        Self { asker, authorize }
+        Self {
+            asker,
+            authorize,
+            sampling: None,
+        }
+    }
+    pub(super) fn with_sampling(
+        mut self,
+        sampling: &'a dyn super::sampling::SamplingHandler,
+    ) -> Self {
+        self.sampling = Some(sampling);
+        self
     }
 }
 

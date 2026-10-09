@@ -522,3 +522,9 @@ The native connection retains the original grace deadline across close-future di
 Local validation passes 172 distinct Rust cases across shared tools, actual runtime/launch, retained deadline/disposal, application host and authenticated MCP APIs. All 58 strict OpenSpec items, generated SDK consistency and formatting pass; cross-spec lint reports zero errors and 21 warnings. New POSIX graceful tests await native CI; Windows Job termination retains its existing native gate. Complete MCP and M1.3 acceptance remain open.
 
 Workspace all-target Clippy with warnings denied also passes for this revision.
+
+### Local call-owned MCP sampling (2026-10-09)
+
+Opt-in local stdio sampling now advertises basic capability and uses transient native-call ownership, `mcp_sampling` permission for the server name, configured small-model selection, fresh authorization and Session/ancestor budget gates. Typed bounded requests exclude Session history/cache identity, provider body authority and unsupported tool/audio/ambient-context extensions. Retained nested tasks drain local provider transports and observed server-attributed billing before native shutdown. Actual client-request observations distinguish human waiting from immediate denial; malformed/denied callback loops cannot renew outer inactivity.
+
+Local runtime evidence covers allow/deny/default-off, billing, pending-approval revocation, Location-close request cleanup, Session/ancestor exhaustion during approval and soft-budget overrun withholding after usage recording. Actual sockets across OpenAI-compatible, OpenAI Responses and Anthropic cover timeout/close and private-input/credential omission from Session events. Portable protocol evidence covers basic-only capability and exact-identity startup/active unowned refusals. Native platform CI and remote MCP sampling remain open; the complete Roots and sampling requirement and all P1 milestones remain unaccepted.

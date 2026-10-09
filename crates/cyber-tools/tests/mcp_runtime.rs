@@ -54,6 +54,17 @@ for line in lines():
         while pathlib.Path('block-call').exists(): time.sleep(.01)
         result={'content':[{'type':'text','text':pathlib.Path('tool-text').read_text() if pathlib.Path('tool-text').exists() else 'remote '+name}], 'isError':name=='error'}
         if name=='structured': result['structuredContent']={'answer':42}
+        if pathlib.Path('sampling.json').exists():
+            print(json.dumps({'jsonrpc':'2.0','id':'sample','method':'sampling/createMessage','params':json.loads(pathlib.Path('sampling.json').read_text())}),flush=True)
+            reply=json.loads(sys.stdin.readline())
+            pathlib.Path('sampling-reply').write_text(json.dumps(reply))
+            while pathlib.Path('sampling-loop').exists():
+                time.sleep(.05)
+                print(json.dumps({'jsonrpc':'2.0','id':'sample','method':'sampling/createMessage','params':json.loads(pathlib.Path('sampling.json').read_text())}),flush=True)
+                line=sys.stdin.readline()
+                if not line: break
+                reply=json.loads(line)
+            result['content'][0]['text']=json.dumps(reply.get('result',reply.get('error')))
         if pathlib.Path('elicitation.json').exists():
             print(json.dumps({'jsonrpc':'2.0','id':'form','method':'elicitation/create','params':json.loads(pathlib.Path('elicitation.json').read_text())}),flush=True)
             reply=json.loads(sys.stdin.readline())
@@ -2257,4 +2268,473 @@ async fn elicitation_human_time_pauses_call_inactivity_and_session_interrupt_cle
     assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
     assert!(!flow.f.repo.join("elicitation-reply").exists());
     flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn sampling_routes_to_small_model_only_after_its_own_permission_and_bills_the_server() {
+    use cyber_server::runtime::NoSnapshots;
+    for (enabled, permission, expected) in [
+        (true, "allow", true),
+        (true, "deny", false),
+        (false, "allow", false),
+    ] {
+        let flow = Flow::with_models(
+            support::Fixture::new(),
+            vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+            false,
+            Arc::new(NoSnapshots),
+            vec![("test/summary", vec![text("nested answer")])],
+        );
+        let path = configure(&flow, json!({}));
+        let mut config: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        config["mcp"]["sampling"] = json!({"enabled":enabled});
+        config["permissions"] = json!({"mcp_sampling":permission});
+        std::fs::write(&path, config.to_string()).unwrap();
+        flow.f.set_config(config);
+        flow.f.write("sampling.json", &json!({"messages":[{"role":"user","content":{"type":"text","text":"private server input"}}],"maxTokens":42,"modelPreferences":{"hints":[{"name":"unconfigured"}]}}).to_string());
+        let id = flow.session("default").await;
+        ready(&flow, &id).await;
+        flow.prompt(&id, "use the server").await;
+        flow.settle(&id).await;
+        let reply: Value = serde_json::from_str(&flow.f.read("sampling-reply")).unwrap();
+        let requests = flow.requests("test/summary");
+        assert_eq!(requests.len(), usize::from(expected));
+        let events = flow.f.store.read_events(&id, -1, 500).unwrap().events;
+        let usage: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "usage.recorded.1")
+            .collect();
+        if expected {
+            assert_eq!(reply["result"]["content"]["text"], "nested answer");
+            assert_eq!(reply["result"]["model"], "summary");
+            assert!(requests[0].tools_disabled && requests[0].tools.is_empty());
+            assert_eq!(requests[0].max_output_tokens, Some(42));
+            assert_eq!(
+                requests[0].messages,
+                vec![cyber_llm::Message::user_text("private server input")]
+            );
+            assert_eq!(usage.len(), 1);
+            assert_eq!(usage[0].data["purpose"], "mcp_sampling:shared");
+            assert_eq!(usage[0].data["call_id"], "c1");
+        } else {
+            assert!(reply.get("error").is_some());
+            assert!(usage.is_empty());
+            if !enabled {
+                assert_eq!(reply["error"]["code"], -32601);
+            }
+        }
+        assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+        flow.f.host.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn sampling_approval_rechecks_configuration_and_location_close_withdraws_its_request() {
+    use cyber_server::runtime::{NoSnapshots, PendingKind, PermissionReply};
+    for close in [false, true] {
+        let flow = Flow::with_models(
+            support::Fixture::new(),
+            vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+            true,
+            Arc::new(NoSnapshots),
+            vec![("test/summary", vec![text("must not run")])],
+        );
+        let path = configure(&flow, json!({}));
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        config["mcp"]["sampling"] = json!({"enabled":true});
+        config["mcp"]["tool_timeout"] = json!(1);
+        config["permissions"] = json!({"mcp_sampling":"ask"});
+        std::fs::write(&path, config.to_string()).unwrap();
+        flow.f.set_config(config.clone());
+        flow.f.write("sampling.json", &json!({"messages":[{"role":"user","content":{"type":"text","text":"private"}}],"maxTokens":42}).to_string());
+        let id = flow.session("default").await;
+        ready(&flow, &id).await;
+        flow.prompt(&id, "ask").await;
+        let pending = flow.pending(&id).await;
+        assert!(
+            matches!(&pending.kind, PendingKind::Permission(ask) if ask.action == "mcp_sampling" && ask.resources == ["shared"])
+        );
+        if close {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                flow.f.host.close_mcp_location(&flow.f.repo),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        } else {
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            config["mcp"]["sampling"]["enabled"] = json!(false);
+            std::fs::write(&path, config.to_string()).unwrap();
+            flow.f.set_config(config);
+            flow.runtime
+                .reply_permission(&pending.id, PermissionReply::Once)
+                .await
+                .unwrap();
+        }
+        flow.settle(&id).await;
+        assert!(flow.requests("test/summary").is_empty());
+        assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+        if close {
+            assert!(!flow.f.repo.join("sampling-reply").exists());
+            assert!(
+                mcp_connections(&flow.f.store, &flow.f.repo)
+                    .unwrap()
+                    .iter()
+                    .all(|owner| owner.phase == McpConnectionPhase::Settled)
+            );
+        } else {
+            let reply: Value = serde_json::from_str(&flow.f.read("sampling-reply")).unwrap();
+            assert!(reply.get("error").is_some());
+        }
+        flow.runtime.shutdown().await;
+    }
+}
+
+struct NativeSamplingModels {
+    base: Arc<dyn cyber_server::runtime::ModelResolver>,
+    adapter: Arc<dyn cyber_llm::Adapter>,
+}
+impl cyber_server::runtime::ModelResolver for NativeSamplingModels {
+    fn role(&self, role: cyber_llm::catalog::ModelRole) -> Option<String> {
+        if role == cyber_llm::catalog::ModelRole::Small {
+            Some("native/small".into())
+        } else {
+            self.base.role(role)
+        }
+    }
+    fn resolve(&self, reference: &str) -> Result<cyber_server::runtime::ResolvedModel, String> {
+        if reference != "native/small" {
+            return self.base.resolve(reference);
+        }
+        Ok(cyber_server::runtime::ResolvedModel {
+            adapter: self.adapter.clone(),
+            provider: "native".into(),
+            model: "small".into(),
+            template: cyber_llm::LlmRequest {
+                model: "small".into(),
+                max_output_tokens: Some(100),
+                ..Default::default()
+            },
+            context_limit: 200000,
+            cost: None,
+            prefers_apply_patch: false,
+        })
+    }
+}
+
+async fn stalled_sampling_provider() -> (
+    String,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::task::JoinHandle<Value>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (send, received) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let request = sampling_provider_request(&mut socket).await;
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: keepalive\n\n").await.unwrap();
+        let _ = send.send(());
+        let mut byte = [0];
+        let read = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut byte))
+            .await
+            .unwrap();
+        assert!(
+            matches!(read, Ok(0) | Err(_)),
+            "sampling provider socket remained open"
+        );
+        request
+    });
+    (format!("http://{address}/v1"), received, task)
+}
+async fn sampling_provider_request(socket: &mut tokio::net::TcpStream) -> Value {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    let mut chunk = [0; 4096];
+    loop {
+        let n = socket.read(&mut chunk).await.unwrap();
+        assert!(n > 0);
+        bytes.extend_from_slice(&chunk[..n]);
+        if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&bytes[..end]);
+            let length: usize = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|value| value.trim().parse().unwrap())
+                })
+                .unwrap();
+            if bytes.len() >= end + 4 + length {
+                return serde_json::from_slice(&bytes[end + 4..end + 4 + length]).unwrap();
+            }
+        }
+        assert!(bytes.len() <= 2 * 1024 * 1024);
+    }
+}
+
+#[tokio::test]
+async fn sampling_native_provider_timeout_and_location_close_stop_sockets_before_settlement() {
+    use cyber_llm::adapters::{ApiKind, Endpoint, adapter};
+    use cyber_server::runtime::NoSnapshots;
+    for kind in [
+        ApiKind::OpenaiCompatible,
+        ApiKind::OpenaiResponses,
+        ApiKind::Anthropic,
+    ] {
+        for close in [false, true] {
+            let (url, received, served) = stalled_sampling_provider().await;
+            let native: Arc<dyn cyber_llm::Adapter> = Arc::from(adapter(
+                kind,
+                Endpoint::new(url, Some("private-provider-credential".into())),
+            ));
+            let flow = Flow::with_resolver_factory(
+                support::Fixture::new(),
+                vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+                false,
+                Arc::new(NoSnapshots),
+                vec![],
+                move |base| {
+                    Arc::new(NativeSamplingModels {
+                        base,
+                        adapter: native,
+                    })
+                },
+            );
+            let path = configure(&flow, json!({}));
+            let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            config["mcp"]["sampling"] = json!({"enabled":true});
+            config["mcp"]["tool_timeout"] = json!(if close { 30 } else { 1 });
+            config["permissions"] = json!({"mcp_sampling":"allow"});
+            std::fs::write(&path, config.to_string()).unwrap();
+            flow.f.set_config(config);
+            flow.f.write("sampling.json", &json!({"messages":[{"role":"user","content":{"type":"text","text":"private-server-input"}}],"maxTokens":42}).to_string());
+            let id = flow.session("default").await;
+            ready(&flow, &id).await;
+            flow.prompt(&id, "sample").await;
+            tokio::time::timeout(Duration::from_secs(5), received)
+                .await
+                .unwrap()
+                .unwrap();
+            if close {
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    flow.f.host.close_mcp_location(&flow.f.repo),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            }
+            flow.settle(&id).await;
+            let request = tokio::time::timeout(Duration::from_secs(5), served)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(request.get("tools").is_none());
+            assert!(request.to_string().contains("private-server-input"));
+            let events = flow.f.store.read_events(&id, -1, 500).unwrap().events;
+            let usage: Vec<_> = events
+                .iter()
+                .filter(|event| event.kind == "usage.recorded.1")
+                .collect();
+            assert_eq!(usage.len(), 1);
+            assert_eq!(usage[0].data["purpose"], "mcp_sampling:shared");
+            assert!(usage[0].data["cost"].is_null());
+            let recorded = events
+                .iter()
+                .map(|e| e.data.to_string())
+                .collect::<String>();
+            assert!(!recorded.contains("private-provider-credential"));
+            assert!(!recorded.contains("private-server-input"));
+            assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+            if !close {
+                let reply: Value = serde_json::from_str(&flow.f.read("sampling-reply")).unwrap();
+                assert!(
+                    reply["error"]["message"]
+                        .as_str()
+                        .unwrap()
+                        .contains("timed out")
+                );
+            }
+            flow.runtime.shutdown().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn sampling_checks_session_and_ancestor_budgets_after_approval() {
+    use cyber_server::runtime::{AuxiliaryUsage, CreateSession, NoSnapshots, PermissionReply};
+    for ancestor in [false, true] {
+        let flow = Flow::with_models(
+            support::Fixture::new(),
+            vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+            true,
+            Arc::new(NoSnapshots),
+            vec![("test/summary", vec![text("must not run")])],
+        );
+        let path = configure(&flow, json!({}));
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        config["mcp"]["sampling"] = json!({"enabled":true});
+        config["permissions"] = json!({"mcp_sampling":"ask"});
+        std::fs::write(&path, config.to_string()).unwrap();
+        flow.f.set_config(config);
+        flow.f.write("sampling.json",&json!({"messages":[{"role":"user","content":{"type":"text","text":"private"}}],"maxTokens":42}).to_string());
+        let root = flow
+            .runtime
+            .create_session(CreateSession {
+                directory: flow.f.repo.display().to_string(),
+                model: "test/main".into(),
+                mode: Some("default".into()),
+                budget: Some(
+                    serde_json::from_value(json!({"max_tokens":150,"enforcement":"soft"})).unwrap(),
+                ),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        let id = if ancestor {
+            flow.runtime
+                .create_session(CreateSession {
+                    directory: flow.f.repo.display().to_string(),
+                    model: "test/main".into(),
+                    mode: Some("default".into()),
+                    parent_id: Some(root.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .id
+        } else {
+            root.clone()
+        };
+        ready(&flow, &id).await;
+        flow.prompt(&id, "sample").await;
+        let pending = flow.pending(&id).await;
+        flow.runtime
+            .operation_asker(&id)
+            .await
+            .unwrap()
+            .record_model_usage(AuxiliaryUsage {
+                provider: "test".into(),
+                model: "test/main".into(),
+                purpose: "fixture".into(),
+                call_id: None,
+                duration_ms: 0,
+                usage: cyber_llm::Usage {
+                    input: 50,
+                    ..Default::default()
+                },
+                cost: Some(0.0),
+            })
+            .await
+            .unwrap();
+        flow.runtime
+            .reply_permission(&pending.id, PermissionReply::Once)
+            .await
+            .unwrap();
+        flow.settle(&id).await;
+        assert!(flow.requests("test/summary").is_empty());
+        let reply: Value = serde_json::from_str(&flow.f.read("sampling-reply")).unwrap();
+        assert_eq!(reply["error"]["message"], "Sampling budget refused");
+        let events = flow.f.store.read_events(&id, -1, 500).unwrap().events;
+        assert!(
+            events
+                .iter()
+                .any(|e| e.kind == "budget.exceeded.1" && e.data["scope_id"] == root)
+        );
+        assert!(!events.iter().any(|e|e.kind == "usage.recorded.1" && e.data["purpose"] == "mcp_sampling:shared"));
+        assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+        flow.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn sampling_records_usage_but_withholds_response_when_the_soft_budget_is_exceeded() {
+    use cyber_server::runtime::{CreateSession, NoSnapshots};
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        vec![call("c1", "mcp__shared__read", json!({})), text("done")],
+        false,
+        Arc::new(NoSnapshots),
+        vec![("test/summary", vec![text("private-nested-answer")])],
+    );
+    let path = configure(&flow, json!({}));
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["mcp"]["sampling"] = json!({"enabled":true});
+    config["permissions"] = json!({"mcp_sampling":"allow"});
+    std::fs::write(&path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+    flow.f.write("sampling.json",&json!({"messages":[{"role":"user","content":{"type":"text","text":"private"}}],"maxTokens":42}).to_string());
+    let id = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: flow.f.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("default".into()),
+            budget: Some(
+                serde_json::from_value(json!({"max_tokens":150,"enforcement":"soft"})).unwrap(),
+            ),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "sample").await;
+    flow.settle(&id).await;
+    assert_eq!(flow.requests("test/summary").len(), 1);
+    let reply: Value = serde_json::from_str(&flow.f.read("sampling-reply")).unwrap();
+    assert_eq!(reply["error"]["message"], "Sampling budget exceeded");
+    assert!(!reply.to_string().contains("private-nested-answer"));
+    let events = flow.f.store.read_events(&id, -1, 500).unwrap().events;
+    assert!(events.iter().any(|e| e.kind == "usage.recorded.1"
+        && e.data["purpose"] == "mcp_sampling:shared"
+        && e.data["usage"]["input"] == 100));
+    assert!(
+        !events
+            .iter()
+            .any(|e| e.data.to_string().contains("private-nested-answer"))
+    );
+    assert_eq!(
+        flow.runtime.session_usage(&id).unwrap().own.total_tokens,
+        215
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn sampling_malformed_and_immediately_denied_callbacks_cannot_extend_call_inactivity() {
+    for malformed in [false, true] {
+        let flow = Flow::new(vec![text("unused")], false);
+        let path = configure(&flow, json!({}));
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        config["mcp"]["sampling"] = json!({"enabled":true});
+        config["mcp"]["tool_timeout"] = json!(1);
+        config["permissions"] = json!({"mcp_sampling":"deny"});
+        std::fs::write(&path, config.to_string()).unwrap();
+        flow.f.set_config(config);
+        flow.f.write("sampling.json",&if malformed {json!({"messages":[],"maxTokens":0})} else {json!({"messages":[{"role":"user","content":{"type":"text","text":"private"}}],"maxTokens":42})}.to_string());
+        flow.f.write("sampling-loop", "loop");
+        let id = flow.session("default").await;
+        let defs = ready(&flow, &id).await;
+        let def = defs
+            .iter()
+            .find(|def| def.spec.name == "mcp__shared__read")
+            .unwrap();
+        let result =
+            tokio::time::timeout(Duration::from_secs(3), invoke(&flow, &id, def, "default")).await;
+        assert!(matches!(result,Ok(ToolOutcome::Failed(error)) if error.contains("timed out")));
+        assert!(
+            mcp_connections(&flow.f.store, &flow.f.repo)
+                .unwrap()
+                .iter()
+                .all(|owner| owner.phase == McpConnectionPhase::Settled)
+        );
+        assert!(flow.requests("test/summary").is_empty());
+        flow.runtime.shutdown().await;
+    }
 }

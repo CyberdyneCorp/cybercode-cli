@@ -811,12 +811,22 @@ impl BuiltinHost {
             .map_err(ToolError::Failed)?
             .call_timeout(&entry.name);
         let authorize = || self.mcp_binding(inv).is_ok();
-        let context = super::ElicitationContext::new(&inv.asker, &authorize);
+        let sampler = super::sampler::Sampler::new(
+            self.weak
+                .upgrade()
+                .ok_or_else(|| ToolError::Failed("MCP host unavailable".into()))?,
+            inv.clone(),
+            entry.name.clone(),
+            Duration::from_secs(timeout.into()),
+        );
+        let context =
+            super::ElicitationContext::new(&inv.asker, &authorize).with_sampling(&sampler);
         let result = tokio::select! {
             result = owner.call_exposed_tool_with_elicitation(&inv.name, inv.input.clone(), Duration::from_secs(timeout.into()), &context) => result.map_err(|error| ToolError::Failed(error.to_string())),
             _ = cancel.cancelled() => Err(ToolError::Aborted),
             _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
+        let sampling_settlement = sampler.finish().await;
         if owner.unresolved() {
             entry.lost.store(true, Ordering::Release);
             *entry
@@ -836,7 +846,12 @@ impl BuiltinHost {
             .await
             .map_err(|_| ToolError::Failed("MCP question cleanup failed".into()))?;
         drop(server);
+        sampling_settlement.map_err(|error| ToolError::Failed(error.into()))?;
         result
+    }
+
+    pub(super) fn authorize_mcp_sampling(&self, inv: &Invocation) -> Result<(), ToolError> {
+        self.mcp_binding(inv).map(|_| ())
     }
 
     fn mcp_binding(&self, inv: &Invocation) -> Result<(Arc<Entry>, DiscoveredTool), ToolError> {

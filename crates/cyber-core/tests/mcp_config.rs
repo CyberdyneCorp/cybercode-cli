@@ -221,3 +221,34 @@ fn tool_timeout_override_preserves_connect_defaults_and_approval_identity() {
         );
     }
 }
+
+#[test]
+fn sampling_is_opt_in_and_does_not_reserve_a_typed_server_name() {
+    for value in [
+        json!({}),
+        json!({"mcp": {}}),
+        json!({"mcp": {"sampling": {}}}),
+        json!({"mcp": {"sampling": {"enabled": false}}}),
+    ] {
+        assert!(!McpSettings::from_config(&value).unwrap().sampling_enabled);
+    }
+    let settings = McpSettings::from_config(&json!({"mcp": {"sampling": {"enabled": true}, "db": {"type": "local", "command": "server"}}})).unwrap();
+    assert!(settings.sampling_enabled);
+    assert_eq!(settings.servers.len(), 1);
+    let settings = McpSettings::from_config(
+        &json!({"mcp": {"sampling": {"type": "local", "command": "server"}}}),
+    )
+    .unwrap();
+    assert!(!settings.sampling_enabled);
+    assert!(settings.servers.contains_key("sampling"));
+    for value in [
+        json!(true),
+        json!(null),
+        json!({"enabled": "private-secret"}),
+        json!({"enabled": true, "unknown": "private-secret"}),
+    ] {
+        let error = McpSettings::from_config(&json!({"mcp": {"sampling": value}})).unwrap_err();
+        assert!(error.starts_with("mcp.sampling:"));
+        assert!(!error.contains("private-secret"));
+    }
+}

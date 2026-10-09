@@ -54,8 +54,23 @@ impl StdioConnection {
         timeout: Duration,
         roots: Option<super::McpRoots>,
     ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
+        Self::connect_with_tools_and_roots_and_sampling(
+            process, name, filter, timeout, roots, false,
+        )
+        .await
+    }
+
+    pub async fn connect_with_tools_and_roots_and_sampling(
+        process: HookCommandProcess,
+        name: &str,
+        filter: &cyber_core::config::McpToolFilter,
+        timeout: Duration,
+        roots: Option<super::McpRoots>,
+        sampling: bool,
+    ) -> Result<(Self, Vec<super::DiscoveredTool>), ConnectionError> {
         let deadline = tokio::time::Instant::now() + timeout;
-        let mut connection = Self::connect_configured(process, timeout, roots, Some(name)).await?;
+        let mut connection =
+            Self::connect_configured(process, timeout, roots, Some(name), sampling).await?;
         match connection
             .discover_tools(
                 name,
@@ -89,7 +104,7 @@ impl StdioConnection {
         timeout: Duration,
         roots: Option<super::McpRoots>,
     ) -> Result<Self, ConnectionError> {
-        Self::connect_configured(process, timeout, roots, None).await
+        Self::connect_configured(process, timeout, roots, None, false).await
     }
 
     async fn connect_configured(
@@ -97,6 +112,7 @@ impl StdioConnection {
         timeout: Duration,
         roots: Option<super::McpRoots>,
         server: Option<&str>,
+        sampling: bool,
     ) -> Result<Self, ConnectionError> {
         let mut connection = Self {
             process,
@@ -105,7 +121,10 @@ impl StdioConnection {
             #[cfg(unix)]
             grace_deadline: None,
         };
-        if let Err(error) = connection.initialize(timeout, roots, server).await {
+        if let Err(error) = connection
+            .initialize(timeout, roots, server, sampling)
+            .await
+        {
             let (acknowledged, stderr) = connection.shutdown().await;
             return Err(ConnectionError {
                 error,
@@ -121,6 +140,7 @@ impl StdioConnection {
         timeout: Duration,
         roots: Option<super::McpRoots>,
         server: Option<&str>,
+        sampling: bool,
     ) -> Result<(), McpError> {
         let stdin = self
             .process
@@ -140,10 +160,13 @@ impl StdioConnection {
             Some(roots) => client.with_roots(roots)?,
             None => client,
         };
-        self.client = Some(match server {
-            Some(server) => client.with_form_elicitation(server)?,
-            None => client,
-        });
+        self.client = Some(
+            (match server {
+                Some(server) => client.with_form_elicitation(server)?,
+                None => client,
+            })
+            .with_sampling(sampling)?,
+        );
         if timeout.is_zero() {
             return Err(McpError::Timeout);
         }

@@ -109,6 +109,17 @@ impl Flow {
         snapshots: Arc<dyn Snapshots>,
         extra: Vec<(&'static str, Scripts)>,
     ) -> Self {
+        Self::with_resolver_factory(f, script, interactive, snapshots, extra, |models| models)
+    }
+
+    pub fn with_resolver_factory(
+        f: Fixture,
+        script: Vec<Vec<ScriptStep>>,
+        interactive: bool,
+        snapshots: Arc<dyn Snapshots>,
+        extra: Vec<(&'static str, Scripts)>,
+        resolver: impl FnOnce(Arc<dyn ModelResolver>) -> Arc<dyn ModelResolver>,
+    ) -> Self {
         let main = Arc::new(ScriptedAdapter::new(script));
         let mut models = Models(HashMap::from([
             ("test/main", Arc::clone(&main)),
@@ -123,7 +134,7 @@ impl Flow {
         let models = Arc::new(models);
         let runtime = Runtime::new(RuntimeOptions {
             store: Arc::clone(&f.store),
-            resolver: models.clone(),
+            resolver: resolver(models.clone()),
             tools: Arc::clone(&f.host) as Arc<dyn ToolHost>,
             global_config_dir: f.dir.path().join("global"),
             shell: "bash".into(),

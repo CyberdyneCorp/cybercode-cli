@@ -215,6 +215,7 @@ impl McpServer {
 pub struct McpSettings {
     pub servers: BTreeMap<String, McpServer>,
     pub tool_timeout: u32,
+    pub sampling_enabled: bool,
 }
 impl McpSettings {
     pub fn call_timeout(&self, name: &str) -> u32 {
@@ -227,12 +228,25 @@ impl McpSettings {
         let mut settings = Self {
             servers: BTreeMap::new(),
             tool_timeout: 300,
+            sampling_enabled: false,
         };
         let Some(value) = config.get("mcp") else {
             return Ok(settings);
         };
         let map = value.as_object().ok_or("mcp: expected server map")?;
         for (name, value) in map {
+            if name == "sampling" && value.get("type").is_none() {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Sampling {
+                    #[serde(default)]
+                    enabled: bool,
+                }
+                settings.sampling_enabled = serde_json::from_value::<Sampling>(value.clone())
+                    .map_err(|_| "mcp.sampling: expected an enabled boolean".to_string())?
+                    .enabled;
+                continue;
+            }
             if name == "tool_timeout" && !value.is_object() {
                 settings.tool_timeout = value
                     .as_u64()

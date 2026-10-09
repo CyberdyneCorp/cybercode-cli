@@ -655,3 +655,50 @@ async fn unadvertised_form_elicitation_is_refused_without_losing_the_active_requ
     client.call_tool("audit", json!({}), TIMEOUT).await.unwrap();
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn sampling_capability_is_basic_opt_in_and_unowned_callbacks_preserve_request_identity() {
+    for enabled in [false, true] {
+        let (client, mut peer) = pair();
+        let mut client = client.with_sampling(enabled).unwrap();
+        let server = tokio::spawn(async move {
+            let initialize = read(&mut peer).await;
+            assert_eq!(
+                initialize["params"]["capabilities"],
+                if enabled {
+                    json!({"sampling":{}})
+                } else {
+                    json!({})
+                }
+            );
+            send(&mut peer,json!({"jsonrpc":"2.0","id":"sample-startup","method":"sampling/createMessage","params":{"messages":[],"maxTokens":1}})).await;
+            let refused = read(&mut peer).await;
+            assert_eq!(refused["id"], "sample-startup");
+            assert_eq!(
+                refused["error"]["code"],
+                if enabled { -32603 } else { -32601 }
+            );
+            send(&mut peer,json!({"jsonrpc":"2.0","id":initialize["id"],"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}})).await;
+            assert_eq!(read(&mut peer).await["method"], "notifications/initialized");
+            let pending = read(&mut peer).await;
+            send(&mut peer,json!({"jsonrpc":"2.0","id":42,"method":"sampling/createMessage","params":{"private":"private-server-input"}})).await;
+            let refused = read(&mut peer).await;
+            assert_eq!(refused["id"], 42);
+            assert_eq!(
+                refused["error"]["code"],
+                if enabled { -32603 } else { -32601 }
+            );
+            assert!(!refused.to_string().contains("private-server-input"));
+            send(
+                &mut peer,
+                json!({"jsonrpc":"2.0","id":pending["id"],"result":{"content":[]}}),
+            )
+            .await;
+        });
+        client.initialize(TIMEOUT).await.unwrap();
+        client.call_tool("audit", json!({}), TIMEOUT).await.unwrap();
+        assert!(!client.unresolved());
+        server.await.unwrap();
+        assert!(client.with_sampling(!enabled).is_err());
+    }
+}

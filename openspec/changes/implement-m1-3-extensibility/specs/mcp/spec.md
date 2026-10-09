@@ -276,6 +276,34 @@
 - **THEN** its root selection SHALL remain an immutable connection snapshot
 - **AND** a fresh connection SHALL capture current authorized configuration
 
+#### Scenario: Sampling configuration and bounded input
+- **WHEN** sampling settings or basic request messages are parsed
+- **THEN** sampling SHALL default disabled and malformed settings SHALL fail without echoing private values
+- **AND** a typed server named sampling SHALL remain a server rather than a settings object
+- **AND** request conversion SHALL retain bounded text/image messages, declared user/assistant roles, token allowance and valid temperature/stop sequences
+- **AND** unsupported tools, audio and ambient-server-context requests SHALL fail before provider work
+
+#### Scenario: Sampling preserves the selected model and privacy
+- **WHEN** an authorized active call requests basic sampling
+- **THEN** model preferences SHALL NOT override the configured small model
+- **AND** the generated provider request SHALL contain only the server-supplied messages and system prompt, with tools disabled and output bounded by the model allowance
+- **AND** conflicting provider body overlays, Session history, Context Sources and Session cache identity SHALL NOT be forwarded
+- **AND** Session/ancestor budgets and server-attributed observed usage SHALL apply before settlement
+
+#### Scenario: Sampling local transport and cancellation
+- **WHEN** a native small-model sampling stream times out or its active MCP Location closes
+- **THEN** its retained task SHALL close the local provider transport and record observed usage before native MCP settlement
+- **AND** an attempted call without final usage SHALL remain unpriced rather than be reported free
+- **AND** protocol refusals and durable Session events SHALL omit provider credentials and sampling input
+- **AND** local transport closure SHALL NOT claim remote processing or final unobserved usage was rolled back
+- **AND** malformed or immediately denied callbacks SHALL NOT extend call inactivity; only an actual client request or attempted nested provider call SHALL pause that budget
+
+#### Scenario: Sampling budget changes during approval
+- **WHEN** a Session or ancestor budget is exhausted while a sampling approval is pending
+- **THEN** approval SHALL NOT admit a small-model request
+- **AND** a completed sampling request that crosses a soft budget SHALL record observed usage but withhold its completion from the server
+
+
 ### Requirement: Server instructions
 (P0) The system SHALL include each connected server's `instructions` in a `<mcp_instructions>` block as a Context Source keyed `mcp/instructions`, omitting servers whose tools are all denied for the agent. Instruction changes SHALL arrive as Mid-Conversation System Messages.
 

@@ -336,12 +336,15 @@ impl LocalLauncher<'_> {
                 });
             }
         };
-        match StdioConnection::connect_with_tools_and_roots(
+        match StdioConnection::connect_with_tools_and_roots_and_sampling(
             process,
             name,
             tools,
             deadline.saturating_duration_since(tokio::time::Instant::now()),
             Some(roots),
+            cyber_core::config::McpSettings::from_config(&self.resolved.value)
+                .map_err(LocalLaunchError::before_launch)?
+                .sampling_enabled,
         )
         .await
         {

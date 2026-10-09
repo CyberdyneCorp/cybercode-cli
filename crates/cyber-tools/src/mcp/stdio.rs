@@ -57,6 +57,7 @@ pub struct StdioClient<R, W> {
     tools_changed: bool,
     roots: Option<super::McpRoots>,
     form_server: Option<String>,
+    sampling: bool,
 }
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
@@ -73,6 +74,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             tools_changed: false,
             roots: None,
             form_server: None,
+            sampling: false,
         }
     }
     /// Install roots before initialization; the connection snapshot stays immutable.
@@ -97,6 +99,16 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             return Err(McpError::Protocol("invalid elicitation configuration"));
         }
         self.form_server = Some(server.into());
+        Ok(self)
+    }
+
+    pub fn with_sampling(mut self, enabled: bool) -> Result<Self, McpError> {
+        if self.initialization_started {
+            return Err(McpError::Protocol(
+                "sampling must be configured before initialization",
+            ));
+        }
+        self.sampling = enabled;
         Ok(self)
     }
 
@@ -189,6 +201,9 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         };
         if self.form_server.is_some() {
             capabilities["elicitation"] = json!({"form":{}});
+        }
+        if self.sampling {
+            capabilities["sampling"] = json!({});
         }
         let result = self.request("initialize", json!({"protocolVersion":VERSION,"capabilities":capabilities,"clientInfo":{"name":"cyber","version":env!("CARGO_PKG_VERSION")}}), timeout).await?;
         let version = result["protocolVersion"]
@@ -345,10 +360,11 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
                     progress = Some(value);
                     deadline = tokio::time::Instant::now() + timeout;
                 }
-                if method == "elicitation/create"
-                    && self.form_server.is_some()
+                if ((method == "elicitation/create" && self.form_server.is_some())
+                    || (method == "sampling/createMessage" && self.sampling))
                     && message.get("id").is_some()
                 {
+                    // Human questions and owned nested sampling have their own wait/timeout rules.
                     let started = tokio::time::Instant::now();
                     if self.server_message(&message, timeout, context).await? {
                         deadline += started.elapsed();
@@ -383,6 +399,22 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         };
         if !id.is_string() && !id.is_number() {
             return Err(McpError::Protocol("invalid server request identity"));
+        }
+        if message["method"] == "sampling/createMessage" && self.sampling {
+            let handler = context.and_then(|context| context.sampling);
+            let (mut response, interacted) = match handler {
+                Some(handler) => handler.sample(&message["params"]).await,
+                None => (
+                    json!({"error":{"code":-32603,"message":"Sampling requires an active tool call owner"}}),
+                    false,
+                ),
+            };
+            response["jsonrpc"] = json!("2.0");
+            response["id"] = id.clone();
+            tokio::time::timeout(timeout, self.write(&response))
+                .await
+                .map_err(|_| McpError::Timeout)??;
+            return Ok(interacted);
         }
         if message["method"] == "elicitation/create"
             && let Some(server) = self.form_server.as_deref()

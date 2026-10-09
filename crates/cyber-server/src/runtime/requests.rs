@@ -5,6 +5,7 @@
 //! attached client replies. Without an interactive client the reply is `Unattended` at once,
 //! so non-interactive Sessions never block.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, Weak};
 
 use serde::{Deserialize, Serialize};
@@ -126,6 +127,7 @@ pub struct Asker {
     pub call_id: String,
     pub message_id: String,
     agent: String,
+    requests_opened: Arc<AtomicU64>,
     pub(super) auto_override: Option<super::auto_override::Grant>,
 }
 
@@ -152,6 +154,7 @@ impl Asker {
             call_id: call_id.into(),
             message_id: message_id.into(),
             agent: agent.into(),
+            requests_opened: Arc::new(AtomicU64::new(0)),
             auto_override: None,
         }
     }
@@ -164,6 +167,7 @@ impl Asker {
             call_id: String::new(),
             message_id: String::new(),
             agent: String::new(),
+            requests_opened: Arc::new(AtomicU64::new(0)),
             auto_override: None,
         }
     }
@@ -173,6 +177,11 @@ impl Asker {
         self.inner
             .upgrade()
             .is_some_and(|inner| inner.options.interactive)
+    }
+
+    /// Call-local observation of actual durable client requests, shared by cloned handles.
+    pub fn requests_opened(&self) -> u64 {
+        self.requests_opened.load(Ordering::Acquire)
     }
 
     pub async fn permission(&self, ask: PermissionAsk) -> PermissionReply {
@@ -186,6 +195,7 @@ impl Asker {
         {
             return PermissionReply::Unattended;
         }
+        self.requests_opened.fetch_add(1, Ordering::Release);
         rx.await.unwrap_or(PermissionReply::Reject {
             message: Some("the request was abandoned".into()),
         })
@@ -217,6 +227,39 @@ impl Asker {
         Ok(())
     }
 
+    /// Withdraw this call's approvals and questions without interrupting sibling work.
+    pub async fn cancel_requests(&self) -> Result<(), RuntimeError> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Ok(());
+        };
+        for request in inner
+            .owned_pending(&self.session_id)
+            .into_iter()
+            .filter(|request| {
+                request.call_id == self.call_id && request.message_id == self.message_id
+            })
+        {
+            if let Some(waiter) = inner.take_waiter(&request.id) {
+                match waiter.reply {
+                    Reply::Permission(sender) => {
+                        let reply = PermissionReply::Reject {
+                            message: Some("The operation was cancelled".into()),
+                        };
+                        inner.record_reply(&request, &reply).await?;
+                        let _ = sender.send(reply);
+                    }
+                    Reply::Question(sender) => {
+                        inner
+                            .record_question_reply(&request, &QuestionReply::Dismissed)
+                            .await?;
+                        let _ = sender.send(QuestionReply::Dismissed);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn question(&self, questions: Vec<Question>) -> QuestionReply {
         let Some(inner) = self.inner.upgrade() else {
             return QuestionReply::Unattended;
@@ -232,6 +275,7 @@ impl Asker {
         {
             return QuestionReply::Unattended;
         }
+        self.requests_opened.fetch_add(1, Ordering::Release);
         rx.await.unwrap_or(QuestionReply::Dismissed)
     }
 }
