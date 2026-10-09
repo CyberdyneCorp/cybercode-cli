@@ -231,7 +231,9 @@ struct ClientFixture {
     turn: TurnContext,
     def: ToolDef,
     frames: mpsc::Receiver<serde_json::Value>,
+    #[cfg(unix)]
     out: mpsc::Sender<serde_json::Value>,
+    #[cfg(unix)]
     owner: u64,
 }
 
@@ -274,7 +276,9 @@ impl ClientFixture {
             turn,
             def,
             frames,
+            #[cfg(unix)]
             out,
+            #[cfg(unix)]
             owner,
         }
     }

@@ -353,6 +353,55 @@ async fn interrupted_call_closes_native_owner_and_removes_registration() {
     flow.runtime.shutdown().await;
 }
 
+#[tokio::test]
+async fn runtime_shutdown_interrupts_active_call_without_session_cancellation() {
+    let flow = Flow::new(vec![], false);
+    configure(&flow, json!({}));
+    let id = flow.session("default").await;
+    let defs = ready(&flow, &id).await;
+    let def = defs
+        .iter()
+        .find(|def| def.spec.name == "mcp__shared__read")
+        .unwrap();
+    let mut inv = flow.f.invocation("default", &def.spec.name, json!({}));
+    inv.session_id = id.clone();
+    inv.registration = def.registration.clone();
+    flow.f.write("block-call", "block");
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    let host = flow.f.host.clone();
+    let task = tokio::spawn(async move { host.execute(inv, token).await });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !flow.f.repo.join("calls").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), flow.f.host.shutdown())
+        .await
+        .unwrap();
+    assert!(!cancel.is_cancelled());
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap(),
+        ToolOutcome::Aborted
+    );
+    assert!(
+        flow.f
+            .host
+            .definitions(&turn(&flow, &id))
+            .iter()
+            .all(|def| !def.spec.name.starts_with("mcp__"))
+    );
+    let record = &mcp_connections(&flow.f.store, &flow.f.repo).unwrap()[0];
+    assert_eq!(record.phase, McpConnectionPhase::Settled);
+    assert_eq!(record.acknowledged, Some(true));
+    flow.runtime.shutdown().await;
+}
+
 struct Git;
 impl cyber_core::worktrees::GitExecution for Git {
     fn run<'a>(

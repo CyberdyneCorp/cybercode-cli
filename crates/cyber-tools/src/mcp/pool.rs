@@ -29,7 +29,18 @@ struct Entry {
     cancel: CancellationToken,
     published: Mutex<Option<(String, Vec<DiscoveredTool>)>>,
     server: tokio::sync::Mutex<Option<OwnedLocalServer>>,
-    task: Mutex<Option<JoinHandle<()>>>,
+    task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Entry {
+    async fn join_startup(&self) {
+        let mut task = self.task.lock().await;
+        if let Some(handle) = task.as_mut() {
+            // Awaiting by reference keeps ownership available if shutdown is disposed.
+            let _ = handle.await;
+            task.take();
+        }
+    }
 }
 
 impl BuiltinHost {
@@ -74,7 +85,7 @@ impl BuiltinHost {
                 cancel: CancellationToken::new(),
                 published: Mutex::default(),
                 server: tokio::sync::Mutex::new(None),
-                task: Mutex::default(),
+                task: tokio::sync::Mutex::default(),
             });
             let owned = entry.clone();
             let host = host.clone();
@@ -122,7 +133,8 @@ impl BuiltinHost {
                     None => {}
                 }
             });
-            *entry.task.lock().unwrap_or_else(PoisonError::into_inner) = Some(task);
+            // The entry is not published until its startup handle is installed.
+            *entry.task.try_lock().expect("unpublished MCP entry") = Some(task);
             pool.entries.insert(key, entry);
         }
     }
@@ -193,14 +205,7 @@ impl BuiltinHost {
                 .published
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = None;
-            let task = entry
-                .task
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            if let Some(task) = task {
-                let _ = task.await;
-            }
+            entry.join_startup().await;
             let mut server = entry.server.lock().await;
             if let Some(owner) = server.as_mut() {
                 match owner.shutdown().await {
@@ -266,6 +271,7 @@ impl BuiltinHost {
         let mut server = tokio::select! {
             server = entry.server.lock() => server,
             _ = cancel.cancelled() => return Err(ToolError::Aborted),
+            _ = entry.cancel.cancelled() => return Err(ToolError::Aborted),
         };
         self.mcp_binding(inv)?;
         let owner = server
@@ -282,6 +288,7 @@ impl BuiltinHost {
         let result = tokio::select! {
             result = owner.call_exposed_tool(&inv.name, inv.input.clone(), Duration::from_secs(timeout.into())) => result.map_err(|error| ToolError::Failed(error.to_string())),
             _ = cancel.cancelled() => Err(ToolError::Aborted),
+            _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
         if owner.unresolved() {
             entry.cancel.cancel();
@@ -369,4 +376,36 @@ fn output(result: Value) -> Result<ToolOutcome, ToolError> {
         },
         None => ToolOutcome::Ok(text),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn disposed_shutdown_retains_startup_until_retry_joins_it() {
+        let (release, blocked) = tokio::sync::oneshot::channel::<()>();
+        let entry = Entry {
+            name: "pending".into(),
+            digest: String::new(),
+            cancel: CancellationToken::new(),
+            published: Mutex::default(),
+            server: tokio::sync::Mutex::default(),
+            task: tokio::sync::Mutex::new(Some(tokio::spawn(async move {
+                let _ = blocked.await;
+            }))),
+        };
+        let mut first = Box::pin(entry.join_startup());
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        drop(first);
+        assert!(entry.task.lock().await.as_ref().is_some());
+        let mut retry = Box::pin(entry.join_startup());
+        assert!(futures::poll!(retry.as_mut()).is_pending());
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), retry)
+            .await
+            .unwrap();
+        assert!(entry.task.lock().await.is_none());
+        entry.join_startup().await;
+    }
 }
