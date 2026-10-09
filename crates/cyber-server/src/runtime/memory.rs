@@ -6,8 +6,8 @@ use cyber_core::memory::{MemoryJournalIdentity, MemoryMutation};
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
 pub use recovery::{MemoryRecoveryAdmission, MemoryRecoveryIdentity, MemoryRecoveryRequestStatus};
 pub(super) use recovery::{recover, review};
-pub use request_status::MemoryRequestStatus;
 pub(super) use request_status::status as request_status;
+pub use request_status::{MemoryRequestStatus, memory_http_request_id};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -272,7 +272,7 @@ pub(super) fn http_identity(
     key: &str,
     digest: &str,
 ) -> Result<Option<bool>, StoreError> {
-    let id = format!("mwr_{:x}", Sha256::digest(format!("http:{key}").as_bytes()));
+    let id = memory_http_request_id(key);
     let recovery_digest = digest.to_owned();
     let digest = digest.to_owned();
     let result = store.read(move |db| {

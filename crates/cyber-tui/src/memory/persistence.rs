@@ -446,6 +446,41 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
+    fn confirmed_record_forgetting_is_durable_and_cancellation_preserves_restart_evidence() {
+        let state = tempfile::tempdir().unwrap();
+        let mut app = app();
+        let mut persistence = Persistence::load(state.path(), &mut app.memory);
+        edit(&mut app);
+        let action = save_action(&mut app);
+        let actions = persistence.gate(&mut app, vec![action]);
+        let Action::Memory(request) = &actions[0] else {
+            panic!("memory request");
+        };
+        app.memory.apply(request, Err("Uncertain response".into()));
+        app.memory.leave_editor();
+        persistence.gate(&mut app, Vec::new());
+        let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        app.memory.key(key('u'), &app.session);
+        app.memory.key(key('f'), &app.session);
+        app.memory.key(key('n'), &app.session);
+        persistence.gate(&mut app, Vec::new());
+        let path = state.path().join("memory-client/state.json");
+        let before: Checkpoint = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(before.intents.len(), 1);
+        app.memory.key(key('f'), &app.session);
+        app.memory.key(key('y'), &app.session);
+        persistence.gate(&mut app, Vec::new());
+        let after: Checkpoint = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(after.intents.is_empty());
+        assert_eq!(after.draft, before.draft);
+        drop(persistence);
+        let mut restored = View::default();
+        let _persistence = Persistence::load(state.path(), &mut restored);
+        assert!(restored.intents.is_empty());
+        assert!(restored.draft.is_some());
+    }
+    #[cfg(unix)]
+    #[test]
     fn external_checkpoint_edit_withholds_dispatch_and_exit_and_preserves_both_drafts() {
         let state = tempfile::tempdir().unwrap();
         let mut app = app();

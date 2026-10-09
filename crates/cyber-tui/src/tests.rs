@@ -2006,8 +2006,26 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
     );
     app.on_key(memory_control('s'));
     let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
+    discard_memory_ack(&client, &mut app, action, &mut persistence).await;
+    assert!(screen(&app).contains("Unavailable"));
+    drop(persistence);
+    app = App::new(app.session.clone(), Vec::new(), "cyber");
+    persistence = crate::memory::persistence::Persistence::load(&paths.state, &mut app.memory);
+    let request = open_memory(&mut app, true);
+    apply_memory_response(&mut app, crate::memory::perform(&client, request).await);
+    let action = app.on_key(key(KeyCode::Char('k'))).remove(0);
     perform_memory_action(&client, &mut app, action, &mut persistence).await;
-    assert!(screen(&app).contains("Saved policy"));
+    assert!(
+        screen(&app).contains("Acknowledged save of policy"),
+        "{}",
+        app.memory.lines().join("\n")
+    );
+    let checkpoint: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(paths.state.join("memory-client/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(checkpoint["draft"].is_null());
+    assert_eq!(checkpoint["intents"].as_array().unwrap().len(), 1);
     assert!(
         memory
             .claim()
@@ -2051,8 +2069,15 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
     assert!(memory.claim().unwrap().read("policy").is_ok());
     app.on_key(key(KeyCode::Char('d')));
     let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
+    discard_memory_ack(&client, &mut app, action, &mut persistence).await;
+    drop(persistence);
+    app = App::new(app.session.clone(), Vec::new(), "cyber");
+    persistence = crate::memory::persistence::Persistence::load(&paths.state, &mut app.memory);
+    let request = open_memory(&mut app, true);
+    apply_memory_response(&mut app, crate::memory::perform(&client, request).await);
+    let action = app.on_key(key(KeyCode::Char('k'))).remove(0);
     perform_memory_action(&client, &mut app, action, &mut persistence).await;
-    assert!(screen(&app).contains("Deleted policy"));
+    assert!(screen(&app).contains("Acknowledged deletion of policy"));
     assert!(memory.claim().unwrap().read("policy").is_err());
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
@@ -2085,6 +2110,26 @@ async fn perform_memory_action(
         .await
         .unwrap();
     apply_memory_response(app, message);
+    assert!(persistence.gate(app, Vec::new()).is_empty());
+}
+
+#[cfg(unix)]
+async fn discard_memory_ack(
+    client: &cyber_client::Client,
+    app: &mut App,
+    action: Action,
+    persistence: &mut crate::memory::persistence::Persistence,
+) {
+    let action = persistence.gate(app, vec![action]).remove(0);
+    let message = crate::perform::perform(client, &app.session, action)
+        .await
+        .unwrap();
+    let crate::perform::Msg::Memory { request, result } = message else {
+        panic!("memory response");
+    };
+    assert!(matches!(result, Ok(crate::memory::Data::Change(_))));
+    app.memory
+        .apply(&request, Err("Simulated lost acknowledgement".into()));
     assert!(persistence.gate(app, Vec::new()).is_empty());
 }
 

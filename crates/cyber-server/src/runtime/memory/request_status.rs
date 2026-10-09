@@ -14,6 +14,11 @@ pub struct MemoryRequestStatus {
     pub completed: Option<MemoryChange>,
 }
 
+/// Public durable admission identity for an HTTP request key; it grants no ownership.
+pub fn memory_http_request_id(key: &str) -> String {
+    format!("mwr_{:x}", Sha256::digest(format!("http:{key}").as_bytes()))
+}
+
 pub(in crate::runtime) fn status(
     store: &Store,
     key: &str,
@@ -21,7 +26,7 @@ pub(in crate::runtime) fn status(
     if !(1..=128).contains(&key.len()) || !key.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
         return Err(refusal("Invalid memory request key"));
     }
-    let id = format!("mwr_{:x}", Sha256::digest(format!("http:{key}").as_bytes()));
+    let id = memory_http_request_id(key);
     store.read(move |db| {
         let row: Option<(String, String, String, String, Option<String>)> = db
             .query_row(

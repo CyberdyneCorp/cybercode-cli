@@ -57,6 +57,7 @@ pub use mcp::{
 pub use memory::{
     MemoryAdmission, MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryIdentity,
     MemoryRecoveryRequestStatus, MemoryRequestStatus, MemoryWrite, MemoryWriteOwner,
+    memory_http_request_id,
 };
 pub mod deferred_tools;
 mod model;

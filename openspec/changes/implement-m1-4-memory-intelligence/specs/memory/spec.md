@@ -290,3 +290,14 @@
 - **AND** an unknown key SHALL return no evidence; a foreign Location/scope SHALL refuse without revealing its evidence
 - **AND** inconsistent ledger identities, digests or receipts SHALL refuse rather than imply completion
 - **AND** lookup SHALL NOT create memory storage, execute a mutation, publish an update or require enabled writable memory settings
+
+#### Scenario: TUI retained request reconciliation
+- **WHEN** the user opens retained requests
+- **THEN** the TUI SHALL list bounded immutable request evidence and provide explicit read-only lookup in the original Session/Location/scope
+- **AND** save/delete status SHALL match the exact retained HTTP fingerprint, name, operation, journal and completion identities before retiring its intent
+- **AND** absent, unresolved, malformed or mismatched status SHALL preserve request evidence and draft text without replay
+- **WHEN** a completed save is reconciled
+- **THEN** its draft SHALL clear only if text and retained key still match; newer edits SHALL remain and require fresh review
+- **WHEN** the user explicitly forgets a selected retained request
+- **THEN** confirmation SHALL identify the exact key and warn that forgetting does not resolve unknown effects; it SHALL remove only that record through the normal durable checkpoint gate
+- **AND** canceled confirmation and late/foreign responses SHALL preserve other records and edits

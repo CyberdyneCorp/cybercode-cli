@@ -122,7 +122,9 @@ jobs:
         run: cargo test --locked -p cyber-cli --test memory
       - name: Native durable memory mutation admission
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-server --lib runtime::memory
+        run: |
+          cargo test --locked -p cyber-server --lib runtime::memory
+          cargo test --locked -p cyber-server --lib http::idempotency::fingerprint_tests
       - name: Native memory HTTP shutdown ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http shutdown_waits_for_disposed_handler_memory_work_and_refuses_new_leases

@@ -39,6 +39,7 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
+pub use idempotency::request_fingerprint;
 pub use memory::{
     MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, RecoverMemory,
     validate_edit_fingerprint,

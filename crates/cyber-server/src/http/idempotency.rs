@@ -154,20 +154,41 @@ fn request_hash(
                 .unwrap_or_else(|| default.display().to_string()),
         )
     });
+    request_fingerprint(
+        parts.method.as_str(),
+        &parts.uri.to_string(),
+        &directory,
+        body,
+        parts
+            .headers
+            .get_all("x-cyber-memory-review")
+            .iter()
+            .map(|review| review.as_bytes()),
+    )
+}
+
+/// Identity of method, API-relative route URI, resolved Location and exact body/review bytes.
+pub fn request_fingerprint<'a>(
+    method: &str,
+    uri: &str,
+    directory: &std::path::Path,
+    body: &[u8],
+    reviews: impl IntoIterator<Item = &'a [u8]>,
+) -> String {
     let mut hash = Sha256::new();
     for field in [
-        parts.method.as_str().as_bytes(),
-        parts.uri.to_string().as_bytes(),
+        method.as_bytes(),
+        uri.as_bytes(),
         directory.as_os_str().as_encoded_bytes(),
         body,
     ] {
         hash.update((field.len() as u64).to_be_bytes());
         hash.update(field);
     }
-    for review in parts.headers.get_all("x-cyber-memory-review") {
+    for review in reviews {
         hash.update(b"memory-edit-review-v1");
-        hash.update((review.as_bytes().len() as u64).to_be_bytes());
-        hash.update(review.as_bytes());
+        hash.update((review.len() as u64).to_be_bytes());
+        hash.update(review);
     }
     format!("{:x}", hash.finalize())
 }
@@ -257,4 +278,63 @@ async fn insert(store: &Arc<Store>, key: &str, s: Stored) -> Result<(), String> 
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+    #[test]
+    fn shared_fingerprint_preserves_api_relative_identity_and_review_binding() {
+        let (parts, _) = axum::http::Request::builder()
+            .method("PUT")
+            .uri("/memory/global/policy")
+            .body(())
+            .unwrap()
+            .into_parts();
+        let directory = std::path::Path::new("/repo");
+        let body = br#"{"content":"test"}"#;
+        let digest = request_fingerprint(
+            "PUT",
+            "/memory/global/policy",
+            directory,
+            body,
+            std::iter::empty(),
+        );
+        assert_eq!(
+            digest,
+            "ab6d025147601d8dc97d0721c09f160feb56c49de34c7c27baca84ab2910d115"
+        );
+        let root = tempfile::tempdir().unwrap();
+        let resolved = root.path().canonicalize().unwrap();
+        assert_eq!(
+            request_hash(&parts, &resolved, body),
+            request_fingerprint(
+                "PUT",
+                "/memory/global/policy",
+                &resolved,
+                body,
+                std::iter::empty()
+            )
+        );
+        assert_ne!(
+            request_fingerprint(
+                "PUT",
+                "/api/v1/memory/global/policy",
+                directory,
+                body,
+                std::iter::empty()
+            ),
+            digest
+        );
+        assert_ne!(
+            request_fingerprint(
+                "PUT",
+                "/memory/global/policy",
+                directory,
+                body,
+                [b"review".as_slice()]
+            ),
+            digest
+        );
+    }
 }

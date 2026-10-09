@@ -1,9 +1,12 @@
 //! Location-bound manual review. A request key reports evidence, never execution authority.
 mod editor;
+mod outcomes;
 pub(crate) mod persistence;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cyber_core::memory::{MemoryCatalog, MemoryDocument, MemoryRecoveryReview};
-use cyber_server::runtime::{MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryRequestStatus};
+use cyber_server::runtime::{
+    MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryRequestStatus, MemoryRequestStatus,
+};
 use editor::{Draft, Save};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -43,6 +46,7 @@ pub enum Operation {
         key: String,
     },
     Receipt(String),
+    Outcome(Box<Request>),
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +70,7 @@ pub enum Data {
     Review(Option<Box<Review>>),
     Change(MemoryChange),
     Receipt(Option<Box<MemoryRecoveryRequestStatus>>),
+    Outcome(Option<Box<MemoryRequestStatus>>),
 }
 #[derive(Debug, Clone)]
 enum Confirmation {
@@ -73,11 +78,14 @@ enum Confirmation {
     DiscardDraft,
     Delete(String),
     Recover(Box<Review>),
+    Forget(Box<Request>),
 }
 #[derive(Debug, Default)]
 pub struct View {
     draft: Option<Draft>,
     intents: Vec<Request>,
+    requests_open: bool,
+    request_selected: usize,
     persistence_error: Option<String>,
     editing: bool,
     scope: Scope,
@@ -97,6 +105,7 @@ impl View {
     pub fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.pending = false;
+        self.requests_open = false;
         self.editing = false;
         self.catalog = None;
         self.note = None;
@@ -234,6 +243,7 @@ impl View {
                     Some(status) => format!("Acknowledged receipt {}", safe(&status.mutation_id)),
                 })
             }
+            Data::Outcome(status) => self.apply_outcome(request, status),
         }
     }
     pub fn key(&mut self, key: KeyEvent, session: &crate::model::Session) -> Option<Request> {
@@ -256,7 +266,16 @@ impl View {
         if self.editing {
             return self.editor_key(key, session);
         }
+        if self.requests_open {
+            return self.requests_key(key, session);
+        }
         match key.code {
+            KeyCode::Char('u' | 'U') => {
+                self.requests_open = true;
+                self.request_selected = self.intents.len().saturating_sub(1);
+                self.scroll = 0;
+                None
+            }
             KeyCode::Char('e' | 'E') => {
                 if let Some(draft) = &self.draft {
                     if draft.belongs(self.scope, session) {
@@ -283,28 +302,7 @@ impl View {
                 Some(self.open(scope, session))
             }
             KeyCode::Char('v' | 'V') => Some(self.request(Operation::Review, session)),
-            KeyCode::Char('k' | 'K') => {
-                let key = self
-                    .recovery_key
-                    .clone()
-                    .filter(|(scope, _)| *scope == self.scope)
-                    .map(|(_, key)| key)
-                    .or_else(|| {
-                        self.intents.iter().rev().find_map(|intent| {
-                            if intent.scope != self.scope
-                                || intent.directory != session.directory
-                                || intent.session_id != session.id
-                            {
-                                return None;
-                            }
-                            match &intent.operation {
-                                Operation::Recover { key, .. } => Some(key.clone()),
-                                _ => None,
-                            }
-                        })
-                    })?;
-                Some(self.request(Operation::Receipt(key), session))
-            }
+            KeyCode::Char('k' | 'K') => self.latest_lookup(session),
             KeyCode::Enter => {
                 let name = self
                     .catalog
@@ -368,6 +366,14 @@ impl View {
             KeyCode::Char('y' | 'Y') => {
                 let key = cyber_core::ids::new_id("mrq");
                 let operation = match self.confirmation.take()? {
+                    Confirmation::Forget(retained) => {
+                        self.intents.retain(|intent| intent != retained.as_ref());
+                        self.notice = Some(
+                            "Retained record forgotten locally; server effects were not changed"
+                                .into(),
+                        );
+                        return None;
+                    }
                     Confirmation::DiscardDraft => {
                         self.draft = None;
                         self.editing = false;
@@ -484,26 +490,16 @@ impl View {
         lines
     }
     pub fn header_lines(&self) -> Vec<String> {
-        let mut lines = vec![format!("{} memory · Enter read · G scope · R refresh · V recovery", self.scope.label()), "E edit/resume draft · X discard draft · D delete reviewed note · C confirm recovery · K receipt · PgUp/PgDn scroll · Esc close".into()];
+        let mut lines = vec![format!("{} memory · Enter read · G scope · R refresh · V recovery", self.scope.label()), "E edit · X discard · D delete · C recovery · K outcome · U requests · PgUp/PgDn scroll · Esc close".into()];
+        if self.requests_open {
+            lines[1] =
+                "↑/↓ select · Enter/K lookup · F forget · U back · PgUp/PgDn scroll · Esc close"
+                    .into();
+        }
         if let Some(error) = &self.persistence_error {
             lines.push(format!("Client retention unavailable: {}", safe(error)));
         }
-        if self.intents.len() > 3 {
-            lines.push(format!(
-                "{} retained requests; latest keys shown",
-                self.intents.len()
-            ));
-        }
-        for intent in self.intents.iter().rev().take(3) {
-            if let Some(key) = persistence::request_key(intent) {
-                lines.push(format!(
-                    "Retained {} request: {} · {}",
-                    intent.scope.label(),
-                    safe(key),
-                    safe(&intent.directory)
-                ));
-            }
-        }
+        self.retained_headers(&mut lines);
         if self.pending {
             lines.push("Loading…".into());
         }
@@ -541,6 +537,10 @@ impl View {
                     safe(&save.name),
                     self.scope.label()
                 ),
+                Confirmation::Forget(retained) => format!(
+                    "Forget key {}? Y confirms · N cancels",
+                    safe(persistence::request_key(retained).unwrap_or_default())
+                ),
                 Confirmation::DiscardDraft => {
                     "Discard the retained unsaved draft? Y confirms · N cancels".into()
                 }
@@ -553,10 +553,17 @@ impl View {
                     "Apply this reviewed recovery? Y confirms · N cancels".into()
                 }
             });
+            if matches!(confirmation, Confirmation::Forget(_)) {
+                lines.push("Unknown effects remain unresolved; copy evidence first. Draft text stays retained.".into());
+            }
         }
         lines
     }
     fn content_lines(&self, lines: &mut Vec<String>) {
+        if self.requests_open {
+            self.request_lines(lines);
+            return;
+        }
         if self.editing
             && let Some(draft) = &self.draft
         {
@@ -647,20 +654,9 @@ async fn execute(client: &cyber_client::Client, request: &Request) -> Result<Dat
             cyber_core::memory::validate_name(name).map_err(|e| e.to_string())?;
             ("GET", format!("/memory/edit/{scope}/{name}"), None, None)
         }
-        Operation::Save(save) => {
-            cyber_core::memory::validate_name(&save.name).map_err(|e| e.to_string())?;
-            cyber_server::http::validate_edit_fingerprint(Some(&save.fingerprint))
-                .map_err(|e| e.body.message)?;
-            (
-                "PUT",
-                format!("/memory/{scope}/{}", save.name),
-                Some(json!({"content":save.content,"review_fingerprint":save.fingerprint})),
-                Some(&save.key),
-            )
-        }
-        Operation::Delete { name, key } => {
-            cyber_core::memory::validate_name(name).map_err(|e| e.to_string())?;
-            ("DELETE", format!("/memory/{scope}/{name}"), None, Some(key))
+        Operation::Save(_) | Operation::Delete { .. } => {
+            let wire = outcomes::write_request(request)?;
+            (wire.method, wire.path, wire.body, Some(wire.key))
         }
         Operation::Recover {
             storage,
@@ -678,9 +674,18 @@ async fn execute(client: &cyber_client::Client, request: &Request) -> Result<Dat
                 "POST",
                 recovery,
                 Some(json!({"storage_fingerprint":storage,"admission_fingerprint":admission})),
-                Some(key),
+                Some(key.as_str()),
             )
         }
+        Operation::Outcome(retained) => (
+            "GET",
+            format!(
+                "/memory/requests?scope={scope}&key={}",
+                encode(persistence::request_key(retained).ok_or("Invalid retained request")?)
+            ),
+            None,
+            None,
+        ),
         Operation::Receipt(key) => (
             "GET",
             format!(
@@ -692,7 +697,7 @@ async fn execute(client: &cyber_client::Client, request: &Request) -> Result<Dat
         ),
     };
     let headers = key
-        .map(|key| vec![("idempotency-key".into(), key.clone())])
+        .map(|key| vec![("idempotency-key".into(), key.to_owned())])
         .unwrap_or_default();
     let client = client.at(&request.directory);
     let (status, value) = tokio::time::timeout(
@@ -803,6 +808,7 @@ fn parse(value: &Value, request: &Request) -> Result<Data, String> {
             }
             Ok(Data::Change(change))
         }
+        Operation::Outcome(retained) => outcomes::parse(value, request, retained),
         Operation::Receipt(_) => {
             let status: Option<MemoryRecoveryRequestStatus> = decode(data)?;
             if let Some(status) = &status {
