@@ -207,9 +207,7 @@ fn external_target_or_index_edit_is_preserved_and_has_no_pending_replay_intent()
             format!("cp \"$1\" \"$2\"\nprintf '%s' 'external user edit' > \"${variable}\"\n");
         let output = env.editor(&script, &note("Updated fact")).output().unwrap();
         assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("Memory changed since editor review")
-        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Memory changed since review"));
         let target = if variable == "MEMORY_PATH" {
             env.note_path()
         } else {

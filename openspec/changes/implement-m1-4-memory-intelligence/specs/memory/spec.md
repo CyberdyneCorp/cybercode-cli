@@ -167,3 +167,11 @@
 - **AND** the owned worker SHALL retain scope and runtime shutdown ownership through durable acknowledgement, including after handler disposal
 - **AND** a completed request identity SHALL remain replayable without repeated effects after response-cache loss, and conflicting endpoint or body reuse SHALL refuse
 - **AND** pre-admission contention SHALL return a retryable unavailable error without caching that temporary refusal
+
+#### Scenario: Reviewed storage recovery
+- **WHEN** a caller explicitly inspects an interrupted memory journal
+- **THEN** inspection SHALL leave files unchanged and return the validated proposed note, mutation identity, completion marker and a fingerprint bound to the scope, journal artifacts and current note/index/catalog
+- **WHEN** a caller requests recovery using that review fingerprint
+- **THEN** the scope SHALL recapture and compare the reviewed state before any normalization or installation
+- **AND** stale reviews, unsafe aliases and conflicting evidence SHALL refuse while preserving files and journal fencing
+- **AND** recovery acknowledgement SHALL retain the journal until the caller acknowledges completion, without granting authority over unresolved database admissions

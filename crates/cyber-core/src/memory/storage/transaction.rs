@@ -1,7 +1,9 @@
 //! Retained journal preparation, installation and fingerprint-governed recovery.
+mod recovery;
 use super::*;
 use crate::memory::render_metadata_index;
 use cap_fs_ext::MetadataExt;
+pub use recovery::MemoryRecoveryReview;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -656,7 +658,7 @@ fn reserve_entries(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    fn note(body: &str) -> String {
+    pub(super) fn note(body: &str) -> String {
         format!("---\nname: rule\ndescription: useful fact\ntype: user\n---\n{body}\n")
     }
 
