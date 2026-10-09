@@ -95,6 +95,12 @@ obtain a fresh review before confirming another save. For a conditional delete, 
 identical acknowledged retries return the original receipt. Review is read-only and does not
 create absent scopes. Windows memory mutations remain unavailable pending native acceptance.
 
+For an uncertain save/delete response, use `client.memory.requestStatus({ scope, key })`
+at the original directory. It reads durable admission, HTTP fingerprint, journal and
+completion evidence even after response-cache loss or when memory is disabled.
+`null` means no retained admission was found; it does not authorize a retry.
+Recovery keys use `client.memory.recoveryRequest({ scope, key })` instead.
+
 ## Session budgets
 
 `client.session.create({ budget: { max_tokens: 100000, max_cost_usd: 2, enforcement: "soft" } })`

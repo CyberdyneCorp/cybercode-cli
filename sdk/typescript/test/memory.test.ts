@@ -126,6 +126,34 @@ test("retained recovery request lookup preserves key encoding and unresolved evi
   assert.equal(calls.length, 1);
 });
 
+test("retained save/delete lookup returns typed ledger evidence with one read-only request", async () => {
+  const key = "write/request+key";
+  for (const deleted of [false, true]) {
+    const status: import("../src/index.js").MemoryRequestStatus = {
+      id: "mwr_key", directory: "/repo", project_id: "global", name: "policy", deleted,
+      request_fingerprint: "b".repeat(64), journal: null, completed: null,
+    };
+    const { client, calls } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: status }), { directory: "/repo" });
+    assert.deepEqual((await client.memory.requestStatus({ scope: "global", key })).data, status);
+    assert.equal(calls[0]?.method, "GET");
+    assert.equal(calls[0]?.url.pathname, "/api/v1/memory/requests");
+    assert.equal(calls[0]?.url.searchParams.get("key"), key);
+    assert.equal(calls[0]?.url.searchParams.get("scope"), "global");
+    assert.equal(calls[0]?.headers.get("idempotency-key"), null);
+    assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
+    assert.equal(calls.length, 1);
+  }
+});
+
+test("retained write lookup preserves unknown evidence and refuses foreign scope without retry", async () => {
+  const absent = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: null }));
+  assert.equal((await absent.client.memory.requestStatus({ key: "unknown" })).data, null);
+  assert.equal(absent.calls.length, 1);
+  const foreign = mockClient(() => json(404, { _tag: "MemoryNotFoundError", message: "Unavailable for this Location" }));
+  await assert.rejects(foreign.client.memory.requestStatus({ scope: "project", key: "foreign" }), isMemoryNotFoundError);
+  assert.equal(foreign.calls.length, 1);
+});
+
 test("memory edit review returns original Markdown and a typed conditional fingerprint", async () => {
   const review: import("../src/index.js").MemoryEditReview = { name: "policy", original: "original Markdown", fingerprint: "a".repeat(64) };
   const { client, calls } = mockClient(() => json(200, { location: { directory: "/repo", project: { id: "global", directory: "/repo" } }, data: review }), { directory: "/repo" });

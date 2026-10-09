@@ -593,6 +593,12 @@ export type Located_Nullable_MemoryRecoveryView = {
 };
 
 /** A Location-scoped response. */
+export type Located_Nullable_MemoryRequestStatus = {
+  location: LocationInfo;
+  data?: MemoryRequestStatus | null;
+};
+
+/** A Location-scoped response. */
 export type Located_Page_SessionRow = {
   location: LocationInfo;
   data: Page_SessionRow;
@@ -714,6 +720,17 @@ export type MemoryRecoveryReview = {
 export type MemoryRecoveryView = {
   storage: MemoryRecoveryReview;
   admission: MemoryRecoveryAdmission;
+};
+
+export type MemoryRequestStatus = {
+  id: string;
+  directory: string;
+  project_id: string;
+  name: string;
+  deleted: boolean;
+  request_fingerprint: string;
+  journal?: MemoryJournalIdentity | null;
+  completed?: MemoryChange | null;
 };
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";

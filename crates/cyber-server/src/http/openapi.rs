@@ -98,6 +98,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
             "get",
+            "/memory/requests",
+            "v1.memory.requestStatus",
+            "Look up durable save/delete request evidence without execution",
+        )
+        .located()
+        .query(&["scope", "key"])
+        .ok::<Located<Option<crate::runtime::MemoryRequestStatus>>>(g),
+        op(
+            "get",
             "/memory/edit/{scope}/{name}",
             "v1.memory.editReview",
             "Review original Markdown and a fingerprint for a conditional edit",

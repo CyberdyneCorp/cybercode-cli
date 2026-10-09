@@ -283,3 +283,10 @@
 - **THEN** fresh memory effects SHALL remain local and orderly exit SHALL refuse while unsaved work remains; original files and draft text SHALL be preserved
 - **AND** unchanged failed checkpoints SHALL NOT create new staged writes on each background tick
 - **AND** acknowledged saves SHALL durably clear saved drafts, acknowledged save/delete requests SHALL retire their pending intents, and explicit discard SHALL durably clear draft state; request evidence SHALL remain bounded and complete native/outcome acceptance SHALL still be required
+
+#### Scenario: Read-only retained save and delete outcome lookup
+- **WHEN** an authenticated client looks up a retained HTTP save/delete key at its original Location and scope
+- **THEN** the API SHALL return durable admitted request metadata, its HTTP fingerprint, pinned journal if available and matching completion if acknowledged, independently of the HTTP response cache
+- **AND** an unknown key SHALL return no evidence; a foreign Location/scope SHALL refuse without revealing its evidence
+- **AND** inconsistent ledger identities, digests or receipts SHALL refuse rather than imply completion
+- **AND** lookup SHALL NOT create memory storage, execute a mutation, publish an update or require enabled writable memory settings

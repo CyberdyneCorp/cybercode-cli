@@ -91,6 +91,171 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn retained_write_lookup_is_authenticated_scoped_and_read_only_before_journal_binding() {
+    use cyber_server::runtime::{MemoryAdmission, MemoryWrite};
+    let f = Fixture::new(true).await;
+    let route = "/memory/requests?scope=global&key=retained";
+    assert_eq!(
+        f.client
+            .get(format!("{}{route}", f.url))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        f.get(route)
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()["data"],
+        Value::Null
+    );
+    for route in [
+        "/memory/requests",
+        "/memory/requests?key=bad%20key",
+        "/memory/requests?key=a&scope=other",
+    ] {
+        assert_eq!(
+            f.get(route).send().await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let digest = "a".repeat(64);
+    let admission = f
+        .app
+        .runtime
+        .admit_memory_write(MemoryWrite {
+            directory: &f.directory,
+            project_id: "global",
+            name: "policy",
+            deleted: false,
+            identity: Some("http:retained"),
+            content: &digest,
+            http_hash: Some(&digest),
+        })
+        .unwrap();
+    assert!(matches!(admission, MemoryAdmission::Owned(_)));
+    drop(admission);
+    std::fs::write(
+        f.app.paths.config.join("cyber.json"),
+        "{\"memory\":{\"enabled\":false}}",
+    )
+    .unwrap();
+    let status = f
+        .get(route)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(status["data"]["request_fingerprint"], digest);
+    assert_eq!(status["data"]["journal"], Value::Null);
+    assert_eq!(status["data"]["completed"], Value::Null);
+    assert_eq!(
+        f.get("/memory/requests?scope=project&key=retained")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let foreign = f.directory.join("other");
+    std::fs::create_dir(&foreign).unwrap();
+    assert_eq!(
+        f.get(route)
+            .header("x-cyber-directory", foreign.to_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        std::fs::read_dir(f.app.paths.data.join("memory"))
+            .unwrap()
+            .count(),
+        0
+    );
+    let id = status["data"]["id"].as_str().unwrap();
+    assert_eq!(f.app.store.read_events(id, -1, 10).unwrap().events.len(), 1);
+    f.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn retained_save_delete_lookup_survives_cache_loss_and_disabled_memory_without_updates() {
+    let f = Fixture::new(false).await;
+    let mut events = f.app.runtime.subscribe();
+    let saved: Value = f
+        .put("policy", &text("policy", "retained fact"))
+        .header("idempotency-key", "retained-save")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let deleted: Value = f
+        .delete("policy")
+        .header("idempotency-key", "retained-delete")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    events.try_recv().unwrap();
+    events.try_recv().unwrap();
+    f.app
+        .store
+        .transaction(|tx| {
+            tx.execute("DELETE FROM idempotency_key", [])?;
+            Ok(())
+        })
+        .unwrap();
+    std::fs::write(
+        f.app.paths.config.join("cyber.json"),
+        "{\"memory\":{\"enabled\":false}}",
+    )
+    .unwrap();
+    for (key, receipt, is_delete) in [
+        ("retained-save", saved, false),
+        ("retained-delete", deleted, true),
+    ] {
+        let response = f
+            .get(&format!("/memory/requests?scope=global&key={key}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let status: Value = response.json().await.unwrap();
+        assert_eq!(status["data"]["completed"], receipt["data"]);
+        assert_eq!(status["data"]["deleted"], is_delete);
+        assert_eq!(
+            status["data"]["journal"]["receipt"],
+            receipt["data"]["receipt"]
+        );
+        assert_eq!(
+            f.app
+                .store
+                .read_events(receipt["data"]["id"].as_str().unwrap(), -1, 10)
+                .unwrap()
+                .events
+                .len(),
+            3
+        );
+    }
+    assert!(events.try_recv().is_err());
+    assert!(!f.app.paths.data.join("memory/global/policy.md").exists());
+    f.close().await;
+}
+
+#[tokio::test]
 async fn empty_review_authentication_and_invalid_routing_create_no_scope() {
     let f = Fixture::new(true).await;
     let response = f

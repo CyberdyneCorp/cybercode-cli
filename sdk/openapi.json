@@ -22,19 +22,25 @@
       }
     },
     "schemas": {
-      "Located_MemoryEditReview": {
+      "Located_Nullable_MemoryRequestStatus": {
         "type": "object",
         "properties": {
           "location": {
             "$ref": "#/components/schemas/LocationInfo"
           },
           "data": {
-            "$ref": "#/components/schemas/MemoryEditReview"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryRequestStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
-          "location",
-          "data"
+          "location"
         ],
         "description": "A Location-scoped response."
       },
@@ -73,6 +79,134 @@
           "id",
           "directory"
         ]
+      },
+      "MemoryRequestStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "request_fingerprint": {
+            "type": "string"
+          },
+          "journal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryJournalIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "directory",
+          "project_id",
+          "name",
+          "deleted",
+          "request_fingerprint"
+        ]
+      },
+      "MemoryJournalIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/MemoryMutation"
+          },
+          "intent_fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt",
+          "intent_fingerprint"
+        ]
+      },
+      "MemoryMutation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "deleted"
+        ]
+      },
+      "MemoryChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/MemoryMutation"
+          }
+        },
+        "required": [
+          "id",
+          "directory",
+          "project_id",
+          "receipt"
+        ],
+        "description": "Public acknowledged change, without note content or execution capabilities."
+      },
+      "Located_MemoryEditReview": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MemoryEditReview"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
       },
       "MemoryEditReview": {
         "type": "object",
@@ -154,66 +288,6 @@
           "project_id",
           "journal"
         ]
-      },
-      "MemoryJournalIdentity": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "receipt": {
-            "$ref": "#/components/schemas/MemoryMutation"
-          },
-          "intent_fingerprint": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "receipt",
-          "intent_fingerprint"
-        ]
-      },
-      "MemoryMutation": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "deleted": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "deleted"
-        ]
-      },
-      "MemoryChange": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "directory": {
-            "type": "string"
-          },
-          "project_id": {
-            "type": "string"
-          },
-          "receipt": {
-            "$ref": "#/components/schemas/MemoryMutation"
-          }
-        },
-        "required": [
-          "id",
-          "directory",
-          "project_id",
-          "receipt"
-        ],
-        "description": "Public acknowledged change, without note content or execution capabilities."
       },
       "Located_Nullable_MemoryRecoveryView": {
         "type": "object",
@@ -4362,6 +4436,71 @@
     }
   },
   "paths": {
+    "/api/v1/memory/requests": {
+      "get": {
+        "operationId": "v1.memory.requestStatus",
+        "summary": "Look up durable save/delete request evidence without execution",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Nullable_MemoryRequestStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/memory/edit/{scope}/{name}": {
       "get": {
         "operationId": "v1.memory.editReview",

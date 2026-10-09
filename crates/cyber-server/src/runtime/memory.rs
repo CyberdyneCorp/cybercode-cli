@@ -1,10 +1,13 @@
 //! Durable scope fencing and receipts; persisted admission never grants live write authority.
 pub(super) mod recovery;
+mod request_status;
 use super::{Bus, LiveEvent};
 use cyber_core::memory::{MemoryJournalIdentity, MemoryMutation};
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
 pub use recovery::{MemoryRecoveryAdmission, MemoryRecoveryIdentity, MemoryRecoveryRequestStatus};
 pub(super) use recovery::{recover, review};
+pub use request_status::MemoryRequestStatus;
+pub(super) use request_status::status as request_status;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -520,6 +523,134 @@ mod tests {
         MemoryJournalIdentity {
             receipt: receipt(),
             intent_fingerprint: "a".repeat(64),
+        }
+    }
+    #[test]
+    fn http_request_status_tracks_admission_binding_and_completion_without_effects() {
+        let store = store();
+        let root = tempfile::tempdir().unwrap();
+        let bus = Bus::new();
+        let mut events = bus.subscribe();
+        let digest = "b".repeat(64);
+        let mut request = write(root.path());
+        request.content = &digest;
+        request.http_hash = Some(&digest);
+        assert_eq!(request_status(&store, "first").unwrap(), None);
+        assert!(request_status(&store, "bad key").is_err());
+        let mut owner = owned(admit(store.clone(), bus, request).unwrap());
+        let admitted = request_status(&store, "first").unwrap().unwrap();
+        assert_eq!(admitted.request_fingerprint, digest);
+        assert_eq!(admitted.name, "policy");
+        assert!(admitted.journal.is_none());
+        assert!(admitted.completed.is_none());
+        let journal = journal();
+        owner.bind_journal(journal.clone()).unwrap();
+        let bound = request_status(&store, "first").unwrap().unwrap();
+        assert_eq!(bound.journal, Some(journal.clone()));
+        assert!(bound.completed.is_none());
+        assert!(events.try_recv().is_err());
+        let change = owner.finish(journal.receipt).unwrap();
+        events.try_recv().unwrap();
+        let status = request_status(&store, "first").unwrap().unwrap();
+        assert_eq!(status.completed, Some(change.clone()));
+        assert_eq!(
+            request_status(&store, "first").unwrap(),
+            Some(status.clone())
+        );
+        assert_public_request_status(status);
+        assert!(events.try_recv().is_err());
+        assert_eq!(
+            store.read_events(&change.id, -1, 10).unwrap().events.len(),
+            3
+        );
+    }
+
+    fn assert_public_request_status(status: MemoryRequestStatus) {
+        let public = serde_json::to_value(status).unwrap();
+        assert!(public.get("owner_hash").is_none());
+        assert!(public.get("request_hash").is_none());
+    }
+
+    #[test]
+    fn http_request_status_refuses_corrupt_ledger_and_receipt_evidence() {
+        for column in ["project_id", "request_hash", "owner_hash", "data", "result"] {
+            let store = store();
+            let root = tempfile::tempdir().unwrap();
+            let digest = "b".repeat(64);
+            let mut request = write(root.path());
+            request.content = &digest;
+            request.http_hash = Some(&digest);
+            let mut owner = owned(admit(store.clone(), Bus::new(), request).unwrap());
+            let journal = journal();
+            owner.bind_journal(journal.clone()).unwrap();
+            let change = owner.finish(journal.receipt).unwrap();
+            store
+                .transaction(move |tx| {
+                    tx.execute(
+                        &format!("UPDATE memory_mutation SET {column}='corrupt' WHERE id=?1"),
+                        [&change.id],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            assert!(request_status(&store, "first").is_err(), "{column}");
+        }
+        let store = store();
+        let root = tempfile::tempdir().unwrap();
+        drop(owned(
+            admit(store.clone(), Bus::new(), write(root.path())).unwrap(),
+        ));
+        assert!(request_status(&store, "first").is_err());
+    }
+
+    #[test]
+    fn http_request_status_refuses_well_formed_foreign_receipts_and_journals() {
+        for pointer in [
+            "/id",
+            "/directory",
+            "/project_id",
+            "/receipt/name",
+            "/receipt/id",
+            "/receipt/deleted",
+            "/journal/receipt/name",
+            "/http_hash",
+        ] {
+            let store = store();
+            let root = tempfile::tempdir().unwrap();
+            let digest = "b".repeat(64);
+            let mut request = write(root.path());
+            request.content = &digest;
+            request.http_hash = Some(&digest);
+            let mut owner = owned(admit(store.clone(), Bus::new(), request).unwrap());
+            let journal = journal();
+            owner.bind_journal(journal.clone()).unwrap();
+            let change = owner.finish(journal.receipt).unwrap();
+            store
+                .transaction(move |tx| {
+                    let column = if pointer.starts_with("/journal/") || pointer == "/http_hash" {
+                        "data"
+                    } else {
+                        "result"
+                    };
+                    let data: String = tx.query_row(
+                        &format!("SELECT {column} FROM memory_mutation WHERE id=?1"),
+                        [&change.id],
+                        |row| row.get(0),
+                    )?;
+                    let mut data: serde_json::Value = serde_json::from_str(&data).unwrap();
+                    *data.pointer_mut(pointer).unwrap() = if pointer == "/receipt/deleted" {
+                        serde_json::json!(true)
+                    } else {
+                        serde_json::json!("foreign")
+                    };
+                    tx.execute(
+                        &format!("UPDATE memory_mutation SET {column}=?1 WHERE id=?2"),
+                        params![data.to_string(), change.id],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            assert!(request_status(&store, "first").is_err(), "{pointer}");
         }
     }
     #[test]

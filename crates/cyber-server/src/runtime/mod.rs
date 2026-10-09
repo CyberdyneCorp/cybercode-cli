@@ -56,7 +56,7 @@ pub use mcp::{
 };
 pub use memory::{
     MemoryAdmission, MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryIdentity,
-    MemoryRecoveryRequestStatus, MemoryWrite, MemoryWriteOwner,
+    MemoryRecoveryRequestStatus, MemoryRequestStatus, MemoryWrite, MemoryWriteOwner,
 };
 pub mod deferred_tools;
 mod model;
@@ -423,6 +423,14 @@ impl Runtime {
         digest: &str,
     ) -> Result<Option<bool>, cyber_store::StoreError> {
         memory::http_identity(&self.inner.store, key, digest)
+    }
+
+    /// Read durable HTTP save/delete evidence without replaying its effects.
+    pub fn memory_request_status(
+        &self,
+        key: &str,
+    ) -> Result<Option<MemoryRequestStatus>, cyber_store::StoreError> {
+        memory::request_status(&self.inner.store, key)
     }
 
     pub fn memory_write_receipt(
