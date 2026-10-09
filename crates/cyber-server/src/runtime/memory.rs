@@ -1,7 +1,10 @@
 //! Durable scope fencing and receipts; persisted admission never grants live write authority.
+mod recovery;
 use super::{Bus, LiveEvent};
 use cyber_core::memory::{MemoryJournalIdentity, MemoryMutation};
 use cyber_store::{EventRegistry, Expected, NewEvent, Store, StoreError, StoredEvent};
+pub use recovery::MemoryRecoveryAdmission;
+pub(super) use recovery::{recover, review};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -28,6 +31,8 @@ struct Request {
     http_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     journal: Option<MemoryJournalIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_seq: Option<i64>,
 }
 
 /// Public acknowledged change, without note content or execution capabilities.
@@ -76,6 +81,7 @@ pub struct MemoryWriteOwner {
     bus: Bus,
     request: Request,
     key: String,
+    expected_seq: i64,
 }
 
 impl MemoryWriteOwner {
@@ -106,6 +112,7 @@ impl MemoryWriteOwner {
         self.request.journal = Some(journal);
         self.request.owner_hash = next_owner_hash;
         self.key = next_key;
+        self.expected_seq = 1;
         Ok(())
     }
 
@@ -133,7 +140,7 @@ impl MemoryWriteOwner {
         };
         let events = self.store.append(
             &update.id,
-            Expected::Seq(1),
+            Expected::Seq(self.expected_seq),
             vec![NewEvent::new(
                 UPDATED,
                 serde_json::to_value(completion).expect("memory receipt serializes"),
@@ -177,6 +184,7 @@ pub(super) fn admit(
         owner_hash: hash(&key),
         http_hash: http_hash.map(str::to_owned),
         journal: None,
+        review_seq: None,
     };
     let expected = request.clone();
     let (_, replay) = store.append_checked(&id, Expected::Any, move |tx| {
@@ -214,6 +222,7 @@ pub(super) fn admit(
             bus,
             request,
             key,
+            expected_seq: 0,
         })),
     })
 }
@@ -321,6 +330,7 @@ pub(super) fn register(registry: &mut EventRegistry) {
     registry.register(ADMITTED).expect("valid memory event");
     registry.register(UPDATED).expect("valid memory event");
     registry.register(BOUND).expect("valid memory event");
+    recovery::register(registry);
     registry.projector(project);
 }
 fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
@@ -328,6 +338,7 @@ fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), String> {
         ADMITTED => project_admission(tx, event),
         UPDATED => project_completion(tx, event),
         BOUND => project_binding(tx, event),
+        recovery::REVIEWED => recovery::project_review(tx, event),
         _ => Ok(()),
     }
 }
@@ -340,6 +351,7 @@ fn project_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), St
         || !valid_hash(&request.request_hash)
         || !valid_hash(&request.owner_hash)
         || request.journal.is_some()
+        || request.review_seq.is_some()
     {
         return Err("Invalid memory admission identity".into());
     }
@@ -378,7 +390,10 @@ fn project_completion(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         .map_err(|e| e.to_string())?;
     let request: Request = serde_json::from_str(&row.0).map_err(|e| e.to_string())?;
     let update = completed.update;
-    let expected_seq = if request.journal.is_some() { 2 } else { 1 };
+    let expected_seq = request
+        .review_seq
+        .map(|seq| seq + 1)
+        .unwrap_or(if request.journal.is_some() { 2 } else { 1 });
     if event.seq != expected_seq
         || row.1.is_some()
         || hash(&completed.previous_owner_key) != request.owner_hash

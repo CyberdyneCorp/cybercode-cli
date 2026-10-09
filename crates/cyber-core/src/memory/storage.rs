@@ -135,6 +135,9 @@ impl MemoryStore {
 }
 
 impl MemoryScope<'_> {
+    pub fn path(&self) -> &Path {
+        &self.store.path
+    }
     fn ready(&self) -> Result<(), MemoryStorageError> {
         match self.store.dir.symlink_metadata(TRANSACTION) {
             Ok(_) => Err(MemoryStorageError::RecoveryRequired),

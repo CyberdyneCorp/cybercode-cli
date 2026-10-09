@@ -54,7 +54,9 @@ pub use mcp::{
     McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
     McpConnectionStatus, McpServerStatus, McpStatusUpdate, mcp_connections,
 };
-pub use memory::{MemoryAdmission, MemoryChange, MemoryWrite, MemoryWriteOwner};
+pub use memory::{
+    MemoryAdmission, MemoryChange, MemoryRecoveryAdmission, MemoryWrite, MemoryWriteOwner,
+};
 pub mod deferred_tools;
 mod model;
 mod requests;
@@ -434,6 +436,31 @@ impl Runtime {
         write: MemoryWrite<'_>,
     ) -> Result<MemoryAdmission, cyber_store::StoreError> {
         memory::admit(self.inner.store.clone(), self.inner.bus.clone(), write)
+    }
+
+    pub fn review_memory_recovery(
+        &self,
+        directory: &std::path::Path,
+        project_id: &str,
+        journal: &cyber_core::memory::MemoryJournalIdentity,
+    ) -> Result<MemoryRecoveryAdmission, cyber_store::StoreError> {
+        memory::review(&self.inner.store, directory, project_id, journal)
+    }
+
+    /// Explicit host-controlled reconciliation; callers retain scope, settings and lifecycle admission.
+    pub fn recover_memory_write(
+        &self,
+        scope: &mut cyber_core::memory::MemoryScope<'_>,
+        storage_review: &cyber_core::memory::MemoryRecoveryReview,
+        admission_review: &MemoryRecoveryAdmission,
+    ) -> Result<MemoryChange, cyber_store::StoreError> {
+        memory::recover(
+            self.inner.store.clone(),
+            self.inner.bus.clone(),
+            scope,
+            storage_review,
+            admission_review,
+        )
     }
 
     pub fn mcp_status_observer(&self) -> McpConnectionObserver {

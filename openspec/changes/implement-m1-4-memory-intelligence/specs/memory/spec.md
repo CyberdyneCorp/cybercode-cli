@@ -190,3 +190,11 @@
 - **AND** completion SHALL require that exact bound receipt and the retained owner capability
 - **AND** interrupted binding SHALL retain pending admission and journal evidence without reconstructing authority or automatically replaying retained intent
 - **AND** historical acknowledged records SHALL remain readable and replayable without manufacturing a journal binding
+
+#### Scenario: Fresh reviewed database and file reconciliation
+- **WHEN** an explicit caller reviews a pending admission and matching physical journal under retained scope ownership
+- **THEN** recovery SHALL compare both the current storage review and database review before file effects
+- **AND** matching bound intent SHALL receive fresh durable recovery ownership without adopting a persisted execution nonce
+- **AND** stale database/file reviews, mismatched journals and legacy unbound admissions SHALL refuse without changing files
+- **AND** owner disposal SHALL retain unknown fencing and require a fresh review
+- **AND** a durably acknowledged journal awaiting archival SHALL finish archival without duplicate acknowledgement or notification
