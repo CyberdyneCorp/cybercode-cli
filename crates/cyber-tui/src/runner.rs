@@ -163,6 +163,8 @@ async fn event_loop(
     opts: &TuiOptions,
     open_picker: bool,
 ) -> Result<(), String> {
+    let mut memory_persistence =
+        crate::memory::persistence::Persistence::load(&opts.state_dir, &mut app.memory);
     let (tx, mut rx) = mpsc::channel::<Result<Msg, String>>(64);
     let mut keys = EventStream::new();
     let mut server = Box::pin(client.events(true).await.map_err(|e| e.to_string())?);
@@ -182,6 +184,7 @@ async fn event_loop(
         });
     }
     spawn_commands(client, &tx);
+    let initial = memory_persistence.gate(app, initial);
     dispatch(app, client, store, &tx, &mut refresh, terminal, initial);
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     while !app.quit {
@@ -208,6 +211,7 @@ async fn event_loop(
             },
             _ = tick.tick() => {let actions=app.admissions.poll(); app.refresh_admissions(); actions},
         };
+        let actions = memory_persistence.gate(app, actions);
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
     Ok(())

@@ -3,10 +3,12 @@ use super::{Scope, safe};
 use crate::{composer::Composer, model::Session};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cyber_core::memory::{MemoryDocument, MemoryEditReview};
+use serde::{Deserialize, Serialize};
 
 const LIMIT: usize = 1024 * 1024;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Save {
     pub name: String,
     pub content: String,
@@ -17,7 +19,7 @@ pub struct Save {
 pub(super) struct Draft {
     pub scope: Scope,
     pub directory: String,
-    session: String,
+    pub(super) session: String,
     pub name: String,
     pub review: Option<MemoryEditReview>,
     pub composer: Composer,

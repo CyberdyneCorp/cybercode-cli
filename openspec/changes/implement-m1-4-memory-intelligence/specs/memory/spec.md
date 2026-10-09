@@ -269,3 +269,17 @@
 - **THEN** only the installed checkpoint SHALL load; staged files SHALL remain evidence and SHALL NOT be automatically adopted
 - **AND** restored bytes SHALL grant no memory mutation or recovery authority; callers SHALL validate versions and scoped identities and obtain fresh reviews before new effects
 - **AND** unsupported native privacy/durability SHALL refuse before creating client storage
+
+
+#### Scenario: Durable TUI memory draft and request retention
+- **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
+- **THEN** it SHALL checkpoint bounded draft text and its original Session/Location/scope identity through the private client store
+- **WHEN** a memory save, deletion or recovery is separately confirmed
+- **THEN** its immutable request intent and exact key SHALL be durably retained before dispatch; stale or foreign-context actions SHALL refuse
+- **WHEN** the TUI restarts
+- **THEN** version and scoped identities SHALL be validated; draft text and request evidence SHALL restore without review fingerprints, pending actions or confirmations
+- **AND** a new save SHALL require fresh review; stored recovery keys SHALL grant only scoped read-only receipt lookup and retained requests SHALL NOT be sent automatically
+- **WHEN** checkpoint storage is unsafe, malformed, busy, changed or cannot save
+- **THEN** fresh memory effects SHALL remain local and orderly exit SHALL refuse while unsaved work remains; original files and draft text SHALL be preserved
+- **AND** unchanged failed checkpoints SHALL NOT create new staged writes on each background tick
+- **AND** acknowledged saves SHALL durably clear saved drafts, acknowledged save/delete requests SHALL retire their pending intents, and explicit discard SHALL durably clear draft state; request evidence SHALL remain bounded and complete native/outcome acceptance SHALL still be required

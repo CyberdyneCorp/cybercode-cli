@@ -1973,28 +1973,30 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
     let mut ui_session = session(false);
     ui_session.directory = directory.display().to_string();
     let mut app = App::new(ui_session, Vec::new(), "cyber");
+    let mut persistence =
+        crate::memory::persistence::Persistence::load(&paths.state, &mut app.memory);
     let request = open_memory(&mut app, true);
     apply_memory_response(&mut app, crate::memory::perform(&client, request).await);
     assert!(screen(&app).contains("Unavailable"));
     let action = app.on_key(key(KeyCode::Char('v'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     assert!(screen(&app).contains("Proposed fact"));
     app.on_key(key(KeyCode::Char('c')));
     assert!(screen(&app).contains("Apply this reviewed recovery?"));
     assert!(app.on_key(key(KeyCode::Enter)).is_empty());
     let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     assert!(screen(&app).contains("Recovered policy"));
     let action = app.on_key(key(KeyCode::Char('k'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     assert!(screen(&app).contains("Acknowledged receipt"));
     let action = app.on_key(key(KeyCode::Char('r'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     let action = app.on_key(key(KeyCode::Enter)).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     assert!(screen(&app).contains("Proposed fact"));
     let action = app.on_key(key(KeyCode::Char('e'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     app.on_paste("Edited Unicode 🦀 fact");
     app.on_key(memory_control('s'));
     app.on_key(key(KeyCode::Char('n')));
@@ -2004,7 +2006,7 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
     );
     app.on_key(memory_control('s'));
     let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     assert!(screen(&app).contains("Saved policy"));
     assert!(
         memory
@@ -2016,11 +2018,11 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
             .contains("Edited Unicode 🦀 fact")
     );
     let action = app.on_key(key(KeyCode::Char('r'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     let action = app.on_key(key(KeyCode::Enter)).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     let action = app.on_key(key(KeyCode::Char('e'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     app.on_paste("Stale local draft");
     memory
         .claim()
@@ -2031,7 +2033,7 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
         .unwrap();
     app.on_key(memory_control('s'));
     let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     assert_eq!(
         memory.claim().unwrap().read("policy").unwrap().body,
         "External user edit"
@@ -2041,15 +2043,15 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
     app.on_key(key(KeyCode::Char('x')));
     app.on_key(key(KeyCode::Char('y')));
     let action = app.on_key(key(KeyCode::Char('r'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     let action = app.on_key(key(KeyCode::Enter)).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     app.on_key(key(KeyCode::Char('d')));
     app.on_key(key(KeyCode::Char('n')));
     assert!(memory.claim().unwrap().read("policy").is_ok());
     app.on_key(key(KeyCode::Char('d')));
     let action = app.on_key(key(KeyCode::Char('y'))).remove(0);
-    perform_memory_action(&client, &mut app, action).await;
+    perform_memory_action(&client, &mut app, action, &mut persistence).await;
     assert!(screen(&app).contains("Deleted policy"));
     assert!(memory.claim().unwrap().read("policy").is_err());
     stop.send(()).unwrap();
@@ -2072,11 +2074,18 @@ fn memory_request(actions: Vec<Action>) -> crate::memory::Request {
     request
 }
 #[cfg(unix)]
-async fn perform_memory_action(client: &cyber_client::Client, app: &mut App, action: Action) {
+async fn perform_memory_action(
+    client: &cyber_client::Client,
+    app: &mut App,
+    action: Action,
+    persistence: &mut crate::memory::persistence::Persistence,
+) {
+    let action = persistence.gate(app, vec![action]).remove(0);
     let message = crate::perform::perform(client, &app.session, action)
         .await
         .unwrap();
     apply_memory_response(app, message);
+    assert!(persistence.gate(app, Vec::new()).is_empty());
 }
 
 fn memory_control(c: char) -> KeyEvent {

@@ -1,13 +1,15 @@
 //! Location-bound manual review. A request key reports evidence, never execution authority.
 mod editor;
+pub(crate) mod persistence;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cyber_core::memory::{MemoryCatalog, MemoryDocument, MemoryRecoveryReview};
 use cyber_server::runtime::{MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryRequestStatus};
 use editor::{Draft, Save};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Scope {
     #[default]
     Project,
@@ -21,7 +23,8 @@ impl Scope {
         }
     }
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
     List,
     Read(String),
@@ -41,7 +44,8 @@ pub enum Operation {
     },
     Receipt(String),
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub generation: u64,
     pub scope: Scope,
@@ -73,6 +77,8 @@ enum Confirmation {
 #[derive(Debug, Default)]
 pub struct View {
     draft: Option<Draft>,
+    intents: Vec<Request>,
+    persistence_error: Option<String>,
     editing: bool,
     scope: Scope,
     generation: u64,
@@ -129,6 +135,11 @@ impl View {
             return;
         }
         self.pending = false;
+        if matches!(&result, Ok(Data::Change(_)))
+            && !matches!(request.operation, Operation::Recover { .. })
+        {
+            self.intents.retain(|intent| intent != request);
+        }
         match result {
             Ok(data) => self.apply_data(data, request),
             Err(error) => {
@@ -273,8 +284,26 @@ impl View {
             }
             KeyCode::Char('v' | 'V') => Some(self.request(Operation::Review, session)),
             KeyCode::Char('k' | 'K') => {
-                let (scope, key) = self.recovery_key.clone()?;
-                (scope == self.scope).then(|| self.request(Operation::Receipt(key), session))
+                let key = self
+                    .recovery_key
+                    .clone()
+                    .filter(|(scope, _)| *scope == self.scope)
+                    .map(|(_, key)| key)
+                    .or_else(|| {
+                        self.intents.iter().rev().find_map(|intent| {
+                            if intent.scope != self.scope
+                                || intent.directory != session.directory
+                                || intent.session_id != session.id
+                            {
+                                return None;
+                            }
+                            match &intent.operation {
+                                Operation::Recover { key, .. } => Some(key.clone()),
+                                _ => None,
+                            }
+                        })
+                    })?;
+                Some(self.request(Operation::Receipt(key), session))
             }
             KeyCode::Enter => {
                 let name = self
@@ -456,6 +485,25 @@ impl View {
     }
     pub fn header_lines(&self) -> Vec<String> {
         let mut lines = vec![format!("{} memory · Enter read · G scope · R refresh · V recovery", self.scope.label()), "E edit/resume draft · X discard draft · D delete reviewed note · C confirm recovery · K receipt · PgUp/PgDn scroll · Esc close".into()];
+        if let Some(error) = &self.persistence_error {
+            lines.push(format!("Client retention unavailable: {}", safe(error)));
+        }
+        if self.intents.len() > 3 {
+            lines.push(format!(
+                "{} retained requests; latest keys shown",
+                self.intents.len()
+            ));
+        }
+        for intent in self.intents.iter().rev().take(3) {
+            if let Some(key) = persistence::request_key(intent) {
+                lines.push(format!(
+                    "Retained {} request: {} · {}",
+                    intent.scope.label(),
+                    safe(key),
+                    safe(&intent.directory)
+                ));
+            }
+        }
         if self.pending {
             lines.push("Loading…".into());
         }
