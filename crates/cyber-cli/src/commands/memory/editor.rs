@@ -1,12 +1,13 @@
 //! Editors mutate retained private drafts; validated memory commits remain directory-bound.
 use super::{mutation_admission, report_mutation, storage_error};
 use crate::{cli::GlobalArgs, context::Context, error::CliError, output};
+#[cfg(not(windows))]
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+#[cfg(not(windows))]
 use cap_std::fs::{Dir, OpenOptions};
 use cyber_core::{env::EnvSource, memory::MemoryScope};
 use serde_json::json;
 use std::{
-    io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -66,10 +67,15 @@ fn run_editor(args: &[String], path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+use std::io::{Read, Write};
+
+#[cfg(not(windows))]
 struct Draft {
     dir: Dir,
     path: PathBuf,
 }
+#[cfg(not(windows))]
 impl Draft {
     fn new(data: &Path, text: &str) -> Result<Self, CliError> {
         let root = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
@@ -155,5 +161,23 @@ impl Draft {
             return Err(CliError::usage("Memory file exceeds 1 MiB"));
         }
         String::from_utf8(bytes).map_err(|_| CliError::usage("Editor draft must be UTF-8"))
+    }
+}
+
+#[cfg(windows)]
+struct Draft {
+    inner: cyber_core::memory::MemoryEditorDraft,
+    path: PathBuf,
+}
+#[cfg(windows)]
+impl Draft {
+    fn new(data: &Path, text: &str) -> Result<Self, CliError> {
+        let inner =
+            cyber_core::memory::MemoryEditorDraft::new(data, text).map_err(storage_error)?;
+        let path = inner.path().to_owned();
+        Ok(Self { inner, path })
+    }
+    fn read(&self) -> Result<String, CliError> {
+        self.inner.read().map_err(storage_error)
     }
 }

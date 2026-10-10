@@ -536,3 +536,10 @@
 - **AND** retrying the same runtime operation key for write/update/delete SHALL return its original receipt without another durable event, notification, installation or archive
 - **AND** configured scope permissions SHALL apply before project-to-global fallback; Windows context tests SHALL verify bounded index-only loading despite an unsafe individual note alias
 - **AND** CLI editor admission SHALL remain independently gated until native private draft identity and editor lifecycle acceptance
+
+#### Scenario: Native private Windows editor draft capability
+- **WHEN** a Windows memory editor draft is created under the caller-owned data namespace
+- **THEN** core storage SHALL atomically create a private retained draft directory and private note, flush the exact objects and namespace, and keep full directory identities bound without ACL repair
+- **AND** readback SHALL accept a private regular editor result only under the same retained directory, freeze its observed full identity for bounded UTF-8 reading and verify the named file again before releasing that snapshot
+- **AND** private atomic file replacement MAY be accepted as an editor result; aliases, inherited/non-private replacements, directory substitution, oversized or invalid UTF-8 results SHALL refuse without normalizing or deleting the retained draft
+- **AND** this draft capability SHALL grant no note/database mutation authority and SHALL not enable CLI admission before native capability and actual editor lifecycle acceptance

@@ -1,7 +1,11 @@
 //! Validated memory documents and index snapshots; storage authority is separate.
 mod client_state;
+#[cfg(windows)]
+mod editor_draft;
 mod identity;
 pub use client_state::MemoryClientStore;
+#[cfg(windows)]
+pub use editor_draft::MemoryEditorDraft;
 mod secrets;
 mod storage;
 #[cfg(windows)]
