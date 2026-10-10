@@ -82,6 +82,11 @@ pub struct Settlement {
 }
 
 enum Command {
+    Open {
+        path: PathBuf,
+        text: String,
+        reply: oneshot::Sender<Result<(), LspError>>,
+    },
     Request {
         method: String,
         params: Value,
@@ -113,6 +118,23 @@ pub struct ServerHandle {
 }
 
 impl ServerHandle {
+    pub async fn open_document(&self, path: &Path, text: String) -> Result<(), LspError> {
+        let path = path.canonicalize().map_err(|_| unavailable())?;
+        if !path.is_file()
+            || !path.starts_with(&self.status().root)
+            || text.len() > super::documents::MAX_DOCUMENT_BYTES
+        {
+            return Err(unavailable());
+        }
+        self.connected().await?;
+        let (reply, receive) = oneshot::channel();
+        self.entry
+            .sender
+            .send(Command::Open { path, text, reply })
+            .await
+            .map_err(|_| unavailable())?;
+        receive.await.map_err(|_| unavailable())?
+    }
     pub fn status(&self) -> ServerStatus {
         let mut status = self.entry.status.borrow().clone();
         if self.entry.status.has_changed().is_err() {
@@ -209,6 +231,20 @@ pub struct Pool {
 }
 
 impl Pool {
+    pub async fn warm(&self, file: &Path, text: String) {
+        let handles: Vec<_> = self
+            .inner
+            .servers
+            .keys()
+            .filter_map(|id| self.ensure(id, file).ok())
+            .collect();
+        futures::future::join_all(
+            handles
+                .iter()
+                .map(|handle| handle.open_document(file, text.clone())),
+        )
+        .await;
+    }
     pub fn new(
         location: &Path,
         servers: Vec<DetectedServer>,
@@ -458,6 +494,7 @@ async fn run(
     mut commands: mpsc::Receiver<Command>,
 ) {
     let mut health = tokio::time::interval(Duration::from_millis(100));
+    let mut documents = super::documents::Documents::default();
     loop {
         let event = tokio::select! {
             biased;
@@ -469,7 +506,7 @@ async fn run(
             command = commands.recv() => match command {Some(c) => Event::Command(c), None => break},
             message = connection.next_idle() => match message {Ok(message) => Event::Message(message), Err(_) => break}
         };
-        let healthy = tokio::select! { biased; _ = cancel.cancelled() => break, healthy = handle_event(connection, event) => healthy };
+        let healthy = tokio::select! { biased; _ = cancel.cancelled() => break, healthy = handle_event(connection, &mut documents, event) => healthy };
         if !healthy {
             break;
         }
@@ -481,9 +518,13 @@ enum Event {
     Command(Command),
 }
 
-async fn handle_event(connection: &mut StdioConnection, event: Event) -> bool {
+async fn handle_event(
+    connection: &mut StdioConnection,
+    documents: &mut super::documents::Documents,
+    event: Event,
+) -> bool {
     match event {
-        Event::Command(command) => execute(connection, command).await,
+        Event::Command(command) => execute(connection, documents, command).await,
         Event::Message(message) => {
             tokio::time::timeout(Duration::from_secs(30), connection.handle_idle(message))
                 .await
@@ -504,8 +545,22 @@ async fn settle_connection(connection: &mut StdioConnection) {
 #[path = "pool_tests.rs"]
 mod tests;
 
-async fn execute(connection: &mut StdioConnection, command: Command) -> bool {
+async fn execute(
+    connection: &mut StdioConnection,
+    documents: &mut super::documents::Documents,
+    command: Command,
+) -> bool {
     match command {
+        Command::Open { path, text, reply } => {
+            if reply.is_closed() {
+                return true;
+            }
+            let language = super::documents::language(&path);
+            let result = documents.open(connection, path, text, language).await;
+            let healthy = result.is_ok();
+            let _ = reply.send(result);
+            healthy
+        }
         Command::Request {
             method,
             params,

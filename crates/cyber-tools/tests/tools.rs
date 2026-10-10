@@ -7,6 +7,60 @@ use serde_json::json;
 use support::{Fixture, failed, ok};
 
 #[tokio::test]
+async fn successful_read_warms_in_background_without_waiting_for_discovery() {
+    use cyber_server::runtime::ToolHost;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::Duration;
+    let f = Fixture::new();
+    f.write("file.rs", "fn main() {}\n");
+    let (permit, receiver) = std::sync::mpsc::channel();
+    let receiver = Mutex::new(receiver);
+    let started = Arc::new(AtomicBool::new(false));
+    let observed = started.clone();
+    f.host
+        .attach_lsp(Arc::new(move |directory| {
+            observed.store(true, Ordering::Release);
+            receiver
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            cyber_tools::lsp::Pool::new(
+                directory,
+                vec![],
+                Arc::new(|_, _| Box::pin(async { unreachable!() })),
+            )
+        }))
+        .unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_millis(500),
+        f.call("default", "read", json!({"path":"file.rs"})),
+    )
+    .await
+    .unwrap();
+    assert!(ok(result).contains("1: fn main() {}"));
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !started.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), f.host.shutdown())
+            .await
+            .is_err()
+    );
+    permit.send(()).unwrap();
+    f.host.shutdown().await;
+    f.host.shutdown().await;
+    assert!(f.host.lsp_status(&f.repo).unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn read_pages_with_line_numbers_and_suggests_near_misses() {
     let f = Fixture::new();
     f.write("src/main.rs", "fn main() {}\nprintln!();\n");

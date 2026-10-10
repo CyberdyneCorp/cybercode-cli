@@ -137,6 +137,28 @@ impl App {
             hook_config_loader(opts.paths.clone(), opts.home.clone()),
             cyber_core::trust::TrustStore::new(opts.paths.trust_file()),
         )?;
+        let lsp_options = cyber_tools::lsp::LaunchOptions {
+            paths: opts.paths.clone(),
+            home: opts.home.clone(),
+            environment: std::env::vars().collect(),
+            profile: None,
+            overrides: vec![],
+            flags: json!({}),
+            sandbox_policy: opts.sandbox_policy.clone(),
+            helper: cyber_sandbox::find_helper(),
+            credential_env_names: resolver.credential_env_names(),
+        };
+        host.attach_lsp(Arc::new(move |location| {
+            let launcher = Arc::new(
+                cyber_tools::lsp::LocalLauncher::new(location, lsp_options.clone())
+                    .map_err(|error| error.error)?,
+            );
+            cyber_tools::lsp::Pool::new(
+                location,
+                launcher.servers().map_err(|error| error.error)?,
+                launcher.callback(),
+            )
+        }))?;
         let snapshots: Arc<dyn Snapshots> = if opts.snapshots {
             let loader = Arc::clone(&config);
             let snaps = cyber_snapshot::GitSnapshots::new(

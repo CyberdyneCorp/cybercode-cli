@@ -638,6 +638,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Located<Vec<super::FormatterStatus>>>(g),
         op(
             "get",
+            "/lsp",
+            "v1.lsp.status",
+            "Inspect actual Location language-server state without startup",
+        )
+        .located()
+        .ok::<Located<Vec<super::LspStatus>>>(g),
+        op(
+            "get",
             "/mcp",
             "v1.mcp.status",
             "Inspect configured MCP state and retained ownership observations without startup",

@@ -63,6 +63,9 @@ while True:
         reply = read()
         assert reply['error']['code'] == -32601
         send({'jsonrpc':'2.0','id':msg['id'],'result':{'text':'λ🦀'}})
+    elif method in ['textDocument/didOpen','textDocument/didChange','textDocument/didClose']:
+        with (workspace / 'document-events').open('a') as events:
+            events.write(json.dumps({'method':method,'params':msg['params']})+'\n')
     elif method == 'remote-error':
         send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32602,'message':'private-error-secret'}})
     elif method == 'descendant':

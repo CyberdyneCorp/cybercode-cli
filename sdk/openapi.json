@@ -4135,6 +4135,52 @@
           "detected_by"
         ]
       },
+      "Located_Array_of_LspStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LspStatus"
+            }
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "LspStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LspState"
+          }
+        },
+        "required": [
+          "id",
+          "root",
+          "status"
+        ]
+      },
+      "LspState": {
+        "type": "string",
+        "enum": [
+          "starting",
+          "connected",
+          "broken"
+        ]
+      },
       "Located_Array_of_McpServerStatus": {
         "type": "object",
         "properties": {
@@ -8337,6 +8383,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Array_of_FormatterStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lsp": {
+      "get": {
+        "operationId": "v1.lsp.status",
+        "summary": "Inspect actual Location language-server state without startup",
+        "tags": [
+          "lsp"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Array_of_LspStatus"
                 }
               }
             }

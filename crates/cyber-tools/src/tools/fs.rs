@@ -62,6 +62,12 @@ impl Tool for Read {
                 return Err(failed("Binary file: application/octet-stream"));
             }
             ctx.host.mark_read(&ctx.inv.session_id, &path);
+            if let Some(locations) = ctx.host.lsp.get()
+                && bytes.len() <= crate::lsp::MAX_DOCUMENT_BYTES
+                && let Ok(content) = std::str::from_utf8(&bytes)
+            {
+                let _ = locations.warm(&ctx.location, path.clone(), content.to_owned());
+            }
             let offset = number(&ctx.inv.input, "offset").unwrap_or(1).max(1) as usize;
             let limit = number(&ctx.inv.input, "limit")
                 .map_or(PAGE_LINES, |l| (l as usize).min(PAGE_LINES));

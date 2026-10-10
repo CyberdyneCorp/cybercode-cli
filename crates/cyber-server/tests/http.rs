@@ -3431,3 +3431,14 @@ async fn formatter_status_reports_unavailable_in_a_custom_host() {
     assert_eq!(body["service"], "formatters");
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn lsp_status_reports_unavailable_in_a_custom_host() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let (status, body, _) = api.call(Method::GET, "/lsp", None, &[]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["_tag"], "ServiceUnavailableError");
+    assert_eq!(body["service"], "lsp");
+    h.runtime.shutdown().await;
+}

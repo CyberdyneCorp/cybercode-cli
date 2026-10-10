@@ -150,6 +150,12 @@ export interface Operations {
     body: undefined;
     response: S.LocationInfo;
   };
+  "v1.lsp.status": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Array_of_LspStatus;
+  };
   "v1.mcp.close": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -744,6 +750,18 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: true,
+    stream: false,
+  },
+  "v1.lsp.status": {
+    tag: "lsp",
+    name: "status",
+    method: "GET",
+    path: "/api/v1/lsp",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
     stream: false,
   },
   "v1.mcp.close": {
@@ -1557,6 +1575,11 @@ export function createGroups(caller: Caller) {
       /** Resolve a Location (`GET /api/v1/location`) */
       get: (options?: RequestOptions): Promise<Operations["v1.location.get"]["response"]> =>
         caller.call("v1.location.get", {}, options),
+    },
+    lsp: {
+      /** Inspect actual Location language-server state without startup (`GET /api/v1/lsp`) */
+      status: (options?: RequestOptions): Promise<Operations["v1.lsp.status"]["response"]> =>
+        caller.call("v1.lsp.status", {}, options),
     },
     mcp: {
       /** Close this Location's MCP connections; unresolved ownership returns conflict (`POST /api/v1/mcp/close`) */

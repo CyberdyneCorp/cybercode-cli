@@ -511,6 +511,12 @@ export type Located_Array_of_FormatterStatus = {
 };
 
 /** A Location-scoped response. */
+export type Located_Array_of_LspStatus = {
+  location: LocationInfo;
+  data: LspStatus[];
+};
+
+/** A Location-scoped response. */
 export type Located_Array_of_McpServerStatus = {
   location: LocationInfo;
   data: McpServerStatus[];
@@ -628,6 +634,14 @@ export type LocationInfo = {
   directory: string;
   workspace?: string | null;
   project: ProjectInfo;
+};
+
+export type LspState = "starting" | "connected" | "broken";
+
+export type LspStatus = {
+  id: string;
+  root: string;
+  status: LspState;
 };
 
 export type McpClosed = {

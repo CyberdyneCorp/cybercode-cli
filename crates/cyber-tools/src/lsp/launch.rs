@@ -23,6 +23,7 @@ use super::{AuthorizedProcess, LaunchError, LaunchFn, LaunchRequest, LspError, R
 use crate::HookCommandProcess;
 
 /// Immutable user-selected loader inputs for one Location service generation.
+#[derive(Clone)]
 pub struct LaunchOptions {
     pub paths: Paths,
     pub home: PathBuf,

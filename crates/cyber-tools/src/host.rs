@@ -59,13 +59,38 @@ pub struct BuiltinHost {
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
     pub(crate) subagents: crate::subagents::Slots,
     pub(crate) mcp: crate::mcp::pool::Pool,
+    pub(crate) lsp: OnceLock<crate::lsp::Locations>,
 }
 
 impl BuiltinHost {
+    pub fn attach_lsp(&self, factory: crate::lsp::PoolFactory) -> Result<(), String> {
+        self.lsp
+            .set(crate::lsp::Locations::new(factory))
+            .map_err(|_| "Language services already attached".into())
+    }
+
+    pub fn lsp_status(
+        &self,
+        location: &Path,
+    ) -> Result<Vec<crate::lsp::ServerStatus>, crate::lsp::LspError> {
+        self.lsp
+            .get()
+            .ok_or(crate::lsp::LspError::Protocol(
+                "Language services unavailable",
+            ))?
+            .status(location)
+    }
+
+    pub fn warm_lsp(&self, location: &Path, file: PathBuf, text: String) {
+        if let Some(locations) = self.lsp.get() {
+            let _ = locations.warm(location, file, text);
+        }
+    }
     pub fn new(opts: HostOptions) -> Arc<Self> {
         Arc::new_cyclic(|weak| Self {
             weak: weak.clone(),
             mcp: Default::default(),
+            lsp: OnceLock::new(),
             opts,
             tools: tools::all(),
             reads: Mutex::default(),
@@ -490,7 +515,21 @@ impl ToolHost for BuiltinHost {
     }
 
     fn shutdown(&self) -> BoxFuture<'_, ()> {
-        Box::pin(self.shutdown_mcp())
+        Box::pin(async move {
+            let lsp = async {
+                if let Some(locations) = self.lsp.get() {
+                    match locations.close().await {
+                        Ok(settlements) if settlements.iter().all(|s| s.acknowledged) => {}
+                        _ => cyber_core::log::error(
+                            "lsp",
+                            "Language service termination is unverified",
+                            serde_json::json!({}),
+                        ),
+                    }
+                }
+            };
+            tokio::join!(self.shutdown_mcp(), lsp);
+        })
     }
     fn session_budget(
         &self,

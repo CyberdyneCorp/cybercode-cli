@@ -54,9 +54,12 @@ jobs:
       - name: Native LSP transport framing
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test lsp_transport --test lsp_client --test lsp_pool --test lsp_idle --test lsp_launch
-      - name: Native LSP resource settlement
+      - name: Native LSP resource and Location ownership
         if: ${{ !cancelled() }}
-        run: 'cargo test --locked -p cyber-tools --lib lsp::launch::tests::'
+        run: 'cargo test --locked -p cyber-tools --lib lsp::'
+      - name: Native read background warming
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test tools successful_read_warms_in_background_without_waiting_for_discovery
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: 'cargo test --locked -p cyber-core --lib memory::'

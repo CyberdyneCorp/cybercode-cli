@@ -93,6 +93,103 @@ fn row<'a>(body: &'a Value, id: &str) -> &'a Value {
 }
 
 #[tokio::test]
+async fn lsp_status_authenticates_observes_actual_roots_and_does_not_start_servers() {
+    let f = Fixture::new().await;
+    let url = f.url.replace("/formatters", "/lsp");
+    assert_eq!(
+        f.client.get(&url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let before: Value = f
+        .client
+        .get(&url)
+        .basic_auth("cyber", Some("status-password"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before["data"], json!([]));
+    assert!(f.app.host.lsp_status(&f.root).unwrap().is_empty());
+    let file = f.root.join("file.fixture-lsp");
+    std::fs::write(&file, "snapshot").unwrap();
+    let candidate = f.root.join("cache/bin/fixture-server.exe");
+    std::fs::write(
+        &candidate,
+        "Invalid executable: must fail without running user code",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    f.settings(json!({"lsp":{"fixture":{"command":[candidate],"extensions":[".fixture-lsp"],"env":{"SECRET":"private-lsp-environment"}}},"sandbox":{"network":"off"}}));
+    f.app.host.warm_lsp(&f.root, file, "snapshot".into());
+    let after = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let body: Value = f
+                .client
+                .get(&url)
+                .basic_auth("cyber", Some("status-password"))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == "fixture" && row["status"] == "broken")
+            {
+                break body;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(row(&after, "fixture")["root"], f.root.display().to_string());
+    assert!(!after.to_string().contains("private-lsp-environment"));
+    assert!(!after.to_string().contains("fixture-server.exe"));
+    let second = f.root.join("second");
+    std::fs::create_dir(&second).unwrap();
+    let foreign: Value = f
+        .client
+        .get(&url)
+        .basic_auth("cyber", Some("status-password"))
+        .query(&[("location[directory]", second.to_str().unwrap())])
+        .header("x-cyber-directory", f.root.to_str().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(foreign["data"], json!([]));
+    assert_eq!(
+        foreign["location"]["directory"],
+        second.display().to_string()
+    );
+    let invalid = f
+        .client
+        .get(&url)
+        .basic_auth("cyber", Some("status-password"))
+        .header(
+            "x-cyber-directory",
+            f.root.join("missing").to_str().unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn formatter_status_authenticates_and_returns_location_without_execution() {
     let f = Fixture::new().await;
     assert_eq!(

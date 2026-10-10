@@ -1,5 +1,18 @@
 ## ADDED Requirements
 
+### Requirement: Owned background LSP warming
+(P1) Successfully read text files SHALL enqueue background warming in a canonical Location-owned LSP generation without awaiting discovery, initialization or diagnostics. Matching installed servers SHALL receive one didOpen per document and versioned full-content didChange for changed read snapshots. Bounded queues and document state SHALL prevent unbounded background admission. Host shutdown and Location idle expiry SHALL fence admission and retain native/resource cleanup ownership through joined settlement.
+
+#### Scenario: Read remains independent of initialization
+- **WHEN** a matching server initializes slowly while a text file is read
+- **THEN** read SHALL return without awaiting that server
+- **AND** repeated unchanged snapshots SHALL NOT duplicate didOpen
+
+#### Scenario: Generation disposal
+- **WHEN** host shutdown or Location idle expiry starts
+- **THEN** no new warm request SHALL enter that generation
+- **AND** cancelling a close caller SHALL NOT dispose retained worker/native/resource settlement
+
 ### Requirement: Trusted local language-server launch
 (P1) Local LSP launch SHALL reload trust-filtered configuration, bind its canonical Location/root and refuse definitions or executables differing from the selected generation. It SHALL use shared sandbox enforcement and credential masking, prevent configured proxy/temp transport overrides, and retain process and proxy-resource settlement ownership.
 

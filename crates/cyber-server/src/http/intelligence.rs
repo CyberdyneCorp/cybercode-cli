@@ -8,6 +8,21 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LspState {
+    Starting,
+    Connected,
+    Broken,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LspStatus {
+    pub id: String,
+    pub root: std::path::PathBuf,
+    pub status: LspState,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct FormatterStatus {
     pub id: String,
     pub extensions: Vec<String>,
@@ -27,7 +42,23 @@ impl From<cyber_core::intelligence::DetectedFormatter> for FormatterStatus {
     }
 }
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/formatters", get(formatters))
+    Router::new()
+        .route("/formatters", get(formatters))
+        .route("/lsp", get(lsp))
+}
+async fn lsp(
+    State(state): State<AppState>,
+    parts: Parts,
+) -> Result<Json<Located<Vec<LspStatus>>>, ApiError> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    if !directory.is_dir() {
+        return Err(ApiError::invalid("LSP Location must be a directory"));
+    }
+    let data = state.services.lsp_status(directory.clone()).await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
 }
 async fn formatters(
     State(state): State<AppState>,

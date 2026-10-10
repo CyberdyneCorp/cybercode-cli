@@ -41,7 +41,7 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
 pub use idempotency::request_fingerprint;
-pub use intelligence::FormatterStatus;
+pub use intelligence::{FormatterStatus, LspState, LspStatus};
 pub use memory::{
     MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, RecoverMemory,
     validate_edit_fingerprint,
@@ -94,6 +94,17 @@ pub struct AgentInfo {
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
+    fn lsp_status(&self, _location: PathBuf) -> BoxFuture<'_, Result<Vec<LspStatus>, ApiError>> {
+        Box::pin(async {
+            let mut error = ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "LSP status is unavailable in this host",
+            );
+            error.body.service = Some("lsp".into());
+            Err(error)
+        })
+    }
     fn memory_recovery(
         &self,
         _runtime: Runtime,

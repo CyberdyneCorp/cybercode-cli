@@ -76,6 +76,42 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn lsp_status(
+        &self,
+        directory: PathBuf,
+    ) -> BoxFuture<'_, Result<Vec<cyber_server::http::LspStatus>, cyber_server::http::ApiError>>
+    {
+        let host = self.host.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                host.lsp_status(&directory)
+                    .map(|rows| {
+                        rows.into_iter()
+                            .map(|row| cyber_server::http::LspStatus {
+                                id: row.id,
+                                root: row.root,
+                                status: match row.status {
+                                    cyber_tools::lsp::ServerState::Starting => {
+                                        cyber_server::http::LspState::Starting
+                                    }
+                                    cyber_tools::lsp::ServerState::Connected => {
+                                        cyber_server::http::LspState::Connected
+                                    }
+                                    cyber_tools::lsp::ServerState::Broken => {
+                                        cyber_server::http::LspState::Broken
+                                    }
+                                },
+                            })
+                            .collect()
+                    })
+                    .map_err(|_| cyber_server::http::ApiError::invalid("LSP status is unavailable"))
+            })
+            .await
+            .map_err(|_| {
+                cyber_server::http::ApiError::invalid("LSP status observation could not complete")
+            })?
+        })
+    }
     fn formatters(
         &self,
         directory: PathBuf,

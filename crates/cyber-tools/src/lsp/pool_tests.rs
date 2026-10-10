@@ -94,6 +94,150 @@ async fn concurrent_starts_and_requests_share_one_real_process() {
 }
 
 #[tokio::test]
+async fn document_snapshots_open_once_change_versions_and_evict_bounded_state() {
+    let (root, file) = fixture();
+    let launches = Arc::new(AtomicUsize::new(0));
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        launcher("normal", launches.clone()),
+    )
+    .unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    handle.open_document(&file, "λ🦀".into()).await.unwrap();
+    handle.open_document(&file, "λ🦀".into()).await.unwrap();
+    handle.open_document(&file, "changed".into()).await.unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    assert!(
+        handle
+            .open_document(outside.path(), "external".into())
+            .await
+            .is_err()
+    );
+    assert!(
+        handle
+            .open_document(
+                &file,
+                "x".repeat(super::super::documents::MAX_DOCUMENT_BYTES + 1)
+            )
+            .await
+            .is_err()
+    );
+    for i in 0..128 {
+        let path = root.path().join(format!("z{i:03}.rs"));
+        std::fs::write(&path, "").unwrap();
+        handle.open_document(&path, "bounded".into()).await.unwrap();
+    }
+    // A subsequent RPC witnesses that the server consumed all preceding notifications.
+    handle
+        .request("fixture", json!({}), Duration::from_secs(3))
+        .await
+        .unwrap();
+    let events: Vec<Value> = std::fs::read_to_string(root.path().join("document-events"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events.len(), 131);
+    assert_eq!(events[0]["method"], "textDocument/didOpen");
+    assert_eq!(events[0]["params"]["textDocument"]["languageId"], "rust");
+    assert_eq!(events[0]["params"]["textDocument"]["text"], "λ🦀");
+    assert_eq!(events[1]["method"], "textDocument/didChange");
+    assert_eq!(events[1]["params"]["textDocument"]["version"], 2);
+    assert_eq!(events[1]["params"]["contentChanges"][0]["text"], "changed");
+    assert_eq!(events[129]["method"], "textDocument/didClose");
+    assert_eq!(
+        events[129]["params"]["textDocument"]["uri"],
+        reqwest::Url::from_file_path(file.canonicalize().unwrap())
+            .unwrap()
+            .as_str()
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+}
+
+#[tokio::test]
+async fn location_idle_expiry_settles_then_allows_a_fresh_generation() {
+    let (root, file) = fixture();
+    let factories = Arc::new(AtomicUsize::new(0));
+    let launches = Arc::new(AtomicUsize::new(0));
+    let factory: super::super::PoolFactory = {
+        let factories = factories.clone();
+        let launches = launches.clone();
+        Arc::new(move |directory| {
+            factories.fetch_add(1, Ordering::SeqCst);
+            Pool::new(
+                directory,
+                vec![server()],
+                launcher("normal", launches.clone()),
+            )
+        })
+    };
+    let locations = super::super::Locations::with_idle(factory, Duration::from_millis(250));
+    assert!(locations.status(root.path()).unwrap().is_empty());
+    assert_eq!(factories.load(Ordering::SeqCst), 0);
+    locations
+        .warm(root.path(), file.clone(), "first".into())
+        .unwrap();
+    wait_for(|| root.path().join("document-events").exists()).await;
+    wait_for(|| locations.status(root.path()).unwrap()[0].status == ServerState::Broken).await;
+    wait_for(|| {
+        locations
+            .warm(root.path(), file.clone(), "second".into())
+            .is_ok()
+    })
+    .await;
+    wait_for(|| launches.load(Ordering::SeqCst) == 2).await;
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+    assert_eq!(factories.load(Ordering::SeqCst), 2);
+    assert!(locations.warm(root.path(), file, "late".into()).is_err());
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn cancelled_location_close_retains_actual_native_shutdown_settlement() {
+    let (root, file) = fixture();
+    let locations = super::super::Locations::new(Arc::new(|directory| {
+        Pool::new(
+            directory,
+            vec![server()],
+            launcher("shutdown-hang", Arc::new(AtomicUsize::new(0))),
+        )
+    }));
+    locations
+        .warm(root.path(), file, "snapshot".into())
+        .unwrap();
+    wait_for(|| root.path().join("document-events").exists()).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), locations.close())
+            .await
+            .is_err()
+    );
+    let settled = locations.close().await.unwrap();
+    assert_eq!(settled.len(), 1);
+    assert!(settled[0].acknowledged);
+    assert_eq!(
+        locations.status(root.path()).unwrap()[0].status,
+        ServerState::Broken
+    );
+    assert_eq!(locations.close().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn nearest_roots_get_independent_owned_processes() {
     let (root, file) = fixture();
     let nested = root.path().join("nested");

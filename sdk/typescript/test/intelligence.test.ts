@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FormatterStatus } from "../src/generated/types.js";
+import type { LspStatus } from "../src/generated/types.js";
 import { json, mockClient } from "./support.js";
 
 test("formatter status preserves typed detection and authenticated Location routing", async () => {
@@ -16,6 +17,22 @@ test("formatter status preserves typed detection and authenticated Location rout
   assert.deepEqual(status.data, [formatter]);
   assert.equal(calls[0]?.method, "GET");
   assert.equal(calls[0]?.url.pathname, "/api/v1/formatters");
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent(directory));
+  assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+  assert.equal(calls[0]?.body, undefined);
+  assert.equal(calls[0]?.headers.get("idempotency-key"), null);
+});
+
+test("LSP status preserves actual roots and authenticated Location routing", async () => {
+  const directory = "/project with spaces";
+  const root: LspStatus = { id: "pyright", root: `${directory}/nested`, status: "connected" };
+  const location = { directory, project: { id: "global", directory } };
+  const { client, calls } = mockClient(() => json(200, { location, data: [root] }), { directory });
+  const status = await client.lsp.status();
+  assert.deepEqual(status.data, [root]);
+  assert.deepEqual(status.location, location);
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/lsp");
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent(directory));
   assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
   assert.equal(calls[0]?.body, undefined);
