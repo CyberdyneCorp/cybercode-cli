@@ -48,6 +48,8 @@ The first release prioritizes reliable editing, recovery and measurable coding q
 
 ## P1: Table stakes
 
+**Paused checkpoint (2026-10-10):** See the [team handoff](docs/implementation/p1-handoff.md) for the pushed implementation checkpoint, validation evidence, unresolved CI gates and recommended resume order. The [implementation status](docs/implementation/p1-status.md) and milestone OpenSpec task lists distinguish completed increments from outstanding acceptance; no P1 milestone is accepted.
+
 **Capabilities:** `browser-verification`, `web-client` (local web UI), `provider-catalog` (additional native providers, fallback chain), `sandbox` (Windows, escalation and advanced policies), `permissions-modes` (`accept-edits`, `auto` classifier, `dont-ask`, `bypass`, protected/critical paths, saved approvals), `agents-subagents` (`agent` tool with `output_schema`, background, fork, worktree isolation), `worktrees`, `background-tasks`, `hooks`, `plugins-marketplace` (plugin host only), `mcp` (OAuth, tool search, resources, prompts, `cyber mcp serve`), `skills-commands` (full, compat locations), `memory`, `code-intelligence`, `snapshots-checkpoints` (rewind UI: code / conversation / both), `cross-session-messaging` (same machine), `observability-costs` (cost, budgets, OTel), `editor-integration` (ACP + VS Code), `compat-import`, `configuration` (features registry, `-c` overrides, references), `permissions-modes` (session ruleset API, auto-mode rules, rule dry run), `sandbox` (profiles, env policy), `exec-mode` (streaming input).
 
 **Milestones**

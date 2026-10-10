@@ -1,3 +1,5 @@
+Paused 2026-10-10. Read the [team handoff](../../../docs/implementation/p1-handoff.md) and [implementation evidence](../../../docs/implementation/p1-status.md) before resuming. Checked subtasks record delivered increments; unchecked parent tasks retain full contract and native acceptance obligations. The next review work includes reproducing suspected named-fork history and CLI completion behavior before changing it; these are not confirmed bugs.
+
 - [x] Add typed hook definitions, event/handler validation, defaults and selector checks through real configuration loading. Native acceptance and hook execution remain open.
 - [ ] Preserve all hook scopes, declared order and per-definition provenance; enforce managed-only policy.
   - [x] Append top-level event groups from loaded global/project/local layers without configuration deduplication; retain indexed group, handler and leaf sources. Verify actual trust-gated configuration resolution and empty-array non-removal.
