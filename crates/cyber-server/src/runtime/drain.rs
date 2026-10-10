@@ -962,7 +962,19 @@ impl Inner {
             let events = outcomes
                 .into_iter()
                 .map(|(call_id, def, outcome)| {
-                    settlement_with_skills(&call_id, &def, outcome, &mut seen)
+                    settlement_with_skills(
+                        &call_id,
+                        &def,
+                        outcome,
+                        &mut seen,
+                        |output, reminder| {
+                            self.tools.finalize_skill_output(
+                                &state.info.directory,
+                                output,
+                                reminder,
+                            )
+                        },
+                    )
                 })
                 .collect();
             self.commit_locked(&mut state, events)?;
@@ -1287,6 +1299,7 @@ pub(super) fn settlement_with_skills(
     def: &ToolDef,
     outcome: ToolOutcome,
     seen: &mut std::collections::BTreeSet<String>,
+    finalize: impl FnOnce(String, &str) -> Result<String, String>,
 ) -> cyber_store::NewEvent {
     let ToolOutcome::SkillSuggestions {
         failed,
@@ -1303,7 +1316,7 @@ pub(super) fn settlement_with_skills(
         if cyber_core::skills::validate_name(&skill.name).is_err() {
             continue;
         }
-        if seen.insert(skill.name.clone()) {
+        if !seen.contains(&skill.name) && !names.contains(&skill.name) {
             names.push(skill.name.clone());
             let description: String = skill
                 .description
@@ -1319,7 +1332,15 @@ pub(super) fn settlement_with_skills(
         }
     }
     if !lines.is_empty() {
-        output.push_str(&format!("\n\n<system-reminder>\nConsider loading these matching skills with the skill tool:\n{}\n</system-reminder>", lines.join("\n")));
+        let reminder = format!(
+            "\n\n<system-reminder>\nConsider loading these matching skills with the skill tool:\n{}\n</system-reminder>",
+            lines.join("\n")
+        );
+        output = match finalize(output, &reminder) {
+            Ok(output) => output,
+            Err(error) => return settlement(call_id, def, ToolOutcome::Crashed(error)),
+        };
+        seen.extend(names.iter().cloned());
     }
     event(
         TOOL_SETTLED,
@@ -1506,14 +1527,20 @@ mod skill_reminder_tests {
             ],
         };
         let mut seen = std::collections::BTreeSet::new();
-        let first = settlement_with_skills("first", &def, outcome(), &mut seen);
+        let first =
+            settlement_with_skills("first", &def, outcome(), &mut seen, |output, reminder| {
+                Ok(format!("{output}{reminder}"))
+            });
         let payload: ToolSettled = serde_json::from_value(first.data).unwrap();
         assert_eq!(payload.structured_output, Some(Value::Null));
         assert_eq!(payload.skill_reminders, ["migrations"]);
         assert_eq!(seen.len(), 1);
         assert_eq!(payload.output.matches("<system-reminder>").count(), 2);
         assert!(payload.output.contains("Use &lt;safe&gt; steps"));
-        let second = settlement_with_skills("second", &def, outcome(), &mut seen);
+        let second =
+            settlement_with_skills("second", &def, outcome(), &mut seen, |output, reminder| {
+                Ok(format!("{output}{reminder}"))
+            });
         let payload: ToolSettled = serde_json::from_value(second.data).unwrap();
         assert!(payload.skill_reminders.is_empty());
         assert_eq!(payload.structured_output, Some(Value::Null));

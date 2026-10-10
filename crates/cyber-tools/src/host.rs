@@ -613,6 +613,16 @@ impl ToolHost for BuiltinHost {
             tokio::join!(self.shutdown_mcp(), lsp);
         })
     }
+    fn finalize_skill_output(
+        &self,
+        directory: &str,
+        output: String,
+        reminder: &str,
+    ) -> Result<String, String> {
+        self.budget(Path::new(directory))
+            .apply_with_reminder(output, reminder)
+    }
+
     fn session_budget(
         &self,
         directory: &str,

@@ -666,3 +666,33 @@ for line in sys.stdin:
     );
     f.app.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn application_host_budgets_reminders_and_preserves_complete_overflow() {
+    let f = ClientFixture::new("bypass").await;
+    f.configure(|config| config["tool_output"] = json!({"max_lines":8,"max_bytes":120}));
+    let text = "application file output\n".repeat(12);
+    let reminder = "\n\n<system-reminder>\nUse migrations\n</system-reminder>";
+    let output = f
+        .host
+        .finalize_skill_output(&f.turn.directory, text.clone(), reminder)
+        .unwrap();
+    let payload = output
+        .lines()
+        .filter(|line| !line.starts_with("[output truncated:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(payload.len() <= 120, "{output}");
+    assert!(payload.lines().count() <= 8, "{output}");
+    assert!(output.ends_with(reminder));
+    let artifacts = std::fs::read_dir(f.app.paths.data.join("tool-output"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(artifacts[0].path()).unwrap(),
+        format!("{text}{reminder}")
+    );
+    f.app.runtime.shutdown().await;
+}

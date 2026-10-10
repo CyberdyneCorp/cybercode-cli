@@ -54,6 +54,16 @@ impl ToolHost for AppHost {
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         self.builtin.shutdown()
     }
+    fn finalize_skill_output(
+        &self,
+        directory: &str,
+        output: String,
+        reminder: &str,
+    ) -> Result<String, String> {
+        self.builtin
+            .finalize_skill_output(directory, output, reminder)
+    }
+
     fn session_budget(
         &self,
         directory: &str,

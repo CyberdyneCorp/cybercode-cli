@@ -275,6 +275,17 @@ pub trait ToolHost: Send + Sync {
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+    /// Finalize the complete reminder and tool text before recording delivered skill names.
+    fn finalize_skill_output(
+        &self,
+        _directory: &str,
+        mut output: String,
+        reminder: &str,
+    ) -> Result<String, String> {
+        output.push_str(reminder);
+        Ok(output)
+    }
+
     fn session_budget(
         &self,
         _directory: &str,

@@ -1,5 +1,15 @@
 # P1 implementation status
 
+## Skill reminder output-budget admission (2026-10-10)
+
+A new actual file-flow regression reproduced output-budget overrun on unchanged main `69c13ff`: file text was truncated by the host before the runtime appended reminders outside the configured limit. Finalization now reserves the entire rendered reminder inside the configured line and UTF-8 byte payload budgets, truncates earlier text as necessary and preserves complete combined text in an exclusive managed artifact. The normal overflow notice remains outside the payload limit and precedes the reminder.
+
+Runtime batching and approval replay finalize through the Location host, including the application wrapper, before adding delivered names to the Epoch set. A reminder that alone exceeds the limit or cannot persist overflow fails operationally without recording delivery. Actual file flows verify budget limits, full overflow text, replay after insufficient limits, storage repair, Unicode content and eventual delivery. An application-host case exercises the real configuration and artifact path. Local tests pass 398 Rust cases: 154 tool library, 19 existing tool flows, nine reminder flows, four recovery, 20 hook-dispatch, 15 application-host, 42 server unit, 60 HTTP, 36 runtime lifecycle and 39 CLI cases. Strict specification validation passes all 60 items; lint reports zero errors and 21 warnings. SDK generation, canonical inventory, formatting/diff checks and workspace all-target Clippy with warnings denied pass. Two broader builds exhausted disk space; with Cargo stopped, only 13 stale generated libraries and 8,067 stale generated compiler objects were removed, recovering 585 MiB and 6,478 MiB respectively. The same server/application and CLI commands then passed. Models, databases, backups, project artifacts and executables were preserved.
+
+The previous revision’s [Windows job 114305406694](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38083612100/job/114305406694) reports the native reminder step successful, covering the existing failure-path suite. Metadata-only retained review and migration snapshots still fail, and the job is still running at this observation. The new budget flows and application forwarding need fresh native evidence.
+
+This does not accept the full skills/commands contract or any milestone; all 225 P1 contracts remain in scope. P0 models/services/evaluation and data artifacts are preserved.
+
 ## Reminders after known completed operations in failed calls (2026-10-10)
 
 Two actual tool-flow regressions reproduced missing reminders on unchanged main `1068325`: a patch created its first file before failing to create a later parent directory, and a write completed before post-hook configuration resolution failed. Both already reported error status and changed the intended file.

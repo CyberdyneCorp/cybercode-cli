@@ -55,6 +55,36 @@ impl Budget {
         ))
     }
 
+    /// Keep the entire reminder in the payload budget; only the overflow notice is extra.
+    pub(crate) fn apply_with_reminder(
+        &self,
+        text: String,
+        reminder: &str,
+    ) -> Result<String, String> {
+        let complete = format!("{text}{reminder}");
+        if complete.len() <= self.max_bytes && complete.lines().count() <= self.max_lines {
+            return Ok(complete);
+        }
+        let path = self.store(&complete)?;
+        if reminder.len() > self.max_bytes || reminder.lines().count() > self.max_lines {
+            return Err(format!(
+                "Skill reminder exceeds tool output budget; complete output at {}",
+                path.display()
+            ));
+        }
+        let kept = head(
+            &text,
+            self.max_lines - reminder.lines().count(),
+            self.max_bytes - reminder.len(),
+        );
+        let omitted_lines = text.lines().count().saturating_sub(kept.lines().count());
+        let omitted_bytes = text.len() - kept.len();
+        Ok(format!(
+            "{kept}\n[output truncated: {omitted_lines} lines / {omitted_bytes} bytes omitted; full output at {}]{reminder}",
+            path.display()
+        ))
+    }
+
     pub(crate) fn store(&self, text: &str) -> Result<PathBuf, String> {
         std::fs::create_dir_all(&self.dir)
             .map_err(|e| format!("could not store the full output: {e}"))?;

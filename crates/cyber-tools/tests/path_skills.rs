@@ -381,3 +381,137 @@ async fn post_hook_failure_keeps_the_mutation_failure_and_durable_reminder() {
     assert!(!flow.output(&id, "read").await.contains("<system-reminder>"));
     flow.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn reminder_reserves_payload_budget_and_preserves_complete_overflow() {
+    let flow = Flow::new(
+        vec![
+            call("read", "read", json!({"path":"db/migrations/a.sql"})),
+            text("done"),
+        ],
+        false,
+    );
+    flow.f
+        .set_config(json!({"tool_output":{"max_lines":8,"max_bytes":400}}));
+    flow.f
+        .write("db/migrations/a.sql", &("migration line\n".repeat(30)));
+    skill(&flow, "migrations", "");
+    let id = flow.session("bypass").await;
+    flow.prompt(&id, "read").await;
+    flow.settle(&id).await;
+    let output = flow.output(&id, "read").await;
+    let payload = output
+        .lines()
+        .filter(|line| !line.starts_with("[output truncated:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(payload.lines().count() <= 8, "{output}");
+    assert!(payload.len() <= 400, "{output}");
+    assert!(output.ends_with("</system-reminder>"), "{output}");
+    let path = output
+        .rsplit("full output at ")
+        .next()
+        .unwrap()
+        .split(']')
+        .next()
+        .unwrap();
+    let complete = std::fs::read_to_string(path).unwrap();
+    assert!(complete.contains("<system-reminder>"), "{complete}");
+    assert!(complete.contains("migration line"), "{complete}");
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn undeliverable_reminder_is_not_consumed_and_can_be_delivered_later() {
+    use cyber_server::runtime::CallStatus;
+    let mut flow = Flow::new(
+        vec![
+            call("first", "read", json!({"path":"db/migrations/a.sql"})),
+            text("failed"),
+            call("second", "read", json!({"path":"db/migrations/a.sql"})),
+            text("done"),
+        ],
+        false,
+    );
+    flow.f
+        .set_config(json!({"tool_output":{"max_lines":2,"max_bytes":400}}));
+    flow.f.write("db/migrations/a.sql", "migration");
+    skill(&flow, "migrations", "");
+    let id = flow.session("bypass").await;
+    flow.prompt(&id, "read").await;
+    flow.settle(&id).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.calls["first"].status, CallStatus::Error);
+    assert!(state.epoch.unwrap().reminded_skills.is_empty());
+    assert!(
+        !flow
+            .output(&id, "first")
+            .await
+            .contains("<system-reminder>")
+    );
+    let stored = std::fs::read_dir(flow.f.dir.path().join("tool-output"))
+        .unwrap()
+        .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        stored
+            .iter()
+            .any(|output| output.contains("migrations: Migration &lt;instructions&gt;"))
+    );
+    flow.f.set_config(json!({}));
+    flow.restart_default_runtime().await;
+    assert!(
+        flow.runtime
+            .state(&id)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .reminded_skills
+            .is_empty()
+    );
+    flow.prompt(&id, "read after budget increase").await;
+    flow.settle(&id).await;
+    assert!(
+        flow.output(&id, "second")
+            .await
+            .contains("<system-reminder>")
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn reminder_overflow_storage_failure_does_not_consume_the_skill() {
+    use cyber_server::runtime::CallStatus;
+    let flow = Flow::new(
+        vec![
+            call("first", "read", json!({"path":"db/migrations/a.sql"})),
+            text("failed"),
+            call("second", "read", json!({"path":"db/migrations/a.sql"})),
+            text("done"),
+        ],
+        false,
+    );
+    flow.f
+        .set_config(json!({"tool_output":{"max_lines":8,"max_bytes":220}}));
+    flow.f.write("db/migrations/a.sql", &"🦀".repeat(25));
+    skill(&flow, "migrations", "");
+    let output_dir = flow.f.dir.path().join("tool-output");
+    std::fs::write(&output_dir, "not a directory").unwrap();
+    let id = flow.session("bypass").await;
+    flow.prompt(&id, "read").await;
+    flow.settle(&id).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.calls["first"].status, CallStatus::Error);
+    assert!(state.epoch.unwrap().reminded_skills.is_empty());
+    std::fs::remove_file(&output_dir).unwrap();
+    flow.prompt(&id, "retry after storage repair").await;
+    flow.settle(&id).await;
+    let output = flow.output(&id, "second").await;
+    assert!(output.contains("<system-reminder>"), "{output}");
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().calls["second"].status,
+        CallStatus::Ok
+    );
+    flow.runtime.shutdown().await;
+}

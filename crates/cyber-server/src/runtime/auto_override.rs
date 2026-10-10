@@ -474,7 +474,16 @@ impl Inner {
             .as_ref()
             .map(|epoch| epoch.reminded_skills.clone())
             .unwrap_or_default();
-        let settled = super::drain::settlement_with_skills(&replay.id, &def, outcome, &mut seen);
+        let settled = super::drain::settlement_with_skills(
+            &replay.id,
+            &def,
+            outcome,
+            &mut seen,
+            |output, reminder| {
+                self.tools
+                    .finalize_skill_output(&state.info.directory, output, reminder)
+            },
+        );
         let output = settled.data["output"]
             .as_str()
             .unwrap_or_default()
