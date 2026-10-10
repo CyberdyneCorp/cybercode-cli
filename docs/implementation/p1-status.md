@@ -1,5 +1,15 @@
 # P1 implementation status
 
+## Inline OpenCode agents, compaction and permission integration (2026-10-10)
+
+Read-only previews now convert bounded custom inline `agent`/`agents` profiles: descriptions, static system prompts, explicit modes, qualified model/variant selection, visibility/disabled flags, color and positive steps. V1 prompt/disable/maxSteps aliases normalize to native fields. Custom v1 agents default to `all`; custom v2 agents default to `primary`. Agent permissions use the existing strict source converter. V2 global and per-agent permission arrays append across source layers while raw provenance keeps each layer's original indices. Explicit compaction auto/buffer and legacy `preserve_recent_tokens` or current `keep.tokens` map to runtime settings without inferring omitted defaults.
+
+Actual tool dispatch exposed a missing runtime integration: native map parsing ignored the migration `permissions.rules` wrapper. Two direct wrapper regressions failed before the parser edit, with the engine, host and fixture sources verified identical to main `6d55ccb`. The parser now expands wrapper arrays at their written map position, preserving ordered rule metadata and exact leaf sources alongside shorthand maps. Real global/agent read and write denials survive bypass. Native config loading still gates project grants until checkout trust approval; compaction's environment override remains authoritative.
+
+The exact native nonnegative integer `/compaction/keep/tokens` now remains visible in normalized diff/comparison rendering. Its direct regression failed against the unchanged main redactor before the edit. String credential values and header-forced contexts stay masked. Local validation passes 176 cases: 43 configuration, eight inline settings, 35 previews, 20 actual permission integrations, 32 permission library, one runtime compaction and 37 actual CLI tests. Workspace all-target Clippy with warnings denied, formatting/diff, generated SDK/inventory and 60 strict OpenSpec items pass; lint has zero errors and 21 warnings.
+
+Built-in source agent equivalence, referenced prompt files, advanced agent/request fields, commands and instruction consumers remain pending. No migration write occurs. Windows ancestor-renames still require implementation; no P1 milestone is accepted and full scope remains all 225 contracts. P0 services/models/evaluations/artifacts are preserved.
+
 ## OpenCode request overlay delivery (2026-10-10)
 
 Static v2 provider/model bodies and model/variant headers now map to native request overlays. Unique explicit variant-array IDs become native named variants, retaining exact raw indices in credential setup and field attribution. Header bindings have distinct provider/model/variant namespaces. Bodies are checked before entering the proposal for bounded recursion and nodes; null fields, unsupported substitutions, credential-shaped keys and declared secret echoes refuse with value-free errors. V1 package-specific model/variant options remain pending.

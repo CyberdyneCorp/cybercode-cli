@@ -155,7 +155,7 @@ pub fn preview_import(
                     &delta,
                     "",
                     &source.path,
-                    true,
+                    provenance::AppendStyle::Claude,
                     &mut rule_origins,
                 )?;
             } else {
@@ -164,7 +164,11 @@ pub fn preview_import(
                     &delta,
                     "",
                     &source.path,
-                    family == SourceTool::Claude,
+                    match family {
+                        SourceTool::Claude => provenance::AppendStyle::Claude,
+                        SourceTool::OpenCode => provenance::AppendStyle::OpenCode,
+                        SourceTool::Codex => provenance::AppendStyle::None,
+                    },
                     &mut raw_origins,
                 )?;
                 representative = Some(source);
@@ -487,6 +491,18 @@ fn document_config(
             if let Some(model) = document.get("model") {
                 map_model(source, model, false, &mut config, report)?;
             }
+            let settings = converted(source, super::opencode_settings_config(document))?;
+            for (key, value) in settings.config.as_object().into_iter().flatten() {
+                config[key] = value.clone();
+            }
+            for pending in settings.not_imported {
+                report.push(record(
+                    &source.path,
+                    pending.field,
+                    "not imported",
+                    pending.reason,
+                ));
+            }
             let providers = converted(source, super::opencode_provider_config(document))?;
             for (key, value) in providers.config.as_object().into_iter().flatten() {
                 config[key] = value.clone();
@@ -508,6 +524,9 @@ fn document_config(
                 "mcp",
                 "provider",
                 "providers",
+                "agent",
+                "agents",
+                "compaction",
             ]
         }
     };

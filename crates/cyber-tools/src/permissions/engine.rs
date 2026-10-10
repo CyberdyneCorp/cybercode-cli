@@ -70,22 +70,37 @@ pub fn parse_rules(value: &Value, sources: &BTreeMap<String, String>) -> Vec<Rul
         Value::Object(map) => map
             .iter()
             .filter(|(action, _)| action.as_str() != "auto_mode")
-            .flat_map(|(action, spec)| action_rules(action, spec, &source_of))
+            .flat_map(|(action, spec)| {
+                if action == "rules"
+                    && let Some(items) = spec.as_array()
+                {
+                    items
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, item)| {
+                            ordered_rule(&format!("/permissions/rules/{index}"), item, sources)
+                        })
+                        .collect()
+                } else {
+                    action_rules(action, spec, &source_of)
+                }
+            })
             .collect(),
         Value::Array(items) => items
             .iter()
             .enumerate()
-            .filter_map(|(index, item)| ordered_rule(index, item, sources))
+            .filter_map(|(index, item)| {
+                ordered_rule(&format!("/permissions/{index}"), item, sources)
+            })
             .collect(),
         _ => Vec::new(),
     }
 }
 
-fn ordered_rule(index: usize, item: &Value, sources: &BTreeMap<String, String>) -> Option<Rule> {
-    let base = format!("/permissions/{index}");
+fn ordered_rule(base: &str, item: &Value, sources: &BTreeMap<String, String>) -> Option<Rule> {
     let source = sources
         .get(&format!("{base}/effect"))
-        .or_else(|| sources.get(&base))
+        .or_else(|| sources.get(base))
         .or_else(|| sources.get("/permissions"))
         .map_or("config", String::as_str);
     let mut rule = Rule::new(

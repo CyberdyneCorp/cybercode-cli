@@ -1345,3 +1345,77 @@ fn accepted_variant_header_setup_uses_raw_array_indices_and_excludes_native_conf
     assert!(!serde_json::to_string(output).unwrap().contains("private-"));
     preview.verify().unwrap();
 }
+
+#[test]
+fn layered_opencode_agents_append_permissions_with_original_indices_and_keep_native_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".config/opencode/opencode.json",
+        r#"{"agents":{"review":{"description":"Global reviewer","permissions":[{"action":"shell","resource":"*","effect":"ask"}]}},"permissions":[{"action":"read","resource":"*","effect":"ask"}]}"#,
+    );
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"agents":{"review":{"system":"Review the code.","permissions":[{"action":"shell","resource":"git push *","effect":"deny"}]}},"permissions":[{"action":"read","resource":".env","effect":"deny"}],"compaction":{"preserve_recent_tokens":12000},"instructions":["private-instruction-path"],"commands":{"audit":{"template":"private-command-template"}}}"#,
+    );
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"agents":{"review":{"description":"Native reviewer"}},"compaction":{"keep":{"tokens":2000}}}"#,
+    );
+    let original = std::fs::read(roots.directory.join("cyber.jsonc")).unwrap();
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    let inherited = output
+        .report
+        .iter()
+        .find(|r| r.field == "/agents/review/permissions/rules/0/effect")
+        .unwrap();
+    assert!(
+        inherited
+            .sources
+            .iter()
+            .any(|s| s.source.starts_with(&roots.home)
+                && s.field == "/agents/review/permissions/0/effect")
+    );
+    let project = output
+        .report
+        .iter()
+        .find(|r| r.field == "/agents/review/permissions/rules/1/effect")
+        .unwrap();
+    assert!(
+        project
+            .sources
+            .iter()
+            .any(|s| s.source.starts_with(&roots.directory)
+                && s.field == "/agents/review/permissions/0/effect")
+    );
+    assert!(
+        output
+            .report
+            .iter()
+            .any(|r| r.field == "/permissions/rules/1/effect" && r.status == "imported")
+    );
+    assert!(
+        output
+            .report
+            .iter()
+            .any(|r| r.field == "/compaction/keep/tokens" && r.status == "merged")
+    );
+    assert!(!output.diff.contains("private-instruction-path"));
+    assert!(!output.diff.contains("private-command-template"));
+    assert_eq!(
+        std::fs::read(roots.directory.join("cyber.jsonc")).unwrap(),
+        original
+    );
+    preview.verify().unwrap();
+}

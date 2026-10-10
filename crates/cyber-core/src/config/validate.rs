@@ -202,25 +202,35 @@ const SECRET_KEYS: &[&str] = &[
 
 /// Replace secret values with `***` (`configuration` → Secrets handling).
 pub fn redact_secrets(value: &Value) -> Value {
-    redact(value, false)
+    redact(value, false, "")
 }
 
-fn redact(value: &Value, force: bool) -> Value {
+fn redact(value: &Value, force: bool, pointer: &str) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
                 .map(|(k, v)| {
-                    let secret = force || is_secret_key(k);
+                    let count =
+                        pointer == "/compaction/keep" && k == "tokens" && v.as_u64().is_some();
+                    let secret = force || (is_secret_key(k) && !count);
                     let child = if secret && !v.is_object() {
                         Value::String("***".into())
                     } else {
-                        redact(v, secret || k == "headers")
+                        let child =
+                            format!("{pointer}/{}", k.replace('~', "~0").replace('/', "~1"));
+                        redact(v, secret || k == "headers", &child)
                     };
                     (k.clone(), child)
                 })
                 .collect(),
         ),
-        Value::Array(items) => Value::Array(items.iter().map(|v| redact(v, force)).collect()),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, v)| redact(v, force, &format!("{pointer}/{index}")))
+                .collect(),
+        ),
         Value::String(_) if force => Value::String("***".into()),
         other => other.clone(),
     }

@@ -97,10 +97,13 @@ jobs:
         run: cargo test --locked -p cyber-core --test import_mcp --test mcp_config
       - name: Native migration provider conversion
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test import_providers --test import_opencode_providers
+        run: cargo test --locked -p cyber-core --test import_providers --test import_opencode_providers --test import_opencode_settings
       - name: Native imported provider configuration and catalog
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test import_providers
+      - name: Native imported compaction configuration
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test import_compaction
       - name: Native imported permission engine decisions
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test import_permissions

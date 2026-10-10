@@ -64,12 +64,33 @@ fn leaves(value: &Value, pointer: &str, output: &mut Vec<String>) {
         _ => output.push(pointer.into()),
     }
 }
+#[derive(Clone, Copy)]
+pub(super) enum AppendStyle {
+    None,
+    Claude,
+    OpenCode,
+}
+fn append_at(style: AppendStyle, pointer: &str) -> bool {
+    match style {
+        AppendStyle::None => false,
+        AppendStyle::Claude => matches!(
+            pointer,
+            "/permissions/rules" | "/permissions/allow" | "/permissions/ask" | "/permissions/deny"
+        ),
+        AppendStyle::OpenCode => {
+            pointer == "/permissions"
+                || (pointer.starts_with("/agents/")
+                    && pointer.ends_with("/permissions")
+                    && pointer.split('/').count() == 4)
+        }
+    }
+}
 pub(super) fn overlay(
     base: &mut Value,
     extra: &Value,
     pointer: &str,
     source: &Path,
-    append: bool,
+    append: AppendStyle,
     origins: &mut Origins,
 ) -> Result<(), DiscoveryError> {
     if let (Some(base), Some(extra)) = (base.as_object_mut(), extra.as_object()) {
@@ -84,11 +105,7 @@ pub(super) fn overlay(
     }
     let mut inputs = Vec::new();
     let mut array_offset = None;
-    if append
-        && matches!(
-            pointer,
-            "/permissions/rules" | "/permissions/allow" | "/permissions/ask" | "/permissions/deny"
-        )
+    if append_at(append, pointer)
         && let (Some(base), Some(extra)) = (base.as_array_mut(), extra.as_array())
     {
         if !extra.is_empty() {
@@ -158,7 +175,7 @@ fn inputs(origins: &Origins, pointers: &[String]) -> Vec<SourceReference> {
         .into_iter()
         .collect()
 }
-fn permission_inputs(tool: SourceTool, raw: &Value) -> Vec<String> {
+pub(super) fn permission_inputs(tool: SourceTool, raw: &Value) -> Vec<String> {
     let mut result = Vec::new();
     if tool == SourceTool::Claude {
         for effect in ["allow", "ask", "deny"] {
@@ -322,6 +339,16 @@ pub(super) fn converted(
     } else {
         BTreeMap::new()
     };
+    let settings_sources = if tool == SourceTool::OpenCode {
+        super::opencode_settings_config(raw)
+            .map_err(|_| DiscoveryError {
+                path: source.into(),
+                reason: "settings source attribution is unavailable",
+            })?
+            .field_sources
+    } else {
+        BTreeMap::new()
+    };
     let permissions = permission_inputs(tool, raw);
     let mut pointers = Vec::new();
     leaves(config, "", &mut pointers);
@@ -355,6 +382,11 @@ pub(super) fn converted(
                 }
                 _ if tool == SourceTool::OpenCode && pointer.starts_with("/providers/") => {
                     provider_sources.get(&pointer).cloned().unwrap_or_default()
+                }
+                _ if tool == SourceTool::OpenCode
+                    && (pointer.starts_with("/agents/") || pointer.starts_with("/compaction/")) =>
+                {
+                    settings_sources.get(&pointer).cloned().unwrap_or_default()
                 }
                 _ if tool == SourceTool::Codex && pointer.starts_with("/providers/") => {
                     provider_inputs(&pointer, raw)

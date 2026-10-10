@@ -1180,3 +1180,37 @@ fn opencode_provider_import_reports_credentials_without_writing_or_loading_packa
     assert!(!e.root.join(".cyber").exists());
     assert!(!e.root.join("cyber-home").exists());
 }
+
+#[test]
+fn inline_agent_and_compaction_imports_are_source_linked_without_runtime_state() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::write(e.root.join("opencode.json"),r#"{"agent":{"audit":{"prompt":"Review code only.","mode":"subagent","permission":{"edit":"deny"}}},"compaction":{"preserve_recent_tokens":12000},"instructions":["never-read-source-instruction"],"commands":{"audit":{"template":"never-execute-source-command"}}}"#).unwrap();
+    let preview = e.cyber(&["import", "opencode", "--dry-run", "--format", "json"]);
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    let view = json(&preview);
+    let report = view["report"].as_array().unwrap();
+    assert!(report.iter().any(|r| r["field"] == "/agents/audit/system"
+        && r["sources"][0]["field"] == "/agent/audit/prompt"));
+    assert!(
+        report
+            .iter()
+            .any(|r| r["field"] == "/compaction/keep/tokens"
+                && r["sources"][0]["field"] == "/compaction/preserve_recent_tokens")
+    );
+    let diff = view["diff"].as_str().unwrap();
+    assert!(diff.contains("12000"));
+    assert!(
+        [
+            "never-read-source-instruction",
+            "never-execute-source-command"
+        ]
+        .iter()
+        .all(|value| !diff.contains(value))
+    );
+    assert!(
+        ["cyber.jsonc", ".cyber", "cyber-home"]
+            .iter()
+            .all(|path| !e.root.join(path).exists())
+    );
+}

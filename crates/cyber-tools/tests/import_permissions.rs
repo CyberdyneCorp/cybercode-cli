@@ -476,3 +476,81 @@ fn converted_codex_sandbox_policies_resolve_without_bypassing_project_restrictio
         );
     }
 }
+
+#[tokio::test]
+async fn migrated_inline_agent_denials_survive_bypass_in_actual_tool_dispatch() {
+    use cyber_server::runtime::ToolHost;
+    use tokio_util::sync::CancellationToken;
+    let fixture = support::Fixture::new();
+    fixture.write(".env", "private-file-value");
+    fixture.write("public.txt", "public-file-value");
+    let result = cyber_core::import::opencode_settings_config(
+        &json!({"agents":{"review":{"mode":"subagent","permissions":[
+            {"action":"read","resource":"*","effect":"allow"},
+            {"action":"read","resource":".env","effect":"deny"},
+            {"action":"edit","resource":"*","effect":"deny"}
+        ]}}}),
+    )
+    .unwrap();
+    fixture.set_config(result.config);
+    for (path, allowed) in [(".env", false), ("public.txt", true)] {
+        let mut invocation = fixture.invocation("bypass", "read", json!({"path":path}));
+        invocation.agent = "review".into();
+        let outcome = fixture
+            .host
+            .execute(invocation, CancellationToken::new())
+            .await;
+        if allowed {
+            assert!(support::ok(outcome).contains("public-file-value"));
+        } else {
+            let error = support::failed(outcome);
+            assert!(error.contains("denied"));
+            assert!(!error.contains("private-file-value"));
+        }
+    }
+    let mut invocation = fixture.invocation(
+        "bypass",
+        "write",
+        json!({"path":"public.txt","content":"changed"}),
+    );
+    invocation.agent = "review".into();
+    assert!(
+        support::failed(
+            fixture
+                .host
+                .execute(invocation, CancellationToken::new())
+                .await
+        )
+        .contains("denied")
+    );
+    assert_eq!(fixture.read("public.txt"), "public-file-value");
+}
+
+#[tokio::test]
+async fn migration_rule_wrapper_enforces_denials_in_actual_tools() {
+    let fixture = support::Fixture::new();
+    fixture.write(".env", "private-file-value");
+    fixture.set_config(
+        json!({"permissions":{"rules":[{"action":"read","resource":".env","effect":"deny"}]}}),
+    );
+    let error = support::failed(fixture.call("bypass", "read", json!({"path":".env"})).await);
+    assert!(error.contains("denied"));
+    assert!(!error.contains("private-file-value"));
+}
+
+#[test]
+fn migration_rule_wrapper_retains_written_map_order_and_leaf_sources() {
+    let sources = BTreeMap::from([(
+        "/permissions/rules/0/effect".into(),
+        "imported-policy".into(),
+    )]);
+    let rules = parse_rules(
+        &json!({"read":"allow","rules":[{"action":"read","resource":".env","effect":"deny"}],"bash":"ask"}),
+        &sources,
+    );
+    let (effect, rule) = evaluate(&rules, "read", ".env");
+    assert_eq!(effect, Effect::Deny);
+    assert_eq!(rule.unwrap().source, "imported-policy");
+    assert_eq!(evaluate(&rules, "read", "public.txt").0, Effect::Allow);
+    assert_eq!(evaluate(&rules, "bash", "git status").0, Effect::Ask);
+}
