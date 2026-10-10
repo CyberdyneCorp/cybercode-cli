@@ -149,10 +149,21 @@ pub(crate) fn shell(configured: &str) -> String {
     let lower = name.to_ascii_lowercase();
     #[cfg(windows)]
     let name = lower.strip_suffix(".exe").unwrap_or(&lower);
-    if SHELLS.contains(&name) && Path::new(configured).exists() {
-        configured.to_string()
-    } else {
-        "/bin/sh".into()
+    #[cfg(windows)]
+    {
+        if SHELLS.contains(&name) {
+            configured.to_string()
+        } else {
+            "bash".into()
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if SHELLS.contains(&name) && Path::new(configured).exists() {
+            configured.to_string()
+        } else {
+            "/bin/sh".into()
+        }
     }
 }
 
@@ -334,5 +345,16 @@ fn render(capture: &Capture, ended: Ended, timeout_ms: u64) -> String {
         Ended::Exited(None) => format!("{out}\nTerminated by a signal"),
         Ended::TimedOut => format!("{out}\nCommand timed out after {timeout_ms} ms"),
         Ended::Cancelled => out,
+    }
+}
+
+#[cfg(all(test, windows))]
+mod shell_tests {
+    #[test]
+    fn windows_supported_shells_remain_path_resolvable_without_posix_fallback() {
+        for name in ["bash", "bash.exe", "BASH.EXE", "sh", "zsh.exe", "dash"] {
+            assert_eq!(super::shell(name), name);
+        }
+        assert_eq!(super::shell("unrecognized-shell"), "bash");
     }
 }

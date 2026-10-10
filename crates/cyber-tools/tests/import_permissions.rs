@@ -428,3 +428,21 @@ fn malformed_argv_metadata_cannot_become_an_allow_rule() {
         Effect::Ask
     );
 }
+
+#[tokio::test]
+async fn codex_rules_text_retains_forbidden_prefix_through_the_actual_host() {
+    let fixture = support::Fixture::new();
+    let plan=cyber_core::import::codex_rules("prefix_rule(pattern=['git','push'], decision='forbidden', match=['git push'])\nprefix_rule(pattern=['git'])\n").unwrap();
+    fixture.set_config(json!({"permissions":plan.rules}));
+    let error = support::failed(
+        fixture
+            .call(
+                "bypass",
+                "bash",
+                json!({"command":"'git'  push origin main"}),
+            )
+            .await,
+    );
+    assert!(error.contains("denied"), "{error}");
+    assert!(!error.contains("Could not start"));
+}

@@ -122,8 +122,17 @@ async fn bash_golden() {
     #[cfg(not(windows))]
     let f = Fixture::new();
     #[cfg(windows)]
+    let bash =
+        std::path::PathBuf::from(std::env::var_os("ProgramFiles").expect("Windows ProgramFiles"))
+            .join("Git/bin/bash.exe");
+    #[cfg(windows)]
+    assert!(
+        bash.is_file(),
+        "install Git Bash before Windows shell goldens"
+    );
+    #[cfg(windows)]
     let f = Fixture::with_policy(
-        "bash",
+        bash.to_str().expect("Git Bash path must be UTF-8"),
         Some(
             cyber_sandbox::find_helper().expect("build cyber-sandbox-exec before Windows goldens"),
         ),

@@ -45,6 +45,9 @@ jobs:
       - name: Build Windows process ownership helper
         if: ${{ !cancelled() }}
         run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - name: Native Bash shell selection
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --lib tools::bash::shell_tests
       - name: Native code intelligence configuration and discovery
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test config --test intelligence_config --test intelligence_discovery --test formatter_discovery --test import_permissions

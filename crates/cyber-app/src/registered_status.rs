@@ -27,24 +27,27 @@ pub async fn registered_lsp_status(
     if password.trim().is_empty() {
         return Err("Existing server credentials are empty".into());
     }
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none());
-    let mut url = registration.url.clone();
-    if url.is_empty() {
+    let (builder, url) = if registration.url.is_empty() {
         #[cfg(unix)]
         {
             let socket = registration
                 .socket
                 .as_ref()
                 .ok_or("Existing server has no status listener")?;
-            builder = builder.unix_socket(socket.as_str());
-            url = "http://localhost".into();
+            (
+                builder.unix_socket(socket.as_str()),
+                "http://localhost".to_owned(),
+            )
         }
         #[cfg(not(unix))]
         return Err("Existing server has no TCP status listener".into());
-    }
+    } else {
+        (builder, registration.url.clone())
+    };
     let mut url = reqwest::Url::parse(&url).map_err(|_| "Existing server listener is invalid")?;
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()

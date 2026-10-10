@@ -133,3 +133,35 @@ async fn registration_replacement_during_observation_refuses_old_generation() {
     assert!(result.unwrap_err().contains("registration changed"));
     assert!(!paths.data.exists());
 }
+
+#[tokio::test]
+async fn registration_without_a_supported_listener_refuses_before_runtime_storage() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let paths = paths(&root);
+    register(&paths, "", "srv_no_listener");
+    std::fs::write(paths.state.join("password"), "private-password").unwrap();
+    let error = registered_lsp_status(&paths, &root).await.unwrap_err();
+    assert!(error.contains("listener"));
+    assert!(!error.contains("private-password"));
+    #[cfg(not(unix))]
+    {
+        let mut registration: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(cyber_app::registration_path(&paths)).unwrap())
+                .unwrap();
+        registration["socket"] = json!(root.join("foreign.sock"));
+        std::fs::write(
+            cyber_app::registration_path(&paths),
+            registration.to_string(),
+        )
+        .unwrap();
+        assert!(
+            registered_lsp_status(&paths, &root)
+                .await
+                .unwrap_err()
+                .contains("no TCP status listener")
+        );
+    }
+    assert!(!paths.data.exists());
+    assert!(!paths.tmp.exists());
+}

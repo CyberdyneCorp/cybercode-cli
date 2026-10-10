@@ -48,3 +48,15 @@
 #### Scenario: Literal argv cannot become a wildcard grant
 - **WHEN** a prefix token contains a native wildcard or whitespace
 - **THEN** conversion SHALL refuse the batch instead of widening the command grant
+
+### Requirement: Literal Codex rules source parsing
+(P1) Import planning SHALL parse bounded constant prefix_rule calls from Codex rules text without evaluating Starlark or executing commands. It SHALL accept comments, single/double quoted strings, whitespace, trailing commas, literal argv alternatives, decisions, justification and match/not_match examples. It SHALL retain source metadata and validate each example against its source argv prefix, then apply the shared strongest-match converter to the complete batch. Input SHALL be bounded at one MiB, 4096 calls and two list levels. Unknown statements, executable expressions, duplicate/unknown fields, malformed strings and contradictory examples SHALL refuse the whole batch with static indexed/offset errors without echoing source values. Unsupported dynamic Starlark constructs SHALL remain reportable as not imported, without silently dropping their potentially protective rules. Source file discovery, config/profile/sandbox conversion and reviewed import writing SHALL remain required.
+
+#### Scenario: Source examples are checked before import
+- **WHEN** a prefix rule declares git push but includes git status in its match examples
+- **THEN** no converted batch SHALL be returned
+- **AND** the failure SHALL identify the example index without repeating source text
+
+#### Scenario: Source code cannot run during migration
+- **WHEN** source text contains load, assignments or function calls instead of constant prefix_rule fields
+- **THEN** parsing SHALL refuse without executing that source

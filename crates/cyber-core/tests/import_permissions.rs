@@ -276,3 +276,101 @@ fn codex_prefix_expansion_is_bounded_before_allocating_the_cartesian_product() {
             .contains("expansion limit")
     );
 }
+
+#[test]
+fn codex_constant_source_parses_comments_quotes_alternatives_and_metadata() {
+    let plan = cyber_core::import::codex_rules(
+        r#"
+# No source code is evaluated.
+prefix_rule(
+    pattern = ['git', ['push', 'fetch']],
+    decision = "prompt",
+    justification = 'Ask before remote access',
+    match = ["git push origin main", ['git','fetch']],
+    not_match = ["git status", "github push"],
+)
+prefix_rule(pattern=["git", "push"], decision="forbidden")
+prefix_rule(pattern=["git"])
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        plan.rules
+            .iter()
+            .map(|r| r.effect.as_str())
+            .collect::<Vec<_>>(),
+        ["allow", "ask", "ask", "deny"]
+    );
+    assert_eq!(plan.sources.len(), 3);
+    assert_eq!(
+        plan.sources[0].justification.as_deref(),
+        Some("Ask before remote access")
+    );
+    assert_eq!(
+        plan.sources[0].match_examples[0],
+        ["git", "push", "origin", "main"]
+    );
+    assert_eq!(plan.sources[0].not_match_examples[0], ["git", "status"]);
+    assert!(plan.sources[2].decision.is_none());
+}
+
+#[test]
+fn codex_constant_source_refuses_dynamic_or_invalid_syntax_without_source_echo() {
+    for text in [
+        "load('private-token')",
+        "private_token = 'secret'",
+        "prefix_rule(pattern=private_token)",
+        "prefix_rule(pattern=['git'],decision=run('private-token'))",
+        "prefix_rule(pattern=['git'],private_token='secret')",
+        "prefix_rule(pattern=['git'],pattern=['push'])",
+        "prefix_rule(pattern=['git'])prefix_rule(pattern=['push'])",
+        "prefix_rule(pattern=['git']) prefix_rule(pattern=['push'])",
+        "prefix_rule(pattern=['git']) + private_token",
+        "prefix_rule(pattern=['git']",
+        "prefix_rule(pattern=['private-token])",
+        "prefix_rule(pattern=[[[['git']]]])",
+        "prefix_rule(pattern=['git'],justification='')",
+        "prefix_rule(pattern=['git'],justification=['private-token'])",
+        "prefix_rule(pattern=['git'],match=['private-token'])",
+        "prefix_rule(pattern=['git'],not_match=[['git','status']])",
+        "prefix_rule(pattern=['git'],match=[[]])",
+        "prefix_rule(pattern=['git'],match=['git \\\"'])",
+    ] {
+        let error = cyber_core::import::codex_rules(text).unwrap_err();
+        assert!(!error.to_string().contains("private-token"), "{error}");
+        assert!(error.to_string().len() < 180);
+    }
+    let error = cyber_core::import::codex_rules(
+        "prefix_rule(pattern=['git'])\nprefix_rule(pattern=['git','push'],match=['git status'])",
+    )
+    .unwrap_err();
+    assert_eq!(error.field, "rules[1].match[0]");
+}
+
+#[test]
+fn codex_constant_source_limits_input_and_retains_valid_statement_boundaries() {
+    assert!(
+        cyber_core::import::codex_rules(&" ".repeat(1024 * 1024 + 1))
+            .unwrap_err()
+            .reason
+            .contains("size limit")
+    );
+    assert!(
+        cyber_core::import::codex_rules(&"prefix_rule(pattern=['git'])\n".repeat(4097))
+            .unwrap_err()
+            .reason
+            .contains("rule limit")
+    );
+    assert!(
+        cyber_core::import::codex_rules("# only a comment\n")
+            .unwrap()
+            .rules
+            .is_empty()
+    );
+    let plan=cyber_core::import::codex_rules(r#"prefix_rule(pattern=["g\u0069t"]); prefix_rule(pattern=['cargo'], justification='a\'b') # end"#).unwrap();
+    assert_eq!(
+        plan.rules[0].argv_prefix.as_deref(),
+        Some(["git".into()].as_slice())
+    );
+    assert_eq!(plan.sources[1].justification.as_deref(), Some("a'b"));
+}
