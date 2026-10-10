@@ -210,3 +210,163 @@ fn native_checkpoint_every_recorded_file_class_refuses_identical_byte_replacemen
         replace_recorded_file(name);
     }
 }
+const OWNER_DATA: &str = "CYBER_CHECKPOINT_OWNER_DATA";
+const OWNER_PHASE: &str = "CYBER_CHECKPOINT_OWNER_PHASE";
+pub(super) fn barrier(
+    phase: &str,
+    intent: &Intent,
+    store: &MemoryClientStore,
+) -> Result<(), MemoryStorageError> {
+    let Some(data) = std::env::var_os(OWNER_DATA) else {
+        return Ok(());
+    };
+    let data = Path::new(&data);
+    if std::env::var(OWNER_PHASE).ok().as_deref() != Some(phase)
+        || store.state != data.join("state")
+        || intent.after.digest != digest(b"After child death")
+    {
+        return Ok(());
+    }
+    let folder = if phase == "archived" {
+        let history = child_directory(&store.dir, HISTORY, false)?
+            .ok_or(MemoryStorageError::RecoveryRequired)?;
+        child_directory(&history, &intent.id, false)?.ok_or(MemoryStorageError::RecoveryRequired)?
+    } else {
+        child_directory(&store.dir, PENDING, false)?.ok_or(MemoryStorageError::RecoveryRequired)?
+    };
+    let marker = snapshot(&folder, "completed")?.map(|proof| proof.id);
+    drop(folder);
+    let mut witness = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(data.join("checkpoint-witness.json"))?;
+    witness.write_all(&serde_json::to_vec(&(intent, marker)).unwrap())?;
+    witness.sync_all()?;
+    std::fs::write(data.join("checkpoint-ready"), b"ready")?;
+    loop {
+        std::thread::park();
+    }
+}
+struct Owner(std::process::Child);
+impl Drop for Owner {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+#[test]
+fn native_checkpoint_owner_child() {
+    let Some(data) = std::env::var_os(OWNER_DATA) else {
+        return;
+    };
+    let mut store = reopen(&Path::new(&data).join("state"));
+    save(&mut store, b"Before child death").unwrap();
+    save(&mut store, b"After child death").unwrap();
+    panic!("child failed to reach configured save barrier");
+}
+fn wait_ready(owner: &mut Owner, path: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !path.exists() {
+        assert!(
+            owner.0.try_wait().unwrap().is_none(),
+            "checkpoint owner exited before readiness"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "checkpoint owner readiness timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+fn inspect_live_checkpoint(path: &Path, phase: &str, intent: &Intent) {
+    let parent = state_directory(path).unwrap();
+    let dir = directory(&parent, false).unwrap().unwrap();
+    assert!(matches!(
+        MemoryClientStore::claim(path, parent, dir),
+        Err(MemoryStorageError::Busy)
+    ));
+    let parent = state_directory(path).unwrap();
+    let dir = directory(&parent, false).unwrap().unwrap();
+    let current = snapshot(&dir, CHECKPOINT).unwrap();
+    let expected = match phase {
+        "prepared" => intent.before.clone(),
+        "captured" => None,
+        _ => Some(intent.after.clone()),
+    };
+    assert_eq!(current, expected);
+    if matches!(phase, "completed" | "released" | "archived") {
+        assert!(
+            native::open_private_file(
+                &descriptor(&dir).unwrap(),
+                CHECKPOINT,
+                native::Access::DataWrite
+            )
+            .is_err()
+        );
+    }
+}
+fn kill_checkpoint_owner(phase: &str) {
+    let (data, store) = fixture();
+    let path = store.state.clone();
+    drop(store);
+    let mut owner = Owner(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "memory::client_state::windows::journal::tests::native_checkpoint_owner_child",
+                "--nocapture",
+            ])
+            .env(OWNER_DATA, data.path())
+            .env(OWNER_PHASE, phase)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_ready(&mut owner, &data.path().join("checkpoint-ready"));
+    let (intent, marker): (Intent, Option<native::FileIdentity>) = serde_json::from_slice(
+        &std::fs::read(data.path().join("checkpoint-witness.json")).unwrap(),
+    )
+    .unwrap();
+    inspect_live_checkpoint(&path, phase, &intent);
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    let restored = reopen(&path);
+    assert_eq!(restored.checkpoint(), Some(b"After child death".as_slice()));
+    assert_eq!(
+        snapshot(&restored.dir, CHECKPOINT).unwrap(),
+        Some(intent.after)
+    );
+    let history = child_directory(&restored.dir, HISTORY, false)
+        .unwrap()
+        .unwrap();
+    let archived = child_directory(&history, &intent.id, false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        native::identity(&descriptor(&archived).unwrap()).unwrap(),
+        intent.journal
+    );
+    assert_eq!(snapshot(&archived, "before").unwrap(), intent.before);
+    if let Some(marker) = marker {
+        assert_eq!(
+            snapshot(&archived, "completed").unwrap().unwrap().id,
+            marker
+        );
+    }
+    assert!(Journal::open(&restored).unwrap().is_none());
+    // One initial save and one recovered (or already archived) update, without replay.
+    assert_eq!(history.entries().unwrap().count(), 2);
+}
+#[test]
+fn native_checkpoint_killed_owner_recovers_every_save_boundary_without_replay() {
+    for phase in [
+        "prepared",
+        "captured",
+        "installed",
+        "completed",
+        "released",
+        "archived",
+    ] {
+        kill_checkpoint_owner(phase);
+    }
+}

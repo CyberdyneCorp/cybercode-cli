@@ -207,6 +207,8 @@ impl Journal {
         let prepared = Self { dir, intent, owner };
         prepared.verify(store)?;
         prepared.phase(store)?;
+        #[cfg(test)]
+        tests::barrier("prepared", &prepared.intent, store)?;
         Ok(prepared)
     }
     fn open(store: &MemoryClientStore) -> Result<Option<Self>, MemoryStorageError> {
@@ -333,6 +335,8 @@ impl Journal {
                     .as_ref()
                     .ok_or(MemoryStorageError::RecoveryRequired)?,
             )?;
+            #[cfg(test)]
+            tests::barrier("captured", &self.intent, store)?;
         }
         self.verify(store)?;
         if self.phase(store)? == Phase::Captured {
@@ -343,6 +347,8 @@ impl Journal {
                 CHECKPOINT,
                 &self.intent.after,
             )?;
+            #[cfg(test)]
+            tests::barrier("installed", &self.intent, store)?;
         }
         self.verify(store)?;
         if self.phase(store)? != Phase::Installed {
@@ -372,6 +378,8 @@ impl Journal {
         let marker = freeze(&self.dir, "completed", &marker_proof)?;
         self.verify(store)?;
         self.phase(store)?;
+        #[cfg(test)]
+        tests::barrier("completed", &self.intent, store)?;
         let history = child_directory(&store.dir, HISTORY, true)?
             .ok_or(MemoryStorageError::RecoveryRequired)?;
         let expected = self.intent.journal;
@@ -380,10 +388,14 @@ impl Journal {
         drop(original);
         drop(self.owner);
         drop(self.dir);
+        #[cfg(test)]
+        tests::barrier("released", &self.intent, store)?;
         native::retain_private_directory(&descriptor(&store.dir)?, PENDING, expected)?
             .rename_to_durable(&descriptor(&history)?, &id)?;
         native::sync_private(&descriptor(&history)?)?;
         store.sync()?;
+        #[cfg(test)]
+        tests::barrier("archived", &self.intent, store)?;
         drop(installed);
         Ok(())
     }

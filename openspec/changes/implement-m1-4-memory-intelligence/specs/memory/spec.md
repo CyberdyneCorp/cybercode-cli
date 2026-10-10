@@ -451,3 +451,10 @@
 - **AND** reopening SHALL resume only validated checkpoint effects, without replaying already installed objects or granting restored bytes request/review authority
 - **AND** changed, aliased, malformed or incomplete evidence SHALL refuse without repair or rollback, preserving user files and journal evidence
 - **AND** completion SHALL retain exact installed objects during terminal verification and exact-source journal archival; native killed-owner/retention/full lifecycle acceptance SHALL precede public activation
+
+#### Scenario: Windows checkpoint owner death at save boundaries
+- **WHEN** the Windows checkpoint owner dies after preparation, original capture, staged installation, completion, journal handle release or archival
+- **THEN** a fresh shared claim SHALL acquire released ownership and resume only validated pending effects, preserving recorded installed/original/marker/journal identities
+- **AND** already archived saves SHALL reopen without a second installation or archival; restored bytes SHALL remain evidence without request authority
+- **AND** test interruption barriers SHALL exist only in test builds and operate only on their explicitly owned child fixture
+- **AND** bounded history retention and full native lifecycle acceptance SHALL remain required before public activation
