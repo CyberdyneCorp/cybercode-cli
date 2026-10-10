@@ -1,0 +1,14 @@
+{
+  "operation": "definition",
+  "results": [
+    {
+      "path": "target.txt",
+      "line": 1,
+      "character": 1,
+      "location": "target.txt:1:1",
+      "preview": "target"
+    }
+  ],
+  "omitted": 0,
+  "servers_failed": 0
+}

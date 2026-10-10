@@ -207,3 +207,21 @@ async fn tool_search_golden() {
     let output = ok(f.call("plan", "tool_search", json!({})).await);
     support::golden(&f, "tool_search", &output);
 }
+
+#[tokio::test]
+async fn lsp_unavailable_golden() {
+    let fixture = Fixture::new();
+    fixture.set_config(json!({"permissions":{"lsp":"allow"}}));
+    assert_eq!(
+        support::failed(
+            fixture
+                .call(
+                    "default",
+                    "lsp",
+                    json!({"operation":"workspace_symbols","query":"main"})
+                )
+                .await
+        ),
+        "LSP services are unavailable"
+    );
+}

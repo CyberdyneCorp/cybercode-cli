@@ -1094,3 +1094,71 @@ async fn foreground_command_can_win_during_an_actual_partial_stdout_frame() {
         assert!(pool.close().await.unwrap()[0].acknowledged);
     }
 }
+
+#[tokio::test]
+async fn queued_navigation_refuses_changed_text_before_document_delivery() {
+    let (root, file) = fixture();
+    let file = file.canonicalize().unwrap();
+    let before = std::fs::read_to_string(&file).unwrap();
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        launcher("normal", Arc::new(AtomicUsize::new(0))),
+    )
+    .unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    let delayed = handle.clone();
+    let marker = root.path().join("navigation-delay");
+    let signal = marker.clone();
+    let blocker = tokio::spawn(async move {
+        delayed
+            .request("delay", json!({"marker":signal}), Duration::from_secs(3))
+            .await
+    });
+    wait_for(|| marker.exists()).await;
+    let queued = handle.clone();
+    let path = file.clone();
+    let navigation = tokio::spawn(async move {
+        queued
+            .navigate_observed(path, before, vec![], "fixture", json!({}))
+            .await
+    });
+    wait_for(|| handle.entry.sender.capacity() < 32).await;
+    std::fs::write(&file, "changed before queued navigation").unwrap();
+    assert!(navigation.await.unwrap().is_err());
+    assert!(blocker.await.unwrap().unwrap().as_bool().unwrap());
+    assert!(!root.path().join("document-events").exists());
+    assert_eq!(handle.status().status, ServerState::Connected);
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+}
+
+#[tokio::test]
+async fn workspace_query_handles_preserve_all_existing_nested_roots() {
+    let root = tempfile::tempdir().unwrap();
+    let launches = Arc::new(AtomicUsize::new(0));
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        launcher("normal", launches.clone()),
+    )
+    .unwrap();
+    for name in ["one", "two"] {
+        let directory = root.path().join(name);
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join(".root"), "").unwrap();
+        let file = directory.join("file.rs");
+        std::fs::write(&file, "nested").unwrap();
+        pool.ensure("fixture", &file)
+            .unwrap()
+            .connected()
+            .await
+            .unwrap();
+    }
+    let handles = pool.query_handles(None);
+    assert_eq!(handles.len(), 2);
+    for handle in handles {
+        assert_ne!(handle.status().root, root.path().canonicalize().unwrap());
+    }
+    assert_eq!(launches.load(Ordering::SeqCst), 2);
+    assert!(pool.close().await.unwrap().iter().all(|s| s.acknowledged));
+}

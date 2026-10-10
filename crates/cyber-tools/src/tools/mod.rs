@@ -4,6 +4,7 @@ pub(crate) mod agent;
 pub(crate) mod bash;
 mod fs;
 pub(crate) mod intelligence;
+mod lsp;
 mod mcp;
 pub(crate) mod memory;
 mod notebook;
@@ -41,6 +42,7 @@ pub(crate) trait Tool: Send + Sync {
 pub(crate) fn all() -> Vec<Box<dyn Tool>> {
     let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(fs::Read),
+        Box::new(lsp::Lsp),
         Box::new(fs::Write),
         Box::new(fs::Edit),
         Box::new(patch::ApplyPatch),

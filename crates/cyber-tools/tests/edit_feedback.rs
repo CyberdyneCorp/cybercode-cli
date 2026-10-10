@@ -10,7 +10,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use support::{Fixture, ok};
 
 const SERVER: &str = r#"
-import json,sys,pathlib,urllib.parse
+import json,sys,pathlib,urllib.parse,time
 versions={}
 def send(value):
     body=json.dumps(value).encode()
@@ -34,6 +34,7 @@ while True:
         with (root/'sync-events').open('a') as f: f.write(json.dumps({'method':method,'params':p})+'\n')
         if method in ['textDocument/didOpen','textDocument/didChange']:
             d=p['textDocument']; versions[d['uri']]=d['version']
+            if sys.argv[1]=='navigation': send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':d['uri'],'version':d['version'],'diagnostics':[diagnostic('fixture diagnostic'),diagnostic('fixture warning',2)]}})
         elif method=='textDocument/didClose': versions.pop(p['textDocument']['uri'])
         elif method=='workspace/didChangeWatchedFiles':
             for change in p['changes']:
@@ -49,6 +50,29 @@ while True:
         if sys.argv[1]!='other-only': send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':uri,'version':versions[uri],'diagnostics':errors}})
         for other in sorted(root.glob('other*.txt')):
             send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':other.as_uri(),'diagnostics':[diagnostic('other error')]}})
+    elif method.startswith('textDocument/') or method=='workspace/symbol':
+        with (root/'rpc-events').open('a') as f: f.write(json.dumps({'method':method,'params':p})+'\n')
+        if sys.argv[1]=='navigation-delay': time.sleep(0.15)
+        if sys.argv[1]=='navigation-error':
+            send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32601,'message':'private-error-secret'}});continue
+        uri=p.get('textDocument',{}).get('uri',(root/'file.txt').as_uri())
+        r=lambda line: {'start':{'line':line,'character':0},'end':{'line':line,'character':3}}
+        if method in ['textDocument/definition','textDocument/references','textDocument/hover','textDocument/implementation','textDocument/rename']: assert p['position']=={'line':0,'character':1}
+        if method=='textDocument/definition': result=[{'targetUri':(root/'target.txt').as_uri(),'targetRange':r(0),'targetSelectionRange':r(0)}]
+        elif method=='textDocument/references':
+            assert p['context']=={'includeDeclaration':True}
+            result=[{'uri':uri,'range':r(i)} for i in range(60)]+[{'uri':'https://example.invalid/file','range':r(0)},{'uri':root.parent.joinpath('outside.txt').as_uri(),'range':r(0)}]
+        elif method=='textDocument/hover': result={'contents':{'kind':'markdown','value':'int <x>\n\x1b[31m'},'range':r(0)}
+        elif method=='textDocument/implementation': result={'uri':uri,'range':r(1)}
+        elif method=='textDocument/documentSymbol': result=[{'name':'one','kind':13,'range':r(0),'selectionRange':r(0),'children':[{'name':'two','kind':13,'range':r(1),'selectionRange':r(1)}]}]
+        elif method=='workspace/symbol':
+            assert p['query']=='find'
+            result=[{'name':'workspace','kind':13,'location':{'uri':(root/'target.txt').as_uri(),'range':r(0)}}]
+        elif method=='textDocument/rename':
+            assert p['newName']=='renamed'
+            result={'changes':{uri:[{'range':r(0),'newText':'renamed'}],'https://example.invalid/file':[{'range':r(0),'newText':'external'}]},'documentChanges':[{'textDocument':{'uri':uri,'version':versions[uri]},'edits':[{'range':r(0),'newText':'renamed'}]},{'textDocument':{'uri':'https://example.invalid/file','version':None},'edits':[{'range':r(0),'newText':'external'}]},{'textDocument':{'uri':(root/'target.txt').as_uri(),'version':None},'edits':[{'range':r(1),'newText':'second edit'}]},{'kind':'create','uri':(root/'created.txt').as_uri()},{'kind':'rename','oldUri':(root/'target.txt').as_uri(),'newUri':(root/'moved.txt').as_uri()},{'kind':'rename','oldUri':(root/'folder').as_uri(),'newUri':(root/'renamed-folder').as_uri()}]}
+        else: result=None
+        send({'jsonrpc':'2.0','id':msg['id'],'result':result})
     elif method=='shutdown': send({'jsonrpc':'2.0','id':msg['id'],'result':None})
     elif method=='exit': break
 "#;
@@ -64,7 +88,11 @@ fn setup(mode: &'static str, wait: u64) -> (Fixture, Locations) {
     let mut paths = Paths::resolve(&environment, fixture.dir.path());
     paths.tmp = fixture.dir.path().join("lsp-tmp");
     paths.ensure().unwrap();
-    std::fs::write(paths.config.join("cyber.jsonc"), json!({"lsp":{"fixture":{"command":["python3","-u","-c",SERVER,mode],"extensions":[".txt",".ipynb"]}},"sandbox":{"network":"off"}}).to_string()).unwrap();
+    let mut config = json!({"lsp":{"fixture":{"command":["python3","-u","-c",SERVER,mode],"extensions":[".txt",".ipynb"]}},"sandbox":{"network":"off"}});
+    for definition in cyber_core::intelligence::builtin_servers() {
+        config["lsp"][definition.id] = json!({"disabled":true});
+    }
+    std::fs::write(paths.config.join("cyber.jsonc"), config.to_string()).unwrap();
     let home = fixture.dir.path().to_path_buf();
     let locations = Locations::new(Arc::new(move |root| {
         let launcher = LocalLauncher::new(
@@ -558,4 +586,346 @@ async fn cold_deletion_starts_no_server_and_zero_wait_retains_warm_deletion() {
             .iter()
             .any(|event| event.to_string().contains("unsupported.bin"))
     );
+}
+
+fn navigation_fixture(mode: &'static str) -> (Fixture, Locations) {
+    let (fixture, locations) = setup(mode, 2000);
+    fixture.set_config(json!({"permissions":{"lsp":"allow"}}));
+    fixture.write("file.txt", "hello\nworld\nthird\n");
+    fixture.write("target.txt", "target\nsecond\n");
+    (fixture, locations)
+}
+
+#[tokio::test]
+async fn navigation_operations_validate_positions_paths_previews_and_result_limit() {
+    let (fixture, locations) = navigation_fixture("navigation");
+    for operation in [
+        "definition",
+        "references",
+        "hover",
+        "document_symbols",
+        "workspace_symbols",
+        "implementation",
+    ] {
+        let input = match operation {
+            "workspace_symbols" => json!({"operation":operation,"query":"find"}),
+            "document_symbols" => json!({"operation":operation,"path":"file.txt"}),
+            _ => json!({"operation":operation,"path":"file.txt","line":1,"character":2}),
+        };
+        let output = ok(fixture.call("default", "lsp", input).await);
+        assert!(!output.contains('\u{1b}'));
+        let result: Value = serde_json::from_str(&output).unwrap();
+        if operation == "definition" {
+            support::golden(&fixture, "lsp", &output);
+        }
+        assert_eq!(result["operation"], operation);
+        assert_eq!(result["servers_failed"], 0);
+        let rows = result["results"].as_array().unwrap();
+        assert!(!rows.is_empty(), "{result}");
+        assert!(rows.len() <= 50);
+        assert!(
+            rows.iter()
+                .all(|row| !row["path"].as_str().unwrap().starts_with('/'))
+        );
+        match operation {
+            "references" => {
+                assert_eq!(rows.len(), 50);
+                assert_eq!(result["omitted"], 12);
+                assert_eq!(rows[0]["line"], 1);
+                assert_eq!(rows[0]["character"], 1);
+                assert_eq!(rows[0]["location"], "file.txt:1:1");
+                assert_eq!(rows[0]["preview"], "hello");
+            }
+            "definition" | "workspace_symbols" => {
+                assert_eq!(rows[0]["path"], "target.txt");
+                assert_eq!(rows[0]["preview"], "target");
+            }
+            "document_symbols" => assert_eq!(rows.len(), 2),
+            "hover" => assert!(rows[0]["text"].as_str().unwrap().contains("int <x>")),
+            "implementation" => assert_eq!(rows[0]["preview"], "world"),
+            _ => unreachable!(),
+        }
+    }
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+    assert!(!fixture.repo.join("save-events").exists());
+}
+
+#[tokio::test]
+async fn rename_preview_returns_text_and_resource_edits_without_mutating_files() {
+    let (fixture, locations) = navigation_fixture("navigation");
+    fixture.write("folder/nested.txt", "preserved folder");
+    let output = ok(fixture.call("plan", "lsp", json!({"operation":"rename_preview","path":"file.txt","line":1,"character":2,"new_name":"renamed"})).await);
+    let result: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(result["results"].as_array().unwrap().len(), 5);
+    assert_eq!(result["omitted"], 1);
+    assert_eq!(result["results"][0]["document_version"], 1);
+    assert!(
+        result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["new_text"] == "renamed")
+    );
+    assert_eq!(fixture.read("file.txt"), "hello\nworld\nthird\n");
+    assert_eq!(fixture.read("target.txt"), "target\nsecond\n");
+    assert!(!fixture.repo.join("created.txt").exists());
+    assert!(!fixture.repo.join("moved.txt").exists());
+    assert_eq!(fixture.read("folder/nested.txt"), "preserved folder");
+    assert!(!fixture.repo.join("renamed-folder").exists());
+    assert!(
+        result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["server"] == "fixture" && row["server_root"] == ".")
+    );
+    assert!(!fixture.repo.join("save-events").exists());
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn navigation_diagnostics_use_the_revalidated_typed_cache() {
+    let (fixture, locations) = navigation_fixture("navigation");
+    ok(fixture
+        .call(
+            "default",
+            "lsp",
+            json!({"operation":"definition","path":"file.txt","line":1,"character":2}),
+        )
+        .await);
+    for path in [Some("file.txt"), None] {
+        let mut input = json!({"operation":"diagnostics"});
+        if let Some(path) = path {
+            input["path"] = json!(path);
+        }
+        let output = ok(fixture.call("default", "lsp", input).await);
+        let result: Value = serde_json::from_str(&output).unwrap();
+        let rows = result["results"].as_array().unwrap();
+        assert_eq!(rows.len(), 2, "{result}");
+        assert_eq!(rows[0]["line"], 3);
+        assert_eq!(rows[0]["character"], 4);
+        assert_eq!(rows[0]["preview"], "third");
+        assert!(
+            rows.iter()
+                .all(|row| row["server_version"] == 1 && row["observed_document_version"] == 1)
+        );
+    }
+    fixture.write("file.txt", "user changed\n");
+    let output = ok(fixture
+        .call("default", "lsp", json!({"operation":"diagnostics"}))
+        .await);
+    assert_eq!(
+        serde_json::from_str::<Value>(&output).unwrap()["results"],
+        json!([])
+    );
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn cold_workspace_symbols_need_no_document_and_denied_requests_start_nothing() {
+    let (fixture, locations) = navigation_fixture("navigation");
+    fixture.set_config(json!({"permissions":{"lsp":"deny"}}));
+    assert!(
+        support::failed(
+            fixture
+                .call(
+                    "bypass",
+                    "lsp",
+                    json!({"operation":"workspace_symbols","query":"find"})
+                )
+                .await
+        )
+        .contains("denied")
+    );
+    assert!(locations.status(&fixture.repo).unwrap().is_empty());
+    fixture.set_config(json!({"permissions":{"lsp":"allow"}}));
+    let output = ok(fixture
+        .call(
+            "default",
+            "lsp",
+            json!({"operation":"workspace_symbols","query":"find"}),
+        )
+        .await);
+    assert_eq!(
+        serde_json::from_str::<Value>(&output).unwrap()["results"][0]["name"],
+        "workspace"
+    );
+    assert!(!fixture.repo.join("sync-events").exists());
+    for mode in ["default", "plan"] {
+        for patch in [false, true] {
+            assert!(
+                fixture
+                    .tool_names(mode, patch)
+                    .iter()
+                    .any(|name| name == "lsp")
+            );
+        }
+    }
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn navigation_refuses_disabled_external_invalid_and_remote_failure_inputs() {
+    let (fixture, locations) = navigation_fixture("navigation-error");
+    for input in [
+        json!({"operation":"definition","path":"file.txt","line":0,"character":1}),
+        json!({"operation":"rename_preview","path":"file.txt","line":1,"character":2}),
+        json!({"operation":"definition","path":"missing.txt","line":1,"character":2}),
+    ] {
+        support::failed(fixture.call("default", "lsp", input).await);
+    }
+    let outside = fixture.dir.path().join("outside.txt");
+    std::fs::write(&outside, "private").unwrap();
+    assert!(
+        support::failed(
+            fixture
+                .call(
+                    "default",
+                    "lsp",
+                    json!({"operation":"definition","path":outside,"line":1,"character":2})
+                )
+                .await
+        )
+        .contains("inside the selected Location")
+    );
+    fixture.set_config(json!({"lsp":false,"permissions":{"lsp":"allow"}}));
+    assert!(
+        support::failed(
+            fixture
+                .call(
+                    "default",
+                    "lsp",
+                    json!({"operation":"workspace_symbols","query":"find"})
+                )
+                .await
+        )
+        .contains("disabled")
+    );
+    assert!(locations.status(&fixture.repo).unwrap().is_empty());
+    fixture.set_config(json!({"permissions":{"lsp":"allow"}}));
+    let output = support::failed(
+        fixture
+            .call(
+                "default",
+                "lsp",
+                json!({"operation":"definition","path":"file.txt","line":1,"character":2}),
+            )
+            .await,
+    );
+    assert!(output.contains("failed or do not support"));
+    assert!(!output.contains("private-error-secret"));
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn navigation_discards_response_after_user_changes_the_source() {
+    use cyber_server::runtime::ToolHost;
+    use tokio_util::sync::CancellationToken;
+    let (fixture, locations) = navigation_fixture("navigation-delay");
+    let host = fixture.host.clone();
+    let invocation = fixture.invocation(
+        "default",
+        "lsp",
+        json!({"operation":"definition","path":"file.txt","line":1,"character":2}),
+    );
+    let pending =
+        tokio::spawn(async move { host.execute(invocation, CancellationToken::new()).await });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !fixture.repo.join("rpc-events").exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    fixture.write("file.txt", "user changed during request\n");
+    assert!(support::failed(pending.await.unwrap()).contains("source changed"));
+    assert_eq!(fixture.read("file.txt"), "user changed during request\n");
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn navigation_preserves_literal_backslashes_and_unicode_in_relative_paths() {
+    let (fixture, locations) = navigation_fixture("navigation");
+    let name = "literal\\λ.txt";
+    fixture.write(name, "hello\nworld\nthird\n");
+    let output = ok(fixture
+        .call(
+            "default",
+            "lsp",
+            json!({"operation":"implementation","path":name,"line":1,"character":2}),
+        )
+        .await);
+    let result: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(result["results"][0]["path"], name);
+    assert_eq!(result["results"][0]["preview"], "world");
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn unapproved_navigation_obeys_default_ask_and_dont_ask_without_startup() {
+    let (fixture, locations) = navigation_fixture("navigation");
+    fixture.set_config(json!({}));
+    for mode in ["default", "plan", "dont-ask"] {
+        support::failed(
+            fixture
+                .call(
+                    mode,
+                    "lsp",
+                    json!({"operation":"workspace_symbols","query":"find"}),
+                )
+                .await,
+        );
+    }
+    assert!(locations.status(&fixture.repo).unwrap().is_empty());
+    assert!(!fixture.repo.join("rpc-events").exists());
+    assert!(locations.close().await.unwrap().is_empty());
 }

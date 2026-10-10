@@ -178,7 +178,18 @@ pub(super) async fn observe(path: PathBuf) -> Option<Observation> {
         .flatten()
 }
 
+pub(crate) async fn document_source(path: PathBuf) -> Option<String> {
+    tokio::task::spawn_blocking(move || observe_source(&path).map(|(_, text)| text))
+        .await
+        .ok()
+        .flatten()
+}
+
 fn observe_file(path: &Path) -> Option<Observation> {
+    observe_source(path).map(|(observation, _)| observation)
+}
+
+fn observe_source(path: &Path) -> Option<(Observation, String)> {
     if path.canonicalize().ok()?.as_path() != path {
         return None;
     }
@@ -214,10 +225,11 @@ fn observe_file(path: &Path) -> Option<Observation> {
     {
         return None;
     }
-    Some(Observation {
-        digest: Sha256::digest(bytes).into(),
-        checkouts,
-    })
+    let digest = Sha256::digest(&bytes).into();
+    Some((
+        Observation { digest, checkouts },
+        String::from_utf8(bytes).ok()?,
+    ))
 }
 
 struct Cached {

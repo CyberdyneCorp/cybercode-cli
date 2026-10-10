@@ -7,6 +7,7 @@ mod framing;
 mod launch;
 mod locations;
 mod pool;
+pub(crate) use diagnostics::document_source;
 pub(crate) use documents::MAX_DOCUMENT_BYTES;
 pub(crate) use locations::{ReadOrigin, edit_origin, read_origin};
 

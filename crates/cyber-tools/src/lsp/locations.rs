@@ -102,7 +102,7 @@ struct Save {
 
 pub(crate) struct ReadOrigin {
     location: Vec<cyber_core::worktrees::Managed>,
-    document: Vec<cyber_core::worktrees::Managed>,
+    pub(crate) document: Vec<cyber_core::worktrees::Managed>,
     created: bool,
 }
 
@@ -321,7 +321,6 @@ impl Locations {
         if warm.text.len() > super::documents::MAX_DOCUMENT_BYTES {
             return Err(unavailable());
         }
-        let runtime = tokio::runtime::Handle::try_current().map_err(|_| unavailable())?;
         let location = location.canonicalize().map_err(|_| unavailable())?;
         if warm.removed {
             if !matches!(std::fs::symlink_metadata(&warm.file), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
@@ -334,6 +333,23 @@ impl Locations {
         if !warm.file.starts_with(&location) || (!warm.removed && !warm.file.is_file()) {
             return Err(unavailable());
         }
+        let _activity = self.acquire(&location)?;
+        let entry = self.start(&location)?;
+        let mut activity = entry.activity.state.lock().map_err(|_| unavailable())?;
+        if entry.cancel.is_cancelled() {
+            return Err(unavailable());
+        }
+        let sent = entry.sender.try_send(warm);
+        if sent.is_ok() {
+            activity.touched = Instant::now();
+            entry.activity.changed.notify_one();
+        }
+        drop(activity);
+        sent.map_err(|_| unavailable())
+    }
+    fn start(&self, location: &Path) -> Result<Arc<Entry>, LspError> {
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| unavailable())?;
+        let location = location.canonicalize().map_err(|_| unavailable())?;
         let mut table = self.0.table.lock().map_err(|_| unavailable())?;
         if table.closed || table.fences.contains_key(&location) || !location.is_dir() {
             return Err(unavailable());
@@ -353,34 +369,76 @@ impl Locations {
             .entry(location.clone())
             .or_default()
             .clone();
-        let entry = table.entries.entry(location.clone()).or_insert_with(|| {
-            let (sender, receiver) = mpsc::channel(16);
-            let entry = Arc::new(Entry {
-                cancel: CancellationToken::new(),
-                activity,
-                sender,
-                pool: OnceLock::new(),
-                retired: AtomicBool::new(false),
-                discovery_failed: AtomicBool::new(false),
-                worker: tokio::sync::Mutex::default(),
-            });
-            let worker = entry.clone();
-            let factory = self.0.factory.clone();
-            let idle = self.0.idle;
-            entry.worker.try_lock().unwrap().task = Some(
-                runtime.spawn(async move { run(worker, location, factory, idle, receiver).await }),
-            );
-            entry
-        });
-        let mut activity = entry.activity.state.lock().map_err(|_| unavailable())?;
-        if entry.cancel.is_cancelled() {
+        let entry = table
+            .entries
+            .entry(location.clone())
+            .or_insert_with(|| {
+                let (sender, receiver) = mpsc::channel(16);
+                let entry = Arc::new(Entry {
+                    cancel: CancellationToken::new(),
+                    activity,
+                    sender,
+                    pool: OnceLock::new(),
+                    retired: AtomicBool::new(false),
+                    discovery_failed: AtomicBool::new(false),
+                    worker: tokio::sync::Mutex::default(),
+                });
+                let worker = entry.clone();
+                let factory = self.0.factory.clone();
+                let idle = self.0.idle;
+                entry.worker.try_lock().unwrap().task =
+                    Some(runtime.spawn(async move {
+                        run(worker, location, factory, idle, receiver).await
+                    }));
+                entry
+            })
+            .clone();
+        Ok(entry)
+    }
+
+    pub(crate) async fn query_pool(
+        &self,
+        location: &Path,
+        origin: ReadOrigin,
+    ) -> Result<Pool, LspError> {
+        let expected_location = location.canonicalize().map_err(|_| unavailable())?;
+        let entry = self.start(location)?;
+        let pool = tokio::time::timeout(Duration::from_secs(45), async {
+            loop {
+                if entry.cancel.is_cancelled() {
+                    return Err(unavailable());
+                }
+                if let Some(pool) = entry.pool.get() {
+                    return Ok(pool.clone());
+                }
+                if entry
+                    .worker
+                    .lock()
+                    .await
+                    .task
+                    .as_ref()
+                    .is_none_or(|task| task.is_finished())
+                {
+                    return Err(unavailable());
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| unavailable())??;
+        if pool.location() != expected_location {
             return Err(unavailable());
         }
-        entry.sender.try_send(warm).map_err(|_| unavailable())?;
-        activity.touched = Instant::now();
-        entry.activity.changed.notify_one();
-        Ok(())
+        let location = location.to_path_buf();
+        let current = tokio::task::spawn_blocking(move || checkout_records(&location))
+            .await
+            .map_err(|_| unavailable())??;
+        if current != origin.location {
+            return Err(unavailable());
+        }
+        Ok(pool)
     }
+
     /// Observation does not create services or start language servers.
     pub fn status(&self, location: &Path) -> Result<Vec<ServerStatus>, LspError> {
         let location = location.canonicalize().map_err(|_| unavailable())?;
@@ -743,6 +801,66 @@ pub(crate) fn checkout_records(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn rejected_save_drops_activity_after_releasing_the_queue_lock() {
+        for closed in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let directory = root.path().canonicalize().unwrap();
+            let file = directory.join("file.rs");
+            std::fs::write(&file, "saved").unwrap();
+            let locations = Locations::new(Arc::new(|_| panic!("no discovery required")));
+            let activity = locations.acquire(&directory).unwrap();
+            let state = activity.state.clone();
+            let (sender, receiver) = mpsc::channel(16);
+            let mut receiver = Some(receiver);
+            if closed {
+                drop(receiver.take());
+            } else {
+                for _ in 0..16 {
+                    sender
+                        .try_send(Warm {
+                            origin: read_origin(&directory, &file).unwrap(),
+                            file: file.clone(),
+                            text: "saved".into(),
+                            removed: false,
+                            save: None,
+                        })
+                        .ok()
+                        .unwrap();
+                }
+            }
+            let entry = Arc::new(Entry {
+                cancel: CancellationToken::new(),
+                activity: state.clone(),
+                sender,
+                pool: OnceLock::new(),
+                retired: AtomicBool::new(false),
+                discovery_failed: AtomicBool::new(false),
+                worker: tokio::sync::Mutex::default(),
+            });
+            locations
+                .0
+                .table
+                .lock()
+                .unwrap()
+                .entries
+                .insert(directory.clone(), entry);
+            let (reply, _) = oneshot::channel();
+            let warm = Warm {
+                origin: read_origin(&directory, &file).unwrap(),
+                file,
+                text: "saved".into(),
+                removed: false,
+                save: Some(Save {
+                    reply,
+                    _activity: activity,
+                }),
+            };
+            assert!(locations.enqueue(&directory, warm).is_err());
+            assert_eq!(state.state.lock().unwrap().users, 0);
+        }
+    }
 
     #[tokio::test]
     async fn activity_is_lazy_and_does_not_consume_service_slots() {

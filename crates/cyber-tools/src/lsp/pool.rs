@@ -153,10 +153,21 @@ enum Command {
         reply: oneshot::Sender<Result<(), LspError>>,
     },
     Notifications(oneshot::Sender<Vec<Value>>),
+    Navigate(Navigation),
+    DiagnosticPaths(oneshot::Sender<Vec<PathBuf>>),
     Diagnostics {
         path: PathBuf,
         reply: oneshot::Sender<Result<Option<super::DiagnosticSnapshot>, LspError>>,
     },
+}
+
+struct Navigation {
+    path: PathBuf,
+    text: String,
+    checkouts: Vec<cyber_core::worktrees::Managed>,
+    method: String,
+    params: Value,
+    reply: oneshot::Sender<Result<Value, LspError>>,
 }
 
 pub(super) struct SaveReceipt {
@@ -256,7 +267,7 @@ impl ServerHandle {
         self.open_observed(path, text, checkouts).await
     }
 
-    async fn open_observed(
+    pub(crate) async fn open_observed(
         &self,
         path: &Path,
         text: String,
@@ -345,6 +356,42 @@ impl ServerHandle {
         self.entry
             .sender
             .send(Command::Notifications(reply))
+            .await
+            .map_err(|_| unavailable())?;
+        receive.await.map_err(|_| unavailable())
+    }
+
+    pub(crate) async fn navigate_observed(
+        &self,
+        path: PathBuf,
+        text: String,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, LspError> {
+        self.connected().await?;
+        let (reply, receive) = oneshot::channel();
+        self.entry
+            .sender
+            .send(Command::Navigate(Navigation {
+                path,
+                text,
+                checkouts,
+                method: method.into(),
+                params,
+                reply,
+            }))
+            .await
+            .map_err(|_| unavailable())?;
+        receive.await.map_err(|_| unavailable())?
+    }
+
+    pub(crate) async fn diagnostic_paths(&self) -> Result<Vec<PathBuf>, LspError> {
+        self.connected().await?;
+        let (reply, receive) = oneshot::channel();
+        self.entry
+            .sender
+            .send(Command::DiagnosticPaths(reply))
             .await
             .map_err(|_| unavailable())?;
         receive.await.map_err(|_| unavailable())
@@ -542,6 +589,58 @@ impl Pool {
         }
         let root = server_root(&self.inner.location, file, &server.definition.root_markers)
             .map_err(|_| LspError::Protocol("file is outside available Location roots"))?;
+        self.ensure_root(id, server, root)
+    }
+
+    pub(crate) fn location(&self) -> &Path {
+        &self.inner.location
+    }
+
+    pub(crate) fn query_handles(&self, file: Option<&Path>) -> Vec<ServerHandle> {
+        if let Some(file) = file {
+            return self
+                .inner
+                .servers
+                .keys()
+                .filter_map(|id| self.ensure(id, file).ok())
+                .collect();
+        }
+        let mut handles = self
+            .inner
+            .table
+            .lock()
+            .map(|table| {
+                table
+                    .entries
+                    .values()
+                    .map(|entry| ServerHandle {
+                        entry: entry.clone(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for (id, server) in &self.inner.servers {
+            if handles.iter().any(|handle| handle.status().id == *id) {
+                continue;
+            }
+            if server.enabled
+                && server.installed
+                && server.executable.is_some()
+                && !server.definition.command.is_empty()
+                && let Ok(handle) = self.ensure_root(id, server, self.inner.location.clone())
+            {
+                handles.push(handle);
+            }
+        }
+        handles
+    }
+
+    fn ensure_root(
+        &self,
+        id: &str,
+        server: &DetectedServer,
+        root: PathBuf,
+    ) -> Result<ServerHandle, LspError> {
         let checkouts = cyber_core::worktrees::Repository::managed_locations_at(&root)
             .map_err(|_| unavailable())?
             .into_iter()
@@ -813,6 +912,9 @@ async fn dispatch_event(
     event: Event,
     cancel: &CancellationToken,
 ) -> bool {
+    if let Event::Command(Command::Navigate(navigation)) = event {
+        return dispatch_navigation(connection, documents, cancel, navigation).await;
+    }
     if let Event::Command(Command::Save {
         path,
         text,
@@ -892,6 +994,49 @@ async fn dispatch_event(
         _ = cancel.cancelled() => false,
         healthy = handle_event(connection, documents, diagnostics, event) => healthy,
     }
+}
+
+async fn dispatch_navigation(
+    connection: &mut StdioConnection,
+    documents: &mut super::documents::Documents,
+    cancel: &CancellationToken,
+    navigation: Navigation,
+) -> bool {
+    let Navigation {
+        path,
+        text,
+        method,
+        params,
+        reply,
+        ..
+    } = navigation;
+    if reply.is_closed() {
+        return true;
+    }
+    let Some(observation) = retained(
+        connection,
+        cancel,
+        super::diagnostics::observe(path.clone()),
+    )
+    .await
+    else {
+        return false;
+    };
+    if !observation.is_some_and(|observation| observation.matches_text(&text)) {
+        let _ = reply.send(Err(unavailable()));
+        return true;
+    }
+    let operation = async {
+        let language = super::documents::language(&path);
+        documents.open(connection, path, text, language).await?;
+        connection
+            .request(&method, params, Duration::from_secs(30))
+            .await
+    };
+    let result = tokio::select! { biased; _ = cancel.cancelled() => return false, result = operation => result };
+    let healthy = result.is_ok() || matches!(result, Err(LspError::Remote(_)));
+    let _ = reply.send(result);
+    healthy
 }
 
 async fn collect_feedback(
@@ -1153,6 +1298,12 @@ async fn admitted_document(
             reply,
             ..
         }) => (path, checkouts, reply.is_closed(), false),
+        Event::Command(Command::Navigate(navigation)) => (
+            &navigation.path,
+            &navigation.checkouts,
+            navigation.reply.is_closed(),
+            false,
+        ),
         Event::Command(Command::Remove {
             path,
             checkouts,
@@ -1225,6 +1376,13 @@ async fn execute(
     command: Command,
 ) -> bool {
     match command {
+        Command::Navigate(_) => {
+            unreachable!("navigation observations are retained by the worker")
+        }
+        Command::DiagnosticPaths(reply) => {
+            let _ = reply.send(diagnostics.paths_after(0));
+            true
+        }
         Command::Remove { path, reply, .. } => {
             if reply.is_closed() {
                 return true;

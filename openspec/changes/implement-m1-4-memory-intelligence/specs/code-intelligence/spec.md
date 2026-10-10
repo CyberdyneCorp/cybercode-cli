@@ -365,3 +365,35 @@ Queued deletion SHALL retain service activity and notification ownership after a
 #### Scenario: Cold or unmatched deletion
 - **WHEN** no matching server root is running or the deleted file has an unsupported extension
 - **THEN** no new language-server process SHALL start solely for that deletion and unrelated roots SHALL receive no document mutation
+
+### Requirement: Owned read-only navigation tool
+(P1) The built-in lsp tool SHALL expose definition, references, hover, document_symbols, workspace_symbols, implementation, rename_preview and diagnostics through the lsp permission action. It SHALL be offered to ordinary and patch-preferring models and in plan mode as read-only. Input positions SHALL be positive 1-based values within the protocol integer range, converted to zero-based positions only for RPC. Position-dependent operations SHALL require a file path; rename_preview SHALL require a new name. The existing default ask policy SHALL remain in force unless lsp is explicitly permitted or approved. Denied/disabled/invalid admissions SHALL NOT start language-server processes.
+
+File operations SHALL observe canonical regular UTF-8 documents within the Location and the 1 MiB document budget, capture immutable managed ancestry before delivery, and open through the retained document-admission boundary. Document open and navigation RPC SHALL execute as one serialized worker operation after revalidating queued contents, without an intervening document change from another caller. Caller source changes during a request SHALL discard the response without modifying user content. Navigation SHALL retain Location activity through discovery, requests and output collection. Workspace operations without a file SHALL discover the owned Location pool without inventing/opening a document, retaining all existing nested server roots. Root startup, native resources, trust checks, sticky failures and explicit lifecycle fences SHALL remain shared with warming/edit feedback.
+
+Navigation SHALL normalize valid locations and links, hierarchical/flat symbols and hover content into bounded JSON with Location-relative paths, 1-based positions and bounded source-line previews where positions are supplied. It SHALL retain at most fifty result rows across servers and report omitted or failed results. External/remote URIs and invalid ranges SHALL NOT cause external reads. Source previews SHALL use bounded regular-file observations refusing symlinks/reparse points. Literal path characters SHALL be preserved, with platform path components separated by forward slashes.
+
+Rename preview SHALL project changes or preferred ordered documentChanges, including text edits and proposed create/rename/delete operations, without writing files or sending didSave. Versioned proposals SHALL preserve their supplied document version and server/root provenance. This projection SHALL NOT claim that previewed edits were applied. Diagnostics SHALL use the existing revalidated typed cache, retaining the distinction between optional server versions and observed client versions.
+
+#### Scenario: Read-only navigation and bounded references
+- **WHEN** a permitted tool call queries references and a server supplies sixty valid locations plus external/remote entries
+- **THEN** output SHALL contain at most fifty Location-relative rows with code previews and the omitted count
+
+#### Scenario: Preview rename in plan mode
+- **WHEN** a server returns versioned text edits and proposed file operations
+- **THEN** plan-mode output SHALL describe the proposals without changing source files or creating/moving destinations
+
+#### Scenario: Workspace query without a file
+- **WHEN** workspace_symbols is called before any document is opened
+- **THEN** a permitted owned pool SHALL discover/start applicable configured servers without sending a synthetic didOpen
+
+#### Scenario: Changed source during RPC
+- **WHEN** a user edits the requested source before the response is collected
+- **THEN** navigation SHALL discard the response and preserve the user's content
+
+### Requirement: Rejected synchronization activity disposal
+(P1) Rejecting a queued save/deletion job SHALL dispose its owned activity only after releasing queue/table/activity locks. Closed or full queues SHALL return an error without deadlocking activity disposal or preventing later lifecycle settlement.
+
+#### Scenario: Closed warming receiver
+- **WHEN** an owned save job is submitted to a service entry whose warming receiver has closed
+- **THEN** rejection SHALL release both the submitted job's activity and any temporary admission guard without waiting on a mutex held by the same call
