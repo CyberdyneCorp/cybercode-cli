@@ -4,9 +4,11 @@ mod transaction;
 use super::{IndexSnapshot, MemoryDocument, MemoryError, MemoryMetadata, directory, validate_name};
 #[cfg(not(windows))]
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::Dir;
+#[cfg(not(windows))]
+use cap_std::fs::DirBuilder;
 #[cfg(not(windows))]
 use cap_std::fs::OpenOptions;
-use cap_std::fs::{Dir, DirBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, TryLockError};
@@ -452,6 +454,7 @@ fn existing_private_directory(parent: &Dir, name: &str) -> Result<Option<Dir>, M
     }
 }
 
+#[cfg(not(windows))]
 pub(super) fn private_builder() -> DirBuilder {
     #[cfg(unix)]
     {

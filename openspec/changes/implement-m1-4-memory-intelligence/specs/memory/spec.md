@@ -436,3 +436,10 @@
 - **THEN** completed journal evidence SHALL survive, process-held exclusions SHALL release, and reopened recovery SHALL retain the exact installed note/index and captured-original identities
 - **AND** recovered acknowledgement SHALL use the original journal/receipt identity and archive that exact journal once without replaying installed objects
 - **AND** storage callback witnesses SHALL NOT be treated as proof of database reconciliation or complete crash acceptance
+
+#### Scenario: Windows private checkpoint ownership and reads
+- **WHEN** client checkpoint storage is privately admitted on Windows
+- **THEN** its state and client directory names and held lock SHALL be pinned to native identities for the owner lifetime, with an independent OS ownership lock
+- **AND** creation SHALL atomically apply protected current-user/SYSTEM privacy; unsafe existing objects SHALL refuse without repair
+- **AND** existing-only admission SHALL not create missing directories or checkpoints; bounded reads SHALL verify bytes and full object identity on retained native handles
+- **AND** native durability SHALL use normal verified file/directory flushes; public checkpoint admission SHALL remain gated until exact-source durable replacement and complete crash acceptance

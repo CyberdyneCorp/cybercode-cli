@@ -1,14 +1,19 @@
 //! Private client checkpoints. Retained bytes grant no memory mutation authority.
 use super::MemoryStorageError;
 use super::identity::{ObjectIdentity, file_identity, verify_identity};
-use super::storage::{
-    private_builder, verify_private_directory, verify_private_file, verify_regular,
-};
-use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+#[cfg(not(windows))]
+use super::storage::private_builder;
+use super::storage::{verify_private_directory, verify_private_file, verify_regular};
+#[cfg(not(windows))]
+use cap_fs_ext::DirExt;
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
 use std::fs::{File, TryLockError};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+#[path = "client_state/windows.rs"]
+mod windows;
 
 const DIRECTORY: &str = "memory-client";
 const CHECKPOINT: &str = "state.json";
@@ -32,10 +37,12 @@ impl MemoryClientStore {
     /// Missing client storage remains missing. Existing unsafe storage is never repaired.
     pub fn existing(state: &Path) -> Result<Option<Self>, MemoryStorageError> {
         native()?;
-        let parent = match Dir::open_ambient_dir(state, cap_std::ambient_authority()) {
+        let parent = match state_directory(state) {
             Ok(parent) => parent,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+            Err(MemoryStorageError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
         };
         match parent.symlink_metadata(DIRECTORY) {
             Ok(metadata) if !metadata.is_dir() => {
@@ -47,30 +54,23 @@ impl MemoryClientStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         }
-        let dir = match parent.open_dir_nofollow(DIRECTORY) {
-            Ok(dir) => dir,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let dir = match client_directory(&parent, false) {
+            Ok(None) => return Ok(None),
+            Ok(Some(dir)) => dir,
+            Err(error) => return Err(error),
         };
         Self::claim(state, parent, dir).map(Some)
     }
     /// Creates only the private child of the caller's existing state directory.
     pub fn open(state: &Path) -> Result<Self, MemoryStorageError> {
         native()?;
-        let parent = Dir::open_ambient_dir(state, cap_std::ambient_authority())?;
-        match parent.create_dir_with(DIRECTORY, &private_builder()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
-        let dir = parent.open_dir_nofollow(DIRECTORY)?;
+        let parent = state_directory(state)?;
+        let dir = client_directory(&parent, true)?.ok_or(MemoryStorageError::ReviewConflict)?;
         Self::claim(state, parent, dir)
     }
     fn claim(state: &Path, parent: Dir, dir: Dir) -> Result<Self, MemoryStorageError> {
         verify_private_directory(&dir)?;
-        let mut options = private_options();
-        options.read(true).write(true).create(true);
-        let lock = dir.open_with(LOCK, &options)?.into_std();
+        let lock = client_lock(&dir)?;
         verify_regular(&lock)?;
         verify_private_file(&lock)?;
         match lock.try_lock() {
@@ -97,6 +97,7 @@ impl MemoryClientStore {
     }
 
     pub fn save(&mut self, bytes: &[u8]) -> Result<(), MemoryStorageError> {
+        native()?;
         if bytes.len() > LIMIT {
             return Err(MemoryStorageError::TooLarge);
         }
@@ -139,12 +140,12 @@ impl MemoryClientStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         }
-        let mut options = private_options();
-        options.read(true);
-        let mut file = match self.dir.open_with(CHECKPOINT, &options) {
-            Ok(file) => file.into_std(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let mut file = match client_file(&self.dir, CHECKPOINT) {
+            Ok(file) => file,
+            Err(MemoryStorageError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
         };
         verify_regular(&file)?;
         verify_private_file(&file)?;
@@ -154,7 +155,7 @@ impl MemoryClientStore {
         if bytes.len() > LIMIT {
             return Err(MemoryStorageError::TooLarge);
         }
-        let current = self.dir.open_with(CHECKPOINT, &options)?.into_std();
+        let current = client_file(&self.dir, CHECKPOINT)?;
         verify_identity(&current, &file)?;
         Ok(Some(Checkpoint { bytes, identity }))
     }
@@ -163,16 +164,16 @@ impl MemoryClientStore {
         verify_regular(&self.lock)?;
         verify_private_file(&self.lock)?;
         verify_identity(
-            &self.parent.open_dir_nofollow(DIRECTORY)?.into_std_file(),
+            &client_directory(&self.parent, false)?
+                .ok_or(MemoryStorageError::ReviewConflict)?
+                .into_std_file(),
             &self.dir.try_clone()?.into_std_file(),
         )?;
         verify_identity(
-            &Dir::open_ambient_dir(&self.state, cap_std::ambient_authority())?.into_std_file(),
+            &state_directory(&self.state)?.into_std_file(),
             &self.parent.try_clone()?.into_std_file(),
         )?;
-        let mut options = private_options();
-        options.read(true);
-        let lock = self.dir.open_with(LOCK, &options)?.into_std();
+        let lock = client_file(&self.dir, LOCK)?;
         verify_regular(&lock)?;
         verify_private_file(&lock)?;
         verify_identity(&lock, &self.lock)
@@ -183,7 +184,64 @@ impl MemoryClientStore {
             super::storage::directory_file(&self.dir)?.sync_all()?;
             super::storage::directory_file(&self.parent)?.sync_all()?;
         }
+        #[cfg(windows)]
+        windows::sync(&self.dir, &self.parent)?;
         Ok(())
+    }
+}
+fn state_directory(state: &Path) -> Result<Dir, MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        windows::state_directory(state)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Dir::open_ambient_dir(state, cap_std::ambient_authority())?)
+    }
+}
+fn client_directory(parent: &Dir, create: bool) -> Result<Option<Dir>, MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        windows::directory(parent, create)
+    }
+    #[cfg(not(windows))]
+    {
+        if create {
+            match parent.create_dir_with(DIRECTORY, &private_builder()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        match parent.open_dir_nofollow(DIRECTORY) {
+            Ok(dir) => Ok(Some(dir)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+fn client_lock(dir: &Dir) -> Result<File, MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        windows::lock(dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut options = private_options();
+        options.read(true).write(true).create(true);
+        Ok(dir.open_with(LOCK, &options)?.into_std())
+    }
+}
+fn client_file(dir: &Dir, name: &str) -> Result<File, MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        windows::file(dir, name)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut options = private_options();
+        options.read(true);
+        Ok(dir.open_with(name, &options)?.into_std())
     }
 }
 fn private_options() -> OpenOptions {
