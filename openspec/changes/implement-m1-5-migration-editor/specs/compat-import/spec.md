@@ -73,3 +73,15 @@
 - **WHEN** an agents or skills source points through a symbolic link
 - **THEN** discovery SHALL report that source without scanning its target
 - **AND** no files SHALL be written or executed
+
+### Requirement: Verified migration source snapshots
+(P1) Migration planning SHALL read only inventoried files under their declared explicit source roots. It SHALL open each path component without following links, retain native directory/file identities, reject reparse points/nonregular/hard-linked source files and bound source contents at one MiB. It SHALL revalidate directory bindings, file identity, modification metadata and content before returning a snapshot and provide the same verification for later reviewed writing. Source bytes SHALL not appear in snapshot debugging or error messages. Changed/replaced/linked/missing sources SHALL refuse instead of authorizing stale review. Snapshot verification alone SHALL NOT grant trust or implement destination transaction/confirmation guarantees; full reviewed import writing remains required.
+
+#### Scenario: Source changed after review
+- **WHEN** an inventoried source is edited or replaced after its snapshot is read
+- **THEN** snapshot verification SHALL fail
+- **AND** it SHALL not expose source contents in its error
+
+#### Scenario: Source directory replaced
+- **WHEN** a source ancestor is renamed/replaced or linked to a different tree
+- **THEN** verification SHALL refuse even when a same-named file remains readable

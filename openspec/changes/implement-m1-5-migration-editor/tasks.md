@@ -9,7 +9,8 @@
   - [ ] Implement unsupported-source reporting, Codex policies/profiles/sandbox mapping and finish remaining source permission/default/home mappings.
 - [ ] Discover every canonical Claude/Codex/OpenCode project/global source, including auto precedence and detection summaries.
   - [x] Inventory static project/global sources with explicit roots, typed provenance, root-to-Location layering, auto-tool ordering, skill assets/manual-port files, deduplicated custom homes, linked-source issues and traversal limits. Content reads/custom referenced paths/full summaries remain open.
-  - [ ] Resolve config-referenced custom sources, fence source reads and implement parsed detection counts/read-time/session status, CLI detect and first-run TUI offer.
+  - [x] Add bounded inventory-admitted source snapshots with no-follow directory handles, native identities, content verification and replacement/link/privacy tests. Native Windows execution and destination transactions remain open.
+  - [ ] Resolve config-referenced custom sources and implement parsed detection counts/read-time/session status, CLI detect and first-run TUI offer.
 - [ ] Convert providers, credentials/env, agents, commands, skills, rules, instructions, hooks, MCP and remaining canonical configuration fields.
 - [ ] Implement dry-run unified diffs, explicit write confirmation, secret safety, source-linked reports and idempotent annotations.
 - [ ] Implement canonical ACP lifecycle, buffers/write-through, editor MCP, permissions and streaming.

@@ -37,3 +37,7 @@ Parse constant prefix_rule calls with a bounded literal reader, not a Starlark e
 ## Read-only file inventory
 
 Use explicit canonical root inputs, walk project layers from repository root to the current Location and retain source/layer/kind/path provenance. Inventory known global/project files and bounded source directories without reading source values or following symlinks. Report linked/uninspectable entries rather than treating them as absent. Retain both default and distinct explicit Codex homes, leaving semantic source precedence to the source adapter. Deterministic tool order is opencode, codex, claude. This inventory is prerequisite delivery, not parsed detection counts/read-time status or the import CLI. Source-referenced custom paths and session/database inspection remain required.
+
+## Verified source snapshots
+
+Admission checks the static inventory and explicit layer root, then opens the complete path from its volume/root through no-follow component handles. Retain native identities and compare fresh path bindings, file identity, modification metadata and a bounded content digest. Windows uses existing full native file identities and reparse refusal without requiring memory ACL policy; Unix compares device/inode and refuses multiply-linked files. Do not expose bytes in Debug or errors. This is the source-review primitive; atomic destination writes and review/confirmation/idempotency remain mandatory.

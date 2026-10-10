@@ -1,5 +1,13 @@
 # P1 implementation status
 
+## Verified migration source snapshots (2026-10-10)
+
+Inventoried files now have a bounded, read-only source snapshot for migration review. Reads open each path component through no-follow directory handles, retain native directory/file identities and refuse linked, reparse, nonregular or hard-linked source files. Contents are limited to one MiB. Verification compares fresh directory bindings, file identity, length/modification metadata and SHA-256 content, then reopens the path to check bindings again. Snapshot debug output and errors omit source contents. This detects reviewed-source changes; it does not freeze concurrent writers, grant trust or implement destination transactions.
+
+Local validation passes 28 cases: six snapshot cases, five inventory cases, sixteen permission conversions and one CI contract. Snapshot fixtures cover edits, same-content file replacement, parent-directory replacement, linked replacement, hard links, size bounds, binary text refusal, inventory admission and secret-free debug output. Workspace all-target Clippy passes with warnings denied. Native Windows snapshot execution remains pending. The preceding inventory run 38059366671 passes Linux/macOS tests, all six build targets, SDK and OpenSpec; its Windows discovery/configuration step failed while the overall job remains live, and its log is not yet available. That failure requires diagnosis rather than acceptance.
+
+Config-referenced sources, parsed detection counts/session status, source adapters, dry-run diffs, confirmation, secret-safe writes, source reports and idempotency, ACP/VS Code and the full 225-requirement P1 scope remain required. No milestone is accepted; P0 models, evaluations and runtime artifacts remain preserved.
+
 ## Read-only migration source inventory (2026-10-10)
 
 Core discovery now takes explicit project root, current Location, home and optional CODEX_HOME inputs, without consulting process-global environment or reading source contents. It retains source tool/layer/kind/path, inventories static Claude/Codex/OpenCode source files and directories, walks project layers root-to-Location and emits tool groups in canonical opencode→codex→claude order. Distinct explicit Codex homes retain provenance; an identical canonical default home is not duplicated. The inventory includes configs/profiles, instructions/MCP files, agents/commands, skills/supporting assets, rules/hooks/admin policy files and OpenCode modes/plugins/custom tools. No source is executed, copied, trusted or written.
