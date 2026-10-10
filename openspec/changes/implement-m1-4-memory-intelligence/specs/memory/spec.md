@@ -300,6 +300,16 @@
 - **AND** missing children, unsafe names, broad permissions, wrong types and file aliases SHALL refuse without changing child bytes or creating missing children
 - **AND** durable installation, caller path binding and storage/checkpoint integration SHALL remain required before enabling Windows writes
 
+#### Scenario: Native Windows retained create-only rename
+- **WHEN** native memory retains a private file or directory for namespace installation
+- **THEN** it SHALL acquire a synchronous handle with exclusive write/delete sharing, verify the expected full source identity and retain it for caller content review
+- **AND** competing source writes, deletion or renaming SHALL refuse while that handle is retained; stale source identity, unsafe permissions, reparse points or regular-file aliases SHALL refuse before namespace effects
+- **WHEN** the retained object is renamed under a private destination directory handle
+- **THEN** the operation SHALL use one validated component and create-only rename through the retained source and destination handles, without path reopening or replacement flags
+- **AND** existing destinations SHALL preserve source and destination objects and bytes; successful installation SHALL verify private security and the same full source identity at the destination
+- **AND** source/destination evidence SHALL remain retained on unknown or failed postconditions without automatic rollback, deletion or permission repair
+- **AND** caller content review, journal recovery, namespace durability and complete storage/checkpoint integration SHALL remain required before Windows writes are enabled
+
 #### Scenario: Durable TUI memory draft and request retention
 - **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
 - **THEN** it SHALL checkpoint bounded draft text and its original Session/Location/scope identity through the private client store

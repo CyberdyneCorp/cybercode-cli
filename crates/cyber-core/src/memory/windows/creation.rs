@@ -54,15 +54,16 @@ pub fn open_private_file(
     child(parent, name, false, Mode::Open(access))
 }
 #[derive(Clone, Copy)]
-enum Mode {
+pub(super) enum Mode {
     Create,
     Open(Access),
+    Retain,
 }
 impl Mode {
     fn disposition(self) -> u32 {
         match self {
             Self::Create => FILE_CREATE,
-            Self::Open(_) => FILE_OPEN,
+            Self::Open(_) | Self::Retain => FILE_OPEN,
         }
     }
     fn access(self) -> u32 {
@@ -74,11 +75,11 @@ impl Mode {
     fn information(self) -> usize {
         match self {
             Self::Create => 2,
-            Self::Open(_) => 1,
+            Self::Open(_) | Self::Retain => 1,
         }
     }
 }
-fn component(name: &str) -> Result<Vec<u16>, MemoryStorageError> {
+pub(super) fn component(name: &str) -> Result<Vec<u16>, MemoryStorageError> {
     if name.is_empty()
         || name.len() > 255
         || name == "."
@@ -147,7 +148,7 @@ fn private_descriptor() -> Result<Descriptor, MemoryStorageError> {
     }
     Ok(descriptor)
 }
-fn child(
+pub(super) fn child(
     parent: &File,
     name: &str,
     directory: bool,
@@ -160,7 +161,7 @@ fn child(
     }
     let descriptor = match mode {
         Mode::Create => Some(private_descriptor()?),
-        Mode::Open(_) => None,
+        Mode::Open(_) | Mode::Retain => None,
     };
     let unicode = UNICODE_STRING {
         Length: (name.len() * 2) as u16,
@@ -189,7 +190,11 @@ fn child(
             &mut status,
             null(),
             FILE_ATTRIBUTE_NORMAL,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            if matches!(mode, Mode::Retain) {
+                FILE_SHARE_READ
+            } else {
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+            },
             mode.disposition(),
             FILE_OPEN_REPARSE_POINT
                 | FILE_SYNCHRONOUS_IO_NONALERT
@@ -331,6 +336,9 @@ mod tests {
         let directory = create_private_directory(&bootstrap, "original").unwrap();
         let mut note = create_private_file(&directory, "note.md").unwrap();
         note.write_all(b"retained").unwrap();
+        let expected = identity(&note).unwrap();
+        // Windows refuses parent renames with an open descendant file.
+        drop(note);
         std::fs::rename(root.path().join("original"), root.path().join("moved")).unwrap();
         let replacement = create_private_directory(&bootstrap, "original").unwrap();
         create_private_file(&replacement, "note.md")
@@ -338,7 +346,7 @@ mod tests {
             .write_all(b"replacement")
             .unwrap();
         let opened = open_private_file(&directory, "note.md", Access::Read).unwrap();
-        assert_eq!(identity(&opened).unwrap(), identity(&note).unwrap());
+        assert_eq!(identity(&opened).unwrap(), expected);
         for access in [Access::Read, Access::Write] {
             assert!(open_private_file(&directory, "missing", access).is_err());
             assert!(open_private_directory(&directory, "missing", access).is_err());
@@ -388,16 +396,13 @@ mod tests {
         let outside = root.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
         std::fs::write(outside.join("user.md"), b"external edits").unwrap();
-        assert!(
-            std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(root.path().join("memory/junction"))
-                .arg(&outside)
-                .output()
-                .unwrap()
-                .status
-                .success()
-        );
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.path().join("memory").join("junction"))
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
         for access in [Access::Read, Access::Write] {
             assert!(open_private_directory(&directory, "junction", access).is_err());
             assert!(open_private_file(&directory, "junction", access).is_err());

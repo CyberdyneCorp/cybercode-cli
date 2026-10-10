@@ -42,7 +42,7 @@ jobs:
           key: windows-lint
       - name: Check native Windows lint
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Native memory handle privacy and private creation
+      - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --lib memory::windows
 
