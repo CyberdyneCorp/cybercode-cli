@@ -16,6 +16,7 @@ mod subst;
 mod validate;
 
 pub(crate) use hooks::is_event_name;
+pub(crate) use subst::has_placeholder;
 pub(crate) use validate::is_mode;
 
 use std::collections::BTreeMap;

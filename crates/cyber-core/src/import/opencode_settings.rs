@@ -367,6 +367,60 @@ fn compaction(
     Ok(())
 }
 
+fn commands(
+    source: &Map<String, Value>,
+    result: &mut OpenCodeSettingsConfig,
+) -> Result<(), ConversionError> {
+    let Some((key, value)) = alias(source, &["command", "commands"])? else {
+        return Ok(());
+    };
+    let entries = value
+        .as_object()
+        .filter(|m| m.len() <= 128)
+        .ok_or_else(|| error("expected at most 128 command definitions"))?;
+    let mut output = Map::new();
+    for (name, value) in entries {
+        if !crate::commands::valid_name(name) {
+            return Err(error("invalid command identifier"));
+        }
+        bounded(value)?;
+        let raw = super::provenance::child(&format!("/{key}"), name);
+        let command = match crate::commands::StaticCommand::parse(value) {
+            Ok(command) => command,
+            Err(_) => {
+                pending(
+                    result,
+                    raw,
+                    "command needs execution, override or source-file support; value withheld",
+                );
+                continue;
+            }
+        };
+        let target = super::provenance::child("/commands", name);
+        let mut native = json!({"template":command.template});
+        map(
+            result,
+            &format!("{target}/template"),
+            &format!("{raw}/template"),
+        );
+        for field in ["description", "argument_hint"] {
+            if let Some(value) = value.get(field) {
+                native[field] = value.clone();
+                map(
+                    result,
+                    &format!("{target}/{field}"),
+                    &format!("{raw}/{field}"),
+                );
+            }
+        }
+        output.insert(name.clone(), native);
+    }
+    if !output.is_empty() {
+        result.config["commands"] = Value::Object(output);
+    }
+    Ok(())
+}
+
 pub fn opencode_settings_config(
     document: &Value,
 ) -> Result<OpenCodeSettingsConfig, ConversionError> {
@@ -381,6 +435,7 @@ pub fn opencode_settings_config(
     };
     agents(source, &mut result)?;
     compaction(source, &mut result)?;
+    commands(source, &mut result)?;
     let secrets = super::preview::sensitive_values(document);
     super::preview::reject_unsafe_strings(
         &result.config,

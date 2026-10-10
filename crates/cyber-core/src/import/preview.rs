@@ -527,6 +527,8 @@ fn document_config(
                 "agent",
                 "agents",
                 "compaction",
+                "command",
+                "commands",
             ]
         }
     };

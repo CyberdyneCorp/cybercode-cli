@@ -285,6 +285,28 @@ impl BuiltinHost {
         Some(skills::expand(&skill.body, arguments))
     }
 
+    pub fn configured_commands(&self, location: &Path) -> cyber_core::commands::Commands {
+        cyber_core::commands::configured(&self.config_for(location))
+    }
+
+    /// Skills have later precedence; configured reserved names use the project namespace.
+    pub fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
+        if ["help", "exit", "goal", "loop", "workflows", "mode"].contains(&name) {
+            return None;
+        }
+        let skill_name = name
+            .strip_prefix("project:")
+            .filter(|original| cyber_core::commands::invocation_name(original) == name)
+            .unwrap_or(name);
+        self.expand_skill(location, skill_name, arguments)
+            .or_else(|| {
+                self.configured_commands(location)
+                    .entries
+                    .get(name)
+                    .map(|c| c.expand(arguments))
+            })
+    }
+
     /// Files and directories under a Location whose relative path contains every
     /// whitespace-separated word of `query` (case-insensitive), honoring ignore files.
     pub fn find_files(&self, location: &Path, query: &str, limit: usize) -> Vec<String> {

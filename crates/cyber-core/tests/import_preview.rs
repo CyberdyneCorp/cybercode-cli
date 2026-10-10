@@ -1412,7 +1412,13 @@ fn layered_opencode_agents_append_permissions_with_original_indices_and_keep_nat
             .any(|r| r.field == "/compaction/keep/tokens" && r.status == "merged")
     );
     assert!(!output.diff.contains("private-instruction-path"));
-    assert!(!output.diff.contains("private-command-template"));
+    assert!(output.diff.contains("private-command-template"));
+    assert!(output.report.iter().any(|r| {
+        r.field == "/commands/audit/template"
+            && r.sources
+                .iter()
+                .any(|s| s.field == "/commands/audit/template")
+    }));
     assert_eq!(
         std::fs::read(roots.directory.join("cyber.jsonc")).unwrap(),
         original

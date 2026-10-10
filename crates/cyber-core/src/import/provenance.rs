@@ -384,7 +384,9 @@ pub(super) fn converted(
                     provider_sources.get(&pointer).cloned().unwrap_or_default()
                 }
                 _ if tool == SourceTool::OpenCode
-                    && (pointer.starts_with("/agents/") || pointer.starts_with("/compaction/")) =>
+                    && (pointer.starts_with("/agents/")
+                        || pointer.starts_with("/compaction/")
+                        || pointer.starts_with("/commands/")) =>
                 {
                     settings_sources.get(&pointer).cloned().unwrap_or_default()
                 }

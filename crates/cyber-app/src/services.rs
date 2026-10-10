@@ -489,7 +489,25 @@ impl Services for AppServices {
                     source: "skill".into(),
                     argument_hint: hint,
                 });
-        builtin.chain(skills).collect()
+        let configured = self
+            .host
+            .configured_commands(location)
+            .entries
+            .into_iter()
+            .map(|(name, command)| CommandInfo {
+                name,
+                description: command.description,
+                source: "command".into(),
+                argument_hint: command.argument_hint,
+            });
+        let mut result = std::collections::BTreeMap::new();
+        for mut entry in builtin.chain(configured).chain(skills) {
+            if entry.source != "builtin" {
+                entry.name = cyber_core::commands::invocation_name(&entry.name);
+            }
+            result.insert(entry.name.clone(), entry);
+        }
+        result.into_values().collect()
     }
 
     fn find_files(&self, location: &Path, query: &str, limit: usize) -> Vec<String> {
@@ -497,7 +515,7 @@ impl Services for AppServices {
     }
 
     fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
-        self.host.expand_skill(location, name, arguments)
+        self.host.expand_command(location, name, arguments)
     }
 }
 

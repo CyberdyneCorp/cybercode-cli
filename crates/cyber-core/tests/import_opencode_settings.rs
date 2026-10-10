@@ -2,6 +2,38 @@ use cyber_core::{config, import::opencode_settings_config};
 use serde_json::json;
 
 #[test]
+fn static_commands_use_native_consumer_and_raw_alias_provenance() {
+    for key in ["command", "commands"] {
+        let mut source = json!({});
+        source[key] = json!({"team/review":{"template":"Review $ARGUMENTS","description":"Review","argument_hint":"<target>"},
+            "shell":{"template":"!`echo private-source`"},
+            "override":{"template":"private-source","agent":"reviewer"},
+            "files":{"template":"Review @private-source"}});
+        let result = opencode_settings_config(&source).unwrap();
+        let native = cyber_core::commands::configured(&result.config);
+        assert_eq!(native.entries["team/review"].expand("code"), "Review code");
+        assert_eq!(native.entries.len(), 1);
+        assert_eq!(result.not_imported.len(), 3);
+        assert_eq!(
+            result.field_sources["/commands/team~1review/template"],
+            vec![format!("/{key}/team~1review/template")]
+        );
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("private-source")
+        );
+    }
+    assert!(opencode_settings_config(&json!({"command":{},"commands":{}})).is_err());
+    assert!(
+        opencode_settings_config(
+            &json!({"commands":{"review":{"template":"private-secret"}},"api_key":"private-secret"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn v1_agent_aliases_and_v2_defaults_materialize_native_profiles() {
     let v1=opencode_settings_config(&json!({"agent":{"team/review":{"description":"Review","prompt":"Review code only.","model":"corp/coder#deep","disable":false,"maxSteps":8,"hidden":true,"color":"#ff6b6b"}}})).unwrap();
     let profiles = config::resolve_agents(&v1.config).unwrap();

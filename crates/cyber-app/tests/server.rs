@@ -35,6 +35,81 @@ async fn app(root: &std::path::Path) -> App {
 }
 
 #[tokio::test]
+async fn imported_static_commands_reach_live_catalogue_and_expansion_with_skill_precedence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let application = app(tmp.path()).await;
+    let converted = cyber_core::import::opencode_settings_config(&serde_json::json!({"command":{
+        "db/migrate":{"template":"Migrate $1 in $2","description":"Migration","argument_hint":"<step> <targets>"},
+        "goal":{"template":"Project goal $ARGUMENTS"},
+        "review":{"template":"Configured review"},
+        "unsupported":{"template":"Review","agent":"explore"}
+    }})).unwrap();
+    std::fs::write(
+        application.paths.config.join("cyber.json"),
+        serde_json::to_vec(&converted.config).unwrap(),
+    )
+    .unwrap();
+    let skill = tmp.path().join(".cyber/skills/review");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: review\ndescription: Skill review\n---\nSkill review $ARGUMENTS",
+    )
+    .unwrap();
+    let reserved = tmp.path().join(".cyber/skills/mode");
+    std::fs::create_dir_all(&reserved).unwrap();
+    std::fs::write(
+        reserved.join("SKILL.md"),
+        "---\nname: mode\ndescription: Project mode skill\n---\nProject mode $ARGUMENTS",
+    )
+    .unwrap();
+    let services = &application.state.services;
+    let commands = services.commands(tmp.path());
+    let entry = commands.iter().find(|c| c.name == "db/migrate").unwrap();
+    assert_eq!(entry.source, "command");
+    assert_eq!(entry.argument_hint.as_deref(), Some("<step> <targets>"));
+    assert!(!commands.iter().any(|c| c.name == "unsupported"));
+    assert_eq!(commands.iter().filter(|c| c.name == "review").count(), 1);
+    assert_eq!(
+        services
+            .expand_command(tmp.path(), "db/migrate", "42 \"auth module\" more")
+            .as_deref(),
+        Some("Migrate 42 in auth module more")
+    );
+    assert_eq!(
+        services
+            .expand_command(tmp.path(), "review", "code")
+            .as_deref(),
+        Some("Skill review code")
+    );
+    assert!(services.expand_command(tmp.path(), "goal", "fix").is_none());
+    assert_eq!(
+        services
+            .expand_command(tmp.path(), "project:goal", "fix")
+            .as_deref(),
+        Some("Project goal fix")
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|c| c.name == "mode" && c.source == "builtin")
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|c| c.name == "project:mode" && c.source == "skill")
+    );
+    assert!(services.expand_command(tmp.path(), "mode", "fix").is_none());
+    assert_eq!(
+        services
+            .expand_command(tmp.path(), "project:mode", "fix")
+            .as_deref(),
+        Some("Project mode fix")
+    );
+    application.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn agent_catalogue_resolves_builtins_and_live_configuration() {
     let tmp = tempfile::tempdir().unwrap();
     let application = app(tmp.path()).await;
