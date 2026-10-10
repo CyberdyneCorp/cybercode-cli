@@ -61,5 +61,7 @@
   - [ ] Complete save/delete outcome lookup and retained-record management, multi-client/native retention, and cross-platform TUI/HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
+  - [x] Add typed LSP/formatter configuration with defaults, built-in overrides, custom extension validation and trust-gated loading; parsing grants no process authority. Four typed configuration and 43 actual configuration loading tests pass locally; full runtime and native acceptance remain open.
+  - [ ] Implement detection/status, owned LSP protocol and shutdown, read warming, diagnostics, navigation tool and sandboxed formatter execution with public integrations.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.
 - [ ] Validate documentation, native behavior and complete M1.4 acceptance.

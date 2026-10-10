@@ -117,6 +117,12 @@ pub fn validate(
     ) {
         issues.push(error.to_string());
     }
+    if let Err(error) = super::LspSettings::from_config(value) {
+        issues.push(error);
+    }
+    if let Err(error) = super::FormatterSettings::from_config(value) {
+        issues.push(error);
+    }
     issues.extend(crate::budget::validate_config(value));
     if let Err(error) = super::DeferredToolSettings::from_config(value) {
         issues.push(error);

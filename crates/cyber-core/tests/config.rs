@@ -1069,3 +1069,43 @@ fn deferred_threshold_is_validated_through_real_configuration_loading() {
     assert!(error.contains("tool_output.deferred_threshold_tokens"));
     assert!(!error.contains("private-invalid-value"));
 }
+
+#[test]
+fn intelligence_commands_require_current_project_trust_before_resolution() {
+    let f = Fixture::new();
+    let original = r#"{"lsp":{"nimlsp":{"command":["nimlangserver"],"extensions":[".nim"]}},"formatters":{"taplo":{"command":["taplo","fmt","$FILE"],"extensions":[".toml"]}}}"#;
+    f.write("cyber.jsonc", original);
+    let untrusted = f.load().unwrap();
+    assert!(untrusted.value.get("lsp").is_none());
+    assert!(untrusted.value.get("formatters").is_none());
+    f.approve_current();
+    let trusted = f.load().unwrap();
+    assert_eq!(
+        trusted.value["lsp"]["nimlsp"]["command"][0],
+        "nimlangserver"
+    );
+    assert_eq!(trusted.value["formatters"]["taplo"]["command"][2], "$FILE");
+    f.write(
+        "cyber.jsonc",
+        &original.replace("nimlangserver", "changed-server"),
+    );
+    let changed = f.load().unwrap();
+    assert!(changed.value.get("lsp").is_none());
+    assert!(changed.value.get("formatters").is_none());
+}
+
+#[test]
+fn trusted_intelligence_config_rejects_invalid_custom_server_and_formatter() {
+    for config in [
+        r#"{"lsp":{"custom":{"command":["server"]}}}"#,
+        r#"{"lsp":{"diagnostics_wait_ms":-1}}"#,
+        r#"{"formatters":{"custom":{"command":[]}}}"#,
+    ] {
+        let f = Fixture::new();
+        f.write("global:cyber.jsonc", config);
+        assert!(
+            matches!(f.load(), Err(ConfigError::Invalid { .. })),
+            "{config}"
+        );
+    }
+}

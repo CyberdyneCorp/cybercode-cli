@@ -2056,3 +2056,12 @@ Windows local database ownership inspection retains regular database and parent 
 Local verification passes all 15 CLI memory cases and workspace all-target Clippy with warnings denied. The Windows-target actual-source harness passes lint for core memory and the new database guard/tests; it does not compile or execute the complete Windows CLI editor fixtures. All 225 P1 contracts remain in scope, no full milestone is accepted, and P0 local-model/runtime/evaluation data remains untouched.
 
 Final workflow contract, formatting/diff checks and all 59 strict OpenSpec items pass; cross-spec lint reports zero errors and 21 warnings. Native CLI execution remains pending the new revision.
+
+
+## 2026-10-10 typed LSP and formatter configuration
+
+Core exposes typed LSP/formatter settings and validates them during resolved configuration loading. Omission enables future auto-detection, false disables the section, server installation defaults off and diagnostics wait defaults to 5000 ms. Built-in server IDs allow partial overrides; custom IDs require nonempty extension lists. Commands, root markers, environments, initialization options and disabled flags retain their typed values. Formatter `$FILE` arguments remain literal until future execution. Invalid section/field types, empty executables, invalid environment entries and unknown entry fields refuse.
+
+Actual project loading tests prove executable definitions remain withheld before sensitive-digest approval, resolve after approval and become withheld again after a command change. Four typed settings tests and 43 configuration loading tests pass; workspace all-target Clippy with warnings denied, formatting/diff and all 59 strict OpenSpec items pass. Cross-spec lint reports zero errors and 21 warnings. This adds no downloads, LSP processes, diagnostics, navigation or formatting; those delivery contracts, built-in definitions/detection/status, runtime integration and native acceptance remain open. No canonical code-intelligence requirement or P1 milestone is fully accepted.
+
+Windows CLI revision `e7dd225` has passed native all-target lint at observation; its actual database/editor lifecycle steps remain pending in [job 114137918412](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38026356955/job/114137918412). P0 local-model services and artifacts are preserved, P0 is not declared closed, and all 225 P1 contracts remain in scope.
