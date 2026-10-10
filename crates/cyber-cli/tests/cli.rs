@@ -1147,7 +1147,7 @@ fn import_kept_credentials_do_not_ask_to_set_ignored_variables() {
 fn opencode_provider_import_reports_credentials_without_writing_or_loading_packages() {
     let e = Env::new();
     std::fs::create_dir_all(e.root.join("home")).unwrap();
-    std::fs::write(e.root.join("opencode.json"), r#"{"model":"corp/coder","providers":{"corp":{"package":"@opencode/ai/providers/openai/responses","settings":{"baseURL":"https://example.com/v1","apiKey":"private-provider-secret"},"models":{"coder":{"modelID":"wire-model","limit":{"context":8192}}}},"custom":{"package":"file:never-load-source-package"}}}"#).unwrap();
+    std::fs::write(e.root.join("opencode.json"), r#"{"model":"corp/coder","providers":{"corp":{"package":"@opencode/ai/providers/openai/responses","settings":{"baseURL":"https://example.com/v1","apiKey":"private-provider-secret"},"models":{"coder":{"modelID":"wire-model","limit":{"context":8192},"body":{"store":false},"variants":[{"id":"deep","body":{"metadata":{"lane":"review"}}}]}}},"custom":{"package":"file:never-load-source-package"}}}"#).unwrap();
     let preview = e.cyber(&["import", "opencode", "--dry-run", "--format", "json"]);
     assert!(preview.status.success(), "{}", stderr(&preview));
     let view = json(&preview);
@@ -1157,8 +1157,12 @@ fn opencode_provider_import_reports_credentials_without_writing_or_loading_packa
         view["required_environment"][0]["sources"][0]["field"],
         "/providers/corp/settings/apiKey"
     );
-    assert!(view["diff"].as_str().unwrap().contains("openai-responses"));
-    assert!(view["diff"].as_str().unwrap().contains("wire-model"));
+    let diff = view["diff"].as_str().unwrap();
+    assert!(
+        ["openai-responses", "wire-model", "review", "deep"]
+            .iter()
+            .all(|field| diff.contains(field))
+    );
     assert!(
         view["report"]
             .as_array()

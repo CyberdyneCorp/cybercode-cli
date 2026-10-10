@@ -78,10 +78,10 @@ fn literal_credentials_headers_and_echoed_endpoints_never_enter_proposal() {
 fn unsupported_packages_and_fields_are_reported_without_loading_or_values() {
     let result = opencode_provider_config(&json!({"providers":{
         "custom":{"package":"file:private-code","settings":{"apiKey":"private-key"}},
-        "corp":{"package":"@opencode/ai/providers/openai/chat","settings":{"timeout":7},"body":{"token":"private-token"},"models":{"coder":{"variants":{"private-variant":{}},"limit":{"extra":5}}}}
+        "corp":{"package":"@opencode/ai/providers/openai/chat","settings":{"timeout":7},"body":{"store":false},"models":{"coder":{"variants":[{"id":"deep","settings":{"private-option":"private-value"}}],"limit":{"extra":5}}}}
     }})).unwrap();
     assert!(result.config["providers"].get("custom").is_none());
-    assert_eq!(result.not_imported.len(), 5);
+    assert_eq!(result.not_imported.len(), 4);
     assert!(!serde_json::to_string(&result).unwrap().contains("private-"));
 }
 
@@ -128,4 +128,80 @@ fn fallback_names_and_report_pointers_cannot_reuse_literal_credentials() {
         let error = opencode_provider_config(&json!({"provider":{"corp":provider}})).unwrap_err();
         assert!(!error.to_string().contains("private-secret"));
     }
+}
+
+#[test]
+fn v2_request_overlays_and_variant_arrays_preserve_source_indices_and_binding_namespaces() {
+    let result = opencode_provider_config(&json!({"providers":{"corp":{"package":"@opencode/ai/providers/openai/chat","headers":{"X-Team":"private-provider-header"},"body":{"nested":{"provider":true}},"models":{"coder/v1":{"headers":{"x-team":"private-model-header"},"body":{"nested":{"model":true}},"variants":[{"id":"deep","headers":{"X-Team":"private-variant-header"},"body":{"nested":{"variant":true},"arr":[1,2]},"settings":{"reasoningEffort":"high"}}]}}}}})).unwrap();
+    assert_eq!(result.required_environment.len(), 3);
+    let names: std::collections::BTreeSet<_> = result
+        .required_environment
+        .iter()
+        .map(|r| &r.variable)
+        .collect();
+    assert_eq!(names.len(), 3);
+    assert_eq!(
+        result.config["providers"]["corp"]["models"]["coder/v1"]["variants"]["deep"]["request"]["body"]
+            ["arr"],
+        json!([1, 2])
+    );
+    assert_eq!(
+        result.field_sources["/providers/corp/models/coder~1v1/variants/deep/request/body/arr/1"],
+        vec!["/providers/corp/models/coder~1v1/variants/0/body/arr/1"]
+    );
+    assert_eq!(result.not_imported.len(), 1);
+    assert_eq!(
+        result.not_imported[0].field,
+        "/providers/corp/models/coder~1v1/variants/0/settings"
+    );
+    assert!(!serde_json::to_string(&result).unwrap().contains("private-"));
+}
+
+#[test]
+fn malformed_or_unsafe_overlay_fields_refuse_without_credentials() {
+    for model in [
+        json!({"body":{"apiKey":"private-secret"}}),
+        json!({"body":{"nested":[{"api_key":false}]}}),
+        json!({"body":{"x":"{env:PRIVATE_SECRET}"}}),
+        json!({"body":{"x":"{file:private-secret}"}}),
+        json!({"body":{"x":null}}),
+        json!({"body":[]}),
+        json!({"variants":[{"id":"deep"},{"id":"deep"}]}),
+        json!({"variants":[{"id":"invalid/name"}]}),
+        json!({"variants":{"deep":{}}}),
+        json!({"headers":{"X-Team":7}}),
+    ] {
+        let source = json!({"providers":{"corp":{"package":"@opencode/ai/providers/openai/chat","models":{"coder":model}}}});
+        let error = opencode_provider_config(&source).unwrap_err();
+        assert!(!error.to_string().contains("private-secret"));
+    }
+}
+
+#[test]
+fn body_recursion_nodes_and_credential_echoes_are_bounded_before_proposal() {
+    let mut deep = json!(true);
+    for _ in 0..18 {
+        deep = json!({"next":deep});
+    }
+    for body in [
+        deep,
+        json!({"items":vec![true;4096]}),
+        json!({"echo":"private-header-secret"}),
+    ] {
+        let source = json!({"providers":{"corp":{"package":"@opencode/ai/providers/openai/chat","headers":{"X-Team":"private-header-secret"},"body":body}}});
+        let error = opencode_provider_config(&source).unwrap_err();
+        assert!(!error.to_string().contains("private-header-secret"));
+    }
+}
+
+#[test]
+fn v1_package_specific_model_overlays_remain_pending() {
+    let result=opencode_provider_config(&json!({"provider":{"corp":{"npm":"@ai-sdk/openai","body":{"store":false},"models":{"coder":{"headers":{"X-Team":"private-header"},"body":{"store":false},"variants":{"high":{"reasoningEffort":"high"}}}}}}})).unwrap();
+    assert_eq!(result.not_imported.len(), 4);
+    assert!(result.required_environment.is_empty());
+    assert!(
+        !serde_json::to_string(&result)
+            .unwrap()
+            .contains("private-header")
+    );
 }

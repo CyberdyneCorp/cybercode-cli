@@ -1,5 +1,13 @@
 # P1 implementation status
 
+## OpenCode request overlay delivery (2026-10-10)
+
+Static v2 provider/model bodies and model/variant headers now map to native request overlays. Unique explicit variant-array IDs become native named variants, retaining exact raw indices in credential setup and field attribution. Header bindings have distinct provider/model/variant namespaces. Bodies are checked before entering the proposal for bounded recursion and nodes; null fields, unsupported substitutions, credential-shaped keys and declared secret echoes refuse with value-free errors. V1 package-specific model/variant options remain pending.
+
+Local validation passes 90 cases: ten OpenCode provider, seven Codex provider, 34 preview, three actual loader/catalog and 36 actual CLI tests. Workspace all-target Clippy with warnings denied, formatting/diff, SDK/inventory and 60 strict OpenSpec checks pass; lint reports zero errors and 21 warnings.
+
+Actual native loader/catalog execution verifies provider → model → selected variant nested-body merges, later array replacement, case-insensitive header replacement, credential resolution and unknown-variant rejection. Preview coverage filters out model credentials preserved by native configuration while retaining accepted variant credentials with their raw array pointers. Package settings/reasoning/capabilities/cost/default resolution, auth stores, reviewed writes and editor integration still require implementation and acceptance. Windows ancestor-rename failure evidence remains unchanged; no milestone is accepted. Full P1 scope remains all 225 contracts, and P0 work is preserved.
+
 ## OpenCode provider proposals and native failure evidence (2026-10-10)
 
 The early Windows artifacts from run 38072373773 now contradict the zero-access candidate: [backend artifact 11677630967](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38072373773/artifacts/11677630967) proves full identity/size queries and read refusal succeed, but ancestor rename still fails with access denied 5. [Snapshot artifact 11677461218](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38072373773/artifacts/11677461218) again records four passing cases and the same five directory-rename failures. Compilation succeeds; the retained-handle design still needs a working native solution. Neither Windows review retention nor a P1 milestone is accepted.

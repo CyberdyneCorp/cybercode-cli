@@ -1307,3 +1307,41 @@ fn opencode_provider_preview_tracks_escaped_model_fields_and_accepted_credential
     );
     preview.verify().unwrap();
 }
+
+#[test]
+fn accepted_variant_header_setup_uses_raw_array_indices_and_excludes_native_conflicts() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"providers":{"corp":{"package":"@opencode/ai/providers/openai/chat","models":{"coder":{"headers":{"X-Team":"private-model"},"variants":[{"id":"deep","headers":{"X-Team":"private-variant"},"body":{"store":false}}]}}}}}"#,
+    );
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"providers":{"corp":{"models":{"coder":{"request":{"headers":{"X-Team":"{env:NATIVE_TEAM}"}}}}}}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    assert_eq!(output.required_environment.len(), 1);
+    assert_eq!(
+        output.required_environment[0].sources[0].field,
+        "/providers/corp/models/coder/variants/0/headers/X-Team"
+    );
+    assert!(output.report.iter().any(|r| {
+        r.field == "/providers/corp/models/coder/variants/deep/request/body/store"
+            && r.sources
+                .iter()
+                .any(|s| s.field == "/providers/corp/models/coder/variants/0/body/store")
+    }));
+    assert!(!serde_json::to_string(output).unwrap().contains("private-"));
+    preview.verify().unwrap();
+}

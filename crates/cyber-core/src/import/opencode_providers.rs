@@ -3,6 +3,8 @@ use super::{ConversionError, RequiredEnvironment};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+#[path = "opencode_overlays.rs"]
+mod overlays;
 
 #[derive(Debug, Serialize)]
 pub struct OpenCodeProviderConfig {
@@ -142,7 +144,40 @@ fn headers(
     }
     Ok(Value::Object(output))
 }
+fn model_overlays(
+    provider_id: &str,
+    id: &str,
+    model: &Map<String, Value>,
+    source: &str,
+    target: &str,
+    converted: &mut Value,
+    result: &mut OpenCodeProviderConfig,
+) -> Result<(), ConversionError> {
+    let namespace = format!("{provider_id}/{id}");
+    let request = overlays::request(
+        &namespace,
+        model,
+        source,
+        &format!("{target}/request"),
+        result,
+    )?;
+    if request.as_object().is_some_and(|m| !m.is_empty()) {
+        converted["request"] = request;
+    }
+    if let Some(variants) = model.get("variants") {
+        converted["variants"] = overlays::variants(
+            &namespace,
+            variants,
+            &format!("{source}/variants"),
+            &format!("{target}/variants"),
+            result,
+        )?;
+    }
+    Ok(())
+}
+
 fn models(
+    provider_id: &str,
     source: &Value,
     pointer: &str,
     native: &str,
@@ -170,6 +205,17 @@ fn models(
         let source = super::provenance::child(pointer, id);
         let target = super::provenance::child(native, id);
         let mut converted = json!({});
+        if v2 {
+            model_overlays(
+                provider_id,
+                id,
+                model,
+                &source,
+                &target,
+                &mut converted,
+                result,
+            )?;
+        }
         for (key, value) in model {
             let raw = super::provenance::child(&source, key);
             let destination = match key.as_str() {
@@ -183,6 +229,8 @@ fn models(
                     "disabled"
                 }
                 "limit" => "limits",
+                "body" | "headers" if v2 => continue,
+                "variants" if v2 => continue,
                 _ => {
                     pending(result, raw);
                     continue;
@@ -269,6 +317,31 @@ fn endpoint_value(
         }
     };
     Ok(url)
+}
+
+fn provider_body(
+    id: &str,
+    source: &Map<String, Value>,
+    pointer: &str,
+    native: &str,
+    output: &mut Value,
+    result: &mut OpenCodeProviderConfig,
+) -> Result<(), ConversionError> {
+    if let Some(body) = source.get("body") {
+        let body_only = Map::from_iter([("body".into(), body.clone())]);
+        let request = overlays::request(
+            id,
+            &body_only,
+            pointer,
+            &format!("{native}/request"),
+            result,
+        )?;
+        if output.get("request").is_none() {
+            output["request"] = json!({});
+        }
+        output["request"]["body"] = request["body"].clone();
+    }
+    Ok(())
 }
 
 fn provider(
@@ -362,8 +435,12 @@ fn provider(
         output["request"] =
             json!({"headers":headers(id,input,&raw,&format!("{native}/request/headers"),result)?});
     }
+    if v2 {
+        provider_body(id, source, pointer, &native, &mut output, result)?;
+    }
     if let Some(input) = source.get("models") {
         output["models"] = models(
+            id,
             input,
             &format!("{pointer}/models"),
             &format!("{native}/models"),
@@ -379,11 +456,15 @@ fn provider(
             "env",
             "headers",
             "models",
+            "body",
         ]
         .contains(&key.as_str())
         {
             pending(result, super::provenance::child(pointer, key));
         }
+    }
+    if !v2 && source.contains_key("body") {
+        pending(result, super::provenance::child(pointer, "body"));
     }
     for key in settings.keys() {
         if !["baseURL", "apiKey", "headers"].contains(&key.as_str()) {
