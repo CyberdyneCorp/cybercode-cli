@@ -284,13 +284,20 @@ impl Cleanup {
         Ok(())
     }
     fn run(self, store: &MemoryClientStore) -> Result<(), MemoryStorageError> {
+        self.run_with(store, native::DisposableChild::remove_durable)
+    }
+    fn run_with(
+        self,
+        store: &MemoryClientStore,
+        mut dispose: impl FnMut(native::DisposableChild) -> Result<(), MemoryStorageError>,
+    ) -> Result<(), MemoryStorageError> {
         let history = child_directory(&store.dir, HISTORY, false)?
             .ok_or(MemoryStorageError::ReviewConflict)?;
         self.verify(store, &history)?;
         self.preflight(&history)?;
         for target in &self.plan.targets {
             self.verify(store, &history)?;
-            remove_target(&history, target)?;
+            remove_target_with(&history, target, &mut dispose)?;
             #[cfg(test)]
             tests::barrier("directory", &store.dir)?;
         }
@@ -305,7 +312,7 @@ impl Cleanup {
         drop(self.owner);
         let source = native::dispose_private_file(&descriptor(&store.dir)?, CLEANUP, proof.id)?;
         checked(source.file(), &proof)?;
-        source.remove_durable()?;
+        dispose(source)?;
         store.sync()?;
         #[cfg(test)]
         tests::barrier("cleared", &store.dir)?;
@@ -371,7 +378,19 @@ fn remaining_proofs(dir: &Dir, target: &Target) -> Result<(), MemoryStorageError
     }
     Ok(())
 }
+#[cfg(test)]
 fn remove_target(history: &Dir, target: &Target) -> Result<(), MemoryStorageError> {
+    remove_target_with(
+        history,
+        target,
+        &mut native::DisposableChild::remove_durable,
+    )
+}
+fn remove_target_with(
+    history: &Dir,
+    target: &Target,
+    dispose: &mut impl FnMut(native::DisposableChild) -> Result<(), MemoryStorageError>,
+) -> Result<(), MemoryStorageError> {
     let directory =
         match native::dispose_private_directory(&descriptor(history)?, &target.name, target.id) {
             Ok(source) => source,
@@ -398,11 +417,11 @@ fn remove_target(history: &Dir, target: &Target) -> Result<(), MemoryStorageErro
             Err(error) => return Err(error),
         };
         checked(source.file(), proof)?;
-        source.remove_durable()?;
+        dispose(source)?;
         #[cfg(test)]
         tests::barrier("file", history)?;
     }
-    directory.remove_durable()
+    dispose(directory)
 }
 #[cfg(test)]
 #[path = "retention_tests.rs"]

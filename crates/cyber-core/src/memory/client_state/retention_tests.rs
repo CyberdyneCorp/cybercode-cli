@@ -292,3 +292,129 @@ fn native_checkpoint_cleanup_killed_owner_resumes_every_disposal_boundary() {
         kill_cleanup_owner(phase);
     }
 }
+
+#[test]
+fn native_checkpoint_cleanup_refuses_every_changed_context_without_deleting_records() {
+    for field in ["state", "client", "lock", "history", "id"] {
+        let (_data, mut store) = fixture();
+        append(&mut store, 4);
+        let before = snapshot(&store.dir, CHECKPOINT).unwrap();
+        let cleanup = planned(&store);
+        let mut plan: Plan = serde_json::from_slice(&encoded(&cleanup.plan).unwrap()).unwrap();
+        drop(cleanup);
+        let replacement = plan.targets[0].id;
+        match field {
+            "state" => plan.state = replacement,
+            "client" => plan.client = replacement,
+            "lock" => plan.lock = replacement,
+            "history" => plan.history = replacement,
+            _ => plan.id = replacement,
+        }
+        let mut file = native::open_private_file(
+            &descriptor(&store.dir).unwrap(),
+            CLEANUP,
+            native::Access::DataWrite,
+        )
+        .unwrap();
+        file.set_len(0).unwrap();
+        file.write_all(&encoded(&plan).unwrap()).unwrap();
+        native::sync_private(&file).unwrap();
+        drop(file);
+        assert!(recover(&store).is_err(), "accepted changed {field}");
+        assert_eq!(candidates(&history(&store)).unwrap().len(), 4);
+        assert_eq!(snapshot(&store.dir, CHECKPOINT).unwrap(), before);
+        assert!(snapshot(&store.dir, CLEANUP).unwrap().is_some());
+    }
+}
+#[test]
+fn native_checkpoint_cleanup_preserves_replaced_archive_directory_and_file() {
+    for directory in [false, true] {
+        let (_data, mut store) = fixture();
+        append(&mut store, 4);
+        let before = snapshot(&store.dir, CHECKPOINT).unwrap();
+        let cleanup = planned(&store);
+        let target = &cleanup.plan.targets[0];
+        let history = history(&store);
+        let path = store.state.join(DIRECTORY).join(HISTORY).join(&target.name);
+        if directory {
+            std::fs::rename(&path, path.with_extension("user-retained")).unwrap();
+            drop(
+                native::create_private_directory(&descriptor(&history).unwrap(), &target.name)
+                    .unwrap(),
+            );
+        } else {
+            let dir = child_directory(&history, &target.name, false)
+                .unwrap()
+                .unwrap();
+            let bytes = std::fs::read(path.join("completed")).unwrap();
+            dir.rename("completed", &store.dir, "user-retained-completed")
+                .unwrap();
+            create(&dir, "completed", &bytes).unwrap();
+        }
+        assert!(cleanup.run(&store).is_err());
+        assert_eq!(candidates(&history).unwrap().len(), 4);
+        assert_eq!(snapshot(&store.dir, CHECKPOINT).unwrap(), before);
+        if directory {
+            assert!(path.with_extension("user-retained").exists());
+            assert!(path.exists());
+        } else {
+            assert_eq!(
+                std::fs::read(path.join("completed")).unwrap(),
+                b"committed\n"
+            );
+            assert_eq!(
+                std::fs::read(store.state.join(DIRECTORY).join("user-retained-completed")).unwrap(),
+                b"committed\n"
+            );
+        }
+    }
+}
+#[test]
+fn native_checkpoint_cleanup_recovers_failed_disposal_before_and_after_effects() {
+    for boundary in [
+        "file-pre",
+        "file-post",
+        "directory-post",
+        "plan-pre",
+        "plan-post",
+    ] {
+        let (_data, mut store) = fixture();
+        append(&mut store, 5);
+        let before = snapshot(&store.dir, CHECKPOINT).unwrap();
+        let cleanup = planned(&store);
+        let plan_id = cleanup.plan.id;
+        let mut failed = false;
+        let result = cleanup.run_with(&store, |source| {
+            let plan = native::identity(source.file())? == plan_id;
+            let directory = source.file().metadata()?.is_dir();
+            let selected = !failed
+                && match boundary {
+                    "file-pre" | "file-post" => !plan && !directory,
+                    "directory-post" => directory,
+                    _ => plan,
+                };
+            if selected && boundary.ends_with("pre") {
+                failed = true;
+                return Err(io::Error::other("injected before disposal").into());
+            }
+            source.remove_durable()?;
+            if selected {
+                failed = true;
+                return Err(io::Error::other("injected after disposal").into());
+            }
+            Ok(())
+        });
+        assert!(failed && result.is_err(), "missed failure {boundary}");
+        assert_eq!(snapshot(&store.dir, CHECKPOINT).unwrap(), before);
+        assert_eq!(
+            snapshot(&store.dir, CLEANUP).unwrap().is_some(),
+            boundary != "plan-post"
+        );
+        let path = store.state.clone();
+        drop(store);
+        let restored = reopen(&path);
+        assert_eq!(snapshot(&restored.dir, CHECKPOINT).unwrap(), before);
+        assert_eq!(candidates(&history(&restored)).unwrap().len(), KEEP);
+        assert!(Cleanup::open(&restored).unwrap().is_none());
+    }
+}

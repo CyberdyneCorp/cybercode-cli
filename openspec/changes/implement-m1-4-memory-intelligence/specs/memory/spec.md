@@ -479,3 +479,9 @@
 - **THEN** fresh shared claim SHALL resume recorded remaining cleanup without replacing the installed checkpoint or replaying an already disposed plan
 - **AND** the selected expired archives SHALL disappear while two retained managed archives and the full installed checkpoint identity SHALL survive
 - **AND** test interruption barriers SHALL be absent from production and bound to the explicitly owned fixture; native runtime and complete failure/context/lifecycle acceptance SHALL remain required before public admission
+
+#### Scenario: Windows checkpoint cleanup context and disposal failure
+- **WHEN** restored cleanup evidence has a changed state/client/lock/history/plan identity or a replaced selected archive directory/file
+- **THEN** recovery SHALL refuse before deleting any remaining selected record and preserve the checkpoint, cleanup evidence and replacement objects
+- **WHEN** cleanup reports failure before or after real file, directory or plan disposal
+- **THEN** shared reopening SHALL resume only remaining recorded objects, preserve the installed checkpoint identity, bound history and clear completed cleanup authority without replay
