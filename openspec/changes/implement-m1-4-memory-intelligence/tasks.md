@@ -62,6 +62,7 @@
   - [ ] Complete save/delete outcome lookup and retained-record management, multi-client/native retention, and cross-platform TUI/HTTP/SDK acceptance.
   - [ ] Verify all canonical P1 memory scenarios and native behavior.
 - [ ] Implement all P1 code intelligence, diagnostics and formatter contracts.
+  - [x] Add bounded LSP Content-Length framing with UTF-8 byte lengths, strict header admission, interrupted I/O fencing and platform-neutral transport regressions. Nine local cases and workspace all-target lint pass; fresh native framing execution, owned process lifecycle and public runtime integration remain required.
   - [x] Add typed LSP/formatter configuration with defaults, built-in overrides, custom extension validation and trust-gated loading; parsing grants no process authority. Four typed configuration and 43 actual configuration loading tests pass locally; full runtime and native acceptance remain open.
   - [x] Add all fourteen built-in server launch/install definitions and local PATH/cache detection, trusted override resolution and Location-bounded nearest-root selection; five real discovery/root tests pass locally. No spawning or downloads; native/public/runtime acceptance remains open.
   - [x] Add all twelve built-in formatter definitions, bounded project-marker/dependency detection, trusted overrides, local CLI LSP/formatter status and doctor installation reporting. Local discovery/configuration, actual CLI/status and memory regression tests pass; native/public/runtime acceptance remains open.

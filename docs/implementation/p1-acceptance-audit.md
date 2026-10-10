@@ -1,5 +1,9 @@
 # P1 acceptance audit
 
+## LSP framing evidence (2026-10-10)
+
+Nine local platform-neutral transport tests verify bounded Content-Length admission, exact UTF-8 byte framing, fragmentation/adjacency, EOF/truncation, safe invalid-content diagnostics and cancellation fencing in both directions. Workspace all-target lint and strict specification validation pass; a dedicated native Windows step now runs the transport test target. This transport has no process-launch authority and cannot prove native termination. Owned LSP lifecycle, pool, public running status, document diagnostics/navigation and sandboxed formatter execution remain unaccepted. Prior revision `8d21522` has completed native formatter API/configuration/discovery/CLI status and lint steps successfully in run 38028611964; its complete job remains live at observation. No canonical milestone acceptance is inferred from this foundation.
+
 Snapshot: 2026-10-09. The full goal covers M1.1–M1.5 and all P1-tagged contracts. No milestone has complete acceptance evidence. This inventory uses the first phase tag of each canonical requirement, matching `scripts/spec_inventory.py`; mixed-phase extensions still need review against the full goal.
 
 ## Remaining delivery areas

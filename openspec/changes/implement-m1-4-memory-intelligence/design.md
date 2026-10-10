@@ -1,3 +1,9 @@
+## LSP transport framing
+
+LSP uses its own Content-Length transport rather than MCP newline framing. The transport limits headers to 8 KiB and content to 4 MiB, validates ASCII header syntax and UTF-8 encoding, rejects duplicate lengths and consumes exactly the declared byte length. JSON parse diagnostics never echo server content. A mutable owner fences all subsequent I/O before its first await and reopens only after a complete valid frame or flushed write. Cancellation, truncation and transport errors therefore cannot reinterpret partially consumed bytes or replay partially sent messages. This transport grants no launch authority or native settlement acknowledgement; the owned sandboxed process lifecycle, initialization, lazy pool, diagnostics and public integrations remain required.
+
+Protocol framing follows the primary [LSP 3.17 base protocol](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/lsp/3.17/specification.md#base-protocol).
+
 ## Memory foundation
 
 Pure core types validate required YAML fields and kebab-case names, one-line descriptions, known memory types and nonempty content. Feedback/project notes require nonempty Why and How to apply lines. Parse diagnostics do not echo supplied text. Write validation scans the entire input, including frontmatter, for credential patterns, private keys and high-entropy strings longer than 32 characters. Parsing an existing document remains distinct from admitting a write.

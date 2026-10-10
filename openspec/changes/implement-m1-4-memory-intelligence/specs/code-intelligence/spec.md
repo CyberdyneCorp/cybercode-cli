@@ -1,3 +1,18 @@
+## ADDED Requirements
+
+### Requirement: Bounded LSP transport framing
+(P1) LSP stdio SHALL use bounded ASCII Content-Length headers and UTF-8 JSON-RPC 2.0 object bodies. Interrupted or failed transport I/O SHALL fence both directions without claiming native termination or granting launch authority.
+
+#### Scenario: Exact byte framing
+- **WHEN** adjacent or fragmented LSP messages contain multibyte Unicode
+- **THEN** the transport SHALL consume exactly each declared content byte length and preserve message boundaries
+- **AND** headers above 8 KiB, content above 4 MiB, duplicate or invalid lengths, unsupported charsets and malformed messages SHALL be refused with diagnostics excluding server content
+
+#### Scenario: Cancelled partial transport I/O
+- **WHEN** a read or write future is cancelled after transport admission
+- **THEN** both subsequent reads and writes SHALL be refused rather than resuming or replaying a partial frame
+- **AND** the caller SHALL retain responsibility for native process termination and settlement
+
 ## MODIFIED Requirements
 
 ### Requirement: LSP enablement

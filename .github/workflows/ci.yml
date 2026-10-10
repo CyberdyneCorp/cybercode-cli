@@ -51,6 +51,9 @@ jobs:
       - name: Native authenticated formatter status
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test intelligence
+      - name: Native LSP transport framing
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test lsp_transport
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: 'cargo test --locked -p cyber-core --lib memory::'
