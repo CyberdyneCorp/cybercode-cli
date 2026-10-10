@@ -33,3 +33,7 @@ Native command permission resources contain source text, so the glob projection 
 ## Literal rules source parser
 
 Parse constant prefix_rule calls with a bounded literal reader, not a Starlark evaluator. Support comments, quoted strings/lists and only the documented keyword fields. Preserve rationale and tokenized inline examples in typed source records, verify examples against their own prefix alternatives, and convert the entire batch with the existing precedence/expansion limits. Reject dynamic constructs/unknown fields atomically with an indexed or offset-only error; the future import report must make these unsupported sources visible. This parser does not imply arbitrary Starlark compatibility or complete migration acceptance.
+
+## Read-only file inventory
+
+Use explicit canonical root inputs, walk project layers from repository root to the current Location and retain source/layer/kind/path provenance. Inventory known global/project files and bounded source directories without reading source values or following symlinks. Report linked/uninspectable entries rather than treating them as absent. Retain both default and distinct explicit Codex homes, leaving semantic source precedence to the source adapter. Deterministic tool order is opencode, codex, claude. This inventory is prerequisite delivery, not parsed detection counts/read-time status or the import CLI. Source-referenced custom paths and session/database inspection remain required.

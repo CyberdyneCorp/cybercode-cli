@@ -60,3 +60,16 @@
 #### Scenario: Source code cannot run during migration
 - **WHEN** source text contains load, assignments or function calls instead of constant prefix_rule fields
 - **THEN** parsing SHALL refuse without executing that source
+
+### Requirement: Read-only migration file inventory
+(P1) Migration discovery SHALL accept explicit canonical project-root, current-directory, home and optional CODEX_HOME inputs and inventory static Claude/Codex/OpenCode project/global source locations without reading configuration contents, executing commands or writing files. It SHALL preserve source tool, global/project/custom-home layer, file kind and path, walk project layers from root to current directory, and order source groups opencode, codex, claude. It SHALL include settings/config/profile files, instructions, MCP files, agents, commands, skills/assets, rules, hooks/policy files and OpenCode manual-port files. Symlinks and inspection failures SHALL be reported explicitly without following linked directory trees. Traversal SHALL be deterministically ordered and bounded at 4096 directory-entry/metadata inspections and 32 tree levels; limit failures SHALL return no incomplete inventory as a complete result. Referenced custom-agent/config paths, parsed item counts/read-time status, sessions/SQLite counts, CLI detection and import review/writes SHALL remain mandatory subsequent delivery.
+
+#### Scenario: Explicit custom Codex home
+- **WHEN** an explicit CODEX_HOME differs from the default user directory
+- **THEN** discovered sources SHALL retain which home supplied each config/profile/rule
+- **AND** discovery SHALL not change process-global environment
+
+#### Scenario: Linked source directory
+- **WHEN** an agents or skills source points through a symbolic link
+- **THEN** discovery SHALL report that source without scanning its target
+- **AND** no files SHALL be written or executed
