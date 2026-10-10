@@ -104,3 +104,86 @@ fn malformed_settings_cannot_appear_to_be_an_empty_policy() {
         assert!(!error.to_string().contains("private-token"));
     }
 }
+
+#[test]
+fn opencode_legacy_tools_precede_written_permission_rules() {
+    let settings: serde_json::Value = serde_json::from_str(
+        r#"{
+        "tools":{"shell":false,"write":false,"task":true},
+        "permission":{"bash":{"*":"ask","git *":"allow","git push *":"deny"},"read":"allow"}
+    }"#,
+    )
+    .unwrap();
+    let rules = cyber_core::import::opencode_permissions(&settings).unwrap();
+    assert_eq!(
+        serde_json::to_value(rules).unwrap(),
+        json!([
+            {"action":"bash","resource":"*","effect":"deny"},
+            {"action":"edit","resource":"*","effect":"deny"},
+            {"action":"agent","resource":"*","effect":"allow"},
+            {"action":"bash","resource":"*","effect":"ask"},
+            {"action":"bash","resource":"git **","effect":"allow"},
+            {"action":"bash","resource":"git push **","effect":"deny"},
+            {"action":"read","resource":"*","effect":"allow"}
+        ])
+    );
+}
+
+#[test]
+fn opencode_ordered_arrays_and_aliases_retain_source_positions() {
+    let rules = cyber_core::import::opencode_permissions(&json!({"permissions":[
+        {"action":"*","resource":"*","effect":"ask"},
+        {"action":"patch","resource":"src/*","effect":"deny"},
+        {"action":"subagent","resource":"review","effect":"allow"},
+        {"action":"shell","resource":"echo ?","effect":"allow"}
+    ]}))
+    .unwrap();
+    assert_eq!(
+        rules.iter().map(|r| r.action.as_str()).collect::<Vec<_>>(),
+        ["*", "edit", "agent", "bash"]
+    );
+    assert!(rules.iter().all(|r| r.tool.is_none()));
+    assert_eq!(rules[3].resource, "echo ?");
+}
+
+#[test]
+fn opencode_global_effect_and_absent_permissions_are_explicit() {
+    for effect in ["allow", "ask", "deny"] {
+        let rules =
+            cyber_core::import::opencode_permissions(&json!({"permission":effect})).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].effect, effect);
+        assert_eq!(rules[0].action, "*");
+    }
+    assert!(
+        cyber_core::import::opencode_permissions(&json!({"model":"private-value"}))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn opencode_invalid_or_unmapped_entries_refuse_the_whole_batch_safely() {
+    for settings in [
+        json!(null),
+        json!([]),
+        json!({"permission":"private-token"}),
+        json!({"permission":null}),
+        json!({"permission":{},"permissions":{}}),
+        json!({"tools":{"bash":"private-token"}}),
+        json!({"tools":{"private-token":false}}),
+        json!({"permission":{"private-token":{}}}),
+        json!({"permission":{"read":{"private-token":null}}}),
+        json!({"permission":{"read":{"~/private-token":"deny"}}}),
+        json!({"permission":{"read":{"$HOME/private-token":"deny"}}}),
+        json!({"permission":{"read":{"private-token\\file":"deny"}}}),
+        json!({"permissions":[{"action":"read","resource":"*","effect":"allow"},{"action":"private-token","resource":"*","effect":"deny"}]}),
+        json!({"permissions":[{"action":"read","resource":"*","effect":"allow","private-token":true}]}),
+        json!({"permissions":[{"action":"read","resource":"","effect":"deny"}]}),
+        json!({"permissions":[{"action":"read","resource":"private-token\n","effect":"deny"}]}),
+    ] {
+        let error = cyber_core::import::opencode_permissions(&settings).unwrap_err();
+        assert!(!error.to_string().contains("private-token"));
+        assert!(error.to_string().len() < 180);
+    }
+}

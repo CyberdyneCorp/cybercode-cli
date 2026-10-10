@@ -283,3 +283,66 @@ fn legacy_rule_wire_shape_is_unchanged_and_old_records_deserialize() {
     assert!(rule.tool.is_none());
     assert_eq!(serde_json::to_value(rule).unwrap(), json);
 }
+
+#[test]
+fn opencode_literal_command_patterns_do_not_acquire_bare_prefix_grants() {
+    let converted = cyber_core::import::opencode_permissions(&json!({"tools":{"bash":false},"permission":{"bash":{"git *":"allow","git push *":"deny"}}})).unwrap();
+    let rules = parse_rules(&serde_json::to_value(converted).unwrap(), &BTreeMap::new());
+    for (command, effect) in [
+        ("git", Effect::Deny),
+        ("git ", Effect::Allow),
+        ("git status", Effect::Allow),
+        ("git push", Effect::Allow),
+        ("git push ", Effect::Deny),
+        ("git push origin main", Effect::Deny),
+        ("npm test", Effect::Deny),
+    ] {
+        assert_eq!(evaluate(&rules, "bash", command).0, effect, "{command:?}");
+    }
+}
+
+#[tokio::test]
+async fn opencode_imported_edit_group_denies_all_native_mutations_in_bypass() {
+    let fixture = support::Fixture::new();
+    fixture.write("a.txt", "original");
+    let converted = cyber_core::import::opencode_permissions(
+        &json!({"permission":{"read":"allow","edit":"deny"}}),
+    )
+    .unwrap();
+    fixture.set_config(json!({"permissions":converted,"lsp":false,"formatters":false}));
+    assert!(
+        support::ok(
+            fixture
+                .call("default", "read", json!({"path":"a.txt"}))
+                .await
+        )
+        .contains("original")
+    );
+    for (tool, input) in [
+        ("write", json!({"path":"a.txt","content":"replacement"})),
+        (
+            "edit",
+            json!({"path":"a.txt","old_string":"original","new_string":"replacement"}),
+        ),
+        (
+            "apply_patch",
+            json!({"patch":"*** Begin Patch\n*** Update File: a.txt\n@@\n-original\n+replacement\n*** End Patch"}),
+        ),
+    ] {
+        let error = support::failed(fixture.call("bypass", tool, input).await);
+        assert!(error.contains("denied"), "{tool}: {error}");
+        assert_eq!(fixture.read("a.txt"), "original");
+    }
+    assert!(
+        support::ok(
+            fixture
+                .call("default", "read", json!({"path":"a.txt"}))
+                .await
+        )
+        .contains("original")
+    );
+    let names = fixture.tool_names("default", false);
+    for hidden in ["write", "edit", "apply_patch", "notebook_edit"] {
+        assert!(!names.contains(&hidden.into()), "{hidden}");
+    }
+}

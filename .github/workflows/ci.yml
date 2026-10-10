@@ -43,6 +43,7 @@ jobs:
       - name: Check native Windows lint
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build Windows process ownership helper
+        if: ${{ !cancelled() }}
         run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - name: Native code intelligence configuration and discovery
         if: ${{ !cancelled() }}

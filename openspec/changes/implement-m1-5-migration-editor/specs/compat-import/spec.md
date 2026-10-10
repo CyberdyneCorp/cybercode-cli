@@ -25,3 +25,15 @@
 - **WHEN** imported permissions deny Write for a path while allowing Edit
 - **THEN** write SHALL be denied in default and bypass modes
 - **AND** edit SHALL remain independently governed
+
+### Requirement: Pure OpenCode permission conversion
+(P1) Import planning SHALL convert explicit OpenCode permission/permissions strings, ordered action/resource/effect arrays, ordered action/pattern maps and legacy tools booleans into typed native rules without executing code or accessing files. Legacy tool rules SHALL precede explicit permission rules. It SHALL map shell to bash, task/subagent to agent and write/patch to edit. Map and array ordering SHALL survive conversion. A source literal glob ending in space-star SHALL NOT acquire Cyber's additional bare-command match. Ambiguous simultaneous permission and permissions fields, malformed shapes, unknown actions/effects or resource patterns requiring unresolved home expansion SHALL refuse the whole batch with bounded static errors that do not echo source values. This explicit converter SHALL NOT imply complete source discovery, implicit source defaults or full migration acceptance.
+
+#### Scenario: Explicit permission overrides legacy boolean
+- **WHEN** legacy tools disable bash and a later permission rule allows one command
+- **THEN** other commands SHALL stay denied and that command SHALL be allowed
+
+#### Scenario: Command prefix retains its literal space
+- **WHEN** a source rule allows git followed by a space and wildcard
+- **THEN** git status SHALL match
+- **AND** bare git SHALL retain its separate decision
