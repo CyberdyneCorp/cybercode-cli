@@ -420,6 +420,7 @@ async fn fork(
 impl SubtaskBody {
     fn request(self) -> crate::runtime::UserSubtask {
         crate::runtime::UserSubtask {
+            skill_command: None,
             admission_id: None,
             prompt: self.prompt,
             agent: self.agent,

@@ -9,17 +9,15 @@ use super::{Tool, ToolError, def, failed, text};
 use crate::host::Ctx;
 use crate::permissions::Request;
 
-const SIBLING_LIMIT: usize = 20;
-
 pub(crate) struct SkillTool;
 
 impl Tool for SkillTool {
     fn def(&self) -> ToolDef {
         def(
             "skill",
-            "Load a skill listed in <available_skills> by name. arguments are substituted into the skill body.",
+            "Load a skill listed in <available_skills> by name. arguments are substituted into the skill body. Forked skills run in background children and deliver only their summaries.",
             json!({"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "arguments": {"type": "string"}}}),
-            RetrySafety::ReadOnly,
+            RetrySafety::Never,
             false,
         )
     }
@@ -48,13 +46,10 @@ impl Tool for SkillTool {
                 ..Request::default()
             };
             ctx.authorize(req, vec![name.into()], Value::Null).await?;
-            let body = skills::expand(&skill.body, text(&ctx.inv.input, "arguments"));
-            let files = skills::sibling_files(skill, SIBLING_LIMIT);
-            let listing = if files.is_empty() {
-                String::new()
-            } else {
-                format!("\n\nFiles in this skill:\n{}", files.join("\n"))
-            };
+            let body = skills::instruction_frame(skill, text(&ctx.inv.input, "arguments"));
+            if skill.context == skills::SkillContext::Fork {
+                return super::agent::fork_skill(ctx, skill, body).await;
+            }
             *ctx.loaded_skill
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -63,12 +58,7 @@ impl Tool for SkillTool {
                     allowed_tools: skill.allowed_tools.clone(),
                     disallowed_tools: skill.disallowed_tools.clone(),
                 });
-            Ok(format!(
-                "<skill name=\"{}\" base=\"{}\">\n{}{listing}\n</skill>",
-                skill.name,
-                skill.base.display(),
-                body.trim_end()
-            ))
+            Ok(body)
         })
     }
 }

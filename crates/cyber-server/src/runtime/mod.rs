@@ -25,6 +25,7 @@ mod delegations;
 mod drain;
 mod events;
 mod fork;
+mod forked_skills;
 mod hook_tests;
 mod hooks;
 pub use hook_tests::{
@@ -208,6 +209,8 @@ pub struct CreateSession {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SkillCommand {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fork: bool,
     pub activation: cyber_core::skills::SkillActivation,
     pub model: Option<String>,
 }

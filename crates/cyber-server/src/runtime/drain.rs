@@ -131,6 +131,15 @@ async fn pass_owned(
         if !eligible(handle, continue_tools, first, cancel).await {
             return Ok(());
         }
+        if inner
+            .forward_skill_commands(handle, continue_tools, cancel)
+            .await?
+        {
+            first = false;
+            if !eligible(handle, continue_tools, first, cancel).await {
+                return Ok(());
+            }
+        }
         let Some(resolved) = prepare_pass(inner, handle, continue_tools, first, cancel).await?
         else {
             return Ok(());

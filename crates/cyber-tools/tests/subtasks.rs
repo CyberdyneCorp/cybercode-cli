@@ -159,6 +159,7 @@ async fn typed_user_delegation_preserves_images_and_caps_requested_steps() {
         .subtask_request(
             &parent,
             UserSubtask {
+                skill_command: None,
                 admission_id: None,
                 prompt: "inspect attachments".into(),
                 agent: Some("general".into()),
@@ -203,6 +204,7 @@ async fn one_step_user_ceiling_removes_tools_and_zero_creates_no_child() {
     flow.f.write("public.txt", "public");
     let parent = flow.session("dont-ask").await;
     let request = |steps| UserSubtask {
+        skill_command: None,
         admission_id: None,
         prompt: "one step".into(),
         agent: Some("general".into()),
@@ -915,6 +917,7 @@ async fn caller_cancellation_removes_only_its_queued_admission_and_releases_capa
     let first = flow.runtime.subtask(&parent, "first task").await.unwrap();
     flow.pending(&parent).await;
     let request = |prompt: &str| UserSubtask {
+        skill_command: None,
         admission_id: None,
         prompt: prompt.into(),
         agent: Some("general".into()),
@@ -981,6 +984,7 @@ async fn pre_cancelled_user_admission_creates_no_session_or_model_request() {
             .subtask_request_owned(
                 &parent,
                 UserSubtask {
+                    skill_command: None,
                     admission_id: None,
                     prompt: "never start".into(),
                     agent: Some("general".into()),

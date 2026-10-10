@@ -33,6 +33,8 @@ pub enum InputStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxRow {
     #[serde(skip)]
+    pub forwarded_skill: bool,
+    #[serde(skip)]
     pub skill_command: Option<super::SkillCommand>,
     pub message_id: String,
     pub parts: Vec<Content>,
@@ -552,6 +554,21 @@ impl SessionState {
             "session.prompt.admitted" => self.on_admitted(decode(e)?, e.seq),
             "session.inbox.updated" => self.on_inbox_updated(decode(e)?),
             "session.prompt.promoted" => self.on_promoted(decode::<Promoted>(e)?, e.seq),
+            "session.prompt.skill_forwarded" => {
+                self.turn_mode = None;
+                self.turn_agent = None;
+                let promoted: Promoted = decode(e)?;
+                self.child_requested_inputs.remove(&promoted.message_id);
+                if let Some(row) = self
+                    .inbox
+                    .iter_mut()
+                    .find(|row| row.message_id == promoted.message_id)
+                {
+                    row.forwarded_skill = true;
+                    row.status = InputStatus::Promoted;
+                    row.promoted_seq = Some(e.seq);
+                }
+            }
             _ => self.apply_runtime(kind, e)?,
         }
         Ok(())
@@ -780,6 +797,7 @@ impl SessionState {
             InputStatus::Pending
         };
         self.inbox.push(InboxRow {
+            forwarded_skill: false,
             skill_command: a.skill_command,
             message_id: a.message_id,
             parts: a.parts,

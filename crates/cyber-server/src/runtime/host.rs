@@ -389,7 +389,10 @@ pub trait ToolHost: Send + Sync {
         request: super::UserSubtask,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<super::Job, String>> {
-        if !request.attachments.is_empty() || request.max_steps.is_some() {
+        if !request.attachments.is_empty()
+            || request.max_steps.is_some()
+            || request.skill_command.is_some()
+        {
             Box::pin(async { Err("typed user delegation is not supported by this host".into()) })
         } else {
             self.subtask_with_agent(turn, request.prompt, request.agent, cancel)

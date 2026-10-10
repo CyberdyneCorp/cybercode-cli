@@ -184,7 +184,15 @@ impl Runtime {
                 "Host does not support durable user delegation".into(),
             ));
         }
-        let hash = format!("{:x}",Sha256::digest(serde_json::to_vec(&serde_json::json!({"prompt":request.prompt,"agent":request.agent,"attachments":request.attachments,"max_steps":request.max_steps})).expect("serializable request")));
+        let mut body = serde_json::json!({"prompt":request.prompt,"agent":request.agent,"attachments":request.attachments,"max_steps":request.max_steps});
+        if let Some(skill) = &request.skill_command {
+            body["skill_command"] =
+                serde_json::to_value(skill).expect("serializable skill command");
+        }
+        let hash = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&body).expect("serializable request"))
+        );
         if let Some(existing) = self.existing_delegation(parent, id, &hash)? {
             return Ok((existing, None));
         }

@@ -89,6 +89,7 @@ fn runtime(h: &Harness, launching: bool, panic: bool) -> (Runtime, Arc<Host>) {
 }
 fn request() -> UserSubtask {
     UserSubtask {
+        skill_command: None,
         admission_id: None,
         prompt: "inspect project".into(),
         agent: None,

@@ -13,6 +13,14 @@ pub struct SkillActivation {
     pub disallowed_tools: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillContext {
+    #[default]
+    Inline,
+    Fork,
+}
+
 /// Where to look for skills.
 #[derive(Debug, Clone)]
 pub struct SkillScope {
@@ -33,6 +41,7 @@ pub struct Skill {
     pub allowed_tools: Vec<String>,
     pub disallowed_tools: Vec<String>,
     pub paths: Vec<String>,
+    pub context: SkillContext,
     pub model: Option<String>,
     pub disable_model_invocation: bool,
     pub user_invocable: bool,
@@ -61,6 +70,8 @@ struct Frontmatter {
     disallowed_tools: Tools,
     #[serde(default)]
     paths: Vec<String>,
+    #[serde(default)]
+    context: SkillContext,
     model: Option<String>,
     #[serde(default)]
     disable_model_invocation: bool,
@@ -195,6 +206,7 @@ pub fn load(dir: &Path) -> Result<Skill, String> {
         allowed_tools,
         disallowed_tools,
         paths: fm.paths,
+        context: fm.context,
         model: fm.model,
         disable_model_invocation: fm.disable_model_invocation,
         user_invocable: fm.user_invocable.unwrap_or(true),
@@ -248,6 +260,23 @@ pub fn validate_name(name: &str) -> Result<(), String> {
             "invalid name {name:?}: use lowercase letters, digits and hyphens"
         ))
     }
+}
+
+/// Captured instructions and bounded supporting-file context for either execution route.
+pub fn instruction_frame(skill: &Skill, arguments: &str) -> String {
+    let body = expand(&skill.body, arguments);
+    let files = sibling_files(skill, 20);
+    let listing = if files.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nFiles in this skill:\n{}", files.join("\n"))
+    };
+    format!(
+        "<skill name=\"{}\" base=\"{}\">\n{}{listing}\n</skill>",
+        skill.name,
+        skill.base.display(),
+        body.trim_end()
+    )
 }
 
 /// Up to `limit` files beside `SKILL.md`, as sorted relative paths.
@@ -361,6 +390,29 @@ fn regex_lite_positions(template: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_defaults_to_inline_and_refuses_unknown_execution_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        for (declaration, expected) in [
+            ("", SkillContext::Inline),
+            ("context: inline\n", SkillContext::Inline),
+            ("context: fork\n", SkillContext::Fork),
+        ] {
+            std::fs::write(
+                tmp.path().join("SKILL.md"),
+                format!("---\nname: release\ndescription: Release\n{declaration}---\nBody\n"),
+            )
+            .unwrap();
+            assert_eq!(load(tmp.path()).unwrap().context, expected);
+        }
+        std::fs::write(
+            tmp.path().join("SKILL.md"),
+            "---\nname: release\ndescription: Release\ncontext: detached\n---\nBody\n",
+        )
+        .unwrap();
+        assert!(load(tmp.path()).unwrap_err().contains("unknown variant"));
+    }
 
     #[test]
     fn skill_tool_scopes_capture_lists_and_refuse_unbounded_declarations() {

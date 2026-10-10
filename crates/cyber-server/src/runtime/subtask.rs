@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub struct UserSubtask {
+    pub skill_command: Option<super::SkillCommand>,
     /// Internal durable admission identity; public request bodies cannot set this.
     pub admission_id: Option<String>,
     pub prompt: String,
@@ -28,6 +29,7 @@ impl Runtime {
         self.subtask_request(
             session_id,
             UserSubtask {
+                skill_command: None,
                 admission_id: None,
                 prompt: prompt.into(),
                 agent,

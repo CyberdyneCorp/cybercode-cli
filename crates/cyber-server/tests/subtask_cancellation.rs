@@ -102,6 +102,7 @@ fn fixture(cancel_before_return: bool, foreign_parent: bool) -> (Harness, Runtim
 }
 fn request() -> UserSubtask {
     UserSubtask {
+        skill_command: None,
         admission_id: None,
         prompt: "child".into(),
         agent: None,

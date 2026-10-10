@@ -5,6 +5,7 @@ use serde_json::json;
 use support::flow::{Flow, call, text};
 fn request(prompt: &str) -> UserSubtask {
     UserSubtask {
+        skill_command: None,
         admission_id: None,
         prompt: prompt.into(),
         agent: Some("general".into()),

@@ -107,6 +107,9 @@ jobs:
       - name: Native ordinary permission regression
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_permissions
+      - name: Native forked skill execution
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test forked_skills
       - name: Native user skill command admission
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test skill_commands

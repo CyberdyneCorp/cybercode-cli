@@ -892,6 +892,7 @@ impl ToolHost for BuiltinHost {
         self.subtask_request(
             turn,
             cyber_server::runtime::UserSubtask {
+                skill_command: None,
                 admission_id: None,
                 prompt,
                 agent,
@@ -914,6 +915,7 @@ impl ToolHost for BuiltinHost {
     ) -> BoxFuture<'_, Result<cyber_server::runtime::Job, String>> {
         Box::pin(async move {
             let cyber_server::runtime::UserSubtask {
+                skill_command,
                 admission_id,
                 prompt,
                 agent,
@@ -936,6 +938,15 @@ impl ToolHost for BuiltinHost {
             let mut input = serde_json::json!({"prompt":prompt,"fork":agent.is_none(),"background":true,"attachments":attachments,"max_steps":max_steps});
             if let Some(agent) = agent {
                 input["agent"] = agent.into();
+            }
+            if let Some(skill) = &skill_command {
+                input["description"] = format!("Run {} skill task", skill.activation.name).into();
+            }
+            if let Some(model) = skill_command
+                .as_ref()
+                .and_then(|skill| skill.model.as_ref())
+            {
+                input["model"] = model.clone().into();
             }
             let inv = Invocation {
                 registration: None,
@@ -964,10 +975,12 @@ impl ToolHost for BuiltinHost {
                 inv: &inv,
                 cancel,
             };
-            let output = tools::agent::run(&ctx, true).await.map_err(|e| match e {
-                ToolError::Failed(message) => message,
-                ToolError::Aborted => "Subtask interrupted".into(),
-            })?;
+            let output = tools::agent::run_with_skill(&ctx, true, skill_command)
+                .await
+                .map_err(|e| match e {
+                    ToolError::Failed(message) => message,
+                    ToolError::Aborted => "Subtask interrupted".into(),
+                })?;
             let result: Value = serde_json::from_str(&output).map_err(|e| e.to_string())?;
             let job = result["job_id"]
                 .as_str()
@@ -1049,7 +1062,7 @@ fn offered(
         _ => true,
     };
     let by_mode = match (mode, name) {
-        (Mode::Plan, "write" | "plan_exit" | "todo") => true,
+        (Mode::Plan, "write" | "plan_exit" | "todo" | "skill") => true,
         (Mode::Plan, "plan_enter") => false,
         (Mode::Plan, _) => safety == cyber_server::runtime::RetrySafety::ReadOnly,
         (_, "plan_exit") => false,

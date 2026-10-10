@@ -65,8 +65,13 @@ impl BuiltinHost {
             return Err(format!("Permission denied: {reason}"));
         }
         Ok(Some(CommandPlan {
-            text: cyber_core::skills::expand(&skill.body, arguments),
+            text: if skill.context == cyber_core::skills::SkillContext::Fork {
+                cyber_core::skills::instruction_frame(skill, arguments)
+            } else {
+                cyber_core::skills::expand(&skill.body, arguments)
+            },
             skill: Some(SkillCommand {
+                fork: skill.context == cyber_core::skills::SkillContext::Fork,
                 activation: cyber_core::skills::SkillActivation {
                     name: skill.name.clone(),
                     allowed_tools: skill.allowed_tools.clone(),

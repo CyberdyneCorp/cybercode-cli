@@ -36,6 +36,7 @@ impl Tool for Agent {
 }
 
 struct Spawn {
+    skill_command: Option<cyber_server::runtime::SkillCommand>,
     authority: Option<cyber_server::runtime::AdmissionAuthority>,
     attachments: Vec<cyber_llm::Content>,
     max_steps: Option<u32>,
@@ -133,6 +134,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         return Err(failed("name must contain 1–128 bytes"));
     }
     Ok(Spawn {
+        skill_command: None,
         authority: None,
         attachments: Vec::new(),
         max_steps: None,
@@ -216,6 +218,53 @@ async fn effective_parent(runtime: &Runtime, session: &str) -> Result<SessionInf
 }
 
 pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, ToolError> {
+    run_with_skill(ctx, user_requested, None).await
+}
+
+pub(crate) async fn fork_skill(
+    ctx: &Ctx<'_>,
+    skill: &cyber_core::skills::Skill,
+    body: String,
+) -> Result<String, ToolError> {
+    let mut inv = ctx.inv.clone();
+    inv.name = "agent".into();
+    inv.input = json!({"prompt":body,"fork":true,"background":true,"description":format!("Run {} skill task", skill.name)});
+    if let Some(model) = &skill.model {
+        inv.input["model"] = model.clone().into();
+    }
+    ctx.host.check_skill_tool(&inv).await.map_err(failed)?;
+    let child_ctx = Ctx {
+        skill_paths: Default::default(),
+        loaded_skill: Default::default(),
+        compiler_feedback: Default::default(),
+        host: ctx.host,
+        policy: ctx.host.policy(&inv).await.map_err(failed)?,
+        location: ctx.location.clone(),
+        inv: &inv,
+        cancel: ctx.cancel.clone(),
+        hook_decision: None,
+    };
+    run_with_skill(
+        &child_ctx,
+        false,
+        Some(cyber_server::runtime::SkillCommand {
+            fork: false,
+            activation: cyber_core::skills::SkillActivation {
+                name: skill.name.clone(),
+                allowed_tools: skill.allowed_tools.clone(),
+                disallowed_tools: skill.disallowed_tools.clone(),
+            },
+            model: skill.model.clone(),
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn run_with_skill(
+    ctx: &Ctx<'_>,
+    user_requested: bool,
+    skill_command: Option<cyber_server::runtime::SkillCommand>,
+) -> Result<String, ToolError> {
     let runtime = ctx
         .host
         .runtime()
@@ -233,6 +282,7 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
         None => None,
     };
     let mut spawn = configured(ctx, resume.as_ref())?;
+    spawn.skill_command = skill_command;
     spawn.authority = Some(authority);
     spawn.user_requested = user_requested;
     user_options(&mut spawn, &ctx.inv.input)?;
@@ -272,11 +322,7 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
             spawn.max_depth
         )));
     }
-    let request = Request {
-        action: "agent".into(),
-        resources: vec![spawn.profile.name.clone()],
-        ..Request::default()
-    };
+    let request = delegation_request(ctx, &spawn);
     if user_requested {
         if let Decision::Deny(reason) = ctx.policy.user_delegation(&request) {
             return Err(failed(format!("Permission denied: {reason}")));
@@ -364,17 +410,44 @@ async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolEr
     spawn.background = latest.background;
     spawn.name = latest.name;
     let policy = ctx.host.policy(ctx.inv).await.map_err(failed)?;
-    let request = Request {
-        action: "agent".into(),
-        resources: vec![spawn.profile.name.clone()],
-        ..Request::default()
-    };
+    check_skill_delegation(&policy, spawn.skill_command.as_ref())?;
+    let request = delegation_request(ctx, spawn);
     let decision = if spawn.user_requested {
         policy.user_delegation(&request)
     } else {
         policy.decide(&request)
     };
     if let Decision::Deny(reason) = decision {
+        return Err(failed(format!("Permission denied: {reason}")));
+    }
+    Ok(())
+}
+
+fn delegation_request(ctx: &Ctx<'_>, spawn: &Spawn) -> Request {
+    Request {
+        action: "agent".into(),
+        resources: vec![spawn.profile.name.clone()],
+        // Forked skills inherit Plan mode, including its child write ceiling.
+        read_only: spawn.skill_command.is_some() && ctx.inv.mode == "plan",
+        ..Request::default()
+    }
+}
+
+fn check_skill_delegation(
+    policy: &crate::permissions::Policy,
+    skill: Option<&cyber_server::runtime::SkillCommand>,
+) -> Result<(), ToolError> {
+    let Some(skill) = skill else {
+        return Ok(());
+    };
+    let request = Request {
+        tool: Some("skill".into()),
+        action: "skill".into(),
+        resources: vec![skill.activation.name.clone()],
+        read_only: true,
+        ..Default::default()
+    };
+    if let Decision::Deny(reason) = policy.user_delegation(&request) {
         return Err(failed(format!("Permission denied: {reason}")));
     }
     Ok(())
@@ -666,6 +739,10 @@ async fn create_child(
             None => None,
         };
         let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
+        admission.skill_command = spawn.skill_command.clone().map(|mut skill| {
+            skill.fork = false;
+            skill
+        });
         admission.source = "session".into();
         admission.parts.extend(spawn.attachments.clone());
         let receipt = runtime
@@ -717,6 +794,10 @@ async fn create_child(
         None
     };
     let mut admission = Admission::text(text(&ctx.inv.input, "prompt"), Delivery::Queue);
+    admission.skill_command = spawn.skill_command.clone().map(|mut skill| {
+        skill.fork = false;
+        skill
+    });
     admission.source = "session".into();
     admission.parts.extend(spawn.attachments.clone());
     let receipt = runtime

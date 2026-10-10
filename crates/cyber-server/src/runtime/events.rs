@@ -18,6 +18,7 @@ pub const CHILD_INPUT_PAUSED: &str = "session.child.input_paused.1";
 pub const RESUMED: &str = "session.subagent.resumed.1";
 pub const ADMITTED: &str = "session.prompt.admitted.1";
 pub const INBOX_UPDATED: &str = "session.inbox.updated.1";
+pub const SKILL_FORWARDED: &str = "session.prompt.skill_forwarded.1";
 pub const PROMOTED: &str = "session.prompt.promoted.1";
 pub const EPOCH_STARTED: &str = "session.context.epoch_started.1";
 pub const CONTEXT_UPDATED: &str = "session.context.updated.1";
@@ -65,6 +66,7 @@ const ALL: &[&str] = &[
     WORKTREE_SETUP_READY,
     INBOX_UPDATED,
     PROMOTED,
+    SKILL_FORWARDED,
     EPOCH_STARTED,
     CONTEXT_UPDATED,
     super::deferred_tools::LOADED,
@@ -449,7 +451,7 @@ fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
             )?;
         }
         INBOX_UPDATED => project_inbox(tx, d)?,
-        PROMOTED => {
+        PROMOTED | SKILL_FORWARDED => {
             tx.execute(
                 "UPDATE session_input SET status = 'promoted', promoted_seq = ?2 WHERE message_id = ?1",
                 params![s(d, "message_id"), e.seq],
