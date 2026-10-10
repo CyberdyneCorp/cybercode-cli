@@ -430,3 +430,9 @@
 - **WHEN** acknowledgement fails or succeeds
 - **THEN** failure SHALL release guards without rollback and keep recovery evidence; success SHALL release journal descendants only for exact-source archival while installed/catalog guards stay owned until commit returns
 - **AND** ordinary readonly inspection SHALL remain possible; full crash/checkpoint/canonical acceptance SHALL remain required before public Windows activation
+
+#### Scenario: Windows owner death during terminal acknowledgement
+- **WHEN** the owning Windows process dies inside the acknowledgement callback before or after publishing its receipt witness
+- **THEN** completed journal evidence SHALL survive, process-held exclusions SHALL release, and reopened recovery SHALL retain the exact installed note/index and captured-original identities
+- **AND** recovered acknowledgement SHALL use the original journal/receipt identity and archive that exact journal once without replaying installed objects
+- **AND** storage callback witnesses SHALL NOT be treated as proof of database reconciliation or complete crash acceptance

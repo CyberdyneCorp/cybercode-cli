@@ -329,6 +329,170 @@ impl Drop for Owner {
         let _ = self.0.wait();
     }
 }
+fn wait_ready(owner: &mut Owner, path: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !path.exists() {
+        assert!(
+            owner.0.try_wait().unwrap().is_none(),
+            "owner exited before readiness"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "owner readiness timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+fn write_witness(path: &std::path::Path, value: &impl Serialize) {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap();
+    file.write_all(&serde_json::to_vec(value).unwrap()).unwrap();
+    file.sync_all().unwrap();
+}
+#[test]
+fn native_terminal_owner_child() {
+    let Some(data) = std::env::var_os("CYBER_MEMORY_TERMINAL_OWNER_DATA") else {
+        return;
+    };
+    let data = std::path::Path::new(&data);
+    let phase = std::env::var("CYBER_MEMORY_TERMINAL_OWNER_PHASE").unwrap();
+    let store = MemoryStore::open(data, "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    prepare(&mut scope, "Before terminal death")
+        .commit()
+        .unwrap();
+    let pending = prepare(&mut scope, "After terminal death");
+    write_witness(
+        &data.join("journal-witness.json"),
+        &pending.journal_identity().unwrap(),
+    );
+    pending
+        .commit_with_acknowledgement(|receipt| {
+            if phase == "after-receipt" {
+                write_witness(&data.join("receipt-witness.json"), receipt);
+            }
+            std::fs::write(data.join("terminal-ready"), b"ready").unwrap();
+            loop {
+                std::thread::park();
+            }
+        })
+        .unwrap();
+}
+fn reconcile_witness(data: &std::path::Path, phase: &str, receipt: &MemoryMutation) {
+    let path = data.join("receipt-witness.json");
+    if phase == "after-receipt" {
+        let observed: MemoryMutation =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(&observed, receipt);
+    } else {
+        assert!(!path.exists());
+        write_witness(&path, receipt);
+    }
+}
+fn terminal_evidence(store: &MemoryStore) -> [native::FileIdentity; 6] {
+    assert!(matches!(store.claim(), Err(MemoryStorageError::Busy)));
+    let note = object(&store.dir, "rule.md");
+    let index = object(&store.dir, "MEMORY.md");
+    for name in ["rule.md", "MEMORY.md"] {
+        assert_frozen(&store.dir, &store.path().join(name), name);
+    }
+    let journal = existing_private_directory(&store.dir, TRANSACTION)
+        .unwrap()
+        .unwrap();
+    let journal_identity = native::identity(&journal.try_clone().unwrap().into_std_file()).unwrap();
+    let marker = object(&journal, "completed");
+    let original_note = object(&journal, "note.before");
+    let original_index = object(&journal, "index.before");
+    for name in ["note.before", "index.before", "completed"] {
+        assert_frozen(&journal, &store.path().join(TRANSACTION).join(name), name);
+    }
+    [
+        note,
+        index,
+        journal_identity,
+        marker,
+        original_note,
+        original_index,
+    ]
+}
+fn killed_terminal_owner(phase: &str) {
+    let data = tempfile::tempdir().unwrap();
+    let mut owner = Owner(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "memory::storage::transaction::windows::tests::native_terminal_owner_child",
+                "--nocapture",
+            ])
+            .env("CYBER_MEMORY_TERMINAL_OWNER_DATA", data.path())
+            .env("CYBER_MEMORY_TERMINAL_OWNER_PHASE", phase)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_ready(&mut owner, &data.path().join("terminal-ready"));
+    let witness: MemoryJournalIdentity =
+        serde_json::from_slice(&std::fs::read(data.path().join("journal-witness.json")).unwrap())
+            .unwrap();
+    let store = MemoryStore::existing(data.path(), "global")
+        .unwrap()
+        .unwrap();
+    let [
+        note,
+        index,
+        journal_identity,
+        marker,
+        original_note,
+        original_index,
+    ] = terminal_evidence(&store);
+    drop(store);
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    let store = MemoryStore::existing(data.path(), "global")
+        .unwrap()
+        .unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = scope.read_prepared().unwrap().unwrap();
+    assert_eq!(pending.journal_identity().unwrap(), witness);
+    assert_eq!(object(&pending.dir, "note.before"), original_note);
+    assert_eq!(object(&pending.dir, "index.before"), original_index);
+    let receipt = pending
+        .commit_with_acknowledgement(|receipt| {
+            assert_eq!(receipt, &witness.receipt);
+            reconcile_witness(data.path(), phase, receipt);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(receipt, witness.receipt);
+    assert_eq!(object(&store.dir, "rule.md"), note);
+    assert_eq!(object(&store.dir, "MEMORY.md"), index);
+    let history = existing_private_directory(&store.dir, HISTORY)
+        .unwrap()
+        .unwrap();
+    let archived = existing_private_directory(&history, &receipt.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        native::identity(&archived.try_clone().unwrap().into_std_file()).unwrap(),
+        journal_identity
+    );
+    assert_eq!(object(&archived, "completed"), marker);
+    assert_eq!(object(&archived, "note.before"), original_note);
+    assert_eq!(object(&archived, "index.before"), original_index);
+    assert!(scope.read_prepared().unwrap().is_none());
+    assert_eq!(scope.read("rule").unwrap().body, "After terminal death");
+}
+#[test]
+fn native_killed_terminal_owner_before_receipt_recovers_exact_objects() {
+    killed_terminal_owner("before-receipt");
+}
+#[test]
+fn native_killed_terminal_owner_after_receipt_recovers_exact_objects() {
+    killed_terminal_owner("after-receipt");
+}
 #[test]
 fn native_identity_owner_child() {
     let Some(data) = std::env::var_os("CYBER_MEMORY_IDENTITY_OWNER_DATA") else {
