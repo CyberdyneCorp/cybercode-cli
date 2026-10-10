@@ -3,16 +3,87 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
-use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
+use tokio::{
+    sync::{Notify, mpsc},
+    task::JoinHandle,
+    time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 
 /// Discovery runs on an owned blocking task; no native process starts until file admission.
 pub type PoolFactory = Arc<dyn Fn(&Path) -> Result<Pool, LspError> + Send + Sync>;
+
+struct Use {
+    users: usize,
+    touched: Instant,
+}
+struct ActivityState {
+    state: Mutex<Use>,
+    changed: Notify,
+}
+impl Default for ActivityState {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(Use {
+                users: 0,
+                touched: Instant::now(),
+            }),
+            changed: Notify::new(),
+        }
+    }
+}
+impl ActivityState {
+    fn deadline(&self, idle: Duration) -> Result<Option<Instant>, LspError> {
+        let state = self.state.lock().map_err(|_| unavailable())?;
+        Ok((state.users == 0).then_some(state.touched + idle))
+    }
+    fn expire(&self, cancel: &CancellationToken, idle: Duration) -> Result<bool, LspError> {
+        let state = self.state.lock().map_err(|_| unavailable())?;
+        if state.users != 0 || Instant::now() < state.touched + idle {
+            return Ok(false);
+        }
+        cancel.cancel();
+        Ok(true)
+    }
+}
+
+/// Activity does not discover or launch a service. Disposal starts a fresh idle window.
+pub struct Activity {
+    owner: Weak<Inner>,
+    location: PathBuf,
+    state: Arc<ActivityState>,
+}
+impl Drop for Activity {
+    fn drop(&mut self) {
+        {
+            let mut state = self
+                .state
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.users -= 1;
+            state.touched = Instant::now();
+        }
+        self.state.changed.notify_one();
+        if let Some(owner) = self.owner.upgrade()
+            && let Ok(mut table) = owner.table.lock()
+            && !table.entries.contains_key(&self.location)
+            && !table.fences.contains_key(&self.location)
+            && table
+                .activities
+                .get(&self.location)
+                .is_some_and(|state| Arc::ptr_eq(state, &self.state))
+            && self.state.state.lock().is_ok_and(|state| state.users == 0)
+        {
+            table.activities.remove(&self.location);
+        }
+    }
+}
 
 struct Warm {
     origin: ReadOrigin,
@@ -33,7 +104,7 @@ pub(crate) fn read_origin(location: &Path, file: &Path) -> Result<ReadOrigin, Ls
 }
 struct Entry {
     cancel: CancellationToken,
-    touched: Mutex<Instant>,
+    activity: Arc<ActivityState>,
     sender: mpsc::Sender<Warm>,
     pool: OnceLock<Pool>,
     retired: AtomicBool,
@@ -50,6 +121,7 @@ struct Table {
     closed: bool,
     entries: BTreeMap<PathBuf, Arc<Entry>>,
     fences: BTreeMap<PathBuf, Arc<()>>,
+    activities: BTreeMap<PathBuf, Arc<ActivityState>>,
 }
 struct Fence {
     location: PathBuf,
@@ -77,6 +149,32 @@ impl Drop for Inner {
 #[derive(Clone)]
 pub struct Locations(Arc<Inner>);
 impl Locations {
+    pub fn acquire(&self, location: &Path) -> Result<Activity, LspError> {
+        let location = location.canonicalize().map_err(|_| unavailable())?;
+        if !location.is_dir() {
+            return Err(unavailable());
+        }
+        let mut table = self.0.table.lock().map_err(|_| unavailable())?;
+        if table.closed {
+            return Err(unavailable());
+        }
+        let state = table
+            .activities
+            .entry(location.clone())
+            .or_default()
+            .clone();
+        {
+            let mut current = state.state.lock().map_err(|_| unavailable())?;
+            current.users = current.users.checked_add(1).ok_or_else(unavailable)?;
+            current.touched = Instant::now();
+        }
+        state.changed.notify_one();
+        Ok(Activity {
+            owner: Arc::downgrade(&self.0),
+            location,
+            state,
+        })
+    }
     pub fn new(factory: PoolFactory) -> Self {
         Self::with_idle(factory, Duration::from_secs(60 * 60))
     }
@@ -123,11 +221,16 @@ impl Locations {
         if !has_capacity(&table, &location) {
             return Err(unavailable());
         }
+        let activity = table
+            .activities
+            .entry(location.clone())
+            .or_default()
+            .clone();
         let entry = table.entries.entry(location.clone()).or_insert_with(|| {
             let (sender, receiver) = mpsc::channel(16);
             let entry = Arc::new(Entry {
                 cancel: CancellationToken::new(),
-                touched: Mutex::new(Instant::now()),
+                activity,
                 sender,
                 pool: OnceLock::new(),
                 retired: AtomicBool::new(false),
@@ -142,6 +245,7 @@ impl Locations {
             );
             entry
         });
+        let mut activity = entry.activity.state.lock().map_err(|_| unavailable())?;
         if entry.cancel.is_cancelled() {
             return Err(unavailable());
         }
@@ -149,7 +253,8 @@ impl Locations {
             .sender
             .try_send(Warm { file, text, origin })
             .map_err(|_| unavailable())?;
-        *entry.touched.lock().map_err(|_| unavailable())? = Instant::now();
+        activity.touched = Instant::now();
+        entry.activity.changed.notify_one();
         Ok(())
     }
     /// Observation does not create services or start language servers.
@@ -184,6 +289,13 @@ impl Locations {
         }
         table.entries.remove(&fence.location);
         table.fences.remove(&fence.location);
+        if table
+            .activities
+            .get(&fence.location)
+            .is_some_and(|state| state.state.lock().is_ok_and(|state| state.users == 0))
+        {
+            table.activities.remove(&fence.location);
+        }
         Ok(result)
     }
 
@@ -330,17 +442,25 @@ async fn next_warm(
     receiver: &mut mpsc::Receiver<Warm>,
 ) -> Result<Option<Warm>, LspError> {
     loop {
-        let deadline = *entry.touched.lock().map_err(|_| unavailable())? + idle;
+        let deadline = entry.activity.deadline(idle)?;
         let warm = tokio::select! {
             biased;
             _ = entry.cancel.cancelled() => return Ok(None),
-            _ = tokio::time::sleep_until(deadline) => {
-                if Instant::now() >= *entry.touched.lock().map_err(|_| unavailable())? + idle { return Ok(None); }
+            _ = wait_deadline(deadline) => {
+                if entry.activity.expire(&entry.cancel, idle)? { return Ok(None); }
                 continue;
             },
+            _ = entry.activity.changed.notified() => continue,
             warm = receiver.recv() => warm
         };
         return Ok(warm);
+    }
+}
+
+async fn wait_deadline(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
     }
 }
 
@@ -403,6 +523,83 @@ pub(crate) fn checkout_records(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn activity_is_lazy_and_does_not_consume_service_slots() {
+        let root = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let locations = Locations::new(Arc::new(move |directory| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Pool::new(
+                directory,
+                vec![],
+                Arc::new(|_, _| Box::pin(async { unreachable!() })),
+            )
+        }));
+        let mut guards = Vec::new();
+        for index in 0..128 {
+            let directory = root.path().join(index.to_string());
+            std::fs::create_dir(&directory).unwrap();
+            locations.close_location(&directory).await.unwrap();
+            guards.push(locations.acquire(&directory).unwrap());
+        }
+        let other = root.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        let file = other.join("file.rs");
+        std::fs::write(&file, "").unwrap();
+        let next = locations.acquire(&other).unwrap();
+        assert!(locations.warm(&other, file.clone(), "full".into()).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(locations.status(&other).unwrap().is_empty());
+        locations
+            .reload_location(&root.path().join("0"))
+            .await
+            .unwrap();
+        locations.warm(&other, file, "available".into()).unwrap();
+        drop(next);
+        drop(guards);
+        locations.close().await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(locations.0.table.lock().unwrap().activities.len(), 128);
+    }
+
+    #[tokio::test]
+    async fn disposed_activity_without_service_entries_releases_its_tracking() {
+        let root = tempfile::tempdir().unwrap();
+        let locations = Locations::new(Arc::new(|_| panic!("must remain lazy")));
+        let guard = locations.acquire(root.path()).unwrap();
+        drop(guard);
+        assert!(locations.0.table.lock().unwrap().activities.is_empty());
+        locations.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn activity_survives_lazy_reload_and_explicit_close() {
+        let root = tempfile::tempdir().unwrap();
+        let locations = Locations::new(Arc::new(|_| panic!("must remain lazy")));
+        let first = locations.acquire(root.path()).unwrap();
+        let second = locations.acquire(&root.path().join(".")).unwrap();
+        locations.close_location(root.path()).await.unwrap();
+        locations.reload_location(root.path()).await.unwrap();
+        let state = locations
+            .0
+            .table
+            .lock()
+            .unwrap()
+            .activities
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        assert!(Arc::ptr_eq(&first.state, &state));
+        assert_eq!(state.state.lock().unwrap().users, 2);
+        drop(first);
+        assert!(state.deadline(Duration::from_secs(60)).unwrap().is_none());
+        drop(second);
+        assert!(locations.0.table.lock().unwrap().activities.is_empty());
+        locations.close().await.unwrap();
+    }
 
     #[tokio::test]
     async fn scoped_close_fences_empty_locations_and_reload_stays_lazy() {

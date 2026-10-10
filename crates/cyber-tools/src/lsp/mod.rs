@@ -13,7 +13,7 @@ pub use client::{LspError, StdioClient};
 pub use connection::{ConnectionError, Shutdown, StdioConnection};
 pub use framing::{Framed, TransportError};
 pub use launch::{CheckoutClaim, LaunchOptions, LocalLauncher};
-pub use locations::{Locations, PoolFactory};
+pub use locations::{Activity, Locations, PoolFactory};
 pub use pool::{
     AdmissionFn, AuthorizedProcess, LaunchError, LaunchFn, LaunchRequest, Pool, ResourceLease,
     ServerHandle, ServerState, ServerStatus, Settlement,

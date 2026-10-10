@@ -78,8 +78,12 @@ impl BuiltinHost {
         })
     }
     pub fn attach_lsp(&self, factory: crate::lsp::PoolFactory) -> Result<(), String> {
+        self.attach_lsp_locations(crate::lsp::Locations::new(factory))
+    }
+
+    pub fn attach_lsp_locations(&self, locations: crate::lsp::Locations) -> Result<(), String> {
         self.lsp
-            .set(crate::lsp::Locations::new(factory))
+            .set(locations)
             .map_err(|_| "Language services already attached".into())
     }
 

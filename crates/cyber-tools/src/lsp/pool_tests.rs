@@ -157,6 +157,47 @@ async fn document_snapshots_open_once_change_versions_and_evict_bounded_state() 
 }
 
 #[tokio::test]
+async fn activity_before_warming_prevents_idle_until_the_last_guard_is_released() {
+    let (root, file) = fixture();
+    let locations = super::super::Locations::with_idle(
+        Arc::new(|directory| {
+            Pool::new(
+                directory,
+                vec![server()],
+                launcher("normal", Arc::new(AtomicUsize::new(0))),
+            )
+        }),
+        Duration::from_millis(150),
+    );
+    let first = locations.acquire(root.path()).unwrap();
+    let second = locations.acquire(root.path()).unwrap();
+    assert!(locations.status(root.path()).unwrap().is_empty());
+    locations
+        .warm(root.path(), file, "snapshot".into())
+        .unwrap();
+    wait_for(|| root.path().join("document-events").exists()).await;
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(
+        locations.status(root.path()).unwrap()[0].status,
+        ServerState::Connected
+    );
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(
+        locations.status(root.path()).unwrap()[0].status,
+        ServerState::Connected
+    );
+    drop(second);
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(
+        locations.status(root.path()).unwrap()[0].status,
+        ServerState::Connected
+    );
+    wait_for(|| locations.status(root.path()).unwrap()[0].status == ServerState::Broken).await;
+    assert!(locations.close().await.unwrap()[0].acknowledged);
+}
+
+#[tokio::test]
 async fn location_idle_expiry_settles_then_allows_a_fresh_generation() {
     let (root, file) = fixture();
     let factories = Arc::new(AtomicUsize::new(0));

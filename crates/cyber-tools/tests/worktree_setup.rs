@@ -189,6 +189,171 @@ while True:
     launcher.pool().unwrap()
 }
 
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[tokio::test]
+async fn lsp_idle_waits_for_runtime_tool_activity_and_a_fresh_release_window() {
+    use cyber_server::runtime::{CreateSession, NoSnapshots};
+    use cyber_tools::lsp::{Locations, ServerState};
+    assert!(
+        cyber_sandbox::available(),
+        "native sandbox prerequisites are required"
+    );
+    let (fixture, _, managed) = owned().await;
+    let pool = managed_lsp_pool(&fixture, &managed.path);
+    let locations = Locations::with_idle(
+        Arc::new(move |_| Ok(pool.clone())),
+        Duration::from_millis(250),
+    );
+    fixture
+        .host
+        .attach_lsp_locations(locations.clone())
+        .unwrap();
+    let bootstrap = locations.acquire(&managed.path).unwrap();
+    let flow = support::flow::Flow::with(
+        fixture,
+        vec![
+            support::flow::call(
+                "busy",
+                "bash",
+                json!({"command":"printf busy > busy-marker; sleep 2; printf done","timeout":5000}),
+            ),
+            support::flow::text("finished"),
+        ],
+        false,
+        Arc::new(NoSnapshots),
+    );
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    locations
+        .warm(
+            &managed.path,
+            managed.path.join("tracked.txt"),
+            "snapshot".into(),
+        )
+        .unwrap();
+    flow.prompt(&info.id, "run the waiting tool").await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !managed.path.join("busy-marker").exists()
+            || !locations
+                .status(&managed.path)
+                .unwrap()
+                .first()
+                .is_some_and(|row| row.status == ServerState::Connected)
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(bootstrap);
+    tokio::time::sleep(Duration::from_millis(650)).await;
+    assert_eq!(
+        locations.status(&managed.path).unwrap()[0].status,
+        ServerState::Connected
+    );
+    flow.settle(&info.id).await;
+    assert!(flow.output(&info.id, "busy").await.contains("done"));
+    assert_eq!(
+        locations.status(&managed.path).unwrap()[0].status,
+        ServerState::Connected
+    );
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while locations.status(&managed.path).unwrap()[0].status != ServerState::Broken {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(locations.close().await.unwrap()[0].acknowledged);
+    flow.runtime.shutdown().await;
+}
+
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[tokio::test]
+async fn lsp_idle_retains_activity_through_native_location_commit_proof() {
+    use cyber_server::runtime::{CreateSession, NoSnapshots, ToolHost};
+    use cyber_tools::lsp::{Locations, ServerState};
+    assert!(
+        cyber_sandbox::available(),
+        "native sandbox prerequisites are required"
+    );
+    let (fixture, _, managed) = owned().await;
+    let pool = managed_lsp_pool(&fixture, &managed.path);
+    let locations = Locations::with_idle(
+        Arc::new(move |_| Ok(pool.clone())),
+        Duration::from_millis(250),
+    );
+    fixture
+        .host
+        .attach_lsp_locations(locations.clone())
+        .unwrap();
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let lease = flow
+        .f
+        .host
+        .claim_location(&info, false, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(lease.worktree_id.as_deref(), Some(managed.id.as_str()));
+    let proof = lease.settle_retained().unwrap();
+    locations
+        .warm(
+            &managed.path,
+            managed.path.join("tracked.txt"),
+            "snapshot".into(),
+        )
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !locations
+            .status(&managed.path)
+            .unwrap()
+            .first()
+            .is_some_and(|row| row.status == ServerState::Connected)
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(650)).await;
+    assert_eq!(
+        locations.status(&managed.path).unwrap()[0].status,
+        ServerState::Connected
+    );
+    drop(proof);
+    assert_eq!(
+        locations.status(&managed.path).unwrap()[0].status,
+        ServerState::Connected
+    );
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while locations.status(&managed.path).unwrap()[0].status != ServerState::Broken {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(locations.close().await.unwrap()[0].acknowledged);
+    flow.runtime.shutdown().await;
+}
+
 #[derive(Default)]
 struct Sink {
     output: Mutex<Vec<u8>>,

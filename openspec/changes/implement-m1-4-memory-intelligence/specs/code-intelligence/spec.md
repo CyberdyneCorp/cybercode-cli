@@ -1,5 +1,22 @@
 ## ADDED Requirements
 
+### Requirement: Runtime Location activity and idle release
+(P1) Language-service idle expiry SHALL account for live Location admissions rather than only read warming. Acquiring activity SHALL create no pool, discovery or native process. Admissions for the same canonical Location SHALL share an activity counter before first warming and across explicit reload. Idle expiry SHALL be disabled while any activity guard is retained, and the last disposal SHALL begin a fresh idle window. Expiry and admission SHALL serialize their counter/cancellation decision. Runtime managed and unmanaged Location leases SHALL retain activity through their operation and through retained native settlement proof disposal. Activity SHALL NOT grant filesystem or process authority, replace checkout ownership, reopen closed services, or prevent explicit close/trust revocation. Retained service/fence entries SHALL remain bounded to 128 Locations. Activity SHALL NOT consume those service slots or reject model admission when the service cache is full; tracking without retained services/fences SHALL be removed after its last guard is disposed.
+
+#### Scenario: Active tool without reads
+- **WHEN** a runtime tool is executing longer than the language-service idle interval without further read warming
+- **THEN** its Location SHALL remain ineligible for idle expiry until operation admission is disposed
+- **AND** disposal SHALL start a full new idle interval
+
+#### Scenario: Retained commit proof
+- **WHEN** Location native settlement returns a retained proof
+- **THEN** its language-service activity SHALL remain retained until the consuming commit disposes that proof
+
+#### Scenario: Shared activity before first warm
+- **WHEN** multiple operations acquire one canonical Location before any file warming
+- **THEN** acquisition SHALL NOT discover or start a language server
+- **AND** only disposal of the last guard SHALL enable idle expiry
+
 ### Requirement: Explicit Location language-service transitions
 (P1) The host SHALL support Location-scoped language-service close and reload. Close SHALL fence new warming before waiting and retain the same discovery/native cleanup ownership after cancellation. A closed Location SHALL remain fenced until explicit reload. Reload SHALL await acknowledged native/resource settlement, or a joined discovery failure known to have created no pool, before reopening lazy admission. Unverified joins or unacknowledged roots SHALL NOT reopen. A newer transition SHALL supersede an older pending transition without releasing its retained worker. Other Locations SHALL remain independent. Closed and active Location entries together SHALL remain bounded to 128.
 

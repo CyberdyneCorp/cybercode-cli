@@ -230,13 +230,19 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
         use cyber_server::runtime::LocationLease;
+        let activity = self
+            .lsp
+            .get()
+            .map(|locations| locations.acquire(Path::new(&inv.directory)))
+            .transpose()
+            .map_err(|error| error.to_string())?;
         let locations = Repository::managed_locations_at(Path::new(&inv.directory))
             .map_err(|error| error.to_string())?;
         let Some((_, managed)) = locations.first() else {
             if bound.is_some() {
                 return Err("Managed checkout ownership is missing; recovery is required".into());
             }
-            return Ok(LocationLease::unmanaged());
+            return Ok(active_location(LocationLease::unmanaged(), activity));
         };
         match bound {
             Some(id) if id == managed.id => {}
@@ -270,7 +276,10 @@ impl BuiltinHost {
                 .map_err(|error| error.to_string())?,
             );
         }
-        Ok(LocationLease::managed(id, Box::new(WorktreeLease(leases))))
+        Ok(active_location(
+            LocationLease::managed(id, Box::new(WorktreeLease(leases))),
+            activity,
+        ))
     }
 
     pub async fn list_worktrees(
@@ -925,6 +934,34 @@ struct GitPort<'a> {
 }
 
 struct WorktreeLease(Vec<cyber_core::worktrees::CheckoutLease>);
+
+fn active_location(
+    lease: cyber_server::runtime::LocationLease,
+    activity: Option<crate::lsp::Activity>,
+) -> cyber_server::runtime::LocationLease {
+    match activity {
+        Some(activity) => cyber_server::runtime::LocationLease::guarded(
+            lease.worktree_id.clone(),
+            Box::new(ActiveLocation { lease, activity }),
+        ),
+        None => lease,
+    }
+}
+
+struct ActiveLocation {
+    lease: cyber_server::runtime::LocationLease,
+    activity: crate::lsp::Activity,
+}
+impl cyber_server::runtime::LocationGuard for ActiveLocation {
+    fn settle(self: Box<Self>) -> Result<(), String> {
+        self.lease.settle()
+    }
+    fn settle_retained(self: Box<Self>) -> Result<Box<dyn Send>, String> {
+        let Self { lease, activity } = *self;
+        let proof = lease.settle_retained()?;
+        Ok(Box::new((proof, activity)))
+    }
+}
 
 impl cyber_server::runtime::LocationGuard for WorktreeLease {
     fn settle(self: Box<Self>) -> Result<(), String> {

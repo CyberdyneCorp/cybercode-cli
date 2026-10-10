@@ -27,6 +27,12 @@ pub struct LocationLease {
 }
 
 impl LocationLease {
+    pub fn guarded(worktree_id: Option<String>, guard: Box<dyn LocationGuard>) -> Self {
+        Self {
+            worktree_id,
+            guard: Some(guard),
+        }
+    }
     pub fn unmanaged() -> Self {
         Self {
             worktree_id: None,
