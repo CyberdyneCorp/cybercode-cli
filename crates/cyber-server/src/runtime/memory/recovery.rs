@@ -275,6 +275,7 @@ pub(super) fn project_review(tx: &Transaction<'_>, event: &StoredEvent) -> Resul
 
 #[cfg(all(test, any(unix, windows)))]
 mod tests {
+    mod death;
     use super::*;
     use cyber_core::memory::MemoryStore;
     struct Fixture {

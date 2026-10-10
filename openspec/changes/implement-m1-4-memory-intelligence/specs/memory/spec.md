@@ -515,3 +515,9 @@
 - **WHEN** both the file-backed database and memory store reopen with a bound prepared journal, either before acknowledgement or after a committed receipt but before archival
 - **THEN** fresh paired review SHALL recover the original journal receipt and archive once, publish only a newly committed acknowledgement, and preserve the installed note
 - **AND** reopening again SHALL replay the durable keyed receipt without another memory event or journal; this graceful reopening evidence SHALL not substitute for actual process-death evidence
+
+#### Scenario: Paired SQLite and note-journal owner process dies
+- **WHEN** the actual owning child process is killed after database/journal binding, inside terminal acknowledgement before or after SQLite receipt commit, or after archival, for a write or deletion
+- **THEN** fresh scope ownership and reopened file-backed SQLite SHALL inspect matching durable evidence and require reviewed reconciliation for pending journals, preserving the original receipt and exactly one completion event
+- **AND** already acknowledged recovery SHALL not publish another completion, archived outcomes SHALL not recreate a journal, and a second reopen SHALL replay the original durable request without another effect or archive
+- **AND** the harness SHALL kill and reap only its owned child after a synced fixture-bound readiness witness; persisted test witnesses SHALL grant no live mutation authority
