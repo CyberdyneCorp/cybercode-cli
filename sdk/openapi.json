@@ -4181,6 +4181,38 @@
           "broken"
         ]
       },
+      "Located_LspTransition": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LspTransition"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "LspTransition": {
+        "type": "object",
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          },
+          "reloaded": {
+            "type": "boolean",
+            "description": "Admission is reopened lazily; this operation starts no language server."
+          }
+        },
+        "required": [
+          "closed",
+          "reloaded"
+        ]
+      },
       "Located_Array_of_McpServerStatus": {
         "type": "object",
         "properties": {
@@ -8432,6 +8464,120 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Array_of_LspStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lsp/close": {
+      "post": {
+        "operationId": "v1.lsp.close",
+        "summary": "Close and fence this Location's language servers until reload",
+        "tags": [
+          "lsp"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_LspTransition"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lsp/reload": {
+      "post": {
+        "operationId": "v1.lsp.reload",
+        "summary": "Settle this Location's language servers and reopen lazy discovery",
+        "tags": [
+          "lsp"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_LspTransition"
                 }
               }
             }

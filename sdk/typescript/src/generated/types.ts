@@ -571,6 +571,12 @@ export type Located_HookRevocation = {
 };
 
 /** A Location-scoped response. */
+export type Located_LspTransition = {
+  location: LocationInfo;
+  data: LspTransition;
+};
+
+/** A Location-scoped response. */
 export type Located_McpClosed = {
   location: LocationInfo;
   data: McpClosed;
@@ -642,6 +648,12 @@ export type LspStatus = {
   id: string;
   root: string;
   status: LspState;
+};
+
+export type LspTransition = {
+  closed: boolean;
+  /** Admission is reopened lazily; this operation starts no language server. */
+  reloaded: boolean;
 };
 
 export type McpClosed = {

@@ -1,5 +1,30 @@
 ## ADDED Requirements
 
+### Requirement: Explicit Location language-service transitions
+(P1) The host SHALL support Location-scoped language-service close and reload. Close SHALL fence new warming before waiting and retain the same discovery/native cleanup ownership after cancellation. A closed Location SHALL remain fenced until explicit reload. Reload SHALL await acknowledged native/resource settlement, or a joined discovery failure known to have created no pool, before reopening lazy admission. Unverified joins or unacknowledged roots SHALL NOT reopen. A newer transition SHALL supersede an older pending transition without releasing its retained worker. Other Locations SHALL remain independent. Closed and active Location entries together SHALL remain bounded to 128.
+
+#### Scenario: Cancelled close and sibling services
+- **WHEN** a close caller cancels during this Location's native shutdown
+- **THEN** the same worker SHALL remain retained for repeated close
+- **AND** another Location SHALL remain available
+
+#### Scenario: Reload is superseded
+- **WHEN** a newer close fences the Location while reload waits for discovery
+- **THEN** the older reload SHALL NOT reopen admission
+
+#### Scenario: Known failure versus unverified ownership
+- **WHEN** discovery returned an error before creating a pool and its worker has been joined
+- **THEN** explicit reload SHALL permit lazy fresh discovery
+- **AND** panic/unverified joins or unacknowledged native roots SHALL remain fenced
+
+### Requirement: Authenticated language-service lifecycle API
+(P1) POST /api/v1/lsp/close and POST /api/v1/lsp/reload SHALL use the authenticated Location envelope and take no request body. Successful responses SHALL report the prior generation closed and whether lazy admission was reopened. Unsettled or superseded transitions SHALL return a conflict without false closure acknowledgement; unsupported hosts SHALL return ServiceUnavailableError. Typed OpenAPI and generated SDK close/reload methods SHALL preserve authentication and Location routing without starting a language server.
+
+#### Scenario: Explicit client transition
+- **WHEN** an authenticated client closes or reloads a selected Location
+- **THEN** the response SHALL retain its Location envelope and typed transition result
+- **AND** reload SHALL NOT discover or launch a server until subsequent file admission
+
 ### Requirement: Document checkout admission
 (P1) Background read snapshots SHALL capture both Location and document managed creation identities before bytes are read. Document commands SHALL retain their captured identities through queued startup. A running local language server SHALL revalidate the canonical document and claim every missing enclosing managed checkout before document text is sent. Claims SHALL use independent language-server ownership and remain held through native/proxy settlement and worker disposal, including after document-cache eviction. A service SHALL refuse a changed creation at an already claimed checkout path. Each service SHALL admit at most 128 distinct checkout scopes and refuse additional scopes rather than release live ownership. Close cancellation SHALL settle the native connection before waiting for an in-flight document claim and SHALL retain the claim operation until it completes.
 

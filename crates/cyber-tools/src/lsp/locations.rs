@@ -37,6 +37,7 @@ struct Entry {
     sender: mpsc::Sender<Warm>,
     pool: OnceLock<Pool>,
     retired: AtomicBool,
+    discovery_failed: AtomicBool,
     worker: tokio::sync::Mutex<Worker>,
 }
 #[derive(Default)]
@@ -48,6 +49,12 @@ struct Worker {
 struct Table {
     closed: bool,
     entries: BTreeMap<PathBuf, Arc<Entry>>,
+    fences: BTreeMap<PathBuf, Arc<()>>,
+}
+struct Fence {
+    location: PathBuf,
+    token: Arc<()>,
+    entry: Option<Arc<Entry>>,
 }
 struct Inner {
     table: Mutex<Table>,
@@ -103,7 +110,7 @@ impl Locations {
             return Err(unavailable());
         }
         let mut table = self.0.table.lock().map_err(|_| unavailable())?;
-        if table.closed || !location.is_dir() {
+        if table.closed || table.fences.contains_key(&location) || !location.is_dir() {
             return Err(unavailable());
         }
         if table
@@ -113,7 +120,7 @@ impl Locations {
         {
             table.entries.remove(&location);
         }
-        if table.entries.len() >= 128 && !table.entries.contains_key(&location) {
+        if !has_capacity(&table, &location) {
             return Err(unavailable());
         }
         let entry = table.entries.entry(location.clone()).or_insert_with(|| {
@@ -124,6 +131,7 @@ impl Locations {
                 sender,
                 pool: OnceLock::new(),
                 retired: AtomicBool::new(false),
+                discovery_failed: AtomicBool::new(false),
                 worker: tokio::sync::Mutex::default(),
             });
             let worker = entry.clone();
@@ -157,6 +165,52 @@ impl Locations {
             None => Ok(vec![]),
         }
     }
+    pub async fn close_location(&self, location: &Path) -> Result<Vec<Settlement>, LspError> {
+        let fence = self.fence(location)?;
+        let result = settle_fence(&fence, false).await?;
+        let table = self.0.table.lock().map_err(|_| unavailable())?;
+        current_fence(&table, &fence)?;
+        Ok(result)
+    }
+
+    /// Reopen admission only after the observed generation has fully settled; discovery stays lazy.
+    pub async fn reload_location(&self, location: &Path) -> Result<Vec<Settlement>, LspError> {
+        let fence = self.fence(location)?;
+        let result = settle_fence(&fence, true).await?;
+        let mut table = self.0.table.lock().map_err(|_| unavailable())?;
+        current_fence(&table, &fence)?;
+        if table.closed {
+            return Err(unavailable());
+        }
+        table.entries.remove(&fence.location);
+        table.fences.remove(&fence.location);
+        Ok(result)
+    }
+
+    fn fence(&self, location: &Path) -> Result<Fence, LspError> {
+        let location = location.canonicalize().map_err(|_| unavailable())?;
+        if !location.is_dir() {
+            return Err(unavailable());
+        }
+        let mut table = self.0.table.lock().map_err(|_| unavailable())?;
+        if table.closed {
+            return Err(unavailable());
+        }
+        if !has_capacity(&table, &location) {
+            return Err(unavailable());
+        }
+        let token = Arc::new(());
+        table.fences.insert(location.clone(), token.clone());
+        let entry = table.entries.get(&location).cloned();
+        if let Some(entry) = &entry {
+            entry.cancel.cancel();
+        }
+        Ok(Fence {
+            location,
+            token,
+            entry,
+        })
+    }
     /// Join handles remain retained when the caller cancels this wait.
     pub async fn close(&self) -> Result<Vec<Settlement>, LspError> {
         let entries: Vec<_> = {
@@ -169,25 +223,71 @@ impl Locations {
         }
         let mut result = vec![];
         for entry in entries {
-            let mut worker = entry.worker.lock().await;
-            if let Some(task) = worker.task.as_mut() {
-                let settled = task
-                    .await
-                    .map_err(|_| ())
-                    .and_then(|settled| settled.map_err(|_| ()));
-                worker.result = Some(settled);
-                worker.task.take();
-            }
-            result.extend(
-                worker
-                    .result
-                    .clone()
-                    .ok_or_else(unavailable)?
-                    .map_err(|_| unavailable())?,
-            );
+            result.extend(settle_entry(&entry).await?);
         }
         Ok(result)
     }
+}
+
+fn has_capacity(table: &Table, location: &Path) -> bool {
+    table.entries.contains_key(location)
+        || table.fences.contains_key(location)
+        || table
+            .entries
+            .keys()
+            .chain(table.fences.keys())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            < 128
+}
+
+fn current_fence(table: &Table, fence: &Fence) -> Result<(), LspError> {
+    if !table
+        .fences
+        .get(&fence.location)
+        .is_some_and(|token| Arc::ptr_eq(token, &fence.token))
+    {
+        return Err(LspError::Protocol("Location transition superseded"));
+    }
+    Ok(())
+}
+
+async fn settle_fence(fence: &Fence, reload: bool) -> Result<Vec<Settlement>, LspError> {
+    let result = match &fence.entry {
+        Some(entry) => match settle_entry(entry).await {
+            Ok(result) => result,
+            Err(_)
+                if reload
+                    && entry.discovery_failed.load(Ordering::Acquire)
+                    && entry.pool.get().is_none() =>
+            {
+                vec![]
+            }
+            Err(error) => return Err(error),
+        },
+        None => vec![],
+    };
+    if result.iter().any(|settlement| !settlement.acknowledged) {
+        return Err(unavailable());
+    }
+    Ok(result)
+}
+
+async fn settle_entry(entry: &Entry) -> Result<Vec<Settlement>, LspError> {
+    let mut worker = entry.worker.lock().await;
+    if let Some(task) = worker.task.as_mut() {
+        let settled = task
+            .await
+            .map_err(|_| ())
+            .and_then(|settled| settled.map_err(|_| ()));
+        worker.result = Some(settled);
+        worker.task.take();
+    }
+    worker
+        .result
+        .clone()
+        .ok_or_else(unavailable)?
+        .map_err(|_| unavailable())
 }
 
 async fn run(
@@ -198,9 +298,7 @@ async fn run(
     mut receiver: mpsc::Receiver<Warm>,
 ) -> Result<Vec<Settlement>, LspError> {
     let observed_location = location.clone();
-    let pool = tokio::task::spawn_blocking(move || factory(&location))
-        .await
-        .map_err(|_| unavailable())??;
+    let pool = discover(&entry, location, factory).await?;
     entry.pool.set(pool.clone()).map_err(|_| unavailable())?;
     while let Some(warm) = next_warm(&entry, idle, &mut receiver).await? {
         if !current_warm(&observed_location, &warm, &pool, &entry.cancel).await {
@@ -209,6 +307,21 @@ async fn run(
         tokio::select! { biased; _ = entry.cancel.cancelled() => break, _ = pool.warm_observed(&warm.file, warm.text, warm.origin.document) => {} }
     }
     close_pool(&entry, &pool).await
+}
+
+async fn discover(
+    entry: &Entry,
+    location: PathBuf,
+    factory: PoolFactory,
+) -> Result<Pool, LspError> {
+    match tokio::task::spawn_blocking(move || factory(&location)).await {
+        Ok(Ok(pool)) => Ok(pool),
+        Ok(Err(error)) => {
+            entry.discovery_failed.store(true, Ordering::Release);
+            Err(error)
+        }
+        Err(_) => Err(unavailable()),
+    }
 }
 
 async fn next_warm(
@@ -290,6 +403,215 @@ pub(crate) fn checkout_records(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn scoped_close_fences_empty_locations_and_reload_stays_lazy() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let file = first.path().join("file.rs");
+        let other = second.path().join("other.rs");
+        std::fs::write(&file, "").unwrap();
+        std::fs::write(&other, "").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let locations = Locations::new(Arc::new(move |directory| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Pool::new(
+                directory,
+                vec![],
+                Arc::new(|_, _| Box::pin(async { unreachable!() })),
+            )
+        }));
+        assert!(
+            locations
+                .close_location(first.path())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            locations
+                .warm(first.path(), file.clone(), "closed".into())
+                .is_err()
+        );
+        locations
+            .warm(second.path(), other, "sibling".into())
+            .unwrap();
+        locations.reload_location(first.path()).await.unwrap();
+        assert!(locations.status(first.path()).unwrap().is_empty());
+        locations
+            .warm(first.path(), file, "reloaded".into())
+            .unwrap();
+        locations.close().await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(locations.reload_location(first.path()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn cancelled_close_supersedes_pending_reload_and_retains_discovery() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file.rs");
+        std::fs::write(&file, "").unwrap();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let blocked = Mutex::new(blocked);
+        let locations = Locations::new(Arc::new(move |directory| {
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            Pool::new(
+                directory,
+                vec![],
+                Arc::new(|_, _| Box::pin(async { unreachable!() })),
+            )
+        }));
+        locations
+            .warm(root.path(), file.clone(), "initial".into())
+            .unwrap();
+        let pending = locations.clone();
+        let directory = root.path().canonicalize().unwrap();
+        let target = directory.clone();
+        let reload = tokio::spawn(async move { pending.reload_location(&target).await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !locations
+                .0
+                .table
+                .lock()
+                .unwrap()
+                .fences
+                .contains_key(&directory)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                locations.close_location(root.path())
+            )
+            .await
+            .is_err()
+        );
+        release.send(()).unwrap();
+        assert!(reload.await.unwrap().is_err());
+        locations.close_location(root.path()).await.unwrap();
+        assert!(
+            locations
+                .warm(root.path(), file, "still-closed".into())
+                .is_err()
+        );
+        locations.reload_location(root.path()).await.unwrap();
+        assert!(locations.status(root.path()).unwrap().is_empty());
+        locations.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn known_discovery_failure_reloads_lazily_after_join() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file.rs");
+        std::fs::write(&file, "").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let locations = Locations::new(Arc::new(move |directory| {
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(unavailable());
+            }
+            Pool::new(
+                directory,
+                vec![],
+                Arc::new(|_, _| Box::pin(async { unreachable!() })),
+            )
+        }));
+        locations
+            .warm(root.path(), file.clone(), "initial".into())
+            .unwrap();
+        assert!(locations.close_location(root.path()).await.is_err());
+        assert!(locations.close_location(root.path()).await.is_err());
+        assert!(
+            locations
+                .warm(root.path(), file.clone(), "failed".into())
+                .is_err()
+        );
+        locations.reload_location(root.path()).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(locations.status(root.path()).unwrap().is_empty());
+        locations.warm(root.path(), file, "fresh".into()).unwrap();
+        locations.close().await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn unverified_discovery_join_cannot_reload_or_implicitly_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file.rs");
+        std::fs::write(&file, "").unwrap();
+        let locations = Locations::new(Arc::new(|_| panic!("unverified discovery")));
+        locations
+            .warm(root.path(), file.clone(), "initial".into())
+            .unwrap();
+        assert!(locations.reload_location(root.path()).await.is_err());
+        assert!(locations.reload_location(root.path()).await.is_err());
+        assert!(locations.close_location(root.path()).await.is_err());
+        assert!(locations.warm(root.path(), file, "failed".into()).is_err());
+        assert!(locations.close().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn unacknowledged_root_cannot_reload_or_implicitly_reopen() {
+        use cyber_core::intelligence::{DetectedServer, InstallMethod, ServerDefinition};
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file.rs");
+        std::fs::write(&file, "").unwrap();
+        let locations = Locations::new(Arc::new(|directory| {
+            Pool::new(
+                directory,
+                vec![DetectedServer {
+                    definition: ServerDefinition {
+                        id: "fixture".into(),
+                        command: vec!["fixture".into()],
+                        extensions: vec![".rs".into()],
+                        root_markers: vec![],
+                        env: Default::default(),
+                        initialization_options: None,
+                        install: InstallMethod::Custom,
+                    },
+                    enabled: true,
+                    installed: true,
+                    executable: Some("/fixture".into()),
+                }],
+                Arc::new(|_, _| {
+                    Box::pin(async {
+                        Err(super::super::LaunchError {
+                            error: unavailable(),
+                            acknowledged: false,
+                        })
+                    })
+                }),
+            )
+        }));
+        locations
+            .warm(root.path(), file.clone(), "initial".into())
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !locations
+                .status(root.path())
+                .unwrap()
+                .first()
+                .is_some_and(|row| row.status == super::super::ServerState::Broken)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(locations.reload_location(root.path()).await.is_err());
+        assert!(locations.close_location(root.path()).await.is_err());
+        assert!(locations.warm(root.path(), file, "unknown".into()).is_err());
+        assert!(!locations.close().await.unwrap()[0].acknowledged);
+    }
 
     #[tokio::test]
     async fn bounded_warming_deduplicates_discovery_and_retains_cancelled_close() {

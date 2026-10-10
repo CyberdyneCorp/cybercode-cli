@@ -38,3 +38,20 @@ test("LSP status preserves actual roots and authenticated Location routing", asy
   assert.equal(calls[0]?.body, undefined);
   assert.equal(calls[0]?.headers.get("idempotency-key"), null);
 });
+
+for (const action of ["close", "reload"] as const) {
+  test(`LSP ${action} preserves authenticated Location routing without a body`, async () => {
+    const directory = "/project with spaces";
+    const location = { directory, project: { id: "global", directory } };
+    const data = { closed: true, reloaded: action === "reload" };
+    const { client, calls } = mockClient(() => json(200, { location, data }), { directory });
+    const result = await client.lsp[action]();
+    assert.deepEqual(result.data, data);
+    assert.deepEqual(result.location, location);
+    assert.equal(calls[0]?.method, "POST");
+    assert.equal(calls[0]?.url.pathname, `/api/v1/lsp/${action}`);
+    assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent(directory));
+    assert.equal(calls[0]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+    assert.equal(calls[0]?.body, undefined);
+  });
+}

@@ -100,6 +100,21 @@ impl BuiltinHost {
             let _ = locations.warm(location, file, text);
         }
     }
+    pub async fn transition_lsp_location(
+        &self,
+        location: &Path,
+        reload: bool,
+    ) -> Result<(), crate::lsp::LspError> {
+        let locations = self.lsp.get().ok_or(crate::lsp::LspError::Protocol(
+            "Language services unavailable",
+        ))?;
+        if reload {
+            locations.reload_location(location).await?;
+        } else {
+            locations.close_location(location).await?;
+        }
+        Ok(())
+    }
     pub fn new(opts: HostOptions) -> Arc<Self> {
         Arc::new_cyclic(|weak| Self {
             weak: weak.clone(),

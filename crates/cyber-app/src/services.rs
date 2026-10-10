@@ -76,6 +76,24 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn transition_lsp(
+        &self,
+        directory: PathBuf,
+        reload: bool,
+    ) -> BoxFuture<'_, Result<(), cyber_server::http::ApiError>> {
+        Box::pin(async move {
+            self.host
+                .transition_lsp_location(&directory, reload)
+                .await
+                .map_err(|_| {
+                    cyber_server::http::ApiError::new(
+                        axum::http::StatusCode::CONFLICT,
+                        "ConflictError",
+                        "LSP Location transition is unavailable or unsettled",
+                    )
+                })
+        })
+    }
     fn lsp_status(
         &self,
         directory: PathBuf,

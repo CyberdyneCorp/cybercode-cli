@@ -150,6 +150,18 @@ export interface Operations {
     body: undefined;
     response: S.LocationInfo;
   };
+  "v1.lsp.close": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_LspTransition;
+  };
+  "v1.lsp.reload": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_LspTransition;
+  };
   "v1.lsp.status": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -750,6 +762,30 @@ export const operations = {
     body: "none",
     located: true,
     unwrap: true,
+    stream: false,
+  },
+  "v1.lsp.close": {
+    tag: "lsp",
+    name: "close",
+    method: "POST",
+    path: "/api/v1/lsp/close",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.lsp.reload": {
+    tag: "lsp",
+    name: "reload",
+    method: "POST",
+    path: "/api/v1/lsp/reload",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
     stream: false,
   },
   "v1.lsp.status": {
@@ -1577,6 +1613,12 @@ export function createGroups(caller: Caller) {
         caller.call("v1.location.get", {}, options),
     },
     lsp: {
+      /** Close and fence this Location's language servers until reload (`POST /api/v1/lsp/close`) */
+      close: (options?: RequestOptions): Promise<Operations["v1.lsp.close"]["response"]> =>
+        caller.call("v1.lsp.close", {}, options),
+      /** Settle this Location's language servers and reopen lazy discovery (`POST /api/v1/lsp/reload`) */
+      reload: (options?: RequestOptions): Promise<Operations["v1.lsp.reload"]["response"]> =>
+        caller.call("v1.lsp.reload", {}, options),
       /** Inspect actual Location language-server state without startup (`GET /api/v1/lsp`) */
       status: (options?: RequestOptions): Promise<Operations["v1.lsp.status"]["response"]> =>
         caller.call("v1.lsp.status", {}, options),

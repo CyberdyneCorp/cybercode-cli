@@ -238,6 +238,80 @@ async fn cancelled_location_close_retains_actual_native_shutdown_settlement() {
 }
 
 #[tokio::test]
+async fn scoped_close_retains_native_settlement_without_stopping_a_sibling() {
+    let (first, file) = fixture();
+    let (second, other) = fixture();
+    let hung = first.path().canonicalize().unwrap();
+    let locations = super::super::Locations::new(Arc::new(move |directory| {
+        let mode = if directory == hung {
+            "shutdown-hang"
+        } else {
+            "normal"
+        };
+        Pool::new(
+            directory,
+            vec![server()],
+            launcher(mode, Arc::new(AtomicUsize::new(0))),
+        )
+    }));
+    locations
+        .warm(first.path(), file.clone(), "first".into())
+        .unwrap();
+    locations
+        .warm(second.path(), other.clone(), "second".into())
+        .unwrap();
+    wait_for(|| first.path().join("document-events").exists()).await;
+    wait_for(|| second.path().join("document-events").exists()).await;
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(20),
+            locations.close_location(first.path())
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        locations
+            .warm(first.path(), file.clone(), "fenced".into())
+            .is_err()
+    );
+    assert_eq!(
+        locations.status(second.path()).unwrap()[0].status,
+        ServerState::Connected
+    );
+    locations
+        .warm(second.path(), other, "sibling-changed".into())
+        .unwrap();
+    assert!(locations.close_location(first.path()).await.unwrap()[0].acknowledged);
+    assert!(
+        locations
+            .warm(first.path(), file.clone(), "closed".into())
+            .is_err()
+    );
+    locations.reload_location(first.path()).await.unwrap();
+    assert!(locations.status(first.path()).unwrap().is_empty());
+    locations
+        .warm(first.path(), file, "fresh-generation".into())
+        .unwrap();
+    wait_for(|| {
+        locations
+            .status(first.path())
+            .unwrap()
+            .first()
+            .is_some_and(|row| row.status == ServerState::Connected)
+    })
+    .await;
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|row| row.acknowledged)
+    );
+}
+
+#[tokio::test]
 async fn cancellation_settles_native_descendants_before_a_blocked_authority_review() {
     use std::sync::atomic::AtomicBool;
     let (root, file) = fixture();

@@ -330,3 +330,58 @@ async fn formatter_status_withholds_project_commands_and_returns_safe_configurat
     assert!(!body.to_string().contains("integration-private-value"));
     f.close().await;
 }
+
+#[tokio::test]
+async fn lsp_lifecycle_authenticates_routes_locations_and_reloads_without_startup() {
+    let f = Fixture::new().await;
+    let base = f.url.replace("/formatters", "/lsp");
+    let sibling = f.root.join("sibling");
+    std::fs::create_dir(&sibling).unwrap();
+    for action in ["close", "reload"] {
+        let url = format!("{base}/{action}");
+        assert_eq!(
+            f.client.post(&url).send().await.unwrap().status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let invalid = f
+            .client
+            .post(&url)
+            .basic_auth("cyber", Some("status-password"))
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+        let response = f
+            .client
+            .post(&url)
+            .basic_auth("cyber", Some("status-password"))
+            .header("x-cyber-directory", f.root.to_str().unwrap())
+            .query(&[("location[directory]", sibling.to_str().unwrap())])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["location"]["directory"], sibling.display().to_string());
+        assert_eq!(
+            body["data"],
+            json!({"closed":true,"reloaded":action=="reload"})
+        );
+        assert!(f.app.host.lsp_status(&sibling).unwrap().is_empty());
+        assert!(f.app.host.lsp_status(&f.root).unwrap().is_empty());
+        let invalid = f
+            .client
+            .post(&url)
+            .basic_auth("cyber", Some("status-password"))
+            .query(&[(
+                "location[directory]",
+                f.root.join("missing").to_str().unwrap(),
+            )])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+    }
+    f.close().await;
+}

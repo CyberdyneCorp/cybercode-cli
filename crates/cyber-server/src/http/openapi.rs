@@ -645,6 +645,22 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .located()
         .ok::<Located<Vec<super::LspStatus>>>(g),
         op(
+            "post",
+            "/lsp/close",
+            "v1.lsp.close",
+            "Close and fence this Location's language servers until reload",
+        )
+        .located()
+        .ok::<Located<super::LspTransition>>(g),
+        op(
+            "post",
+            "/lsp/reload",
+            "v1.lsp.reload",
+            "Settle this Location's language servers and reopen lazy discovery",
+        )
+        .located()
+        .ok::<Located<super::LspTransition>>(g),
+        op(
             "get",
             "/mcp",
             "v1.mcp.status",

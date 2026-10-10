@@ -1,9 +1,15 @@
-//! Authenticated, read-only Location code-intelligence status.
+//! Authenticated Location code-intelligence status and lifecycle.
 use super::{
     ApiError, AppState,
     envelope::{Located, LocationInfo, location},
 };
-use axum::{Json, Router, extract::State, http::request::Parts, routing::get};
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::State,
+    http::request::Parts,
+    routing::{get, post},
+};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -20,6 +26,13 @@ pub struct LspStatus {
     pub id: String,
     pub root: std::path::PathBuf,
     pub status: LspState,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LspTransition {
+    pub closed: bool,
+    /// Admission is reopened lazily; this operation starts no language server.
+    pub reloaded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -45,6 +58,47 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/formatters", get(formatters))
         .route("/lsp", get(lsp))
+        .route("/lsp/close", post(close_lsp))
+        .route("/lsp/reload", post(reload_lsp))
+}
+async fn close_lsp(
+    State(state): State<AppState>,
+    parts: Parts,
+    body: Bytes,
+) -> Result<Json<Located<LspTransition>>, ApiError> {
+    transition_lsp(state, parts, body, false).await
+}
+async fn reload_lsp(
+    State(state): State<AppState>,
+    parts: Parts,
+    body: Bytes,
+) -> Result<Json<Located<LspTransition>>, ApiError> {
+    transition_lsp(state, parts, body, true).await
+}
+async fn transition_lsp(
+    state: AppState,
+    parts: Parts,
+    body: Bytes,
+    reload: bool,
+) -> Result<Json<Located<LspTransition>>, ApiError> {
+    if !body.is_empty() {
+        return Err(ApiError::invalid("LSP lifecycle takes no request body"));
+    }
+    let directory = location(&parts, &state.options.default_directory)?;
+    if !directory.is_dir() {
+        return Err(ApiError::invalid("LSP Location must be a directory"));
+    }
+    state
+        .services
+        .transition_lsp(directory.clone(), reload)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data: LspTransition {
+            closed: true,
+            reloaded: reload,
+        },
+    }))
 }
 async fn lsp(
     State(state): State<AppState>,
