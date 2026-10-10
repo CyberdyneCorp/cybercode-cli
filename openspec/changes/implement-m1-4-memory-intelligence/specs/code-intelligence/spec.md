@@ -1,5 +1,23 @@
 ## ADDED Requirements
 
+### Requirement: Owned LSP connection lifecycle
+(P1) LSP connections SHALL consume already-authorized processes, initialize within a default 45-second deadline and retain ownership until explicit native settlement. Closing SHALL attempt shutdown/exit for at most three seconds before forced tree termination and separate acknowledgement. Timeout or cancellation SHALL NOT permit request replay or imply termination.
+
+#### Scenario: Initialized connection
+- **WHEN** an authorized LSP process successfully responds to initialize
+- **THEN** the client SHALL send initialized and retain its capabilities, immutable workspace root and bounded untrusted notifications
+- **AND** unsupported server requests SHALL NOT authorize workspace mutations
+
+#### Scenario: Failed or interrupted connection
+- **WHEN** initialization fails or a request is interrupted
+- **THEN** incomplete protocol ownership SHALL remain fenced and cleanup SHALL terminate the owned tree, retaining the distinction between forced termination and native acknowledgement
+- **AND** server response and stderr content SHALL NOT appear in error display
+
+#### Scenario: Owned shutdown
+- **WHEN** shutdown succeeds or stalls
+- **THEN** the connection SHALL settle the owned process tree, including descendants after leader exit, or report acknowledgement as unavailable
+- **AND** dropping an owner SHALL terminate its tree without claiming settlement
+
 ### Requirement: Bounded LSP transport framing
 (P1) LSP stdio SHALL use bounded ASCII Content-Length headers and UTF-8 JSON-RPC 2.0 object bodies. Interrupted or failed transport I/O SHALL fence both directions without claiming native termination or granting launch authority.
 
