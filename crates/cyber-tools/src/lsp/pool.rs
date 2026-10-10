@@ -34,6 +34,20 @@ pub struct AuthorizedProcess {
 
 /// Explicit resource settlement follows native process settlement; Drop grants no acknowledgement.
 pub trait ResourceLease: Send {
+    fn admit_document(
+        &mut self,
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), LspError>> {
+        Box::pin(async move {
+            super::documents::verify_origin(path, checkouts.clone()).await?;
+            if !checkouts.is_empty() {
+                return Err(LspError::Protocol("document checkout claim unavailable"));
+            }
+            Ok(())
+        })
+    }
     fn close(&mut self) -> BoxFuture<'_, bool>;
 }
 impl ResourceLease for () {
@@ -87,6 +101,7 @@ pub struct Settlement {
 
 enum Command {
     Open {
+        checkouts: Vec<cyber_core::worktrees::Managed>,
         path: PathBuf,
         text: String,
         reply: oneshot::Sender<Result<(), LspError>>,
@@ -123,6 +138,16 @@ pub struct ServerHandle {
 
 impl ServerHandle {
     pub async fn open_document(&self, path: &Path, text: String) -> Result<(), LspError> {
+        let checkouts = super::locations::checkout_records(path)?;
+        self.open_observed(path, text, checkouts).await
+    }
+
+    async fn open_observed(
+        &self,
+        path: &Path,
+        text: String,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+    ) -> Result<(), LspError> {
         let path = path.canonicalize().map_err(|_| unavailable())?;
         if !path.is_file()
             || !path.starts_with(&self.status().root)
@@ -134,7 +159,12 @@ impl ServerHandle {
         let (reply, receive) = oneshot::channel();
         self.entry
             .sender
-            .send(Command::Open { path, text, reply })
+            .send(Command::Open {
+                path,
+                text,
+                checkouts,
+                reply,
+            })
             .await
             .map_err(|_| unavailable())?;
         receive.await.map_err(|_| unavailable())?
@@ -243,6 +273,17 @@ impl Pool {
         Ok(self)
     }
     pub async fn warm(&self, file: &Path, text: String) {
+        if let Ok(checkouts) = super::locations::checkout_records(file) {
+            self.warm_observed(file, text, checkouts).await;
+        }
+    }
+
+    pub(crate) async fn warm_observed(
+        &self,
+        file: &Path,
+        text: String,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+    ) {
         let handles: Vec<_> = self
             .inner
             .servers
@@ -252,7 +293,7 @@ impl Pool {
         futures::future::join_all(
             handles
                 .iter()
-                .map(|handle| handle.open_document(file, text.clone())),
+                .map(|handle| handle.open_observed(file, text.clone(), checkouts.clone())),
         )
         .await;
     }
@@ -450,7 +491,15 @@ async fn serve(
             }
         };
     status.send_modify(|s| s.status = ServerState::Connected);
-    run(&mut connection, &cancel, commands, &request, admission).await;
+    run(
+        &mut connection,
+        &mut *keepalive,
+        &cancel,
+        commands,
+        &request,
+        admission,
+    )
+    .await;
     status.send_modify(|s| s.status = ServerState::Broken);
     settle_connection(&mut connection).await;
     settle_resources(&mut *keepalive).await;
@@ -510,6 +559,7 @@ async fn settle_resources(resources: &mut dyn ResourceLease) {
 
 async fn run(
     connection: &mut StdioConnection,
+    resources: &mut dyn ResourceLease,
     cancel: &CancellationToken,
     mut commands: mpsc::Receiver<Command>,
     request: &LaunchRequest,
@@ -531,6 +581,9 @@ async fn run(
         if !matches!(event, Event::Health)
             && !admitted(connection, &admission, request, cancel).await
         {
+            break;
+        }
+        if !admitted_document(connection, resources, &event, cancel).await {
             break;
         }
         let healthy = tokio::select! { biased; _ = cancel.cancelled() => break, healthy = handle_event(connection, &mut documents, event) => healthy };
@@ -591,6 +644,37 @@ enum Event {
     Command(Command),
 }
 
+async fn admitted_document(
+    connection: &mut StdioConnection,
+    resources: &mut dyn ResourceLease,
+    event: &Event,
+    cancel: &CancellationToken,
+) -> bool {
+    let Event::Command(Command::Open {
+        path,
+        checkouts,
+        reply,
+        ..
+    }) = event
+    else {
+        return true;
+    };
+    if reply.is_closed() {
+        return true;
+    }
+    let admission = resources.admit_document(path.clone(), checkouts.clone(), cancel.clone());
+    tokio::pin!(admission);
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            settle_connection(connection).await;
+            let _ = admission.await;
+            false
+        },
+        result = &mut admission => result.is_ok() && !cancel.is_cancelled()
+    }
+}
+
 async fn handle_event(
     connection: &mut StdioConnection,
     documents: &mut super::documents::Documents,
@@ -626,7 +710,9 @@ async fn execute(
     command: Command,
 ) -> bool {
     match command {
-        Command::Open { path, text, reply } => {
+        Command::Open {
+            path, text, reply, ..
+        } => {
             if reply.is_closed() {
                 return true;
             }

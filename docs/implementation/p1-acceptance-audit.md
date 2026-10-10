@@ -1,5 +1,17 @@
 # P1 acceptance audit
 
+## Document checkout ownership evidence (2026-10-10)
+
+Read warming now captures document checkout ancestry as well as Location ancestry before reading bytes. The immutable document scope travels through delayed discovery, startup and queued didOpen/didChange. Canonical file identity and the complete managed creation set are rechecked on joined blocking work before delivery. A running LocalLauncher service acquires any missing enclosing checkout claims through the existing owned sandboxed Git port, using independent `lsp` owners. Both original and later document leases remain retained through native/proxy acknowledgement and worker disposal; document eviction does not release them. The service refuses changed creations at previously claimed paths and caps its total admitted checkout scopes at 128. Low-level pools without a claim implementation refuse managed documents.
+
+A real macOS server rooted outside the managed checkouts now opens a document inside two nested managed checkouts. It receives one didOpen for duplicate snapshots; opening 128 additional documents evicts that snapshot with a real didClose while both leases remain held. Changed creation at that claimed path is refused. Actual removal of both checkouts is blocked, remains blocked through cancelled close, and succeeds after native acknowledgement/disposal. A portable delayed-discovery case deletes/recreates only the document checkout while the outer Location remains unchanged and proves no stale launch. A Unix blocked-claim case proves native descendants stop before the retained claim is released, with cancelled/repeated close and no document delivery after cancellation. The existing startup pin and replaced-Location cases still pass.
+
+The preceding `bb136b8` CI run 38038098529 has successful Ubuntu tests, SDK/specification checks and all six Linux/macOS platform builds. Its macOS tests and Windows lint/test job remain live at observation; fresh native acceptance for this increment is required.
+
+Local validation passes 127 test cases: 35 LSP library (including blocked document-claim cancellation), 29 LSP integration, 35 built-in tool, 23 worktree setup and five App TCP cases. The final four ownership cases pass again after adding changed-creation refusal to the real nested-server case. Strict OpenSpec validation passes all 59 items; cross-spec lint reports zero errors and 21 warnings. Workspace all-target Clippy with warnings denied, formatting and diff checks pass. Fresh native CI for this increment remains required.
+
+Full Location activity and explicit reload/close controls, reviewed unknown recovery, live CLI state, diagnostic document/path/version validation, edit synchronization, navigation and formatter execution, enforced Windows launch and the remaining canonical P1 requirements remain open. No milestone is accepted. P0 local-model data and its independent acceptance gate are preserved.
+
 ## Managed LSP runtime checkout evidence (2026-10-10)
 
 Production LocalLauncher generations now capture managed Location and root creation records and acquire the complete enclosing claim set before preparation/native spawn. App wiring uses an independent `lsp` owner and the shared owned, sandboxed Git verifier without borrowing a Session. Claims are checked for owner, count and checkout IDs; missing claim support refuses managed launch. Pins remain held through native acknowledgement, proxy shutdown and worker disposal. Uncertain spawn or unacknowledged resource settlement preserves unknown activity.

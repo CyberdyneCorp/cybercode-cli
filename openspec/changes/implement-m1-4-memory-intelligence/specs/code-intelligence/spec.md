@@ -1,5 +1,22 @@
 ## ADDED Requirements
 
+### Requirement: Document checkout admission
+(P1) Background read snapshots SHALL capture both Location and document managed creation identities before bytes are read. Document commands SHALL retain their captured identities through queued startup. A running local language server SHALL revalidate the canonical document and claim every missing enclosing managed checkout before document text is sent. Claims SHALL use independent language-server ownership and remain held through native/proxy settlement and worker disposal, including after document-cache eviction. A service SHALL refuse a changed creation at an already claimed checkout path. Each service SHALL admit at most 128 distinct checkout scopes and refuse additional scopes rather than release live ownership. Close cancellation SHALL settle the native connection before waiting for an in-flight document claim and SHALL retain the claim operation until it completes.
+
+#### Scenario: Nested document under an existing root
+- **WHEN** a running server rooted outside managed checkouts opens a document inside nested managed checkouts
+- **THEN** every enclosing checkout SHALL be claimed before didOpen or didChange
+- **AND** checkout removal SHALL remain refused until native and proxy acknowledgement and worker disposal
+
+#### Scenario: Nested read origin is recreated
+- **WHEN** a document checkout is deleted and recreated while background discovery is delayed and its enclosing Location is unchanged
+- **THEN** the original read snapshot SHALL NOT be delivered to a server for the new creation
+
+#### Scenario: Close during document admission
+- **WHEN** a document claim is blocked and the service closes
+- **THEN** native descendants SHALL terminate before waiting for claim completion
+- **AND** a cancelled close caller SHALL NOT discard that claim or authorize document delivery
+
 ### Requirement: Language-server managed launch pins
 (P1) Local LSP launch SHALL claim every enclosing managed checkout of its Location and server root using an independent language-server identity before native spawn. It SHALL verify the complete claim set and creation identities, retain pins through native and proxy settlement, and preserve unknown activity after uncertain native spawn or unacknowledged disposal. Background read warming SHALL retain its captured Location creation identities and refuse a changed creation before document delivery.
 

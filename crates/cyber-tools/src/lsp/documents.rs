@@ -8,6 +8,23 @@ use super::{LspError, StdioConnection};
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 const MAX_DOCUMENTS: usize = 128;
 
+pub(super) async fn verify_origin(
+    path: PathBuf,
+    expected: Vec<cyber_core::worktrees::Managed>,
+) -> Result<(), LspError> {
+    tokio::task::spawn_blocking(move || {
+        if path.canonicalize().ok().as_ref() != Some(&path)
+            || !path.is_file()
+            || super::locations::checkout_records(&path)? != expected
+        {
+            return Err(LspError::Protocol("document creation changed"));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| LspError::Protocol("document observation failed"))?
+}
+
 #[derive(Default)]
 pub(super) struct Documents(BTreeMap<PathBuf, (i32, [u8; 32])>);
 

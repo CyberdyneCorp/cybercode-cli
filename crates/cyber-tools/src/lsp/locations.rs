@@ -15,9 +15,21 @@ use tokio_util::sync::CancellationToken;
 pub type PoolFactory = Arc<dyn Fn(&Path) -> Result<Pool, LspError> + Send + Sync>;
 
 struct Warm {
-    checkouts: Vec<cyber_core::worktrees::Managed>,
+    origin: ReadOrigin,
     file: PathBuf,
     text: String,
+}
+
+pub(crate) struct ReadOrigin {
+    location: Vec<cyber_core::worktrees::Managed>,
+    document: Vec<cyber_core::worktrees::Managed>,
+}
+
+pub(crate) fn read_origin(location: &Path, file: &Path) -> Result<ReadOrigin, LspError> {
+    Ok(ReadOrigin {
+        location: checkout_records(location)?,
+        document: checkout_records(file)?,
+    })
 }
 struct Entry {
     cancel: CancellationToken,
@@ -70,7 +82,8 @@ impl Locations {
     }
     /// Never await discovery, initialization, queue capacity or diagnostic delivery.
     pub fn warm(&self, location: &Path, file: PathBuf, text: String) -> Result<(), LspError> {
-        self.warm_observed(location, file, text, checkout_records(location)?)
+        let origin = read_origin(location, &file)?;
+        self.warm_observed(location, file, text, origin)
     }
 
     pub(crate) fn warm_observed(
@@ -78,7 +91,7 @@ impl Locations {
         location: &Path,
         file: PathBuf,
         text: String,
-        checkouts: Vec<cyber_core::worktrees::Managed>,
+        origin: ReadOrigin,
     ) -> Result<(), LspError> {
         if text.len() > super::documents::MAX_DOCUMENT_BYTES {
             return Err(unavailable());
@@ -126,11 +139,7 @@ impl Locations {
         }
         entry
             .sender
-            .try_send(Warm {
-                file,
-                text,
-                checkouts,
-            })
+            .try_send(Warm { file, text, origin })
             .map_err(|_| unavailable())?;
         *entry.touched.lock().map_err(|_| unavailable())? = Instant::now();
         Ok(())
@@ -197,7 +206,7 @@ async fn run(
         if !current_warm(&observed_location, &warm, &pool, &entry.cancel).await {
             continue;
         }
-        tokio::select! { biased; _ = entry.cancel.cancelled() => break, _ = pool.warm(&warm.file, warm.text) => {} }
+        tokio::select! { biased; _ = entry.cancel.cancelled() => break, _ = pool.warm_observed(&warm.file, warm.text, warm.origin.document) => {} }
     }
     close_pool(&entry, &pool).await
 }
@@ -241,9 +250,13 @@ async fn current_warm(
     cancel: &CancellationToken,
 ) -> bool {
     let location = location.to_path_buf();
-    let expected = warm.checkouts.clone();
-    let mut observation =
-        tokio::task::spawn_blocking(move || checkout_records(&location).ok() == Some(expected));
+    let file = warm.file.clone();
+    let expected_location = warm.origin.location.clone();
+    let expected_document = warm.origin.document.clone();
+    let mut observation = tokio::task::spawn_blocking(move || {
+        checkout_records(&location).ok() == Some(expected_location)
+            && checkout_records(&file).ok() == Some(expected_document)
+    });
     tokio::select! {
         biased;
         _ = cancel.cancelled() => {
@@ -262,7 +275,13 @@ fn unavailable() -> LspError {
 pub(crate) fn checkout_records(
     location: &Path,
 ) -> Result<Vec<cyber_core::worktrees::Managed>, LspError> {
-    cyber_core::worktrees::Repository::managed_locations_at(location)
+    let path = location.canonicalize().map_err(|_| unavailable())?;
+    let directory = if path.is_file() {
+        path.parent().ok_or_else(unavailable)?
+    } else {
+        &path
+    };
+    cyber_core::worktrees::Repository::managed_locations_at(directory)
         .map(|locations| locations.into_iter().map(|(_, managed)| managed).collect())
         .map_err(|_| unavailable())
 }

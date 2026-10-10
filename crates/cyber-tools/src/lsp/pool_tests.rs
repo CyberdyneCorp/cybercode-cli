@@ -300,6 +300,78 @@ async fn cancellation_settles_native_descendants_before_a_blocked_authority_revi
 }
 
 #[tokio::test]
+async fn cancellation_settles_native_descendants_before_a_blocked_document_claim() {
+    struct Resource {
+        permit: Arc<tokio::sync::Semaphore>,
+        entered: Arc<AtomicUsize>,
+        released: Arc<AtomicUsize>,
+    }
+    impl ResourceLease for Resource {
+        fn admit_document(
+            &mut self,
+            _path: PathBuf,
+            _checkouts: Vec<cyber_core::worktrees::Managed>,
+            _cancel: CancellationToken,
+        ) -> BoxFuture<'_, Result<(), LspError>> {
+            Box::pin(async move {
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                self.permit.acquire().await.unwrap().forget();
+                Ok(())
+            })
+        }
+        fn close(&mut self) -> BoxFuture<'_, bool> {
+            self.released.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { true })
+        }
+    }
+    let (root, file) = fixture();
+    let marker = root.path().join("document-claim-escape");
+    let permit = Arc::new(tokio::sync::Semaphore::new(0));
+    let entered = Arc::new(AtomicUsize::new(0));
+    let released = Arc::new(AtomicUsize::new(0));
+    let resource = Arc::new(Mutex::new(Some(Resource {
+        permit: permit.clone(),
+        entered: entered.clone(),
+        released: released.clone(),
+    })));
+    let launch: LaunchFn = Arc::new(move |_, _| {
+        let resource = resource.lock().unwrap().take().unwrap();
+        Box::pin(async move {
+            Ok(AuthorizedProcess {
+                process: super::super::connection::tests::process("normal").await,
+                keepalive: Box::new(resource),
+            })
+        })
+    });
+    let pool = Pool::new(root.path(), vec![server()], launch).unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    handle
+        .request(
+            "descendant",
+            json!({"marker":marker}),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    let pending = tokio::spawn(async move { handle.open_document(&file, "pending".into()).await });
+    wait_for(|| entered.load(Ordering::SeqCst) == 1).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), pool.close())
+            .await
+            .is_err()
+    );
+    tokio::time::sleep(Duration::from_millis(650)).await;
+    assert!(!marker.exists());
+    assert_eq!(released.load(Ordering::SeqCst), 0);
+    permit.add_permits(1);
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+    assert!(pending.await.unwrap().is_err());
+    assert_eq!(released.load(Ordering::SeqCst), 1);
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+    assert_eq!(released.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn nearest_roots_get_independent_owned_processes() {
     let (root, file) = fixture();
     let nested = root.path().join("nested");

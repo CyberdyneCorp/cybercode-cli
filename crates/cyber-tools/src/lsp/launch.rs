@@ -206,6 +206,7 @@ impl LocalLauncher {
             }
         };
         resources.pins = pins;
+        resources.document_root = request.root.clone();
         let prepared = self
             .prepared(&request, &resolved, &resources, &cancel)
             .await;
@@ -320,40 +321,7 @@ impl LocalLauncher {
                 expected.push(checkout.clone());
             }
         }
-        if expected.is_empty() {
-            return Ok(Pins::default());
-        }
-        let claim = self
-            .options
-            .checkout_claim
-            .as_ref()
-            .ok_or_else(|| refused("managed checkout claim unavailable"))?;
-        let owner = cyber_core::ids::new_id("lsp");
-        let leases = claim(expected.clone(), owner.clone(), cancel)
-            .await
-            .map_err(|error| LaunchError {
-                error,
-                acknowledged: false,
-            })?;
-        let observed: std::collections::BTreeSet<_> =
-            leases.iter().map(|lease| lease.worktree_id()).collect();
-        let wanted: std::collections::BTreeSet<_> = expected
-            .iter()
-            .map(|checkout| checkout.id.as_str())
-            .collect();
-        if observed != wanted
-            || leases.len() != expected.len()
-            || leases.iter().any(|lease| lease.owner_id() != owner)
-        {
-            return Err(LaunchError {
-                error: LspError::Protocol("managed checkout claims do not match launch"),
-                acknowledged: false,
-            });
-        }
-        Ok(Pins {
-            leases,
-            acknowledged: None,
-        })
+        claim_pins(&self.options.checkout_claim, expected, cancel).await
     }
 
     async fn prepare(&self, resolved: &Resolved) -> Result<Resources, LaunchError> {
@@ -383,6 +351,8 @@ impl LocalLauncher {
             None
         };
         Ok(Resources {
+            checkout_claim: self.options.checkout_claim.clone(),
+            document_root: self.location.clone(),
             pins: Pins::default(),
             pins_safe: true,
             config,
@@ -471,6 +441,8 @@ fn scratch(parent: &Path) -> Result<PathBuf, LaunchError> {
 }
 
 struct Resources {
+    checkout_claim: Option<CheckoutClaim>,
+    document_root: PathBuf,
     pins: Pins,
     pins_safe: bool,
     config: SandboxConfig,
@@ -481,6 +453,27 @@ struct Resources {
 }
 
 impl ResourceLease for Resources {
+    fn admit_document(
+        &mut self,
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), LspError>> {
+        Box::pin(async move {
+            if self.acknowledged.is_some() || !path.starts_with(&self.document_root) {
+                return Err(LspError::Protocol("document root unavailable"));
+            }
+            super::documents::verify_origin(path.clone(), checkouts.clone()).await?;
+            let missing = self.pins.missing(&path, &checkouts)?;
+            let pins = claim_pins(&self.checkout_claim, missing, cancel.clone())
+                .await
+                .map_err(|error| error.error)?;
+            self.pins.checkouts.extend(pins.checkouts);
+            self.pins.leases.extend(pins.leases);
+            super::documents::verify_origin(path, checkouts).await?;
+            check_cancel(&cancel).map_err(|error| error.error)
+        })
+    }
     fn close(&mut self) -> BoxFuture<'_, bool> {
         Box::pin(async move {
             if let Some(acknowledged) = self.acknowledged {
@@ -503,10 +496,31 @@ impl ResourceLease for Resources {
 
 #[derive(Default)]
 struct Pins {
+    checkouts: Vec<cyber_core::worktrees::Managed>,
     leases: Vec<cyber_core::worktrees::CheckoutLease>,
     acknowledged: Option<bool>,
 }
 impl Pins {
+    fn missing(
+        &self,
+        path: &Path,
+        expected: &[cyber_core::worktrees::Managed],
+    ) -> Result<Vec<cyber_core::worktrees::Managed>, LspError> {
+        for previous in &self.checkouts {
+            if path.starts_with(&previous.path) && !expected.contains(previous) {
+                return Err(LspError::Protocol("document checkout creation changed"));
+            }
+        }
+        let missing: Vec<_> = expected
+            .iter()
+            .filter(|checkout| !self.checkouts.contains(checkout))
+            .cloned()
+            .collect();
+        if self.checkouts.len() + missing.len() > 128 {
+            return Err(LspError::Protocol("document checkout capacity exhausted"));
+        }
+        Ok(missing)
+    }
     fn settle(&mut self) -> bool {
         if let Some(acknowledged) = self.acknowledged {
             return acknowledged;
@@ -522,6 +536,49 @@ impl Pins {
         self.acknowledged = Some(acknowledged);
         acknowledged
     }
+}
+
+async fn claim_pins(
+    claim: &Option<CheckoutClaim>,
+    expected: Vec<cyber_core::worktrees::Managed>,
+    cancel: CancellationToken,
+) -> Result<Pins, LaunchError> {
+    if expected.len() > 128 {
+        return Err(refused("document checkout capacity exhausted"));
+    }
+    if expected.is_empty() {
+        return Ok(Pins::default());
+    }
+    let claim = claim
+        .as_ref()
+        .ok_or_else(|| refused("managed checkout claim unavailable"))?;
+    let owner = cyber_core::ids::new_id("lsp");
+    let leases = claim(expected.clone(), owner.clone(), cancel)
+        .await
+        .map_err(|error| LaunchError {
+            error,
+            acknowledged: false,
+        })?;
+    let observed: std::collections::BTreeSet<_> =
+        leases.iter().map(|lease| lease.worktree_id()).collect();
+    let wanted: std::collections::BTreeSet<_> = expected
+        .iter()
+        .map(|checkout| checkout.id.as_str())
+        .collect();
+    if observed != wanted
+        || leases.len() != expected.len()
+        || leases.iter().any(|lease| lease.owner_id() != owner)
+    {
+        return Err(LaunchError {
+            error: LspError::Protocol("managed checkout claims do not match launch"),
+            acknowledged: false,
+        });
+    }
+    Ok(Pins {
+        checkouts: expected,
+        leases,
+        acknowledged: None,
+    })
 }
 
 fn checkout_records(directory: &Path) -> Result<Vec<cyber_core::worktrees::Managed>, LaunchError> {
@@ -541,6 +598,8 @@ mod tests {
 
     fn resources(root: &Path) -> Resources {
         Resources {
+            checkout_claim: None,
+            document_root: root.into(),
             pins: Pins::default(),
             pins_safe: true,
             config: SandboxConfig::resolve(&serde_json::json!({}), &BTreeMap::new(), None, root),

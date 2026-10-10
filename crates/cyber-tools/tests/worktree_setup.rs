@@ -90,62 +90,13 @@ async fn owned() -> (support::Fixture, Repository, Managed) {
 #[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
 #[tokio::test]
 async fn lsp_native_shutdown_retains_managed_checkout_pins_until_acknowledgement() {
-    use cyber_core::paths::Paths;
     use cyber_core::worktrees::CheckoutActivity;
-    use cyber_tools::lsp::{LaunchOptions, LocalLauncher};
     assert!(
         cyber_sandbox::available(),
         "native sandbox prerequisites are required"
     );
     let (fixture, repository, managed) = owned().await;
-    let root = fixture.dir.path().canonicalize().unwrap();
-    let paths = Paths {
-        config: root.join("config"),
-        data: root.join("data"),
-        cache: root.join("cache"),
-        state: root.join("state"),
-        tmp: root.join("lsp-tmp"),
-    };
-    paths.ensure().unwrap();
-    let script = root.join("server.py");
-    std::fs::write(&script, r#"
-import sys,json,time
-while True:
-    length=None
-    while True:
-        line=sys.stdin.buffer.readline()
-        if not line: sys.exit(0)
-        if line==b'\r\n': break
-        if line.lower().startswith(b'content-length:'): length=int(line.split(b':',1)[1])
-    msg=json.loads(sys.stdin.buffer.read(length))
-    if msg['method']=='shutdown': time.sleep(60)
-    if 'id' in msg:
-        result={'capabilities':{}} if msg['method']=='initialize' else True
-        body=json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':result}).encode()
-        sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body);sys.stdout.buffer.flush()
-"#).unwrap();
-    let config = json!({"lsp":{"fixture":{"command":["python3",script],"extensions":[".txt"]}},"sandbox":{"network":"off"}});
-    fixture.set_config(config.clone());
-    std::fs::write(paths.config.join("cyber.jsonc"), config.to_string()).unwrap();
-    let launcher = Arc::new(
-        LocalLauncher::new(
-            &managed.path,
-            LaunchOptions {
-                checkout_claim: Some(fixture.host.lsp_checkout_claim()),
-                paths,
-                home: root.join("home"),
-                environment: std::env::vars().collect(),
-                profile: None,
-                overrides: vec![],
-                flags: json!({}),
-                sandbox_policy: None,
-                helper: cyber_sandbox::find_helper(),
-                credential_env_names: vec![],
-            },
-        )
-        .unwrap(),
-    );
-    let pool = launcher.pool().unwrap();
+    let pool = managed_lsp_pool(&fixture, &managed.path);
     let handle = pool
         .ensure("fixture", &managed.path.join("tracked.txt"))
         .unwrap();
@@ -180,6 +131,64 @@ while True:
     assert!(!managed.path.exists());
 }
 
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+fn managed_lsp_pool(fixture: &support::Fixture, location: &Path) -> cyber_tools::lsp::Pool {
+    use cyber_core::paths::Paths;
+    use cyber_tools::lsp::{LaunchOptions, LocalLauncher};
+    let root = fixture.dir.path().canonicalize().unwrap();
+    let paths = Paths {
+        config: root.join("config"),
+        data: root.join("data"),
+        cache: root.join("cache"),
+        state: root.join("state"),
+        tmp: root.join("lsp-tmp"),
+    };
+    paths.ensure().unwrap();
+    let script = root.join("server.py");
+    std::fs::write(&script, r#"
+import sys,json,time
+documents=[]
+closed=[]
+while True:
+    length=None
+    while True:
+        line=sys.stdin.buffer.readline()
+        if not line: sys.exit(0)
+        if line==b'\r\n': break
+        if line.lower().startswith(b'content-length:'): length=int(line.split(b':',1)[1])
+    msg=json.loads(sys.stdin.buffer.read(length))
+    if msg['method']=='textDocument/didOpen': documents.append(msg['params']['textDocument']['text'])
+    if msg['method']=='textDocument/didClose': closed.append(msg['params']['textDocument']['uri'])
+    if msg['method']=='shutdown': time.sleep(60)
+    if 'id' in msg:
+        result={'capabilities':{}} if msg['method']=='initialize' else documents if msg['method']=='documents' else closed if msg['method']=='closed' else True
+        body=json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':result}).encode()
+        sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body);sys.stdout.buffer.flush()
+"#).unwrap();
+    let config = json!({"lsp":{"fixture":{"command":["python3",script],"extensions":[".txt"]}},"sandbox":{"network":"off"}});
+    fixture.set_config(config.clone());
+    std::fs::write(paths.config.join("cyber.jsonc"), config.to_string()).unwrap();
+    let launcher = Arc::new(
+        LocalLauncher::new(
+            location,
+            LaunchOptions {
+                checkout_claim: Some(fixture.host.lsp_checkout_claim()),
+                paths,
+                home: root.join("home"),
+                environment: std::env::vars().collect(),
+                profile: None,
+                overrides: vec![],
+                flags: json!({}),
+                sandbox_policy: None,
+                helper: cyber_sandbox::find_helper(),
+                credential_env_names: vec![],
+            },
+        )
+        .unwrap(),
+    );
+    launcher.pool().unwrap()
+}
+
 #[derive(Default)]
 struct Sink {
     output: Mutex<Vec<u8>>,
@@ -187,14 +196,138 @@ struct Sink {
     fail: bool,
 }
 
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[tokio::test]
+async fn lsp_document_below_existing_root_claims_and_retains_its_checkout() {
+    use cyber_core::worktrees::CheckoutActivity;
+    assert!(
+        cyber_sandbox::available(),
+        "native sandbox prerequisites are required"
+    );
+    let (fixture, repository, managed) = owned().await;
+    let location = fixture.dir.path().canonicalize().unwrap();
+    let nested = repository
+        .create(
+            &Git,
+            &Settings::default(),
+            &managed.path.join("nested-data"),
+            "prj_nested",
+            &Name::parse("nested").unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(Repository::managed_at(&location).unwrap().is_none());
+    let outer_file = location.join("outer.txt");
+    std::fs::write(&outer_file, "outer").unwrap();
+    let pool = managed_lsp_pool(&fixture, &location);
+    let handle = pool.ensure("fixture", &outer_file).unwrap();
+    handle
+        .request("ping", json!({}), Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert_eq!(handle.status().root, location);
+    let file = nested.path.join("tracked.txt");
+    assert_eq!(
+        Repository::managed_locations_at(file.parent().unwrap())
+            .unwrap()
+            .len(),
+        2
+    );
+    handle
+        .open_document(&file, "nested-checkout".into())
+        .await
+        .unwrap();
+    handle
+        .open_document(&file, "nested-checkout".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        handle
+            .request("documents", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap(),
+        json!(["nested-checkout"])
+    );
+    for index in 0..128 {
+        let other = location.join(format!("zz-{index:03}.txt"));
+        std::fs::write(&other, "outside-checkouts").unwrap();
+        handle
+            .open_document(&other, "outside-checkouts".into())
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        handle
+            .request("closed", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap(),
+        json!([reqwest::Url::from_file_path(&file).unwrap().to_string()])
+    );
+    for checkout in [&nested, &managed] {
+        let error = repository
+            .remove(&Git, &CheckoutActivity, checkout, false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("in use by lsp_"), "{error}");
+    }
+    let record = nested
+        .common_dir
+        .join("cyber-worktrees")
+        .join("nested.json");
+    let original = std::fs::read(&record).unwrap();
+    let mut changed = nested.clone();
+    changed.id = cyber_core::ids::new_id("wt");
+    std::fs::write(&record, serde_json::to_vec(&changed).unwrap()).unwrap();
+    let rejected = handle
+        .open_document(&file, "replacement-snapshot".into())
+        .await;
+    std::fs::write(&record, original).unwrap();
+    assert!(rejected.is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), pool.close())
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .remove(&Git, &CheckoutActivity, &managed, false)
+            .await
+            .is_err()
+    );
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+    repository
+        .remove(&Git, &CheckoutActivity, &nested, false)
+        .await
+        .unwrap();
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+    assert!(!managed.path.exists());
+}
+
 #[tokio::test]
 async fn lsp_background_snapshot_cannot_start_against_a_recreated_checkout() {
+    assert_recreated_lsp_origin(false).await;
+}
+
+#[tokio::test]
+async fn lsp_background_document_cannot_start_against_a_recreated_nested_checkout() {
+    assert_recreated_lsp_origin(true).await;
+}
+
+async fn assert_recreated_lsp_origin(nested: bool) {
     use cyber_core::intelligence::{DetectedServer, InstallMethod, ServerDefinition};
     use cyber_core::worktrees::CheckoutActivity;
     use cyber_tools::lsp::{LaunchError, Locations, LspError, Pool};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     let (fixture, repository, managed) = owned().await;
     let file = managed.path.join("tracked.txt");
+    let location = if nested {
+        fixture.dir.path().canonicalize().unwrap()
+    } else {
+        managed.path.clone()
+    };
     let (release, blocked) = std::sync::mpsc::channel();
     let blocked = Mutex::new(blocked);
     let started = Arc::new(AtomicBool::new(false));
@@ -242,7 +375,7 @@ async fn lsp_background_snapshot_cannot_start_against_a_recreated_checkout() {
         pool
     }));
     locations
-        .warm(&managed.path, file, "private-original-read".into())
+        .warm(&location, file, "private-original-read".into())
         .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         while !started.load(Ordering::Acquire) {
@@ -276,7 +409,7 @@ async fn lsp_background_snapshot_cannot_start_against_a_recreated_checkout() {
     .await
     .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert!(locations.status(&replacement.path).unwrap().is_empty());
+    assert!(locations.status(&location).unwrap().is_empty());
     assert_eq!(launches.load(Ordering::SeqCst), 0);
     locations.close().await.unwrap();
 }
