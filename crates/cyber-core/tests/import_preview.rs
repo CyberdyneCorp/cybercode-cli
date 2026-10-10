@@ -1093,3 +1093,166 @@ fn merged_permission_arrays_show_redacted_values_without_changing_kept_rules() {
         native
     );
 }
+
+#[test]
+fn kept_mcp_credentials_do_not_require_setting_ignored_source_variables() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"mcp":{"audit":{"type":"local","command":"kept-server","args":[],"env":{"API_KEY":"{env:KEPT_KEY}"}}}}"#,
+    );
+    write(
+        &roots.directory,
+        ".mcp.json",
+        r#"{"mcpServers":{"audit":{"command":"ignored-server","env":{"API_KEY":"private-ignored-key"}}}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(preview.output().diff.is_empty());
+    assert!(preview.output().required_environment.is_empty());
+}
+
+#[test]
+fn generated_source_bindings_cannot_repurpose_native_environment_references() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    let source = serde_json::json!({"mcpServers":{"audit":{"command":"server","env":{"API_KEY":"private-source-key"}}}});
+    let converted = cyber_core::import::mcp_config(SourceTool::Claude, &source).unwrap();
+    let variable = &converted.required_environment[0].variable;
+    write(&roots.directory, "cyber.jsonc", &serde_json::to_string(&serde_json::json!({"description":format!("prefix {{env:{variable}:-fallback}} suffix")})).unwrap());
+    write(&roots.directory, ".mcp.json", &source.to_string());
+    assert!(
+        preview_import(
+            &roots,
+            Some(SourceTool::Claude),
+            ImportScope::Project,
+            &global(&root)
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn partial_merges_only_report_accepted_environment_fields_and_coalesce_shared_variables() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"mcp":{"audit":{"type":"local","command":"kept-server","args":[],"env":{"IGNORED":"{env:KEPT_KEY}"}}}}"#,
+    );
+    write(
+        &roots.directory,
+        ".mcp.json",
+        r#"{"mcpServers":{"audit":{"command":"ignored-server","env":{"IGNORED":"{env:SHARED}","ADDED":"{env:SHARED}"}},"other":{"command":"server","env":{"TOKEN":"{env:SHARED}"}}}}"#,
+    );
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        "[model_providers.local]\nbase_url='https://example.test/v1'\nenv_key='SHARED'\n",
+    );
+    let preview = preview_import(&roots, None, ImportScope::Project, &global(&root)).unwrap();
+    assert_eq!(preview.output().required_environment.len(), 1);
+    let required = &preview.output().required_environment[0];
+    assert_eq!(required.requirement.variable, "SHARED");
+    assert!(!required.requirement.from_literal);
+    let fields: Vec<_> = required.sources.iter().map(|s| s.field.as_str()).collect();
+    assert_eq!(fields.len(), 3);
+    assert!(fields.contains(&"/mcpServers/audit/env/ADDED"));
+    assert!(fields.contains(&"/mcpServers/other/env/TOKEN"));
+    assert!(fields.contains(&"/model_providers/local/env_key"));
+    assert!(!fields.contains(&"/mcpServers/audit/env/IGNORED"));
+    assert!(fields.contains(&required.requirement.field.as_str()));
+}
+
+#[test]
+fn ignored_credential_bindings_do_not_block_unrelated_accepted_bindings() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    let source = serde_json::json!({"mcpServers":{"audit":{"command":"server","env":{"API_KEY":"private-new-key"}}}});
+    let mapped = cyber_core::import::mcp_config(SourceTool::Claude, &source).unwrap();
+    let variable = &mapped.required_environment[0].variable;
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"providers":{"local":{"api":{"settings":{"api_key":"{env:KEPT_KEY}"}}}}}"#,
+    );
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        &format!(
+            "[model_providers.local]\nbase_url='https://example.test/v1'\nenv_key='{variable}'\n"
+        ),
+    );
+    write(&roots.directory, ".mcp.json", &source.to_string());
+    let preview = preview_import(&roots, None, ImportScope::Project, &global(&root)).unwrap();
+    assert_eq!(preview.output().required_environment.len(), 1);
+    assert_eq!(
+        preview.output().required_environment[0]
+            .requirement
+            .variable,
+        *variable
+    );
+    assert!(
+        preview.output().required_environment[0]
+            .requirement
+            .from_literal
+    );
+}
+
+#[test]
+fn same_family_provider_and_mcp_collisions_are_checked_before_shared_setup_coalescing() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    let mcp = serde_json::json!({"mcp_servers":{"audit":{"command":"server","env":{"API_KEY":"private-mcp-key"}}}});
+    let mapped = cyber_core::import::mcp_config(SourceTool::Codex, &mcp).unwrap();
+    let variable = &mapped.required_environment[0].variable;
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        &format!(
+            "[model_providers.local]\nbase_url='https://example.test/v1'\nenv_key='{variable}'\n[mcp_servers.audit]\ncommand='server'\n[mcp_servers.audit.env]\nAPI_KEY='private-mcp-key'\n"
+        ),
+    );
+    assert!(
+        preview_import(
+            &roots,
+            Some(SourceTool::Codex),
+            ImportScope::Project,
+            &global(&root)
+        )
+        .is_err()
+    );
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"mcp":{"audit":{"env":{"API_KEY":"{env:KEPT_KEY}"}}}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert_eq!(preview.output().required_environment.len(), 1);
+    let requirement = &preview.output().required_environment[0];
+    assert!(!requirement.requirement.from_literal);
+    assert_eq!(
+        requirement.requirement.field,
+        "/model_providers/local/env_key"
+    );
+    assert_eq!(requirement.sources.len(), 1);
+}

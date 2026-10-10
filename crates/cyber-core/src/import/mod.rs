@@ -6,6 +6,7 @@ mod codex_providers;
 mod codex_source;
 mod detection;
 mod discovery;
+mod environment_setup;
 mod mcp;
 mod opencode;
 mod preview;

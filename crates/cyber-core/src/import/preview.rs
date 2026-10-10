@@ -198,32 +198,35 @@ pub fn preview_import(
         };
         provenance::append_rules(&mut config, &rules, &mut origins, &rule_origins);
         provenance::strongest_permissions(family, &mut config, &mut origins);
-        let environment_origins = provenance::environment_origins(&config, &origins)
+        let mut accepted = Origins::new();
+        fill_existing(
+            &mut proposed,
+            &config,
+            "",
+            &origins,
+            &mut accepted,
+            &mut context.report,
+        );
+        let environment_origins = provenance::environment_origins(&config, &accepted)
             .map_err(|e| error(&target, e.reason))?;
-        context
-            .required
-            .extend(required.into_iter().map(|requirement| {
-                PreviewEnvironment {
-                    sources: environment_origins
-                        .get(&requirement.variable)
-                        .cloned()
-                        .unwrap_or_default(),
-                    requirement,
-                }
-            }));
-        fill_existing(&mut proposed, &config, "", &origins, &mut context.report);
+        context.required.extend(
+            super::environment_setup::accepted(required, environment_origins, &raw)
+                .map_err(|e| error(&target, e.reason))?,
+        );
     }
-    let bindings: Vec<_> = context
+    let mut bindings: Vec<_> = context
         .required
         .iter()
         .map(|entry| entry.requirement.clone())
         .collect();
+    bindings.extend(super::environment_setup::reserved(&existing));
     super::codex_providers::validate_environment_bindings(&bindings).map_err(|_| {
         error(
             &target,
             "generated credential variable conflicts across source adapters",
         )
     })?;
+    context.required = super::environment_setup::coalesce(context.required);
     redact_report_fields(&mut context.report, &mut context.required, &context.secrets);
     reject_unsafe_strings(&proposed, &existing, &context.secrets, &target)?;
     let diff = render_diff(&target, &existing, &proposed, &context.secrets)?;
@@ -559,13 +562,14 @@ fn fill_existing(
     extra: &Value,
     pointer: &str,
     origins: &Origins,
+    accepted: &mut Origins,
     report: &mut Vec<MappingRecord>,
 ) {
     for (key, value) in extra.as_object().into_iter().flatten() {
         let child = format!("{pointer}/{}", key.replace('~', "~0").replace('/', "~1"));
         if let Some(previous) = base.get_mut(key) {
             if previous.is_object() && value.is_object() {
-                fill_existing(previous, value, &child, origins, report);
+                fill_existing(previous, value, &child, origins, accepted, report);
             } else {
                 report_mapping(
                     report,
@@ -584,6 +588,7 @@ fn fill_existing(
                 .unwrap()
                 .insert(key.clone(), value.clone());
             for field in provenance::fields(origins, &child) {
+                accepted.insert(field.clone(), origins[field].clone());
                 report_mapping(
                     report,
                     origins,

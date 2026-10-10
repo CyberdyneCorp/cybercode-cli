@@ -268,7 +268,7 @@ fn credentials(
             env_name(text, field)?
         };
         output["api"]["settings"] =
-            json!({"api_key":reference(variable, field, literal, required)});
+            json!({"api_key":reference(variable, &format!("{field}.{key}"), literal, required)});
     }
     Ok(())
 }

@@ -426,10 +426,10 @@ pub(super) fn environment_origins(
         else {
             continue;
         };
-        output
-            .entry(variable.into())
-            .or_default()
-            .extend(references(origins, &pointer));
+        let sources = references(origins, &pointer);
+        if !sources.is_empty() {
+            output.entry(variable.into()).or_default().extend(sources);
+        }
     }
     Ok(output
         .into_iter()

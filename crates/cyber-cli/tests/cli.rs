@@ -1115,3 +1115,30 @@ fn import_merged_reports_include_comparisons_in_json_and_text_without_writing() 
     );
     assert!(!e.root.join("cyber-home").exists());
 }
+
+#[test]
+fn import_kept_credentials_do_not_ask_to_set_ignored_variables() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    let native = r#"{"mcp":{"audit":{"type":"local","command":"kept","args":[],"env":{"API_KEY":"{env:KEPT_KEY}"}}}}"#;
+    std::fs::write(e.root.join("cyber.jsonc"), native).unwrap();
+    std::fs::write(
+        e.root.join(".mcp.json"),
+        r#"{"mcpServers":{"audit":{"command":"ignored","env":{"API_KEY":"private-ignored-key"}}}}"#,
+    )
+    .unwrap();
+    let preview = e.cyber(&["import", "claude", "--dry-run", "--format", "json"]);
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    let view = json(&preview);
+    assert!(view["required_environment"].as_array().unwrap().is_empty());
+    assert_eq!(view["diff"], "");
+    let text = e.cyber(&["import", "claude", "--dry-run"]);
+    assert!(text.status.success(), "{}", stderr(&text));
+    assert!(!stdout(&text).contains("Set CYBER_IMPORT_"));
+    assert!(!stdout(&text).contains("private-ignored-key"));
+    assert_eq!(
+        std::fs::read_to_string(e.root.join("cyber.jsonc")).unwrap(),
+        native
+    );
+    assert!(!e.root.join("cyber-home").exists());
+}
