@@ -3,7 +3,7 @@ use serde_json::json;
 use std::process::Stdio;
 
 const SERVER: &str = r#"
-import json, sys, pathlib, subprocess, time
+import json, sys, pathlib, subprocess, time, urllib.parse
 mode = sys.argv[1]
 def read():
     length = None
@@ -23,6 +23,7 @@ while True:
     if msg is None: break
     method = msg.get('method')
     if method == 'initialize':
+        workspace = pathlib.Path(urllib.parse.unquote(urllib.parse.urlparse(msg['params']['rootUri']).path))
         if mode == 'stderr-flood':
             sys.stderr.write('E' * (1024 * 1024 + 100)); sys.stderr.flush()
         assert msg['params']['rootUri'].startswith('file:')
@@ -36,6 +37,26 @@ while True:
             send({'jsonrpc':'2.0','id':msg['id'],'result':{'capabilities':{'hoverProvider':True}}})
     elif method == 'initialized':
         if mode == 'exit-on-initialized': break
+        if mode == 'idle-messages':
+            uri = (workspace / 'file.rs').as_uri()
+            send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':uri,'version':7,'diagnostics':[]}})
+            send({'jsonrpc':'2.0','id':'idle-request','method':'workspace/applyEdit','params':{'edit':{'changes':{uri:[{'range':{'start':{'line':0,'character':0},'end':{'line':0,'character':0}},'newText':'unrequested edit'}]}}}})
+            reply = read()
+            assert reply['error']['code'] == -32601
+            (workspace / 'idle-replied').write_text('refused')
+        if mode == 'idle-foreign-response':
+            send({'jsonrpc':'2.0','id':999,'result':True})
+        if mode in ['partial-idle-header', 'partial-idle-body']:
+            body = json.dumps({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':(workspace / 'file.rs').as_uri(),'version':8,'diagnostics':[]}}).encode('utf-8')
+            header = ('Content-Length: %d\r\n\r\n' % len(body)).encode('ascii')
+            frame = header + body
+            split_at = 10 if mode == 'partial-idle-header' else len(header) + 4
+            sys.stdout.buffer.write(frame[:split_at]); sys.stdout.buffer.flush()
+            (workspace / 'partial-started').write_text('started')
+            request = read()
+            assert request['method'] == 'fixture'
+            sys.stdout.buffer.write(frame[split_at:]); sys.stdout.buffer.flush()
+            send({'jsonrpc':'2.0','id':request['id'],'result':{'text':'λ🦀'}})
     elif method == 'fixture':
         send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':'file:///untrusted','diagnostics':[]}})
         send({'jsonrpc':'2.0','id':'server-request','method':'workspace/applyEdit','params':{'edit':{}}})

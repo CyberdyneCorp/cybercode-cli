@@ -1,5 +1,13 @@
 # P1 implementation status
 
+## M1.4 continuous owned LSP message handling (2026-10-10)
+
+The client now retains a dedicated framing reader and a bounded four-frame inbox. Idle worker selection cancels only an inbox wait, so partially read stdout headers/bodies survive health checks and foreground commands. The worker consumes idle notifications and answers supported/refused server requests without a foreground RPC. Unsolicited responses and malformed idle messages fence reuse and break the root. Notifications remain bounded untrusted data; no server-requested edit is applied. Closing forces overdue native processes before joining the reader, preserving the existing three-second kill deadline. Explicit cleanup aborts/joins reader ownership, while Drop supplies no completion acknowledgement.
+
+Six platform-neutral idle cases pass: partial header/body cancellation followed by a usable RPC, idle request refusal, malformed/foreign envelopes, truncation, stream release and bounded-inbox backpressure with blocked-reader release. Three new Unix subprocess cases verify idle diagnostics/refusal with unchanged file content, broken-root native settlement and a foreground command arriving during actual partial stdout frames. Twelve connection and eleven pool subprocess cases pass, alongside all existing framing/RPC/admission regressions. The preceding native framing/RPC/pool-admission step at `bf17269` passed in [run 38030821975](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38030821975/job/114151215610) while its full job remained live; fresh native idle-reader and Windows owned-process acceptance remain required.
+
+This completes continuous raw-message consumption in the shared worker, not document/path/version validation or public diagnostic feedback. Concrete trusted sandbox launch, Location service lifecycle/status, read warming, document synchronization, validated diagnostics/navigation and sandboxed formatter execution remain required. The full P1 scope stays active; no milestone is accepted and P0 local-model acceptance remains independent.
+
 ## M1.4 owned LSP pool (2026-10-10)
 
 The Location pool now freezes detected definitions and starts one background worker per server and confined nearest-marker root. Concurrent starts deduplicate; commands use a bounded serialized queue, and failed or unexpectedly exited roots remain broken until pool recreation. Status comes from actual worker state. Explicit close fences admission, cancels workers and joins retained task handles; cancelling close leaves settlement restartable. Sandbox/proxy keepalives survive native settlement, and an unacknowledged startup error retains the actual connection for retry. Last-owner Drop requests cleanup without claiming acknowledgement.

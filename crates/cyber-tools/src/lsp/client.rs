@@ -1,7 +1,11 @@
 use std::{path::Path, time::Duration};
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, Empty},
+    sync::mpsc,
+    task::JoinHandle,
+};
 
 use super::{Framed, TransportError};
 
@@ -19,7 +23,10 @@ pub enum LspError {
 
 /// Single-request protocol ownership. Timeout/cancellation leaves pending ownership fenced.
 pub struct StdioClient<R, W> {
-    transport: Framed<R, W>,
+    transport: Framed<Empty, W>,
+    reader: Option<R>,
+    incoming: Option<mpsc::Receiver<Result<Value, LspError>>>,
+    read_task: Option<JoinHandle<()>>,
     root_uri: String,
     next_id: u64,
     pending: bool,
@@ -31,7 +38,7 @@ pub struct StdioClient<R, W> {
     capabilities: Option<Value>,
 }
 
-impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
+impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin> StdioClient<R, W> {
     pub fn new(reader: R, writer: W, root: &Path) -> Result<Self, LspError> {
         let root = root
             .canonicalize()
@@ -42,7 +49,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         let uri = reqwest::Url::from_directory_path(root)
             .map_err(|_| LspError::Protocol("invalid root URI"))?;
         Ok(Self {
-            transport: Framed::new(reader, writer),
+            transport: Framed::new(tokio::io::empty(), writer),
+            reader: Some(reader),
+            incoming: None,
+            read_task: None,
             root_uri: uri.into(),
             next_id: 0,
             pending: false,
@@ -70,6 +80,13 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             return Err(LspError::Protocol("initialization already started"));
         }
         self.started = true;
+        let reader = self
+            .reader
+            .take()
+            .ok_or(LspError::Protocol("reader unavailable"))?;
+        let (sender, incoming) = mpsc::channel(4);
+        self.incoming = Some(incoming);
+        self.read_task = Some(tokio::spawn(read_messages(reader, sender)));
         let params = json!({
             "processId":std::process::id(),
             "clientInfo":{"name":"cyber","version":env!("CARGO_PKG_VERSION")},
@@ -121,6 +138,50 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         Ok(())
     }
 
+    /// Cancelling this wait consumes no message and never interrupts framing reads.
+    pub async fn next_idle(&mut self) -> Result<Value, LspError> {
+        self.require_ready()?;
+        let result = self.next_message().await;
+        if result.is_err() {
+            self.pending = true;
+        }
+        result
+    }
+
+    /// A received idle message remains owned until its handling finishes.
+    pub async fn handle_idle(&mut self, message: Value) -> Result<(), LspError> {
+        self.require_ready()?;
+        let result = if message.get("method").is_none() {
+            Err(LspError::Protocol("unexpected idle response"))
+        } else {
+            self.server_message(message).await
+        };
+        if result.is_err() {
+            self.pending = true;
+        }
+        result
+    }
+
+    pub(crate) async fn stop_reader(&mut self) {
+        self.ready = false;
+        self.closing = true;
+        if let Some(task) = self.read_task.as_mut() {
+            task.abort();
+            let _ = task.await;
+        }
+        self.read_task.take();
+        self.incoming.take();
+    }
+
+    async fn next_message(&mut self) -> Result<Value, LspError> {
+        self.incoming
+            .as_mut()
+            .ok_or(LspError::Protocol("reader unavailable"))?
+            .recv()
+            .await
+            .ok_or(LspError::Protocol("server closed transport"))?
+    }
+
     pub(crate) async fn shutdown_protocol(&mut self, timeout: Duration) -> Result<(), LspError> {
         self.require_ready()?;
         self.closing = true;
@@ -168,11 +229,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         request["id"] = json!(id);
         self.transport.write(&request).await?;
         loop {
-            let message = self
-                .transport
-                .read()
-                .await?
-                .ok_or(LspError::Protocol("server closed transport"))?;
+            let message = self.next_message().await?;
             if message.get("method").is_some() {
                 self.server_message(message).await?;
             } else {
@@ -182,6 +239,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
     }
 
     async fn server_message(&mut self, message: Value) -> Result<(), LspError> {
+        if message.get("result").is_some() || message.get("error").is_some() {
+            return Err(LspError::Protocol("invalid server message envelope"));
+        }
+        check_params(message.get("params").unwrap_or(&Value::Null))?;
         let method = message
             .get("method")
             .and_then(Value::as_str)
@@ -211,6 +272,32 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         self.notification_bytes += bytes;
         self.notifications.push(message);
         Ok(())
+    }
+}
+
+impl<R, W> Drop for StdioClient<R, W> {
+    fn drop(&mut self) {
+        if let Some(task) = self.read_task.take() {
+            task.abort();
+        }
+    }
+}
+
+async fn read_messages<R: AsyncRead + Unpin>(
+    reader: R,
+    sender: mpsc::Sender<Result<Value, LspError>>,
+) {
+    let mut frames = Framed::new(reader, tokio::io::sink());
+    loop {
+        let message = match frames.read().await {
+            Ok(Some(message)) => Ok(message),
+            Ok(None) => Err(LspError::Protocol("server closed transport")),
+            Err(error) => Err(error.into()),
+        };
+        let closed = message.is_err();
+        if sender.send(message).await.is_err() || closed {
+            break;
+        }
     }
 }
 

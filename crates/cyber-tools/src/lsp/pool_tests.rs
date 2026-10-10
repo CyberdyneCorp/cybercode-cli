@@ -312,3 +312,75 @@ async fn cancelled_caller_cannot_dispose_or_replay_an_admitted_worker_request() 
     assert_eq!(handle.status().status, ServerState::Connected);
     assert!(pool.close().await.unwrap()[0].acknowledged);
 }
+
+#[tokio::test]
+async fn idle_diagnostics_and_server_requests_are_consumed_without_a_tool_rpc() {
+    let (root, file) = fixture();
+    let marker = root.path().join("idle-replied");
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        launcher("idle-messages", Arc::new(AtomicUsize::new(0))),
+    )
+    .unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    handle.connected().await.unwrap();
+    wait_for(|| marker.exists()).await;
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "refused");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "fn main() {}\n");
+    let notifications = handle.take_notifications().await.unwrap();
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0]["params"]["version"], 7);
+    assert_eq!(handle.status().status, ServerState::Connected);
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+}
+
+#[tokio::test]
+async fn unsolicited_idle_response_breaks_the_root_and_settles_the_native_owner() {
+    let (root, file) = fixture();
+    let launches = Arc::new(AtomicUsize::new(0));
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        launcher("idle-foreign-response", launches.clone()),
+    )
+    .unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    wait_for(|| handle.status().status == ServerState::Broken).await;
+    assert!(
+        pool.ensure("fixture", &file)
+            .unwrap()
+            .connected()
+            .await
+            .is_err()
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+}
+
+#[tokio::test]
+async fn foreground_command_can_win_during_an_actual_partial_stdout_frame() {
+    for mode in ["partial-idle-header", "partial-idle-body"] {
+        let (root, file) = fixture();
+        let marker = root.path().join("partial-started");
+        let pool = Pool::new(
+            root.path(),
+            vec![server()],
+            launcher(mode, Arc::new(AtomicUsize::new(0))),
+        )
+        .unwrap();
+        let handle = pool.ensure("fixture", &file).unwrap();
+        handle.connected().await.unwrap();
+        wait_for(|| marker.exists()).await;
+        let result = handle
+            .request("fixture", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap();
+        assert_eq!(result["text"], "λ🦀");
+        let notifications = handle.take_notifications().await.unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0]["params"]["version"], 8);
+        assert_eq!(handle.status().status, ServerState::Connected);
+        assert!(pool.close().await.unwrap()[0].acknowledged);
+    }
+}

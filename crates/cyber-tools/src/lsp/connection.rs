@@ -159,6 +159,27 @@ impl StdioConnection {
             .unwrap_or_default()
     }
 
+    pub(crate) async fn next_idle(&mut self) -> Result<Value, LspError> {
+        self.client
+            .as_mut()
+            .ok_or(LspError::Protocol("transport closed"))?
+            .next_idle()
+            .await
+    }
+
+    pub(crate) async fn handle_idle(&mut self, message: Value) -> Result<(), LspError> {
+        let result = self
+            .client
+            .as_mut()
+            .ok_or(LspError::Protocol("transport closed"))?
+            .handle_idle(message)
+            .await;
+        if result.is_err() {
+            self.process.terminate();
+        }
+        result
+    }
+
     pub async fn request(
         &mut self,
         method: &str,
@@ -216,7 +237,6 @@ impl StdioConnection {
                 Ok(Ok(()))
             )
         };
-        drop(self.client.take());
         let acknowledged = if graceful {
             true
         } else {
@@ -226,6 +246,10 @@ impl StdioConnection {
                 Ok(Ok(_))
             )
         };
+        if let Some(client) = self.client.as_mut() {
+            client.stop_reader().await;
+        }
+        drop(self.client.take());
         let (stderr, stderr_truncated) = self.finish_stderr().await;
         Shutdown {
             graceful,

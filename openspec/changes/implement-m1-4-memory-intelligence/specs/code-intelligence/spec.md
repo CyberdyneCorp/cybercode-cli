@@ -1,5 +1,22 @@
 ## ADDED Requirements
 
+### Requirement: Continuous owned LSP message handling
+(P1) An initialized LSP worker SHALL continuously consume bounded server frames while idle, retaining framing-reader ownership independently of command selection. Notifications SHALL remain bounded and untrusted until document/path/version validation. Unsupported server requests SHALL NOT authorize edits; malformed or unsolicited idle responses SHALL break the root.
+
+#### Scenario: Idle message delivery
+- **WHEN** an initialized server publishes diagnostics or sends a server request without a client RPC in progress
+- **THEN** the worker SHALL consume it and retain bounded untrusted notifications or send the supported immutable-root/refusal reply
+
+#### Scenario: Partial frame and command selection
+- **WHEN** another worker event wins while a header or body is only partly read
+- **THEN** the same framing reader SHALL finish that frame without losing bytes or permitting RPC replay
+- **AND** selecting or cancelling an idle inbox wait SHALL NOT dispose framing ownership
+
+#### Scenario: Reader cleanup
+- **WHEN** explicit connection cleanup runs
+- **THEN** overdue native processes SHALL be terminated after the existing three-second grace before the retained reader is aborted and joined
+- **AND** Drop SHALL abort the reader without claiming joined or native completion
+
 ### Requirement: Owned Location language-server pool
 (P1) A Location's language-server pool SHALL freeze resolved definitions for its lifetime and admit matching confined files lazily. Concurrent admissions for the same server and nearest-marker root SHALL share one owned worker. Failed roots SHALL remain broken until service recreation. Closing SHALL fence new starts and retain native settlement ownership across cancellation.
 

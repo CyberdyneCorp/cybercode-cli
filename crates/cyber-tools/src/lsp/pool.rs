@@ -438,18 +438,35 @@ async fn run(
 ) {
     let mut health = tokio::time::interval(Duration::from_millis(100));
     loop {
-        let command = tokio::select! {
+        let event = tokio::select! {
             biased;
             _ = cancel.cancelled() => break,
             _ = health.tick() => {
                 if connection.leader_exited().unwrap_or(true) { break; }
                 continue;
             },
-            command = commands.recv() => match command {Some(c) => c, None => break}
+            command = commands.recv() => match command {Some(c) => Event::Command(c), None => break},
+            message = connection.next_idle() => match message {Ok(message) => Event::Message(message), Err(_) => break}
         };
-        let healthy = tokio::select! { biased; _ = cancel.cancelled() => break, healthy = execute(connection, command) => healthy };
+        let healthy = tokio::select! { biased; _ = cancel.cancelled() => break, healthy = handle_event(connection, event) => healthy };
         if !healthy {
             break;
+        }
+    }
+}
+
+enum Event {
+    Message(Value),
+    Command(Command),
+}
+
+async fn handle_event(connection: &mut StdioConnection, event: Event) -> bool {
+    match event {
+        Event::Command(command) => execute(connection, command).await,
+        Event::Message(message) => {
+            tokio::time::timeout(Duration::from_secs(30), connection.handle_idle(message))
+                .await
+                .is_ok_and(|result| result.is_ok())
         }
     }
 }
