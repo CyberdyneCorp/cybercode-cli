@@ -259,6 +259,7 @@ impl Runtime {
                     },
                 ];
                 let admitted = Admitted {
+                    skill_command: None,
                     admission_bindings: None,
                     wake: false,
                     message_id: message_id.clone(),

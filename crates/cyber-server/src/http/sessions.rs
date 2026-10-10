@@ -476,6 +476,7 @@ async fn prompt(
         return Err(ApiError::invalid("parts must not be empty"));
     }
     let admission = Admission {
+        skill_command: None,
         message_id: body.id,
         parts: body.parts,
         delivery: body.delivery,
@@ -497,23 +498,27 @@ async fn command(
     Path(id): Path<String>,
     Json(b): Json<CommandBody>,
 ) -> Result<Response> {
-    let directory = state.runtime.state(&id).await?.info.directory;
-    let text = state
+    let info = state.runtime.state(&id).await?.info;
+    let turn = crate::runtime::TurnContext {
+        session_id: info.id,
+        directory: info.directory,
+        agent: info.agent,
+        mode: info.mode,
+        prefers_apply_patch: false,
+        rules: info.rules,
+    };
+    let plan = state
         .services
-        .expand_command(std::path::Path::new(&directory), &b.name, &b.arguments)
+        .command_plan(&turn, &b.name, &b.arguments)
+        .await
+        .map_err(ApiError::forbidden)?
         .ok_or_else(|| {
             ApiError::not_found(
                 "CommandNotFoundError",
                 format!("no command or skill named {}", b.name),
             )
         })?;
-    let admission = Admission {
-        message_id: b.id,
-        parts: vec![Content::Text { text }],
-        delivery: b.delivery,
-        source: "user".into(),
-        resume: true,
-    };
+    let admission = plan.admission(b.id, b.delivery);
     let receipt = state.runtime.admit_user(&id, admission).await?;
     Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response())
 }

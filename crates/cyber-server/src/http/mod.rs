@@ -296,6 +296,18 @@ pub trait Services: Send + Sync {
     fn commands(&self, location: &Path) -> Vec<CommandInfo>;
     /// Files and directories under the Location matching `query`, for `@` mentions.
     fn find_files(&self, location: &Path, query: &str, limit: usize) -> Vec<String>;
+    fn command_plan<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        name: &'a str,
+        arguments: &'a str,
+    ) -> BoxFuture<'a, Result<Option<crate::runtime::CommandPlan>, String>> {
+        Box::pin(async move {
+            Ok(self
+                .expand_command(Path::new(&turn.directory), name, arguments)
+                .map(crate::runtime::CommandPlan::plain))
+        })
+    }
     /// Expand a skill or custom command with its arguments into prompt text.
     fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String>;
 }

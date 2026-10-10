@@ -502,6 +502,7 @@ impl Inner {
                 event(
                     ADMITTED,
                     &Admitted {
+                        skill_command: None,
                         admission_bindings: None,
                         wake: false,
                         message_id: message_id.into(),

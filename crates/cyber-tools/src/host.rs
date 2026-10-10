@@ -1,4 +1,5 @@
 //! The built-in tool host (`tool-registry`, `builtin-tools`, `permissions-modes`).
+mod command_skills;
 mod path_skills;
 
 use std::collections::{BTreeMap, HashMap, HashSet};

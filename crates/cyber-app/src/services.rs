@@ -523,6 +523,15 @@ impl Services for AppServices {
         self.host.find_files(location, query, limit)
     }
 
+    fn command_plan<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        name: &'a str,
+        arguments: &'a str,
+    ) -> BoxFuture<'a, Result<Option<cyber_server::runtime::CommandPlan>, String>> {
+        Box::pin(self.host.command_plan(turn, name, arguments))
+    }
+
     fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
         self.host.expand_command(location, name, arguments)
     }

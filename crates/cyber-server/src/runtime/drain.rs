@@ -242,7 +242,7 @@ async fn boundary(
     handle: &Arc<Handle>,
     continue_tools: bool,
 ) -> Result<(PreparedModel, bool), RuntimeError> {
-    let prepared = {
+    let mut prepared = {
         let mut state = handle.state.lock().await;
         let mut selected = inner.resolve_selection(&state.info, &state.model_selection)?;
         if state.mode_default_pending {
@@ -267,15 +267,34 @@ async fn boundary(
             };
             inner.commit_locked(&mut state, vec![event(MODEL_SWITCHED, &payload)])?;
         }
+        if let Some(model) = state.boundary_command_model(continue_tools) {
+            selected = inner.resolve_selection(
+                &state.info,
+                &super::selection::ModelSelection::explicit(model.into()),
+            )?;
+        }
         PreparedModel {
             model: selected.model,
             steps: selected.steps,
             revision: state.selection_revision,
         }
     };
-    let resolved = &prepared.model;
-    inner.ensure_epoch(handle, &resolved.provider).await?;
+    inner.ensure_epoch(handle, &prepared.model.provider).await?;
     let promoted = promote(inner, handle, continue_tools).await?;
+    {
+        let state = handle.state.lock().await;
+        let selection = state
+            .command_model()
+            .map(|model| super::selection::ModelSelection::explicit(model.into()));
+        let selected = inner.resolve_selection(
+            &state.info,
+            selection.as_ref().unwrap_or(&state.model_selection),
+        )?;
+        prepared.model = selected.model;
+        prepared.steps = selected.steps;
+    }
+    inner.ensure_epoch(handle, &prepared.model.provider).await?;
+    let resolved = &prepared.model;
     inner.reconcile_context(handle).await?;
     let requested = handle
         .pending_compaction

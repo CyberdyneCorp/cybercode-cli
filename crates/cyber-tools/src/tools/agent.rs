@@ -203,6 +203,18 @@ fn user_options(spawn: &mut Spawn, input: &Value) -> Result<(), ToolError> {
     Ok(())
 }
 
+async fn effective_parent(runtime: &Runtime, session: &str) -> Result<SessionInfo, ToolError> {
+    let state = runtime
+        .state(session)
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    let mut parent = state.info.clone();
+    if let Some(model) = state.command_model() {
+        parent.model = model.into();
+    }
+    Ok(parent)
+}
+
 pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, ToolError> {
     let runtime = ctx
         .host
@@ -241,11 +253,7 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
         }
         spawn.isolation = isolated;
     }
-    let parent = runtime
-        .state(&ctx.inv.session_id)
-        .await
-        .map_err(|e| failed(e.to_string()))?
-        .info;
+    let parent = effective_parent(&runtime, &ctx.inv.session_id).await?;
     let ancestors = runtime
         .ancestors(&parent)
         .await

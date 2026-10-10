@@ -206,8 +206,38 @@ pub struct CreateSession {
     pub max_steps: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SkillCommand {
+    pub activation: cyber_core::skills::SkillActivation,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandPlan {
+    pub text: String,
+    pub skill: Option<SkillCommand>,
+}
+
+impl CommandPlan {
+    pub fn plain(text: String) -> Self {
+        Self { text, skill: None }
+    }
+    pub fn admission(self, message_id: Option<String>, delivery: Delivery) -> Admission {
+        Admission {
+            skill_command: self.skill,
+            message_id,
+            parts: vec![Content::Text { text: self.text }],
+            delivery,
+            source: "user".into(),
+            resume: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Admission {
+    /// Captured by the trusted command service; public prompt bodies cannot supply this.
+    pub skill_command: Option<SkillCommand>,
     pub message_id: Option<String>,
     pub parts: Vec<Content>,
     pub delivery: Delivery,
@@ -220,6 +250,7 @@ pub struct Admission {
 impl Admission {
     pub fn text(text: impl Into<String>, delivery: Delivery) -> Self {
         Self {
+            skill_command: None,
             message_id: None,
             parts: vec![Content::Text { text: text.into() }],
             delivery,
@@ -698,7 +729,11 @@ impl Runtime {
             .message_id
             .clone()
             .unwrap_or_else(|| cyber_core::ids::new_id("msg"));
-        let digest = digest(&admission.parts, admission.delivery);
+        let digest = digest(
+            &admission.parts,
+            admission.delivery,
+            admission.skill_command.as_ref(),
+        );
         let receipt = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
@@ -710,6 +745,7 @@ impl Runtime {
                 return Err(RuntimeError::Busy(session_id.into()));
             }
             let payload = Admitted {
+                skill_command: admission.skill_command,
                 admission_bindings,
                 wake: state.info.parent_id.is_some()
                     && admission.resume
@@ -1242,8 +1278,11 @@ fn default_title() -> String {
     )
 }
 
-fn digest(parts: &[Content], delivery: Delivery) -> String {
-    let body = serde_json::json!({ "parts": parts, "delivery": delivery });
+fn digest(parts: &[Content], delivery: Delivery, skill: Option<&SkillCommand>) -> String {
+    let mut body = serde_json::json!({ "parts": parts, "delivery": delivery });
+    if let Some(skill) = skill {
+        body["skill_command"] = serde_json::to_value(skill).expect("serializable skill command");
+    }
     format!("sha256:{:x}", Sha256::digest(body.to_string()))
 }
 

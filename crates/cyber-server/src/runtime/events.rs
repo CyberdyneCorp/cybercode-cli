@@ -127,6 +127,8 @@ pub struct Created {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Admitted {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_command: Option<super::SkillCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) admission_bindings: Option<Vec<super::admission_authority::Binding>>,
     /// Child input requested dispatch; absent historical records remain explicitly deferred.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

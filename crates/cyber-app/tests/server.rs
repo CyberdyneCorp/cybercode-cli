@@ -1890,3 +1890,116 @@ async fn command_catalog_api_exposes_location_provenance_without_template_values
     server.await.unwrap().unwrap();
     application.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn authenticated_skill_commands_capture_declarations_and_refuse_denials() {
+    use serde_json::json;
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join(".git")).unwrap();
+    let application = app(tmp.path()).await;
+    let mut config = json!({"sandbox":{"policy":"full-access"},"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{},"skill":{}}}}});
+    std::fs::write(
+        application.paths.config.join("cyber.json"),
+        config.to_string(),
+    )
+    .unwrap();
+    let skill = tmp.path().join(".cyber/skills/release");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"),"---\nname: release\ndescription: Release changes\nmodel: test/skill\ndisable-model-invocation: true\nallowed-tools: ['write:*']\n---\nRelease $ARGUMENTS\n").unwrap();
+    let info = application
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: tmp.path().display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!(
+        "http://{}/api/v1/sessions/{}",
+        listener.local_addr().unwrap(),
+        info.id
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let body = json!({"id":"msg_skill_http","name":"release","arguments":"v1","delivery":"hold","skill_command":{"model":"test/main"}});
+    assert_eq!(
+        client
+            .post(format!("{base}/command"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let response = client
+        .post(format!("{base}/command"))
+        .basic_auth("cyber", Some("test-password-123456"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    let receipt: serde_json::Value = response.json().await.unwrap();
+    application.runtime.wait_idle(&info.id).await;
+    let state = application.runtime.state(&info.id).await.unwrap();
+    assert_eq!(
+        state.inbox[0].parts[0],
+        cyber_llm::Content::Text {
+            text: "Release v1\n".into()
+        }
+    );
+    let captured = state.inbox[0].skill_command.as_ref().unwrap();
+    assert_eq!(captured.model.as_deref(), Some("test/skill"));
+    assert_eq!(captured.activation.allowed_tools, ["write:*"]);
+    assert_eq!(state.info.model, "test/main");
+    assert!(state.entries.is_empty());
+    let duplicate = client
+        .post(format!("{base}/command"))
+        .basic_auth("cyber", Some("test-password-123456"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(
+        duplicate.json::<serde_json::Value>().await.unwrap(),
+        receipt
+    );
+    let prompt = client.post(format!("{base}/prompt")).basic_auth("cyber",Some("test-password-123456")).json(&json!({"id":"msg_spoofed_command","parts":[{"type":"text","text":"plain"}],"delivery":"hold","resume":false,"skill_command":{"activation":{"name":"release","allowed_tools":["write:*"],"disallowed_tools":[]}}})).send().await.unwrap();
+    assert_eq!(prompt.status(), reqwest::StatusCode::ACCEPTED);
+    let state = application.runtime.state(&info.id).await.unwrap();
+    assert!(state.inbox[1].skill_command.is_none());
+    let before = state.last_seq;
+    config["permissions"] = json!({"skill":{"release":"deny"}});
+    std::fs::write(
+        application.paths.config.join("cyber.json"),
+        config.to_string(),
+    )
+    .unwrap();
+    let denied = client
+        .post(format!("{base}/command"))
+        .basic_auth("cyber", Some("test-password-123456"))
+        .json(&json!({"id":"msg_denied_command","name":"release","delivery":"hold"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_eq!(
+        application.runtime.state(&info.id).await.unwrap().last_seq,
+        before
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    application.runtime.shutdown().await;
+}

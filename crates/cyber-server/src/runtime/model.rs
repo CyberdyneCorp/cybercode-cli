@@ -32,6 +32,8 @@ pub enum InputStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxRow {
+    #[serde(skip)]
+    pub skill_command: Option<super::SkillCommand>,
     pub message_id: String,
     pub parts: Vec<Content>,
     pub delivery: Delivery,
@@ -346,11 +348,69 @@ impl SessionState {
         {
             return Vec::new();
         }
-        self.calls
+        let mut scopes: Vec<_> = self
+            .calls
             .values()
             .filter(|call| call.status == CallStatus::Ok && call.message_id == message)
             .filter_map(|call| call.skill_activation.clone())
-            .collect()
+            .collect();
+        if let Some(row) = self.current_command_row() {
+            let first = self
+                .steps
+                .iter()
+                .find(|step| step.user_message_id.as_deref() == Some(&row.message_id));
+            if first.is_some_and(|step| step.step_id == message) {
+                scopes.push(
+                    row.skill_command
+                        .as_ref()
+                        .expect("command row")
+                        .activation
+                        .clone(),
+                );
+            }
+        }
+        scopes
+    }
+
+    fn current_command_row(&self) -> Option<&InboxRow> {
+        let message = self.current_user_message()?;
+        self.inbox
+            .iter()
+            .find(|row| row.message_id == message && row.skill_command.is_some())
+    }
+
+    pub(crate) fn boundary_command_model(&self, continue_tools: bool) -> Option<&str> {
+        let pending = self.pending(Delivery::Steer).last().or_else(|| {
+            (!continue_tools)
+                .then(|| self.pending(Delivery::Queue).next())
+                .flatten()
+        });
+        match pending {
+            Some(row) => row.skill_command.as_ref()?.model.as_deref(),
+            None => self.command_model(),
+        }
+    }
+
+    /// A command model applies through its tool loop, then expires at its final text reply.
+    pub fn command_model(&self) -> Option<&str> {
+        let row = self.current_command_row()?;
+        let user = self
+            .entries
+            .iter()
+            .position(|entry| entry.id() == row.message_id)?;
+        let last = self
+            .entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, entry)| match entry {
+                Entry::Assistant(assistant) if index > user => Some(assistant),
+                _ => None,
+            });
+        if last.is_some_and(|assistant| assistant.finished && assistant.calls.is_empty()) {
+            return None;
+        }
+        row.skill_command.as_ref()?.model.as_deref()
     }
 
     pub fn child_worktree_setup_pending(&self) -> bool {
@@ -720,6 +780,7 @@ impl SessionState {
             InputStatus::Pending
         };
         self.inbox.push(InboxRow {
+            skill_command: a.skill_command,
             message_id: a.message_id,
             parts: a.parts,
             delivery: a.delivery,

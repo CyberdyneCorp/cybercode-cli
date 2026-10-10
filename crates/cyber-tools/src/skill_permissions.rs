@@ -31,9 +31,52 @@ pub(crate) fn scope_rules(state: &SessionState, message: Option<&str>) -> Vec<Ru
         .collect()
 }
 
+pub(crate) fn tool_denial(rules: &[Rule], tool: &str) -> Option<String> {
+    rules
+        .iter()
+        .find(|rule| {
+            rule.effect == Effect::Deny
+                && rule.resource == "*"
+                && rule
+                    .tool_pattern
+                    .as_deref()
+                    .is_some_and(|pattern| cyber_core::wildcard::matches(pattern, tool))
+        })
+        .map(|_| format!("Skill disallows tool: {tool}"))
+}
+
 impl BuiltinHost {
     pub(crate) async fn check_skill_tool(&self, inv: &Invocation) -> Result<(), String> {
-        match self.policy(inv).await?.skill_tool_denial(&inv.name) {
+        let mut rules = self.skill_scope_rules(inv).await?;
+        let page = self
+            .opts
+            .store
+            .read_events(&inv.session_id, -1, 1)
+            .map_err(|error| error.to_string())?;
+        if !page.events.is_empty() {
+            let info = SessionState::replay(&page.events)?.info;
+            if info.parent_id.is_some() {
+                let runtime = self
+                    .runtime()
+                    .ok_or("Parent permission resolution requires the runtime")?;
+                for parent in runtime
+                    .ancestors(&info)
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
+                    let state = runtime
+                        .state(&parent.id)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    rules.extend(
+                        scope_rules(&state, None)
+                            .into_iter()
+                            .filter(|rule| rule.effect == Effect::Deny),
+                    );
+                }
+            }
+        }
+        match tool_denial(&rules, &inv.name) {
             Some(reason) => Err(reason),
             None => Ok(()),
         }

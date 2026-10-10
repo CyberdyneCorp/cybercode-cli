@@ -26,7 +26,11 @@ impl Runtime {
             .message_id
             .get_or_insert_with(|| cyber_core::ids::new_id("msg"))
             .clone();
-        let digest = digest(&admission.parts, admission.delivery);
+        let digest = digest(
+            &admission.parts,
+            admission.delivery,
+            admission.skill_command.as_ref(),
+        );
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
             return Ok(receipt);
         }
@@ -80,6 +84,7 @@ impl Runtime {
                 event(
                     ADMITTED,
                     &Admitted {
+                        skill_command: admission.skill_command,
                         admission_bindings: prepared.admission_bindings(),
                         wake: true,
                         message_id: message.clone(),

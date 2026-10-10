@@ -369,17 +369,7 @@ const PLAN_DENY: &str = "Plan mode is read-only. Present the plan with plan_exit
 
 impl Policy {
     pub(crate) fn skill_tool_denial(&self, tool: &str) -> Option<String> {
-        self.rules
-            .iter()
-            .find(|rule| {
-                rule.effect == Effect::Deny
-                    && rule.resource == "*"
-                    && rule
-                        .tool_pattern
-                        .as_deref()
-                        .is_some_and(|pattern| matches(pattern, tool))
-            })
-            .map(|_| format!("Skill disallows tool: {tool}"))
+        crate::skill_permissions::tool_denial(&self.rules, tool)
     }
 
     pub fn decide(&self, req: &Request) -> Decision {
