@@ -190,6 +190,11 @@ async fn closing_cancels_a_stalled_initialize_and_acknowledges_the_real_process(
 #[tokio::test]
 async fn cancelled_close_retains_join_handles_and_keepalives_until_settlement() {
     struct Resource(Arc<AtomicUsize>);
+    impl ResourceLease for Resource {
+        fn close(&mut self) -> BoxFuture<'_, bool> {
+            Box::pin(async { true })
+        }
+    }
     impl Drop for Resource {
         fn drop(&mut self) {
             self.0.fetch_add(1, Ordering::SeqCst);
@@ -225,6 +230,63 @@ async fn cancelled_close_retains_join_handles_and_keepalives_until_settlement() 
     assert!(stop[0].acknowledged);
     assert_eq!(released.load(Ordering::SeqCst), 1);
     assert_eq!(pool.close().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn pool_settlement_waits_for_resources_after_normal_and_failed_startup() {
+    struct Resource {
+        permit: tokio::sync::oneshot::Receiver<()>,
+        entered: Arc<AtomicUsize>,
+        released: Arc<AtomicUsize>,
+    }
+    impl ResourceLease for Resource {
+        fn close(&mut self) -> BoxFuture<'_, bool> {
+            Box::pin(async move {
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                (&mut self.permit).await.is_ok()
+            })
+        }
+    }
+    impl Drop for Resource {
+        fn drop(&mut self) {
+            self.released.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    for mode in ["normal", "reject"] {
+        let (root, file) = fixture();
+        let (permit, receiver) = tokio::sync::oneshot::channel();
+        let entered = Arc::new(AtomicUsize::new(0));
+        let released = Arc::new(AtomicUsize::new(0));
+        let resource = Arc::new(Mutex::new(Some(Resource {
+            permit: receiver,
+            entered: entered.clone(),
+            released: released.clone(),
+        })));
+        let launch: LaunchFn = Arc::new(move |_, _| {
+            let resource = resource.lock().unwrap().take().unwrap();
+            Box::pin(async move {
+                Ok(AuthorizedProcess {
+                    process: super::super::connection::tests::process(mode).await,
+                    keepalive: Box::new(resource),
+                })
+            })
+        });
+        let pool = Pool::new(root.path(), vec![server()], launch).unwrap();
+        let connected = pool.ensure("fixture", &file).unwrap().connected().await;
+        assert_eq!(connected.is_ok(), mode == "normal");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), pool.close())
+                .await
+                .is_err()
+        );
+        wait_for(|| entered.load(Ordering::SeqCst) == 1).await;
+        assert_eq!(released.load(Ordering::SeqCst), 0);
+        permit.send(()).unwrap();
+        assert!(pool.close().await.unwrap()[0].acknowledged);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert!(pool.close().await.unwrap()[0].acknowledged);
+        assert_eq!(entered.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[tokio::test]

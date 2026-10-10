@@ -1,5 +1,23 @@
 ## ADDED Requirements
 
+### Requirement: Trusted local language-server launch
+(P1) Local LSP launch SHALL reload trust-filtered configuration, bind its canonical Location/root and refuse definitions or executables differing from the selected generation. It SHALL use shared sandbox enforcement and credential masking, prevent configured proxy/temp transport overrides, and retain process and proxy-resource settlement ownership.
+
+#### Scenario: Fresh launch admission
+- **WHEN** selected definitions change, checkout trust is revoked, the root leaves its Location or launch is cancelled before spawn
+- **THEN** native execution SHALL be refused with diagnostics excluding supplied secrets
+- **AND** fresh admission after preparation SHALL refuse changed resolved values, provenance or trust
+
+#### Scenario: Enforced native launch
+- **WHEN** a local server launches under workspace-write or read-only policy
+- **THEN** the shared sandbox SHALL enforce workspace/protected/unreadable roots, ambient provider/catalog credential masking and managed proxy/temp environment
+- **AND** unsupported enforced platforms SHALL remain fenced rather than silently opting out
+
+#### Scenario: Owned proxy disposal
+- **WHEN** native process settlement completes
+- **THEN** the same retained resource lease SHALL close and join owned proxy transports before successful pool settlement
+- **AND** interrupted resource waits SHALL retain their join handle and failed acknowledgement SHALL NOT become success on retry
+
 ### Requirement: Continuous owned LSP message handling
 (P1) An initialized LSP worker SHALL continuously consume bounded server frames while idle, retaining framing-reader ownership independently of command selection. Notifications SHALL remain bounded and untrusted until document/path/version validation. Unsupported server requests SHALL NOT authorize edits; malformed or unsolicited idle responses SHALL break the root.
 

@@ -28,7 +28,17 @@ pub struct LaunchRequest {
 /// The caller grants launch authority and retains sandbox/proxy resources here.
 pub struct AuthorizedProcess {
     pub process: HookCommandProcess,
-    pub keepalive: Box<dyn Send>,
+    pub keepalive: Box<dyn ResourceLease>,
+}
+
+/// Explicit resource settlement follows native process settlement; Drop grants no acknowledgement.
+pub trait ResourceLease: Send {
+    fn close(&mut self) -> BoxFuture<'_, bool>;
+}
+impl ResourceLease for () {
+    fn close(&mut self) -> BoxFuture<'_, bool> {
+        Box::pin(async { true })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -372,7 +382,7 @@ async fn serve(
         root: request.root.clone(),
         acknowledged: false,
     };
-    let (mut connection, keepalive) =
+    let (mut connection, mut keepalive) =
         match startup(&request, &launcher, &cancel, &status, initialize_timeout).await {
             Ok(resources) => resources,
             Err(acknowledged) => {
@@ -387,6 +397,7 @@ async fn serve(
     run(&mut connection, &cancel, commands).await;
     status.send_modify(|s| s.status = ServerState::Broken);
     settle_connection(&mut connection).await;
+    settle_resources(&mut *keepalive).await;
     drop(keepalive);
     Settlement {
         acknowledged: true,
@@ -394,7 +405,7 @@ async fn serve(
     }
 }
 
-type ConnectionResources = (StdioConnection, Box<dyn Send>);
+type ConnectionResources = (StdioConnection, Box<dyn ResourceLease>);
 
 async fn startup(
     request: &LaunchRequest,
@@ -403,7 +414,10 @@ async fn startup(
     status: &watch::Sender<ServerStatus>,
     initialize_timeout: Duration,
 ) -> Result<ConnectionResources, bool> {
-    let AuthorizedProcess { process, keepalive } = launcher(request.clone(), cancel.clone())
+    let AuthorizedProcess {
+        process,
+        mut keepalive,
+    } = launcher(request.clone(), cancel.clone())
         .await
         .map_err(|error| error.acknowledged)?;
     let connected = StdioConnection::connect_with_cancellation(
@@ -426,8 +440,15 @@ async fn startup(
             while !error.retry_shutdown().await {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
+            settle_resources(&mut *keepalive).await;
             Err(true)
         }
+    }
+}
+
+async fn settle_resources(resources: &mut dyn ResourceLease) {
+    while !resources.close().await {
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

@@ -53,7 +53,10 @@ jobs:
         run: cargo test --locked -p cyber-app --test intelligence
       - name: Native LSP transport framing
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-tools --test lsp_transport --test lsp_client --test lsp_pool --test lsp_idle
+        run: cargo test --locked -p cyber-tools --test lsp_transport --test lsp_client --test lsp_pool --test lsp_idle --test lsp_launch
+      - name: Native LSP resource settlement
+        if: ${{ !cancelled() }}
+        run: 'cargo test --locked -p cyber-tools --lib lsp::launch::tests::'
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: 'cargo test --locked -p cyber-core --lib memory::'
