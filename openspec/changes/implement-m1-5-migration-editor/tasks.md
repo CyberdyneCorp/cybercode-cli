@@ -10,6 +10,7 @@
   - [ ] Implement unsupported-source reporting, complete Codex policies/profiles/sandbox mapping and finish remaining source permission/default/home mappings.
 - [ ] Discover every canonical Claude/Codex/OpenCode project/global source, including auto precedence and detection summaries.
   - [x] Inventory static project/global sources with explicit roots, typed provenance, root-to-Location layering, auto-tool ordering, skill assets/manual-port files, deduplicated custom homes, linked-source issues and traversal limits. Content reads/custom referenced paths/full summaries remain open.
+  - [ ] Resolve Windows retained-handle ancestor-rename failures using isolated directory/file probes and native evidence; evaluate a test-only read-only section without relaxing directory/empty-file liveness or original replacement assertions.
   - [x] Add bounded inventory-admitted source snapshots with no-follow directory handles, native identities, content verification and replacement/link/privacy tests. Native Windows execution and destination transactions remain open.
   - [x] Expose read-only CLI detection and parsed raw definition counts for static JSON/JSONC/TOML sources, with unknown session/compatibility coverage and explicit incomplete flags.
   - [ ] Resolve config-referenced custom sources and finish detection counts/read-time/session status and first-run TUI offer.

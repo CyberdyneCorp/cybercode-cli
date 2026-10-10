@@ -113,3 +113,10 @@ Migration proposals currently emit ordered rules under `permissions.rules`. Dire
 ### Visible typed compaction counts
 
 The migration review must show the numeric compaction keep count. Preserve only a nonnegative integer at the exact native `/compaction/keep/tokens` pointer during config redaction; credential-shaped strings and any header-forced context remain masked. A direct unchanged-main redactor regression must fail before the edit. This avoids turning every key containing `token` into displayable data and lets existing normalized diff/comparison rendering share the same rule.
+
+
+## Isolated Windows ancestor-rename experiments
+
+Run directory-self, child-directory and child-file metadata retention cases independently, preserving the original combined backend and public snapshot assertions. Each requires ordinary `std::fs::rename` to succeed while its isolated retained object remains live, with full identity checked before and after the move. Failures identify which handle class blocks moves; they do not grant acceptance.
+
+A test-only unnamed read-only section probe closes its original data handle before an ancestor rename, checks the moved file identity, and distinguishes a recreated same-content source while the section stays live. [CreateFileMappingW](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw) documents read-only protection, existing-length sizing, unnamed objects and zero-length refusal. No mapped view, source mutation or production retention change is introduced. A passing probe would still not prove identity liveness against reuse, directory retention, empty-file support or complete snapshot safety. The full no-follow chain, native identifiers, live identity retention and namespace/content replacement checks remain required.

@@ -1,5 +1,13 @@
 # P1 implementation status
 
+## Isolated Windows rename probes (2026-10-10)
+
+The current main run 38075107826 reproduces the Windows blocker: [metadata artifact 11677339654](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38075107826/artifacts/11677339654) fails the original combined retention test with access denied 5; [snapshot artifact 11677729025](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38075107826/artifacts/11677729025) has four passes and the same five ancestor/directory rename failures. These logs were downloaded and inspected, rather than inferred from job status.
+
+New Windows-only probes separate directory-self, child-directory and child-file retention through ordinary ancestor moves, checking full identities before and after. A fourth test evaluates an unnamed read-only file section after closing the original data handle, without mapping views or modifying source data. The section is test-only and cannot yet cover empty files, directory retention or prove resistance to identity reuse. Production snapshot retention and the original combined/public assertions stay intact; no failure is ignored. Existing CI runs all backend probes and immediately uploads their log independently of the public snapshot suite. Native compilation/execution of these probes remains required.
+
+Local snapshot and CI-contract tests pass (11 total). Strict OpenSpec validation passes all 60 items; cross-spec lint has zero errors and 21 warnings. SDK/inventory checks pass with 47 capabilities and 817 requirements, including all 225 P1 contracts. No P1 milestone is accepted; P0 baseline services, models and artifacts remain preserved.
+
 ## Inline OpenCode agents, compaction and permission integration (2026-10-10)
 
 Read-only previews now convert bounded custom inline `agent`/`agents` profiles: descriptions, static system prompts, explicit modes, qualified model/variant selection, visibility/disabled flags, color and positive steps. V1 prompt/disable/maxSteps aliases normalize to native fields. Custom v1 agents default to `all`; custom v2 agents default to `primary`. Agent permissions use the existing strict source converter. V2 global and per-agent permission arrays append across source layers while raw provenance keeps each layer's original indices. Explicit compaction auto/buffer and legacy `preserve_recent_tokens` or current `keep.tokens` map to runtime settings without inferring omitted defaults.
