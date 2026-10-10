@@ -308,10 +308,17 @@ mod tests {
     }
     impl Fixture {
         fn new() -> Self {
+            Self::with_disk(false)
+        }
+        fn with_disk(disk: bool) -> Self {
             let root = tempfile::tempdir().unwrap();
             let db = Arc::new(
                 Store::open(cyber_store::StoreOptions::new(
-                    cyber_core::paths::DatabaseLocation::Memory,
+                    if disk {
+                        cyber_core::paths::DatabaseLocation::File(root.path().join("events.db"))
+                    } else {
+                        cyber_core::paths::DatabaseLocation::Memory
+                    },
                     super::super::super::Runtime::registry(),
                 ))
                 .unwrap(),
@@ -355,6 +362,157 @@ mod tests {
         fn review(&self, storage: &MemoryRecoveryReview) -> MemoryRecoveryAdmission {
             review(&self.db, self.root.path(), "global", &storage.journal).unwrap()
         }
+    }
+
+    fn reopen_disk(root: tempfile::TempDir) -> Fixture {
+        let db = Arc::new(
+            Store::open(cyber_store::StoreOptions::new(
+                cyber_core::paths::DatabaseLocation::File(root.path().join("events.db")),
+                crate::runtime::Runtime::registry(),
+            ))
+            .unwrap(),
+        );
+        assert_eq!(db.durability(), cyber_store::Durability::Full);
+        let memory = MemoryStore::existing(root.path(), "global")
+            .unwrap()
+            .unwrap();
+        Fixture {
+            root,
+            db,
+            memory,
+            bus: Bus::new(),
+        }
+    }
+
+    fn close_disk(f: Fixture) -> tempfile::TempDir {
+        let Fixture {
+            root,
+            db,
+            memory,
+            bus,
+        } = f;
+        drop(memory);
+        drop(bus);
+        drop(db);
+        root
+    }
+
+    #[test]
+    fn real_journal_and_receipt_reopen_before_and_after_acknowledgement() {
+        for acknowledged in [false, true] {
+            verify_disk_reopening(acknowledged);
+        }
+    }
+
+    fn verify_disk_reopening(acknowledged: bool) {
+        let f = Fixture::with_disk(true);
+        let prepared_review = f.prepare();
+        if acknowledged {
+            acknowledge_without_archival(&f, &prepared_review);
+        }
+        let f = reopen_disk(close_disk(f));
+        let mut scope = f.memory.claim().unwrap();
+        let storage = scope.inspect_recovery().unwrap().unwrap();
+        assert_eq!(storage.journal, prepared_review.journal);
+        let admission = f.review(&storage);
+        assert_eq!(admission.completed.is_some(), acknowledged);
+        let identity = MemoryRecoveryIdentity {
+            key: "disk-paired-review".into(),
+            digest: "d".repeat(64),
+        };
+        let mut live = f.bus.subscribe();
+        let change = recover_with_identity(
+            f.db.clone(),
+            f.bus.clone(),
+            &mut scope,
+            &storage,
+            &admission,
+            Some(&identity),
+        )
+        .unwrap();
+        assert_eq!(change.receipt, prepared_review.receipt);
+        assert_eq!(scope.read("policy").unwrap().body, "Fact");
+        assert!(scope.inspect_recovery().unwrap().is_none());
+        assert_eq!(
+            std::fs::read_dir(f.memory.path().join(".memory-history"))
+                .unwrap()
+                .count(),
+            1
+        );
+        if !acknowledged {
+            assert!(matches!(
+                live.try_recv().unwrap(),
+                LiveEvent::MemoryUpdated { .. }
+            ));
+        }
+        assert!(live.try_recv().is_err());
+        let events = f.db.read_events(&change.id, -1, 20).unwrap().events;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e.kind == super::super::UPDATED)
+                .count(),
+            1
+        );
+        drop(scope);
+        verify_disk_receipt_replay(f, &storage, &admission, &identity, &change, events.len());
+    }
+
+    fn acknowledge_without_archival(f: &Fixture, prepared_review: &MemoryRecoveryReview) {
+        let admission = f.review(prepared_review);
+        let MemoryAdmission::Owned(owner) = claim(f.db.clone(), f.bus.clone(), &admission).unwrap()
+        else {
+            panic!("fresh owner")
+        };
+        let mut scope = f.memory.claim().unwrap();
+        assert!(
+            scope
+                .recover_reviewed_with_acknowledgement(&prepared_review.fingerprint, |receipt| {
+                    owner.finish(receipt.clone()).unwrap();
+                    Err(MemoryStorageError::RecoveryRequired)
+                })
+                .is_err()
+        );
+        assert!(scope.inspect_recovery().unwrap().unwrap().completed);
+    }
+
+    fn verify_disk_receipt_replay(
+        f: Fixture,
+        storage: &MemoryRecoveryReview,
+        admission: &MemoryRecoveryAdmission,
+        identity: &MemoryRecoveryIdentity,
+        change: &MemoryChange,
+        event_count: usize,
+    ) {
+        let f = reopen_disk(close_disk(f));
+        let mut scope = f.memory.claim().unwrap();
+        let mut live = f.bus.subscribe();
+        assert_eq!(
+            recover_with_identity(
+                f.db.clone(),
+                f.bus.clone(),
+                &mut scope,
+                storage,
+                admission,
+                Some(identity),
+            )
+            .unwrap(),
+            change.clone()
+        );
+        assert_eq!(
+            f.db.read_events(&change.id, -1, 20).unwrap().events.len(),
+            event_count
+        );
+        assert_eq!(lookup(&f.db, &f.write()).unwrap(), Some(change.clone()));
+        assert!(scope.inspect_recovery().unwrap().is_none());
+        assert_eq!(scope.read("policy").unwrap().body, "Fact");
+        assert_eq!(
+            std::fs::read_dir(f.memory.path().join(".memory-history"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert!(live.try_recv().is_err());
     }
 
     #[test]

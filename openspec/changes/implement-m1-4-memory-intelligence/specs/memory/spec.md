@@ -510,3 +510,8 @@
 - **THEN** core storage write/delete, conditional edits and reviewed recovery SHALL use that native protocol on Windows, preserving scope isolation and user edits
 - **AND** actual SQLite admission/receipt/reviewed-recovery tests SHALL execute on Windows, including stale ownership/review refusal, acknowledged-but-unarchived replay without another event and copied native journal context refusal
 - **AND** application, CLI and model-tool mutation admission SHALL keep independent gates until their coupled native lifecycle acceptance; core publication SHALL not claim full P1 or application/database acceptance
+
+#### Scenario: Real memory journal and SQLite receipt survive reopening
+- **WHEN** both the file-backed database and memory store reopen with a bound prepared journal, either before acknowledgement or after a committed receipt but before archival
+- **THEN** fresh paired review SHALL recover the original journal receipt and archive once, publish only a newly committed acknowledgement, and preserve the installed note
+- **AND** reopening again SHALL replay the durable keyed receipt without another memory event or journal; this graceful reopening evidence SHALL not substitute for actual process-death evidence
