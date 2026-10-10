@@ -119,6 +119,9 @@ jobs:
       - name: Native delegation receipt reconciliation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test delegation_recovery
+      - name: Native reviewer skill selection and ceilings
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test reviewer_skills
       - name: Native forked skill execution
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test forked_skills

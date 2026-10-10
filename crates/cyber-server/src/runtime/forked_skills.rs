@@ -84,10 +84,13 @@ impl Runtime {
             session,
             &id,
             UserSubtask {
+                agent: row
+                    .skill_command
+                    .as_ref()
+                    .and_then(|skill| skill.agent.clone()),
                 skill_command: row.skill_command,
                 admission_id: None,
                 prompt,
-                agent: None,
                 attachments: Vec::new(),
                 max_steps: None,
             },

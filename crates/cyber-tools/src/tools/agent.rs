@@ -229,6 +229,9 @@ pub(crate) async fn fork_skill(
     let mut inv = ctx.inv.clone();
     inv.name = "agent".into();
     inv.input = json!({"prompt":body,"fork":true,"background":true,"description":format!("Run {} skill task", skill.name)});
+    if let Some(agent) = &skill.agent {
+        inv.input["agent"] = agent.clone().into();
+    }
     if let Some(model) = &skill.model {
         inv.input["model"] = model.clone().into();
     }
@@ -248,6 +251,7 @@ pub(crate) async fn fork_skill(
         &child_ctx,
         false,
         Some(cyber_server::runtime::SkillCommand {
+            agent: skill.agent.clone(),
             fork: false,
             activation: cyber_core::skills::SkillActivation {
                 name: skill.name.clone(),

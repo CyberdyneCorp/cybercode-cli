@@ -71,6 +71,7 @@ impl BuiltinHost {
                 cyber_core::skills::expand(&skill.body, arguments)
             },
             skill: Some(SkillCommand {
+                agent: skill.agent.clone(),
                 fork: skill.context == cyber_core::skills::SkillContext::Fork,
                 activation: cyber_core::skills::SkillActivation {
                     name: skill.name.clone(),

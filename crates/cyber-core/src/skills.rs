@@ -42,6 +42,7 @@ pub struct Skill {
     pub disallowed_tools: Vec<String>,
     pub paths: Vec<String>,
     pub context: SkillContext,
+    pub agent: Option<String>,
     pub model: Option<String>,
     pub disable_model_invocation: bool,
     pub user_invocable: bool,
@@ -72,6 +73,7 @@ struct Frontmatter {
     paths: Vec<String>,
     #[serde(default)]
     context: SkillContext,
+    agent: Option<String>,
     model: Option<String>,
     #[serde(default)]
     disable_model_invocation: bool,
@@ -176,6 +178,14 @@ pub fn load(dir: &Path) -> Result<Skill, String> {
     let fm: Frontmatter =
         serde_yaml_ng::from_str(yaml).map_err(|e| format!("invalid frontmatter: {e}"))?;
     validate_name(&fm.name)?;
+    if let Some(agent) = &fm.agent
+        && (fm.context != SkillContext::Fork
+            || agent.trim().is_empty()
+            || agent.len() > 128
+            || agent.chars().any(char::is_control))
+    {
+        return Err("agent must be a bounded name on a forked skill".into());
+    }
     if fm.description.trim().is_empty() || fm.description.chars().count() > 1024 {
         return Err("description must be 1-1024 characters".into());
     }
@@ -207,6 +217,7 @@ pub fn load(dir: &Path) -> Result<Skill, String> {
         disallowed_tools,
         paths: fm.paths,
         context: fm.context,
+        agent: fm.agent,
         model: fm.model,
         disable_model_invocation: fm.disable_model_invocation,
         user_invocable: fm.user_invocable.unwrap_or(true),
@@ -390,6 +401,34 @@ fn regex_lite_positions(template: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_agent_selection_is_bounded_and_inline_selectors_are_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        for (header, valid) in [
+            ("context: fork\nagent: reviewer\n", true),
+            ("context: fork\nagent: 'audit reviewer'\n", true),
+            ("agent: reviewer\n", false),
+            ("context: fork\nagent: ''\n", false),
+            ("context: fork\nagent: \"\\n\"\n", false),
+        ] {
+            std::fs::write(
+                tmp.path().join("SKILL.md"),
+                format!("---\nname: audit\ndescription: Audit\n{header}---\nInstructions\n"),
+            )
+            .unwrap();
+            assert_eq!(load(tmp.path()).is_ok(), valid, "{header}");
+        }
+        std::fs::write(
+            tmp.path().join("SKILL.md"),
+            format!(
+                "---\nname: audit\ndescription: Audit\ncontext: fork\nagent: '{}'\n---\nBody\n",
+                "x".repeat(129)
+            ),
+        )
+        .unwrap();
+        assert!(load(tmp.path()).unwrap_err().contains("agent must"));
+    }
 
     #[test]
     fn context_defaults_to_inline_and_refuses_unknown_execution_modes() {

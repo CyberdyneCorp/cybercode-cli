@@ -209,6 +209,8 @@ pub struct CreateSession {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SkillCommand {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fork: bool,
     pub activation: cyber_core::skills::SkillActivation,

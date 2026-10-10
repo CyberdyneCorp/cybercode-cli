@@ -19,7 +19,7 @@ pub struct AgentProfile {
     pub name: String,
     #[serde(skip_deserializing)]
     pub builtin: bool,
-    /// Built-in explore's filesystem ceiling; a model patch cannot remove it.
+    /// Built-in exploration/review identity; a model patch cannot remove it.
     #[serde(skip_deserializing)]
     pub read_only: bool,
     pub description: String,
@@ -83,7 +83,7 @@ pub fn resolve_agents(config: &Value) -> Result<BTreeMap<String, AgentProfile>, 
         let mut profile: AgentProfile =
             serde_json::from_value(value).map_err(|error| format!("agents.{name}: {error}"))?;
         profile.builtin = builtin_agent(&name);
-        profile.read_only = name == "explore";
+        profile.read_only = matches!(name.as_str(), "explore" | "reviewer");
         profile.name = name.clone();
         resolved.insert(name, profile);
     }
@@ -91,7 +91,7 @@ pub fn resolve_agents(config: &Value) -> Result<BTreeMap<String, AgentProfile>, 
 }
 
 fn builtin_agent(name: &str) -> bool {
-    matches!(name, "build" | "explore" | "general") || system_agent(name)
+    matches!(name, "build" | "explore" | "general" | "reviewer") || system_agent(name)
 }
 
 fn system_agent(name: &str) -> bool {
@@ -107,6 +107,11 @@ fn builtins() -> BTreeMap<String, Value> {
         (
             "explore".into(),
             json!({"description":"Explore code and answer questions without changing files", "mode":"subagent", "steps":50,
+            "tools":{"allow":["read","glob","grep","webfetch","websearch","bash"]}}),
+        ),
+        (
+            "reviewer".into(),
+            json!({"description":"Review changes and report structured findings without modifying files", "mode":"subagent", "permission_mode":"plan", "steps":50,
             "tools":{"allow":["read","glob","grep","webfetch","websearch","bash"]}}),
         ),
         (

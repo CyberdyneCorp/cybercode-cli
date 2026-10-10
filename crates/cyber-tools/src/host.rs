@@ -464,6 +464,14 @@ impl BuiltinHost {
             rule.source = "session".into();
         }
         rules.extend(extra);
+        if agent == Some("reviewer") {
+            let mut immutable =
+                permissions::parse_rules(&serde_json::json!({"edit":"deny"}), &BTreeMap::new());
+            for rule in &mut immutable {
+                rule.source = "builtin:reviewer".into();
+            }
+            rules.extend(immutable);
+        }
         Ok(rules)
     }
 
@@ -485,6 +493,10 @@ impl BuiltinHost {
             Default::default()
         };
         rules.extend(inherited.rules);
+        let mut parent_modes = inherited.modes;
+        if agent == Some("reviewer") {
+            parent_modes.push(Mode::Plan);
+        }
         let mut saved = saved::rules(&self.opts.store, &root).unwrap_or_default();
         for rule in self.skill_scope_rules(inv).await? {
             if rule.effect == Effect::Deny {
@@ -497,7 +509,7 @@ impl BuiltinHost {
             rules,
             saved,
             mode: Mode::parse(&inv.mode),
-            parent_modes: inherited.modes,
+            parent_modes,
             plan_file: location
                 .join(".cyber/plans")
                 .join(format!("{}.md", inv.session_id)),

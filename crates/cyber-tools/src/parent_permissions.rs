@@ -50,6 +50,9 @@ impl BuiltinHost {
                 )
             })?;
             inherited.modes.push(mode);
+            if authority.effective_agent == "reviewer" {
+                inherited.modes.push(Mode::Plan);
+            }
             if mode == Mode::Auto {
                 let (config, _) = (self.opts.config)(Path::new(&parent.directory))?;
                 let settings = AutoModeSettings::from_config(&config)?;

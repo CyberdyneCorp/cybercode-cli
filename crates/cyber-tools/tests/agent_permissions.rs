@@ -88,9 +88,9 @@ async fn ordered_profile_rules_preserve_resource_exceptions() {
 #[tokio::test]
 async fn subagent_only_profiles_receive_noninteractive_defaults() {
     let f = Fixture::new();
-    f.set_config(json!({"agents":{"reviewer":{"mode":"subagent"}}}));
+    f.set_config(json!({"agents":{"auditor":{"mode":"subagent"}}}));
     let mut inv = f.invocation("bypass", "question", json!({"questions":[]}));
-    inv.agent = "reviewer".into();
+    inv.agent = "auditor".into();
     let error = failed(f.host.execute(inv, CancellationToken::new()).await);
     assert!(error.contains("denied"), "{error}");
 }

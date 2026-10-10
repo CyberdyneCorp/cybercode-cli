@@ -138,7 +138,7 @@ async fn agent_catalogue_resolves_builtins_and_live_configuration() {
     };
     assert_eq!(
         names(application.state.services.agents(tmp.path())),
-        ["build", "explore", "general"]
+        ["build", "explore", "general", "reviewer"]
     );
     std::fs::write(
         application.paths.config.join("cyber.json"),
@@ -154,8 +154,10 @@ async fn agent_catalogue_resolves_builtins_and_live_configuration() {
     .unwrap();
     let agents = application.state.services.agents(tmp.path());
     assert_eq!(agents[1].description, "Configured general agent");
-    assert_eq!(agents[2].mode, "all");
-    assert_eq!(names(agents), ["build", "general", "docs"]);
+    assert_eq!(agents[2].name, "reviewer");
+    assert_eq!(agents[2].mode, "subagent");
+    assert_eq!(agents[3].mode, "all");
+    assert_eq!(names(agents), ["build", "general", "reviewer", "docs"]);
     std::fs::write(
         application.paths.config.join("cyber.json"),
         r#"{"agents":{"docs":{"unknown":true}}}"#,
