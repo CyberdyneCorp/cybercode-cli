@@ -160,6 +160,9 @@ while True:
     if msg['method']=='textDocument/didOpen': documents.append(msg['params']['textDocument']['text'])
     if msg['method']=='textDocument/didClose': closed.append(msg['params']['textDocument']['uri'])
     if msg['method']=='shutdown': time.sleep(60)
+    if msg['method']=='publish-diagnostics':
+        body=json.dumps({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':msg['params']}).encode()
+        sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body);sys.stdout.buffer.flush()
     if 'id' in msg:
         result={'capabilities':{}} if msg['method']=='initialize' else documents if msg['method']=='documents' else closed if msg['method']=='closed' else True
         body=json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':result}).encode()
@@ -474,6 +477,77 @@ async fn lsp_document_below_existing_root_claims_and_retains_its_checkout() {
 #[tokio::test]
 async fn lsp_background_snapshot_cannot_start_against_a_recreated_checkout() {
     assert_recreated_lsp_origin(false).await;
+}
+
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[tokio::test]
+async fn lsp_unopened_diagnostic_file_claims_all_enclosing_managed_scopes() {
+    use cyber_core::worktrees::CheckoutActivity;
+    assert!(
+        cyber_sandbox::available(),
+        "native sandbox prerequisites are required"
+    );
+    let (fixture, repository, managed) = owned().await;
+    let nested = repository
+        .create(
+            &Git,
+            &Settings::default(),
+            &managed.path.join("nested-data"),
+            "prj_nested",
+            &Name::parse("nested").unwrap(),
+        )
+        .await
+        .unwrap();
+    let location = fixture.dir.path().canonicalize().unwrap();
+    let outer = location.join("outer.txt");
+    std::fs::write(&outer, "outer").unwrap();
+    let pool = managed_lsp_pool(&fixture, &location);
+    let handle = pool.ensure("fixture", &outer).unwrap();
+    let file = nested.path.join("tracked.txt").canonicalize().unwrap();
+    handle
+        .request(
+            "publish-diagnostics",
+            json!({"uri":reqwest::Url::from_file_path(&file).unwrap().as_str(),"diagnostics":[]}),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    let snapshot = handle.diagnostics(&file).await.unwrap().unwrap();
+    assert_eq!(snapshot.document_version, None);
+    assert_eq!(
+        handle
+            .request("documents", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap(),
+        json!([])
+    );
+    for checkout in [&nested, &managed] {
+        let error = repository
+            .remove(&Git, &CheckoutActivity, checkout, false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("in use by lsp_"), "{error}");
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), pool.close())
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .remove(&Git, &CheckoutActivity, &managed, false)
+            .await
+            .is_err()
+    );
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+    repository
+        .remove(&Git, &CheckoutActivity, &nested, false)
+        .await
+        .unwrap();
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

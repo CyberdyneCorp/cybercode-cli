@@ -33,6 +33,16 @@ pub(super) struct Documents {
 }
 
 impl Documents {
+    pub fn version(&self, path: &std::path::Path) -> Option<i32> {
+        self.entries.get(path).map(|(version, _)| *version)
+    }
+
+    pub fn matches_digest(&self, path: &std::path::Path, digest: &[u8; 32]) -> bool {
+        self.entries
+            .get(path)
+            .is_none_or(|(_, current)| current == digest)
+    }
+
     pub async fn open(
         &mut self,
         connection: &mut StdioConnection,

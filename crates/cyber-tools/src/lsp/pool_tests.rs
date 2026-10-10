@@ -434,35 +434,46 @@ async fn cancellation_settles_native_descendants_before_a_blocked_authority_revi
 
 #[tokio::test]
 async fn cancellation_settles_native_descendants_before_a_blocked_document_claim() {
-    struct Resource {
-        permit: Arc<tokio::sync::Semaphore>,
-        entered: Arc<AtomicUsize>,
-        released: Arc<AtomicUsize>,
+    blocked_document_claim(false).await;
+}
+
+#[tokio::test]
+async fn cancellation_settles_native_descendants_before_a_blocked_diagnostic_claim() {
+    blocked_document_claim(true).await;
+}
+
+struct BlockedClaimResource {
+    permit: Arc<tokio::sync::Semaphore>,
+    entered: Arc<AtomicUsize>,
+    released: Arc<AtomicUsize>,
+}
+impl ResourceLease for BlockedClaimResource {
+    fn admit_document(
+        &mut self,
+        _path: PathBuf,
+        _checkouts: Vec<cyber_core::worktrees::Managed>,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), LspError>> {
+        Box::pin(async move {
+            self.entered.fetch_add(1, Ordering::SeqCst);
+            self.permit.acquire().await.unwrap().forget();
+            Ok(())
+        })
     }
-    impl ResourceLease for Resource {
-        fn admit_document(
-            &mut self,
-            _path: PathBuf,
-            _checkouts: Vec<cyber_core::worktrees::Managed>,
-            _cancel: CancellationToken,
-        ) -> BoxFuture<'_, Result<(), LspError>> {
-            Box::pin(async move {
-                self.entered.fetch_add(1, Ordering::SeqCst);
-                self.permit.acquire().await.unwrap().forget();
-                Ok(())
-            })
-        }
-        fn close(&mut self) -> BoxFuture<'_, bool> {
-            self.released.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { true })
-        }
+    fn close(&mut self) -> BoxFuture<'_, bool> {
+        self.released.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { true })
     }
+}
+
+async fn blocked_document_claim(diagnostic: bool) {
     let (root, file) = fixture();
+    let file = file.canonicalize().unwrap();
     let marker = root.path().join("document-claim-escape");
     let permit = Arc::new(tokio::sync::Semaphore::new(0));
     let entered = Arc::new(AtomicUsize::new(0));
     let released = Arc::new(AtomicUsize::new(0));
-    let resource = Arc::new(Mutex::new(Some(Resource {
+    let resource = Arc::new(Mutex::new(Some(BlockedClaimResource {
         permit: permit.clone(),
         entered: entered.clone(),
         released: released.clone(),
@@ -486,7 +497,7 @@ async fn cancellation_settles_native_descendants_before_a_blocked_document_claim
         )
         .await
         .unwrap();
-    let pending = tokio::spawn(async move { handle.open_document(&file, "pending".into()).await });
+    let pending = tokio::spawn(submit_blocked_claim(handle, file, diagnostic));
     wait_for(|| entered.load(Ordering::SeqCst) == 1).await;
     assert!(
         tokio::time::timeout(Duration::from_millis(20), pool.close())
@@ -496,12 +507,214 @@ async fn cancellation_settles_native_descendants_before_a_blocked_document_claim
     tokio::time::sleep(Duration::from_millis(650)).await;
     assert!(!marker.exists());
     assert_eq!(released.load(Ordering::SeqCst), 0);
+    finish_blocked_claim(&pool, &permit, &released, pending).await;
+}
+
+async fn finish_blocked_claim(
+    pool: &Pool,
+    permit: &tokio::sync::Semaphore,
+    released: &AtomicUsize,
+    pending: JoinHandle<Result<(), LspError>>,
+) {
     permit.add_permits(1);
     assert!(pool.close().await.unwrap()[0].acknowledged);
     assert!(pending.await.unwrap().is_err());
     assert_eq!(released.load(Ordering::SeqCst), 1);
     assert!(pool.close().await.unwrap()[0].acknowledged);
     assert_eq!(released.load(Ordering::SeqCst), 1);
+}
+
+async fn submit_blocked_claim(
+    handle: ServerHandle,
+    file: PathBuf,
+    diagnostic: bool,
+) -> Result<(), LspError> {
+    if diagnostic {
+        let uri = reqwest::Url::from_file_path(&file).unwrap().to_string();
+        let params = json!({"uri":uri,"diagnostics":[]});
+        handle
+            .request("publish-diagnostics", params, Duration::from_secs(3))
+            .await?;
+        handle.diagnostics(&file).await.map(|_| ())
+    } else {
+        handle.open_document(&file, "pending".into()).await
+    }
+}
+
+#[tokio::test]
+async fn native_diagnostics_replace_clear_validate_versions_and_refuse_changed_content() {
+    let (root, file) = fixture();
+    let file = file.canonicalize().unwrap();
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        launcher("normal", Arc::new(AtomicUsize::new(0))),
+    )
+    .unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    handle
+        .open_document(&file, std::fs::read_to_string(&file).unwrap())
+        .await
+        .unwrap();
+    let diagnostic = json!({"range":{"start":{"line":0,"character":2},"end":{"line":0,"character":4}},"severity":1,"message":"type error","relatedInformation":[{"location":{"uri":"file:///private"}}]});
+    let params = json!({"uri":reqwest::Url::from_file_path(&file).unwrap().as_str(),"version":1,"diagnostics":[diagnostic]});
+    handle
+        .request(
+            "publish-diagnostics",
+            params.clone(),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    let first = handle.diagnostics(&file).await.unwrap().unwrap();
+    assert_eq!(first.version, Some(1));
+    assert_eq!(first.document_version, Some(1));
+    assert_eq!(first.diagnostics.len(), 1);
+    assert!(
+        serde_json::to_value(&first).unwrap()["diagnostics"][0]
+            .get("relatedInformation")
+            .is_none()
+    );
+    let mut invalid = Vec::new();
+    for version in [json!(0), json!(2), Value::Null] {
+        let mut value = params.clone();
+        value["version"] = version;
+        invalid.push(value);
+    }
+    for severity in [json!(0), json!(5), json!("error"), Value::Null] {
+        let mut value = params.clone();
+        value["diagnostics"][0]["severity"] = severity;
+        invalid.push(value);
+    }
+    for character in [json!(-1), json!(i64::from(i32::MAX) + 1), json!(8)] {
+        let mut value = params.clone();
+        value["diagnostics"][0]["range"]["start"]["character"] = character;
+        invalid.push(value);
+    }
+    for uri in [
+        "https://example.test/file",
+        "file://remote/file",
+        "file:///private",
+        "file:///file?query",
+        "file:///file#fragment",
+    ] {
+        let mut value = params.clone();
+        value["uri"] = json!(uri);
+        invalid.push(value);
+    }
+    for params in invalid {
+        handle
+            .request("publish-diagnostics", params, Duration::from_secs(3))
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.diagnostics(&file).await.unwrap(),
+            Some(first.clone())
+        );
+    }
+    let mut clear = params.clone();
+    clear["diagnostics"] = json!([]);
+    handle
+        .request("publish-diagnostics", clear, Duration::from_secs(3))
+        .await
+        .unwrap();
+    let cleared = handle.diagnostics(&file).await.unwrap().unwrap();
+    assert!(cleared.diagnostics.is_empty());
+    assert!(cleared.sequence > first.sequence);
+    let mut unversioned = params.clone();
+    unversioned.as_object_mut().unwrap().remove("version");
+    handle
+        .request("publish-diagnostics", unversioned, Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert_eq!(
+        handle.diagnostics(&file).await.unwrap().unwrap().version,
+        None
+    );
+    let mut many = params.clone();
+    many["diagnostics"] = json!(vec![params["diagnostics"][0].clone(); 300]);
+    handle
+        .request("publish-diagnostics", many, Duration::from_secs(3))
+        .await
+        .unwrap();
+    let many = handle.diagnostics(&file).await.unwrap().unwrap();
+    assert_eq!(many.diagnostics.len(), 300);
+    let block = many
+        .error_block(root.path().canonicalize().unwrap().as_path())
+        .unwrap();
+    assert_eq!(block.matches("ERROR [").count(), 20);
+    assert!(block.contains("… and 280 more"));
+    let mut long = params.clone();
+    long["diagnostics"][0]["message"] = json!("x".repeat(8192));
+    handle
+        .request("publish-diagnostics", long, Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert_eq!(
+        handle
+            .diagnostics(&file)
+            .await
+            .unwrap()
+            .unwrap()
+            .diagnostics[0]
+            .message
+            .len(),
+        8192
+    );
+    std::fs::write(&file, "changed text").unwrap();
+    assert!(handle.diagnostics(&file).await.unwrap().is_none());
+    // The server's open text must also match disk before diagnostics can be cached.
+    handle
+        .request(
+            "publish-diagnostics",
+            params.clone(),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert!(handle.diagnostics(&file).await.unwrap().is_none());
+    handle
+        .open_document(&file, "changed text".into())
+        .await
+        .unwrap();
+    handle
+        .request(
+            "publish-diagnostics",
+            params.clone(),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert!(handle.diagnostics(&file).await.unwrap().is_none());
+    let mut changed = params;
+    changed["version"] = json!(2);
+    handle
+        .request("publish-diagnostics", changed, Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert_eq!(
+        handle.diagnostics(&file).await.unwrap().unwrap().version,
+        Some(2)
+    );
+    let other = root.path().join("unopened.rs");
+    std::fs::write(&other, "other text").unwrap();
+    let other = other.canonicalize().unwrap();
+    handle
+        .request(
+            "publish-diagnostics",
+            json!({"uri":reqwest::Url::from_file_path(&other).unwrap().as_str(),"diagnostics":[]}),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    let snapshot = handle.diagnostics(&other).await.unwrap().unwrap();
+    assert_eq!(snapshot.document_version, None);
+    assert_eq!(snapshot.version, None);
+    std::fs::remove_file(&other).unwrap();
+    assert!(handle.diagnostics(&other).await.unwrap().is_none());
+    assert!(!handle.take_notifications().await.unwrap().is_empty());
+    assert!(handle.take_notifications().await.unwrap().is_empty());
+    assert!(pool.close().await.unwrap()[0].acknowledged);
 }
 
 #[tokio::test]

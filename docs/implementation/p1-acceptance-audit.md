@@ -1,5 +1,17 @@
 # P1 acceptance audit
 
+## Validated LSP diagnostic cache evidence (2026-10-10)
+
+The worker now validates typed diagnostic publications for canonical regular UTF-8 files under its root, retaining a bounded 128-file/1 MiB cache and an independently bounded raw notification archive. Opened-document server versions must match the client version; omitted server versions remain omitted, and unopened project-system files do not claim client-version correlation. Valid sets replace prior data, including empty clears. Invalid publications leave prior sets intact. Retrieval revalidates disk contents, managed creation identities and observed client versions. Arbitrary server metadata and related-information URIs do not reach typed snapshots.
+
+Fresh service authority and independent managed scope admission precede caching. Observations are joined before and after claims, and cancellation settles native ownership before awaiting retained observation/claim work. A real descendant test proves blocked diagnostic claims cannot defer child termination or release resources early. A real sandboxed macOS case publishes diagnostics for an unopened file inside two nested managed checkouts, verifies no didOpen, refuses both removals and retains cleanup through cancelled close until final acknowledgement.
+
+Error-block formatting includes only explicit errors, one-based positions, at most 20 entries and the exact remaining count, with escaped framing and terminal controls. Valid sets with more than 256 diagnostics and long messages are supported within the publication/cache byte budget. An actual server case verifies 300 errors render 20 plus “280 more” and an 8192-byte message is retained. This formatting is not yet connected to edit results.
+
+Local verification passes 53 LSP library, 29 transport/client/pool/idle/launch and seven managed LSP cases (89 total). Workspace all-target Clippy with warnings and complexity denied, formatting/diff and generated SDK checks pass. All 59 strict OpenSpec items pass; cross-spec lint reports zero errors and 21 warnings. Fresh native execution for this increment remains required. Preceding run 38042758120 at `b9e7b05` is still live at observation.
+
+The complete Diagnostics after edits and lsp tool contracts remain unaccepted: all four edit synchronization paths, didSave, 150 ms debounce, diagnostics wait and other-file feedback, navigation operations/permissions and public integrations still require delivery. Sandboxed formatter execution, enforced Windows launch and all other canonical P1 contracts remain in scope. No full milestone is accepted; P0 local-model services/data/artifacts and its independent exit gate are preserved.
+
 ## Runtime activity-aware LSP idle evidence (2026-10-10)
 
 Language-service idle expiry now uses shared canonical Location activity as well as admitted warming. Activity acquisition creates no pool or process and can precede first warming. Concurrent guards disable the idle deadline; final disposal starts a full fresh idle window and wakes the service coordinator. The counter/deadline and idle cancellation decision share one lock. Explicit close remains available during activity, and reload preserves live guards for the replacement generation. Services and explicit fences retain their 128-Location bound. Activity follows owned operations without consuming service slots or rejecting model admission when that cache is full; disposal without retained services/fences removes its tracking.

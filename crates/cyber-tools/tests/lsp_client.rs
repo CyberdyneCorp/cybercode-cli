@@ -21,7 +21,7 @@ async fn initialize(server: &mut Server) {
     assert_eq!(request["method"], "initialize");
     assert_eq!(
         request["params"]["capabilities"],
-        json!({"workspace":{"workspaceFolders":true}})
+        json!({"workspace":{"workspaceFolders":true},"textDocument":{"publishDiagnostics":{"versionSupport":true}}})
     );
     assert!(
         request["params"]["rootUri"]

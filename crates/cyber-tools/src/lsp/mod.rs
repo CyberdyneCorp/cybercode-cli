@@ -1,6 +1,7 @@
 //! Bounded LSP transport. Process authorization and lifetime belong to its owner.
 mod client;
 mod connection;
+mod diagnostics;
 mod documents;
 mod framing;
 mod launch;
@@ -11,6 +12,7 @@ pub(crate) use locations::read_origin;
 
 pub use client::{LspError, StdioClient};
 pub use connection::{ConnectionError, Shutdown, StdioConnection};
+pub use diagnostics::{Diagnostic, DiagnosticPosition, DiagnosticRange, DiagnosticSnapshot};
 pub use framing::{Framed, TransportError};
 pub use launch::{CheckoutClaim, LaunchOptions, LocalLauncher};
 pub use locations::{Activity, Locations, PoolFactory};

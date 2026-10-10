@@ -279,3 +279,28 @@
 - **AND** query Location SHALL take precedence over header Location, with invalid Locations refused before discovery
 - **AND** status SHALL NOT execute candidates, evaluate project configuration code or publish formatter environment/command secrets
 - **AND** unavailable service hosts SHALL return a typed service-unavailable error rather than an empty success list
+
+
+### Requirement: Bounded validated diagnostic publications
+(P1) Owned LSP workers SHALL interpret publishDiagnostics version support and retain a typed diagnostic cache for canonical regular UTF-8 files under their root, including unopened workspace documents. Supplied versions for opened documents SHALL match the current client version. Omitted versions SHALL remain omitted and SHALL NOT be represented as proof of edit completion. Valid publications SHALL replace prior sets, including empty clears; invalid publications SHALL NOT partially replace a valid set. The cache SHALL retain at most 128 files and 1 MiB of serialized diagnostic snapshots. Publication admission SHALL use the 1 MiB message budget rather than arbitrary diagnostic-count or message-character cutoffs.
+
+Workers SHALL recheck current service authority before diagnostic scope admission. Diagnostic files SHALL retain independent claims for every enclosing managed checkout before caching, and content/creation observations SHALL match again after admission. Cache retrieval SHALL revalidate file contents, managed creation identities and observed client versions. Changed or missing files SHALL return no stale publication. In-flight observation and scope claims SHALL remain owned through cancellation; native settlement SHALL precede waiting for their completion.
+
+Typed snapshots SHALL expose only path/version/observed-client-version/receipt-sequence and range/severity/message data. Error feedback formatting SHALL include only explicit error severity, at most 20 entries per file, one-based positions and an omitted-count suffix. Server text SHALL NOT introduce diagnostic block framing or terminal controls. Raw notification retrieval SHALL remain explicitly untrusted and bounded to 128 retained messages and 1 MiB independently of typed snapshots.
+
+#### Scenario: Empty publication clears errors
+- **WHEN** a valid publication replaces a file's prior errors with an empty diagnostics array
+- **THEN** the cached typed result SHALL contain no former errors and SHALL have a new receipt sequence
+
+#### Scenario: Stale or malformed publication
+- **WHEN** an opened document receives a mismatched version or invalid diagnostic range/severity/message shape
+- **THEN** the prior valid set SHALL remain unchanged
+
+#### Scenario: External content change
+- **WHEN** file contents or managed creation identities differ from the cached observation
+- **THEN** retrieval SHALL return no stale diagnostic set
+
+#### Scenario: Unopened nested managed file
+- **WHEN** an unmanaged server root receives diagnostics for an unopened file inside nested managed checkouts
+- **THEN** every enclosing checkout SHALL retain independent LSP ownership through native/resource settlement
+- **AND** receipt SHALL NOT send didOpen or infer an acknowledged document version

@@ -91,7 +91,7 @@ impl<R: AsyncRead + Unpin + Send + 'static, W: AsyncWrite + Unpin> StdioClient<R
             "processId":std::process::id(),
             "clientInfo":{"name":"cyber","version":env!("CARGO_PKG_VERSION")},
             "rootUri":self.root_uri,
-            "capabilities":{"workspace":{"workspaceFolders":true}},
+            "capabilities":{"workspace":{"workspaceFolders":true},"textDocument":{"publishDiagnostics":{"versionSupport":true}}},
             "workspaceFolders":[{"uri":self.root_uri,"name":"workspace"}],
             "initializationOptions":options,
         });

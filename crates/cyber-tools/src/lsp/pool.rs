@@ -15,6 +15,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::diagnostics::{Diagnostics, Publication};
 use super::{LspError, StdioConnection};
 use crate::HookCommandProcess;
 
@@ -118,6 +119,10 @@ enum Command {
         reply: oneshot::Sender<Result<(), LspError>>,
     },
     Notifications(oneshot::Sender<Vec<Value>>),
+    Diagnostics {
+        path: PathBuf,
+        reply: oneshot::Sender<Result<Option<super::DiagnosticSnapshot>, LspError>>,
+    },
 }
 
 struct Worker {
@@ -224,6 +229,7 @@ impl ServerHandle {
         receive.await.map_err(|_| unavailable())?
     }
 
+    /// Returns the bounded raw archive; every message remains untrusted.
     pub async fn take_notifications(&self) -> Result<Vec<Value>, LspError> {
         self.connected().await?;
         let (reply, receive) = oneshot::channel();
@@ -233,6 +239,27 @@ impl ServerHandle {
             .await
             .map_err(|_| unavailable())?;
         receive.await.map_err(|_| unavailable())
+    }
+
+    /// Revalidates a canonical file's contents and checkout creation before returning a publication.
+    pub async fn diagnostics(
+        &self,
+        path: &Path,
+    ) -> Result<Option<super::DiagnosticSnapshot>, LspError> {
+        if !path.is_absolute() || !path.starts_with(&self.status().root) {
+            return Err(unavailable());
+        }
+        self.connected().await?;
+        let (reply, receive) = oneshot::channel();
+        self.entry
+            .sender
+            .send(Command::Diagnostics {
+                path: path.into(),
+                reply,
+            })
+            .await
+            .map_err(|_| unavailable())?;
+        receive.await.map_err(|_| unavailable())?
     }
 }
 
@@ -568,6 +595,7 @@ async fn run(
     let mut health = tokio::time::interval(Duration::from_millis(100));
     let mut review = tokio::time::interval(Duration::from_secs(1));
     let mut documents = super::documents::Documents::default();
+    let mut diagnostics = Diagnostics::default();
     while let Some(event) = next_event(
         connection,
         &mut commands,
@@ -586,11 +614,133 @@ async fn run(
         if !admitted_document(connection, resources, &event, cancel).await {
             break;
         }
-        let healthy = tokio::select! { biased; _ = cancel.cancelled() => break, healthy = handle_event(connection, &mut documents, event) => healthy };
+        let healthy =
+            dispatch_event(connection, &mut documents, &mut diagnostics, event, cancel).await;
         if !healthy {
             break;
         }
+        if !collect_diagnostics(
+            connection,
+            resources,
+            cancel,
+            request,
+            &admission,
+            &documents,
+            &mut diagnostics,
+        )
+        .await
+        {
+            break;
+        }
     }
+}
+
+async fn dispatch_event(
+    connection: &mut StdioConnection,
+    documents: &mut super::documents::Documents,
+    diagnostics: &mut Diagnostics,
+    event: Event,
+    cancel: &CancellationToken,
+) -> bool {
+    if let Event::Command(Command::Diagnostics { path, reply }) = event {
+        let Some(observation) = retained(
+            connection,
+            cancel,
+            super::diagnostics::observe(path.clone()),
+        )
+        .await
+        else {
+            return false;
+        };
+        let _ = reply.send(Ok(diagnostics.snapshot(
+            &path,
+            observation.as_ref(),
+            documents,
+        )));
+        return true;
+    }
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => false,
+        healthy = handle_event(connection, documents, diagnostics, event) => healthy,
+    }
+}
+
+async fn retained<T>(
+    connection: &mut StdioConnection,
+    cancel: &CancellationToken,
+    operation: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::pin!(operation);
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            settle_connection(connection).await;
+            let _ = operation.await;
+            None
+        },
+        result = &mut operation => Some(result),
+    }
+}
+
+async fn collect_diagnostics(
+    connection: &mut StdioConnection,
+    resources: &mut dyn ResourceLease,
+    cancel: &CancellationToken,
+    request: &LaunchRequest,
+    admission: &Option<AdmissionFn>,
+    documents: &super::documents::Documents,
+    diagnostics: &mut Diagnostics,
+) -> bool {
+    for message in connection.take_notifications() {
+        diagnostics.retain_raw(message.clone());
+        let Some(publication) = Publication::parse(&message, &request.root, documents) else {
+            continue;
+        };
+        if !admitted(connection, admission, request, cancel).await {
+            return false;
+        }
+        match publication_origin(connection, resources, cancel, &publication.path, documents).await
+        {
+            Ok(Some(observation)) => diagnostics.publish(publication, observation, documents),
+            Ok(None) => {}
+            Err(()) => return false,
+        }
+    }
+    true
+}
+
+async fn publication_origin(
+    connection: &mut StdioConnection,
+    resources: &mut dyn ResourceLease,
+    cancel: &CancellationToken,
+    path: &Path,
+    documents: &super::documents::Documents,
+) -> Result<Option<super::diagnostics::Observation>, ()> {
+    let observation = retained(connection, cancel, super::diagnostics::observe(path.into()))
+        .await
+        .ok_or(())?;
+    let Some(observation) = observation else {
+        return Ok(None);
+    };
+    if !observation.matches(path, documents) {
+        return Ok(None);
+    }
+    let claim =
+        resources.admit_document(path.into(), observation.checkouts.clone(), cancel.clone());
+    if !retained(connection, cancel, claim)
+        .await
+        .is_some_and(|result| result.is_ok())
+    {
+        return Err(());
+    }
+    let current = retained(connection, cancel, super::diagnostics::observe(path.into()))
+        .await
+        .ok_or(())?;
+    if current.as_ref() != Some(&observation) {
+        return Ok(None);
+    }
+    Ok(Some(observation))
 }
 
 async fn next_event(
@@ -678,12 +828,13 @@ async fn admitted_document(
 async fn handle_event(
     connection: &mut StdioConnection,
     documents: &mut super::documents::Documents,
+    diagnostics: &mut Diagnostics,
     event: Event,
 ) -> bool {
     match event {
         Event::Health => connection.leader_exited().is_ok_and(|exited| !exited),
         Event::Review => true,
-        Event::Command(command) => execute(connection, documents, command).await,
+        Event::Command(command) => execute(connection, documents, diagnostics, command).await,
         Event::Message(message) => {
             tokio::time::timeout(Duration::from_secs(30), connection.handle_idle(message))
                 .await
@@ -707,6 +858,7 @@ mod tests;
 async fn execute(
     connection: &mut StdioConnection,
     documents: &mut super::documents::Documents,
+    diagnostics: &mut Diagnostics,
     command: Command,
 ) -> bool {
     match command {
@@ -753,8 +905,11 @@ async fn execute(
             healthy
         }
         Command::Notifications(reply) => {
-            let _ = reply.send(connection.take_notifications());
+            let _ = reply.send(diagnostics.take_raw());
             true
+        }
+        Command::Diagnostics { .. } => {
+            unreachable!("diagnostic observations are retained by the worker")
         }
     }
 }

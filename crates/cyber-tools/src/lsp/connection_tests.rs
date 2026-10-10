@@ -57,6 +57,9 @@ while True:
             assert request['method'] == 'fixture'
             sys.stdout.buffer.write(frame[split_at:]); sys.stdout.buffer.flush()
             send({'jsonrpc':'2.0','id':request['id'],'result':{'text':'λ🦀'}})
+    elif method == 'publish-diagnostics':
+        send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':msg['params']})
+        send({'jsonrpc':'2.0','id':msg['id'],'result':True})
     elif method == 'fixture':
         send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':'file:///untrusted','diagnostics':[]}})
         send({'jsonrpc':'2.0','id':'server-request','method':'workspace/applyEdit','params':{'edit':{}}})
