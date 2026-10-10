@@ -114,6 +114,8 @@ pub(super) fn apply_target(
             identities.0.ok_or(MemoryStorageError::RecoveryRequired)?,
         )?;
         verify_backup(stage, &backup, limit, Some(before))?;
+        #[cfg(test)]
+        tests::death::barrier(&format!("{prefix}-captured"), root)?;
     } else if current.is_some() {
         return Err(MemoryStorageError::Conflict);
     }
@@ -128,7 +130,10 @@ pub(super) fn apply_target(
             identities.1.ok_or(MemoryStorageError::RecoveryRequired)?,
         )?;
     }
-    verify_hash(root, name, limit, after)
+    verify_hash(root, name, limit, after)?;
+    #[cfg(test)]
+    tests::death::barrier(&format!("{prefix}-installed"), root)?;
+    Ok(())
 }
 
 pub(super) fn normalize_pair(
@@ -147,4 +152,4 @@ pub(super) fn normalize_pair(
 
 #[cfg(test)]
 #[path = "windows/tests.rs"]
-mod tests;
+pub(crate) mod tests;

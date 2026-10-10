@@ -174,6 +174,8 @@ impl<'store> MemoryScope<'store> {
             intent_file,
         };
         prepared.verify_binding()?;
+        #[cfg(all(test, windows))]
+        windows::tests::death::barrier("prepared", &prepared.scope.store.dir)?;
         Ok(prepared)
     }
     pub fn recover(&mut self) -> Result<Option<MemoryMutation>, MemoryStorageError> {
@@ -260,6 +262,8 @@ impl PreparedMemory<'_, '_> {
         sync_dir(&self.dir)?;
         #[cfg(windows)]
         terminal.marker(&self.dir)?;
+        #[cfg(all(test, windows))]
+        windows::tests::death::barrier("completed", &self.scope.store.dir)?;
         let receipt = MemoryMutation {
             id: self.intent.id.clone(),
             name: self.intent.name.clone(),
@@ -279,9 +283,13 @@ impl PreparedMemory<'_, '_> {
         drop(self.intent_file);
         #[cfg(windows)]
         terminal.release_journal();
+        #[cfg(all(test, windows))]
+        windows::tests::death::barrier("released", &self.scope.store.dir)?;
         archive_journal(&self.scope.store.dir, self.dir, &history, &self.intent.id)?;
         sync_dir(&history)?;
         sync_dir(&self.scope.store.dir)?;
+        #[cfg(all(test, windows))]
+        windows::tests::death::barrier("archived", &self.scope.store.dir)?;
         Ok(MemoryMutation {
             id: self.intent.id.clone(),
             name: self.intent.name.clone(),

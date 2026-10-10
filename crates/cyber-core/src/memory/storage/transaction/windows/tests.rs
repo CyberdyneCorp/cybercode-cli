@@ -812,3 +812,6 @@ fn native_journal_alias_refuses_without_link_normalization_or_file_effects() {
     assert!(!store.path().join("rule.md").exists());
     assert!(!store.path().join("MEMORY.md").exists());
 }
+
+#[path = "death.rs"]
+pub(crate) mod death;

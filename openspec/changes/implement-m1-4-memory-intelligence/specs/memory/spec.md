@@ -497,3 +497,10 @@
 - **THEN** public existing/open/save SHALL use the native private checkpoint journal and bounded retention on Windows, with existing-only absence, independent ownership exclusion, user-edit refusal and no ACL repair
 - **AND** TUI restoration SHALL preserve draft text and request keys without restoring review confirmation or automatically dispatching actions; durable forgetting/discard and storage-error dispatch/exit fencing SHALL match the Unix behavior
 - **AND** checkpoint admission SHALL grant no note mutation or database receipt authority; public memory mutation and complete canonical native acceptance SHALL retain independent gates
+
+#### Scenario: Windows note write/delete owner death across installation and archival
+- **WHEN** the owning Windows process dies after prepared intent, note capture/install, index capture/install, completed evidence, journal release or durable archival for a write or deletion
+- **THEN** process-held scope ownership SHALL release and fresh private recovery SHALL accept only recorded slots, preserve original/installed/intent/journal/marker full identities and finish the original receipt without replaying installed effects
+- **AND** terminal installed objects SHALL remain readonly during live completion/release/archive ownership, with ordinary readonly inspection and no claim of reservation for absent deleted filenames
+- **AND** already archived outcomes SHALL reopen without a second archival; restored test witnesses SHALL grant no database receipt or mutation authority
+- **AND** interruption barriers SHALL be absent from production and bound to the explicitly owned child fixture; actual native runtime and database reconciliation SHALL remain required before public note mutation admission
