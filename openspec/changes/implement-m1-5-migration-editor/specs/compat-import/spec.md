@@ -97,3 +97,16 @@
 #### Scenario: Malformed source contains secrets
 - **WHEN** a source document cannot be parsed
 - **THEN** detection SHALL report a static issue without echoing source values
+
+### Requirement: Secret-safe Codex provider/model planning
+(P1) The provider/model adapter SHALL parse bounded TOML and convert supported Codex model/provider declarations into native provider-catalog configuration. It SHALL map explicit chat and Responses wire protocols, preserve the documented Responses default and qualify/register selected custom models without inventing pricing. Literal API keys/bearer tokens and static HTTP header values SHALL become deterministic environment references with value-free setup records; existing environment names SHALL remain references. Unsupported fields SHALL remain explicit indexed pending mappings. Ambiguous credentials/headers, unsafe endpoint forms and unsupported account authentication SHALL refuse the batch with value-free errors. This pure adapter SHALL NOT imply complete source/profile/sandbox migration, keyring persistence, reviewed writing or import acceptance.
+
+#### Scenario: Provider resolves through native loader
+- **WHEN** a converted custom provider and selected model are loaded with the reported environment variables set
+- **THEN** the native catalog SHALL resolve the intended protocol, endpoint, credential and headers
+- **AND** custom pricing SHALL remain unknown
+
+#### Scenario: Literal credentials remain out of plans
+- **WHEN** a source contains literal API keys or static header values
+- **THEN** serialized/debug plan output SHALL omit those values
+- **AND** the plan SHALL name the environment variables the user must populate

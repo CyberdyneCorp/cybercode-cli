@@ -13,6 +13,7 @@
   - [x] Expose read-only CLI detection and parsed raw definition counts for static JSON/JSONC/TOML sources, with unknown session/compatibility coverage and explicit incomplete flags.
   - [ ] Resolve config-referenced custom sources and finish detection counts/read-time/session status and first-run TUI offer.
 - [ ] Convert providers, credentials/env, agents, commands, skills, rules, instructions, hooks, MCP and remaining canonical configuration fields.
+  - [x] Convert bounded Codex provider/model TOML with native catalog shapes, credential/header environment references, value-free pending mappings and actual native loader/catalog validation. Complete provider/profile/sandbox/source adapters and reviewed writes remain open.
 - [ ] Implement dry-run unified diffs, explicit write confirmation, secret safety, source-linked reports and idempotent annotations.
 - [ ] Implement canonical ACP lifecycle, buffers/write-through, editor MCP, permissions and streaming.
 - [ ] Implement the P1 VS Code extension and editor acceptance coverage.

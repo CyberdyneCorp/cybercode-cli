@@ -50,7 +50,25 @@ jobs:
         run: cargo test --locked -p cyber-tools --lib tools::bash::shell_tests
       - name: Native code intelligence configuration and discovery
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test config --test intelligence_config --test intelligence_discovery --test formatter_discovery --test import_permissions --test import_discovery --test import_snapshot --test import_detection
+        run: cargo test --locked -p cyber-core --test config --test intelligence_config --test intelligence_discovery --test formatter_discovery
+      - name: Native migration permission conversion
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test import_permissions
+      - name: Native migration source inventory
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test import_discovery
+      - name: Native migration source snapshots
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test import_snapshot
+      - name: Native migration detection
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test import_detection
+      - name: Native migration provider conversion
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test import_providers
+      - name: Native imported provider configuration and catalog
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-llm --test import_providers
       - name: Native imported permission engine decisions
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test import_permissions
