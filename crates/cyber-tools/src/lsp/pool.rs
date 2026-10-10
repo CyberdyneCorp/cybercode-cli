@@ -19,6 +19,8 @@ use super::diagnostics::{Diagnostics, Publication};
 use super::{LspError, StdioConnection};
 use crate::HookCommandProcess;
 
+const PEER_BURST: usize = 16;
+
 #[derive(Clone)]
 pub struct LaunchRequest {
     pub checkouts: Vec<cyber_core::worktrees::Managed>,
@@ -866,16 +868,23 @@ async fn run(
     let mut review = tokio::time::interval(Duration::from_secs(1));
     let mut documents = super::documents::Documents::default();
     let mut diagnostics = Diagnostics::default();
-    while let Some(event) = next_event(
+    let mut messages = 0;
+    while let Some(event) = next_scheduled_event(
         connection,
         &mut commands,
         &mut health,
         &mut review,
         admission.is_some(),
         cancel,
+        messages,
     )
     .await
     {
+        match &event {
+            Event::Message(_) => messages = messages.saturating_add(1),
+            Event::Command(_) => messages = 0,
+            _ => {}
+        }
         if !matches!(event, Event::Health)
             && !admitted(connection, &admission, request, cancel).await
         {
@@ -1241,9 +1250,33 @@ async fn next_event(
         _ = cancel.cancelled() => None,
         _ = review.tick(), if authorized => Some(Event::Review),
         _ = health.tick() => Some(Event::Health),
-        command = commands.recv() => command.map(Event::Command),
         message = connection.next_idle() => message.ok().map(Event::Message),
+        command = commands.recv() => command.map(Event::Command),
     }
+}
+
+/// Drain ready peer publications before observing feedback, while bounding command delay.
+/// Health/review events do not reset the burst, so a busy peer cannot defeat fairness.
+async fn next_scheduled_event(
+    connection: &mut StdioConnection,
+    commands: &mut mpsc::Receiver<Command>,
+    health: &mut tokio::time::Interval,
+    review: &mut tokio::time::Interval,
+    authorized: bool,
+    cancel: &CancellationToken,
+    messages: usize,
+) -> Option<Event> {
+    if cancel.is_cancelled() {
+        return None;
+    }
+    if messages >= PEER_BURST {
+        match commands.try_recv() {
+            Ok(command) => return Some(Event::Command(command)),
+            Err(mpsc::error::TryRecvError::Disconnected) => return None,
+            Err(mpsc::error::TryRecvError::Empty) => {}
+        }
+    }
+    next_event(connection, commands, health, review, authorized, cancel).await
 }
 
 async fn admitted(

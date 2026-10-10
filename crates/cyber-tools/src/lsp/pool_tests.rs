@@ -47,6 +47,222 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
     (root, file)
 }
 
+#[tokio::test]
+async fn queued_peer_messages_precede_feedback_commands() {
+    let (root, _) = fixture();
+    let mut connection = StdioConnection::connect_with_timeout(
+        super::super::connection::tests::process("idle-burst").await,
+        root.path(),
+        json!({"fixture":true}),
+        Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    wait_for(|| root.path().join("burst-sent").exists()).await;
+    let (sender, mut commands) = mpsc::channel(1);
+    let (reply, _) = oneshot::channel();
+    sender.send(Command::DiagnosticPaths(reply)).await.unwrap();
+    let mut health = tokio::time::interval(Duration::from_secs(60));
+    let mut review = tokio::time::interval(Duration::from_secs(60));
+    health.tick().await;
+    review.tick().await;
+    let cancel = CancellationToken::new();
+    let event = next_event(
+        &mut connection,
+        &mut commands,
+        &mut health,
+        &mut review,
+        false,
+        &cancel,
+    )
+    .await;
+    let peer_first = matches!(event, Some(Event::Message(_)));
+    assert!(connection.shutdown().await.acknowledged);
+    assert!(
+        peer_first,
+        "an already queued publication must precede feedback observation"
+    );
+}
+
+#[tokio::test]
+async fn exhausted_peer_burst_services_a_queued_command_and_preserves_cancellation() {
+    let (root, _) = fixture();
+    let mut connection = StdioConnection::connect_with_timeout(
+        super::super::connection::tests::process("idle-burst").await,
+        root.path(),
+        json!({"fixture":true}),
+        Duration::from_secs(3),
+    )
+    .await
+    .unwrap();
+    wait_for(|| root.path().join("burst-sent").exists()).await;
+    let (sender, mut commands) = mpsc::channel(1);
+    let (reply, _) = oneshot::channel();
+    sender.send(Command::DiagnosticPaths(reply)).await.unwrap();
+    let mut health = tokio::time::interval(Duration::from_secs(60));
+    let mut review = tokio::time::interval(Duration::from_secs(60));
+    let cancel = CancellationToken::new();
+    let event = next_scheduled_event(
+        &mut connection,
+        &mut commands,
+        &mut health,
+        &mut review,
+        false,
+        &cancel,
+        PEER_BURST,
+    )
+    .await;
+    assert!(matches!(
+        event,
+        Some(Event::Command(Command::DiagnosticPaths(_)))
+    ));
+    let (reply, _) = oneshot::channel();
+    sender.send(Command::DiagnosticPaths(reply)).await.unwrap();
+    cancel.cancel();
+    assert!(
+        next_scheduled_event(
+            &mut connection,
+            &mut commands,
+            &mut health,
+            &mut review,
+            false,
+            &cancel,
+            PEER_BURST
+        )
+        .await
+        .is_none()
+    );
+    assert_eq!(
+        sender.capacity(),
+        0,
+        "cancellation must not consume the queued command"
+    );
+    assert!(matches!(
+        commands.try_recv(),
+        Ok(Command::DiagnosticPaths(_))
+    ));
+    drop(sender);
+    assert!(
+        next_scheduled_event(
+            &mut connection,
+            &mut commands,
+            &mut health,
+            &mut review,
+            false,
+            &CancellationToken::new(),
+            PEER_BURST,
+        )
+        .await
+        .is_none(),
+        "a closed command queue must not be starved by peer traffic"
+    );
+    assert!(connection.shutdown().await.acknowledged);
+}
+
+struct PausedPublication {
+    admissions: usize,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl ResourceLease for PausedPublication {
+    fn admit_document(
+        &mut self,
+        _: PathBuf,
+        _: Vec<cyber_core::worktrees::Managed>,
+        _: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), LspError>> {
+        self.admissions += 1;
+        let pause = self.admissions == 2;
+        Box::pin(async move {
+            if pause {
+                self.entered.notify_one();
+                self.release.notified().await;
+            }
+            Ok(())
+        })
+    }
+    fn close(&mut self) -> BoxFuture<'_, bool> {
+        Box::pin(async { true })
+    }
+}
+
+#[tokio::test]
+async fn feedback_includes_queued_other_files_after_slow_publication_admission() {
+    let (root, file) = fixture();
+    let file = file.canonicalize().unwrap();
+    for index in 0..7 {
+        std::fs::write(root.path().join(format!("other{index}.rs")), "other").unwrap();
+    }
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let admission_entered = entered.clone();
+    let admission_release = release.clone();
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        Arc::new(move |_, _| {
+            let entered = admission_entered.clone();
+            let release = admission_release.clone();
+            Box::pin(async move {
+                Ok(AuthorizedProcess {
+                    process: super::super::connection::tests::process("save-burst").await,
+                    keepalive: Box::new(PausedPublication {
+                        admissions: 0,
+                        entered,
+                        release,
+                    }),
+                })
+            })
+        }),
+    )
+    .unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    let receipt = handle
+        .save_observed(
+            file.clone(),
+            std::fs::read_to_string(&file).unwrap(),
+            vec![],
+            false,
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), entered.notified())
+        .await
+        .unwrap();
+    wait_for(|| root.path().join("diagnostics-sent").exists()).await;
+    let feedback_handle = handle.clone();
+    let feedback_file = file.clone();
+    let feedback =
+        tokio::spawn(async move { feedback_handle.feedback(feedback_file, receipt, true).await });
+    wait_for(|| handle.entry.sender.capacity() < 32).await;
+    // The publication claim holds the worker past the shared save quiet window.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    release.notify_one();
+    let result = tokio::time::timeout(Duration::from_secs(3), feedback)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        pool.close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|stop| stop.acknowledged)
+    );
+    assert!(result.complete);
+    assert_eq!(
+        result
+            .snapshots
+            .iter()
+            .filter(|snapshot| snapshot.path != file)
+            .count(),
+        5,
+        "already buffered other-file publications must be collected before complete feedback"
+    );
+}
+
 async fn wait_for(mut condition: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(3), async {
         while !condition() {

@@ -5,6 +5,7 @@ use std::process::Stdio;
 const SERVER: &str = r#"
 import json, sys, pathlib, subprocess, time, urllib.parse
 mode = sys.argv[1]
+versions = {}
 def read():
     length = None
     while True:
@@ -36,6 +37,10 @@ while True:
         else:
             send({'jsonrpc':'2.0','id':msg['id'],'result':{'capabilities':{'hoverProvider':True}}})
     elif method == 'initialized':
+        if mode == 'idle-burst':
+            for index in range(32):
+                send({'jsonrpc':'2.0','method':'fixture/burst','params':{'index':index}})
+            (workspace / 'burst-sent').write_text('sent')
         if mode == 'exit-on-initialized': break
         if mode == 'idle-messages':
             uri = (workspace / 'file.rs').as_uri()
@@ -67,8 +72,17 @@ while True:
         assert reply['error']['code'] == -32601
         send({'jsonrpc':'2.0','id':msg['id'],'result':{'text':'λ🦀'}})
     elif method in ['textDocument/didOpen','textDocument/didChange','textDocument/didClose']:
+        if method != 'textDocument/didClose':
+            versions[msg['params']['textDocument']['uri']] = msg['params']['textDocument']['version']
         with (workspace / 'document-events').open('a') as events:
             events.write(json.dumps({'method':method,'params':msg['params']})+'\n')
+    elif method == 'textDocument/didSave' and mode == 'save-burst':
+        uri = msg['params']['textDocument']['uri']
+        for index, target in enumerate([uri] + [p.as_uri() for p in sorted(workspace.glob('other*.rs'))]):
+            params = {'uri':target,'diagnostics':[{'range':{'start':{'line':0,'character':0},'end':{'line':0,'character':1}},'severity':1,'message':'fresh error'}]}
+            if index == 0: params['version'] = versions[uri]
+            send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':params})
+        (workspace / 'diagnostics-sent').write_text('sent')
     elif method == 'remote-error':
         send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32602,'message':'private-error-secret'}})
     elif method == 'descendant':

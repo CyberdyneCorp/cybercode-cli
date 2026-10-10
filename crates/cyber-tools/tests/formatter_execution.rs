@@ -152,14 +152,63 @@ async fn disabled_and_missing_formatters_preserve_successful_edits() {
 async fn child_started(fixture: &Fixture) -> i32 {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Ok(pid) = std::fs::read_to_string(fixture.repo.join("child")) {
-                return pid.trim().parse().unwrap();
+            if let Ok(pid) = std::fs::read_to_string(fixture.repo.join("child"))
+                && let Ok(pid) = pid.trim().parse::<i32>()
+                && pid > 0
+                && let Some(host_pid) = host_child_pid(fixture, pid)
+            {
+                return host_pid;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
     .unwrap()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn host_child_pid(_: &Fixture, pid: i32) -> Option<i32> {
+    Some(pid)
+}
+
+#[cfg(target_os = "linux")]
+fn host_child_pid(fixture: &Fixture, namespace_pid: i32) -> Option<i32> {
+    let marker = fixture.repo.join("file.txt");
+    std::fs::read_dir("/proc")
+        .ok()?
+        .filter_map(Result::ok)
+        .find_map(|entry| {
+            let host_pid = entry.file_name().to_str()?.parse().ok()?;
+            let status = std::fs::read_to_string(entry.path().join("status")).ok()?;
+            if innermost_pid(&status) != Some(namespace_pid) {
+                return None;
+            }
+            let command = std::fs::read(entry.path().join("cmdline")).ok()?;
+            command
+                .split(|byte| *byte == 0)
+                .any(|arg| arg == marker.as_os_str().as_encoded_bytes())
+                .then_some(host_pid)
+        })
+}
+
+fn innermost_pid(status: &str) -> Option<i32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("NSpid:"))?
+        .split_whitespace()
+        .last()?
+        .parse::<i32>()
+        .ok()
+        .filter(|pid| *pid > 0)
+}
+
+#[test]
+fn namespace_pid_mapping_uses_the_innermost_identity() {
+    assert_eq!(innermost_pid("Pid: 21234\nNSpid:\t21234\t17\t3\n"), Some(3));
+    assert_eq!(innermost_pid("NSpid: 21234\n"), Some(21234));
+    assert_eq!(innermost_pid("Pid: 3\n"), None);
+    assert_eq!(innermost_pid("NSpid: invalid\n"), None);
+    assert_eq!(innermost_pid("NSpid: 0\n"), None);
 }
 
 fn assert_child_stopped(pid: i32) {
@@ -177,7 +226,7 @@ fn assert_child_stopped(pid: i32) {
 #[tokio::test]
 async fn thirty_second_timeout_settles_descendants_and_continues_formatting() {
     let fixture = configured(json!({
-        "first":formatter("sleep 60 & printf '%s' \"$!\" > child; wait", &[".txt"]),
+        "first":formatter("/bin/sh -c 'sleep 60; :' \"$1\" & printf '%s' \"$!\" > child; wait", &[".txt"]),
         "second":formatter("printf 'formatted' > \"$1\"", &[".txt"])
     }));
     let started = std::time::Instant::now();
@@ -197,7 +246,7 @@ async fn thirty_second_timeout_settles_descendants_and_continues_formatting() {
 #[tokio::test]
 async fn cancellation_settles_descendants_and_starts_no_later_formatter() {
     let fixture = configured(json!({
-        "first":formatter("sleep 60 & printf '%s' \"$!\" > child; wait", &[".txt"]),
+        "first":formatter("/bin/sh -c 'sleep 60; :' \"$1\" & printf '%s' \"$!\" > child; wait", &[".txt"]),
         "second":formatter("touch should-not-run", &[".txt"])
     }));
     let cancel = CancellationToken::new();

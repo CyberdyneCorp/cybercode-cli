@@ -1,5 +1,18 @@
 ## ADDED Requirements
 
+### Requirement: Bounded peer publication scheduling before feedback
+(P1) Owned language-server workers SHALL service already ready peer messages before queued feedback observation commands so a slow publication authority/checkout admission does not leave an already buffered diagnostic batch behind complete edited-file feedback. Peer priority SHALL be bounded: after sixteen peer messages the worker SHALL offer a queued command a turn before reading further peer messages. Health/review events SHALL NOT reset this burst counter. Queued commands SHALL retain existing fresh authority and document admission. Cancellation SHALL take priority without consuming queued commands; closed command queues SHALL stop the worker at the fairness boundary. This ordering SHALL NOT infer freshness of delayed unversioned publications, extend the configured diagnostic deadline, reset document versions, or weaken scope/ownership checks.
+
+#### Scenario: Slow publication admission with queued feedback
+- **WHEN** the first publication's admission holds the worker beyond the shared save quiet window while other-file publications and a feedback command are already queued
+- **THEN** those ready publications SHALL be processed before complete feedback observation
+- **AND** write feedback SHALL include at most five newly erroneous other files
+
+#### Scenario: Busy peer and cancellation
+- **WHEN** a peer burst reaches sixteen messages with a command waiting
+- **THEN** the queued command SHALL receive a turn under its existing authority checks
+- **AND** cancellation SHALL return without consuming that queued command
+
 ### Requirement: Automatic sandboxed formatting after file edits
 (P1) Successful write, edit, apply_patch and notebook_edit mutations SHALL run each enabled formatter matching the edited extension sequentially before owned LSP save/diagnostic feedback. Commands SHALL replace $FILE with the canonical absolute edited path, use the Location directory and configured environment, and run inside the selected sandbox with owned temporary roots and a thirty-second timeout each. Automatic formatting SHALL NOT approve unknown network domains or override sandbox proxy/temporary environment. Configuration/provenance and source contents SHALL be rechecked before native launch. Disabled, missing, failed and nonzero formatters SHALL be logged without failing the completed edit, and a failed formatter SHALL NOT skip a later enabled formatter. Cancellation SHALL start no later formatter and SHALL retain native/sandbox ownership until process-tree settlement. Changed content and the formatting diff SHALL be returned to the model, with control characters JSON-escaped. Source rereads SHALL refuse redirected/nonregular targets. Existing tool Location ownership and edit permission SHALL remain authoritative; formatting SHALL NOT acquire independent edit permission.
 
