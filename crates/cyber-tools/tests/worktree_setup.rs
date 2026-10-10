@@ -149,6 +149,7 @@ fn managed_lsp_pool(fixture: &support::Fixture, location: &Path) -> cyber_tools:
 import sys,json,time
 documents=[]
 closed=[]
+watched=[]
 while True:
     length=None
     while True:
@@ -159,12 +160,13 @@ while True:
     msg=json.loads(sys.stdin.buffer.read(length))
     if msg['method']=='textDocument/didOpen': documents.append(msg['params']['textDocument']['text'])
     if msg['method']=='textDocument/didClose': closed.append(msg['params']['textDocument']['uri'])
+    if msg['method']=='workspace/didChangeWatchedFiles': watched.extend(msg['params']['changes'])
     if msg['method']=='shutdown': time.sleep(60)
     if msg['method']=='publish-diagnostics':
         body=json.dumps({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':msg['params']}).encode()
         sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body);sys.stdout.buffer.flush()
     if 'id' in msg:
-        result={'capabilities':{}} if msg['method']=='initialize' else documents if msg['method']=='documents' else closed if msg['method']=='closed' else True
+        result={'capabilities':{}} if msg['method']=='initialize' else documents if msg['method']=='documents' else closed if msg['method']=='closed' else watched if msg['method']=='watched' else True
         body=json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':result}).encode()
         sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body);sys.stdout.buffer.flush()
 "#).unwrap();
@@ -1998,6 +2000,102 @@ async fn acknowledged_native_worktree_scope_reopens_with_original_checkout_ident
     assert!(old.verify(&flow.runtime, &info.id).is_err());
     repository
         .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+}
+
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[tokio::test]
+async fn lsp_unopened_deletion_retains_all_managed_claims_through_cancelled_close() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::ToolHost;
+    use cyber_tools::lsp::Locations;
+    assert!(
+        cyber_sandbox::available(),
+        "native sandbox prerequisites are required"
+    );
+    let (fixture, repository, managed) = owned().await;
+    let nested = repository
+        .create(
+            &Git,
+            &Settings::default(),
+            &managed.path.join("nested-data"),
+            "prj_nested",
+            &Name::parse("nested").unwrap(),
+        )
+        .await
+        .unwrap();
+    let location = fixture.dir.path().canonicalize().unwrap();
+    let outer = location.join("outer.txt");
+    std::fs::write(&outer, "outer").unwrap();
+    let pool = managed_lsp_pool(&fixture, &location);
+    let handle = pool.ensure("fixture", &outer).unwrap();
+    handle
+        .request("ping", json!({}), Duration::from_secs(3))
+        .await
+        .unwrap();
+    let retained = pool.clone();
+    let locations = Locations::new(Arc::new(move |_| Ok(retained.clone())));
+    fixture
+        .host
+        .attach_lsp_locations(locations.clone())
+        .unwrap();
+    let file = nested.path.join("tracked.txt").canonicalize().unwrap();
+    let mut invocation = fixture.invocation("accept-edits", "apply_patch", json!({"patch":format!("*** Begin Patch\n*** Delete File: {}\n*** End Patch",file.display())}));
+    invocation.directory = location.display().to_string();
+    support::ok(
+        fixture
+            .host
+            .execute(invocation, CancellationToken::new())
+            .await,
+    );
+    assert!(!file.exists());
+    assert_eq!(
+        handle
+            .request("documents", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap(),
+        json!([])
+    );
+    assert_eq!(
+        handle
+            .request("closed", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap(),
+        json!([])
+    );
+    assert_eq!(
+        handle
+            .request("watched", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap(),
+        json!([{"uri":reqwest::Url::from_file_path(&file).unwrap().as_str(),"type":3}])
+    );
+    for checkout in [&nested, &managed] {
+        let error = repository
+            .remove(&Git, &CheckoutActivity, checkout, true)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("in use by lsp_"), "{error}");
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), locations.close())
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .remove(&Git, &CheckoutActivity, &managed, true)
+            .await
+            .is_err()
+    );
+    assert!(locations.close().await.unwrap()[0].acknowledged);
+    repository
+        .remove(&Git, &CheckoutActivity, &nested, true)
+        .await
+        .unwrap();
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, true)
         .await
         .unwrap();
 }

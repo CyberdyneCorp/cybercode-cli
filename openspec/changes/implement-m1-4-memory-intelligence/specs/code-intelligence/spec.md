@@ -342,3 +342,26 @@ A pending feedback receipt SHALL be completed without any primary or other-file 
 #### Scenario: External modification while waiting
 - **WHEN** a user changes saved contents without sending another save notification
 - **THEN** pending feedback SHALL discard all diagnostics for the obsolete save without changing the user's contents
+
+### Requirement: Owned patch deletion and rename synchronization
+(P1) Applied file deletion SHALL enqueue owned synchronization to matching already-admitted language-server roots without starting a server solely for a missing file. Deleted paths SHALL use a canonical parent and remain inside the Location. Delivery SHALL freshly validate service authority, path absence and the managed creation ancestry captured before mutation. Dangling symlinks, recreated files, noncanonical parents and changed checkout identities SHALL refuse delivery. Independent claims for every enclosing managed checkout SHALL be retained through native/resource settlement, including deletion of previously unopened documents.
+
+For an opened document the worker SHALL send didClose and clear its document, quiet-clock and typed diagnostic cache state without resetting the server-generation version counter. It SHALL send a deleted-file watched notification, and successful saves SHALL send created or changed watched notifications according to pre-mutation existence. Rename through apply_patch SHALL synchronize the old deletion before opening/saving the destination when the same server/root serves both paths. No didClose SHALL be sent for an unopened document. This mutation synchronization SHALL NOT claim complete general filesystem watching or server-side dynamic watcher registration.
+
+Queued deletion SHALL retain service activity and notification ownership after a zero-wait caller returns. In-flight deletion scope admission SHALL remain owned through cancellation; native descendants SHALL stop before waiting for blocked claims, and final/repeated close SHALL require resource acknowledgement.
+
+#### Scenario: Rename then delete an opened file
+- **WHEN** apply_patch moves an opened file and later deletes its destination
+- **THEN** the old and new opened documents SHALL each close once and the server SHALL receive deletion/creation/deletion events in order
+
+#### Scenario: Delete an unopened nested managed file
+- **WHEN** a running unmanaged root receives a patch deletion inside two nested managed checkouts
+- **THEN** both checkouts SHALL retain independent LSP claims through cancelled shutdown and no didOpen or didClose SHALL be inferred
+
+#### Scenario: Zero-wait deletion
+- **WHEN** apply_patch deletes a supported file with a zero diagnostic deadline
+- **THEN** queued deletion synchronization SHALL still reach its running server or settle with its service
+
+#### Scenario: Cold or unmatched deletion
+- **WHEN** no matching server root is running or the deleted file has an unsupported extension
+- **THEN** no new language-server process SHALL start solely for that deletion and unrelated roots SHALL receive no document mutation

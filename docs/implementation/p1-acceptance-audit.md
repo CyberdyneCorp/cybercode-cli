@@ -1,5 +1,16 @@
 # P1 acceptance audit
 
+## Patch deletion and rename synchronization evidence (2026-10-10)
+
+Applied deletions now queue owned synchronization to matching existing server roots. They use a canonical parent, revalidate path absence and pre-mutation managed ancestry, and freshly check running service authority. Deletions do not start servers solely for missing files. Open documents receive didClose; document/quiet-clock and typed diagnostic cache state is cleared without resetting the generation version counter. Deleted-file watched events follow closure. Successful saves now send created/changed watched events based on captured pre-mutation existence. Rename synchronizes source deletion before destination open/save in a shared server/root. These mutation events do not implement general filesystem watching or dynamic watcher registration.
+
+Removal admission reuses retained native ownership and acquires missing independent claims for every enclosing managed checkout even when the deleted document was never opened. A real macOS unmanaged-root case deletes a file inside two nested managed checkouts, sends only its deletion event, refuses force-removal of both checkouts and keeps ownership through cancelled shutdown until native/resource acknowledgement. A real subprocess case blocks removal admission and proves descendants stop before the blocked claim is released; final/repeated close retains acknowledgement semantics.
+
+Eight real-server host cases cover all four edits plus ordered rename/deletion, created/changed/deleted event types, no stale old-path blocks, owned zero-wait deletion, cold no-start and unmatched no-notification behavior. A portable absence-observation test refuses recreated files, noncanonical parents and dangling Unix symlinks. Local validation passes 55 LSP library, 112 tool/protocol/runtime integration and eight managed-checkout LSP cases (175 total). One initial concurrent managed run timed out at idle-start readiness; the isolated case and complete eight-case rerun both pass. Workspace all-target Clippy with warnings/complexity denied, formatting/diff and generated SDK consistency checks pass. All 59 strict OpenSpec items pass; cross-spec lint reports zero errors and 21 warnings. Fresh native platform CI remains required.
+
+The complete canonical Diagnostics after edits contract remains unaccepted pending broader delayed unversioned-publication handling and native platform evidence. Navigation, sandboxed formatters, client-wide lifecycle controls, enforced Windows launch and all other P1 requirements remain in scope. No full milestone is accepted. P0 local-model processes/data/artifacts and its independent exit gate are preserved.
+
+
 ## Document feedback debounce and supersession evidence (2026-10-10)
 
 Diagnostic collection now uses a shared per-document quiet deadline updated after each successful didSave, including identical-content saves. Waiting callers consult the current server-generation deadline, so a rapid later save defers both collections; each caller retains its original configured timeout. All save notifications remain delivered. Quiet-clock state follows the bounded document cache and is removed on eviction.

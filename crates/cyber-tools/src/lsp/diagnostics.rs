@@ -338,7 +338,7 @@ impl Diagnostics {
         Some(cached.snapshot.clone())
     }
 
-    fn remove(&mut self, path: &Path) {
+    pub(super) fn remove(&mut self, path: &Path) {
         if let Some(cached) = self.entries.remove(path) {
             self.bytes -= cached.bytes;
         }

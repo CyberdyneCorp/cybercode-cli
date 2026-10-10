@@ -89,6 +89,7 @@ struct Warm {
     origin: ReadOrigin,
     file: PathBuf,
     text: String,
+    removed: bool,
     save: Option<Save>,
 }
 
@@ -102,12 +103,14 @@ struct Save {
 pub(crate) struct ReadOrigin {
     location: Vec<cyber_core::worktrees::Managed>,
     document: Vec<cyber_core::worktrees::Managed>,
+    created: bool,
 }
 
 pub(crate) fn read_origin(location: &Path, file: &Path) -> Result<ReadOrigin, LspError> {
     Ok(ReadOrigin {
         location: checkout_records(location)?,
         document: checkout_records(file)?,
+        created: false,
     })
 }
 
@@ -116,7 +119,9 @@ pub(crate) fn edit_origin(location: &Path, file: &Path) -> Result<ReadOrigin, Ls
     while !existing.exists() {
         existing = existing.parent().ok_or_else(unavailable)?;
     }
-    read_origin(location, existing)
+    let mut origin = read_origin(location, existing)?;
+    origin.created = !file.exists();
+    Ok(origin)
 }
 struct Entry {
     cancel: CancellationToken,
@@ -220,9 +225,43 @@ impl Locations {
                 file,
                 text,
                 origin,
+                removed: false,
                 save: None,
             },
         )
+    }
+
+    pub(crate) async fn removed(
+        &self,
+        location: &Path,
+        file: PathBuf,
+        origin: ReadOrigin,
+        wait: Duration,
+    ) {
+        let Ok(activity) = self.acquire(location) else {
+            return;
+        };
+        let Some(parent) = file.parent().and_then(|parent| parent.canonicalize().ok()) else {
+            return;
+        };
+        let Some(name) = file.file_name() else {
+            return;
+        };
+        let file = parent.join(name);
+        let (reply, receive) = oneshot::channel();
+        let warm = Warm {
+            file,
+            text: String::new(),
+            origin,
+            removed: true,
+            save: Some(Save {
+                reply,
+                _activity: activity,
+            }),
+        };
+        if self.enqueue(location, warm).is_ok() {
+            let _ = tokio::time::timeout(wait, receive).await;
+        }
     }
 
     pub(crate) async fn feedback(
@@ -249,6 +288,7 @@ impl Locations {
                     file: file.clone(),
                     text,
                     origin,
+                    removed: false,
                     save: Some(Save {
                         reply,
                         _activity: activity,
@@ -283,8 +323,15 @@ impl Locations {
         }
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| unavailable())?;
         let location = location.canonicalize().map_err(|_| unavailable())?;
-        warm.file = warm.file.canonicalize().map_err(|_| unavailable())?;
-        if !warm.file.starts_with(&location) || !warm.file.is_file() {
+        if warm.removed {
+            if !matches!(std::fs::symlink_metadata(&warm.file), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+            {
+                return Err(unavailable());
+            }
+        } else {
+            warm.file = warm.file.canonicalize().map_err(|_| unavailable())?;
+        }
+        if !warm.file.starts_with(&location) || (!warm.removed && !warm.file.is_file()) {
             return Err(unavailable());
         }
         let mut table = self.0.table.lock().map_err(|_| unavailable())?;
@@ -501,8 +548,15 @@ async fn run(
 }
 
 async fn deliver_warm(entry: &Entry, pool: &Pool, warm: Warm) -> bool {
+    if warm.removed {
+        tokio::select! { biased; _ = entry.cancel.cancelled() => return false, _ = pool.remove_observed(&warm.file, warm.origin.document) => {} }
+        if let Some(save) = warm.save {
+            let _ = save.reply.send(vec![]);
+        }
+        return true;
+    }
     if let Some(save) = warm.save {
-        let saved = tokio::select! { biased; _ = entry.cancel.cancelled() => return false, saved = pool.save_observed(&warm.file, warm.text, warm.origin.document) => saved };
+        let saved = tokio::select! { biased; _ = entry.cancel.cancelled() => return false, saved = pool.save_observed(&warm.file, warm.text, warm.origin.document, warm.origin.created) => saved };
         let _ = save.reply.send(saved);
     } else {
         tokio::select! { biased; _ = entry.cancel.cancelled() => return false, _ = pool.warm_observed(&warm.file, warm.text, warm.origin.document) => {} }
@@ -572,7 +626,14 @@ async fn current_warm(
     cancel: &CancellationToken,
 ) -> bool {
     let location = location.to_path_buf();
-    let file = warm.file.clone();
+    let file = if warm.removed {
+        let Some(parent) = warm.file.parent() else {
+            return false;
+        };
+        parent.to_owned()
+    } else {
+        warm.file.clone()
+    };
     let expected_location = warm.origin.location.clone();
     let expected_document = warm.origin.document.clone();
     let mut observation = tokio::task::spawn_blocking(move || {

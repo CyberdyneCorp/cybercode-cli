@@ -49,6 +49,22 @@ pub trait ResourceLease: Send {
             Ok(())
         })
     }
+    fn admit_removed(
+        &mut self,
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), LspError>> {
+        Box::pin(async move {
+            super::documents::verify_removed(path, checkouts.clone()).await?;
+            if !checkouts.is_empty() {
+                return Err(LspError::Protocol(
+                    "removed document checkout claim unavailable",
+                ));
+            }
+            Ok(())
+        })
+    }
     fn close(&mut self) -> BoxFuture<'_, bool>;
 }
 impl ResourceLease for () {
@@ -108,10 +124,16 @@ enum Command {
         reply: oneshot::Sender<Result<(), LspError>>,
     },
     Save {
+        created: bool,
         checkouts: Vec<cyber_core::worktrees::Managed>,
         path: PathBuf,
         text: String,
         reply: oneshot::Sender<Result<Arc<SaveReceipt>, LspError>>,
+    },
+    Remove {
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        reply: oneshot::Sender<Result<(), LspError>>,
     },
     Feedback {
         path: PathBuf,
@@ -172,14 +194,35 @@ impl ServerHandle {
         path: PathBuf,
         text: String,
         checkouts: Vec<cyber_core::worktrees::Managed>,
+        created: bool,
     ) -> Result<Arc<SaveReceipt>, LspError> {
         self.connected().await?;
         let (reply, receive) = oneshot::channel();
         self.entry
             .sender
             .send(Command::Save {
+                created,
                 path,
                 text,
+                checkouts,
+                reply,
+            })
+            .await
+            .map_err(|_| unavailable())?;
+        receive.await.map_err(|_| unavailable())?
+    }
+
+    async fn remove_observed(
+        &self,
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+    ) -> Result<(), LspError> {
+        self.connected().await?;
+        let (reply, receive) = oneshot::channel();
+        self.entry
+            .sender
+            .send(Command::Remove {
+                path,
                 checkouts,
                 reply,
             })
@@ -359,11 +402,44 @@ pub struct Pool {
 }
 
 impl Pool {
+    pub(super) async fn remove_observed(
+        &self,
+        path: &Path,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+    ) {
+        let handles = self
+            .inner
+            .table
+            .lock()
+            .map(|table| {
+                table
+                    .entries
+                    .iter()
+                    .filter_map(|((id, root), entry)| {
+                        let server = self.inner.servers.get(id)?;
+                        (path.starts_with(root) && matches_file(server, path)).then(|| {
+                            ServerHandle {
+                                entry: entry.clone(),
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        futures::future::join_all(
+            handles
+                .iter()
+                .map(|handle| handle.remove_observed(path.into(), checkouts.clone())),
+        )
+        .await;
+    }
+
     pub(super) async fn save_observed(
         &self,
         file: &Path,
         text: String,
         checkouts: Vec<cyber_core::worktrees::Managed>,
+        created: bool,
     ) -> Vec<(ServerHandle, Arc<SaveReceipt>)> {
         let handles: Vec<_> = self
             .inner
@@ -377,7 +453,7 @@ impl Pool {
             let checkouts = checkouts.clone();
             async move {
                 handle
-                    .save_observed(path, text, checkouts)
+                    .save_observed(path, text, checkouts, created)
                     .await
                     .ok()
                     .map(|receipt| (handle, receipt))
@@ -738,7 +814,11 @@ async fn dispatch_event(
     cancel: &CancellationToken,
 ) -> bool {
     if let Event::Command(Command::Save {
-        path, text, reply, ..
+        path,
+        text,
+        reply,
+        created,
+        ..
     }) = event
     {
         if reply.is_closed() {
@@ -763,7 +843,7 @@ async fn dispatch_event(
         let result = tokio::select! {
             biased;
             _ = cancel.cancelled() => return false,
-            result = documents.save(connection, path, text) => result.map(|version| Arc::new(SaveReceipt { version, sequence, previous, observation })),
+            result = documents.save(connection, path, text, created) => result.map(|version| Arc::new(SaveReceipt { version, sequence, previous, observation })),
         };
         let healthy = result.is_ok();
         let _ = reply.send(result);
@@ -1060,31 +1140,27 @@ async fn admitted_document(
     event: &Event,
     cancel: &CancellationToken,
 ) -> bool {
-    let Event::Command(Command::Open {
-        path,
-        checkouts,
-        reply,
-        ..
-    }) = event
-    else {
-        if let Event::Command(Command::Save {
+    let (path, checkouts, closed, removed) = match event {
+        Event::Command(Command::Open {
             path,
             checkouts,
             reply,
             ..
-        }) = event
-        {
-            if reply.is_closed() {
-                return true;
-            }
-            return admitted_origin(connection, resources, path, checkouts, cancel).await;
-        }
-        return true;
+        }) => (path, checkouts, reply.is_closed(), false),
+        Event::Command(Command::Save {
+            path,
+            checkouts,
+            reply,
+            ..
+        }) => (path, checkouts, reply.is_closed(), false),
+        Event::Command(Command::Remove {
+            path,
+            checkouts,
+            reply,
+        }) => (path, checkouts, reply.is_closed(), true),
+        _ => return true,
     };
-    if reply.is_closed() {
-        return true;
-    }
-    admitted_origin(connection, resources, path, checkouts, cancel).await
+    closed || admitted_origin(connection, resources, path, checkouts, cancel, removed).await
 }
 
 async fn admitted_origin(
@@ -1093,8 +1169,13 @@ async fn admitted_origin(
     path: &Path,
     checkouts: &[cyber_core::worktrees::Managed],
     cancel: &CancellationToken,
+    removed: bool,
 ) -> bool {
-    let admission = resources.admit_document(path.into(), checkouts.to_vec(), cancel.clone());
+    let admission = if removed {
+        resources.admit_removed(path.into(), checkouts.to_vec(), cancel.clone())
+    } else {
+        resources.admit_document(path.into(), checkouts.to_vec(), cancel.clone())
+    };
     tokio::pin!(admission);
     tokio::select! {
         biased;
@@ -1144,6 +1225,16 @@ async fn execute(
     command: Command,
 ) -> bool {
     match command {
+        Command::Remove { path, reply, .. } => {
+            if reply.is_closed() {
+                return true;
+            }
+            let result = documents.removed(connection, &path).await;
+            let healthy = result.is_ok();
+            diagnostics.remove(&path);
+            let _ = reply.send(result);
+            healthy
+        }
         Command::Save { .. } => unreachable!("save observations are retained by the worker"),
         Command::Open {
             path, text, reply, ..

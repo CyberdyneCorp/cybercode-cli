@@ -30,8 +30,15 @@ while True:
     if method=='initialize':
         root=pathlib.Path(urllib.parse.unquote(urllib.parse.urlparse(p['rootUri']).path))
         send({'jsonrpc':'2.0','id':msg['id'],'result':{'capabilities':{'textDocumentSync':{'openClose':True,'change':1,'save':{'includeText':True}}}}})
-    elif method in ['textDocument/didOpen','textDocument/didChange']:
-        d=p['textDocument']; versions[d['uri']]=d['version']
+    elif method in ['textDocument/didOpen','textDocument/didChange','textDocument/didClose','workspace/didChangeWatchedFiles']:
+        with (root/'sync-events').open('a') as f: f.write(json.dumps({'method':method,'params':p})+'\n')
+        if method in ['textDocument/didOpen','textDocument/didChange']:
+            d=p['textDocument']; versions[d['uri']]=d['version']
+        elif method=='textDocument/didClose': versions.pop(p['textDocument']['uri'])
+        elif method=='workspace/didChangeWatchedFiles':
+            for change in p['changes']:
+                path=pathlib.Path(urllib.parse.unquote(urllib.parse.urlparse(change['uri']).path))
+                if change['type']==3: assert not path.exists()
     elif method=='textDocument/didSave':
         uri=p['textDocument']['uri']; path=pathlib.Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
         assert p['text']==path.read_text()
@@ -156,6 +163,12 @@ async fn all_four_edit_tools_append_fresh_errors_and_write_limits_new_other_file
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert_eq!(saves.len(), 6);
+    let changed: Vec<_> = sync_events(&fixture)
+        .into_iter()
+        .filter(|event| event["method"] == "workspace/didChangeWatchedFiles")
+        .map(|event| event["params"]["changes"][0]["type"].as_i64().unwrap())
+        .collect();
+    assert_eq!(changed, vec![1, 2, 2, 2, 1, 2]);
     for save in &saves[3..5] {
         assert_eq!(save["project"]["file.txt"], "fourth\n");
         assert_eq!(save["project"]["final.txt"], "final\n");
@@ -393,5 +406,156 @@ async fn external_change_discards_all_pending_feedback() {
             .unwrap()
             .iter()
             .all(|s| s.acknowledged)
+    );
+}
+
+fn sync_events(fixture: &Fixture) -> Vec<Value> {
+    fixture
+        .read("sync-events")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn patch_rename_and_delete_close_old_documents_and_publish_file_events() {
+    let (fixture, locations) = setup("errors", 2000);
+    ok(fixture
+        .call(
+            "accept-edits",
+            "write",
+            json!({"path":"old.txt","content":"old"}),
+        )
+        .await);
+    let output = ok(fixture.call("accept-edits", "apply_patch", json!({"patch":"*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n-old\n+new\n*** End Patch"})).await);
+    assert_errors(&output, "new.txt");
+    assert!(!output.contains("<diagnostics file=\"old.txt\""));
+    assert!(!fixture.repo.join("old.txt").exists());
+    assert_eq!(fixture.read("new.txt"), "new\n");
+    ok(fixture
+        .call(
+            "accept-edits",
+            "apply_patch",
+            json!({"patch":"*** Begin Patch\n*** Delete File: new.txt\n*** End Patch"}),
+        )
+        .await);
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+    let events = sync_events(&fixture);
+    let closes: Vec<_> = events
+        .iter()
+        .filter(|event| event["method"] == "textDocument/didClose")
+        .collect();
+    assert_eq!(closes.len(), 2, "{events:?}");
+    assert!(
+        closes[0]["params"]["textDocument"]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("/old.txt")
+    );
+    assert!(
+        closes[1]["params"]["textDocument"]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("/new.txt")
+    );
+    let changes: Vec<_> = events
+        .iter()
+        .filter(|event| event["method"] == "workspace/didChangeWatchedFiles")
+        .map(|event| event["params"]["changes"][0].clone())
+        .collect();
+    assert_eq!(
+        changes
+            .iter()
+            .map(|change| change["type"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![1, 3, 1, 3]
+    );
+    let old_closed = events
+        .iter()
+        .position(|event| event["method"] == "textDocument/didClose")
+        .unwrap();
+    let new_open = events
+        .iter()
+        .position(|event| {
+            event["method"] == "textDocument/didOpen"
+                && event["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("/new.txt")
+        })
+        .unwrap();
+    assert!(old_closed < new_open);
+}
+
+#[tokio::test]
+async fn cold_deletion_starts_no_server_and_zero_wait_retains_warm_deletion() {
+    let (fixture, locations) = setup("errors", 2000);
+    fixture.write("cold.txt", "cold");
+    ok(fixture
+        .call(
+            "accept-edits",
+            "apply_patch",
+            json!({"patch":"*** Begin Patch\n*** Delete File: cold.txt\n*** End Patch"}),
+        )
+        .await);
+    assert!(locations.status(&fixture.repo).unwrap().is_empty());
+    assert!(!fixture.repo.join("sync-events").exists());
+    ok(fixture
+        .call(
+            "accept-edits",
+            "write",
+            json!({"path":"warm.txt","content":"warm"}),
+        )
+        .await);
+    fixture.set_config(json!({"lsp":{"diagnostics_wait_ms":0}}));
+    ok(fixture
+        .call(
+            "accept-edits",
+            "apply_patch",
+            json!({"patch":"*** Begin Patch\n*** Delete File: warm.txt\n*** End Patch"}),
+        )
+        .await);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let events = sync_events(&fixture);
+            if events.iter().any(|event| {
+                event["method"] == "workspace/didChangeWatchedFiles"
+                    && event["params"]["changes"][0]["type"] == 3
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    fixture.write("unsupported.bin", "binary");
+    ok(fixture
+        .call(
+            "accept-edits",
+            "apply_patch",
+            json!({"patch":"*** Begin Patch\n*** Delete File: unsupported.bin\n*** End Patch"}),
+        )
+        .await);
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+    let events = sync_events(&fixture);
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.to_string().contains("unsupported.bin"))
     );
 }

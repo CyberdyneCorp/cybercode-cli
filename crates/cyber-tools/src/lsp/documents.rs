@@ -25,6 +25,33 @@ pub(super) async fn verify_origin(
     .map_err(|_| LspError::Protocol("document observation failed"))?
 }
 
+pub(super) async fn verify_removed(
+    path: PathBuf,
+    expected: Vec<cyber_core::worktrees::Managed>,
+) -> Result<(), LspError> {
+    tokio::task::spawn_blocking(move || {
+        let parent = path.parent().ok_or(LspError::Protocol("removed document parent unavailable"))?;
+        if parent.canonicalize().ok().as_deref() != Some(parent)
+            || !matches!(std::fs::symlink_metadata(&path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+            || super::locations::checkout_records(parent)? != expected {
+            return Err(LspError::Protocol("removed document creation changed"));
+        }
+        Ok(())
+    }).await.map_err(|_| LspError::Protocol("removed document observation failed"))?
+}
+
+pub(super) async fn verify_scope(
+    path: PathBuf,
+    expected: Vec<cyber_core::worktrees::Managed>,
+    removed: bool,
+) -> Result<(), LspError> {
+    if removed {
+        verify_removed(path, expected).await
+    } else {
+        verify_origin(path, expected).await
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Documents {
     entries: BTreeMap<PathBuf, (i32, [u8; 32])>,
@@ -34,11 +61,36 @@ pub(super) struct Documents {
 }
 
 impl Documents {
+    pub async fn removed(
+        &mut self,
+        connection: &mut StdioConnection,
+        path: &std::path::Path,
+    ) -> Result<(), LspError> {
+        let document_uri = uri(path)?;
+        if self.entries.contains_key(path) {
+            notify(
+                connection,
+                "textDocument/didClose",
+                json!({"textDocument":{"uri":document_uri}}),
+            )
+            .await?;
+            self.entries.remove(path);
+            self.saved.remove(path);
+        }
+        notify(
+            connection,
+            "workspace/didChangeWatchedFiles",
+            json!({"changes":[{"uri":document_uri,"type":3}]}),
+        )
+        .await
+    }
+
     pub async fn save(
         &mut self,
         connection: &mut StdioConnection,
         path: PathBuf,
         text: String,
+        created: bool,
     ) -> Result<i32, LspError> {
         let language = language(&path);
         let include_text = connection
@@ -52,6 +104,12 @@ impl Documents {
         }
         self.open(connection, path.clone(), text, language).await?;
         notify(connection, "textDocument/didSave", params).await?;
+        notify(
+            connection,
+            "workspace/didChangeWatchedFiles",
+            json!({"changes":[{"uri":uri(&path)?,"type":if created { 1 } else { 2 }}]}),
+        )
+        .await?;
         self.saved.insert(path.clone(), tokio::time::Instant::now());
         self.version(&path)
             .ok_or(LspError::Protocol("saved document unavailable"))
@@ -231,5 +289,35 @@ mod tests {
         assert_eq!(events[0]["method"], "textDocument/didOpen");
         assert_eq!(events[0]["params"]["textDocument"]["version"], i32::MAX);
         assert!(connection.shutdown().await.acknowledged);
+    }
+}
+
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn removal_observation_refuses_recreated_and_noncanonical_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        let path = directory.join("deleted.rs");
+        verify_removed(path.clone(), vec![]).await.unwrap();
+        std::fs::write(&path, "replacement").unwrap();
+        assert!(verify_removed(path.clone(), vec![]).await.is_err());
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            verify_removed(
+                directory.join("missing").join("..").join("deleted.rs"),
+                vec![]
+            )
+            .await
+            .is_err()
+        );
+        assert!(verify_removed(directory.clone(), vec![]).await.is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(directory.join("absent"), &path).unwrap();
+            assert!(verify_removed(path, vec![]).await.is_err());
+        }
     }
 }

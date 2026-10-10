@@ -434,12 +434,24 @@ async fn cancellation_settles_native_descendants_before_a_blocked_authority_revi
 
 #[tokio::test]
 async fn cancellation_settles_native_descendants_before_a_blocked_document_claim() {
-    blocked_document_claim(false).await;
+    blocked_document_claim(ClaimKind::Open).await;
 }
 
 #[tokio::test]
 async fn cancellation_settles_native_descendants_before_a_blocked_diagnostic_claim() {
-    blocked_document_claim(true).await;
+    blocked_document_claim(ClaimKind::Diagnostic).await;
+}
+
+#[tokio::test]
+async fn cancellation_settles_native_descendants_before_a_blocked_removal_claim() {
+    blocked_document_claim(ClaimKind::Remove).await;
+}
+
+#[derive(Clone, Copy)]
+enum ClaimKind {
+    Open,
+    Diagnostic,
+    Remove,
 }
 
 struct BlockedClaimResource {
@@ -460,13 +472,21 @@ impl ResourceLease for BlockedClaimResource {
             Ok(())
         })
     }
+    fn admit_removed(
+        &mut self,
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), LspError>> {
+        self.admit_document(path, checkouts, cancel)
+    }
     fn close(&mut self) -> BoxFuture<'_, bool> {
         self.released.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { true })
     }
 }
 
-async fn blocked_document_claim(diagnostic: bool) {
+async fn blocked_document_claim(kind: ClaimKind) {
     let (root, file) = fixture();
     let file = file.canonicalize().unwrap();
     let marker = root.path().join("document-claim-escape");
@@ -497,7 +517,7 @@ async fn blocked_document_claim(diagnostic: bool) {
         )
         .await
         .unwrap();
-    let pending = tokio::spawn(submit_blocked_claim(handle, file, diagnostic));
+    let pending = tokio::spawn(submit_blocked_claim(handle, file, kind));
     wait_for(|| entered.load(Ordering::SeqCst) == 1).await;
     assert!(
         tokio::time::timeout(Duration::from_millis(20), pool.close())
@@ -527,9 +547,13 @@ async fn finish_blocked_claim(
 async fn submit_blocked_claim(
     handle: ServerHandle,
     file: PathBuf,
-    diagnostic: bool,
+    kind: ClaimKind,
 ) -> Result<(), LspError> {
-    if diagnostic {
+    if matches!(kind, ClaimKind::Remove) {
+        std::fs::remove_file(&file).unwrap();
+        return handle.remove_observed(file, vec![]).await;
+    }
+    if matches!(kind, ClaimKind::Diagnostic) {
         let uri = reqwest::Url::from_file_path(&file).unwrap().to_string();
         let params = json!({"uri":uri,"diagnostics":[]});
         handle

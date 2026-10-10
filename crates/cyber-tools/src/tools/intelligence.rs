@@ -47,3 +47,19 @@ pub(crate) async fn feedback(
     ctx.compiler_feedback.store(true, Ordering::Release);
     format!("\n{blocks}")
 }
+
+pub(crate) async fn removed(ctx: &Ctx<'_>, path: &Path, origin: Option<ReadOrigin>) {
+    let Some(origin) = origin else {
+        return;
+    };
+    let Some(locations) = ctx.host.lsp.get() else {
+        return;
+    };
+    let Ok(settings) = LspSettings::from_config(&ctx.host.config_for(&ctx.location)) else {
+        return;
+    };
+    if !settings.enabled {
+        return;
+    }
+    tokio::select! { biased; _ = ctx.cancel.cancelled() => {}, _ = locations.removed(&ctx.location, path.into(), origin, Duration::from_millis(settings.diagnostics_wait_ms)) => {} }
+}

@@ -357,7 +357,10 @@ async fn patch_feedback(
                 Some(bytes) => {
                     super::intelligence::feedback(ctx, &change.path, bytes, origin).await
                 }
-                None => String::new(),
+                None => {
+                    super::intelligence::removed(ctx, &change.path, origin).await;
+                    String::new()
+                }
             }
         }))
         .await;

@@ -452,6 +452,29 @@ struct Resources {
     acknowledged: Option<bool>,
 }
 
+impl Resources {
+    async fn admit_scope(
+        &mut self,
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        cancel: CancellationToken,
+        removed: bool,
+    ) -> Result<(), LspError> {
+        if self.acknowledged.is_some() || !path.starts_with(&self.document_root) {
+            return Err(LspError::Protocol("document root unavailable"));
+        }
+        super::documents::verify_scope(path.clone(), checkouts.clone(), removed).await?;
+        let missing = self.pins.missing(&path, &checkouts)?;
+        let pins = claim_pins(&self.checkout_claim, missing, cancel.clone())
+            .await
+            .map_err(|error| error.error)?;
+        self.pins.checkouts.extend(pins.checkouts);
+        self.pins.leases.extend(pins.leases);
+        super::documents::verify_scope(path, checkouts, removed).await?;
+        check_cancel(&cancel).map_err(|error| error.error)
+    }
+}
+
 impl ResourceLease for Resources {
     fn admit_document(
         &mut self,
@@ -459,21 +482,17 @@ impl ResourceLease for Resources {
         checkouts: Vec<cyber_core::worktrees::Managed>,
         cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<(), LspError>> {
-        Box::pin(async move {
-            if self.acknowledged.is_some() || !path.starts_with(&self.document_root) {
-                return Err(LspError::Protocol("document root unavailable"));
-            }
-            super::documents::verify_origin(path.clone(), checkouts.clone()).await?;
-            let missing = self.pins.missing(&path, &checkouts)?;
-            let pins = claim_pins(&self.checkout_claim, missing, cancel.clone())
-                .await
-                .map_err(|error| error.error)?;
-            self.pins.checkouts.extend(pins.checkouts);
-            self.pins.leases.extend(pins.leases);
-            super::documents::verify_origin(path, checkouts).await?;
-            check_cancel(&cancel).map_err(|error| error.error)
-        })
+        Box::pin(self.admit_scope(path, checkouts, cancel, false))
     }
+    fn admit_removed(
+        &mut self,
+        path: PathBuf,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<(), LspError>> {
+        Box::pin(self.admit_scope(path, checkouts, cancel, true))
+    }
+
     fn close(&mut self) -> BoxFuture<'_, bool> {
         Box::pin(async move {
             if let Some(acknowledged) = self.acknowledged {
