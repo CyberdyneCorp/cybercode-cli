@@ -41,6 +41,15 @@ pub(crate) async fn prepare_command(
     prepare_scoped_command(ctx, program, args, true, None, &[]).await
 }
 
+/// Automatic formatters use owned temporary roots rather than the ambient OS temp tree.
+pub(crate) async fn prepare_formatter_command(
+    ctx: &Ctx<'_>,
+    program: &str,
+    args: &[String],
+) -> Result<Prepared, ToolError> {
+    prepare_scoped_command(ctx, program, args, false, None, &[]).await
+}
+
 /// Setup must not gain ambient temporary-directory access outside its owned roots.
 pub(crate) async fn prepare_worktree_command(
     ctx: &Ctx<'_>,

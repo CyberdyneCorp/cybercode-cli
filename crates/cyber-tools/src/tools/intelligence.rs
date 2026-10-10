@@ -17,6 +17,17 @@ pub(crate) async fn feedback(
     bytes: &[u8],
     origin: Option<ReadOrigin>,
 ) -> String {
+    let (formatted, formatting) = super::formatters::apply(ctx, path, bytes).await;
+    let diagnostics = diagnostics(ctx, path, &formatted, origin).await;
+    format!("{formatting}{diagnostics}")
+}
+
+async fn diagnostics(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    bytes: &[u8],
+    origin: Option<ReadOrigin>,
+) -> String {
     let Some(origin) = origin else {
         return String::new();
     };

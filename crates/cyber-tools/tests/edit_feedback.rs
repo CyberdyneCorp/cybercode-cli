@@ -134,6 +134,49 @@ fn assert_errors(output: &str, file: &str) {
 }
 
 #[tokio::test]
+async fn formatter_finishes_before_owned_lsp_open_and_save() {
+    let (fixture, locations) = setup("all", 1000);
+    fixture.set_config(json!({
+        "sandbox":{"network":"off"},
+        "lsp":{"diagnostics_wait_ms":1000},
+        "formatters":{"fixture":{"command":["/bin/sh","-c","printf 'formatted\\n' > \"$1\"","formatter","$FILE"],"extensions":[".txt"]}}
+    }));
+    let output = ok(fixture
+        .call(
+            "bypass",
+            "write",
+            json!({"path":"source.txt","content":"draft\n"}),
+        )
+        .await);
+    assert_eq!(fixture.read("source.txt"), "formatted\n");
+    assert!(output.contains("Formatting result:"));
+    assert_errors(&output, "source.txt");
+    let saves: Vec<Value> = fixture
+        .read("save-events")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(saves.len(), 1);
+    assert_eq!(saves[0]["text"], "formatted\n");
+    let opens: Vec<Value> = fixture
+        .read("sync-events")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|event: &Value| event["method"] == "textDocument/didOpen")
+        .collect();
+    assert_eq!(opens.len(), 1);
+    assert_eq!(opens[0]["params"]["textDocument"]["text"], "formatted\n");
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|settlement| settlement.acknowledged)
+    );
+}
+
+#[tokio::test]
 async fn all_four_edit_tools_append_fresh_errors_and_write_limits_new_other_files() {
     let (fixture, locations) = setup("errors", 2000);
     for i in 0..7 {

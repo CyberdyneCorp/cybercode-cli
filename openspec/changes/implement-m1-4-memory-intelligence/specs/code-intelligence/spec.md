@@ -1,5 +1,27 @@
 ## ADDED Requirements
 
+### Requirement: Automatic sandboxed formatting after file edits
+(P1) Successful write, edit, apply_patch and notebook_edit mutations SHALL run each enabled formatter matching the edited extension sequentially before owned LSP save/diagnostic feedback. Commands SHALL replace $FILE with the canonical absolute edited path, use the Location directory and configured environment, and run inside the selected sandbox with owned temporary roots and a thirty-second timeout each. Automatic formatting SHALL NOT approve unknown network domains or override sandbox proxy/temporary environment. Configuration/provenance and source contents SHALL be rechecked before native launch. Disabled, missing, failed and nonzero formatters SHALL be logged without failing the completed edit, and a failed formatter SHALL NOT skip a later enabled formatter. Cancellation SHALL start no later formatter and SHALL retain native/sandbox ownership until process-tree settlement. Changed content and the formatting diff SHALL be returned to the model, with control characters JSON-escaped. Source rereads SHALL refuse redirected/nonregular targets. Existing tool Location ownership and edit permission SHALL remain authoritative; formatting SHALL NOT acquire independent edit permission.
+
+#### Scenario: Sequential formatters
+- **WHEN** two enabled formatters match an edited file
+- **THEN** the second SHALL observe the first formatter's content in the same Location
+- **AND** the result SHALL include final content and its diff from the submitted edit
+
+#### Scenario: Formatter failure and timeout
+- **WHEN** a formatter exits nonzero or reaches its thirty-second deadline
+- **THEN** its failure SHALL be logged and the completed edit SHALL remain successful
+- **AND** native descendants SHALL settle before the next formatter starts
+
+#### Scenario: Final content language-server synchronization
+- **WHEN** an enabled formatter changes an edited file
+- **THEN** LSP save and diagnostics SHALL use the formatted snapshot rather than the submitted unformatted bytes
+
+#### Scenario: Cancelled formatting
+- **WHEN** cancellation arrives during an automatic formatter
+- **THEN** its native descendants SHALL be terminated and observed before resource disposal
+- **AND** no later formatter SHALL start
+
 ### Requirement: Runtime Location activity and idle release
 (P1) Language-service idle expiry SHALL account for live Location admissions rather than only read warming. Acquiring activity SHALL create no pool, discovery or native process. Admissions for the same canonical Location SHALL share an activity counter before first warming and across explicit reload. Idle expiry SHALL be disabled while any activity guard is retained, and the last disposal SHALL begin a fresh idle window. Expiry and admission SHALL serialize their counter/cancellation decision. Runtime managed and unmanaged Location leases SHALL retain activity through their operation and through retained native settlement proof disposal. Activity SHALL NOT grant filesystem or process authority, replace checkout ownership, reopen closed services, or prevent explicit close/trust revocation. Retained service/fence entries SHALL remain bounded to 128 Locations. Activity SHALL NOT consume those service slots or reject model admission when the service cache is full; tracking without retained services/fences SHALL be removed after its last guard is disposed.
 

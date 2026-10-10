@@ -2,6 +2,7 @@
 
 pub(crate) mod agent;
 pub(crate) mod bash;
+mod formatters;
 mod fs;
 pub(crate) mod intelligence;
 mod lsp;
