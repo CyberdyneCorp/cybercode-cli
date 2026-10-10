@@ -373,3 +373,14 @@
 - **WHEN** the user explicitly forgets a selected retained request
 - **THEN** confirmation SHALL identify the exact key and warn that forgetting does not resolve unknown effects; it SHALL remove only that record through the normal durable checkpoint gate
 - **AND** canceled confirmation and late/foreign responses SHALL preserve other records and edits
+
+#### Scenario: Native Windows journal installation and retained recovery
+- **WHEN** Windows prepares a memory journal
+- **THEN** journal directories and files SHALL be created privately through retained parent handles, without adopting an existing transaction or repairing unsafe objects
+- **WHEN** an original note/index is captured or a prepared replacement is installed
+- **THEN** the exact source SHALL be retained and its bounded content hash and full identity SHALL match before a durable create-only rename
+- **AND** existing destinations SHALL refuse without replacement, cleanup or rollback
+- **WHEN** Windows resumes a partial installation
+- **THEN** installed note/index identities SHALL be preserved, original versions SHALL remain journal evidence, and hard-link aliases SHALL refuse without Unix link normalization
+- **AND** a failed acknowledgement SHALL leave completed evidence for recovery without replaying installed file effects
+- **AND** complete journal/client path binding and native lifecycle acceptance SHALL remain required before public Windows mutation admission

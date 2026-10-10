@@ -1,13 +1,21 @@
 //! Retained journal preparation, installation and fingerprint-governed recovery.
 mod recovery;
+#[cfg(windows)]
+#[path = "transaction/windows.rs"]
+mod windows;
 use super::*;
 use crate::memory::render_metadata_index;
+#[cfg(not(windows))]
 use cap_fs_ext::MetadataExt;
 pub use recovery::MemoryRecoveryReview;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Write;
+#[cfg(windows)]
+use windows::{
+    apply_target, archive_journal, create_file, create_journal_directory, normalize_pair,
+};
 
 const INDEX_LIMIT: u64 = 8 * NOTE_LIMIT;
 const INTENT_LIMIT: u64 = 4 * NOTE_LIMIT;
@@ -129,11 +137,8 @@ impl<'store> MemoryScope<'store> {
         if json.len() as u64 > INTENT_LIMIT {
             return Err(MemoryStorageError::TooLarge);
         }
-        self.store
-            .dir
-            .create_dir_with(TRANSACTION, &private_builder())?;
+        let dir = create_journal_directory(&self.store.dir)?;
         sync_dir(&self.store.dir)?;
-        let dir = self.store.dir.open_dir_nofollow(TRANSACTION)?;
         if let Some((_, text)) = desired {
             create_file(&dir, "note.after", text.as_bytes())?;
         }
@@ -147,25 +152,9 @@ impl<'store> MemoryScope<'store> {
         })
     }
     pub fn recover(&mut self) -> Result<Option<MemoryMutation>, MemoryStorageError> {
-        mutation_platform()?;
-        let dir = match self.store.dir.open_dir_nofollow(TRANSACTION) {
-            Ok(dir) => dir,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        verify_private_directory(&dir)?;
-        let json = optional_bytes(&dir, "intent.json", INTENT_LIMIT)?
-            .ok_or(MemoryStorageError::RecoveryRequired)?;
-        let intent: Intent =
-            serde_json::from_slice(&json).map_err(|_| MemoryStorageError::RecoveryRequired)?;
-        validate_intent(&intent)?;
-        PreparedMemory {
-            scope: self,
-            dir,
-            intent,
-        }
-        .commit()
-        .map(Some)
+        self.recovery_prepared()?
+            .map(PreparedMemory::commit)
+            .transpose()
     }
     fn fingerprints(&self, excluded: &str) -> Result<BTreeMap<String, String>, MemoryStorageError> {
         self.catalog_unchecked()?
@@ -251,10 +240,7 @@ impl PreparedMemory<'_, '_> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        self.scope
-            .store
-            .dir
-            .rename(TRANSACTION, &history, &self.intent.id)?;
+        archive_journal(&self.scope.store.dir, self.dir, &history, &self.intent.id)?;
         sync_dir(&history)?;
         sync_dir(&self.scope.store.dir)?;
         Ok(MemoryMutation {
@@ -400,6 +386,30 @@ fn mutation_platform() -> Result<(), MemoryStorageError> {
         Err(MemoryStorageError::Unsafe(
             "memory mutations require platform privacy and durability support",
         ))
+    }
+}
+#[cfg(not(windows))]
+fn create_journal_directory(root: &Dir) -> Result<Dir, MemoryStorageError> {
+    root.create_dir_with(TRANSACTION, &private_builder())?;
+    Ok(root.open_dir_nofollow(TRANSACTION)?)
+}
+#[cfg(not(windows))]
+fn archive_journal(root: &Dir, _: Dir, history: &Dir, id: &str) -> Result<(), MemoryStorageError> {
+    root.rename(TRANSACTION, history, id)?;
+    Ok(())
+}
+fn existing_journal_directory(root: &Dir) -> Result<Option<Dir>, MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        existing_private_directory(root, TRANSACTION)
+    }
+    #[cfg(not(windows))]
+    {
+        match root.open_dir_nofollow(TRANSACTION) {
+            Ok(dir) => Ok(Some(dir)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 fn validate_intent(intent: &Intent) -> Result<(), MemoryStorageError> {
@@ -551,6 +561,7 @@ fn preflight_target(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(not(windows))]
 fn apply_target(
     root: &Dir,
     stage: &Dir,
@@ -599,6 +610,7 @@ fn apply_target(
     verify_hash(root, name, limit, after)
 }
 
+#[cfg(not(windows))]
 fn normalize_pair(
     stage: &Dir,
     staged: &str,
@@ -640,6 +652,7 @@ fn normalize_pair(
     sync_dir(stage)?;
     sync_dir(root)
 }
+#[cfg(not(windows))]
 fn create_file(dir: &Dir, name: &str, bytes: &[u8]) -> Result<(), MemoryStorageError> {
     let mut options = OpenOptions::new();
     options
@@ -826,6 +839,14 @@ mod tests {
 }
 
 fn verify_history(root: &Dir) -> Result<(), MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        if let Some(dir) = existing_private_directory(root, HISTORY)? {
+            verify_private_directory(&dir)?;
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
     match root.open_dir_nofollow(HISTORY) {
         Ok(dir) => verify_private_directory(&dir),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),

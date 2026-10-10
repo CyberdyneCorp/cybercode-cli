@@ -1,8 +1,11 @@
 //! Directory-bound memory reads and exclusive per-scope ownership.
 mod transaction;
 use super::{IndexSnapshot, MemoryDocument, MemoryError, MemoryMetadata, directory, validate_name};
+#[cfg(not(windows))]
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
-use cap_std::fs::{Dir, DirBuilder, OpenOptions};
+#[cfg(not(windows))]
+use cap_std::fs::OpenOptions;
+use cap_std::fs::{Dir, DirBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, TryLockError};

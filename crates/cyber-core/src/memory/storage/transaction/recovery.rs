@@ -64,15 +64,20 @@ impl<'store> MemoryScope<'store> {
         pending.commit_with_acknowledgement(acknowledge)
     }
 
-    fn recovery_prepared(
+    pub(super) fn recovery_prepared(
         &mut self,
     ) -> Result<Option<PreparedMemory<'_, 'store>>, MemoryStorageError> {
         mutation_platform()?;
+        self.read_prepared()
+    }
+
+    // Native integration tests exercise this reader while public admission remains gated.
+    pub(super) fn read_prepared(
+        &mut self,
+    ) -> Result<Option<PreparedMemory<'_, 'store>>, MemoryStorageError> {
         verify_private_directory(&self.store.dir)?;
-        let dir = match self.store.dir.open_dir_nofollow(TRANSACTION) {
-            Ok(dir) => dir,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let Some(dir) = existing_journal_directory(&self.store.dir)? else {
+            return Ok(None);
         };
         verify_private_directory(&dir)?;
         verify_history(&self.store.dir)?;
