@@ -44,3 +44,10 @@
 - **WHEN** a project defines LSP or formatter commands without approval for its current sensitive digest
 - **THEN** those definitions SHALL remain absent from resolved executable configuration
 - **AND** approving and subsequently changing the definitions SHALL require fresh trust review
+
+#### Scenario: Local server catalogue and confined root discovery
+- **WHEN** language-server definitions are resolved for a Location
+- **THEN** built-ins SHALL retain their canonical IDs, extensions, root markers, launch arguments and install methods, with trusted user overrides taking precedence
+- **AND** executable discovery SHALL search the supplied PATH followed by `<cache>/bin`, refuse non-executable files on Unix and never run candidate executables
+- **AND** root discovery SHALL select the nearest existing root marker without ascending above the canonical Location or accepting files outside it
+- **AND** missing executables SHALL remain uninstalled without downloading during discovery
