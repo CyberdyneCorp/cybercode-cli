@@ -513,7 +513,11 @@ impl Runtime {
             }
             match self.write_delegation(&record, seq) {
                 Err(RuntimeError::Store(StoreError::Concurrency { .. })) => continue,
-                result => return result,
+                Err(error) => return Err(error),
+                Ok(()) => {
+                    self.notify_fork_admission(&record.data).await?;
+                    return Ok(());
+                }
             }
         }
     }

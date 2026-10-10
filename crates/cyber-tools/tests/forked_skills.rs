@@ -773,3 +773,224 @@ async fn plan_keeps_inline_skills_and_forked_read_only_delegation_available() {
     assert!(!flow.f.repo.join("blocked.txt").exists());
     flow.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn refused_user_fork_reports_one_durable_handback_without_launching() {
+    use cyber_server::runtime::{DelegationStatus, Delivery, Runtime};
+    let mut flow = Flow::new(vec![text("Admission was refused")], false);
+    flow.f.set_config(json!({"permissions":{"agent":"deny"}}));
+    flow.f.write(".cyber/skills/audit/SKILL.md", "---\nname: audit\ndescription: Audit changes\ncontext: fork\n---\nPRIVATE REFUSED INSTRUCTIONS\n");
+    let parent = flow.session("bypass").await;
+    let info = flow.runtime.state(&parent).await.unwrap().info;
+    let turn = cyber_server::runtime::TurnContext {
+        session_id: parent.clone(),
+        directory: info.directory,
+        agent: info.agent,
+        mode: info.mode,
+        prefers_apply_patch: false,
+        rules: info.rules,
+    };
+    let plan = flow
+        .f
+        .host
+        .command_plan(&turn, "audit", "")
+        .await
+        .unwrap()
+        .unwrap();
+    let admission = plan.admission(Some("msg_refused_fork".into()), Delivery::Queue);
+    flow.runtime
+        .admit_user(&parent, admission.clone())
+        .await
+        .unwrap();
+    let id = Runtime::skill_command_delegation_id(&parent, "msg_refused_fork");
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if flow
+                .runtime
+                .delegation(&parent, &id)
+                .unwrap()
+                .is_some_and(|d| d.status == DelegationStatus::Failed)
+                && flow
+                    .runtime
+                    .state(&parent)
+                    .await
+                    .unwrap()
+                    .inbox
+                    .iter()
+                    .any(|row| row.source == "session")
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    flow.settle(&parent).await;
+    let state = flow.runtime.state(&parent).await.unwrap();
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    let handbacks: Vec<_> = state
+        .inbox
+        .iter()
+        .filter(|row| row.source == "session")
+        .collect();
+    assert_eq!(handbacks.len(), 1, "failed admission must reach the caller");
+    assert!(format!("{:?}", handbacks[0].parts).contains("Forked skill admission handback"));
+    assert!(!format!("{:?}", state.entries).contains("PRIVATE REFUSED INSTRUCTIONS"));
+    assert_eq!(flow.main.requests().len(), 1);
+    let seq = state.last_seq;
+    flow.runtime.admit_user(&parent, admission).await.unwrap();
+    flow.settle(&parent).await;
+    assert_eq!(flow.runtime.state(&parent).await.unwrap().last_seq, seq);
+    flow.restart_default_runtime().await;
+    flow.runtime.resume(&parent).await.unwrap();
+    flow.settle(&parent).await;
+    let replay = flow.runtime.state(&parent).await.unwrap();
+    assert_eq!(
+        replay
+            .inbox
+            .iter()
+            .filter(|row| row.source == "session")
+            .count(),
+        1
+    );
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    flow.runtime.shutdown().await;
+}
+
+async fn forwarded_admission_cut(flow: &Flow, status: &str) -> (String, String) {
+    use cyber_server::runtime::{Delivery, Runtime};
+    flow.f.write(".cyber/skills/audit/SKILL.md", "---\nname: audit\ndescription: Audit changes\ncontext: fork\n---\nPRIVATE CUT INSTRUCTIONS\n");
+    let parent = flow.session("bypass").await;
+    let info = flow.runtime.state(&parent).await.unwrap().info;
+    let turn = cyber_server::runtime::TurnContext {
+        session_id: parent.clone(),
+        directory: info.directory,
+        agent: info.agent,
+        mode: info.mode,
+        prefers_apply_patch: false,
+        rules: info.rules,
+    };
+    let plan = flow
+        .f
+        .host
+        .command_plan(&turn, "audit", "")
+        .await
+        .unwrap()
+        .unwrap();
+    let mut admission = plan.admission(Some("msg_admission_cut".into()), Delivery::Queue);
+    admission.resume = false;
+    flow.runtime.admit_user(&parent, admission).await.unwrap();
+    let state = flow.runtime.state(&parent).await.unwrap();
+    flow.f
+        .store
+        .append(
+            &parent,
+            cyber_store::Expected::Seq(state.last_seq),
+            vec![cyber_store::NewEvent::new(
+                "session.prompt.skill_forwarded.1",
+                json!({"message_id":"msg_admission_cut"}),
+            )],
+        )
+        .unwrap();
+    let id = Runtime::skill_command_delegation_id(&parent, "msg_admission_cut");
+    flow.f.store.append(&id,cyber_store::Expected::Seq(-1),vec![cyber_store::NewEvent::new("delegation.changed.1",json!({"data":{"id":id,"session_id":parent,"status":status,"phase":"reserved","job_id":null,"error":"PRIVATE SETUP DIAGNOSTIC"},"hash":null}))]).unwrap();
+    (parent, id)
+}
+
+#[tokio::test]
+async fn terminal_admission_replay_repairs_the_missing_handback_once() {
+    for status in ["failed", "cancelled"] {
+        let mut flow = Flow::new(vec![text("terminal admission summary")], false);
+        let (parent, id) = forwarded_admission_cut(&flow, status).await;
+        flow.f.write(
+            ".cyber/skills/audit/SKILL.md",
+            "changed invalid skill source",
+        );
+        flow.restart_default_runtime().await;
+        flow.runtime.resume(&parent).await.unwrap();
+        flow.settle(&parent).await;
+        let state = flow.runtime.state(&parent).await.unwrap();
+        let handbacks: Vec<_> = state
+            .inbox
+            .iter()
+            .filter(|row| row.source == "session")
+            .collect();
+        assert_eq!(handbacks.len(), 1);
+        let output = format!("{:?}", handbacks[0].parts);
+        assert!(output.contains(&id));
+        assert!(output.contains(status));
+        assert!(output.contains("audit"));
+        assert!(!output.contains("PRIVATE"));
+        assert!(!format!("{:?}", state.entries).contains("PRIVATE"));
+        assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+        assert_eq!(flow.main.requests().len(), 1);
+        flow.restart_default_runtime().await;
+        flow.runtime.resume(&parent).await.unwrap();
+        flow.settle(&parent).await;
+        assert_eq!(
+            flow.runtime
+                .state(&parent)
+                .await
+                .unwrap()
+                .inbox
+                .iter()
+                .filter(|row| row.source == "session")
+                .count(),
+            1
+        );
+        assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+        flow.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn unknown_reserved_skill_requires_explicit_fenced_cancellation() {
+    use cyber_server::runtime::DelegationStatus;
+    let mut flow = Flow::new(vec![text("Cancelled unknown admission")], false);
+    let (parent, id) = forwarded_admission_cut(&flow, "pending").await;
+    flow.restart_default_runtime().await;
+    assert_eq!(
+        flow.runtime
+            .delegation(&parent, &id)
+            .unwrap()
+            .unwrap()
+            .status,
+        DelegationStatus::Unknown
+    );
+    flow.runtime.resume(&parent).await.unwrap();
+    flow.settle(&parent).await;
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert!(flow.main.requests().is_empty());
+    assert!(
+        flow.runtime
+            .state(&parent)
+            .await
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    assert_eq!(
+        flow.runtime
+            .cancel_delegation(&parent, &id)
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Cancelled
+    );
+    flow.runtime.resume(&parent).await.unwrap();
+    flow.settle(&parent).await;
+    let state = flow.runtime.state(&parent).await.unwrap();
+    assert_eq!(
+        state
+            .inbox
+            .iter()
+            .filter(|row| row.source == "session")
+            .count(),
+        1
+    );
+    assert!(format!("{:?}", state.entries).contains("cancelled"));
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert_eq!(flow.main.requests().len(), 1);
+    flow.runtime.shutdown().await;
+}

@@ -1,7 +1,9 @@
 //! Inbox forwarding retains retry identity without exposing forked instructions to the parent.
 use super::events::{Promoted, SKILL_FORWARDED, event};
 use super::model::{Delivery, InboxRow, SessionState};
-use super::{DelegationStatus, Handle, Inner, Runtime, RuntimeError, UserSubtask};
+use super::{
+    Admission, Delegation, DelegationStatus, Handle, Inner, Runtime, RuntimeError, UserSubtask,
+};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -12,6 +14,47 @@ impl Runtime {
             "op_skill_{:x}",
             Sha256::digest(format!("{session}\0{message}"))
         )
+    }
+
+    /// Terminal pre-admission outcomes use the inbox's existing retry fence.
+    pub(super) async fn notify_fork_admission(
+        &self,
+        delegation: &Delegation,
+    ) -> Result<bool, RuntimeError> {
+        if delegation.job_id.is_some()
+            || !matches!(
+                delegation.status,
+                DelegationStatus::Failed | DelegationStatus::Cancelled
+            )
+        {
+            return Ok(false);
+        }
+        let message = format!("msg_skill_handback_{}", delegation.id);
+        let state = self.state(&delegation.session_id).await?;
+        if state.input(&message).is_some() {
+            return Ok(false);
+        }
+        let Some(skill) = state.inbox.iter().find_map(|row| {
+            (row.forwarded_skill
+                && Self::skill_command_delegation_id(&delegation.session_id, &row.message_id)
+                    == delegation.id)
+                .then_some(row.skill_command.as_ref())
+                .flatten()
+        }) else {
+            return Ok(false);
+        };
+        // Setup errors may include private instructions; expose only stable diagnostics.
+        let mut admission = Admission::text(
+            format!(
+                "Forked skill admission handback: {}",
+                serde_json::json!({"skill":skill.activation.name,"delegation_id":delegation.id,"status":delegation.status})
+            ),
+            Delivery::Queue,
+        );
+        admission.message_id = Some(message);
+        admission.source = "session".into();
+        self.admit(&delegation.session_id, admission).await?;
+        Ok(true)
     }
 
     async fn dispatch_forwarded_skill(
@@ -26,7 +69,7 @@ impl Runtime {
                     "Forked skill admission needs reconciliation: {id}"
                 )));
             }
-            return Ok(false);
+            return self.notify_fork_admission(&delegation).await;
         }
         let prompt = row
             .parts
