@@ -28,6 +28,7 @@ const LEADER_TIMEOUT_MS: u128 = 2000;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Memory(crate::memory::Request),
+    ReconcileAdmission(crate::admissions::Request),
     Admission {
         request: crate::admissions::Request,
         stop: bool,
@@ -807,7 +808,7 @@ impl App {
                 let items = self.admissions.choices(&self.session.id);
                 self.open_picker(
                     PickerKind::Admissions,
-                    "Admissions · Enter inspect · Ctrl+S cancel",
+                    "Admissions · Enter inspect · Ctrl+R reconcile · Ctrl+S cancel",
                     items,
                 );
                 Vec::new()
@@ -897,6 +898,17 @@ impl App {
         }
         if picker.pending.is_some() {
             return session_op_key(picker, key);
+        }
+        if picker.kind == PickerKind::Admissions
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('r')
+        {
+            return picker
+                .current()
+                .and_then(|choice| self.admissions.0.get(&choice.key))
+                .filter(|entry| entry.status == "unknown" && !entry.busy)
+                .map(|entry| vec![Action::ReconcileAdmission(entry.request.clone())])
+                .unwrap_or_default();
         }
         if picker.kind == PickerKind::Admissions
             && key.modifiers.contains(KeyModifiers::CONTROL)

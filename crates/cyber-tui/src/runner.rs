@@ -436,22 +436,9 @@ fn dispatch(
                 if let Action::SwitchModel(model) = &action {
                     store.push_recent_model(model);
                 }
-                if let Action::Admission { request, stop } = &action {
-                    if *stop && let Err(error) = store.save_admission(request) {
-                        app.toast(format!("Cannot retain cancellation identity: {error}"));
-                        continue;
-                    }
-                    if let Some(entry) = app.admissions.0.get_mut(&request.id) {
-                        entry.busy = true;
-                        if *stop {
-                            if entry.status == "unknown" {
-                                entry.stop_at = Some(std::time::Instant::now());
-                            } else {
-                                entry.stop_at.get_or_insert_with(std::time::Instant::now);
-                            }
-                        }
-                        entry.stopping |= stop;
-                    }
+                if let Err(error) = app.admissions.prepare(&action, store) {
+                    app.toast(error);
+                    continue;
                 }
                 let store = store.clone();
                 let (client, tx, session) = (client.clone(), tx.clone(), app.session.clone());

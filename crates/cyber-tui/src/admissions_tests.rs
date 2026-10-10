@@ -43,7 +43,12 @@ impl Mock {
                     continue;
                 };
                 let path = head.split_whitespace().nth(1).unwrap();
-                let id = path.trim_end_matches("/stop").rsplit('/').next().unwrap();
+                let id = path
+                    .trim_end_matches("/stop")
+                    .trim_end_matches("/reconcile")
+                    .rsplit('/')
+                    .next()
+                    .unwrap();
                 if let Some(dir) = &saved {
                     assert!(dir.join("admissions").join(format!("{id}.json")).is_file());
                 }
@@ -533,4 +538,162 @@ fn uncertain_lookup_after_admission_restores_saved_recovery_identity() {
     tracker.update(request(), Err("lookup response lost".into()), false, &store);
     assert_eq!(tracker.0["op_test"].job.as_deref(), Some("job_owned"));
     assert_eq!(store.admissions(), vec![request()]);
+}
+
+#[tokio::test]
+async fn reconciliation_uses_saved_source_after_current_session_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalStore::new(dir.path());
+    store.save_admission(&request()).unwrap();
+    let server = Mock::new(vec![admitted], Some(dir.path().into()));
+    let current = crate::model::Session {
+        id: "ses_other".into(),
+        directory: "/other".into(),
+        ..Default::default()
+    };
+    let message = crate::perform::perform_owned(
+        &server.client,
+        &current,
+        Action::ReconcileAdmission(request()),
+        None,
+    )
+    .await
+    .unwrap();
+    let (saved, result) = updated(message);
+    let mut admissions = Admissions::default();
+    admissions.update(saved, result, false, &store);
+    assert_eq!(admissions.0["op_test"].status, "admitted");
+    assert_eq!(admissions.0["op_test"].job.as_deref(), Some("job_owned"));
+    assert!(store.admissions().is_empty());
+    let log = server.log.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert!(
+        log[0]
+            .0
+            .starts_with("POST /api/v1/sessions/ses_1/delegations/op_test/reconcile ")
+    );
+    assert!(log[0].1.is_null());
+}
+
+#[tokio::test]
+async fn reconciliation_lost_response_looks_up_without_resubmitting_the_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalStore::new(dir.path());
+    store.save_admission(&request()).unwrap();
+    let server = Mock::new(vec![|_| "{".into(), admitted], Some(dir.path().into()));
+    let (_, result) = updated(reconcile(&server.client, request()).await);
+    assert_eq!(result.unwrap()["job_id"], "job_owned");
+    let log = server.log.lock().unwrap();
+    assert_eq!(log.len(), 2);
+    assert!(
+        log[0]
+            .0
+            .starts_with("POST /api/v1/sessions/ses_1/delegations/op_test/reconcile ")
+    );
+    assert!(
+        log[1]
+            .0
+            .starts_with("GET /api/v1/sessions/ses_1/delegations/op_test ")
+    );
+    assert!(log.iter().all(|(_, body)| body.is_null()));
+}
+
+#[tokio::test]
+async fn reconciliation_preserves_unknown_and_refuses_foreign_or_replaced_job_identity() {
+    for response in [
+        |id: &str| json!({"data":record(id,"unknown","launching",Some("job_owned"))}).to_string(),
+        |id: &str| {
+            let mut r = record(id, "admitted", "launching", Some("job_owned"));
+            r["session_id"] = "ses_foreign".into();
+            json!({"data":r}).to_string()
+        },
+        |id: &str| {
+            json!({"data":record(id,"admitted","launching",Some("job_replaced"))}).to_string()
+        },
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalStore::new(dir.path());
+        let mut admissions = Admissions::default();
+        admissions.update(
+            request(),
+            Ok(record("op_test", "unknown", "launching", Some("job_owned"))),
+            false,
+            &store,
+        );
+        let server = Mock::new(vec![response], Some(dir.path().into()));
+        let (saved, result) = updated(reconcile(&server.client, request()).await);
+        admissions.update(saved, result, false, &store);
+        assert_eq!(admissions.0["op_test"].status, "unknown");
+        assert_eq!(admissions.0["op_test"].job.as_deref(), Some("job_owned"));
+        assert_eq!(store.admissions(), vec![request()]);
+        assert!(admissions.poll().is_empty());
+        assert_eq!(server.log.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn reconciliation_deadline_keeps_reconnect_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalStore::new(dir.path());
+    store.save_admission(&request()).unwrap();
+    let server = Mock::new(
+        vec![|id| {
+            thread::sleep(Duration::from_secs(4));
+            admitted(id)
+        }],
+        Some(dir.path().into()),
+    );
+    let start = std::time::Instant::now();
+    let (saved, result) = updated(reconcile(&server.client, request()).await);
+    assert!(start.elapsed() < Duration::from_millis(3500));
+    assert!(result.as_ref().unwrap_err().contains("timed out"));
+    let mut admissions = Admissions::default();
+    admissions.update(saved, result, false, &store);
+    assert_eq!(store.admissions(), vec![request()]);
+    assert_eq!(admissions.0["op_test"].status, "unknown");
+    assert!(admissions.poll().is_empty());
+}
+
+#[tokio::test]
+async fn reconciliation_preserves_an_already_requested_cancellation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalStore::new(dir.path());
+    let mut admissions = Admissions::default();
+    admissions.update(
+        request(),
+        Ok(record("op_test", "unknown", "launching", None)),
+        false,
+        &store,
+    );
+    admissions.0.get_mut("op_test").unwrap().stopping = true;
+    let server = Mock::new(vec![admitted], Some(dir.path().into()));
+    admissions
+        .prepare(&Action::ReconcileAdmission(request()), &store)
+        .unwrap();
+    let (saved, result) = updated(reconcile(&server.client, request()).await);
+    admissions.update(saved, result, false, &store);
+    assert_eq!(admissions.0["op_test"].status, "cancelling");
+    assert_eq!(store.admissions(), vec![request()]);
+    assert_eq!(admissions.poll(), vec![request().action(true)]);
+    assert_eq!(server.log.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn reconciliation_refuses_dispatch_when_identity_cannot_be_retained() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocked = dir.path().join("blocked");
+    std::fs::write(&blocked, "not a state directory").unwrap();
+    let store = LocalStore::new(&blocked);
+    let mut admissions = Admissions::default();
+    admissions.register(request());
+    let entry = admissions.0.get_mut("op_test").unwrap();
+    entry.status = "unknown".into();
+    entry.busy = false;
+    assert!(
+        admissions
+            .prepare(&Action::ReconcileAdmission(request()), &store)
+            .unwrap_err()
+            .contains("Cannot retain reconciliation identity")
+    );
+    assert!(!admissions.0["op_test"].busy);
 }

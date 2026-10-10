@@ -1301,3 +1301,81 @@ fn markdown_command_import_is_read_only_and_links_body_and_frontmatter() {
         assert!(!e.root.join(path).exists());
     }
 }
+
+#[test]
+fn api_reconciliation_uses_the_registered_service_without_creating_a_job() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let env = Env::new();
+    let mut command = env.command(&["serve", "--register", "--port", "0"]);
+    #[cfg(unix)]
+    command.arg("--socket").arg(env.root.join("r.sock"));
+    let mut owned = OwnedService(
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let registration = env.root.join("cyber-home/state/server.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !registration.is_file() {
+        assert!(
+            owned.0.try_wait().unwrap().is_none(),
+            "owned server exited before registration"
+        );
+        assert!(Instant::now() < deadline, "owned server did not register");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let created = env.cyber(&[
+        "api",
+        "v1.session.create",
+        "--data",
+        r#"{"model":"openai/gpt-6-luna"}"#,
+    ]);
+    assert!(
+        created.status.success(),
+        "{}: {}",
+        stderr(&created),
+        stdout(&created)
+    );
+    let session = json(&created)["data"]["id"].as_str().unwrap().to_owned();
+    let session_parameter = format!("sessionID={session}");
+    let request_parameter = "requestID=op_cli_reconcile";
+    let stopped = env.cyber(&[
+        "api",
+        "v1.session.stopDelegation",
+        "--param",
+        &session_parameter,
+        "--param",
+        request_parameter,
+    ]);
+    assert!(stopped.status.success(), "{}", stderr(&stopped));
+    for _ in 0..2 {
+        let recovered = env.cyber(&[
+            "api",
+            "v1.session.reconcileDelegation",
+            "--param",
+            &session_parameter,
+            "--param",
+            request_parameter,
+        ]);
+        assert!(
+            recovered.status.success(),
+            "{}: {}",
+            stderr(&recovered),
+            stdout(&recovered)
+        );
+        let recovered = json(&recovered);
+        assert_eq!(recovered["data"]["session_id"], session);
+        assert_eq!(recovered["data"]["id"], "op_cli_reconcile");
+        assert_eq!(recovered["data"]["status"], "cancelled");
+        assert!(recovered["data"]["job_id"].is_null());
+    }
+    let jobs = env.cyber(&["api", "v1.job.list"]);
+    assert!(jobs.status.success(), "{}", stderr(&jobs));
+    assert!(json(&jobs)["data"].as_array().unwrap().is_empty());
+    let stop = env.cyber(&["service", "stop", "--format", "json"]);
+    assert!(stop.status.success(), "{}", stderr(&stop));
+}

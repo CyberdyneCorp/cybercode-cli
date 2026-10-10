@@ -107,6 +107,12 @@ jobs:
       - name: Native ordinary permission regression
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_permissions
+      - name: Native admission reconciliation controls
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui --lib reconciliation
+      - name: Native CLI admission reconciliation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-cli --test cli api_reconciliation
       - name: Native authenticated delegation reconciliation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http delegation_reconciliation_api

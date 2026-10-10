@@ -2257,3 +2257,37 @@ fn memory_drafts_survive_dismissal_and_location_changes_without_foreign_save_aut
             .contains("Retained global draft")
     );
 }
+
+#[test]
+fn admissions_picker_reconciliation_is_explicit_and_does_not_repeat_busy_work() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    let request = crate::admissions::Request {
+        id: "op_reconcile".into(),
+        source: "ses_1".into(),
+        directory: "/repo".into(),
+    };
+    app.admissions.register(request.clone());
+    typed(&mut app, "/admissions");
+    app.on_key(key(KeyCode::Enter));
+    let recover = with(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    assert!(app.on_key(recover).is_empty());
+    let entry = app.admissions.0.get_mut(&request.id).unwrap();
+    entry.status = "unknown".into();
+    entry.busy = false;
+    assert_eq!(
+        app.on_key(recover),
+        vec![Action::ReconcileAdmission(request.clone())]
+    );
+    app.admissions.0.get_mut(&request.id).unwrap().busy = true;
+    assert!(app.on_key(recover).is_empty());
+    app.admissions.0.get_mut(&request.id).unwrap().busy = false;
+    assert!(screen(&app).contains("Ctrl+R reconcile"));
+    let mut other = session(false);
+    other.id = "ses_other".into();
+    other.directory = "/other".into();
+    app.set_session(other);
+    assert_eq!(
+        app.on_key(recover),
+        vec![Action::ReconcileAdmission(request)]
+    );
+}

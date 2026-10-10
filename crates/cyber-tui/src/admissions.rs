@@ -55,6 +55,31 @@ impl Entry {
 #[derive(Default)]
 pub struct Admissions(pub BTreeMap<String, Entry>);
 impl Admissions {
+    pub fn prepare(&mut self, action: &Action, store: &LocalStore) -> Result<(), String> {
+        let (request, stop, persist, label) = match action {
+            Action::ReconcileAdmission(request) => (request, false, true, "reconciliation"),
+            Action::Admission { request, stop } => (request, *stop, *stop, "cancellation"),
+            _ => return Ok(()),
+        };
+        if persist {
+            store
+                .save_admission(request)
+                .map_err(|error| format!("Cannot retain {label} identity: {error}"))?;
+        }
+        if let Some(entry) = self.0.get_mut(&request.id) {
+            entry.busy = true;
+            if stop {
+                if entry.status == "unknown" {
+                    entry.stop_at = Some(std::time::Instant::now());
+                } else {
+                    entry.stop_at.get_or_insert_with(std::time::Instant::now);
+                }
+            }
+            entry.stopping |= stop;
+        }
+        Ok(())
+    }
+
     pub fn register(&mut self, request: Request) {
         self.0.entry(request.id.clone()).or_insert(Entry {
             request,
@@ -222,6 +247,14 @@ pub async fn start(
         stop: false,
     })
 }
+pub async fn perform_action(client: &Client, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::ReconcileAdmission(request) => Ok(reconcile(client, request).await),
+        Action::Admission { request, stop } => Ok(perform(client, request, stop).await),
+        _ => Err("Unsupported admission action".into()),
+    }
+}
+
 pub async fn perform(client: &Client, request: Request, stop: bool) -> Msg {
     if !request.valid() {
         return Msg::AdmissionUpdated {
@@ -244,6 +277,32 @@ pub async fn perform(client: &Client, request: Request, stop: bool) -> Msg {
         stop,
     }
 }
+pub async fn reconcile(client: &Client, request: Request) -> Msg {
+    let result = if request.valid() {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let scoped = client.at(&request.directory);
+            match scoped
+                .post(&format!("{}/reconcile", request.path()), Value::Null)
+                .await
+            {
+                Ok(response) => check(&request, response),
+                Err(error) => lookup(&scoped, &request).await.map_err(|lookup| {
+                    format!("Reconciliation was not acknowledged: {error}; {lookup}")
+                }),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| Err("Reconciliation acknowledgement timed out".into()))
+    } else {
+        Err("Invalid delegation identity".into())
+    };
+    Msg::AdmissionUpdated {
+        request,
+        result,
+        stop: false,
+    }
+}
+
 async fn lookup(client: &Client, request: &Request) -> Result<Value, String> {
     check(
         request,

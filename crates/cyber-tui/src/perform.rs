@@ -239,8 +239,8 @@ pub async fn perform_owned(
     let client = &scoped;
     match action {
         Action::Memory(request) => Ok(crate::memory::perform(client, request).await),
-        Action::Admission { request, stop } => {
-            Ok(crate::admissions::perform(client, request, stop).await)
+        Action::ReconcileAdmission(_) | Action::Admission { .. } => {
+            crate::admissions::perform_action(client, action).await
         }
         Action::Refresh => snapshot(client, &session.id).await,
         Action::LoadHookDefinitions { .. }
