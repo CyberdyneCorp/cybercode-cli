@@ -237,6 +237,57 @@ fn provider_inputs(pointer: &str, raw: &Value) -> Vec<String> {
         _ => vec![base],
     }
 }
+fn mcp_inputs(tool: SourceTool, raw: &Value, pointer: &str) -> Vec<String> {
+    let root = match tool {
+        SourceTool::Claude => "/mcpServers",
+        SourceTool::Codex => "/mcp_servers",
+        SourceTool::OpenCode if raw.pointer("/mcp/servers").is_some() => "/mcp/servers",
+        SourceTool::OpenCode => "/mcp",
+    };
+    let suffix = pointer.strip_prefix("/mcp").unwrap_or("");
+    let (server, field) = suffix
+        .trim_start_matches('/')
+        .split_once('/')
+        .unwrap_or((suffix.trim_start_matches('/'), ""));
+    let base = format!("{root}/{server}");
+    let input = raw.pointer(&base);
+    match field {
+        "type" => vec![base],
+        "disabled" => ["enabled", "disabled"]
+            .into_iter()
+            .map(|key| child(&base, key))
+            .filter(|p| raw.pointer(p).is_some())
+            .collect(),
+        "command"
+            if input
+                .and_then(|v| v.get("command"))
+                .is_some_and(Value::is_array) =>
+        {
+            vec![format!("{base}/command/0")]
+        }
+        f if f.starts_with("args/")
+            && input
+                .and_then(|v| v.get("command"))
+                .is_some_and(Value::is_array) =>
+        {
+            let index = f
+                .strip_prefix("args/")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            vec![format!("{base}/command/{}", index + 1)]
+        }
+        f if f == "env" || f.starts_with("env/") => {
+            let key = if input.is_some_and(|v| v.get("environment").is_some()) {
+                "environment"
+            } else {
+                "env"
+            };
+            vec![format!("{base}/{key}{}", &f[3..])]
+        }
+        "" => vec![root.into()],
+        _ => vec![format!("{base}/{field}")],
+    }
+}
 pub(super) fn converted(
     tool: SourceTool,
     raw: &Value,
@@ -274,6 +325,9 @@ pub(super) fn converted(
                     } else {
                         "/approval_policy".into()
                     }]
+                }
+                _ if pointer == "/mcp" || pointer.starts_with("/mcp/") => {
+                    mcp_inputs(tool, raw, &pointer)
                 }
                 _ if tool == SourceTool::Codex && pointer.starts_with("/providers/") => {
                     provider_inputs(&pointer, raw)
@@ -391,6 +445,33 @@ pub(super) fn indexed_field(raw: &Value, descriptor: &str) -> Option<String> {
             .parse::<usize>()
             .ok()?;
         return providers[id]
+            .as_object()?
+            .keys()
+            .nth(index)
+            .map(|key| child(&base, key));
+    }
+    for key in ["mcpServers", "mcp_servers", "mcp"] {
+        let Some(rest) = descriptor.strip_prefix(&format!("{key}[")) else {
+            continue;
+        };
+        let (index, rest) = rest.split_once(']')?;
+        let root = if key == "mcp" && raw.pointer("/mcp/servers").is_some() {
+            "/mcp/servers".to_owned()
+        } else {
+            child("", key)
+        };
+        let servers = raw.pointer(&root)?.as_object()?;
+        let name = servers.keys().nth(index.parse::<usize>().ok()?)?;
+        let base = child(&root, name);
+        if rest.is_empty() {
+            return Some(base);
+        }
+        let index = rest
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .parse::<usize>()
+            .ok()?;
+        return servers[name]
             .as_object()?
             .keys()
             .nth(index)

@@ -69,6 +69,9 @@ jobs:
       - name: Native read-only migration previews
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_preview
+      - name: Native MCP migration and disabled configuration
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test import_mcp --test mcp_config
       - name: Native migration provider conversion
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_providers

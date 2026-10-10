@@ -1054,3 +1054,31 @@ fn import_preview_is_read_only_and_preserves_diff_escaping() {
     );
     assert!(!e.root.join("cyber-home").exists());
 }
+
+#[test]
+fn mcp_import_preview_is_secret_safe_source_linked_and_does_not_create_runtime_state() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::write(e.root.join(".mcp.json"), r#"{"mcpServers":{"audit":{"command":"never-execute-source-server","env":{"API_KEY":"private-mcp-secret"},"disabled":true}}}"#).unwrap();
+    let preview = e.cyber(&["import", "claude", "--dry-run", "--format", "json"]);
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    let view = json(&preview);
+    assert_eq!(view["complete"], false);
+    assert!(
+        view["diff"]
+            .as_str()
+            .unwrap()
+            .contains("never-execute-source-server")
+    );
+    assert_eq!(
+        view["required_environment"][0]["sources"][0]["field"],
+        "/mcpServers/audit/env/API_KEY"
+    );
+    assert!(!stdout(&preview).contains("private-mcp-secret"));
+    let text = e.cyber(&["import", "claude", "--dry-run"]);
+    assert!(text.status.success(), "{}", stderr(&text));
+    assert!(!stdout(&text).contains("private-mcp-secret"));
+    assert!(!e.root.join("cyber.jsonc").exists());
+    assert!(!e.root.join(".cyber").exists());
+    assert!(!e.root.join("cyber-home").exists());
+}

@@ -352,7 +352,9 @@ fn environment_binding(name: &str) -> String {
         name.to_owned()
     }
 }
-fn validate_environment_bindings(required: &[RequiredEnvironment]) -> Result<(), ConversionError> {
+pub(super) fn validate_environment_bindings(
+    required: &[RequiredEnvironment],
+) -> Result<(), ConversionError> {
     let generated: BTreeSet<_> = required
         .iter()
         .filter(|v| v.from_literal)

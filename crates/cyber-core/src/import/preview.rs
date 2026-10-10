@@ -318,7 +318,7 @@ fn source_config(
     } = context;
     if !matches!(
         source.kind,
-        SourceKind::Config | SourceKind::Profile | SourceKind::Rule
+        SourceKind::Config | SourceKind::Profile | SourceKind::Rule | SourceKind::Mcp
     ) {
         let status = if matches!(source.kind, SourceKind::Plugin | SourceKind::CustomTool) {
             "requires manual port"
@@ -365,7 +365,24 @@ fn source_config(
     } else {
         let document = super::detection::parse_document(source, snapshot.text()?)?;
         secrets.extend(sensitive_values(&document));
-        document
+        if source.kind == SourceKind::Mcp {
+            for (index, key) in document
+                .as_object()
+                .into_iter()
+                .flat_map(|m| m.keys())
+                .enumerate()
+            {
+                if key != "mcpServers" {
+                    report.push(record(&source.path, format!("settings[{index}]"), "not imported",
+                        "MCP state/project association requires an additional adapter; value withheld"));
+                }
+            }
+            document
+                .get("mcpServers")
+                .map_or_else(|| json!({}), |servers| json!({"mcpServers": servers}))
+        } else {
+            document
+        }
     };
     report.push(record(
         &source.path,
@@ -404,7 +421,10 @@ fn codex_config(
     required.extend(converted.required_environment);
     for pending in converted.not_imported {
         let field = provenance::indexed_field(document, &pending.field);
-        if matches!(field.as_deref(), Some("/approval_policy" | "/sandbox_mode")) {
+        if matches!(
+            field.as_deref(),
+            Some("/approval_policy" | "/sandbox_mode" | "/mcp_servers")
+        ) {
             continue;
         }
         report.push(record(
@@ -424,7 +444,10 @@ fn document_config(
 ) -> Result<Value, DiscoveryError> {
     let mut config = json!({});
     let supported: &[&str] = match source.tool {
-        SourceTool::Codex => return codex_config(source, document, required, report),
+        SourceTool::Codex => {
+            config = codex_config(source, document, required, report)?;
+            &["mcp_servers"]
+        }
         SourceTool::Claude => {
             let permissions = converted(source, claude_permissions(document))?;
             if !permissions.rules.is_empty() {
@@ -436,7 +459,7 @@ fn document_config(
             if let Some(model) = document.get("model") {
                 map_model(source, model, true, &mut config, report)?;
             }
-            &["permissions", "model"]
+            &["permissions", "model", "mcpServers"]
         }
         SourceTool::OpenCode => {
             let rules = converted(source, opencode_permissions(document))?;
@@ -446,9 +469,25 @@ fn document_config(
             if let Some(model) = document.get("model") {
                 map_model(source, model, false, &mut config, report)?;
             }
-            &["permission", "permissions", "tools", "model"]
+            &["permission", "permissions", "tools", "model", "mcp"]
         }
     };
+    let mcp = converted(source, super::mcp_config(source.tool, document))?;
+    for (key, value) in mcp.config.as_object().into_iter().flatten() {
+        config[key] = value.clone();
+    }
+    required.extend(mcp.required_environment);
+    for pending in mcp.not_imported {
+        report.push(record(
+            &source.path,
+            pending.field,
+            "not imported",
+            pending.reason,
+        ));
+    }
+    if source.tool == SourceTool::Codex {
+        return Ok(config);
+    }
     for (index, key) in document.as_object().unwrap().keys().enumerate() {
         if !supported.contains(&key.as_str()) {
             report.push(record(
@@ -579,7 +618,7 @@ fn redact_report_fields(
         }
     }
 }
-fn sensitive_values(value: &Value) -> Vec<String> {
+pub(super) fn sensitive_values(value: &Value) -> Vec<String> {
     fn collect(value: &Value, force: bool, out: &mut Vec<String>) {
         match value {
             Value::Object(map) => {
@@ -622,7 +661,7 @@ fn sensitive_values(value: &Value) -> Vec<String> {
     out.dedup();
     out
 }
-fn reject_unsafe_strings(
+pub(super) fn reject_unsafe_strings(
     proposed: &Value,
     existing: &Value,
     secrets: &[String],
@@ -642,10 +681,12 @@ fn reject_unsafe_strings(
                     return false;
                 }
                 if s.contains("{env:") {
-                    let allowed = pointer.starts_with("/providers/")
+                    let allowed = (pointer.starts_with("/providers/")
                         && (pointer.ends_with("/api/settings/api_key")
                             || pointer.ends_with("/api/url")
-                            || pointer.contains("/request/headers/"));
+                            || pointer.contains("/request/headers/")))
+                        || (pointer.starts_with("/mcp/")
+                            && (pointer.contains("/env/") || pointer.contains("/headers/")));
                     let valid = s
                         .strip_prefix("{env:")
                         .and_then(|s| s.strip_suffix('}'))

@@ -1,5 +1,11 @@
 # P1 implementation status
 
+## Static MCP migration previews (2026-10-10)
+
+Static Claude `mcpServers`, Codex `mcp_servers`, and OpenCode `mcp`/`mcp.servers` declarations now convert into native local/HTTP server proposals in read-only previews. Command arrays, arguments, environment/header bindings and explicit enablement retain source-field provenance. Literal binding values become deterministic environment references; malformed/ambiguous transports, unsafe substitutions, embedded declared credentials, metadata credential echoes and binding collisions refuse with value-free errors. Unknown server options are indexed pending mappings. Global Claude state contributes only top-level MCP declarations; unrelated settings and project associations are reported pending rather than used as native configuration. No source server is executed or connected.
+
+The native parser accepts `disabled` as the inverse of `enabled`, rejects conflicting/nonboolean flags and retains normalized approval digests. The new regression failed against unchanged main before the parser change. Local validation passes 70 selected tests: five pure MCP adapter, 22 preview, ten native MCP configuration and 33 actual CLI cases. Workspace all-target Clippy with warnings denied and 60 strict OpenSpec items pass; spec lint has zero errors and 21 warnings, and SDK/inventory checks pass. CI now runs the MCP adapter and native parser independently. Advanced auth/transport/timeout options, source-relative working directories, custom referenced sources/project associations, byte-exact reviewed writes and complete canonical import acceptance remain required. No P1 milestone is accepted; P0 state remains preserved.
+
 ## Windows snapshot directory sharing diagnosis (2026-10-10)
 
 The terminal log for run 38061022871/job 114239139813 proves the corrected junction inventory fixture passes, as do all five inventory, three detection and sixteen core permission-conversion cases. Snapshot reads/file replacement/limits/hard-link refusal pass four cases; the two directory/junction replacement fixtures fail before verification with Windows sharing violation 32 at the rename operation. The installed capability library deliberately opens directory lookup handles without FILE_SHARE_DELETE, and retaining those lookup handles for the review lifetime blocks user directory changes.

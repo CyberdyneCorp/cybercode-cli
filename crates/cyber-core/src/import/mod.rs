@@ -6,6 +6,7 @@ mod codex_providers;
 mod codex_source;
 mod detection;
 mod discovery;
+mod mcp;
 mod opencode;
 mod preview;
 mod provenance;
@@ -23,6 +24,7 @@ pub use discovery::{
     DiscoveryError, DiscoveryIssue, SourceFile, SourceInventory, SourceKind, SourceLayer,
     SourceRoots, SourceTool, discover_sources,
 };
+pub use mcp::{McpImportConfig, McpMappingIssue, mcp_config};
 pub use opencode::opencode_permissions;
 pub use preview::{
     ImportPreview, ImportScope, MappingRecord, PreviewEnvironment, PreviewOutput, preview_import,

@@ -211,6 +211,24 @@ impl McpServer {
     }
 }
 
+fn normalize_enabled(value: &Value) -> Result<Value, &'static str> {
+    let mut definition = value.clone();
+    let Some(map) = definition.as_object_mut() else {
+        return Ok(definition);
+    };
+    if let Some(disabled) = map.remove("disabled") {
+        let disabled = disabled.as_bool().ok_or("disabled must be boolean")?;
+        if let Some(enabled) = map.get("enabled") {
+            if enabled.as_bool() != Some(!disabled) {
+                return Err("conflicting enabled/disabled flags");
+            }
+        } else {
+            map.insert("enabled".into(), Value::Bool(!disabled));
+        }
+    }
+    Ok(definition)
+}
+
 #[derive(Debug, Clone)]
 pub struct McpSettings {
     pub servers: BTreeMap<String, McpServer>,
@@ -263,7 +281,9 @@ impl McpSettings {
             {
                 return Err(format!("mcp.{name}: invalid server name"));
             }
-            let server: McpServer = serde_json::from_value(value.clone())
+            let definition = normalize_enabled(value)
+                .map_err(|_| format!("mcp.{name}: invalid enablement flags"))?;
+            let server: McpServer = serde_json::from_value(definition)
                 .map_err(|_| format!("mcp.{name}: invalid server definition"))?;
             server
                 .validate()

@@ -756,3 +756,140 @@ fn retired_codex_approval_emits_a_note_and_unsupported_policy_refuses_the_whole_
     assert!(!error.to_string().contains("private-source-secret"));
     assert!(!roots.directory.join("cyber.jsonc").exists());
 }
+
+#[test]
+fn mcp_file_preview_withholds_credentials_tracks_inputs_and_verifies_without_writes() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        ".mcp.json",
+        r#"{"mcpServers":{"audit":{"command":"server","env":{"API_KEY":"private-mcp-value"},"disabled":true,"custom":"private-unsupported"}}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    assert!(output.diff.contains("server"));
+    assert!(output.diff.contains("disabled"));
+    let serialized = serde_json::to_string(output).unwrap();
+    assert!(!serialized.contains("private-mcp-value"));
+    assert!(!serialized.contains("private-unsupported"));
+    assert_eq!(output.required_environment.len(), 1);
+    assert!(
+        output.required_environment[0]
+            .sources
+            .iter()
+            .any(|s| s.source.ends_with(".mcp.json") && s.field == "/mcpServers/audit/env/API_KEY")
+    );
+    assert!(output.report.iter().any(|r| {
+        r.status == "imported"
+            && r.field == "/mcp/audit/command"
+            && r.sources
+                .iter()
+                .any(|s| s.field == "/mcpServers/audit/command")
+    }));
+    assert!(output.report.iter().any(|r| {
+        r.status == "not imported"
+            && r.sources
+                .iter()
+                .any(|s| s.field == "/mcpServers/audit/custom")
+    }));
+    assert!(!roots.directory.join("cyber.jsonc").exists());
+    preview.verify().unwrap();
+    write(&roots.directory, ".mcp.json", r#"{"mcpServers":{}}"#);
+    assert!(preview.verify().is_err());
+}
+
+#[test]
+fn opencode_array_and_codex_server_previews_trace_actual_source_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"mcp":{"servers":{"audit":{"type":"local","command":["server","--stdio"],"environment":{"API_KEY":"private-mcp-value"},"enabled":false}}}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    for (output, input) in [
+        ("/mcp/audit/command", "/mcp/servers/audit/command/0"),
+        ("/mcp/audit/args/0", "/mcp/servers/audit/command/1"),
+        ("/mcp/audit/disabled", "/mcp/servers/audit/enabled"),
+    ] {
+        assert!(
+            preview
+                .output()
+                .report
+                .iter()
+                .any(|r| r.field == output && r.sources.iter().any(|s| s.field == input))
+        );
+    }
+    assert_eq!(
+        preview.output().required_environment[0].sources[0].field,
+        "/mcp/servers/audit/environment/API_KEY"
+    );
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        "[mcp_servers.audit]\ncommand='server'\nstartup_timeout_sec=10\n[mcp_servers.audit.env]\nAPI_KEY='private-codex-mcp'\n",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(preview.output().diff.contains("server"));
+    assert!(preview.output().report.iter().any(|r| {
+        r.status == "not imported"
+            && r.sources
+                .iter()
+                .any(|s| s.field == "/mcp_servers/audit/startup_timeout_sec")
+    }));
+    assert_eq!(
+        preview.output().required_environment[0].sources[0].field,
+        "/mcp_servers/audit/env/API_KEY"
+    );
+}
+
+#[test]
+fn claude_global_state_does_not_import_unrelated_settings_or_project_associations() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".claude.json",
+        r#"{"model":"claude-unrelated","projects":{"elsewhere":{"mcpServers":{"wrong":{"command":"wrong"}}}},"mcpServers":{"audit":{"command":"server"}}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Global,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(preview.output().diff.contains("server"));
+    assert!(!preview.output().diff.contains("claude-unrelated"));
+    assert!(!preview.output().diff.contains("wrong"));
+    assert!(
+        preview
+            .output()
+            .report
+            .iter()
+            .any(|r| r.reason.contains("project association"))
+    );
+}

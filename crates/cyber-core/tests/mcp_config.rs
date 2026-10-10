@@ -252,3 +252,32 @@ fn sampling_is_opt_in_and_does_not_reserve_a_typed_server_name() {
         assert!(!error.contains("private-secret"));
     }
 }
+
+#[test]
+fn disabled_config_alias_preserves_server_state_and_normalized_approval_identity() {
+    let alias = McpSettings::from_config(
+        &json!({"mcp":{"audit":{"type":"local","command":"audit-server","disabled":true}}}),
+    )
+    .unwrap();
+    let native = McpSettings::from_config(
+        &json!({"mcp":{"audit":{"type":"local","command":"audit-server","enabled":false}}}),
+    )
+    .unwrap();
+    assert!(!alias.servers["audit"].enabled());
+    assert_eq!(
+        alias.servers["audit"].digest("audit").unwrap(),
+        native.servers["audit"].digest("audit").unwrap()
+    );
+    for value in [
+        json!({"disabled":"false"}),
+        json!({"disabled":true,"enabled":true}),
+        json!({"disabled":false,"enabled":false}),
+    ] {
+        let mut definition = json!({"type":"local","command":"audit-server"});
+        definition
+            .as_object_mut()
+            .unwrap()
+            .extend(value.as_object().unwrap().clone());
+        assert!(McpSettings::from_config(&json!({"mcp":{"audit":definition}})).is_err());
+    }
+}
