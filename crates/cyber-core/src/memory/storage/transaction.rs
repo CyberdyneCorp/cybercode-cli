@@ -646,7 +646,9 @@ fn create_file(dir: &Dir, name: &str, bytes: &[u8]) -> Result<(), MemoryStorageE
 fn sync_dir(dir: &Dir) -> Result<(), MemoryStorageError> {
     #[cfg(unix)]
     directory_file(dir)?.sync_all()?;
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    super::super::windows::sync_private(&dir.try_clone()?.into_std_file())?;
+    #[cfg(not(any(unix, windows)))]
     let _ = dir;
     Ok(())
 }

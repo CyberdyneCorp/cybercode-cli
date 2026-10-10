@@ -45,11 +45,15 @@ jobs:
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --lib memory::windows
-      - name: Native private memory storage and startup
+      - name: Native test failure propagation regression
         if: ${{ !cancelled() }}
-        run: |
-          cargo test --locked -p cyber-core --test memory_storage
-          cargo test --locked -p cyber-core --test paths ensure_
+        run: cargo test --locked -p cyber-core --test ci_contracts
+      - name: Native private memory storage
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test memory_storage
+      - name: Native private memory startup
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test paths ensure_
 
   windows:
     name: Windows build
@@ -72,8 +76,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked -p cyber-cli --bin cyber worktree_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --bin cyber listing_renders_status_sessions_and_recovery_diagnostics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test http worktree_request_validation_precedes_host_dispatch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native worktree configuration, repository creation and lock ownership
         run: cargo test --locked -p cyber-core --lib --test worktrees --test worktree_lock --test worktree_repository --test config
       - name: Native MCP configuration, framed protocol and startup wait
@@ -83,19 +90,30 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked -p cyber-tools --lib mcp::stdio::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::roots::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::elicitation::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib mcp::sampling::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib tools::process::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native scope-aware deferred tool materialization
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked -p cyber-core --lib config::deferred_tools::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib runtime::deferred_tools::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test runtime loaded_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --test context_compaction loaded_schemas
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --lib tools::tool_search::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test golden tool_search_golden
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native MCP retained startup joins and bounded reconnect
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --lib mcp::pool::tests
@@ -109,7 +127,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked -p cyber-server --test runtime registration
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib http::remote_tools::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native application client-tool schema and permission boundaries
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --lib host::tests
@@ -132,7 +152,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked -p cyber-server --lib runtime::memory
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-server --lib http::idempotency::fingerprint_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native memory HTTP shutdown ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test http shutdown_waits_for_disposed_handler_memory_work_and_refuses_new_leases
@@ -320,7 +342,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked -p cyber-server --test http child_thread
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tui child_thread
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native subagent resume and attempt replay
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test subagent_resume -p cyber-server --test resume_children --test child_preparation --test admission_authority
@@ -333,6 +357,7 @@ jobs:
           cargo test --locked -p cyber-tools --test isolated_subagents interrupt_cancels_public_child_preparation_before_late_setup_or_input -- --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-tools --test isolated_subagents -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native durable subagent names
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --test subagent_names -p cyber-tools --test subagent_names

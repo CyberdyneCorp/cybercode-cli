@@ -11,6 +11,7 @@ use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 /// Callers must review content through this retained handle before installation.
 pub struct RetainedChild {
     file: File,
+    parent: File,
     identity: FileIdentity,
     directory: bool,
 }
@@ -42,6 +43,7 @@ fn retain(
     }
     Ok(RetainedChild {
         file,
+        parent: parent.try_clone()?,
         identity: expected,
         directory,
     })
@@ -49,6 +51,34 @@ fn retain(
 impl RetainedChild {
     pub fn file(&self) -> &File {
         &self.file
+    }
+
+    /// Acknowledges installation only after the object and both directories flush.
+    /// Any failure after rename retains this source; callers retain their journal too.
+    pub fn rename_to_durable(
+        &self,
+        destination: &File,
+        name: &str,
+    ) -> Result<(), MemoryStorageError> {
+        self.rename_to_durable_with(destination, name, sync_private)
+    }
+    fn rename_to_durable_with(
+        &self,
+        destination: &File,
+        name: &str,
+        mut flush: impl FnMut(&File) -> Result<(), MemoryStorageError>,
+    ) -> Result<(), MemoryStorageError> {
+        creation::component(name)?;
+        if !destination.metadata()?.is_dir() {
+            return Err(refusal("expected a native memory destination directory"));
+        }
+        flush(&self.file)?;
+        flush(&self.parent)?;
+        flush(destination)?;
+        self.rename_to(destination, name)?;
+        flush(&self.file)?;
+        flush(&self.parent)?;
+        flush(destination)
     }
 
     /// Renames this exact retained object without replacing any destination.
@@ -211,6 +241,92 @@ mod tests {
         drop(installed);
         drop(retained);
         open_private_file(&directory, "installed", Access::Write).unwrap();
+    }
+    #[test]
+    fn native_durable_file_install_flushes_both_directories_with_exact_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let bootstrap = parent(root.path());
+        let source = create_private_directory(&bootstrap, "staging").unwrap();
+        let destination = create_private_directory(&bootstrap, "memory").unwrap();
+        let expected = staged(&source, "note", b"durable bytes");
+        let retained = retain_private_file(&source, "note", expected).unwrap();
+        retained
+            .rename_to_durable(&destination, "installed")
+            .unwrap();
+        let installed = open_private_file(&destination, "installed", Access::Read).unwrap();
+        assert_eq!(identity(&installed).unwrap(), expected);
+        assert!(!root.path().join("staging").join("note").exists());
+        assert_eq!(
+            std::fs::read(root.path().join("memory").join("installed")).unwrap(),
+            b"durable bytes"
+        );
+        assert_eq!(verify_private(retained.file()).unwrap(), expected);
+    }
+    #[test]
+    fn native_durable_directory_install_preserves_private_journal_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let bootstrap = parent(root.path());
+        let source = create_private_directory(&bootstrap, "memory").unwrap();
+        let history = create_private_directory(&source, "history").unwrap();
+        let journal = create_private_directory(&source, "journal").unwrap();
+        let expected = identity(&journal).unwrap();
+        drop(journal);
+        let retained = retain_private_directory(&source, "journal", expected).unwrap();
+        retained.rename_to_durable(&history, "completed").unwrap();
+        let installed = open_private_directory(&history, "completed", Access::Read).unwrap();
+        assert_eq!(verify_private(&installed).unwrap(), expected);
+        assert!(!root.path().join("memory").join("journal").exists());
+    }
+    #[test]
+    fn native_durable_preflight_and_collision_refuse_without_namespace_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let bootstrap = parent(root.path());
+        let source = create_private_directory(&bootstrap, "source").unwrap();
+        let destination = create_private_directory(&bootstrap, "destination").unwrap();
+        let read_only = open_private_directory(&bootstrap, "destination", Access::Read).unwrap();
+        let expected = staged(&source, "note", b"source bytes");
+        staged(&destination, "existing", b"user edits");
+        let retained = retain_private_file(&source, "note", expected).unwrap();
+        assert!(retained.rename_to_durable(&read_only, "new").is_err());
+        assert!(!root.path().join("destination").join("new").exists());
+        assert!(
+            retained
+                .rename_to_durable(&destination, "existing")
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("source").join("note")).unwrap(),
+            b"source bytes"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("destination").join("existing")).unwrap(),
+            b"user edits"
+        );
+        assert_eq!(identity(retained.file()).unwrap(), expected);
+    }
+    #[test]
+    fn post_rename_flush_failure_retains_installed_source_without_rollback_or_acknowledgement() {
+        let root = tempfile::tempdir().unwrap();
+        let bootstrap = parent(root.path());
+        let source = create_private_directory(&bootstrap, "source").unwrap();
+        let destination = create_private_directory(&bootstrap, "destination").unwrap();
+        let expected = staged(&source, "note", b"retained evidence");
+        let retained = retain_private_file(&source, "note", expected).unwrap();
+        let mut calls = 0;
+        let result = retained.rename_to_durable_with(&destination, "installed", |file| {
+            calls += 1;
+            if calls == 4 {
+                return Err(io::Error::other("simulated post-rename flush failure").into());
+            }
+            sync_private(file)
+        });
+        assert!(matches!(result, Err(MemoryStorageError::Io(_))));
+        assert_eq!(calls, 4);
+        assert!(!root.path().join("source").join("note").exists());
+        let installed = root.path().join("destination").join("installed");
+        assert_eq!(std::fs::read(&installed).unwrap(), b"retained evidence");
+        assert_eq!(identity(retained.file()).unwrap(), expected);
+        assert!(std::fs::remove_file(&installed).is_err());
     }
     #[test]
     fn native_rename_collision_and_invalid_names_preserve_all_evidence() {

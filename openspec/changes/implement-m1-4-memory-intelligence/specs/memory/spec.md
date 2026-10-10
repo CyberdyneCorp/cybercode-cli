@@ -322,6 +322,16 @@
 - **AND** startup SHALL NOT create a default-public memory root before private admission, while missing project/global scopes remain uncreated
 - **AND** Windows mutation/checkpoint workflows SHALL remain gated until durable namespace installation and complete lifecycle integration are implemented and natively verified
 
+#### Scenario: Native Windows private flush and durable create-only rename
+- **WHEN** native memory synchronizes a private retained file or directory
+- **THEN** it SHALL request normal native flushing of data, metadata and underlying storage cache with no data-only/no-sync flags, and verify the retained private identity before and after the synchronous call
+- **AND** read-only handles, unsafe objects, unsupported filesystem/storage flushing and non-success native settlement SHALL refuse without a silent fallback or durability acknowledgement
+- **WHEN** a retained private object is installed durably
+- **THEN** its source directory handle SHALL remain retained; file/source-directory/destination-directory flushing SHALL be preflighted before create-only rename
+- **AND** successful rename SHALL be followed by source-object and both directory flushes before acknowledgement, preserving exact identity and existing-destination refusal
+- **AND** preflight refusal SHALL leave the namespace unchanged; a failure after rename SHALL retain source/journal evidence without rollback or inferred durable completion
+- **AND** native flush acceptance SHALL NOT by itself enable mutation/checkpoints before journal/client integration, caller path/content binding and complete native lifecycle acceptance
+
 #### Scenario: Durable TUI memory draft and request retention
 - **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
 - **THEN** it SHALL checkpoint bounded draft text and its original Session/Location/scope identity through the private client store

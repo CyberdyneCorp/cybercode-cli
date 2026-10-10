@@ -3,18 +3,28 @@ use cyber_core::memory::{MemoryStorageError, MemoryStore};
 use std::io::Write;
 use std::path::Path;
 
+#[cfg(windows)]
+fn native_directory(path: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ALL_ACCESS, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    // Native scope handles include DELETE access; fixture reopenings must share it.
+    std::fs::OpenOptions::new()
+        .access_mode(FILE_ALL_ACCESS)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .unwrap()
+}
 fn write(path: &Path, content: &[u8]) {
     #[cfg(windows)]
     {
         use cyber_core::memory::windows::{
             Access, create_private_file, open_private_file, verify_private,
         };
-        let parent = cap_std::fs::Dir::open_ambient_dir(
-            path.parent().unwrap(),
-            cap_std::ambient_authority(),
-        )
-        .unwrap()
-        .into_std_file();
+        let parent = native_directory(path.parent().unwrap());
         // Outside-data and child-ready markers intentionally use ordinary fixture files.
         if verify_private(&parent).is_ok() {
             let name = path.file_name().unwrap().to_str().unwrap();
@@ -78,22 +88,18 @@ fn private_project_and_global_storage_is_separate_and_existing_review_does_not_c
             global.path().to_owned(),
             project.path().join(".memory.lock"),
         ] {
-            let object = cap_std::fs::Dir::open_ambient_dir(
-                path.parent().unwrap(),
-                cap_std::ambient_authority(),
-            )
-            .unwrap();
+            let object = native_directory(path.parent().unwrap());
             let name = path.file_name().unwrap().to_str().unwrap();
             let file = if path.is_dir() {
                 cyber_core::memory::windows::open_private_directory(
-                    &object.into_std_file(),
+                    &object,
                     name,
                     cyber_core::memory::windows::Access::Read,
                 )
                 .unwrap()
             } else {
                 cyber_core::memory::windows::open_private_file(
-                    &object.into_std_file(),
+                    &object,
                     name,
                     cyber_core::memory::windows::Access::Read,
                 )
@@ -419,9 +425,7 @@ mod native_storage {
     use cyber_core::memory::windows::{Access, open_private_directory, verify_private};
 
     fn directory(path: &Path) -> std::fs::File {
-        cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())
-            .unwrap()
-            .into_std_file()
+        native_directory(path)
     }
     fn junction(path: &Path, target: &Path) {
         let output = std::process::Command::new("cmd")
