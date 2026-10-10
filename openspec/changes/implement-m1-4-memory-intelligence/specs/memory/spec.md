@@ -310,6 +310,18 @@
 - **AND** source/destination evidence SHALL remain retained on unknown or failed postconditions without automatic rollback, deletion or permission repair
 - **AND** caller content review, journal recovery, namespace durability and complete storage/checkpoint integration SHALL remain required before Windows writes are enabled
 
+#### Scenario: Native Windows private memory storage admission
+- **WHEN** startup ensures the Windows memory root or MemoryStore explicitly admits a project/global scope
+- **THEN** missing directories SHALL be created through retained parent handles with private security installed atomically, and existing directories SHALL be opened without repair and verified as private non-reparse objects
+- **AND** existing-review admission SHALL NOT create missing directories or lock files
+- **WHEN** a Windows scope is claimed
+- **THEN** its lock SHALL be created privately or an existing private regular lock SHALL be opened without truncation/repair, with exclusive cross-process ownership retained through the scope guard
+- **WHEN** a Windows memory note or index is read
+- **THEN** handle-relative read-only opening SHALL verify private owner/DACL, regular type, no reparse points and a single link before returning any bytes
+- **AND** broad or inherited-unprotected directories, locks, notes and indexes SHALL refuse without permission changes or user-byte loss; unsafe catalog diagnostics SHALL NOT expose note contents
+- **AND** startup SHALL NOT create a default-public memory root before private admission, while missing project/global scopes remain uncreated
+- **AND** Windows mutation/checkpoint workflows SHALL remain gated until durable namespace installation and complete lifecycle integration are implemented and natively verified
+
 #### Scenario: Durable TUI memory draft and request retention
 - **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
 - **THEN** it SHALL checkpoint bounded draft text and its original Session/Location/scope identity through the private client store

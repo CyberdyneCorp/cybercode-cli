@@ -96,6 +96,50 @@ fn ensure_creates_derived_directories() {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn ensure_windows_memory_root_is_private_without_creating_scopes() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = Paths::resolve(
+        &env(&[("CYBER_HOME", dir.path().to_str().unwrap())]),
+        dir.path(),
+    );
+    p.ensure().unwrap();
+    p.ensure().unwrap();
+    let root =
+        cap_std::fs::Dir::open_ambient_dir(p.data.join("memory"), cap_std::ambient_authority())
+            .unwrap()
+            .into_std_file();
+    cyber_core::memory::windows::verify_private(&root).unwrap();
+    assert_eq!(std::fs::read_dir(p.data.join("memory")).unwrap().count(), 0);
+}
+
+#[cfg(windows)]
+#[test]
+fn ensure_refuses_existing_broad_windows_memory_root_without_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = Paths::resolve(
+        &env(&[("CYBER_HOME", dir.path().to_str().unwrap())]),
+        dir.path(),
+    );
+    let memory = p.data.join("memory");
+    std::fs::create_dir_all(&memory).unwrap();
+    std::fs::write(memory.join("user"), b"retained startup edits").unwrap();
+    assert_eq!(
+        p.ensure().unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    let root = cap_std::fs::Dir::open_ambient_dir(&memory, cap_std::ambient_authority())
+        .unwrap()
+        .into_std_file();
+    assert!(cyber_core::memory::windows::verify_private(&root).is_err());
+    assert_eq!(
+        std::fs::read(memory.join("user")).unwrap(),
+        b"retained startup edits"
+    );
+    assert_eq!(std::fs::read_dir(memory).unwrap().count(), 1);
+}
+
 /// Regression: the embedded git SHA went stale because the build script did not watch HEAD.
 #[test]
 fn build_info_reports_the_current_commit() {

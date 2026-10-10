@@ -71,7 +71,19 @@ impl Paths {
     }
 
     pub fn ensure(&self) -> io::Result<()> {
-        self.all_dirs().iter().try_for_each(std::fs::create_dir_all)
+        for dir in self.all_dirs() {
+            #[cfg(windows)]
+            if dir == self.data.join("memory") {
+                continue;
+            }
+            std::fs::create_dir_all(dir)?;
+        }
+        #[cfg(windows)]
+        crate::memory::MemoryStore::ensure_root(&self.data).map_err(|error| match error {
+            crate::memory::MemoryStorageError::Io(error) => error,
+            _ => io::Error::new(io::ErrorKind::PermissionDenied, "unsafe memory root"),
+        })?;
+        Ok(())
     }
 
     /// Advisory lock held by the registered server, the single writer owner.

@@ -80,21 +80,46 @@ impl MemoryStore {
         Ok(Self { dir, path })
     }
 
+    #[cfg(windows)]
+    pub(crate) fn ensure_root(data: &Path) -> Result<(), MemoryStorageError> {
+        let data = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
+        private_directory(&data, "memory")?;
+        Ok(())
+    }
+
     /// Review existing storage without creating directories or changing permissions.
     pub fn existing(data: &Path, project_id: &str) -> Result<Option<Self>, MemoryStorageError> {
         let path = directory(data, project_id)?;
-        let open = || -> io::Result<Dir> {
-            let data = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
-            data.open_dir_nofollow("memory")?
-                .open_dir_nofollow(project_id)
-        };
-        let dir = match open() {
-            Ok(dir) => dir,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        verify_private_directory(&dir)?;
-        Ok(Some(Self { dir, path }))
+        #[cfg(windows)]
+        {
+            let data = match Dir::open_ambient_dir(data, cap_std::ambient_authority()) {
+                Ok(data) => data,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            let Some(root) = existing_private_directory(&data, "memory")? else {
+                return Ok(None);
+            };
+            let Some(dir) = existing_private_directory(&root, project_id)? else {
+                return Ok(None);
+            };
+            Ok(Some(Self { dir, path }))
+        }
+        #[cfg(not(windows))]
+        {
+            let open = || -> io::Result<Dir> {
+                let data = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
+                data.open_dir_nofollow("memory")?
+                    .open_dir_nofollow(project_id)
+            };
+            let dir = match open() {
+                Ok(dir) => dir,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            verify_private_directory(&dir)?;
+            Ok(Some(Self { dir, path }))
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -113,18 +138,38 @@ impl MemoryStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .write(true)
-            .create(true)
-            .follow(FollowSymlinks::No);
-        #[cfg(unix)]
-        {
-            use cap_std::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let lock = self.dir.open_with(".memory.lock", &options)?.into_std();
+        #[cfg(windows)]
+        let lock = {
+            let parent = self.dir.try_clone()?.into_std_file();
+            match super::windows::create_private_file(&parent, ".memory.lock") {
+                Ok(file) => file,
+                Err(MemoryStorageError::Io(error))
+                    if error.kind() == io::ErrorKind::AlreadyExists =>
+                {
+                    super::windows::open_private_file(
+                        &parent,
+                        ".memory.lock",
+                        super::windows::Access::Write,
+                    )?
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        #[cfg(not(windows))]
+        let lock = {
+            let mut options = OpenOptions::new();
+            options
+                .read(true)
+                .write(true)
+                .create(true)
+                .follow(FollowSymlinks::No);
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            self.dir.open_with(".memory.lock", &options)?.into_std()
+        };
         verify_regular(&lock)?;
         make_private_file(&lock)?;
         match lock.try_lock() {
@@ -250,14 +295,29 @@ impl MemoryScope<'_> {
         if !metadata.is_file() {
             return Err(MemoryStorageError::Unsafe("expected a regular file"));
         }
-        let mut options = OpenOptions::new();
-        options.read(true).follow(FollowSymlinks::No);
-        let file = match self.store.dir.open_with(name, &options) {
-            Ok(file) => file.into_std(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+        #[cfg(windows)]
+        let file = match super::windows::open_private_file(
+            &self.store.dir.try_clone()?.into_std_file(),
+            name,
+            super::windows::Access::Read,
+        ) {
+            Ok(file) => file,
+            Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
                 return Err(MemoryStorageError::NotFound);
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
+        };
+        #[cfg(not(windows))]
+        let file = {
+            let mut options = OpenOptions::new();
+            options.read(true).follow(FollowSymlinks::No);
+            match self.store.dir.open_with(name, &options) {
+                Ok(file) => file.into_std(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Err(MemoryStorageError::NotFound);
+                }
+                Err(error) => return Err(error.into()),
+            }
         };
         verify_regular(&file)?;
         verify_private_file(&file)?;
@@ -284,6 +344,7 @@ fn display_filename(filename: &str) -> String {
     }
 }
 
+#[cfg(not(windows))]
 fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError> {
     let builder = private_builder();
     match parent.create_dir_with(name, &builder) {
@@ -298,6 +359,31 @@ fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError
         directory_file(&dir)?.set_permissions(std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(dir)
+}
+
+#[cfg(windows)]
+fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError> {
+    let parent = parent.try_clone()?.into_std_file();
+    let file = match super::windows::create_private_directory(&parent, name) {
+        Ok(file) => file,
+        Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::AlreadyExists => {
+            super::windows::open_private_directory(&parent, name, super::windows::Access::Write)?
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(Dir::from_std_file(file))
+}
+#[cfg(windows)]
+fn existing_private_directory(parent: &Dir, name: &str) -> Result<Option<Dir>, MemoryStorageError> {
+    match super::windows::open_private_directory(
+        &parent.try_clone()?.into_std_file(),
+        name,
+        super::windows::Access::Write,
+    ) {
+        Ok(file) => Ok(Some(Dir::from_std_file(file))),
+        Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn private_builder() -> DirBuilder {
@@ -336,7 +422,9 @@ fn make_private_file(file: &File) -> Result<(), MemoryStorageError> {
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    super::windows::verify_private(file)?;
+    #[cfg(not(any(unix, windows)))]
     let _ = file;
     Ok(())
 }
@@ -350,7 +438,9 @@ pub(super) fn verify_private_file(file: &File) -> Result<(), MemoryStorageError>
             ));
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    super::windows::verify_private(file)?;
+    #[cfg(not(any(unix, windows)))]
     let _ = file;
     Ok(())
 }
@@ -373,7 +463,7 @@ pub(super) fn verify_private_directory(dir: &Dir) -> Result<(), MemoryStorageErr
         }
     }
     #[cfg(windows)]
-    super::windows::identity(&dir.try_clone()?.into_std_file())?;
+    super::windows::verify_private(&dir.try_clone()?.into_std_file())?;
     #[cfg(not(any(unix, windows)))]
     let _ = dir;
     Ok(())

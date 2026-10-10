@@ -45,6 +45,11 @@ jobs:
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --lib memory::windows
+      - name: Native private memory storage and startup
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --test memory_storage
+          cargo test --locked -p cyber-core --test paths ensure_
 
   windows:
     name: Windows build

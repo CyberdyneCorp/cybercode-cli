@@ -1,9 +1,37 @@
-//! Actual directory/descriptor ownership; note mutations are not implemented yet.
+//! Actual private directory/descriptor ownership and read admission.
 use cyber_core::memory::{MemoryStorageError, MemoryStore};
 use std::io::Write;
 use std::path::Path;
 
 fn write(path: &Path, content: &[u8]) {
+    #[cfg(windows)]
+    {
+        use cyber_core::memory::windows::{
+            Access, create_private_file, open_private_file, verify_private,
+        };
+        let parent = cap_std::fs::Dir::open_ambient_dir(
+            path.parent().unwrap(),
+            cap_std::ambient_authority(),
+        )
+        .unwrap()
+        .into_std_file();
+        // Outside-data and child-ready markers intentionally use ordinary fixture files.
+        if verify_private(&parent).is_ok() {
+            let name = path.file_name().unwrap().to_str().unwrap();
+            let mut file = match create_private_file(&parent, name) {
+                Ok(file) => file,
+                Err(MemoryStorageError::Io(error))
+                    if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                {
+                    open_private_file(&parent, name, Access::Write).unwrap()
+                }
+                Err(error) => panic!("{error}"),
+            };
+            file.set_len(0).unwrap();
+            file.write_all(content).unwrap();
+            return;
+        }
+    }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -42,6 +70,38 @@ fn private_project_and_global_storage_is_separate_and_existing_review_does_not_c
             .unwrap()
             .is_some()
     );
+    #[cfg(windows)]
+    {
+        for path in [
+            data.path().join("memory"),
+            project.path().to_owned(),
+            global.path().to_owned(),
+            project.path().join(".memory.lock"),
+        ] {
+            let object = cap_std::fs::Dir::open_ambient_dir(
+                path.parent().unwrap(),
+                cap_std::ambient_authority(),
+            )
+            .unwrap();
+            let name = path.file_name().unwrap().to_str().unwrap();
+            let file = if path.is_dir() {
+                cyber_core::memory::windows::open_private_directory(
+                    &object.into_std_file(),
+                    name,
+                    cyber_core::memory::windows::Access::Read,
+                )
+                .unwrap()
+            } else {
+                cyber_core::memory::windows::open_private_file(
+                    &object.into_std_file(),
+                    name,
+                    cyber_core::memory::windows::Access::Read,
+                )
+                .unwrap()
+            };
+            cyber_core::memory::windows::verify_private(&file).unwrap();
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -342,14 +402,147 @@ fn native_memory_reads_refuse_hard_link_alias_before_note_access() {
     let root = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(root.path(), "global").unwrap();
     let path = store.path().join("policy.md");
-    std::fs::write(
+    write(
         &path,
-        "---\nname: policy\ndescription: Policy\ntype: reference\n---\nPrivate text\n",
-    )
-    .unwrap();
+        b"---\nname: policy\ndescription: Policy\ntype: reference\n---\nPrivate text\n",
+    );
     std::fs::hard_link(&path, root.path().join("alias.md")).unwrap();
     assert!(matches!(
         store.claim().unwrap().read("policy"),
         Err(MemoryStorageError::Unsafe(_))
     ));
+}
+
+#[cfg(windows)]
+mod native_storage {
+    use super::*;
+    use cyber_core::memory::windows::{Access, open_private_directory, verify_private};
+
+    fn directory(path: &Path) -> std::fs::File {
+        cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())
+            .unwrap()
+            .into_std_file()
+    }
+    fn junction(path: &Path, target: &Path) {
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(path)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    #[test]
+    fn unsafe_existing_root_and_scope_refuse_without_repair_or_child_effects() {
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().join("memory");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("user"), b"retained root edits").unwrap();
+        assert!(verify_private(&directory(&root)).is_err());
+        assert!(MemoryStore::existing(data.path(), "global").is_err());
+        assert!(MemoryStore::open(data.path(), "global").is_err());
+        assert!(verify_private(&directory(&root)).is_err());
+        assert!(!root.join("global").exists());
+        assert_eq!(
+            std::fs::read(root.join("user")).unwrap(),
+            b"retained root edits"
+        );
+
+        let data = tempfile::tempdir().unwrap();
+        let safe = MemoryStore::open(data.path(), "global").unwrap();
+        let unsafe_scope = data.path().join("memory").join("prj_unsafe");
+        std::fs::create_dir(&unsafe_scope).unwrap();
+        std::fs::write(unsafe_scope.join("user"), b"retained scope edits").unwrap();
+        assert!(MemoryStore::existing(data.path(), "prj_unsafe").is_err());
+        assert!(MemoryStore::open(data.path(), "prj_unsafe").is_err());
+        assert!(verify_private(&directory(&unsafe_scope)).is_err());
+        assert!(!unsafe_scope.join(".memory.lock").exists());
+        assert_eq!(
+            std::fs::read(unsafe_scope.join("user")).unwrap(),
+            b"retained scope edits"
+        );
+        assert!(safe.claim().is_ok());
+    }
+    #[test]
+    fn existing_review_does_not_create_missing_scope_or_lock() {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        assert!(
+            MemoryStore::existing(data.path(), "prj_missing")
+                .unwrap()
+                .is_none()
+        );
+        assert!(!data.path().join("memory").join("prj_missing").exists());
+        assert!(
+            MemoryStore::existing(data.path(), "global")
+                .unwrap()
+                .is_some()
+        );
+        assert!(!store.path().join(".memory.lock").exists());
+        let root = open_private_directory(&directory(data.path()), "memory", Access::Read).unwrap();
+        verify_private(&root).unwrap();
+    }
+    #[test]
+    fn unsafe_existing_lock_refuses_without_repair_or_truncation() {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        let lock = store.path().join(".memory.lock");
+        std::fs::write(&lock, b"retained lock bytes").unwrap();
+        assert!(store.claim().is_err());
+        assert_eq!(std::fs::read(&lock).unwrap(), b"retained lock bytes");
+        assert!(verify_private(&std::fs::File::open(&lock).unwrap()).is_err());
+        assert_eq!(std::fs::read_dir(store.path()).unwrap().count(), 1);
+    }
+    #[test]
+    fn broad_note_and_index_refuse_before_body_access_and_catalog_diagnostics() {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        let scope = store.claim().unwrap();
+        std::fs::write(store.path().join("rule.md"), note("rule")).unwrap();
+        std::fs::write(store.path().join("MEMORY.md"), b"private supplied index").unwrap();
+        assert!(matches!(
+            scope.read("rule"),
+            Err(MemoryStorageError::Unsafe(_))
+        ));
+        assert!(matches!(scope.index(), Err(MemoryStorageError::Unsafe(_))));
+        let catalog = scope.list().unwrap();
+        assert!(catalog.memories.is_empty());
+        assert_eq!(catalog.invalid.len(), 1);
+        assert!(!catalog.invalid[0].diagnostic.contains("A preference"));
+        assert!(
+            verify_private(&std::fs::File::open(store.path().join("rule.md")).unwrap()).is_err()
+        );
+        assert_eq!(
+            std::fs::read(store.path().join("MEMORY.md")).unwrap(),
+            b"private supplied index"
+        );
+    }
+    #[test]
+    fn junction_roots_scopes_and_locks_never_route_to_outside_data() {
+        let data = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("user"), b"outside edits").unwrap();
+        let root_alias = data.path().join("memory");
+        junction(&root_alias, outside.path());
+        assert!(MemoryStore::existing(data.path(), "global").is_err());
+        assert!(MemoryStore::open(data.path(), "global").is_err());
+        assert!(!outside.path().join("global").exists());
+
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        junction(
+            &data.path().join("memory").join("prj_alias"),
+            outside.path(),
+        );
+        assert!(MemoryStore::existing(data.path(), "prj_alias").is_err());
+        assert!(MemoryStore::open(data.path(), "prj_alias").is_err());
+        junction(&store.path().join(".memory.lock"), outside.path());
+        assert!(store.claim().is_err());
+        assert!(!outside.path().join(".memory.lock").exists());
+        assert_eq!(
+            std::fs::read(outside.path().join("user")).unwrap(),
+            b"outside edits"
+        );
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
+    }
 }
