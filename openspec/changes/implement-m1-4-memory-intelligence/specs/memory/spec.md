@@ -411,3 +411,13 @@
 - **THEN** the intent guard SHALL release without deleting evidence or replaying effects, and SHALL close before exclusive journal-directory archival
 - **AND** a fresh recovery SHALL admit and validate current evidence again rather than inherit disposed authority
 - **AND** Unix replacement/content conflict checks and Windows persisted target identity/crash/client checkpoint gates SHALL remain intact
+
+#### Scenario: Persisted native identity through Windows recovery
+- **WHEN** Windows seals a memory journal
+- **THEN** versioned intent SHALL persist full native identities for its data/root/scope/journal/intent objects, original/staged note/index files and admitted catalog files
+- **AND** content and identity SHALL be captured on the same bounded verified handle and original identities SHALL be captured before final review verification
+- **WHEN** recovery resumes after disposal or process death
+- **THEN** it SHALL require recorded directory/intent identities and exact original/captured/installed slot identities, refusing replacements even with identical bytes before effects or acknowledgement
+- **AND** source retention for capture/installation SHALL use the recorded identity rather than a newly observed replacement identity
+- **AND** incomplete/legacy Windows intent SHALL refuse without repair; Unix version-1 serialization and recovery SHALL remain supported
+- **AND** complete crash acceptance, terminal ownership and client checkpoint integration SHALL remain required before public Windows mutation activation

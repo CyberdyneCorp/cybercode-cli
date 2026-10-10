@@ -10,6 +10,21 @@ pub(super) struct Binding {
 }
 impl Binding {
     #[cfg(windows)]
+    pub(super) fn identities(
+        &self,
+    ) -> Result<
+        (
+            super::super::windows::FileIdentity,
+            super::super::windows::FileIdentity,
+        ),
+        MemoryStorageError,
+    > {
+        Ok((
+            super::super::windows::identity(&self.data.try_clone()?.into_std_file())?,
+            super::super::windows::identity(&self.root.try_clone()?.into_std_file())?,
+        ))
+    }
+    #[cfg(windows)]
     pub(super) fn pin(&self, scope: &Dir) -> Result<Lease, MemoryStorageError> {
         let data = data_directory_with_sharing(&self.path, false)?;
         compare(&data, &self.data)?;

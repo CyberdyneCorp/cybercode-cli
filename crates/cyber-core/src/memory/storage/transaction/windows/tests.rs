@@ -19,6 +19,223 @@ fn object(dir: &Dir, name: &str) -> native::FileIdentity {
 }
 
 #[test]
+fn native_recovery_refuses_identical_byte_replacements_of_every_recorded_file() {
+    for target in [
+        "intent.json",
+        "note.after",
+        "index.after",
+        "rule.md",
+        "MEMORY.md",
+        "other.md",
+    ] {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        let mut scope = store.claim().unwrap();
+        prepare(&mut scope, "Before").commit().unwrap();
+        let other_text = text("Other").replace("name: rule", "name: other");
+        let other = MemoryDocument::for_write(&other_text).unwrap();
+        let rendered = other.render_for_write().unwrap();
+        scope
+            .prepare("other", Some((other, rendered)), None, None)
+            .unwrap()
+            .commit()
+            .unwrap();
+        let pending = prepare(&mut scope, "Proposed");
+        let dir = if target.ends_with(".md") {
+            store.dir.try_clone().unwrap()
+        } else {
+            existing_private_directory(&store.dir, TRANSACTION)
+                .unwrap()
+                .unwrap()
+        };
+        let bytes = optional_bytes(&dir, target, INTENT_LIMIT).unwrap().unwrap();
+        let old = object(&dir, target);
+        drop(pending);
+        let base = if target.ends_with(".md") {
+            store.path().to_owned()
+        } else {
+            store.path().join(TRANSACTION)
+        };
+        let original = base.join("retained-original");
+        std::fs::rename(base.join(target), &original).unwrap();
+        create_file(&dir, target, &bytes).unwrap();
+        let replacement = object(&dir, target);
+        assert_ne!(replacement, old);
+        drop(dir);
+        drop(scope);
+        drop(store);
+        let store = MemoryStore::existing(data.path(), "global")
+            .unwrap()
+            .unwrap();
+        let mut scope = store.claim().unwrap();
+        assert!(scope.read_prepared().is_err(), "{target}");
+        assert_eq!(std::fs::read(base.join(target)).unwrap(), bytes);
+        assert_eq!(std::fs::read(&original).unwrap(), bytes);
+        assert!(!store.path().join(TRANSACTION).join("completed").exists());
+        std::fs::remove_file(base.join(target)).unwrap();
+        std::fs::rename(original, base.join(target)).unwrap();
+        scope.read_prepared().unwrap().unwrap().commit().unwrap();
+        assert_eq!(scope.read("rule").unwrap().body, "Proposed");
+    }
+}
+
+#[test]
+fn native_recovery_refuses_new_directory_context_even_with_original_file_objects() {
+    for target in ["data", "root", "scope", "journal"] {
+        let container = tempfile::tempdir().unwrap();
+        let data = container.path().join("data");
+        std::fs::create_dir(&data).unwrap();
+        let store = MemoryStore::open(&data, "global").unwrap();
+        let mut scope = store.claim().unwrap();
+        prepare(&mut scope, "Before").commit().unwrap();
+        drop(prepare(&mut scope, "Proposed"));
+        let path = store.path().to_owned();
+        let source = match target {
+            "data" => data.clone(),
+            "root" => data.join("memory"),
+            "scope" => path.clone(),
+            _ => path.join(TRANSACTION),
+        };
+        drop(scope);
+        drop(store);
+        let retained = container.path().join("retained");
+        std::fs::rename(&source, &retained).unwrap();
+        if target == "data" {
+            std::fs::create_dir(&data).unwrap();
+        }
+        let store = MemoryStore::open(&data, "global").unwrap();
+        let old_scope = match target {
+            "data" => retained.join("memory").join("global"),
+            "root" => retained.join("global"),
+            "scope" => retained.clone(),
+            _ => path.clone(),
+        };
+        if target == "journal" {
+            drop(
+                native::create_private_directory(
+                    &store.dir.try_clone().unwrap().into_std_file(),
+                    TRANSACTION,
+                )
+                .unwrap(),
+            );
+            for entry in std::fs::read_dir(&retained).unwrap() {
+                let entry = entry.unwrap();
+                std::fs::rename(entry.path(), path.join(TRANSACTION).join(entry.file_name()))
+                    .unwrap();
+            }
+        } else {
+            for name in ["rule.md", "MEMORY.md", TRANSACTION] {
+                std::fs::rename(old_scope.join(name), store.path().join(name)).unwrap();
+            }
+        }
+        let mut scope = store.claim().unwrap();
+        let note = object(&store.dir, "rule.md");
+        assert!(scope.read_prepared().is_err(), "{target}");
+        assert_eq!(object(&store.dir, "rule.md"), note);
+        assert!(!store.path().join(TRANSACTION).join("completed").exists());
+    }
+}
+
+#[test]
+fn native_legacy_or_incomplete_object_plan_refuses_without_file_effects() {
+    for legacy in [false, true] {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        let mut scope = store.claim().unwrap();
+        drop(prepare(&mut scope, "Proposed"));
+        let dir = existing_private_directory(&store.dir, TRANSACTION)
+            .unwrap()
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(
+            &optional_bytes(&dir, "intent.json", INTENT_LIMIT)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        if legacy {
+            value["version"] = 1.into();
+            value.as_object_mut().unwrap().remove("objects");
+        } else {
+            value["objects"]["intent"] = serde_json::Value::Null;
+        }
+        let mut file = native::open_private_file(
+            &dir.try_clone().unwrap().into_std_file(),
+            "intent.json",
+            native::Access::DataWrite,
+        )
+        .unwrap();
+        file.set_len(0).unwrap();
+        file.write_all(&serde_json::to_vec(&value).unwrap())
+            .unwrap();
+        drop(file);
+        assert!(scope.read_prepared().is_err());
+        assert!(!store.path().join("rule.md").exists());
+        assert!(!store.path().join("MEMORY.md").exists());
+    }
+}
+
+struct Owner(std::process::Child);
+impl Drop for Owner {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+#[test]
+fn native_identity_owner_child() {
+    let Some(data) = std::env::var_os("CYBER_MEMORY_IDENTITY_OWNER_DATA") else {
+        return;
+    };
+    let store = MemoryStore::open(std::path::Path::new(&data), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let mut pending = prepare(&mut scope, "After owner death");
+    pending.apply_note().unwrap();
+    std::fs::write(std::path::Path::new(&data).join("prepared-ready"), b"ready").unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+#[test]
+fn native_killed_owner_recovery_preserves_recorded_installed_identity() {
+    let data = tempfile::tempdir().unwrap();
+    let mut owner = Owner(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "memory::storage::transaction::windows::tests::native_identity_owner_child",
+                "--nocapture",
+            ])
+            .env("CYBER_MEMORY_IDENTITY_OWNER_DATA", data.path())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !data.path().join("prepared-ready").exists() {
+        assert!(
+            owner.0.try_wait().unwrap().is_none(),
+            "owner exited before preparation"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "owner readiness timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    let store = MemoryStore::existing(data.path(), "global")
+        .unwrap()
+        .unwrap();
+    let installed = object(&store.dir, "rule.md");
+    let mut scope = store.claim().unwrap();
+    scope.read_prepared().unwrap().unwrap().commit().unwrap();
+    assert_eq!(object(&store.dir, "rule.md"), installed);
+    assert_eq!(scope.read("rule").unwrap().body, "After owner death");
+    assert!(!store.path().join(TRANSACTION).exists());
+}
+
+#[test]
 fn native_live_intent_replacement_with_identical_bytes_refuses_before_effects() {
     let data = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(data.path(), "global").unwrap();

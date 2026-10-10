@@ -1,6 +1,9 @@
 //! Native journal operations; public mutation admission still requires lifecycle acceptance.
 use super::*;
 use crate::memory::windows as native;
+#[path = "windows/objects.rs"]
+mod objects;
+pub(super) use objects::{Objects, persist_intent, target_ids, validate_shape, verify_objects};
 
 pub(super) fn create_journal_directory(root: &Dir) -> Result<Dir, MemoryStorageError> {
     let parent = root.try_clone()?.into_std_file();
@@ -45,13 +48,20 @@ fn move_file(
     target: &str,
     limit: u64,
     expected: &str,
+    expected_identity: native::FileIdentity,
 ) -> Result<(), MemoryStorageError> {
     let file = optional_file(source, name)?.ok_or(MemoryStorageError::Conflict)?;
     let identity = native::identity(&file)?;
+    if identity != expected_identity {
+        return Err(MemoryStorageError::Conflict);
+    }
     // Release the shared write-capable opening before acquiring the exclusive source.
     drop(file);
-    let retained =
-        native::retain_private_file(&source.try_clone()?.into_std_file(), name, identity)?;
+    let retained = native::retain_private_file(
+        &source.try_clone()?.into_std_file(),
+        name,
+        expected_identity,
+    )?;
     let mut bytes = Vec::new();
     retained.file().take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit || hash(&bytes) != expected {
@@ -69,7 +79,9 @@ pub(super) fn apply_target(
     before: Option<&str>,
     after: Option<&str>,
     limit: u64,
+    identities: (Option<native::FileIdentity>, Option<native::FileIdentity>),
 ) -> Result<(), MemoryStorageError> {
+    objects::verify_slots(root, stage, name, prefix, identities)?;
     let backup = format!("{prefix}.before");
     let staged = format!("{prefix}.after");
     let archived = optional_bytes(stage, &backup, limit)?;
@@ -89,13 +101,29 @@ pub(super) fn apply_target(
         if current_hash.as_deref() != Some(before) {
             return Err(MemoryStorageError::Conflict);
         }
-        move_file(root, name, stage, &backup, limit, before)?;
+        move_file(
+            root,
+            name,
+            stage,
+            &backup,
+            limit,
+            before,
+            identities.0.ok_or(MemoryStorageError::RecoveryRequired)?,
+        )?;
         verify_backup(stage, &backup, limit, Some(before))?;
     } else if current.is_some() {
         return Err(MemoryStorageError::Conflict);
     }
     if let Some(expected) = after {
-        move_file(stage, &staged, root, name, limit, expected)?;
+        move_file(
+            stage,
+            &staged,
+            root,
+            name,
+            limit,
+            expected,
+            identities.1.ok_or(MemoryStorageError::RecoveryRequired)?,
+        )?;
     }
     verify_hash(root, name, limit, after)
 }

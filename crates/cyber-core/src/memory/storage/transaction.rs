@@ -36,6 +36,9 @@ struct Intent {
     before_index: Option<String>,
     after_index: String,
     catalog: BTreeMap<String, String>,
+    #[cfg(windows)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    objects: Option<windows::Objects>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -124,11 +127,19 @@ impl<'store> MemoryScope<'store> {
         if index.len() as u64 > INDEX_LIMIT {
             return Err(MemoryStorageError::TooLarge);
         }
+        #[cfg(windows)]
+        let objects = windows::Objects::capture_original(
+            self.store,
+            name,
+            before_note.as_deref().map(hash).as_deref(),
+            before_index.as_deref().map(hash).as_deref(),
+            &catalog,
+        )?;
         if let Some(fingerprint) = expected_review {
             self.verify_edit_review(name, fingerprint)?;
         }
         let intent = Intent {
-            version: 1,
+            version: if cfg!(windows) { 2 } else { 1 },
             id: crate::ids::new_id("mem"),
             name: name.into(),
             before_note: before_note.as_deref().map(hash),
@@ -136,6 +147,8 @@ impl<'store> MemoryScope<'store> {
             before_index: before_index.as_deref().map(hash),
             after_index: hash(index.as_bytes()),
             catalog,
+            #[cfg(windows)]
+            objects: Some(objects),
         };
         let json = serde_json::to_vec(&intent)
             .map_err(|_| MemoryStorageError::Unsafe("transaction encoding failed"))?;
@@ -148,7 +161,7 @@ impl<'store> MemoryScope<'store> {
             create_file(&dir, "note.after", text.as_bytes())?;
         }
         create_file(&dir, "index.after", index.as_bytes())?;
-        create_file(&dir, "intent.json", &json)?;
+        let intent = persist_intent(&dir, intent)?;
         sync_dir(&dir)?;
         self.verify_binding()?;
         let file =
@@ -270,6 +283,8 @@ impl PreparedMemory<'_, '_> {
     fn verify_binding(&self) -> Result<(), MemoryStorageError> {
         use crate::memory::identity::verify_identity;
         self.scope.verify_binding()?;
+        #[cfg(windows)]
+        windows::verify_objects(self)?;
         let current = existing_journal_directory(&self.scope.store.dir)?
             .ok_or(MemoryStorageError::ReviewConflict)?;
         verify_identity(
@@ -373,6 +388,8 @@ impl PreparedMemory<'_, '_> {
             self.intent.before_note.as_deref(),
             self.intent.after_note.as_deref(),
             NOTE_LIMIT,
+            #[cfg(windows)]
+            windows::target_ids(&self.intent, "note")?,
         )
     }
     fn apply_index(&mut self) -> Result<(), MemoryStorageError> {
@@ -384,6 +401,8 @@ impl PreparedMemory<'_, '_> {
             self.intent.before_index.as_deref(),
             Some(&self.intent.after_index),
             INDEX_LIMIT,
+            #[cfg(windows)]
+            windows::target_ids(&self.intent, "index")?,
         )
     }
     fn verify_terminal(&self) -> Result<(), MemoryStorageError> {
@@ -464,7 +483,7 @@ fn validate_intent(intent: &Intent) -> Result<(), MemoryStorageError> {
         .id
         .strip_prefix("mem_")
         .ok_or(MemoryStorageError::RecoveryRequired)?;
-    if intent.version != 1
+    if intent.version != if cfg!(windows) { 2 } else { 1 }
         || id.len() != 26
         || !id
             .bytes()
@@ -472,6 +491,8 @@ fn validate_intent(intent: &Intent) -> Result<(), MemoryStorageError> {
     {
         return Err(MemoryStorageError::RecoveryRequired);
     }
+    #[cfg(windows)]
+    windows::validate_shape(intent)?;
     for name in intent.catalog.keys() {
         validate_name(name)?;
     }
@@ -1094,5 +1115,18 @@ fn intent_descriptor(handle: &IntentHandle) -> &File {
     #[cfg(not(windows))]
     {
         handle
+    }
+}
+
+fn persist_intent(dir: &Dir, intent: Intent) -> Result<Intent, MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        windows::persist_intent(dir, intent)
+    }
+    #[cfg(not(windows))]
+    {
+        let json = serde_json::to_vec(&intent).map_err(|_| MemoryStorageError::RecoveryRequired)?;
+        create_file(dir, "intent.json", &json)?;
+        Ok(intent)
     }
 }
