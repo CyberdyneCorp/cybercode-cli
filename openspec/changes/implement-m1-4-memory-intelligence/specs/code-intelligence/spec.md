@@ -304,3 +304,24 @@ Typed snapshots SHALL expose only path/version/observed-client-version/receipt-s
 - **WHEN** an unmanaged server root receives diagnostics for an unopened file inside nested managed checkouts
 - **THEN** every enclosing checkout SHALL retain independent LSP ownership through native/resource settlement
 - **AND** receipt SHALL NOT send didOpen or infer an acknowledged document version
+
+### Requirement: Owned edit diagnostic feedback
+(P1) Successful UTF-8 writes by edit, write, apply_patch and notebook_edit SHALL capture managed ancestry before mutation and enqueue owned save synchronization after releasing the file-write lock. Save delivery SHALL revalidate service authority, managed creation identities and current disk content before sending didOpen or didChange followed by didSave. Servers requesting save text SHALL receive the saved text. Diagnostic waiting SHALL use the configured deadline and SHALL NOT convert a completed file edit into a failure when services are unavailable or no fresh diagnostics arrive. Zero-wait callers SHALL retain queued synchronization ownership through notification or service settlement.
+
+Feedback SHALL use publications received after save admission, revalidate current document version/content and preserve omitted server versions as omitted. It SHALL append escaped explicit error blocks through the existing output budget. Write SHALL include at most five other files with new errors, excluding unchanged previously cached errors. Multi-file patches SHALL finish their applied mutations before starting diagnostic waits, including feedback for completed mutations on a partial failure. The canonical Diagnostics after edits requirement remains authoritative for complete debounce and lifecycle acceptance.
+
+#### Scenario: Four editing tools with a publishing server
+- **WHEN** each editing tool saves a supported file and the server publishes matching-version errors and warnings
+- **THEN** output SHALL include at most twenty errors per file with the omitted count and no warnings
+
+#### Scenario: New errors in other files
+- **WHEN** write receives fresh publications for seven other files and later receives the same unchanged errors
+- **THEN** the first write SHALL report at most five other files and the later write SHALL omit those unchanged errors
+
+#### Scenario: Save without diagnostic waiting
+- **WHEN** an edit has a zero diagnostic deadline
+- **THEN** its owned save notification SHALL still reach the server or settle with its service
+
+#### Scenario: Concurrent edit during feedback
+- **WHEN** one edit waits for diagnostics and a second edit changes the same file
+- **THEN** the first diagnostic wait SHALL NOT retain the file-write lock or overwrite the second edit upon cancellation

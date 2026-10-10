@@ -94,9 +94,10 @@ impl Tool for NotebookEdit {
                     .map_err(|_| failed("Notebook must contain valid UTF-8 JSON"))?,
                 &after,
             );
-            fs::guarded_write(ctx, &path, Some(&before), after.as_bytes(), diff).await?;
+            let feedback =
+                fs::guarded_write(ctx, &path, Some(&before), after.as_bytes(), diff).await?;
             Ok(format!(
-                "Edited notebook {} ({} cell {index})",
+                "Edited notebook {} ({} cell {index}){feedback}",
                 ctx.resource(&path),
                 input.mode.label()
             ))

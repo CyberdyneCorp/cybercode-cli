@@ -285,9 +285,10 @@ pub(crate) async fn guarded_write(
     before: Option<&[u8]>,
     after: &[u8],
     diff: String,
-) -> Result<(), ToolError> {
+) -> Result<String, ToolError> {
     ctx.check_external(&[path.to_path_buf()]).await?;
     authorize_edit(ctx, path, diff).await?;
+    let origin = super::intelligence::capture(ctx, path);
     let lock = ctx.host.path_lock(path);
     let _guard = lock.lock().await;
     let current = tokio::fs::read(path).await.ok();
@@ -305,7 +306,8 @@ pub(crate) async fn guarded_write(
         .await
         .map_err(|e| failed(format!("Could not write {}: {e}", path.display())))?;
     ctx.host.mark_read(&ctx.inv.session_id, path);
-    Ok(())
+    drop(_guard);
+    Ok(super::intelligence::feedback(ctx, path, after, origin).await)
 }
 
 pub(crate) async fn authorize_edit(
@@ -354,15 +356,17 @@ impl Tool for Write {
                 },
             };
             let diff = unified_diff(&ctx.resource(&path), &file.content, content);
-            guarded_write(ctx, &path, before.as_deref(), &encode(&file, content), diff).await?;
-            Ok(match before {
+            let feedback =
+                guarded_write(ctx, &path, before.as_deref(), &encode(&file, content), diff).await?;
+            let output = match before {
                 None => format!("Created {}", ctx.resource(&path)),
                 Some(_) => format!(
                     "Wrote {} ({} lines)",
                     ctx.resource(&path),
                     content.lines().count()
                 ),
-            })
+            };
+            Ok(format!("{output}{feedback}"))
         })
     }
 }
@@ -422,7 +426,7 @@ impl Tool for Edit {
                 file.content.replacen(&old, &new, 1)
             };
             let diff = unified_diff(&ctx.resource(&path), &file.content, &updated);
-            guarded_write(
+            let feedback = guarded_write(
                 ctx,
                 &path,
                 Some(&before),
@@ -432,7 +436,7 @@ impl Tool for Edit {
             .await?;
             let replaced = if replace_all { count } else { 1 };
             Ok(format!(
-                "Edited {} ({replaced} replacement{})\n{diff}",
+                "Edited {} ({replaced} replacement{})\n{diff}{feedback}",
                 ctx.resource(&path),
                 if replaced == 1 { "" } else { "s" }
             ))

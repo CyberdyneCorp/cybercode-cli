@@ -144,6 +144,7 @@ impl BuiltinHost {
         removed: Option<&Managed>,
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv,
@@ -477,6 +478,7 @@ impl ChildWorktree {
             guard = lock.lock() => guard,
         };
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: &host,
             inv: &self.invocation,
@@ -531,6 +533,7 @@ impl ChildWorktree {
             return Ok(());
         }
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             policy: host
                 .policy(&self.invocation)

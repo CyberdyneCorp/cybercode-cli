@@ -87,6 +87,7 @@ impl BuiltinHost {
             asker: Asker::detached(),
         };
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv: &inv,
@@ -145,6 +146,7 @@ impl BuiltinHost {
             asker: Asker::detached(),
         };
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv: &inv,
@@ -253,6 +255,7 @@ impl BuiltinHost {
             ),
         }
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv,
@@ -317,6 +320,7 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> io::Result<Vec<WorktreeListing>> {
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv,
@@ -522,6 +526,7 @@ impl BuiltinHost {
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let location = Path::new(&inv.directory).canonicalize()?;
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv,
@@ -698,6 +703,7 @@ impl BuiltinHost {
             ));
         }
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv,

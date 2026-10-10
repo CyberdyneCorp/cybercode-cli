@@ -1,5 +1,16 @@
 # P1 implementation status
 
+## Edit-tool diagnostic feedback evidence (2026-10-10)
+
+All four built-in edit tools now capture managed ancestry before writing, release their file-write lock and enqueue owned LSP save synchronization. Matching servers receive didOpen/didChange and didSave after fresh authority, creation and disk-content checks; save text is included when requested by server capabilities. Configured waiting covers queued discovery/save and diagnostic retrieval. A timeout or unavailable service leaves the successful file edit successful. Zero-wait synchronization retains service activity and notification ownership after its caller stops waiting.
+
+Feedback considers publications received after save admission and revalidates current disk contents/document versions. It renders escaped explicit errors, twenty per file with the remaining count; write merges up to five other files and excludes unchanged previously cached errors. The existing output budget prioritizes actual diagnostic tails using a typed flag. Multi-file patches finish their applied mutations before collecting feedback, including applied changes on partial failure.
+
+Three real macOS sandboxed-server host cases cover all four tools, requested save text, versions, completed multi-file patch state, error/warning filtering, escaping/counts, other-file bounds and unchanged-error suppression, diagnostic timeout, owned zero-wait save delivery, concurrent writes during a diagnostic wait and cancellation preserving saved content. The 53 LSP library cases, 107 tool/protocol/runtime integration cases and seven managed-checkout LSP cases pass locally (167 total). Workspace all-target Clippy with warnings and complexity denied, formatting/diff and generated SDK consistency checks pass. All 59 strict OpenSpec items pass; cross-spec lint reports zero errors and 21 warnings. Fresh platform CI remains required.
+
+This is implementation evidence, not acceptance of the complete canonical Diagnostics after edits contract. The current 150 ms delayed collection does not prove coalescing of rapid saves; deletion/rename notifications, broader stale-publication races and native Windows execution remain required. Unversioned publications preserve their omitted version and receipt timing is not proof that the server computed a particular edit. Formatters, navigation, client-wide lifecycle controls and the full remaining P1 scope stay open. No milestone is accepted; P0 services/data/artifacts and its separate exit gate remain preserved.
+
+
 ## M1.4 runtime Location activity leases (2026-10-10)
 
 Language-service idle expiry now uses shared canonical Location activity as well as admitted warming. Activity acquisition creates no pool or process and can precede first warming. Concurrent guards disable the idle deadline; final disposal starts a full fresh idle window and wakes the service coordinator. The counter/deadline and idle cancellation decision share one lock. Explicit close remains available during activity, and reload preserves live guards for the replacement generation. Services and explicit fences retain their 128-Location bound. Activity follows owned operations without consuming service slots or rejecting model admission when that cache is full; disposal without retained services/fences removes its tracking.

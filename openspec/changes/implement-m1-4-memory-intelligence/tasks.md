@@ -82,6 +82,7 @@
   - [x] Register notebook_edit through shared guarded file edits, with selectors, metadata/untouched-cell preservation, code-output clearing, modern/legacy IDs, mode/permission admission, no-op approval and intervening-user-edit refusal. Native Windows execution and LSP/formatter feedback remain required.
   - [x] Add bounded typed diagnostic publication validation, replacement/clear semantics, revalidated retrieval, error-only block rendering and retained managed-scope admission for unopened files. All four edit-tool synchronization paths, diagnostics debounce/wait, other-file feedback, navigation and full native acceptance remain open.
   - [x] Fence LSP document versions across bounded-cache eviction/reopening within each server generation, with real subprocess regression and checked exhaustion refusal. Diagnostic validation, edit synchronization and complete code-intelligence acceptance remain open.
+  - [x] Connect all four edit tools to owned save synchronization and bounded fresh error feedback; release write locks before waiting and retain zero-wait notifications. Local real-server host cases pass. Complete debounce, deletion/rename, stale-publication races and native Windows acceptance remain required.
   - [ ] Implement HTTP status, owned LSP protocol and shutdown, read warming, diagnostics, navigation tool and sandboxed formatter execution with public integrations.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.
 - [ ] Validate documentation, native behavior and complete M1.4 acceptance.

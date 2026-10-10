@@ -48,6 +48,7 @@ impl BuiltinHost {
             asker: Asker::detached(),
         };
         let ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv: &inv,
@@ -180,6 +181,7 @@ impl BuiltinHost {
         child_inv.mode = context.child.mode.clone();
         child_inv.rules = context.child.rules.clone();
         let child_ctx = Ctx {
+            compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
             inv: &child_inv,

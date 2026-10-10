@@ -3,6 +3,7 @@
 pub(crate) mod agent;
 pub(crate) mod bash;
 mod fs;
+pub(crate) mod intelligence;
 mod mcp;
 pub(crate) mod memory;
 mod notebook;

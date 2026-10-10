@@ -133,6 +133,7 @@ async fn execute(
         .await
         .map_err(|_| "Sampling permission policy is unavailable")?;
     let ctx = Ctx {
+        compiler_feedback: Default::default(),
         host,
         inv,
         policy,

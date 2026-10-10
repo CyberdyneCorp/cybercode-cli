@@ -756,6 +756,7 @@ impl ToolHost for BuiltinHost {
                 Err(error) => return ToolOutcome::Failed(error),
             };
             let ctx = Ctx {
+                compiler_feedback: Default::default(),
                 host: self,
                 policy,
                 location: PathBuf::from(&inv.directory),
@@ -766,7 +767,14 @@ impl ToolHost for BuiltinHost {
             let started = std::time::Instant::now();
             let keep_tail = matches!(inv.name.as_str(), "bash" | "powershell");
             let outcome = match tool.run(&ctx).await {
-                Ok(output) => self.settle_output(&ctx, output, keep_tail),
+                Ok(output) => self.settle_output(
+                    &ctx,
+                    output,
+                    keep_tail
+                        || ctx
+                            .compiler_feedback
+                            .load(std::sync::atomic::Ordering::Acquire),
+                ),
                 Err(ToolError::Failed(message)) => ToolOutcome::Failed(message),
                 Err(ToolError::Aborted) => ToolOutcome::Aborted,
             };
@@ -863,6 +871,7 @@ impl ToolHost for BuiltinHost {
             };
             self.check_agent_tool(&inv)?;
             let ctx = Ctx {
+                compiler_feedback: Default::default(),
                 hook_decision: None,
                 host: self,
                 policy: self.policy(&inv).await?,
@@ -919,6 +928,7 @@ impl ToolHost for BuiltinHost {
         let command = command.to_string();
         Box::pin(async move {
             let ctx = Ctx {
+                compiler_feedback: Default::default(),
                 hook_decision: None,
                 host: self,
                 policy: self.policy_for(&inv, None).await?,
@@ -983,6 +993,7 @@ pub(crate) fn fully_denied(rules: &[permissions::Rule], action: &str) -> bool {
 
 /// Everything a tool needs for one call.
 pub(crate) struct Ctx<'a> {
+    pub compiler_feedback: std::sync::atomic::AtomicBool,
     pub host: &'a BuiltinHost,
     pub inv: &'a Invocation,
     pub policy: Policy,

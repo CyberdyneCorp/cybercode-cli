@@ -323,8 +323,10 @@ impl Tool for ApplyPatch {
 
 async fn write_all(ctx: &Ctx<'_>, changes: &[Change]) -> Result<String, ToolError> {
     let mut applied: Vec<String> = Vec::new();
+    let mut pending = Vec::new();
     for change in changes {
         let label = format!("{} {}", change.kind, ctx.resource(&change.path));
+        let origin = super::intelligence::capture(ctx, &change.path);
         if let Err(e) = write_one(ctx, change).await {
             let message = format!(
                 "Patch partially applied before failing at {}: {e}. Applied: {}",
@@ -335,11 +337,31 @@ async fn write_all(ctx: &Ctx<'_>, changes: &[Change]) -> Result<String, ToolErro
                     applied.join(", ")
                 }
             );
-            return Err(failed(message));
+            let feedback = patch_feedback(ctx, pending).await;
+            return Err(failed(format!("{message}{feedback}")));
         }
+        pending.push((change, origin));
         applied.push(label);
     }
-    Ok(applied.join("\n"))
+    let feedback = patch_feedback(ctx, pending).await;
+    Ok(format!("{}{feedback}", applied.join("\n")))
+}
+
+async fn patch_feedback(
+    ctx: &Ctx<'_>,
+    pending: Vec<(&Change, Option<crate::lsp::ReadOrigin>)>,
+) -> String {
+    let results =
+        futures::future::join_all(pending.into_iter().map(|(change, origin)| async move {
+            match &change.after {
+                Some(bytes) => {
+                    super::intelligence::feedback(ctx, &change.path, bytes, origin).await
+                }
+                None => String::new(),
+            }
+        }))
+        .await;
+    results.concat()
 }
 
 async fn write_one(ctx: &Ctx<'_>, change: &Change) -> Result<(), String> {

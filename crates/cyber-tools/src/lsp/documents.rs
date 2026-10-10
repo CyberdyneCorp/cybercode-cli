@@ -33,6 +33,28 @@ pub(super) struct Documents {
 }
 
 impl Documents {
+    pub async fn save(
+        &mut self,
+        connection: &mut StdioConnection,
+        path: PathBuf,
+        text: String,
+    ) -> Result<i32, LspError> {
+        let language = language(&path);
+        let include_text = connection
+            .capabilities()
+            .and_then(|capabilities| capabilities.pointer("/textDocumentSync/save/includeText"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mut params = json!({"textDocument":{"uri":uri(&path)?}});
+        if include_text {
+            params["text"] = json!(text);
+        }
+        self.open(connection, path.clone(), text, language).await?;
+        notify(connection, "textDocument/didSave", params).await?;
+        self.version(&path)
+            .ok_or(LspError::Protocol("saved document unavailable"))
+    }
+
     pub fn version(&self, path: &std::path::Path) -> Option<i32> {
         self.entries.get(path).map(|(version, _)| *version)
     }

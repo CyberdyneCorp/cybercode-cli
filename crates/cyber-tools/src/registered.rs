@@ -120,6 +120,7 @@ impl BuiltinHost {
                 ),
             );
             let ctx = Ctx {
+                compiler_feedback: Default::default(),
                 host: self,
                 inv: &inv,
                 policy,

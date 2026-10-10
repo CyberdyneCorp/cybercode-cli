@@ -163,6 +163,9 @@ pub(super) struct Observation {
 }
 
 impl Observation {
+    pub fn matches_text(&self, text: &str) -> bool {
+        self.digest == <[u8; 32]>::from(Sha256::digest(text.as_bytes()))
+    }
     pub fn matches(&self, path: &Path, documents: &Documents) -> bool {
         documents.matches_digest(path, &self.digest)
     }
@@ -233,6 +236,36 @@ pub(super) struct Diagnostics {
 }
 
 impl Diagnostics {
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub fn baseline(&self) -> BTreeMap<PathBuf, Vec<Diagnostic>> {
+        self.entries
+            .iter()
+            .map(|(path, cached)| {
+                (
+                    path.clone(),
+                    cached
+                        .snapshot
+                        .diagnostics
+                        .iter()
+                        .filter(|diagnostic| diagnostic.severity == Some(1))
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn paths_after(&self, sequence: u64) -> Vec<PathBuf> {
+        self.entries
+            .iter()
+            .filter(|(_, cached)| cached.snapshot.sequence > sequence)
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
     pub fn retain_raw(&mut self, message: Value) {
         let bytes = serde_json::to_vec(&message).map_or(MAX_BYTES + 1, |bytes| bytes.len());
         if bytes > MAX_BYTES {

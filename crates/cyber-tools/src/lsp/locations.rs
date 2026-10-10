@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{Notify, mpsc},
+    sync::{Notify, mpsc, oneshot},
     task::JoinHandle,
     time::Instant,
 };
@@ -89,6 +89,14 @@ struct Warm {
     origin: ReadOrigin,
     file: PathBuf,
     text: String,
+    save: Option<Save>,
+}
+
+type Saved = Vec<(super::ServerHandle, Arc<super::pool::SaveReceipt>)>;
+
+struct Save {
+    reply: oneshot::Sender<Saved>,
+    _activity: Activity,
 }
 
 pub(crate) struct ReadOrigin {
@@ -101,6 +109,14 @@ pub(crate) fn read_origin(location: &Path, file: &Path) -> Result<ReadOrigin, Ls
         location: checkout_records(location)?,
         document: checkout_records(file)?,
     })
+}
+
+pub(crate) fn edit_origin(location: &Path, file: &Path) -> Result<ReadOrigin, LspError> {
+    let mut existing = file;
+    while !existing.exists() {
+        existing = existing.parent().ok_or_else(unavailable)?;
+    }
+    read_origin(location, existing)
 }
 struct Entry {
     cancel: CancellationToken,
@@ -198,13 +214,77 @@ impl Locations {
         text: String,
         origin: ReadOrigin,
     ) -> Result<(), LspError> {
-        if text.len() > super::documents::MAX_DOCUMENT_BYTES {
+        self.enqueue(
+            location,
+            Warm {
+                file,
+                text,
+                origin,
+                save: None,
+            },
+        )
+    }
+
+    pub(crate) async fn feedback(
+        &self,
+        location: &Path,
+        file: PathBuf,
+        text: String,
+        origin: ReadOrigin,
+        wait: Duration,
+        other: bool,
+    ) -> String {
+        let Ok(activity) = self.acquire(location) else {
+            return String::new();
+        };
+        let (reply, receive) = oneshot::channel();
+        let file = match file.canonicalize() {
+            Ok(file) => file,
+            Err(_) => return String::new(),
+        };
+        if self
+            .enqueue(
+                location,
+                Warm {
+                    file: file.clone(),
+                    text,
+                    origin,
+                    save: Some(Save {
+                        reply,
+                        _activity: activity,
+                    }),
+                },
+            )
+            .is_err()
+        {
+            return String::new();
+        }
+        let Some(deadline) = Instant::now().checked_add(wait) else {
+            return String::new();
+        };
+        let saved = tokio::time::timeout_at(deadline, receive)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
+        let snapshots = futures::future::join_all(saved.into_iter().map(|(handle, receipt)| {
+            wait_feedback(handle, receipt, file.clone(), other, deadline)
+        }))
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+        render_feedback(snapshots, &file, location, other)
+    }
+
+    fn enqueue(&self, location: &Path, mut warm: Warm) -> Result<(), LspError> {
+        if warm.text.len() > super::documents::MAX_DOCUMENT_BYTES {
             return Err(unavailable());
         }
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| unavailable())?;
         let location = location.canonicalize().map_err(|_| unavailable())?;
-        let file = file.canonicalize().map_err(|_| unavailable())?;
-        if !file.starts_with(&location) || !file.is_file() {
+        warm.file = warm.file.canonicalize().map_err(|_| unavailable())?;
+        if !warm.file.starts_with(&location) || !warm.file.is_file() {
             return Err(unavailable());
         }
         let mut table = self.0.table.lock().map_err(|_| unavailable())?;
@@ -249,10 +329,7 @@ impl Locations {
         if entry.cancel.is_cancelled() {
             return Err(unavailable());
         }
-        entry
-            .sender
-            .try_send(Warm { file, text, origin })
-            .map_err(|_| unavailable())?;
+        entry.sender.try_send(warm).map_err(|_| unavailable())?;
         activity.touched = Instant::now();
         entry.activity.changed.notify_one();
         Ok(())
@@ -416,9 +493,21 @@ async fn run(
         if !current_warm(&observed_location, &warm, &pool, &entry.cancel).await {
             continue;
         }
-        tokio::select! { biased; _ = entry.cancel.cancelled() => break, _ = pool.warm_observed(&warm.file, warm.text, warm.origin.document) => {} }
+        if !deliver_warm(&entry, &pool, warm).await {
+            break;
+        }
     }
     close_pool(&entry, &pool).await
+}
+
+async fn deliver_warm(entry: &Entry, pool: &Pool, warm: Warm) -> bool {
+    if let Some(save) = warm.save {
+        let saved = tokio::select! { biased; _ = entry.cancel.cancelled() => return false, saved = pool.save_observed(&warm.file, warm.text, warm.origin.document) => saved };
+        let _ = save.reply.send(saved);
+    } else {
+        tokio::select! { biased; _ = entry.cancel.cancelled() => return false, _ = pool.warm_observed(&warm.file, warm.text, warm.origin.document) => {} }
+    }
+    true
 }
 
 async fn discover(
@@ -503,6 +592,74 @@ async fn current_warm(
 
 fn unavailable() -> LspError {
     LspError::Protocol("Location language services unavailable")
+}
+
+async fn wait_feedback(
+    handle: super::ServerHandle,
+    receipt: Arc<super::pool::SaveReceipt>,
+    file: PathBuf,
+    other: bool,
+    deadline: Instant,
+) -> Vec<super::DiagnosticSnapshot> {
+    tokio::time::sleep_until((Instant::now() + Duration::from_millis(150)).min(deadline)).await;
+    let mut latest = vec![];
+    loop {
+        if Instant::now() >= deadline {
+            return latest;
+        }
+        let packet = match tokio::time::timeout_at(
+            deadline,
+            handle.feedback(file.clone(), receipt.clone(), other),
+        )
+        .await
+        {
+            Ok(Ok(packet)) => packet,
+            _ => return latest,
+        };
+        latest = packet.snapshots;
+        if packet.complete || Instant::now() >= deadline {
+            return latest;
+        }
+        tokio::time::sleep_until((Instant::now() + Duration::from_millis(25)).min(deadline)).await;
+    }
+}
+
+fn render_feedback(
+    snapshots: Vec<super::DiagnosticSnapshot>,
+    file: &Path,
+    location: &Path,
+    other: bool,
+) -> String {
+    let mut merged: BTreeMap<PathBuf, super::DiagnosticSnapshot> = BTreeMap::new();
+    for snapshot in snapshots {
+        match merged.get_mut(&snapshot.path) {
+            None => {
+                merged.insert(snapshot.path.clone(), snapshot);
+            }
+            Some(existing) => {
+                for diagnostic in snapshot.diagnostics {
+                    if !existing.diagnostics.contains(&diagnostic) {
+                        existing.diagnostics.push(diagnostic);
+                    }
+                }
+            }
+        }
+    }
+    let mut blocks = vec![];
+    if let Some(snapshot) = merged.remove(file)
+        && let Some(block) = snapshot.error_block(location)
+    {
+        blocks.push(block);
+    }
+    if other {
+        blocks.extend(
+            merged
+                .into_values()
+                .filter_map(|snapshot| snapshot.error_block(location))
+                .take(5),
+        );
+    }
+    blocks.join("\n")
 }
 
 pub(crate) fn checkout_records(

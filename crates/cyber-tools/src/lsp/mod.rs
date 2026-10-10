@@ -8,7 +8,7 @@ mod launch;
 mod locations;
 mod pool;
 pub(crate) use documents::MAX_DOCUMENT_BYTES;
-pub(crate) use locations::read_origin;
+pub(crate) use locations::{ReadOrigin, edit_origin, read_origin};
 
 pub use client::{LspError, StdioClient};
 pub use connection::{ConnectionError, Shutdown, StdioConnection};

@@ -107,6 +107,18 @@ enum Command {
         text: String,
         reply: oneshot::Sender<Result<(), LspError>>,
     },
+    Save {
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+        path: PathBuf,
+        text: String,
+        reply: oneshot::Sender<Result<Arc<SaveReceipt>, LspError>>,
+    },
+    Feedback {
+        path: PathBuf,
+        receipt: Arc<SaveReceipt>,
+        other: bool,
+        reply: oneshot::Sender<Result<Feedback, LspError>>,
+    },
     Request {
         method: String,
         params: Value,
@@ -123,6 +135,17 @@ enum Command {
         path: PathBuf,
         reply: oneshot::Sender<Result<Option<super::DiagnosticSnapshot>, LspError>>,
     },
+}
+
+pub(super) struct SaveReceipt {
+    version: i32,
+    sequence: u64,
+    previous: BTreeMap<PathBuf, Vec<super::Diagnostic>>,
+}
+
+pub(super) struct Feedback {
+    pub complete: bool,
+    pub snapshots: Vec<super::DiagnosticSnapshot>,
 }
 
 struct Worker {
@@ -142,6 +165,47 @@ pub struct ServerHandle {
 }
 
 impl ServerHandle {
+    pub(super) async fn save_observed(
+        &self,
+        path: PathBuf,
+        text: String,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+    ) -> Result<Arc<SaveReceipt>, LspError> {
+        self.connected().await?;
+        let (reply, receive) = oneshot::channel();
+        self.entry
+            .sender
+            .send(Command::Save {
+                path,
+                text,
+                checkouts,
+                reply,
+            })
+            .await
+            .map_err(|_| unavailable())?;
+        receive.await.map_err(|_| unavailable())?
+    }
+
+    pub(super) async fn feedback(
+        &self,
+        path: PathBuf,
+        receipt: Arc<SaveReceipt>,
+        other: bool,
+    ) -> Result<Feedback, LspError> {
+        self.connected().await?;
+        let (reply, receive) = oneshot::channel();
+        self.entry
+            .sender
+            .send(Command::Feedback {
+                path,
+                receipt,
+                other,
+                reply,
+            })
+            .await
+            .map_err(|_| unavailable())?;
+        receive.await.map_err(|_| unavailable())?
+    }
     pub async fn open_document(&self, path: &Path, text: String) -> Result<(), LspError> {
         let checkouts = super::locations::checkout_records(path)?;
         self.open_observed(path, text, checkouts).await
@@ -293,6 +357,35 @@ pub struct Pool {
 }
 
 impl Pool {
+    pub(super) async fn save_observed(
+        &self,
+        file: &Path,
+        text: String,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+    ) -> Vec<(ServerHandle, Arc<SaveReceipt>)> {
+        let handles: Vec<_> = self
+            .inner
+            .servers
+            .keys()
+            .filter_map(|id| self.ensure(id, file).ok())
+            .collect();
+        futures::future::join_all(handles.into_iter().map(|handle| {
+            let path = file.to_owned();
+            let text = text.clone();
+            let checkouts = checkouts.clone();
+            async move {
+                handle
+                    .save_observed(path, text, checkouts)
+                    .await
+                    .ok()
+                    .map(|receipt| (handle, receipt))
+            }
+        }))
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
+    }
     pub fn with_admission(mut self, admission: AdmissionFn) -> Result<Self, LspError> {
         Arc::get_mut(&mut self.inner)
             .ok_or_else(unavailable)?
@@ -642,6 +735,58 @@ async fn dispatch_event(
     event: Event,
     cancel: &CancellationToken,
 ) -> bool {
+    if let Event::Command(Command::Save {
+        path, text, reply, ..
+    }) = event
+    {
+        if reply.is_closed() {
+            return true;
+        }
+        let Some(observation) = retained(
+            connection,
+            cancel,
+            super::diagnostics::observe(path.clone()),
+        )
+        .await
+        else {
+            return false;
+        };
+        if !observation.is_some_and(|observation| observation.matches_text(&text)) {
+            let _ = reply.send(Err(unavailable()));
+            return true;
+        }
+        let sequence = diagnostics.sequence();
+        let previous = diagnostics.baseline();
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return false,
+            result = documents.save(connection, path, text) => result.map(|version| Arc::new(SaveReceipt { version, sequence, previous })),
+        };
+        let healthy = result.is_ok();
+        let _ = reply.send(result);
+        return healthy;
+    }
+    if let Event::Command(Command::Feedback {
+        path,
+        receipt,
+        other,
+        reply,
+    }) = event
+    {
+        let result = collect_feedback(
+            connection,
+            documents,
+            diagnostics,
+            cancel,
+            &path,
+            &receipt,
+            other,
+        )
+        .await;
+        let healthy = result.is_ok();
+        let _ = reply.send(result);
+        return healthy;
+    }
     if let Event::Command(Command::Diagnostics { path, reply }) = event {
         let Some(observation) = retained(
             connection,
@@ -664,6 +809,66 @@ async fn dispatch_event(
         _ = cancel.cancelled() => false,
         healthy = handle_event(connection, documents, diagnostics, event) => healthy,
     }
+}
+
+async fn collect_feedback(
+    connection: &mut StdioConnection,
+    documents: &super::documents::Documents,
+    diagnostics: &mut Diagnostics,
+    cancel: &CancellationToken,
+    path: &Path,
+    receipt: &SaveReceipt,
+    other: bool,
+) -> Result<Feedback, LspError> {
+    let mut feedback = Feedback {
+        complete: false,
+        snapshots: vec![],
+    };
+    let mut paths = diagnostics.paths_after(receipt.sequence);
+    paths.sort_by_key(|candidate| candidate != path);
+    for candidate in paths {
+        if candidate != path
+            && (!other
+                || feedback
+                    .snapshots
+                    .iter()
+                    .filter(|snapshot| snapshot.path != path)
+                    .count()
+                    == 5)
+        {
+            continue;
+        }
+        let observation = retained(
+            connection,
+            cancel,
+            super::diagnostics::observe(candidate.clone()),
+        )
+        .await
+        .ok_or_else(unavailable)?;
+        let Some(mut snapshot) = diagnostics.snapshot(&candidate, observation.as_ref(), documents)
+        else {
+            continue;
+        };
+        if candidate == path {
+            if snapshot.document_version != Some(receipt.version) {
+                continue;
+            }
+            feedback.complete = true;
+        } else {
+            snapshot.diagnostics.retain(|diagnostic| {
+                diagnostic.severity == Some(1)
+                    && receipt
+                        .previous
+                        .get(&candidate)
+                        .is_none_or(|previous| !previous.contains(diagnostic))
+            });
+            if snapshot.diagnostics.is_empty() {
+                continue;
+            }
+        }
+        feedback.snapshots.push(snapshot);
+    }
+    Ok(feedback)
 }
 
 async fn retained<T>(
@@ -807,12 +1012,34 @@ async fn admitted_document(
         ..
     }) = event
     else {
+        if let Event::Command(Command::Save {
+            path,
+            checkouts,
+            reply,
+            ..
+        }) = event
+        {
+            if reply.is_closed() {
+                return true;
+            }
+            return admitted_origin(connection, resources, path, checkouts, cancel).await;
+        }
         return true;
     };
     if reply.is_closed() {
         return true;
     }
-    let admission = resources.admit_document(path.clone(), checkouts.clone(), cancel.clone());
+    admitted_origin(connection, resources, path, checkouts, cancel).await
+}
+
+async fn admitted_origin(
+    connection: &mut StdioConnection,
+    resources: &mut dyn ResourceLease,
+    path: &Path,
+    checkouts: &[cyber_core::worktrees::Managed],
+    cancel: &CancellationToken,
+) -> bool {
+    let admission = resources.admit_document(path.into(), checkouts.to_vec(), cancel.clone());
     tokio::pin!(admission);
     tokio::select! {
         biased;
@@ -862,6 +1089,7 @@ async fn execute(
     command: Command,
 ) -> bool {
     match command {
+        Command::Save { .. } => unreachable!("save observations are retained by the worker"),
         Command::Open {
             path, text, reply, ..
         } => {
@@ -910,6 +1138,9 @@ async fn execute(
         }
         Command::Diagnostics { .. } => {
             unreachable!("diagnostic observations are retained by the worker")
+        }
+        Command::Feedback { .. } => {
+            unreachable!("feedback observations are retained by the worker")
         }
     }
 }
