@@ -1,5 +1,13 @@
 # P1 implementation status
 
+## Zero-access native review metadata (2026-10-10)
+
+The native diagnostic artifact from run 38071367713 confirms all five rename regressions still fail with access denied under the retained FILE_READ_ATTRIBUTES handles, while capture/content/file-replacement checks pass. Review retention now requests zero desired access, which [CreateFileW documents](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew) for metadata queries without file access. This is a candidate fix, not native acceptance evidence. The original no-follow lookup chain remains pinned while retained directory and file identities are compared; full volume/file identifiers, regular-file/reparse/hard-link checks, file state and fresh namespace/content verification remain unchanged. Retained metadata handles are not used for reads or mutations.
+
+A new Windows-only backend regression queries full identity and file size, requires data reads to fail without returning bytes, keeps directory/file handles live through an ancestor rename and distinguishes a same-content recreated file. CI runs that test independently and immediately uploads its log, then runs the unchanged snapshot/replacement suite independently even if the backend test fails. Both logs expire after seven days. The test and zero-access metadata support still require fresh native compilation/execution; no Windows or P1 milestone is accepted.
+
+Local validation passes 43 selected cases on the macOS host: 32 previews, nine snapshots and two CI contracts. Full P1 scope remains 225 contracts, with complete migration/adapters/writes, editor integration and other acceptance gaps still required. P0 services/models/evaluations/artifacts are preserved.
+
 ## Accepted credential setup and live native failure evidence (2026-10-10)
 
 Preview setup records now derive from fields actually proposed after native/auto fill. Adapter descriptors resolve to exact raw source pointers before filtering, including provider credential keys, MCP environment aliases and HTTP header maps. Ignored credentials create no setup instruction; shared variables appear once with all accepted contributors and no ignored contributors. Collision validation runs before coalescing, including same-family provider/MCP combinations. Existing native environment references, including embedded references with defaults, reserve their names against newly generated credential bindings. The ignored-setup and native-binding collision regressions both failed on unchanged main before implementation.

@@ -60,6 +60,19 @@ jobs:
       - name: Native migration source inventory
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_discovery
+      - name: Native metadata-only review handles
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-core --lib import::snapshot::windows::tests 2>&1 | Tee-Object -FilePath migration-metadata-handles.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish native metadata handle log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-metadata-handles-${{ github.run_id }}
+          path: migration-metadata-handles.log
+          retention-days: 7
+          if-no-files-found: error
       - name: Native migration source snapshots
         if: ${{ !cancelled() }}
         run: |
