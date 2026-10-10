@@ -393,3 +393,12 @@
 - **THEN** its named journal directory and intent object/bytes SHALL match retained evidence before file effects and acknowledgement
 - **AND** moved/replaced scopes, roots, locks, journals or intent objects SHALL refuse without repairing or deleting replacement evidence
 - **AND** Windows bootstrap directory handles SHALL permit delete sharing and reject final reparse objects, while public mutation admission remains gated pending complete lifecycle acceptance
+
+#### Scenario: Windows scope namespace pins
+- **WHEN** Windows claims a memory scope
+- **THEN** data/root/scope directories and its lock SHALL have retained handles denying competing delete/rename sharing throughout the claim
+- **AND** ordinary writable directory/lock capabilities SHALL exclude delete access so independent reads/claims and native flushes can coexist with those pins
+- **WHEN** a live journal is prepared or reopened
+- **THEN** its directory SHALL deny delete sharing until exact-source history archival releases the writable journal handle and acquires the identity-verified exclusive source
+- **AND** failed competing renames/deletions SHALL leave objects/bytes unchanged; disposal SHALL release pins and allow namespace changes
+- **AND** pinning SHALL NOT itself activate public Windows mutations before persisted identity, intent/crash/client checkpoint integration and native acceptance

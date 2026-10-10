@@ -5,10 +5,14 @@ use crate::memory::windows as native;
 pub(super) fn create_journal_directory(root: &Dir) -> Result<Dir, MemoryStorageError> {
     let parent = root.try_clone()?.into_std_file();
     native::verify_private(&parent)?;
-    Ok(Dir::from_std_file(native::create_private_directory(
-        &parent,
-        TRANSACTION,
-    )?))
+    let created = native::create_private_directory(&parent, TRANSACTION)?;
+    let expected = native::identity(&created)?;
+    drop(created);
+    let pinned = native::open_pinned_private_directory(&parent, TRANSACTION, true)?;
+    if native::identity(&pinned)? != expected {
+        return Err(MemoryStorageError::ReviewConflict);
+    }
+    Ok(Dir::from_std_file(pinned))
 }
 
 pub(super) fn create_file(dir: &Dir, name: &str, bytes: &[u8]) -> Result<(), MemoryStorageError> {

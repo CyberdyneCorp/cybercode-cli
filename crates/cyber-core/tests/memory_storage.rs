@@ -7,12 +7,12 @@ use std::path::Path;
 fn native_directory(path: &Path) -> std::fs::File {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ALL_ACCESS, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
-    // Native scope handles include DELETE access; fixture reopenings must share it.
+    // Content-only parent access coexists with scope pins and native source guards.
     std::fs::OpenOptions::new()
-        .access_mode(FILE_ALL_ACCESS)
+        .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
@@ -306,19 +306,31 @@ fn replaced_lock_binding_refuses_reads_and_reviews_without_repair() {
     let scope = store.claim().unwrap();
     let lock = store.path().join(".memory.lock");
     let original = store.path().join("retained-lock");
-    std::fs::rename(&lock, &original).unwrap();
-    write(&lock, b"replacement lock evidence");
-    assert!(matches!(
-        scope.read("rule"),
-        Err(MemoryStorageError::ReviewConflict)
-    ));
-    assert!(matches!(
-        scope.inspect_edit("rule"),
-        Err(MemoryStorageError::ReviewConflict)
-    ));
-    assert_eq!(std::fs::read(&lock).unwrap(), b"replacement lock evidence");
-    assert!(original.exists());
-    assert!(!store.path().join(".memory-transaction").exists());
+    #[cfg(windows)]
+    {
+        assert!(std::fs::rename(&lock, &original).is_err());
+        assert!(!original.exists());
+        assert_eq!(scope.read("rule").unwrap().body, "A preference");
+        drop(scope);
+        std::fs::rename(&lock, &original).unwrap();
+        assert!(original.exists());
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(&lock, &original).unwrap();
+        write(&lock, b"replacement lock evidence");
+        assert!(matches!(
+            scope.read("rule"),
+            Err(MemoryStorageError::ReviewConflict)
+        ));
+        assert!(matches!(
+            scope.inspect_edit("rule"),
+            Err(MemoryStorageError::ReviewConflict)
+        ));
+        assert_eq!(std::fs::read(&lock).unwrap(), b"replacement lock evidence");
+        assert!(original.exists());
+        assert!(!store.path().join(".memory-transaction").exists());
+    }
 }
 
 #[cfg(unix)]
@@ -547,6 +559,18 @@ mod native_storage {
     fn directory(path: &Path) -> std::fs::File {
         native_directory(path)
     }
+    fn deletion_access(path: &Path) -> std::io::Result<std::fs::File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        std::fs::OpenOptions::new()
+            .access_mode(DELETE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    }
     fn junction(path: &Path, target: &Path) {
         let output = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
@@ -555,6 +579,52 @@ mod native_storage {
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
+    }
+    #[test]
+    fn claimed_data_root_and_scope_names_reject_moves_and_release_after_disposal() {
+        for component in ["data", "memory", "global"] {
+            let container = tempfile::tempdir().unwrap();
+            let data = container.path().join("data");
+            std::fs::create_dir(&data).unwrap();
+            let store = MemoryStore::open(&data, "global").unwrap();
+            write(&store.path().join("rule.md"), note("rule").as_bytes());
+            let scope = store.claim().unwrap();
+            let source = match component {
+                "data" => data.clone(),
+                "memory" => data.join("memory"),
+                _ => store.path().to_owned(),
+            };
+            let moved = container.path().join("moved");
+            assert!(deletion_access(&source).is_err());
+            assert!(std::fs::rename(&source, &moved).is_err());
+            assert!(source.exists());
+            assert!(!moved.exists());
+            assert_eq!(scope.read("rule").unwrap().body, "A preference");
+            assert!(MemoryStore::existing(&data, "global").unwrap().is_some());
+            drop(scope);
+            assert!(deletion_access(&source).is_ok());
+            drop(store);
+            std::fs::rename(&source, &moved).unwrap();
+            assert!(moved.exists());
+            assert!(!source.exists());
+        }
+    }
+
+    #[test]
+    fn pins_allow_independent_scopes_and_content_capabilities_but_refuse_delete_access() {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        let scope = store.claim().unwrap();
+        let other = MemoryStore::open(data.path(), "prj_test").unwrap();
+        let other_scope = other.claim().unwrap();
+        let root = directory(&data.path().join("memory"));
+        let writable = open_private_directory(&root, "global", Access::DataWrite).unwrap();
+        cyber_core::memory::windows::sync_private(&writable).unwrap();
+        assert!(open_private_directory(&root, "global", Access::Write).is_err());
+        assert!(matches!(store.claim(), Err(MemoryStorageError::Busy)));
+        drop(other_scope);
+        drop(scope);
+        assert!(open_private_directory(&root, "global", Access::Write).is_ok());
     }
     #[test]
     fn unsafe_existing_root_and_scope_refuse_without_repair_or_child_effects() {

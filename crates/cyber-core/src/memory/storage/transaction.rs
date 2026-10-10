@@ -430,7 +430,17 @@ fn archive_journal(root: &Dir, _: Dir, history: &Dir, id: &str) -> Result<(), Me
 fn existing_journal_directory(root: &Dir) -> Result<Option<Dir>, MemoryStorageError> {
     #[cfg(windows)]
     {
-        existing_private_directory(root, TRANSACTION)
+        match super::super::windows::open_pinned_private_directory(
+            &root.try_clone()?.into_std_file(),
+            TRANSACTION,
+            true,
+        ) {
+            Ok(file) => Ok(Some(Dir::from_std_file(file))),
+            Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
     #[cfg(not(windows))]
     {

@@ -14,8 +14,8 @@ use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE,
+    FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
@@ -34,6 +34,31 @@ pub fn create_private_file(parent: &File, name: &str) -> Result<File, MemoryStor
 pub enum Access {
     Read,
     Write,
+    /// Read/write content without delete or ACL mutation authority.
+    DataWrite,
+}
+
+/// An existing private directory whose name cannot be deleted/renamed while held.
+pub fn open_pinned_private_directory(
+    parent: &File,
+    name: &str,
+    writable: bool,
+) -> Result<File, MemoryStorageError> {
+    child(
+        parent,
+        name,
+        true,
+        Mode::Pinned(if writable {
+            Access::DataWrite
+        } else {
+            Access::Read
+        }),
+    )
+}
+/// An existing private lock pinned to its name; caller still acquires the OS file lock.
+pub fn open_pinned_private_file(parent: &File, name: &str) -> Result<File, MemoryStorageError> {
+    verify_private(parent)?;
+    child(parent, name, false, Mode::Pinned(Access::DataWrite))
 }
 
 /// Open an existing private directory under its retained parent, without creation or ACL repair.
@@ -57,25 +82,29 @@ pub fn open_private_file(
 pub(super) enum Mode {
     Create,
     Open(Access),
+    Pinned(Access),
     Retain,
 }
 impl Mode {
     fn disposition(self) -> u32 {
         match self {
             Self::Create => FILE_CREATE,
-            Self::Open(_) | Self::Retain => FILE_OPEN,
+            Self::Open(_) | Self::Pinned(_) | Self::Retain => FILE_OPEN,
         }
     }
     fn access(self) -> u32 {
         match self {
-            Self::Open(Access::Read) => FILE_GENERIC_READ,
+            Self::Open(Access::Read) | Self::Pinned(Access::Read) => FILE_GENERIC_READ,
+            Self::Open(Access::DataWrite) | Self::Pinned(Access::DataWrite) => {
+                FILE_GENERIC_READ | FILE_GENERIC_WRITE
+            }
             _ => FILE_ALL_ACCESS,
         }
     }
     fn information(self) -> usize {
         match self {
             Self::Create => 2,
-            Self::Open(_) | Self::Retain => 1,
+            Self::Open(_) | Self::Pinned(_) | Self::Retain => 1,
         }
     }
 }
@@ -161,7 +190,7 @@ pub(super) fn child(
     }
     let descriptor = match mode {
         Mode::Create => Some(private_descriptor()?),
-        Mode::Open(_) | Mode::Retain => None,
+        Mode::Open(_) | Mode::Pinned(_) | Mode::Retain => None,
     };
     let unicode = UNICODE_STRING {
         Length: (name.len() * 2) as u16,
@@ -192,6 +221,8 @@ pub(super) fn child(
             FILE_ATTRIBUTE_NORMAL,
             if matches!(mode, Mode::Retain) {
                 FILE_SHARE_READ
+            } else if matches!(mode, Mode::Pinned(_)) {
+                FILE_SHARE_READ | FILE_SHARE_WRITE
             } else {
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
             },

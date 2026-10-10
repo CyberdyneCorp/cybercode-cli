@@ -9,6 +9,25 @@ pub(super) struct Binding {
     scope: String,
 }
 impl Binding {
+    #[cfg(windows)]
+    pub(super) fn pin(&self, scope: &Dir) -> Result<Lease, MemoryStorageError> {
+        let data = data_directory_with_sharing(&self.path, false)?;
+        compare(&data, &self.data)?;
+        let root = super::super::windows::open_pinned_private_directory(
+            &data.try_clone()?.into_std_file(),
+            "memory",
+            false,
+        )?;
+        verify_identity(&root, &self.root.try_clone()?.into_std_file())?;
+        let child =
+            super::super::windows::open_pinned_private_directory(&root, &self.scope, false)?;
+        verify_identity(&child, &scope.try_clone()?.into_std_file())?;
+        Ok(Lease {
+            _data: data,
+            _root: root,
+            _scope: child,
+        })
+    }
     pub(super) fn new(path: &Path, data: Dir, root: Dir, scope: &str) -> Self {
         Self {
             data,
@@ -26,6 +45,12 @@ impl Binding {
         compare(&child_directory(&self.root, &self.scope)?, scope)
     }
 }
+#[cfg(windows)]
+pub(super) struct Lease {
+    _data: Dir,
+    _root: File,
+    _scope: File,
+}
 fn compare(current: &Dir, retained: &Dir) -> Result<(), MemoryStorageError> {
     verify_identity(
         &current.try_clone()?.into_std_file(),
@@ -35,6 +60,16 @@ fn compare(current: &Dir, retained: &Dir) -> Result<(), MemoryStorageError> {
 pub(super) fn data_directory(path: &Path) -> Result<Dir, MemoryStorageError> {
     #[cfg(windows)]
     {
+        data_directory_with_sharing(path, true)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Dir::open_ambient_dir(path, cap_std::ambient_authority())?)
+    }
+}
+#[cfg(windows)]
+fn data_directory_with_sharing(path: &Path, delete: bool) -> Result<Dir, MemoryStorageError> {
+    {
         use std::os::windows::fs::OpenOptionsExt;
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
@@ -42,7 +77,9 @@ pub(super) fn data_directory(path: &Path) -> Result<Dir, MemoryStorageError> {
         };
         let file = std::fs::OpenOptions::new()
             .access_mode(FILE_GENERIC_READ)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .share_mode(
+                FILE_SHARE_READ | FILE_SHARE_WRITE | if delete { FILE_SHARE_DELETE } else { 0 },
+            )
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)?;
         super::super::windows::identity(&file)?;
@@ -52,10 +89,6 @@ pub(super) fn data_directory(path: &Path) -> Result<Dir, MemoryStorageError> {
             ));
         }
         Ok(Dir::from_std_file(file))
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(Dir::open_ambient_dir(path, cap_std::ambient_authority())?)
     }
 }
 fn child_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError> {

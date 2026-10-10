@@ -83,6 +83,27 @@ fn native_live_intent_content_change_refuses_before_effects_or_acknowledgement()
 }
 
 #[test]
+fn native_live_journal_name_is_pinned_until_disposal_or_exact_source_archival() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = prepare(&mut scope, "Proposed");
+    let journal = store.path().join(TRANSACTION);
+    let moved = store.path().join("moved-journal");
+    assert!(std::fs::rename(&journal, &moved).is_err());
+    assert!(journal.exists());
+    assert!(!moved.exists());
+    let receipt = pending.commit().unwrap();
+    assert!(!journal.exists());
+    assert!(store.path().join(HISTORY).join(receipt.id).exists());
+    let pending = prepare(&mut scope, "Second");
+    assert!(std::fs::rename(&journal, &moved).is_err());
+    drop(pending);
+    std::fs::rename(&journal, &moved).unwrap();
+    assert!(moved.join("intent.json").exists());
+}
+
+#[test]
 fn native_journal_commit_update_delete_preserves_original_objects_and_private_history() {
     let data = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(data.path(), "global").unwrap();

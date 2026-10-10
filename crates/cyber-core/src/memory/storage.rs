@@ -57,6 +57,8 @@ pub struct MemoryStore {
 pub struct MemoryScope<'a> {
     store: &'a MemoryStore,
     lock: File,
+    #[cfg(windows)]
+    _lease: binding::Lease,
 }
 impl Drop for MemoryScope<'_> {
     fn drop(&mut self) {
@@ -156,6 +158,8 @@ impl MemoryStore {
     /// Contention is explicit so async consumers can wait/cancel without blocking.
     pub fn claim(&self) -> Result<MemoryScope<'_>, MemoryStorageError> {
         self.verify_binding()?;
+        #[cfg(windows)]
+        let lease = self.binding.pin(&self.dir)?;
         verify_private_directory(&self.dir)?;
         match self.dir.symlink_metadata(".memory.lock") {
             Ok(metadata) if !metadata.is_file() => {
@@ -166,22 +170,7 @@ impl MemoryStore {
             Err(error) => return Err(error.into()),
         }
         #[cfg(windows)]
-        let lock = {
-            let parent = self.dir.try_clone()?.into_std_file();
-            match super::windows::create_private_file(&parent, ".memory.lock") {
-                Ok(file) => file,
-                Err(MemoryStorageError::Io(error))
-                    if error.kind() == io::ErrorKind::AlreadyExists =>
-                {
-                    super::windows::open_private_file(
-                        &parent,
-                        ".memory.lock",
-                        super::windows::Access::Write,
-                    )?
-                }
-                Err(error) => return Err(error),
-            }
-        };
+        let lock = pinned_lock(&self.dir)?;
         #[cfg(not(windows))]
         let lock = {
             let mut options = OpenOptions::new();
@@ -201,7 +190,12 @@ impl MemoryStore {
         make_private_file(&lock)?;
         match lock.try_lock() {
             Ok(()) => {
-                let scope = MemoryScope { store: self, lock };
+                let scope = MemoryScope {
+                    store: self,
+                    lock,
+                    #[cfg(windows)]
+                    _lease: lease,
+                };
                 scope.verify_binding()?;
                 Ok(scope)
             }
@@ -394,23 +388,63 @@ fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError
 }
 
 #[cfg(windows)]
-fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError> {
-    let parent = parent.try_clone()?.into_std_file();
-    let file = match super::windows::create_private_directory(&parent, name) {
-        Ok(file) => file,
-        Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::AlreadyExists => {
-            super::windows::open_private_directory(&parent, name, super::windows::Access::Write)?
-        }
+fn pinned_lock(dir: &Dir) -> Result<File, MemoryStorageError> {
+    let parent = dir.try_clone()?.into_std_file();
+    match super::windows::open_pinned_private_file(&parent, ".memory.lock") {
+        Ok(file) => return Ok(file),
+        Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let expected = match super::windows::create_private_file(&parent, ".memory.lock") {
+        Ok(created) => Some(super::windows::identity(&created)?),
+        Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::AlreadyExists => None,
         Err(error) => return Err(error),
     };
-    Ok(Dir::from_std_file(file))
+    let lock = super::windows::open_pinned_private_file(&parent, ".memory.lock")?;
+    if let Some(expected) = expected
+        && super::windows::identity(&lock)? != expected
+    {
+        return Err(MemoryStorageError::ReviewConflict);
+    }
+    Ok(lock)
+}
+
+#[cfg(windows)]
+fn private_directory(parent: &Dir, name: &str) -> Result<Dir, MemoryStorageError> {
+    let parent = parent.try_clone()?.into_std_file();
+    match super::windows::open_private_directory(&parent, name, super::windows::Access::DataWrite) {
+        Ok(file) => Ok(Dir::from_std_file(file)),
+        Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+            let expected = match super::windows::create_private_directory(&parent, name) {
+                Ok(created) => Some(super::windows::identity(&created)?),
+                Err(MemoryStorageError::Io(error))
+                    if error.kind() == io::ErrorKind::AlreadyExists =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            let file = super::windows::open_private_directory(
+                &parent,
+                name,
+                super::windows::Access::DataWrite,
+            )?;
+            if let Some(expected) = expected
+                && super::windows::identity(&file)? != expected
+            {
+                return Err(MemoryStorageError::ReviewConflict);
+            }
+            Ok(Dir::from_std_file(file))
+        }
+        Err(error) => Err(error),
+    }
 }
 #[cfg(windows)]
 fn existing_private_directory(parent: &Dir, name: &str) -> Result<Option<Dir>, MemoryStorageError> {
     match super::windows::open_private_directory(
         &parent.try_clone()?.into_std_file(),
         name,
-        super::windows::Access::Write,
+        super::windows::Access::DataWrite,
     ) {
         Ok(file) => Ok(Some(Dir::from_std_file(file))),
         Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),

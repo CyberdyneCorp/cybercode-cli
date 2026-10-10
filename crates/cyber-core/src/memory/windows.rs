@@ -7,8 +7,8 @@ mod durability;
 mod namespace;
 use super::MemoryStorageError;
 pub use creation::{
-    Access, create_private_directory, create_private_file, open_private_directory,
-    open_private_file,
+    Access, create_private_directory, create_private_file, open_pinned_private_directory,
+    open_pinned_private_file, open_private_directory, open_private_file,
 };
 pub use durability::sync_private;
 pub use namespace::{RetainedChild, retain_private_directory, retain_private_file};
