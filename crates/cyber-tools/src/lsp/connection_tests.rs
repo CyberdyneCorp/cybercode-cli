@@ -35,7 +35,7 @@ while True:
         else:
             send({'jsonrpc':'2.0','id':msg['id'],'result':{'capabilities':{'hoverProvider':True}}})
     elif method == 'initialized':
-        pass
+        if mode == 'exit-on-initialized': break
     elif method == 'fixture':
         send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':'file:///untrusted','diagnostics':[]}})
         send({'jsonrpc':'2.0','id':'server-request','method':'workspace/applyEdit','params':{'edit':{}}})
@@ -50,6 +50,11 @@ while True:
         send({'jsonrpc':'2.0','id':msg['id'],'result':None})
     elif method == 'hang':
         time.sleep(60)
+    elif method == 'delay':
+        with pathlib.Path(msg['params']['marker']).open('a') as witness:
+            witness.write('started\n')
+        time.sleep(0.15)
+        send({'jsonrpc':'2.0','id':msg['id'],'result':True})
     elif method == 'shutdown':
         assert 'params' not in msg
         if mode == 'shutdown-hang': time.sleep(60)
@@ -58,7 +63,7 @@ while True:
         break
 "#;
 
-async fn process(mode: &str) -> HookCommandProcess {
+pub(crate) async fn process(mode: &str) -> HookCommandProcess {
     HookCommandProcess::spawn_with_stdin(
         "python3",
         &["-u".into(), "-c".into(), SERVER.into(), mode.into()],
@@ -304,4 +309,23 @@ time.sleep(60)
     drop(startup);
     tokio::time::sleep(Duration::from_millis(650)).await;
     assert!(!marker.exists());
+}
+
+#[tokio::test]
+async fn unacknowledged_error_retains_the_actual_owner_for_settlement_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = connect("normal", root.path()).await;
+    let mut error = ConnectionError {
+        error: LspError::Protocol("unverified startup settlement"),
+        shutdown: Shutdown::default(),
+        retained: Some(Box::new(owner)),
+    };
+    error.shutdown.stderr = b"retained-stderr".to_vec();
+    // Dropping an unpolled retry does not dispose the retained native owner.
+    drop(error.retry_shutdown());
+    assert!(error.retained.is_some());
+    assert!(error.retry_shutdown().await);
+    assert!(error.retained.is_none());
+    assert_eq!(error.shutdown.stderr, b"retained-stderr");
+    assert!(error.retry_shutdown().await);
 }

@@ -1,5 +1,23 @@
 ## ADDED Requirements
 
+### Requirement: Owned Location language-server pool
+(P1) A Location's language-server pool SHALL freeze resolved definitions for its lifetime and admit matching confined files lazily. Concurrent admissions for the same server and nearest-marker root SHALL share one owned worker. Failed roots SHALL remain broken until service recreation. Closing SHALL fence new starts and retain native settlement ownership across cancellation.
+
+#### Scenario: Shared lazy worker
+- **WHEN** concurrent matching-file admissions select the same server and root
+- **THEN** exactly one launch SHALL occur and callers SHALL share bounded serialized protocol ownership
+- **AND** disabled, unavailable, unmatched or external files SHALL NOT reach the launcher
+
+#### Scenario: Broken generation
+- **WHEN** startup fails or an owned process exits unexpectedly
+- **THEN** the root SHALL expose broken status and SHALL NOT respawn in the same pool generation
+
+#### Scenario: Interrupted close
+- **WHEN** a caller cancels pool close while a process is settling
+- **THEN** a later close SHALL join the same retained worker and report its native acknowledgement
+- **AND** launch resource keepalives SHALL survive until owned connection settlement
+- **AND** last-owner Drop SHALL request cleanup without claiming acknowledgement
+
 ### Requirement: Owned LSP connection lifecycle
 (P1) LSP connections SHALL consume already-authorized processes, initialize within a default 45-second deadline and retain ownership until explicit native settlement. Closing SHALL attempt shutdown/exit for at most three seconds before forced tree termination and separate acknowledgement. Timeout or cancellation SHALL NOT permit request replay or imply termination.
 

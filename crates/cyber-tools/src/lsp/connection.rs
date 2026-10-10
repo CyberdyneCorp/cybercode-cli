@@ -2,6 +2,7 @@ use std::{path::Path, time::Duration};
 
 use serde_json::Value;
 use tokio::{io::AsyncReadExt, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 
 use super::{LspError, StdioClient};
 use crate::{
@@ -28,6 +29,25 @@ pub struct ConnectionError {
     #[source]
     pub error: LspError,
     pub shutdown: Shutdown,
+    retained: Option<Box<StdioConnection>>,
+}
+
+impl ConnectionError {
+    /// An unavailable acknowledgement retains the same native owner for retry.
+    pub async fn retry_shutdown(&mut self) -> bool {
+        if let Some(owner) = self.retained.as_mut() {
+            let mut shutdown = owner.settle(Duration::ZERO).await;
+            if shutdown.stderr.is_empty() {
+                shutdown.stderr = std::mem::take(&mut self.shutdown.stderr);
+                shutdown.stderr_truncated |= self.shutdown.stderr_truncated;
+            }
+            self.shutdown = shutdown;
+            if self.shutdown.acknowledged {
+                self.retained.take();
+            }
+        }
+        self.shutdown.acknowledged
+    }
 }
 
 /// Consumes an already-authorized sandbox process. Drop terminates but supplies no acknowledgement.
@@ -35,6 +55,14 @@ pub struct StdioConnection {
     process: HookCommandProcess,
     client: Option<StdioClient<ReadStream, WriteStream>>,
     stderr: Option<JoinHandle<std::io::Result<StderrCapture>>>,
+}
+
+impl std::fmt::Debug for StdioConnection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StdioConnection")
+            .finish_non_exhaustive()
+    }
 }
 
 impl StdioConnection {
@@ -52,6 +80,16 @@ impl StdioConnection {
         options: Value,
         timeout: Duration,
     ) -> impl std::future::Future<Output = Result<Self, ConnectionError>> + '_ {
+        Self::connect_with_cancellation(process, root, options, timeout, CancellationToken::new())
+    }
+
+    pub fn connect_with_cancellation(
+        process: HookCommandProcess,
+        root: &Path,
+        options: Value,
+        timeout: Duration,
+        cancel: CancellationToken,
+    ) -> impl std::future::Future<Output = Result<Self, ConnectionError>> + '_ {
         // Establish the tree guard before returning a future, including before its first poll.
         let mut owner = Self {
             process,
@@ -59,9 +97,19 @@ impl StdioConnection {
             stderr: None,
         };
         async move {
-            if let Err(error) = owner.initialize(root, options, timeout).await {
+            let initialized = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(LspError::Protocol("startup cancelled")),
+                result = owner.initialize(root, options, timeout) => result,
+            };
+            if let Err(error) = initialized {
                 let shutdown = owner.settle(Duration::ZERO).await;
-                return Err(ConnectionError { error, shutdown });
+                let retained = (!shutdown.acknowledged).then(|| Box::new(owner));
+                return Err(ConnectionError {
+                    error,
+                    shutdown,
+                    retained,
+                });
             }
             Ok(owner)
         }
@@ -96,6 +144,12 @@ impl StdioConnection {
 
     pub fn capabilities(&self) -> Option<&Value> {
         self.client.as_ref().and_then(StdioClient::capabilities)
+    }
+
+    pub(crate) fn leader_exited(&mut self) -> Result<bool, LspError> {
+        self.process
+            .leader_exited()
+            .map_err(|error| LspError::Transport(error.into()))
     }
 
     pub fn take_notifications(&mut self) -> Vec<Value> {
@@ -199,7 +253,7 @@ impl StdioConnection {
 
 #[cfg(all(test, unix))]
 #[path = "connection_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 impl Drop for StdioConnection {
     fn drop(&mut self) {
