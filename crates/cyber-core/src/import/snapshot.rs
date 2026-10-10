@@ -58,6 +58,8 @@ fn directory_identity(dir: &Dir, path: &Path) -> Result<Identity, DiscoveryError
 
 struct OpenSource {
     _directories: Vec<Dir>,
+    #[cfg(windows)]
+    _identity_handles: Vec<File>,
     bindings: Vec<Identity>,
     file: File,
     state: FileState,
@@ -138,10 +140,49 @@ impl OpenSource {
         let state = state(&file, path)?;
         Ok(Self {
             _directories: directories,
+            #[cfg(windows)]
+            _identity_handles: Vec::new(),
             bindings,
             file,
             state,
         })
+    }
+    #[cfg(windows)]
+    fn retain_review_identities(&mut self, path: &Path) -> Result<(), DiscoveryError> {
+        use cap_fs_ext::Reopen;
+        use cap_std::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        };
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let mut handles = Vec::new();
+        for (directory, expected) in self._directories.iter().zip(&self.bindings) {
+            let original = directory
+                .try_clone()
+                .map_err(|_| error(path, "source directory handle is unavailable"))?
+                .into_std_file();
+            // Reopen the same object with delete sharing; never use these handles for path lookup.
+            let retained = original.reopen(&options).map_err(|_| {
+                error(
+                    path,
+                    "source directory identity cannot be retained for review",
+                )
+            })?;
+            if identity(&retained, path)? != *expected {
+                return Err(error(
+                    path,
+                    "source directory identity changed during review handoff",
+                ));
+            }
+            handles.push(retained);
+        }
+        self._identity_handles = handles;
+        self._directories.clear();
+        Ok(())
     }
     fn bytes(&mut self, path: &Path) -> Result<Vec<u8>, DiscoveryError> {
         if self.state.len > LIMIT {
@@ -217,7 +258,20 @@ impl SourceSnapshot {
             bytes,
         };
         snapshot.verify()?;
-        Ok(snapshot)
+        snapshot.into_review()
+    }
+    fn into_review(self) -> Result<Self, DiscoveryError> {
+        #[cfg(windows)]
+        {
+            let mut snapshot = self;
+            snapshot.opened.retain_review_identities(&snapshot.path)?;
+            snapshot.verify()?;
+            Ok(snapshot)
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(self)
+        }
     }
     pub fn bytes(&self) -> &[u8] {
         &self.bytes

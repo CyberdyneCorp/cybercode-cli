@@ -86,6 +86,12 @@
 - **WHEN** a source ancestor is renamed/replaced or linked to a different tree
 - **THEN** verification SHALL refuse even when a same-named file remains readable
 
+#### Scenario: Windows directory changes during review
+- **WHEN** a source snapshot has returned and the user renames its project/source directory
+- **THEN** retained review identities SHALL permit namespace deletion/renaming
+- **AND** later verification SHALL refuse changed/replaced source bindings
+- **AND** capability path operations SHALL continue to use fresh no-follow lookup handles
+
 ### Requirement: Read-only static-source detection command
 (P1) The implemented `cyber import --detect [--format json]` increment SHALL inventory known static project/global sources, parse JSON/JSONC/TOML definitions with bounded verified reads and return raw agent/command/skill/MCP/hook counts without source configuration values. It SHALL avoid bootstrap, database, logging or source execution. Incomplete session counts, referenced sources and effective read-time coverage SHALL remain explicitly unknown/incomplete; this increment SHALL NOT imply acceptance of canonical complete Source detection or reviewed import writing.
 

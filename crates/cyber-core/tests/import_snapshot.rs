@@ -147,3 +147,16 @@ fn junction_replacement_is_refused_before_returning_target_data() {
     assert!(snapshot.verify().is_err());
     assert!(SourceSnapshot::read(&roots, &source).is_err());
 }
+
+#[test]
+fn reviewed_snapshot_allows_project_root_rename_and_refuses_same_content_replacement() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let (roots, source) = fixture(&root, b"same-content");
+    let snapshot = SourceSnapshot::read(&roots, &source).unwrap();
+    std::fs::rename(&roots.project_root, root.join("retained-project")).unwrap();
+    std::fs::create_dir_all(roots.project_root.join(".claude")).unwrap();
+    std::fs::write(&source.path, b"same-content").unwrap();
+    assert!(snapshot.verify().is_err());
+    assert_eq!(snapshot.bytes(), b"same-content");
+}
