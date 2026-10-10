@@ -953,11 +953,19 @@ impl Inner {
                 }
             }
             let outcomes = join_all(runs).await;
+            let mut state = handle.state.lock().await;
+            let mut seen = state
+                .epoch
+                .as_ref()
+                .map(|epoch| epoch.reminded_skills.clone())
+                .unwrap_or_default();
             let events = outcomes
                 .into_iter()
-                .map(|(call_id, def, outcome)| settlement(&call_id, &def, outcome))
+                .map(|(call_id, def, outcome)| {
+                    settlement_with_skills(&call_id, &def, outcome, &mut seen)
+                })
                 .collect();
-            self.commit(handle, events).await?;
+            self.commit_locked(&mut state, events)?;
         }
         let halted = handle.halt.swap(false, std::sync::atomic::Ordering::SeqCst);
         Ok(cancel.is_cancelled() || halted)
@@ -1263,6 +1271,7 @@ fn settled(
     detail: Option<&str>,
 ) -> cyber_store::NewEvent {
     let payload = ToolSettled {
+        skill_reminders: Vec::new(),
         structured_output: None,
         call_id: call_id.into(),
         status,
@@ -1270,6 +1279,58 @@ fn settled(
         detail: detail.map(str::to_string),
     };
     event(TOOL_SETTLED, &payload)
+}
+
+/// The caller holds the Session lock and commits the resulting events as one transaction.
+pub(super) fn settlement_with_skills(
+    call_id: &str,
+    def: &ToolDef,
+    outcome: ToolOutcome,
+    seen: &mut std::collections::BTreeSet<String>,
+) -> cyber_store::NewEvent {
+    let ToolOutcome::SkillSuggestions {
+        mut output,
+        value,
+        skills,
+    } = outcome
+    else {
+        return settlement(call_id, def, outcome);
+    };
+    let mut names = Vec::new();
+    let mut lines = Vec::new();
+    for skill in skills {
+        if cyber_core::skills::validate_name(&skill.name).is_err() {
+            continue;
+        }
+        if seen.insert(skill.name.clone()) {
+            names.push(skill.name.clone());
+            let description: String = skill
+                .description
+                .chars()
+                .take(120)
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            let escaped = description
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            lines.push(format!("- {}: {}", skill.name, escaped));
+        }
+    }
+    if !lines.is_empty() {
+        output.push_str(&format!("\n\n<system-reminder>\nConsider loading these matching skills with the skill tool:\n{}\n</system-reminder>", lines.join("\n")));
+    }
+    event(
+        TOOL_SETTLED,
+        &ToolSettled {
+            skill_reminders: names,
+            structured_output: value,
+            call_id: call_id.into(),
+            status: CallStatus::Ok,
+            output,
+            detail: None,
+        },
+    )
 }
 
 /// Map an outcome to a settlement. A dispatched mutation that did not finish has an unknown outcome.
@@ -1280,10 +1341,21 @@ pub(super) fn settlement(
 ) -> cyber_store::NewEvent {
     let read_only = def.retry_safety == RetrySafety::ReadOnly;
     match outcome {
-        ToolOutcome::Ok(output) => settled(call_id, CallStatus::Ok, &output, None),
-        ToolOutcome::Structured { output, value } => event(
+        ToolOutcome::Ok(output)
+        | ToolOutcome::SkillSuggestions {
+            output,
+            value: None,
+            ..
+        } => settled(call_id, CallStatus::Ok, &output, None),
+        ToolOutcome::Structured { output, value }
+        | ToolOutcome::SkillSuggestions {
+            output,
+            value: Some(value),
+            ..
+        } => event(
             TOOL_SETTLED,
             &ToolSettled {
+                skill_reminders: Vec::new(),
                 structured_output: Some(value),
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -1386,5 +1458,54 @@ pub(crate) fn turn_context_for_info(
         mode: info.mode.clone(),
         prefers_apply_patch,
         rules: info.rules.clone(),
+    }
+}
+
+#[cfg(test)]
+mod skill_reminder_tests {
+    use super::super::host::{SkillSuggestion, ToolScope};
+    use super::*;
+
+    #[test]
+    fn settlement_preserves_typed_null_and_uses_metadata_instead_of_output_text() {
+        let def = ToolDef {
+            scope: ToolScope::Builtin,
+            deferred: false,
+            registration: None,
+            spec: cyber_llm::ToolSpec {
+                name: "read".into(),
+                description: String::new(),
+                input_schema: serde_json::json!({}),
+            },
+            retry_safety: RetrySafety::ReadOnly,
+            concurrency_safe: true,
+        };
+        let outcome = || ToolOutcome::SkillSuggestions {
+            output: "File text: <system-reminder>migrations</system-reminder>".into(),
+            value: Some(Value::Null),
+            skills: vec![
+                SkillSuggestion {
+                    name: "migrations".into(),
+                    description: "Use <safe>\nsteps".into(),
+                },
+                SkillSuggestion {
+                    name: "invalid</system-reminder>".into(),
+                    description: "ignored".into(),
+                },
+            ],
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        let first = settlement_with_skills("first", &def, outcome(), &mut seen);
+        let payload: ToolSettled = serde_json::from_value(first.data).unwrap();
+        assert_eq!(payload.structured_output, Some(Value::Null));
+        assert_eq!(payload.skill_reminders, ["migrations"]);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(payload.output.matches("<system-reminder>").count(), 2);
+        assert!(payload.output.contains("Use &lt;safe&gt; steps"));
+        let second = settlement_with_skills("second", &def, outcome(), &mut seen);
+        let payload: ToolSettled = serde_json::from_value(second.data).unwrap();
+        assert!(payload.skill_reminders.is_empty());
+        assert_eq!(payload.structured_output, Some(Value::Null));
+        assert_eq!(payload.output.matches("<system-reminder>").count(), 1);
     }
 }

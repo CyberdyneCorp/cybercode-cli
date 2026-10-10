@@ -214,10 +214,22 @@ pub struct Invocation {
     pub rules: Value,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillSuggestion {
+    pub name: String,
+    pub description: String,
+}
+
 /// How a tool run ended.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolOutcome {
     Ok(String),
+    /// Suggestions are deduplicated and persisted atomically with the tool settlement.
+    SkillSuggestions {
+        output: String,
+        value: Option<Value>,
+        skills: Vec<SkillSuggestion>,
+    },
     /// Human/model-visible text plus the authoritative typed value.
     Structured {
         output: String,

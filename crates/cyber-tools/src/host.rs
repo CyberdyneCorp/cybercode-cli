@@ -1,4 +1,5 @@
 //! The built-in tool host (`tool-registry`, `builtin-tools`, `permissions-modes`).
+mod path_skills;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -800,6 +801,7 @@ impl ToolHost for BuiltinHost {
                 Err(error) => return ToolOutcome::Failed(error),
             };
             let ctx = Ctx {
+                skill_paths: Default::default(),
                 compiler_feedback: Default::default(),
                 host: self,
                 policy,
@@ -830,7 +832,7 @@ impl ToolHost for BuiltinHost {
                     }
                 };
             }
-            outcome
+            self.path_skill_suggestions(&ctx, outcome)
         })
     }
 
@@ -915,6 +917,7 @@ impl ToolHost for BuiltinHost {
             };
             self.check_agent_tool(&inv)?;
             let ctx = Ctx {
+                skill_paths: Default::default(),
                 compiler_feedback: Default::default(),
                 hook_decision: None,
                 host: self,
@@ -972,6 +975,7 @@ impl ToolHost for BuiltinHost {
         let command = command.to_string();
         Box::pin(async move {
             let ctx = Ctx {
+                skill_paths: Default::default(),
                 compiler_feedback: Default::default(),
                 hook_decision: None,
                 host: self,
@@ -1041,6 +1045,7 @@ fn fully_denied_scoped(rules: &[permissions::Rule], action: &str, tool: &str) ->
 
 /// Everything a tool needs for one call.
 pub(crate) struct Ctx<'a> {
+    pub skill_paths: Mutex<Vec<PathBuf>>,
     pub compiler_feedback: std::sync::atomic::AtomicBool,
     pub host: &'a BuiltinHost,
     pub inv: &'a Invocation,
@@ -1051,6 +1056,13 @@ pub(crate) struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    pub fn note_skill_path(&self, path: &Path) {
+        self.skill_paths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(path.into());
+    }
+
     /// Resolve a tool path against the Location (`~/` expands to home), lexically normalized.
     pub fn resolve(&self, path: &str) -> PathBuf {
         resolve_path(&self.location, &self.host.opts.home, path)

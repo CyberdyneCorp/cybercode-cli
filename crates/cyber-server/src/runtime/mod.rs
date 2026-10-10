@@ -93,7 +93,8 @@ pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, ChildContinuation, FileDiff, Invocation, LocationGuard,
     LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
-    RestoreError, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
+    RestoreError, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope,
+    TurnContext,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
@@ -1095,6 +1096,7 @@ impl Runtime {
             ),
         };
         let payload = ToolSettled {
+            skill_reminders: Vec::new(),
             structured_output: None,
             call_id: call_id.into(),
             status,

@@ -341,6 +341,7 @@ async fn write_all(ctx: &Ctx<'_>, changes: &[Change]) -> Result<String, ToolErro
             return Err(failed(format!("{message}{feedback}")));
         }
         pending.push((change, origin));
+        ctx.note_skill_path(&change.path);
         applied.push(label);
     }
     let feedback = patch_feedback(ctx, pending).await;

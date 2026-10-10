@@ -227,3 +227,12 @@ Hook scope requirements force workspace sandboxing independently of MCP's ordina
 Dedicated hook connections have no model-call Asker: startup/idle/tool callbacks cannot borrow a Session requester, elicitation declines and sampling refuses. Full lifecycle integration, remote MCP hooks, async scheduling and platform acceptance remain required by the parent goal.
 
 Explicit shared MCP close now pauses the Location against per-step catalog refresh. Close still joins the original actors and retains unknown fences. A new Session or explicit Turn open may remove that pause and start fresh connection identities; refreshing tools within the current Turn may not. This prevents a cancelled callback's following model step from immediately recreating the actor that the user just closed. Existing custom hosts retain their prior refresh behavior through a default trait method.
+
+
+## Path-triggered skill reminders
+
+Parse optional `paths` as at most 64 project-relative globs, each at most 256 bytes, with literal path separators and refusal of invalid or escaping patterns. File tools record actual successful reads and mutations through their invocation context; directory listings and rejected reads do not claim file observations. After successful tool execution and post-hooks, match paths relative to the checkout root, filter model-disabled skills, agent tool exclusions and effective permission denials, and return typed suggestion metadata rather than injecting instruction bodies.
+
+Settle suggestion metadata under the Session lock. Select each skill once against the current Epoch and the other results in that concurrent batch, then commit the reminder text and selected names in the same tool-settlement transaction. Replay rebuilds the Epoch's seen set; a new Epoch resets it. Handle approval replay through the same settlement path. Preserve structured values, including explicit null, independently of appended text. Validate names and escape/truncate descriptions when rendering the system-reminder block; never infer seen names by parsing file/tool output.
+
+The increment covers successful file operations, concurrent reads, runtime recreation, repair and actual compaction boundaries, and permission/tool visibility. Known partial operation failures and post-hook failure paths still need reminder delivery, and reminder overhead needs complete output-budget admission. Remote/bundled skills, scoped activation/model selection, fork execution, disallowed-tools and all other canonical P1 contracts remain required.

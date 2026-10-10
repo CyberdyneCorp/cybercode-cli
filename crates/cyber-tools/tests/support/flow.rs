@@ -159,6 +159,26 @@ impl Flow {
         }
     }
 
+    pub async fn restart_default_runtime(&mut self) {
+        self.runtime.shutdown().await;
+        self.f.renew_host(None);
+        self.runtime = Runtime::new(RuntimeOptions {
+            store: Arc::clone(&self.f.store),
+            resolver: self.models.clone(),
+            tools: Arc::clone(&self.f.host) as Arc<dyn ToolHost>,
+            global_config_dir: self.f.dir.path().join("global"),
+            shell: "bash".into(),
+            claude_compat: false,
+            compaction: CompactionConfig::default(),
+            retry: RetryPolicy::default(),
+            max_steps: None,
+            today: Some("2026-10-04".into()),
+            interactive: false,
+            snapshots: Arc::new(NoSnapshots),
+        });
+        self.f.host.attach(self.runtime.clone());
+    }
+
     pub fn requests(&self, reference: &str) -> Vec<LlmRequest> {
         self.models
             .0

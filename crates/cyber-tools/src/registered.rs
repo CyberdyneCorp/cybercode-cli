@@ -120,6 +120,7 @@ impl BuiltinHost {
                 ),
             );
             let ctx = Ctx {
+                skill_paths: Default::default(),
                 compiler_feedback: Default::default(),
                 host: self,
                 inv: &inv,
@@ -171,6 +172,20 @@ impl BuiltinHost {
                 .map_or_else(ToolOutcome::Crashed, |output| ToolOutcome::Structured {
                     output,
                     value,
+                }),
+            ToolOutcome::SkillSuggestions {
+                output,
+                value,
+                skills,
+            } => self
+                .budget(&ctx.location)
+                .apply_with_token_limit(output, false, token_limit)
+                .map_or_else(ToolOutcome::Crashed, |output| {
+                    ToolOutcome::SkillSuggestions {
+                        output,
+                        value,
+                        skills,
+                    }
                 }),
             ToolOutcome::Failed(output) => self
                 .budget(&ctx.location)

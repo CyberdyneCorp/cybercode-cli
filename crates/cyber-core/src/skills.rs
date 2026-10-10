@@ -23,6 +23,7 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub allowed_tools: Vec<String>,
+    pub paths: Vec<String>,
     pub model: Option<String>,
     pub disable_model_invocation: bool,
     pub user_invocable: bool,
@@ -47,6 +48,8 @@ struct Frontmatter {
     description: String,
     #[serde(default)]
     allowed_tools: Tools,
+    #[serde(default)]
+    paths: Vec<String>,
     model: Option<String>,
     #[serde(default)]
     disable_model_invocation: bool,
@@ -154,10 +157,28 @@ pub fn load(dir: &Path) -> Result<Skill, String> {
     if fm.description.trim().is_empty() || fm.description.chars().count() > 1024 {
         return Err("description must be 1-1024 characters".into());
     }
+    if fm.paths.len() > 64
+        || fm.paths.iter().any(|path| {
+            path.is_empty()
+                || path.len() > 256
+                || path.contains('\0')
+                || path.as_bytes().get(1) == Some(&b':')
+                || path.starts_with('/')
+                || path.contains('\\')
+                || path.split('/').any(|part| part == "..")
+                || globset::GlobBuilder::new(path)
+                    .literal_separator(true)
+                    .build()
+                    .is_err()
+        })
+    {
+        return Err("paths must contain at most 64 bounded project-relative globs".into());
+    }
     Ok(Skill {
         name: fm.name,
         description: fm.description.trim().to_string(),
         allowed_tools: fm.allowed_tools.into_vec(),
+        paths: fm.paths,
         model: fm.model,
         disable_model_invocation: fm.disable_model_invocation,
         user_invocable: fm.user_invocable.unwrap_or(true),
@@ -180,7 +201,7 @@ fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
     ))
 }
 
-fn validate_name(name: &str) -> Result<(), String> {
+pub fn validate_name(name: &str) -> Result<(), String> {
     let mut chars = name.chars();
     let first_ok = chars
         .next()
@@ -407,5 +428,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load(tmp.path()).unwrap().allowed_tools, vec!["read"]);
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    #[test]
+    fn paths_load_as_bounded_relative_globs_and_refuse_escaping_or_invalid_patterns() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("SKILL.md");
+        let document = |paths: serde_json::Value| {
+            format!("---\nname: migrations\ndescription: Migrations\npaths: {paths}\n---\nBody")
+        };
+        std::fs::write(
+            &file,
+            document(serde_json::json!(["db/migrations/**", "src/*.{rs,sql}"])),
+        )
+        .unwrap();
+        assert_eq!(
+            super::load(temp.path()).unwrap().paths,
+            ["db/migrations/**", "src/*.{rs,sql}"]
+        );
+        for pattern in [
+            "",
+            "../outside/**",
+            "/absolute/**",
+            "C:/outside/**",
+            "bad[",
+            "db\\migrations\\*",
+        ] {
+            std::fs::write(&file, document(serde_json::json!([pattern]))).unwrap();
+            assert!(super::load(temp.path()).is_err(), "{pattern}");
+        }
+        std::fs::write(&file, document(serde_json::json!(vec!["db/**"; 65]))).unwrap();
+        assert!(super::load(temp.path()).is_err());
     }
 }

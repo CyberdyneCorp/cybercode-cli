@@ -67,6 +67,7 @@ impl Tool for Read {
                 return Err(failed("Binary file: application/octet-stream"));
             }
             ctx.host.mark_read(&ctx.inv.session_id, &path);
+            ctx.note_skill_path(&path);
             if let Some(locations) = ctx.host.lsp.get()
                 && bytes.len() <= crate::lsp::MAX_DOCUMENT_BYTES
                 && let Ok(content) = std::str::from_utf8(&bytes)
@@ -306,6 +307,7 @@ pub(crate) async fn guarded_write(
         .await
         .map_err(|e| failed(format!("Could not write {}: {e}", path.display())))?;
     ctx.host.mark_read(&ctx.inv.session_id, path);
+    ctx.note_skill_path(path);
     drop(_guard);
     Ok(super::intelligence::feedback(ctx, path, after, origin).await)
 }

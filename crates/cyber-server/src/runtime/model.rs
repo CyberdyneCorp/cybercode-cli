@@ -164,6 +164,8 @@ pub struct CallState {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Epoch {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub reminded_skills: std::collections::BTreeSet<String>,
     pub number: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
@@ -764,6 +766,7 @@ impl SessionState {
 
     fn on_epoch(&mut self, e: EpochStarted) {
         self.epoch = Some(Epoch {
+            reminded_skills: Default::default(),
             number: e.epoch,
             baseline: e.baseline,
             snapshot: e.snapshot,
@@ -861,6 +864,11 @@ impl SessionState {
 
     fn on_settled(&mut self, s: ToolSettled) {
         if let Some(call) = self.calls.get_mut(&s.call_id) {
+            if s.status == CallStatus::Ok
+                && let Some(epoch) = &mut self.epoch
+            {
+                epoch.reminded_skills.extend(s.skill_reminders);
+            }
             call.status = s.status;
             call.output = Some(s.output);
             call.structured_output = s.structured_output;

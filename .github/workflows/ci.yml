@@ -98,6 +98,9 @@ jobs:
       - name: Native migration provider conversion
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test commands --test import_providers --test import_opencode_providers --test import_opencode_settings
+      - name: Native path-triggered skill reminders
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test path_skills
       - name: Native read-time command discovery
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test command_discovery

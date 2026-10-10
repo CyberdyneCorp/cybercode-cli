@@ -71,3 +71,6 @@
 - [ ] Implement P1 JSON-RPC plugin host, package and required plugin lifecycle/capabilities.
 - [ ] Implement MCP OAuth; local deferred discovery/search is covered by the completed task above.
 - [ ] Validate full canonical P1 extensibility scenarios, native behavior, documentation and M1.3 acceptance.
+
+- [ ] Deliver all canonical P1 skill and command contracts, including remote sources, scoped approvals/model selection, shell injection, bundles and path-triggered/forked skills.
+  - [x] Add bounded relative path declarations and typed once-per-Epoch reminders for successful file operations, atomically settled with outputs; verify concurrent reads, runtime recreation, repair/compaction resets, permission/tool exclusions and patch execution. Full failure-path delivery, reminder budget admission, fork/scoped behavior and native acceptance remain open.

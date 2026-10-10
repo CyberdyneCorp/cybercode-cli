@@ -450,3 +450,12 @@ Each catalogue or expansion request reads the files again; returned templates ke
 
 
 `GET /api/v1/commands` also includes `namespace` for namespaced entries and `provenance` for available static commands. Provenance contains the winning and shadowed origins, each with a scope (`global`, `project` or `runtime`), kind and source paths. It contains no templates or raw loader labels. Native inline configuration can combine leaves from several files, so its paths list includes all contributing file layers. Logical profile/CLI/environment overrides retain runtime precedence without inventing a filesystem source. The catalogue still lists available entries only; unavailable-definition diagnostics, complete skill/plugin/MCP provenance, CLI inspection and current-agent permission effects remain open.
+
+
+Skills may declare project-relative path globs:
+
+```yaml
+paths: ["db/migrations/**", "src/*.{rs,sql}"]
+```
+
+Successful file reads, writes, edits and patches append a `<system-reminder>` suggesting matching skills. Directory listings, failed reads, model-disabled skills and effective skill/tool denials do not produce suggestions. Reminders include names and shortened descriptions. The model can load the body through the normal skill tool. Each skill is suggested once per Context Epoch. The seen names commit with the tool result, survive runtime recreation and reset when a new Epoch starts, including after compaction or context repair. Concurrent file calls share that durable decision. Relative declarations are bounded to 64 globs of 256 bytes each. Reminder delivery after partial operations/post-hook failures, complete output-budget admission, scoped approvals/model selection, forked skills and disallowed-tools remain under implementation.

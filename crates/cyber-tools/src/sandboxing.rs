@@ -449,6 +449,7 @@ mod tests {
             rules: serde_json::Value::Null,
         };
         let ctx = Ctx {
+            skill_paths: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: &host,

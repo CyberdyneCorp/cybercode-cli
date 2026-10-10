@@ -144,9 +144,9 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> Result<(), ToolError> {
         let (kind, output) = match outcome {
-            ToolOutcome::Ok(output) | ToolOutcome::Structured { output, .. } => {
-                ("PostToolUse", output)
-            }
+            ToolOutcome::Ok(output)
+            | ToolOutcome::Structured { output, .. }
+            | ToolOutcome::SkillSuggestions { output, .. } => ("PostToolUse", output),
             ToolOutcome::Failed(error) | ToolOutcome::Crashed(error) => {
                 ("PostToolUseFailure", error)
             }

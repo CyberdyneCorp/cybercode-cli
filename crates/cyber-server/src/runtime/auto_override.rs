@@ -468,13 +468,20 @@ impl Inner {
             .run_tool(handle, def, invocation, scope.control.stop.clone())
             .await;
         invocation_done.cancel();
-        let settled = super::drain::settlement(&replay.id, &def, outcome);
+        let mut state = handle.state.lock().await;
+        let mut seen = state
+            .epoch
+            .as_ref()
+            .map(|epoch| epoch.reminded_skills.clone())
+            .unwrap_or_default();
+        let settled = super::drain::settlement_with_skills(&replay.id, &def, outcome, &mut seen);
         let output = settled.data["output"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
         record.status = "settled".into();
-        self.commit(handle, vec![settled, change(record)]).await?;
+        self.commit_locked(&mut state, vec![settled, change(record)])?;
+        drop(state);
         if scope.control.stop.is_cancelled()
             || self.ensure_admission_open(&scope.control.source).is_err()
         {

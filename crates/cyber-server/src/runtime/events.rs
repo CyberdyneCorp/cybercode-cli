@@ -271,6 +271,8 @@ pub struct ToolDispatched {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSettled {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_reminders: Vec<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
