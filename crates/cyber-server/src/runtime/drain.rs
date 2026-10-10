@@ -1289,6 +1289,7 @@ pub(super) fn settlement_with_skills(
     seen: &mut std::collections::BTreeSet<String>,
 ) -> cyber_store::NewEvent {
     let ToolOutcome::SkillSuggestions {
+        failed,
         mut output,
         value,
         skills,
@@ -1326,7 +1327,11 @@ pub(super) fn settlement_with_skills(
             skill_reminders: names,
             structured_output: value,
             call_id: call_id.into(),
-            status: CallStatus::Ok,
+            status: if failed {
+                CallStatus::Error
+            } else {
+                CallStatus::Ok
+            },
             output,
             detail: None,
         },
@@ -1341,6 +1346,11 @@ pub(super) fn settlement(
 ) -> cyber_store::NewEvent {
     let read_only = def.retry_safety == RetrySafety::ReadOnly;
     match outcome {
+        ToolOutcome::SkillSuggestions {
+            failed: true,
+            output,
+            ..
+        } => settled(call_id, CallStatus::Error, &output, None),
         ToolOutcome::Ok(output)
         | ToolOutcome::SkillSuggestions {
             output,
@@ -1481,6 +1491,7 @@ mod skill_reminder_tests {
             concurrency_safe: true,
         };
         let outcome = || ToolOutcome::SkillSuggestions {
+            failed: false,
             output: "File text: <system-reminder>migrations</system-reminder>".into(),
             value: Some(Value::Null),
             skills: vec![

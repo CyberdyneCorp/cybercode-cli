@@ -1,5 +1,17 @@
 # P1 implementation status
 
+## Reminders after known completed operations in failed calls (2026-10-10)
+
+Two actual tool-flow regressions reproduced missing reminders on unchanged main `1068325`: a patch created its first file before failing to create a later parent directory, and a write completed before post-hook configuration resolution failed. Both already reported error status and changed the intended file.
+
+The host now preserves typed suggestions for those recorded successful paths. Runtime settlement keeps `CallStatus::Error`, appends the reminder and commits the emitted names with the same event. Replay includes those error-settlement names, so a recreated runtime suppresses duplicate suggestions. Failed reads without completed paths, crashes and aborted calls do not acquire suggestions. The regressions verify real file content, error output/status, repeat suppression and post-hook runtime recreation.
+
+Local validation passes 268 unique Rust cases: 40 core units, two CI contracts, 42 server units, 60 HTTP, 36 runtime lifecycle, 19 existing tool flows, four recovery, six reminder flows, 20 hook-dispatch and 39 CLI cases. Strict specification validation passes all 60 items; lint reports zero errors and 21 warnings. SDK generation, the canonical inventory, formatting/diff checks and workspace all-target Clippy with warnings denied pass.
+
+The previous revision’s [Windows job 114302174108](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38082515043/job/114302174108) reports its native reminder step successful, alongside command and intelligence gates. The retained metadata-only review and migration snapshot steps still fail; the job remains running at this observation. This revision’s two failure-path regressions still require native execution.
+
+Complete reminder output-budget admission, native acceptance and the remaining skills/commands contracts remain open. All 225 P1 contracts remain in scope; no milestone is accepted. P0 model services and evaluation/data artifacts are preserved.
+
 ## Durable path-triggered skill reminders (2026-10-10)
 
 Skills now accept bounded project-relative path globs. Successful file reads and mutations collect actual paths, match the declaring skill's globs, and filter model-disabled skills, current-agent tool exclusions and effective permission denials. Matching names/descriptions become typed suggestion metadata; bodies are not loaded by the reminder. Directory listings and failed reads do not consume reminders.
@@ -8,7 +20,7 @@ The runtime selects each skill once per Context Epoch while holding the Session 
 
 Local validation passes 246 Rust cases: 40 core units, two CI contracts, 42 server units, 60 HTTP, 36 runtime lifecycle, 19 existing tool flows, four tool recovery, four new actual reminder flows and 39 CLI tests. SDK typechecking and all 80 TypeScript tests pass. The new flow covers parallel reads, fresh runtime/host recreation, edit and patch execution, real compaction/repair resets, directory/unmatched/failed reads, disabled skills and permission/agent-tool denials. The native CI job runs the reminder flow independently even after other native failures.
 
-Full skill acceptance remains open: known partial-operation/post-hook failures need reminder delivery, reminder overhead needs complete output-budget admission, and scoped activation/model selection, forked execution, disallowed-tools, remote sources and bundles remain required. The M1.3 change retains the complete canonical P1 skill/command requirements rather than accepting just the reminder increment. Full goal scope remains all 225 P1 contracts; no milestone is accepted.
+Full skill acceptance remains open: reminder overhead needs complete output-budget admission, and scoped activation/model selection, forked execution, disallowed-tools, remote sources and bundles remain required. The M1.3 change retains the complete canonical P1 skill/command requirements rather than accepting just the reminder increment. Full goal scope remains all 225 P1 contracts; no milestone is accepted.
 
 The prior push's [Windows job 114295863006](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38080370213/job/114295863006) has passed command discovery, host scope controls, actual application command/API tests and CLI/intelligence tests. Metadata-only review retention and migration snapshot steps have failed, and the job is still running at the latest observation. The new reminder code still needs native acceptance. P0 local-model services/models/evaluations/databases/artifacts/executables remain preserved. Only 21 stale generated Rust libraries were removed with Cargo stopped, recovering 836 MiB for validation.
 

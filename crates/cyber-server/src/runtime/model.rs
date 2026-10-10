@@ -864,7 +864,7 @@ impl SessionState {
 
     fn on_settled(&mut self, s: ToolSettled) {
         if let Some(call) = self.calls.get_mut(&s.call_id) {
-            if s.status == CallStatus::Ok
+            if matches!(s.status, CallStatus::Ok | CallStatus::Error)
                 && let Some(epoch) = &mut self.epoch
             {
                 epoch.reminded_skills.extend(s.skill_reminders);

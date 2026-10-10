@@ -825,12 +825,15 @@ impl ToolHost for BuiltinHost {
                 Err(ToolError::Aborted) => ToolOutcome::Aborted,
             };
             if let Err(error) = self.post_tool_hooks(&inv, &outcome, started, cancel).await {
-                return match error {
-                    ToolError::Aborted => ToolOutcome::Aborted,
-                    ToolError::Failed(error) => {
-                        ToolOutcome::Failed(format!("Tool settled; post-hook failed: {error}"))
-                    }
-                };
+                return self.path_skill_suggestions(
+                    &ctx,
+                    match error {
+                        ToolError::Aborted => ToolOutcome::Aborted,
+                        ToolError::Failed(error) => {
+                            ToolOutcome::Failed(format!("Tool settled; post-hook failed: {error}"))
+                        }
+                    },
+                );
             }
             self.path_skill_suggestions(&ctx, outcome)
         })

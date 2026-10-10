@@ -236,3 +236,148 @@ async fn compaction_starts_a_fresh_reminder_epoch_and_agent_tool_denial_withhold
     );
     flow.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn partial_patch_failure_emits_once_for_the_files_that_actually_changed() {
+    use cyber_server::runtime::{CallStatus, CreateSession, NoSnapshots};
+    use std::sync::Arc;
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        Vec::new(),
+        false,
+        Arc::new(NoSnapshots),
+        vec![(
+            "test/patch",
+            vec![
+                call(
+                    "partial",
+                    "apply_patch",
+                    json!({"patch":"*** Begin Patch\n*** Add File: db/migrations/created.sql\n+created\n*** Add File: blocked/child.sql\n+blocked\n*** End Patch"}),
+                ),
+                text("failed"),
+                call("read", "read", json!({"path":"db/migrations/created.sql"})),
+                text("read"),
+            ],
+        )],
+    );
+    skill(&flow, "migrations", "");
+    flow.f.write("blocked", "A file, not a directory");
+    let id = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: flow.f.repo.display().to_string(),
+            model: "test/patch".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    flow.prompt(&id, "patch").await;
+    flow.settle(&id).await;
+    let output = flow.output(&id, "partial").await;
+    assert!(output.contains("Patch partially applied"), "{output}");
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().calls["partial"].status,
+        CallStatus::Error
+    );
+    assert_eq!(
+        std::fs::read_to_string(flow.f.repo.join("db/migrations/created.sql")).unwrap(),
+        "created\n"
+    );
+    assert!(output.contains("<system-reminder>"), "{output}");
+    assert!(
+        flow.runtime
+            .state(&id)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .reminded_skills
+            .contains("migrations")
+    );
+    flow.prompt(&id, "read created file").await;
+    flow.settle(&id).await;
+    assert!(!flow.output(&id, "read").await.contains("<system-reminder>"));
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn post_hook_failure_keeps_the_mutation_failure_and_durable_reminder() {
+    use cyber_core::config::{Resolved, TrustReport};
+    use cyber_core::trust::TrustStore;
+    use cyber_server::runtime::CallStatus;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let mut flow = Flow::new(
+        vec![
+            call(
+                "write",
+                "write",
+                json!({"path":"db/migrations/created.sql","content":"created"}),
+            ),
+            text("hook failed"),
+            call("read", "read", json!({"path":"db/migrations/created.sql"})),
+            text("read"),
+        ],
+        false,
+    );
+    skill(&flow, "migrations", "");
+    let target = flow.f.repo.join("db/migrations/created.sql");
+    let root = flow.f.repo.clone();
+    let pending = AtomicBool::new(true);
+    flow.f
+        .host
+        .attach_hook_config(
+            Arc::new(move |_| {
+                if target.exists() && pending.swap(false, Ordering::SeqCst) {
+                    return Err("post-hook resolver fixture failed".into());
+                }
+                Ok(Resolved {
+                    value: json!({}),
+                    sources: Default::default(),
+                    warnings: Vec::new(),
+                    layers: Vec::new(),
+                    trust: TrustReport {
+                        checkout_root: root.clone(),
+                        trusted: true,
+                        digest: None,
+                        definitions: Vec::new(),
+                    },
+                })
+            }),
+            TrustStore::new(flow.f.dir.path().join("trust.json")),
+        )
+        .unwrap();
+    let id = flow.session("bypass").await;
+    flow.prompt(&id, "write").await;
+    flow.settle(&id).await;
+    let output = flow.output(&id, "write").await;
+    assert!(output.contains("post-hook failed"), "{output}");
+    assert_eq!(
+        flow.runtime.state(&id).await.unwrap().calls["write"].status,
+        CallStatus::Error
+    );
+    assert_eq!(
+        std::fs::read_to_string(flow.f.repo.join("db/migrations/created.sql")).unwrap(),
+        "created"
+    );
+    assert!(output.contains("<system-reminder>"), "{output}");
+    flow.restart_default_runtime().await;
+    assert!(
+        flow.runtime
+            .state(&id)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .reminded_skills
+            .contains("migrations")
+    );
+    flow.prompt(&id, "read").await;
+    flow.settle(&id).await;
+    assert!(!flow.output(&id, "read").await.contains("<system-reminder>"));
+    flow.runtime.shutdown().await;
+}

@@ -54,13 +54,21 @@ impl BuiltinHost {
         }
         match outcome {
             ToolOutcome::Ok(output) => ToolOutcome::SkillSuggestions {
+                failed: false,
                 output,
                 value: None,
                 skills,
             },
             ToolOutcome::Structured { output, value } => ToolOutcome::SkillSuggestions {
+                failed: false,
                 output,
                 value: Some(value),
+                skills,
+            },
+            ToolOutcome::Failed(output) => ToolOutcome::SkillSuggestions {
+                failed: true,
+                output,
+                value: None,
                 skills,
             },
             other => other,

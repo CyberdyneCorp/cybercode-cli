@@ -226,6 +226,7 @@ pub enum ToolOutcome {
     Ok(String),
     /// Suggestions are deduplicated and persisted atomically with the tool settlement.
     SkillSuggestions {
+        failed: bool,
         output: String,
         value: Option<Value>,
         skills: Vec<SkillSuggestion>,

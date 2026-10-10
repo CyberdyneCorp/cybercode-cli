@@ -146,10 +146,18 @@ impl BuiltinHost {
         let (kind, output) = match outcome {
             ToolOutcome::Ok(output)
             | ToolOutcome::Structured { output, .. }
-            | ToolOutcome::SkillSuggestions { output, .. } => ("PostToolUse", output),
-            ToolOutcome::Failed(error) | ToolOutcome::Crashed(error) => {
-                ("PostToolUseFailure", error)
-            }
+            | ToolOutcome::SkillSuggestions {
+                failed: false,
+                output,
+                ..
+            } => ("PostToolUse", output),
+            ToolOutcome::Failed(error)
+            | ToolOutcome::Crashed(error)
+            | ToolOutcome::SkillSuggestions {
+                failed: true,
+                output: error,
+                ..
+            } => ("PostToolUseFailure", error),
             ToolOutcome::Aborted => return Ok(()),
         };
         let event = event(

@@ -174,6 +174,7 @@ impl BuiltinHost {
                     value,
                 }),
             ToolOutcome::SkillSuggestions {
+                failed,
                 output,
                 value,
                 skills,
@@ -182,6 +183,7 @@ impl BuiltinHost {
                 .apply_with_token_limit(output, false, token_limit)
                 .map_or_else(ToolOutcome::Crashed, |output| {
                     ToolOutcome::SkillSuggestions {
+                        failed,
                         output,
                         value,
                         skills,
