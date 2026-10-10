@@ -60,6 +60,8 @@ impl MemoryEditorDraft {
         drop(note);
         native::sync_private(&created)?;
         native::sync_namespace_directory(&base)?;
+        // The creation handle has delete access, which conflicts with the no-delete pin.
+        drop(created);
         let directory = native::open_pinned_private_directory(&base, &name, false)?;
         if native::verify_private(&directory)? != directory_id {
             return Err(MemoryStorageError::ReviewConflict);
@@ -140,6 +142,23 @@ mod tests {
         let path = draft.path().to_owned();
         drop(draft);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "Edited");
+    }
+
+    #[test]
+    fn native_draft_creator_handoff_allows_compatible_directory_reopening() {
+        let data = tempfile::tempdir().unwrap();
+        let draft = MemoryEditorDraft::new(data.path(), "Original").unwrap();
+        let compatible =
+            native::open_private_directory(&draft.base, &draft.name, native::Access::DataWrite)
+                .unwrap();
+        assert_eq!(
+            native::verify_private(&compatible).unwrap(),
+            draft.directory_id
+        );
+        std::fs::write(draft.path(), "Changed!").unwrap();
+        assert_eq!(draft.read().unwrap(), "Changed!");
+        drop(draft);
+        native::verify_private(&compatible).unwrap();
     }
 
     #[test]

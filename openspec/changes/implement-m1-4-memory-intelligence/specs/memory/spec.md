@@ -540,6 +540,14 @@
 #### Scenario: Native private Windows editor draft capability
 - **WHEN** a Windows memory editor draft is created under the caller-owned data namespace
 - **THEN** core storage SHALL atomically create a private retained draft directory and private note, flush the exact objects and namespace, and keep full directory identities bound without ACL repair
+- **AND** creation SHALL release its privileged delete-capable directory handle before acquiring the no-delete pin and SHALL verify the pinned object against the recorded creation identity
 - **AND** readback SHALL accept a private regular editor result only under the same retained directory, freeze its observed full identity for bounded UTF-8 reading and verify the named file again before releasing that snapshot
 - **AND** private atomic file replacement MAY be accepted as an editor result; aliases, inherited/non-private replacements, directory substitution, oversized or invalid UTF-8 results SHALL refuse without normalizing or deleting the retained draft
 - **AND** this draft capability SHALL grant no note/database mutation authority and SHALL not enable CLI admission before native capability and actual editor lifecycle acceptance
+
+#### Scenario: Native Windows CLI editor and recovery lifecycle
+- **WHEN** native private draft capability tests have execution evidence and a Windows user explicitly invokes memory editing, deletion or reviewed recovery
+- **THEN** CLI admission SHALL select the shared native storage protocol with the same current configuration, target/index review and database-correlation refusal as Unix
+- **AND** actual Windows editor-process tests SHALL verify quoted arguments, UTF-8 saves, unchanged drafts, validation and editor failure retention, hard-link and non-private replacement refusal, and external target/index or settings changes before commit
+- **AND** local reviewed recovery SHALL preserve unknown database ownership and stale user edits; explicitly confirmed server recovery SHALL retain its original paired receipt across response cache loss
+- **AND** native CLI acceptance SHALL require actual subprocess execution; cross-target compilation alone SHALL not establish it
