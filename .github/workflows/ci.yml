@@ -63,6 +63,9 @@ jobs:
       - name: Native migration detection
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_detection
+      - name: Native read-only migration previews
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test import_preview
       - name: Native migration provider conversion
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_providers

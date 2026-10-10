@@ -40,8 +40,8 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         return Err(tree::external(args));
     }
-    if let Command::Import { .. } = &command {
-        return import::detect(&cli.global);
+    if let Command::Import(args) = &command {
+        return import::run(args, &cli.global);
     }
     let ctx = Context::new(&cli.global)?;
     start_logging(&ctx, &cli.global)?;
@@ -63,7 +63,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
-        Command::External(_) | Command::Import { .. } => unreachable!("handled above"),
+        Command::External(_) | Command::Import(_) => unreachable!("handled above"),
     }
 }
 

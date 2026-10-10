@@ -40,7 +40,7 @@ Use `--model provider/model` to select a model. See the [local core guide](docs/
 | Safety | Checkout trust, tool permissions, protected paths, credential masking and macOS/Linux sandboxing |
 | Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
 | Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
-| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks/local MCP, memory, LSP navigation and edit feedback, automatic formatting, migration detection |
+| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks/local MCP, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
 
 **P0 is implemented, with release gates still open:** the full local-model baseline, including the long coding task, remains incomplete. **P1 is in progress; no P1 milestone is fully accepted.** Windows confinement, remote MCP/OAuth, plugins, complete client controls, browser verification and migration/editor integration still need work or acceptance. Later phases cover workflows, goals, remote control and cloud runners.
 

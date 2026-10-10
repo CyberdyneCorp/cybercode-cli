@@ -15,6 +15,7 @@
 - [ ] Convert providers, credentials/env, agents, commands, skills, rules, instructions, hooks, MCP and remaining canonical configuration fields.
   - [x] Convert bounded Codex provider/model TOML with native catalog shapes, credential/header environment references, value-free pending mappings and actual native loader/catalog validation. Complete provider/profile/sandbox/source adapters and reviewed writes remain open.
 - [ ] Implement dry-run unified diffs, explicit write confirmation, secret safety, source-linked reports and idempotent annotations.
+  - [x] Expose partial read-only previews for supported configuration/permission/provider fields, canonical auto fill order, source layering, redacted normalized diffs and review invalidation. Exact file-byte diffs, full layered provenance, remaining adapters, confirmation/writes and idempotency remain open.
 - [ ] Implement canonical ACP lifecycle, buffers/write-through, editor MCP, permissions and streaming.
 - [ ] Implement the P1 VS Code extension and editor acceptance coverage.
 - [ ] Audit every P1 compat-import/editor-integration requirement against implementation and native evidence.

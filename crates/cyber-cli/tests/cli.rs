@@ -1024,7 +1024,29 @@ fn import_detection_is_read_only_and_outputs_counts_without_configuration_secret
     assert!(text.status.success(), "{}", stderr(&text));
     assert!(stdout(&text).contains("claude: 1 agents"));
     assert!(stdout(&text).contains("sessions: unknown"));
-    let unavailable = e.cyber(&["import", "auto", "--dry-run"]);
-    assert_eq!(unavailable.status.code(), Some(2));
+    assert!(!e.root.join("cyber-home").exists());
+}
+
+#[test]
+fn import_preview_is_read_only_and_preserves_diff_escaping() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::create_dir_all(e.root.join(".codex")).unwrap();
+    let native = r#"{ "description": "line\nquoted\"value" }"#;
+    std::fs::write(e.root.join("cyber.jsonc"), native).unwrap();
+    std::fs::write(e.root.join(".codex/config.toml"), "model='coder'\nmodel_provider='local'\n[model_providers.local]\nbase_url='http://localhost:8000/v1'\napi_key='private-secret'\n").unwrap();
+    let preview = e.cyber(&["import", "auto", "--dry-run", "--format", "json"]);
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    let view = json(&preview);
+    assert_eq!(view["complete"], false);
+    assert_eq!(view["required_environment"].as_array().unwrap().len(), 1);
+    assert!(!stdout(&preview).contains("private-secret"));
+    let text = e.cyber(&["import", "auto", "--dry-run"]);
+    assert!(text.status.success(), "{}", stderr(&text));
+    assert!(stdout(&text).contains(view["diff"].as_str().unwrap()));
+    assert_eq!(
+        std::fs::read_to_string(e.root.join("cyber.jsonc")).unwrap(),
+        native
+    );
     assert!(!e.root.join("cyber-home").exists());
 }

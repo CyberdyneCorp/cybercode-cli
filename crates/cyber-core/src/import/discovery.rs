@@ -117,7 +117,7 @@ fn canonical(path: &Path) -> Result<PathBuf, DiscoveryError> {
     Ok(path)
 }
 
-fn is_link(metadata: &fs::Metadata) -> bool {
+pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

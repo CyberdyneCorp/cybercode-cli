@@ -6,6 +6,7 @@ mod codex_source;
 mod detection;
 mod discovery;
 mod opencode;
+mod preview;
 mod snapshot;
 pub use claude::{ClaudePermissions, ConversionError, PermissionRule, claude_permissions};
 pub use codex::codex_prefix_rules;
@@ -20,4 +21,5 @@ pub use discovery::{
     SourceRoots, SourceTool, discover_sources,
 };
 pub use opencode::opencode_permissions;
+pub use preview::{ImportPreview, ImportScope, MappingRecord, PreviewOutput, preview_import};
 pub use snapshot::SourceSnapshot;

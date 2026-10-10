@@ -149,16 +149,14 @@ impl OpenSource {
     }
     #[cfg(windows)]
     fn retain_review_identities(&mut self, path: &Path) -> Result<(), DiscoveryError> {
-        use cap_fs_ext::Reopen;
-        use cap_std::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use windows_sys::Win32::{
+            Foundation::INVALID_HANDLE_VALUE,
+            Storage::FileSystem::{
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, ReOpenFile,
+            },
         };
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .access_mode(FILE_READ_ATTRIBUTES)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
         let mut handles = Vec::new();
         for (directory, expected) in self._directories.iter().zip(&self.bindings) {
             let original = directory
@@ -166,12 +164,28 @@ impl OpenSource {
                 .map_err(|_| error(path, "source directory handle is unavailable"))?
                 .into_std_file();
             // Reopen the same object with delete sharing; never use these handles for path lookup.
-            let retained = original.reopen(&options).map_err(|_| {
-                error(
-                    path,
-                    "source directory identity cannot be retained for review",
+            // Only attribute access is requested; no enumeration or mutation authority is added.
+            // The original owns a live handle, and success returns a distinct owned handle.
+            let handle = unsafe {
+                ReOpenFile(
+                    original.as_raw_handle(),
+                    FILE_READ_ATTRIBUTES,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
                 )
-            })?;
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                let reason = match std::io::Error::last_os_error().raw_os_error() {
+                    Some(5) => "source review identity handoff denied access",
+                    Some(6) => "source review identity handoff rejected the directory handle",
+                    Some(32) => "source review identity handoff encountered incompatible sharing",
+                    Some(87) => "source review identity handoff rejected native parameters",
+                    _ => "source directory identity cannot be retained for review",
+                };
+                return Err(error(path, reason));
+            }
+            // ReOpenFile returned a valid independent handle; File closes it on every error path.
+            let retained = unsafe { File::from_raw_handle(handle) };
             if identity(&retained, path)? != *expected {
                 return Err(error(
                     path,
@@ -249,10 +263,51 @@ impl SourceSnapshot {
         if !source.path.starts_with(&base) {
             return Err(error(&source.path, "source is outside its declared root"));
         }
-        let mut opened = OpenSource::open(&source.path)?;
-        let bytes = opened.bytes(&source.path)?;
+        Self::capture(&source.path)
+    }
+    pub(super) fn read_native_config(path: &Path) -> Result<Option<Self>, DiscoveryError> {
+        let path = std::path::absolute(path)
+            .map_err(|_| error(path, "native configuration path is unavailable"))?;
+        if path.components().any(|c| matches!(c, Component::ParentDir))
+            || !path
+                .file_name()
+                .is_some_and(|n| n == "cyber.json" || n == "cyber.jsonc")
+        {
+            return Err(error(&path, "invalid native configuration target"));
+        }
+        let mut exists = false;
+        for ancestor in path.ancestors() {
+            match std::fs::symlink_metadata(ancestor) {
+                Ok(metadata) => {
+                    if super::discovery::is_link(&metadata) {
+                        return Err(error(
+                            ancestor,
+                            "linked native configuration binding is unsupported",
+                        ));
+                    }
+                    if ancestor == path {
+                        exists = true;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(_) => {
+                    return Err(error(
+                        ancestor,
+                        "native configuration metadata is unavailable",
+                    ));
+                }
+            }
+        }
+        if !exists {
+            return Ok(None);
+        }
+        Self::capture(&path).map(Some)
+    }
+    fn capture(path: &Path) -> Result<Self, DiscoveryError> {
+        let mut opened = OpenSource::open(path)?;
+        let bytes = opened.bytes(path)?;
         let snapshot = Self {
-            path: source.path.clone(),
+            path: path.into(),
             opened,
             digest: Sha256::digest(&bytes).into(),
             bytes,

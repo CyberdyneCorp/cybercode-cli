@@ -114,7 +114,7 @@ fn count_file(
     }
     Ok(())
 }
-fn parse_document(source: &SourceFile, text: &str) -> Result<Value, DiscoveryError> {
+pub(super) fn parse_document(source: &SourceFile, text: &str) -> Result<Value, DiscoveryError> {
     let value = if source.path.extension().is_some_and(|e| e == "toml") {
         let table = text
             .parse::<toml::Table>()
