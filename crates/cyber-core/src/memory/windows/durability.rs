@@ -8,7 +8,25 @@ use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 /// Flushes the exact retained private object. Unsupported or read-only flushes refuse.
 /// Callers must additionally synchronize affected parent directories after installation.
 pub fn sync_private(file: &File) -> Result<(), MemoryStorageError> {
-    let before = verify_private(file)?;
+    sync_checked(file, verify_private)
+}
+/// Flush only a retained caller-selected namespace container, never a payload file.
+/// Its caller owns routing/binding; inherited container ACLs are neither promoted nor repaired.
+pub(crate) fn sync_namespace_directory(file: &File) -> Result<(), MemoryStorageError> {
+    sync_checked(file, directory_identity)
+}
+fn directory_identity(file: &File) -> Result<FileIdentity, MemoryStorageError> {
+    let id = identity(file)?;
+    if !file.metadata()?.is_dir() {
+        return Err(refusal("expected a namespace directory for flushing"));
+    }
+    Ok(id)
+}
+fn sync_checked(
+    file: &File,
+    verify: impl Fn(&File) -> Result<FileIdentity, MemoryStorageError>,
+) -> Result<(), MemoryStorageError> {
+    let before = verify(file)?;
     let mut status = IO_STATUS_BLOCK::default();
     // Normal flags flush data, metadata and the storage cache. The native flush operation
     // is synchronous, so neither IO_STATUS_BLOCK nor input storage can outlive this call.
@@ -21,7 +39,7 @@ pub fn sync_private(file: &File) -> Result<(), MemoryStorageError> {
     if result != 0 || unsafe { status.Anonymous.Status } != 0 {
         return Err(refusal("native memory flush returned unknown settlement"));
     }
-    if verify_private(file)? != before {
+    if verify(file)? != before {
         return Err(refusal("native memory flush identity changed"));
     }
     Ok(())
@@ -82,5 +100,45 @@ mod tests {
             std::fs::read(root.path().join("alias")).unwrap(),
             b"user bytes"
         );
+    }
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::*;
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE,
+    };
+    #[test]
+    fn native_namespace_flush_supports_inherited_directory_and_refuses_files_and_readonly_handles()
+    {
+        let data = tempfile::tempdir().unwrap();
+        let directory = std::fs::OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(data.path())
+            .unwrap();
+        let before = identity(&directory).unwrap();
+        assert!(verify_private(&directory).is_err());
+        sync_namespace_directory(&directory).unwrap();
+        assert_eq!(identity(&directory).unwrap(), before);
+        assert!(verify_private(&directory).is_err());
+        let readonly = std::fs::OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(data.path())
+            .unwrap();
+        assert!(sync_namespace_directory(&readonly).is_err());
+        let path = data.path().join("ordinary-file");
+        std::fs::write(&path, b"untouched").unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        assert!(sync_namespace_directory(&file).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"untouched");
     }
 }

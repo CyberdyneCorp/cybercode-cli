@@ -160,3 +160,58 @@ fn native_client_unsafe_existing_directory_and_lock_are_not_repaired() {
     assert!(retained.exists());
     assert!(lock.exists());
 }
+
+#[test]
+fn native_client_actual_startup_inherited_container_saves_retains_and_reopens_private_state() {
+    let data = tempfile::tempdir().unwrap();
+    let paths = crate::paths::Paths {
+        data: data.path().join("data"),
+        config: data.path().join("config"),
+        state: data.path().join("state"),
+        cache: data.path().join("cache"),
+        tmp: data.path().join("tmp"),
+    };
+    paths.ensure().unwrap();
+    let mut store = admit(&paths.state);
+    let parent_id = native::identity(&store.parent.try_clone().unwrap().into_std_file()).unwrap();
+    assert!(native::verify_private(&store.parent.try_clone().unwrap().into_std_file()).is_err());
+    native::verify_private(&store.dir.try_clone().unwrap().into_std_file()).unwrap();
+    std::fs::write(paths.state.join("unrelated-state"), b"preserve me").unwrap();
+    for index in 0..6 {
+        save(&mut store, format!("startup checkpoint {index}").as_bytes()).unwrap();
+    }
+    let bytes = store.checkpoint().unwrap().to_vec();
+    let file = native::open_private_file(
+        &store.dir.try_clone().unwrap().into_std_file(),
+        CHECKPOINT,
+        native::Access::Read,
+    )
+    .unwrap();
+    let id = native::verify_private(&file).unwrap();
+    drop(file);
+    assert_eq!(
+        std::fs::read_dir(paths.state.join(DIRECTORY).join(".checkpoint-history"))
+            .unwrap()
+            .count(),
+        2
+    );
+    assert_eq!(
+        native::identity(&store.parent.try_clone().unwrap().into_std_file()).unwrap(),
+        parent_id
+    );
+    assert!(native::verify_private(&store.parent.try_clone().unwrap().into_std_file()).is_err());
+    drop(store);
+    let restored = admit(&paths.state);
+    assert_eq!(restored.checkpoint(), Some(bytes.as_slice()));
+    let file = native::open_private_file(
+        &restored.dir.try_clone().unwrap().into_std_file(),
+        CHECKPOINT,
+        native::Access::Read,
+    )
+    .unwrap();
+    assert_eq!(native::verify_private(&file).unwrap(), id);
+    assert_eq!(
+        std::fs::read(paths.state.join("unrelated-state")).unwrap(),
+        b"preserve me"
+    );
+}

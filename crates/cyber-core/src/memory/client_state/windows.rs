@@ -94,7 +94,7 @@ pub(super) fn file(dir: &Dir, name: &str) -> Result<File, MemoryStorageError> {
 }
 pub(super) fn sync(dir: &Dir, parent: &Dir) -> Result<(), MemoryStorageError> {
     native::sync_private(&dir.try_clone()?.into_std_file())?;
-    native::sync_private(&parent.try_clone()?.into_std_file())
+    native::sync_namespace_directory(&parent.try_clone()?.into_std_file())
 }
 #[cfg(test)]
 #[path = "windows_tests.rs"]

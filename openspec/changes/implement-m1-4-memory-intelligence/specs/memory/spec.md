@@ -485,3 +485,9 @@
 - **THEN** recovery SHALL refuse before deleting any remaining selected record and preserve the checkpoint, cleanup evidence and replacement objects
 - **WHEN** cleanup reports failure before or after real file, directory or plan disposal
 - **THEN** shared reopening SHALL resume only remaining recorded objects, preserve the installed checkpoint identity, bound history and clear completed cleanup authority without replay
+
+#### Scenario: Windows checkpoint inherited startup container
+- **WHEN** the caller-selected state container has inherited permissions from ordinary startup
+- **THEN** private checkpoint directories and files SHALL still require current-user ownership and protected private ACLs without repairing existing objects
+- **AND** the retained state container SHALL be pinned against namespace changes and flushed normally with full identity and directory-type checks before/after the operation, without changing its ACL or accepting non-directory handles
+- **AND** the actual startup path SHALL support private checkpoint saves, bounded history and reopening while preserving unrelated container files; native execution SHALL be required before public activation
