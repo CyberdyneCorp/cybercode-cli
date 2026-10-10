@@ -6,6 +6,33 @@ use serde_json::json;
 use std::path::Path;
 
 impl BuiltinHost {
+    /// Discovered skills override commands; embedded defaults do not mask definitions.
+    pub(crate) fn command_sources(
+        &self,
+        location: &Path,
+        name: &str,
+    ) -> (
+        Option<cyber_core::skills::Skill>,
+        cyber_core::commands::Commands,
+    ) {
+        let skill_name = name
+            .strip_prefix("project:")
+            .filter(|original| cyber_core::commands::invocation_name(original) == name)
+            .unwrap_or(name);
+        let registry = self.command_registry(location);
+        let skill = self
+            .skills(location)
+            .skills
+            .remove(skill_name)
+            .filter(|skill| {
+                skill.user_invocable
+                    && (!skill.is_bundled()
+                        || (!registry.entries.contains_key(name)
+                            && !registry.unavailable.iter().any(|entry| entry == name)))
+            });
+        (skill, registry)
+    }
+
     pub async fn command_plan(
         &self,
         turn: &TurnContext,
@@ -15,19 +42,10 @@ impl BuiltinHost {
         if ["help", "exit", "goal", "loop", "workflows", "mode"].contains(&name) {
             return Ok(None);
         }
-        let skill_name = name
-            .strip_prefix("project:")
-            .filter(|original| cyber_core::commands::invocation_name(original) == name)
-            .unwrap_or(name);
         let location = Path::new(&turn.directory);
-        let found = self.skills(location);
-        let Some(skill) = found
-            .skills
-            .get(skill_name)
-            .filter(|skill| skill.user_invocable)
-        else {
-            return Ok(self
-                .command_registry(location)
+        let (skill, registry) = self.command_sources(location, name);
+        let Some(skill) = skill else {
+            return Ok(registry
                 .entries
                 .get(name)
                 .map(|command| CommandPlan::plain(command.expand(arguments))));
@@ -66,7 +84,7 @@ impl BuiltinHost {
         }
         Ok(Some(CommandPlan {
             text: if skill.context == cyber_core::skills::SkillContext::Fork {
-                cyber_core::skills::instruction_frame(skill, arguments)
+                cyber_core::skills::instruction_frame(&skill, arguments)
             } else {
                 cyber_core::skills::expand(&skill.body, arguments)
             },

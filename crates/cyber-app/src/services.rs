@@ -481,19 +481,28 @@ impl Services for AppServices {
                 namespace: None,
                 provenance: None,
             });
-        let skills =
-            self.host
-                .skill_commands(location)
-                .into_iter()
-                .map(|(name, description, hint)| CommandInfo {
-                    name,
-                    description,
-                    source: "skill".into(),
-                    argument_hint: hint,
-                    namespace: None,
-                    provenance: None,
-                });
+        let (bundled, skills): (Vec<_>, Vec<_>) = self
+            .host
+            .skill_commands(location)
+            .into_iter()
+            .map(|skill| CommandInfo {
+                source: if skill.is_bundled() {
+                    "builtin"
+                } else {
+                    "skill"
+                }
+                .into(),
+                name: skill.name,
+                description: skill.description,
+                argument_hint: skill.argument_hint,
+                namespace: None,
+                provenance: None,
+            })
+            .partition(|entry| entry.source == "builtin");
         let mut registry = self.host.command_registry(location);
+        let bundled = bundled
+            .into_iter()
+            .filter(|entry| !registry.unavailable.contains(&entry.name));
         let configured = registry.entries.into_iter().map(|(name, command)| {
             let provenance = registry.provenance.remove(&name);
             CommandInfo {
@@ -506,7 +515,7 @@ impl Services for AppServices {
             }
         });
         let mut result = std::collections::BTreeMap::new();
-        for mut entry in builtin.chain(configured).chain(skills) {
+        for mut entry in builtin.chain(bundled).chain(configured).chain(skills) {
             if entry.source != "builtin" {
                 entry.name = cyber_core::commands::invocation_name(&entry.name);
             }

@@ -191,7 +191,10 @@ async fn unknown_skills_list_the_available_names() {
         "---\nname: hidden\ndescription: user only\ndisable-model-invocation: true\n---\nH",
     );
     let out = failed(f.call("default", "skill", json!({"name": "nope"})).await);
-    assert_eq!(out, "Skill \"nope\" not found. Available: alpha");
+    assert_eq!(
+        out,
+        "Skill \"nope\" not found. Available: alpha, batch, customize-cyber, review, security-review, simplify"
+    );
 }
 
 #[tokio::test]
@@ -229,7 +232,10 @@ async fn skills_listing_excludes_denied_and_user_only_skills() {
         ".cyber/skills/c/SKILL.md",
         "---\nname: gamma\ndescription: user only\ndisable-model-invocation: true\n---\nC",
     );
-    f.set_config(json!({"permissions": {"skill": {"beta": "deny"}}}));
+    f.set_config(json!({"permissions": {"skill": {
+        "beta": "deny", "batch": "deny", "customize-cyber": "deny",
+        "review": "deny", "security-review": "deny", "simplify": "deny"
+    }}}));
     let turn = cyber_server::runtime::TurnContext {
         session_id: "s".into(),
         directory: f.repo.display().to_string(),

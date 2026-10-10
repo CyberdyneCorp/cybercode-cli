@@ -39,6 +39,7 @@ Use `--model provider/model` to select a model. See the [local core guide](docs/
 | Sessions | Durable prompt admission, streaming, interrupt/resume, crash recovery and compaction |
 | Safety | Checkout trust, tool permissions, protected paths, credential masking and macOS/Linux sandboxing |
 | Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
+| Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks |
 | Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
 | Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks/local MCP, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
 

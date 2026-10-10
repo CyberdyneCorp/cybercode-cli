@@ -2005,3 +2005,82 @@ async fn authenticated_skill_commands_capture_declarations_and_refuse_denials() 
     server.await.unwrap().unwrap();
     application.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn bundled_skill_catalogue_and_project_overrides_share_command_precedence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let application = app(tmp.path()).await;
+    let services = &application.state.services;
+    let rows = services.commands(tmp.path());
+    for name in [
+        "review",
+        "batch",
+        "simplify",
+        "security-review",
+        "customize-cyber",
+    ] {
+        let row = rows.iter().find(|row| row.name == name).unwrap();
+        assert_eq!(row.source, "builtin");
+        assert!(row.argument_hint.is_some());
+        assert!(row.provenance.is_none());
+        assert!(
+            services
+                .expand_command(tmp.path(), name, "requested target")
+                .unwrap()
+                .contains("requested target")
+        );
+    }
+    let command = tmp.path().join(".cyber/commands/simplify.md");
+    std::fs::create_dir_all(command.parent().unwrap()).unwrap();
+    std::fs::write(
+        &command,
+        "---\ndescription: Project command\n---\nCOMMAND $ARGUMENTS",
+    )
+    .unwrap();
+    assert_eq!(
+        services.expand_command(tmp.path(), "simplify", "scope"),
+        Some("COMMAND scope".into())
+    );
+    let rows = services.commands(tmp.path());
+    assert_eq!(
+        rows.iter()
+            .find(|row| row.name == "simplify")
+            .unwrap()
+            .source,
+        "command"
+    );
+    let directory = tmp.path().join(".cyber/skills/simplify");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("SKILL.md"),
+        "---\nname: simplify\ndescription: Project skill\n---\nSKILL $ARGUMENTS",
+    )
+    .unwrap();
+    assert_eq!(
+        services.expand_command(tmp.path(), "simplify", "scope"),
+        Some("SKILL scope".into())
+    );
+    let rows = services.commands(tmp.path());
+    assert_eq!(
+        rows.iter()
+            .find(|row| row.name == "simplify")
+            .unwrap()
+            .source,
+        "skill"
+    );
+    assert_eq!(rows.iter().filter(|row| row.name == "simplify").count(), 1);
+    std::fs::remove_file(directory.join("SKILL.md")).unwrap();
+    std::fs::write(&command, "---\nagent: reviewer\n---\nUnavailable command").unwrap();
+    assert!(
+        services
+            .expand_command(tmp.path(), "simplify", "scope")
+            .is_none()
+    );
+    assert!(
+        !services
+            .commands(tmp.path())
+            .iter()
+            .any(|row| row.name == "simplify")
+    );
+    application.runtime.shutdown().await;
+}

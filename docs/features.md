@@ -14,6 +14,7 @@ Implemented behavior and remaining scope, reviewed on **2026-10-10**. Start with
 | File recovery | Shadow-git snapshots and conflict-aware restore preserving user edits | Available; broader rewind UI remains |
 | Clients | TUI, noninteractive `exec`, background service, HTTP/SSE/WebSocket/stdio API and generated TypeScript SDK | Available; complete P1 client surfaces remain |
 | Subagents | Foreground/background children, named resume, forked context, structured results, approvals and task controls | Partial P1 |
+| Skills | Five embedded instruction packages, discovered replacements, captured user commands and background reviewer tasks | Partial P1; remote sources, complete command overrides, dedicated review CLI/target validation and lifecycle acceptance remain |
 | Worktrees | Managed startup and isolated children, setup journals, file summaries, cleanup and reviewed setup retry | Partial P1; public lifecycle and unknown-effect recovery remain |
 | Cancellation | Durable admission closure, exclusive child result ownership, bounded stop reports and matched reopening | Partial P1; unknown-effect recovery, cross-process actor cancellation and exec/TUI adoption remain |
 | Spending | Durable own/descendant billing, atomic usage API, TUI `/cost` and soft Session budgets | Partial P1; reservations, daily caps and complete enforcement/displays remain |

@@ -119,6 +119,15 @@ jobs:
       - name: Native delegation receipt reconciliation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test delegation_recovery
+      - name: Native bundled skill discovery and agent profiles
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --lib --test agent_profiles
+      - name: Native bundled skill execution and worktrees
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test bundled_skills
+      - name: Native bundled command catalogue
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --test server bundled_skill_catalogue
       - name: Native reviewer skill selection and ceilings
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test reviewer_skills

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod bundled;
+
 /// Captured declarations from an authorized load; instruction text is not authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillActivation {
@@ -19,6 +21,13 @@ pub enum SkillContext {
     #[default]
     Inline,
     Fork,
+}
+
+/// Embedded packages have no local directory or filesystem authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillSource {
+    Directory(PathBuf),
+    Bundled,
 }
 
 /// Where to look for skills.
@@ -47,9 +56,28 @@ pub struct Skill {
     pub disable_model_invocation: bool,
     pub user_invocable: bool,
     pub argument_hint: Option<String>,
-    /// The directory holding `SKILL.md`.
-    pub base: PathBuf,
+    pub source: SkillSource,
     pub body: String,
+}
+
+impl Skill {
+    pub fn directory(&self) -> Option<&Path> {
+        match &self.source {
+            SkillSource::Directory(path) => Some(path),
+            SkillSource::Bundled => None,
+        }
+    }
+
+    pub fn is_bundled(&self) -> bool {
+        self.source == SkillSource::Bundled
+    }
+
+    pub fn source_label(&self) -> String {
+        self.directory().map_or_else(
+            || format!("builtin:{}", self.name),
+            |path| path.display().to_string(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -139,12 +167,19 @@ pub fn roots(scope: &SkillScope) -> Vec<PathBuf> {
 }
 
 pub fn discover(scope: &SkillScope) -> Discovery {
-    let mut out = Discovery::default();
+    let mut out = bundled::discover();
     for root in roots(scope) {
         for dir in skill_dirs(&root) {
             match load(&dir) {
                 Ok(skill) => {
-                    out.skills.insert(skill.name.clone(), skill);
+                    if let Some(previous) = out.skills.insert(skill.name.clone(), skill.clone()) {
+                        out.diagnostics.push(format!(
+                            "{}: replaces skill {} from {}",
+                            skill.source_label(),
+                            skill.name,
+                            previous.source_label()
+                        ));
+                    }
                 }
                 Err(reason) => out
                     .diagnostics
@@ -174,7 +209,11 @@ fn skill_dirs(root: &Path) -> Vec<PathBuf> {
 
 pub fn load(dir: &Path) -> Result<Skill, String> {
     let text = std::fs::read_to_string(dir.join("SKILL.md")).map_err(|e| e.to_string())?;
-    let (yaml, body) = split_frontmatter(&text).ok_or("missing YAML frontmatter")?;
+    parse(&text, SkillSource::Directory(dir.to_path_buf()))
+}
+
+fn parse(text: &str, source: SkillSource) -> Result<Skill, String> {
+    let (yaml, body) = split_frontmatter(text).ok_or("missing YAML frontmatter")?;
     let fm: Frontmatter =
         serde_yaml_ng::from_str(yaml).map_err(|e| format!("invalid frontmatter: {e}"))?;
     validate_name(&fm.name)?;
@@ -222,7 +261,7 @@ pub fn load(dir: &Path) -> Result<Skill, String> {
         disable_model_invocation: fm.disable_model_invocation,
         user_invocable: fm.user_invocable.unwrap_or(true),
         argument_hint: fm.argument_hint,
-        base: dir.to_path_buf(),
+        source,
         body: body.trim_start_matches(['\r', '\n']).to_string(),
     })
 }
@@ -285,15 +324,18 @@ pub fn instruction_frame(skill: &Skill, arguments: &str) -> String {
     format!(
         "<skill name=\"{}\" base=\"{}\">\n{}{listing}\n</skill>",
         skill.name,
-        skill.base.display(),
+        skill.source_label(),
         body.trim_end()
     )
 }
 
 /// Up to `limit` files beside `SKILL.md`, as sorted relative paths.
 pub fn sibling_files(skill: &Skill, limit: usize) -> Vec<String> {
+    let Some(base) = skill.directory() else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    let mut stack = vec![skill.base.clone()];
+    let mut stack = vec![base.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -303,7 +345,7 @@ pub fn sibling_files(skill: &Skill, limit: usize) -> Vec<String> {
         for path in entries {
             if path.is_dir() {
                 stack.push(path);
-            } else if let Ok(rel) = path.strip_prefix(&skill.base)
+            } else if let Ok(rel) = path.strip_prefix(base)
                 && rel != Path::new("SKILL.md")
             {
                 out.push(rel.to_string_lossy().replace('\\', "/"));
@@ -533,7 +575,8 @@ mod tests {
             extra: vec![tmp.path().to_path_buf()],
         };
         let found = discover(&scope);
-        assert!(found.skills.is_empty());
+        assert_eq!(found.skills.len(), 5);
+        assert!(found.skills.values().all(Skill::is_bundled));
         assert_eq!(found.diagnostics.len(), 2, "{:?}", found.diagnostics);
     }
 

@@ -259,7 +259,7 @@ impl BuiltinHost {
             self.skills_for(location, config)
                 .skills
                 .into_values()
-                .map(|s| s.base),
+                .filter_map(|s| s.directory().map(Path::to_path_buf)),
         );
         let mut rules = permissions::defaults(&allowed, primary_agent);
         for scope in ["project", "global"] {
@@ -274,13 +274,12 @@ impl BuiltinHost {
         rules
     }
 
-    /// Skills a user can invoke as `/name` from a Location: `(name, description, argument hint)`.
-    pub fn skill_commands(&self, location: &Path) -> Vec<(String, String, Option<String>)> {
+    /// Skills a user can invoke as `/name`, including embedded source identity.
+    pub fn skill_commands(&self, location: &Path) -> Vec<skills::Skill> {
         self.skills(location)
             .skills
             .into_values()
             .filter(|s| s.user_invocable)
-            .map(|s| (s.name, s.description, s.argument_hint))
             .collect()
     }
 
@@ -326,16 +325,14 @@ impl BuiltinHost {
         if ["help", "exit", "goal", "loop", "workflows", "mode"].contains(&name) {
             return None;
         }
-        let skill_name = name
-            .strip_prefix("project:")
-            .filter(|original| cyber_core::commands::invocation_name(original) == name)
-            .unwrap_or(name);
-        self.expand_skill(location, skill_name, arguments)
+        let (skill, registry) = self.command_sources(location, name);
+        skill
+            .map(|skill| skills::expand(&skill.body, arguments))
             .or_else(|| {
-                self.command_registry(location)
+                registry
                     .entries
                     .get(name)
-                    .map(|c| c.expand(arguments))
+                    .map(|command| command.expand(arguments))
             })
     }
 
