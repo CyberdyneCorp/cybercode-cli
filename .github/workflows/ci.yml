@@ -106,7 +106,7 @@ jobs:
         run: cargo test --locked -p cyber-tools --test command_discovery
       - name: Native imported static command consumption
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-app --test server commands_
+        run: cargo test --locked -p cyber-app --test server command
       - name: Native imported provider configuration and catalog
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test import_providers

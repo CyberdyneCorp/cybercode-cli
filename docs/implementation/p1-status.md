@@ -1,5 +1,18 @@
 # P1 implementation status
 
+## Runtime command provenance and verified loader precedence (2026-10-10)
+
+A new actual application regression failed on unchanged runtime code from main `4f906a2`: a `global:<path>` configuration source was treated as a literal filesystem path, so global inline configuration masked nearer project Markdown. Discovery now decodes runtime global/project labels, resolves the declaring directory for ancestor depth and retains profile/CLI/environment overrides as explicit runtime precedence. The same regression passes, including refusal of fallback beneath an unsupported nearer winner.
+
+Static registries retain typed winning and shadowed origins for available and unavailable definitions, limited to source kind, scope and contributing paths. The authenticated command catalogue exposes provenance for available static commands and namespaces for namespaced entries. No templates, bodies or raw logical loader labels appear in that metadata. Native inline configuration may combine leaves from several file layers, so all contributing file paths remain visible. The catalogue keeps available-only autocomplete semantics.
+
+An actual authenticated HTTP test checks requested-Location isolation, global versus project winners, shadowed scope, reserved namespaces, unavailable omission, absence of template bodies and no new durable events. OpenAPI and generated SDK types include the additive fields. Full CLI/unavailable/permission-effect inspection, other command sources, advanced behavior, complete migration writes and editor integration remain required; this does not accept the broader command contract or a milestone.
+
+Local validation passes 187 Rust cases across nine discovery, four parser, nine snapshot, 39 preview, two CI contracts, 24 actual application/server cases, 60 HTTP cases, one host scope-control and 39 CLI cases. SDK typechecking and all 80 TypeScript tests pass. Workspace all-target Clippy with warnings denied, formatting/diff, SDK generation/inventory and 60 strict OpenSpec checks pass; specification lint reports zero errors and 21 warnings. Explicit project-labelled configuration remains project-scoped even when the custom global directory overlaps that checkout.
+
+The prior push's [Windows job 114293461483](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38079553866/job/114293461483) has passed native read-time discovery and host project-disable controls, including the post-return directory-move regression, while metadata-only retention and migration snapshot steps have failed. At the latest observation the job is still running. Transient reader success does not establish retained review-handle acceptance. Full scope remains all 225 P1 contracts; P0 local-model services/models/evaluations/artifacts are preserved.
+
+
 ## Live static Markdown command discovery (2026-10-10)
 
 The application catalogue and expansion service now discover native global/project and Claude-compatible static Markdown commands without requiring import. Global-to-project, ancestor-to-Location and compatibility-to-native precedence use the runtime configuration's source attribution; unattributed runtime/profile inline overrides retain highest precedence. Unsupported winning files suppress older fallbacks. Later skills and reserved-name namespaces remain intact. Each request rereads files and returns owned templates, without retaining handles after catalogue return.

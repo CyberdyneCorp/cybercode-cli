@@ -4490,6 +4490,23 @@
               "string",
               "null"
             ]
+          },
+          "namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommandProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Static command origins only; broader source/permission inspection remains separate."
           }
         },
         "required": [
@@ -4498,6 +4515,63 @@
           "source"
         ],
         "description": "A slash command or skill for autocomplete."
+      },
+      "CommandProvenance": {
+        "type": "object",
+        "properties": {
+          "winner": {
+            "$ref": "#/components/schemas/CommandOrigin"
+          },
+          "shadowed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommandOrigin"
+            }
+          }
+        },
+        "required": [
+          "winner",
+          "shadowed"
+        ]
+      },
+      "CommandOrigin": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/CommandSourceScope"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CommandSourceKind"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "scope",
+          "kind",
+          "paths"
+        ],
+        "description": "Only source locations are retained; definition values and loader labels are omitted."
+      },
+      "CommandSourceScope": {
+        "type": "string",
+        "enum": [
+          "global",
+          "project",
+          "runtime"
+        ]
+      },
+      "CommandSourceKind": {
+        "type": "string",
+        "enum": [
+          "native_markdown",
+          "compatibility_markdown",
+          "configuration"
+        ]
       },
       "Located_Array_of_string": {
         "type": "object",

@@ -1692,6 +1692,21 @@ async fn native_markdown_commands_reach_live_catalogue_and_refresh_after_edits()
     let review = rows.iter().find(|c| c.name == "review").unwrap();
     assert_eq!(review.source, "command");
     assert_eq!(review.argument_hint.as_deref(), Some("<paths>"));
+    let provenance = review.provenance.as_ref().unwrap();
+    assert_eq!(
+        provenance.winner.paths,
+        [commands.join("review.md").canonicalize().unwrap()]
+    );
+    assert_eq!(
+        provenance.winner.scope,
+        cyber_core::commands::CommandSourceScope::Project
+    );
+    let mode = rows.iter().find(|row| row.name == "project:mode").unwrap();
+    assert_eq!(mode.namespace.as_deref(), Some("project"));
+    let serialized = serde_json::to_value(review).unwrap();
+    assert_eq!(serialized["provenance"]["winner"]["scope"], "project");
+    assert!(serialized.get("template").is_none());
+
     assert!(!rows.iter().any(|c| c.name == "shell"));
     assert!(
         rows.iter()
@@ -1737,5 +1752,141 @@ async fn native_markdown_commands_reach_live_catalogue_and_refresh_after_edits()
             .is_none()
     );
     assert!(!location.join("never-created-sentinel").exists());
+    application.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn commands_resolve_real_loader_scope_labels_before_markdown_precedence() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join(".git")).unwrap();
+    let application = app(tmp.path()).await;
+    let location = tmp.path().join("nested");
+    let commands = location.join(".cyber/commands");
+    std::fs::create_dir_all(&commands).unwrap();
+    std::fs::write(
+        application.paths.config.join("cyber.json"),
+        r#"{"commands":{"review":{"template":"Global inline"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(commands.join("review.md"), "Nearest Markdown").unwrap();
+    assert_eq!(
+        application
+            .state
+            .services
+            .expand_command(&location, "review", ""),
+        Some("Nearest Markdown".into())
+    );
+    let rows = application.state.services.commands(&location);
+    let review = rows.iter().find(|row| row.name == "review").unwrap();
+    let provenance = review.provenance.as_ref().unwrap();
+    assert_eq!(
+        provenance.shadowed[0].scope,
+        cyber_core::commands::CommandSourceScope::Global
+    );
+    assert_eq!(
+        provenance.shadowed[0].paths,
+        [application.paths.config.join("cyber.json")]
+    );
+    // An ancestor inline definition must not mask a nearer unsupported definition.
+    std::fs::write(
+        tmp.path().join("cyber.json"),
+        r#"{"commands":{"review":{"template":"Ancestor inline"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        commands.join("review.md"),
+        "---\nagent: reviewer\n---\nUnsupported",
+    )
+    .unwrap();
+    assert!(
+        application
+            .state
+            .services
+            .expand_command(&location, "review", "")
+            .is_none()
+    );
+    application.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn command_catalog_api_exposes_location_provenance_without_template_values() {
+    let tmp = tempfile::tempdir().unwrap();
+    let application = app(tmp.path()).await;
+    let location = tmp.path().join("checkout/nested");
+    std::fs::create_dir_all(tmp.path().join("checkout/.git")).unwrap();
+    let commands = location.join(".cyber/commands");
+    std::fs::create_dir_all(&commands).unwrap();
+    std::fs::write(
+        application.paths.config.join("cyber.json"),
+        r#"{"commands":{"review":{"template":"private-global-body"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(commands.join("review.md"), "private-project-body").unwrap();
+    std::fs::write(commands.join("mode.md"), "private-mode-body").unwrap();
+    std::fs::write(
+        commands.join("blocked.md"),
+        "---\nagent: reviewer\n---\nprivate-blocked-body",
+    )
+    .unwrap();
+    let before: i64 = application
+        .store
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM event", [], |row| row.get(0))?))
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/api/v1/commands", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let response = hook_catalog(&client, &url, &location).await;
+    let rows = response["data"].as_array().unwrap();
+    let review = rows.iter().find(|row| row["name"] == "review").unwrap();
+    assert_eq!(review["provenance"]["winner"]["scope"], "project");
+    assert_eq!(
+        review["provenance"]["winner"]["paths"][0],
+        commands
+            .join("review.md")
+            .canonicalize()
+            .unwrap()
+            .display()
+            .to_string()
+    );
+    assert_eq!(review["provenance"]["shadowed"][0]["scope"], "global");
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["name"] == "project:mode")
+            .unwrap()["namespace"],
+        "project"
+    );
+    assert!(!rows.iter().any(|row| row["name"] == "blocked"));
+    assert!(!response.to_string().contains("private-"));
+    let elsewhere = hook_catalog(&client, &url, tmp.path()).await;
+    let global = elsewhere["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "review")
+        .unwrap();
+    assert_eq!(global["provenance"]["winner"]["scope"], "global");
+    assert_eq!(
+        application
+            .store
+            .read(|conn| Ok(
+                conn.query_row("SELECT count(*) FROM event", [], |row| row.get::<_, i64>(0))?
+            ))
+            .unwrap(),
+        before
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
     application.runtime.shutdown().await;
 }

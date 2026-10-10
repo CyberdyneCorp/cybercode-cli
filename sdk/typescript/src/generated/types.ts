@@ -89,6 +89,21 @@ export type CommandInfo = {
   /** `builtin`, `skill` or `command`. */
   source: string;
   argument_hint?: string | null;
+  namespace?: string | null;
+  /** Static command origins only; broader source/permission inspection remains separate. */
+  provenance?: CommandProvenance | null;
+};
+
+/** Only source locations are retained; definition values and loader labels are omitted. */
+export type CommandOrigin = {
+  scope: CommandSourceScope;
+  kind: CommandSourceKind;
+  paths: string[];
+};
+
+export type CommandProvenance = {
+  winner: CommandOrigin;
+  shadowed: CommandOrigin[];
 };
 
 export type CommandResult = {
@@ -101,6 +116,10 @@ export type CommandResult = {
   message: string;
   status: "not_dispatched";
 };
+
+export type CommandSourceKind = "native_markdown" | "compatibility_markdown" | "configuration";
+
+export type CommandSourceScope = "global" | "project" | "runtime";
 
 export type CommandStatus = {
   status: "not_started";

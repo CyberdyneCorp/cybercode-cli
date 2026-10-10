@@ -285,3 +285,95 @@ fn entry_and_aggregate_byte_limits_refuse_even_explicit_inline_fallbacks() {
             .any(|issue| issue.reason.contains("aggregate byte bound"))
     );
 }
+
+#[test]
+fn provenance_tracks_scope_labelled_winners_shadowed_sources_and_unavailable_files() {
+    use cyber_core::commands::{CommandSourceKind, CommandSourceScope};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let scope = fixture(&root);
+    let global = write(&scope.global_config_dir, "cyber.json", "{}");
+    let ancestor = write(&root.join("repo"), "cyber.json", "{}");
+    let nearest = write(
+        &scope.location,
+        ".cyber/commands/review.md",
+        "Nearest review",
+    );
+    let unavailable = write(
+        &scope.location,
+        ".cyber/commands/blocked.md",
+        "---\nagent: private-agent\n---\nprivate-body",
+    );
+    let config = json!({"commands":{
+        "review":{"template":"private-global-template"},
+        "blocked":{"template":"private-ancestor-template"},
+        "runtime":{"template":"Explicit override"}
+    }});
+    let sources = BTreeMap::from([
+        (
+            "/commands/review/template".into(),
+            format!("global:{}", global.display()),
+        ),
+        (
+            "/commands/blocked/template".into(),
+            format!("project:{}", ancestor.display()),
+        ),
+        (
+            "/commands/runtime/template".into(),
+            "profile:private-profile".into(),
+        ),
+    ]);
+    let result = discover(&scope, &config, &sources);
+    assert_eq!(result.entries["review"].template, "Nearest review");
+    assert!(!result.entries.contains_key("blocked"));
+    let provenance = &result.provenance["review"];
+    assert_eq!(provenance.winner.scope, CommandSourceScope::Project);
+    assert_eq!(provenance.winner.kind, CommandSourceKind::NativeMarkdown);
+    assert_eq!(provenance.winner.paths, [nearest]);
+    assert_eq!(provenance.shadowed.len(), 1);
+    assert_eq!(provenance.shadowed[0].scope, CommandSourceScope::Global);
+    assert_eq!(provenance.shadowed[0].paths, [global]);
+    assert_eq!(result.provenance["blocked"].winner.paths, [unavailable]);
+    assert_eq!(result.provenance["blocked"].shadowed[0].paths, [ancestor]);
+    assert_eq!(
+        result.provenance["runtime"].winner.scope,
+        CommandSourceScope::Runtime
+    );
+    assert!(result.provenance["runtime"].winner.paths.is_empty());
+    let report = serde_json::to_string(&result.provenance).unwrap();
+    for value in [
+        "private-body",
+        "private-global-template",
+        "private-ancestor-template",
+        "private-profile",
+        "private-agent",
+    ] {
+        assert!(!report.contains(value));
+    }
+}
+
+#[test]
+fn explicit_project_layer_scope_wins_even_inside_the_global_config_directory() {
+    use cyber_core::commands::CommandSourceScope;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let mut scope = fixture(&root);
+    scope.global_config_dir = scope.location.join(".cyber");
+    let path = write(&scope.global_config_dir, "cyber.json", "{}");
+    let sources = BTreeMap::from([(
+        "/commands/review/template".into(),
+        format!("project:{}", path.display()),
+    )]);
+    let config = json!({"commands":{"review":{"template":"Project inline"}}});
+    let result = discover(&scope, &config, &sources);
+    assert_eq!(
+        result.provenance["review"].winner.scope,
+        CommandSourceScope::Project
+    );
+    scope.project = false;
+    assert!(
+        !discover(&scope, &config, &sources)
+            .entries
+            .contains_key("review")
+    );
+}

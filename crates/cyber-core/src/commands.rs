@@ -15,12 +15,44 @@ pub struct StaticCommand {
     pub argument_hint: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandSourceScope {
+    Global,
+    Project,
+    Runtime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandSourceKind {
+    NativeMarkdown,
+    CompatibilityMarkdown,
+    Configuration,
+}
+
+/// Only source locations are retained; definition values and loader labels are omitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct CommandOrigin {
+    pub scope: CommandSourceScope,
+    pub kind: CommandSourceKind,
+    pub paths: Vec<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct CommandProvenance {
+    pub winner: CommandOrigin,
+    pub shadowed: Vec<CommandOrigin>,
+}
+
 #[derive(Debug, Default)]
 pub struct Commands {
     pub entries: BTreeMap<String, StaticCommand>,
     /// Definition names only; never include template or parser error values.
     pub unavailable: Vec<String>,
     pub issues: Vec<CommandIssue>,
+    /// Includes unavailable winning definitions, which must not fall back.
+    pub provenance: BTreeMap<String, CommandProvenance>,
 }
 
 pub struct MarkdownCommand {

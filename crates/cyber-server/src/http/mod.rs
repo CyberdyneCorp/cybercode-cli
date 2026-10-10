@@ -81,6 +81,11 @@ pub struct CommandInfo {
     /// `builtin`, `skill` or `command`.
     pub source: String,
     pub argument_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// Static command origins only; broader source/permission inspection remains separate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<cyber_core::commands::CommandProvenance>,
 }
 
 /// An agent clients can select.

@@ -478,6 +478,8 @@ impl Services for AppServices {
                 description: (*description).into(),
                 source: "builtin".into(),
                 argument_hint: None,
+                namespace: None,
+                provenance: None,
             });
         let skills =
             self.host
@@ -488,23 +490,30 @@ impl Services for AppServices {
                     description,
                     source: "skill".into(),
                     argument_hint: hint,
+                    namespace: None,
+                    provenance: None,
                 });
-        let configured = self
-            .host
-            .command_registry(location)
-            .entries
-            .into_iter()
-            .map(|(name, command)| CommandInfo {
+        let mut registry = self.host.command_registry(location);
+        let configured = registry.entries.into_iter().map(|(name, command)| {
+            let provenance = registry.provenance.remove(&name);
+            CommandInfo {
                 name,
                 description: command.description,
                 source: "command".into(),
                 argument_hint: command.argument_hint,
-            });
+                namespace: None,
+                provenance,
+            }
+        });
         let mut result = std::collections::BTreeMap::new();
         for mut entry in builtin.chain(configured).chain(skills) {
             if entry.source != "builtin" {
                 entry.name = cyber_core::commands::invocation_name(&entry.name);
             }
+            entry.namespace = entry
+                .name
+                .split_once(':')
+                .map(|(namespace, _)| namespace.into());
             result.insert(entry.name.clone(), entry);
         }
         result.into_values().collect()

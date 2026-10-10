@@ -1,5 +1,8 @@
 //! Bounded command discovery with handle-fenced traversal and independent file verification.
-use super::{Commands, StaticCommand, invocation_name, markdown, valid_name};
+use super::{
+    CommandOrigin, CommandProvenance, CommandSourceKind, CommandSourceScope, Commands,
+    StaticCommand, invocation_name, markdown, valid_name,
+};
 use crate::import::{SourceSnapshot, command_directory, verify_command_directory};
 use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;
@@ -27,6 +30,7 @@ type Priority = (u8, usize, u8);
 struct Candidate {
     priority: Priority,
     command: Option<StaticCommand>,
+    provenance: CommandProvenance,
 }
 struct Scanner {
     candidates: BTreeMap<String, Candidate>,
@@ -44,15 +48,35 @@ impl Scanner {
         });
     }
 
-    fn put(&mut self, name: String, priority: Priority, command: Option<StaticCommand>) {
-        if self
-            .candidates
-            .get(&name)
-            .is_none_or(|old| old.priority <= priority)
-        {
-            self.candidates
-                .insert(name, Candidate { priority, command });
+    fn put(
+        &mut self,
+        name: String,
+        priority: Priority,
+        command: Option<StaticCommand>,
+        origin: CommandOrigin,
+    ) {
+        if let Some(old) = self.candidates.get_mut(&name) {
+            if old.priority <= priority {
+                old.provenance.shadowed.push(old.provenance.winner.clone());
+                old.provenance.winner = origin;
+                old.priority = priority;
+                old.command = command;
+            } else {
+                old.provenance.shadowed.push(origin);
+            }
+            return;
         }
+        self.candidates.insert(
+            name,
+            Candidate {
+                priority,
+                command,
+                provenance: CommandProvenance {
+                    winner: origin,
+                    shadowed: Vec::new(),
+                },
+            },
+        );
     }
 
     fn root(&mut self, root: &Path, priority: Priority) {
@@ -165,7 +189,20 @@ impl Scanner {
             return;
         };
         let command = self.read(path);
-        self.put(invocation_name(&name), priority, command);
+        self.put(
+            invocation_name(&name),
+            priority,
+            command,
+            CommandOrigin {
+                scope: source_scope(priority),
+                kind: if priority.2 == 1 {
+                    CommandSourceKind::CompatibilityMarkdown
+                } else {
+                    CommandSourceKind::NativeMarkdown
+                },
+                paths: vec![path.into()],
+            },
+        );
     }
 
     fn read(&mut self, path: &Path) -> Option<StaticCommand> {
@@ -213,36 +250,84 @@ fn canonical(path: &Path, scanner: &mut Scanner) -> Option<PathBuf> {
     }
 }
 
+/// File-layer labels are produced by the runtime loader; logical overrides have no path.
+fn source_path(source: &str) -> Option<&Path> {
+    let source = source
+        .strip_prefix("global:")
+        .or_else(|| source.strip_prefix("project:"))
+        .unwrap_or(source);
+    let path = Path::new(source);
+    path.is_absolute().then_some(path)
+}
+
+fn source_scope(priority: Priority) -> CommandSourceScope {
+    match priority.0 {
+        0 => CommandSourceScope::Global,
+        1 => CommandSourceScope::Project,
+        _ => CommandSourceScope::Runtime,
+    }
+}
+
+fn command_sources<'a>(
+    name: &str,
+    sources: &'a BTreeMap<String, String>,
+) -> impl Iterator<Item = &'a String> {
+    let pointer = format!("/commands/{}", name.replace('~', "~0").replace('/', "~1"));
+    let prefix = format!("{pointer}/");
+    sources
+        .iter()
+        .filter(move |(key, _)| *key == &pointer || key.starts_with(&prefix))
+        .map(|(_, source)| source)
+}
+
+fn source_priority(source: &str, project: &Path, global: Option<&Path>) -> Priority {
+    let Some(path) = source_path(source) else {
+        return (2, 0, 2);
+    };
+    // Scope belongs to the declaring layer, even if its file is a symlink.
+    if source.starts_with("global:")
+        || (!source.starts_with("project:") && global.is_some_and(|g| path.starts_with(g)))
+    {
+        return (0, 0, 2);
+    }
+    let parent = path.parent().unwrap_or(project);
+    let parent = parent.canonicalize().unwrap_or_else(|_| parent.into());
+    if parent.starts_with(project) {
+        let parent = if parent.file_name().is_some_and(|n| n == ".cyber") {
+            parent.parent().unwrap_or(&parent)
+        } else {
+            &parent
+        };
+        return (1, parent.components().count(), 2);
+    }
+    (2, 0, 2)
+}
+
 fn inline_priority(
     name: &str,
     sources: &BTreeMap<String, String>,
     project: &Path,
     global: Option<&Path>,
 ) -> Priority {
-    let pointer = format!("/commands/{}", name.replace('~', "~0").replace('/', "~1"));
-    let prefix = format!("{pointer}/");
-    sources
-        .iter()
-        .filter(|(key, _)| *key == &pointer || key.starts_with(&prefix))
-        .map(|(_, source)| {
-            let path = Path::new(source);
-            let path = path.canonicalize().unwrap_or_else(|_| path.into());
-            if global.is_some_and(|g| path.starts_with(g)) {
-                return (0, 0, 2);
-            }
-            if path.starts_with(project) {
-                let parent = path.parent().unwrap_or(project);
-                let parent = if parent.file_name().is_some_and(|n| n == ".cyber") {
-                    parent.parent().unwrap_or(parent)
-                } else {
-                    parent
-                };
-                return (1, parent.components().count(), 2);
-            }
-            (2, 0, 2)
-        })
+    command_sources(name, sources)
+        .map(|source| source_priority(source, project, global))
         .max()
         .unwrap_or((2, 0, 2))
+}
+
+fn inline_origin(
+    name: &str,
+    sources: &BTreeMap<String, String>,
+    priority: Priority,
+) -> CommandOrigin {
+    let paths: std::collections::BTreeSet<_> = command_sources(name, sources)
+        .filter_map(|source| source_path(source).map(Path::to_path_buf))
+        .collect();
+    CommandOrigin {
+        scope: source_scope(priority),
+        kind: CommandSourceKind::Configuration,
+        paths: paths.into_iter().collect(),
+    }
 }
 
 fn global_sources(scanner: &mut Scanner, scope: &CommandScope) -> Option<PathBuf> {
@@ -307,6 +392,7 @@ fn inline_sources(
                         invocation_name(name),
                         priority,
                         StaticCommand::parse(value).ok(),
+                        inline_origin(name, sources, priority),
                     );
                 }
             }
@@ -360,10 +446,14 @@ pub fn discover(
             path: location,
             reason: "command registry is incomplete or exceeds its bound",
         });
-        result.unavailable.extend(scanner.candidates.into_keys());
+        for (name, candidate) in scanner.candidates {
+            result.provenance.insert(name.clone(), candidate.provenance);
+            result.unavailable.push(name);
+        }
         return result;
     }
     for (name, candidate) in scanner.candidates {
+        result.provenance.insert(name.clone(), candidate.provenance);
         match candidate.command {
             Some(command) => {
                 result.entries.insert(name, command);
