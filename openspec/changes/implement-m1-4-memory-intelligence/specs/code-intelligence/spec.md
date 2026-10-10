@@ -1,5 +1,16 @@
 ## ADDED Requirements
 
+### Requirement: Independent language-server checkout ownership
+(P1) Managed checkout activity SHALL support a distinct language-server owner identity independent of Sessions and MCP connections. Claims SHALL revalidate ready creation identity under the repository removal lock. Native ownership SHALL retain checkout exclusion through acknowledged settlement. Disposal without acknowledgement SHALL leave unknown activity that prevents removal and implicit reclamation.
+
+#### Scenario: Session finishes before language server
+- **WHEN** a Session settles while its checkout remains pinned by a language-server owner
+- **THEN** checkout removal SHALL remain refused until acknowledged language-server pin settlement releases its native lock
+
+#### Scenario: Unknown language-server owner
+- **WHEN** a language-server checkout lease is disposed without acknowledgement
+- **THEN** removal and reclamation under that identity SHALL remain refused
+
 ### Requirement: Live LSP generation authority
 (P1) Local LSP generations SHALL recheck current trust-filtered configuration before dispatching queued document, notification, diagnostic or navigation commands. Changed definitions, executable selection, resolved configuration, provenance or trust SHALL fence that root and retain process/resource settlement. Periodic idle authority reviews SHALL stop revoked roots without requiring a foreground command. Joined configuration observations SHALL retain ownership when a close caller is cancelled.
 

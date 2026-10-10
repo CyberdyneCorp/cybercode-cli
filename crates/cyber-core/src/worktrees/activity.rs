@@ -134,6 +134,17 @@ impl Repository {
         self.claim_owner(execution, managed, connection_id).await
     }
 
+    /// A language-server process owns checkout activity independently of Sessions and MCP.
+    pub async fn claim_lsp(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        server_id: &str,
+    ) -> io::Result<CheckoutLease> {
+        safe_id(server_id, "lsp")?;
+        self.claim_owner(execution, managed, server_id).await
+    }
+
     async fn claim_owner(
         &self,
         execution: &dyn GitExecution,
@@ -202,6 +213,8 @@ fn safe_id(id: &str, prefix: &str) -> io::Result<()> {
 fn safe_owner_id(id: &str) -> io::Result<()> {
     let prefix = if crate::ids::has_prefix(id, "mcs") {
         "mcs"
+    } else if crate::ids::has_prefix(id, "lsp") {
+        "lsp"
     } else {
         "ses"
     };

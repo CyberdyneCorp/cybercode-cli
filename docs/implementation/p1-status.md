@@ -1,5 +1,13 @@
 # P1 implementation status
 
+## M1.4 independent language-server checkout owner backend (2026-10-10)
+
+Core worktree activity now supports a distinct `lsp` owner identity through `Repository::claim_lsp`. It revalidates exact ready creation identity under the repository removal lock and keeps server ownership separate from Session and MCP namespaces. Session settlement cannot release the server's lock. Acknowledged settlement can retain exclusion until disposal; unacknowledged Drop or process death leaves unknown activity that refuses removal and implicit reclaim.
+
+Four real repository cases verify namespace separation, removal exclusion before/after retained settlement, unknown disposal, changed creation refusal before activity creation and cross-process live/killed-owner fencing, including forced-removal refusal. All 63 repository cases pass locally; the ignored helper is executed by the cross-process parent cases. The preceding revision's Windows protocol, resource/Location and background read steps passed in [run 38035386744](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38035386744/job/114164628532), while the full job remained live. Fresh Windows lease-owner execution is queued.
+
+Workspace all-target Clippy with warnings denied, formatting, the CI failure-propagation regression and all 59 strict OpenSpec validations pass; cross-spec validation reports zero errors and 21 warnings. This is the durable checkout owner backend. Production LSP launch still needs captured managed creation identities, claims for every enclosing checkout before effects, and pin retention through native/proxy shutdown. Full Location activity/reload/close, diagnostics/edit/navigation/formatter integration, enforced Windows launch and all remaining P1 contracts remain open. No milestone or complete runtime pinning contract is accepted; P0 local-model data is preserved and its acceptance stays open.
+
 ## M1.4 live LSP generation authority (2026-10-10)
 
 App-created local pools now capture their trusted configuration generation and freshly recheck selected definitions/executables, resolved values, provenance and trust before dispatching queued document/RPC/notification/diagnostic commands or idle messages. A one-second periodic authority review also fences changed or revoked roots while idle. The failed root stays broken; native connection and proxy/resource settlement retain their existing owners. Low-level pools using independent authorized callbacks must supply their own admission policy; the production App uses the concrete guarded local pool.

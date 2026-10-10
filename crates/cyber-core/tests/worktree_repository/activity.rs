@@ -2,6 +2,82 @@ use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
 #[test]
+fn lsp_owner_remains_independent_and_excludes_removal_through_retained_settlement() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("lsp-owner").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    assert!(block_on(repository.claim(&fixture.execution, &managed, "lsp_server")).is_err());
+    assert!(block_on(repository.claim_mcp(&fixture.execution, &managed, "lsp_server")).is_err());
+    assert!(block_on(repository.claim_lsp(&fixture.execution, &managed, "ses_user")).is_err());
+    assert!(block_on(repository.claim_lsp(&fixture.execution, &managed, "mcs_server")).is_err());
+    let session = block_on(repository.claim(&fixture.execution, &managed, "ses_user")).unwrap();
+    let server =
+        block_on(repository.claim_lsp(&fixture.execution, &managed, "lsp_server")).unwrap();
+    assert_eq!(server.owner_id(), "lsp_server");
+    assert_eq!(server.worktree_id(), managed.id);
+    session.settle().unwrap();
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    let retained = server.settle_retained().unwrap();
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    drop(retained);
+    block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
+    assert!(!managed.path.exists());
+}
+
+#[test]
+fn disposed_lsp_checkout_activity_remains_unknown_and_cannot_be_reclaimed() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("lsp-unknown").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    drop(block_on(repository.claim_lsp(&fixture.execution, &managed, "lsp_server")).unwrap());
+    assert!(block_on(repository.claim_lsp(&fixture.execution, &managed, "lsp_server")).is_err());
+    let error = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown"));
+    assert!(managed.path.join("tracked.txt").exists());
+}
+
+#[test]
+fn lsp_claim_refuses_changed_creation_identity_without_creating_activity() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let mut managed = fixture
+        .create(
+            &repository,
+            &Name::parse("lsp-identity").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    managed.id = "wt_other_creation".into();
+    assert!(block_on(repository.claim_lsp(&fixture.execution, &managed, "lsp_server")).is_err());
+    assert!(
+        !repository
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&managed.id)
+            .exists()
+    );
+}
+
+#[test]
 fn mcp_owner_is_independent_of_sessions_and_retains_the_lock_through_durable_settlement() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
@@ -147,7 +223,12 @@ fn lease_worker() {
     };
     let managed = serde_json::from_slice(&std::fs::read(root.join("lease.json")).unwrap()).unwrap();
     let repository = block_on(Repository::discover(&execution, &root.join("source"))).unwrap();
-    let lease = block_on(repository.claim(&execution, &managed, "ses_worker")).unwrap();
+    let lease = if std::env::var("CYBER_LEASE_TEST_KIND").as_deref() == Ok("lsp") {
+        block_on(repository.claim_lsp(&execution, &managed, "lsp_worker"))
+    } else {
+        block_on(repository.claim(&execution, &managed, "ses_worker"))
+    }
+    .unwrap();
     std::fs::write(root.join("lease-ready"), "ready").unwrap();
     let mut request = String::new();
     std::io::stdin().read_line(&mut request).unwrap();
@@ -156,6 +237,14 @@ fn lease_worker() {
 }
 
 fn spawn_worker(fixture: &Fixture, managed: &cyber_core::worktrees::Managed) -> Worker {
+    spawn_worker_kind(fixture, managed, "session")
+}
+
+fn spawn_worker_kind(
+    fixture: &Fixture,
+    managed: &cyber_core::worktrees::Managed,
+    kind: &str,
+) -> Worker {
     let root = fixture._temp.path();
     std::fs::write(
         root.join("lease.json"),
@@ -171,6 +260,7 @@ fn spawn_worker(fixture: &Fixture, managed: &cyber_core::worktrees::Managed) -> 
                 "--nocapture",
             ])
             .env("CYBER_LEASE_TEST_ROOT", root)
+            .env("CYBER_LEASE_TEST_KIND", kind)
             .stdin(std::process::Stdio::piped())
             .spawn()
             .unwrap(),
@@ -188,6 +278,41 @@ fn spawn_worker(fixture: &Fixture, managed: &cyber_core::worktrees::Managed) -> 
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     worker
+}
+
+#[test]
+fn lsp_cross_process_lock_and_killed_owner_preserve_unknown_checkout_activity() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("lsp-killed").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let mut worker = spawn_worker_kind(&fixture, &managed, "lsp");
+    let live = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+        .unwrap_err();
+    assert!(live.to_string().contains("in use by lsp_worker"));
+    worker.0.kill().unwrap();
+    worker.0.wait().unwrap();
+    let unknown =
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+            .unwrap_err();
+    assert!(
+        unknown
+            .to_string()
+            .contains("outcome unknown for lsp_worker")
+    );
+    assert!(block_on(repository.claim_lsp(&fixture.execution, &managed, "lsp_worker")).is_err());
+    assert!(managed.path.join("tracked.txt").exists());
+    assert!(
+        !managed
+            .common_dir
+            .join("cyber-worktree-removals/lsp-killed.json")
+            .exists()
+    );
 }
 
 #[test]
