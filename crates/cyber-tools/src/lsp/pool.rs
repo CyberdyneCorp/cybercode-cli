@@ -20,6 +20,7 @@ use crate::HookCommandProcess;
 
 #[derive(Clone)]
 pub struct LaunchRequest {
+    pub checkouts: Vec<cyber_core::worktrees::Managed>,
     pub location: PathBuf,
     pub root: PathBuf,
     pub server: DetectedServer,
@@ -302,6 +303,11 @@ impl Pool {
         }
         let root = server_root(&self.inner.location, file, &server.definition.root_markers)
             .map_err(|_| LspError::Protocol("file is outside available Location roots"))?;
+        let checkouts = cyber_core::worktrees::Repository::managed_locations_at(&root)
+            .map_err(|_| unavailable())?
+            .into_iter()
+            .map(|(_, managed)| managed)
+            .collect();
         let mut table = self.inner.table.lock().map_err(|_| unavailable())?;
         if table.closing {
             return Err(unavailable());
@@ -319,6 +325,7 @@ impl Pool {
                 let (status, receiver) = watch::channel(initial);
                 let (sender, commands) = mpsc::channel(32);
                 let request = LaunchRequest {
+                    checkouts,
                     location: self.inner.location.clone(),
                     root,
                     server: server.clone(),

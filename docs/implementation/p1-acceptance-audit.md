@@ -1,5 +1,17 @@
 # P1 acceptance audit
 
+## Managed LSP runtime checkout evidence (2026-10-10)
+
+Production LocalLauncher generations now capture managed Location and root creation records and acquire the complete enclosing claim set before preparation/native spawn. App wiring uses an independent `lsp` owner and the shared owned, sandboxed Git verifier without borrowing a Session. Claims are checked for owner, count and checkout IDs; missing claim support refuses managed launch. Pins remain held through native acknowledgement, proxy shutdown and worker disposal. Uncertain spawn or unacknowledged resource settlement preserves unknown activity.
+
+Successful built-in reads capture their Location creation records before reading bytes. Background warming rechecks that origin on joined blocking work before delivery; a deleted/recreated Location cannot consume its predecessor's queued snapshot. Cancellation settles the pool before joining a pending observation. Additional managed document scopes beneath an existing root still require their own creation binding and pins.
+
+Two real repository integration cases pass locally on macOS: a sandboxed Python server blocks removal through cancelled close and hung shutdown until native acknowledgement/disposal, and delayed discovery refuses a read queued for a deleted/recreated checkout. Native CI now includes the portable origin case; the actual enforced-launch case runs on Unix, while Windows enforcement remains a separate open gate. The preceding `889ebca` Windows lint/test, macOS/Ubuntu tests, SDK/specifications and six platform build jobs pass in run 38036185153; its Windows build remains live at observation.
+
+Local validation passes 125 test cases: 34 LSP library, 29 LSP protocol/launcher integrations, 35 built-in tool, 21 worktree setup, five App TCP and one CI failure-propagation case. After the final background observation cancellation change, the 34 library, 21 worktree, five App and CI-contract cases pass again. Workspace all-target Clippy with warnings denied, formatting and diff checks pass. All 59 strict OpenSpec items pass; cross-spec lint reports zero errors and 21 warnings. Fresh CI for this runtime increment remains required.
+
+Full Location activity/reload/close, additional document scope leases, reviewed unknown recovery, diagnostics/edit/navigation/formatter integration, enforced Windows launch and the other canonical P1 contracts remain open. No complete milestone is accepted; P0 local-model data and its independent acceptance gate remain preserved.
+
 ## Independent LSP checkout owner backend evidence (2026-10-10)
 
 `Repository::claim_lsp` now uses distinct owner identities with the existing ready-creation/removal lock and conservative unknown records. Four repository cases verify namespace separation, independent Session settlement, retained native-lock exclusion, unacknowledged disposal/reclaim refusal, changed creation refusal without new activity and actual cross-process live/killed-owner fencing. All 63 repository cases pass locally; one helper is ignored in ordinary enumeration and executed by cross-process parent cases. Fresh Windows execution is pending. This proves the core lease backend, not pinning of a running language server: production creation binding, all enclosing checkout claims, native/proxy settlement retention and reviewed unknown recovery remain required. Other canonical P1 contracts and all milestone acceptance remain open.

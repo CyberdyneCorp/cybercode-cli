@@ -7,11 +7,12 @@ mod launch;
 mod locations;
 mod pool;
 pub(crate) use documents::MAX_DOCUMENT_BYTES;
+pub(crate) use locations::checkout_records;
 
 pub use client::{LspError, StdioClient};
 pub use connection::{ConnectionError, Shutdown, StdioConnection};
 pub use framing::{Framed, TransportError};
-pub use launch::{LaunchOptions, LocalLauncher};
+pub use launch::{CheckoutClaim, LaunchOptions, LocalLauncher};
 pub use locations::{Locations, PoolFactory};
 pub use pool::{
     AdmissionFn, AuthorizedProcess, LaunchError, LaunchFn, LaunchRequest, Pool, ResourceLease,

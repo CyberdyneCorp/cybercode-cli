@@ -1,5 +1,17 @@
 ## ADDED Requirements
 
+### Requirement: Language-server managed launch pins
+(P1) Local LSP launch SHALL claim every enclosing managed checkout of its Location and server root using an independent language-server identity before native spawn. It SHALL verify the complete claim set and creation identities, retain pins through native and proxy settlement, and preserve unknown activity after uncertain native spawn or unacknowledged disposal. Background read warming SHALL retain its captured Location creation identities and refuse a changed creation before document delivery.
+
+#### Scenario: Managed server lifetime
+- **WHEN** a managed Location starts a language server
+- **THEN** checkout removal SHALL remain refused while native or proxy settlement is pending
+- **AND** acknowledged resource settlement SHALL retain native pin locks until worker disposal
+
+#### Scenario: Replaced background origin
+- **WHEN** a read's captured managed Location differs before background warming
+- **THEN** the read snapshot SHALL NOT reach a server for the replacement creation
+
 ### Requirement: Independent language-server checkout ownership
 (P1) Managed checkout activity SHALL support a distinct language-server owner identity independent of Sessions and MCP connections. Claims SHALL revalidate ready creation identity under the repository removal lock. Native ownership SHALL retain checkout exclusion through acknowledged settlement. Disposal without acknowledgement SHALL leave unknown activity that prevents removal and implicit reclamation.
 

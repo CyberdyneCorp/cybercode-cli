@@ -53,6 +53,7 @@ impl Fixture {
             LocalLauncher::new(
                 &self.repo,
                 LaunchOptions {
+                    checkout_claim: None,
                     paths: self.paths.clone(),
                     home: self.root.path().into(),
                     environment: self.environment.clone(),
@@ -69,6 +70,7 @@ impl Fixture {
     }
     fn request(&self, launcher: &LocalLauncher) -> LaunchRequest {
         LaunchRequest {
+            checkouts: vec![],
             location: self.repo.canonicalize().unwrap(),
             root: self.repo.canonicalize().unwrap(),
             server: launcher
@@ -220,6 +222,7 @@ while True:
         ]));
         fixture.global(json!({"lsp":{"fixture":{"command":[fixture.binary,outside,credentials],"extensions":[".rs"],"env":{"GOOD":"configured","HTTP_PROXY":"http://bypass.invalid:9","TMPDIR":"/unowned"}}},"providers":{"fixture":{"env":["CUSTOM_AUTH"]}},"sandbox":{"policy":policy,"network":"off"}}));
         let mut options = LaunchOptions {
+            checkout_claim: None,
             paths: fixture.paths.clone(),
             home: fixture.root.path().into(),
             environment: fixture.environment.clone(),

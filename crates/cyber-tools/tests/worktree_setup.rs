@@ -87,11 +87,198 @@ async fn owned() -> (support::Fixture, Repository, Managed) {
     (fixture, repository, managed)
 }
 
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[tokio::test]
+async fn lsp_native_shutdown_retains_managed_checkout_pins_until_acknowledgement() {
+    use cyber_core::paths::Paths;
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_tools::lsp::{LaunchOptions, LocalLauncher};
+    assert!(
+        cyber_sandbox::available(),
+        "native sandbox prerequisites are required"
+    );
+    let (fixture, repository, managed) = owned().await;
+    let root = fixture.dir.path().canonicalize().unwrap();
+    let paths = Paths {
+        config: root.join("config"),
+        data: root.join("data"),
+        cache: root.join("cache"),
+        state: root.join("state"),
+        tmp: root.join("lsp-tmp"),
+    };
+    paths.ensure().unwrap();
+    let script = root.join("server.py");
+    std::fs::write(&script, r#"
+import sys,json,time
+while True:
+    length=None
+    while True:
+        line=sys.stdin.buffer.readline()
+        if not line: sys.exit(0)
+        if line==b'\r\n': break
+        if line.lower().startswith(b'content-length:'): length=int(line.split(b':',1)[1])
+    msg=json.loads(sys.stdin.buffer.read(length))
+    if msg['method']=='shutdown': time.sleep(60)
+    if 'id' in msg:
+        result={'capabilities':{}} if msg['method']=='initialize' else True
+        body=json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':result}).encode()
+        sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body);sys.stdout.buffer.flush()
+"#).unwrap();
+    let config = json!({"lsp":{"fixture":{"command":["python3",script],"extensions":[".txt"]}},"sandbox":{"network":"off"}});
+    fixture.set_config(config.clone());
+    std::fs::write(paths.config.join("cyber.jsonc"), config.to_string()).unwrap();
+    let launcher = Arc::new(
+        LocalLauncher::new(
+            &managed.path,
+            LaunchOptions {
+                checkout_claim: Some(fixture.host.lsp_checkout_claim()),
+                paths,
+                home: root.join("home"),
+                environment: std::env::vars().collect(),
+                profile: None,
+                overrides: vec![],
+                flags: json!({}),
+                sandbox_policy: None,
+                helper: cyber_sandbox::find_helper(),
+                credential_env_names: vec![],
+            },
+        )
+        .unwrap(),
+    );
+    let pool = launcher.pool().unwrap();
+    let handle = pool
+        .ensure("fixture", &managed.path.join("tracked.txt"))
+        .unwrap();
+    assert_eq!(
+        handle
+            .request("ping", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap(),
+        true
+    );
+    let blocked = repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap_err();
+    assert!(blocked.to_string().contains("in use by lsp_"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), pool.close())
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .remove(&Git, &CheckoutActivity, &managed, false)
+            .await
+            .is_err()
+    );
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+    assert!(!managed.path.exists());
+}
+
 #[derive(Default)]
 struct Sink {
     output: Mutex<Vec<u8>>,
     ready: Notify,
     fail: bool,
+}
+
+#[tokio::test]
+async fn lsp_background_snapshot_cannot_start_against_a_recreated_checkout() {
+    use cyber_core::intelligence::{DetectedServer, InstallMethod, ServerDefinition};
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_tools::lsp::{LaunchError, Locations, LspError, Pool};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let (fixture, repository, managed) = owned().await;
+    let file = managed.path.join("tracked.txt");
+    let (release, blocked) = std::sync::mpsc::channel();
+    let blocked = Mutex::new(blocked);
+    let started = Arc::new(AtomicBool::new(false));
+    let completed = Arc::new(AtomicBool::new(false));
+    let launches = Arc::new(AtomicUsize::new(0));
+    let observed_started = started.clone();
+    let observed_completed = completed.clone();
+    let observed_launches = launches.clone();
+    let locations = Locations::new(Arc::new(move |directory| {
+        observed_started.store(true, Ordering::Release);
+        blocked
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let launches = observed_launches.clone();
+        let pool = Pool::new(
+            directory,
+            vec![DetectedServer {
+                definition: ServerDefinition {
+                    id: "fixture".into(),
+                    command: vec!["fixture".into()],
+                    extensions: vec![".txt".into()],
+                    root_markers: vec![],
+                    env: Default::default(),
+                    initialization_options: None,
+                    install: InstallMethod::Custom,
+                },
+                enabled: true,
+                installed: true,
+                executable: Some("/fixture".into()),
+            }],
+            Arc::new(move |_, _| {
+                let launches = launches.clone();
+                Box::pin(async move {
+                    launches.fetch_add(1, Ordering::SeqCst);
+                    Err(LaunchError {
+                        error: LspError::Protocol("unexpected stale launch"),
+                        acknowledged: true,
+                    })
+                })
+            }),
+        );
+        observed_completed.store(true, Ordering::Release);
+        pool
+    }));
+    locations
+        .warm(&managed.path, file, "private-original-read".into())
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !started.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+    let replacement = repository
+        .create(
+            &Git,
+            &Settings::default(),
+            fixture.dir.path(),
+            "prj_test",
+            &Name::parse("setup").unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(managed.path, replacement.path);
+    assert_ne!(managed.id, replacement.id);
+    release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !completed.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(locations.status(&replacement.path).unwrap().is_empty());
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    locations.close().await.unwrap();
 }
 
 #[cfg(unix)]

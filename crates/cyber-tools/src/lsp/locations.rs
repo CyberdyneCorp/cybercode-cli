@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 pub type PoolFactory = Arc<dyn Fn(&Path) -> Result<Pool, LspError> + Send + Sync>;
 
 struct Warm {
+    checkouts: Vec<cyber_core::worktrees::Managed>,
     file: PathBuf,
     text: String,
 }
@@ -69,6 +70,16 @@ impl Locations {
     }
     /// Never await discovery, initialization, queue capacity or diagnostic delivery.
     pub fn warm(&self, location: &Path, file: PathBuf, text: String) -> Result<(), LspError> {
+        self.warm_observed(location, file, text, checkout_records(location)?)
+    }
+
+    pub(crate) fn warm_observed(
+        &self,
+        location: &Path,
+        file: PathBuf,
+        text: String,
+        checkouts: Vec<cyber_core::worktrees::Managed>,
+    ) -> Result<(), LspError> {
         if text.len() > super::documents::MAX_DOCUMENT_BYTES {
             return Err(unavailable());
         }
@@ -115,7 +126,11 @@ impl Locations {
         }
         entry
             .sender
-            .try_send(Warm { file, text })
+            .try_send(Warm {
+                file,
+                text,
+                checkouts,
+            })
             .map_err(|_| unavailable())?;
         *entry.touched.lock().map_err(|_| unavailable())? = Instant::now();
         Ok(())
@@ -173,23 +188,41 @@ async fn run(
     idle: Duration,
     mut receiver: mpsc::Receiver<Warm>,
 ) -> Result<Vec<Settlement>, LspError> {
+    let observed_location = location.clone();
     let pool = tokio::task::spawn_blocking(move || factory(&location))
         .await
         .map_err(|_| unavailable())??;
     entry.pool.set(pool.clone()).map_err(|_| unavailable())?;
+    while let Some(warm) = next_warm(&entry, idle, &mut receiver).await? {
+        if !current_warm(&observed_location, &warm, &pool, &entry.cancel).await {
+            continue;
+        }
+        tokio::select! { biased; _ = entry.cancel.cancelled() => break, _ = pool.warm(&warm.file, warm.text) => {} }
+    }
+    close_pool(&entry, &pool).await
+}
+
+async fn next_warm(
+    entry: &Entry,
+    idle: Duration,
+    receiver: &mut mpsc::Receiver<Warm>,
+) -> Result<Option<Warm>, LspError> {
     loop {
         let deadline = *entry.touched.lock().map_err(|_| unavailable())? + idle;
         let warm = tokio::select! {
             biased;
-            _ = entry.cancel.cancelled() => break,
+            _ = entry.cancel.cancelled() => return Ok(None),
             _ = tokio::time::sleep_until(deadline) => {
-                if Instant::now() >= *entry.touched.lock().map_err(|_| unavailable())? + idle { break; }
+                if Instant::now() >= *entry.touched.lock().map_err(|_| unavailable())? + idle { return Ok(None); }
                 continue;
             },
-            warm = receiver.recv() => match warm { Some(warm) => warm, None => break }
+            warm = receiver.recv() => warm
         };
-        tokio::select! { biased; _ = entry.cancel.cancelled() => break, _ = pool.warm(&warm.file, warm.text) => {} }
+        return Ok(warm);
     }
+}
+
+async fn close_pool(entry: &Entry, pool: &Pool) -> Result<Vec<Settlement>, LspError> {
     entry.cancel.cancel();
     let result = pool.close().await;
     if result
@@ -201,8 +234,37 @@ async fn run(
     result
 }
 
+async fn current_warm(
+    location: &Path,
+    warm: &Warm,
+    pool: &Pool,
+    cancel: &CancellationToken,
+) -> bool {
+    let location = location.to_path_buf();
+    let expected = warm.checkouts.clone();
+    let mut observation =
+        tokio::task::spawn_blocking(move || checkout_records(&location).ok() == Some(expected));
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            let _ = pool.close().await;
+            let _ = observation.await;
+            false
+        },
+        result = &mut observation => result.unwrap_or(false)
+    }
+}
+
 fn unavailable() -> LspError {
     LspError::Protocol("Location language services unavailable")
+}
+
+pub(crate) fn checkout_records(
+    location: &Path,
+) -> Result<Vec<cyber_core::worktrees::Managed>, LspError> {
+    cyber_core::worktrees::Repository::managed_locations_at(location)
+        .map(|locations| locations.into_iter().map(|(_, managed)| managed).collect())
+        .map_err(|_| unavailable())
 }
 
 #[cfg(test)]

@@ -50,6 +50,11 @@ impl Tool for Read {
             if meta.is_dir() {
                 return Ok(list_dir(&path, 1));
             }
+            let checkouts = ctx
+                .host
+                .lsp
+                .get()
+                .and_then(|_| crate::lsp::checkout_records(&ctx.location).ok());
             let bytes = tokio::fs::read(&path)
                 .await
                 .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?;
@@ -65,8 +70,14 @@ impl Tool for Read {
             if let Some(locations) = ctx.host.lsp.get()
                 && bytes.len() <= crate::lsp::MAX_DOCUMENT_BYTES
                 && let Ok(content) = std::str::from_utf8(&bytes)
+                && let Some(checkouts) = checkouts
             {
-                let _ = locations.warm(&ctx.location, path.clone(), content.to_owned());
+                let _ = locations.warm_observed(
+                    &ctx.location,
+                    path.clone(),
+                    content.to_owned(),
+                    checkouts,
+                );
             }
             let offset = number(&ctx.inv.input, "offset").unwrap_or(1).max(1) as usize;
             let limit = number(&ctx.inv.input, "limit")

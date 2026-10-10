@@ -62,6 +62,59 @@ struct SetupAdmission<'a> {
 }
 
 impl BuiltinHost {
+    pub(crate) async fn claim_lsp_checkouts(
+        &self,
+        expected: Vec<Managed>,
+        owner: String,
+        cancel: CancellationToken,
+    ) -> Result<Vec<cyber_core::worktrees::CheckoutLease>, String> {
+        let first = expected
+            .first()
+            .ok_or("Managed checkout claims are empty")?;
+        let inv = Invocation {
+            registration: None,
+            session_id: owner.clone(),
+            directory: first.path.to_string_lossy().into(),
+            agent: String::new(),
+            mode: "default".into(),
+            rules: serde_json::Value::Null,
+            message_id: String::new(),
+            call_id: cyber_core::ids::new_id("call"),
+            operation_key: String::new(),
+            name: "worktree".into(),
+            input: serde_json::Value::Null,
+            attempt: 1,
+            asker: Asker::detached(),
+        };
+        let ctx = Ctx {
+            hook_decision: None,
+            host: self,
+            inv: &inv,
+            policy: self.policy_for(&inv, None).await?,
+            location: first.path.clone(),
+            cancel,
+        };
+        let execution = GitPort {
+            ctx: &ctx,
+            writable: Some(Vec::new()),
+            credentials: &[],
+        };
+        let mut leases = Vec::with_capacity(expected.len());
+        for managed in expected {
+            let repository = Repository {
+                root: managed.path.clone(),
+                common_dir: managed.common_dir.clone(),
+            };
+            leases.push(
+                retry_repository_busy(&ctx.cancel, || {
+                    repository.claim_lsp(&execution, &managed, &owner)
+                })
+                .await
+                .map_err(|error| error.to_string())?,
+            );
+        }
+        Ok(leases)
+    }
     pub(crate) async fn claim_mcp_location(
         &self,
         info: &SessionInfo,

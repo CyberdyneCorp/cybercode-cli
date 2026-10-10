@@ -22,9 +22,21 @@ use tokio_util::sync::CancellationToken;
 use super::{AuthorizedProcess, LaunchError, LaunchFn, LaunchRequest, LspError, ResourceLease};
 use crate::HookCommandProcess;
 
+pub type CheckoutClaim = Arc<
+    dyn Fn(
+            Vec<cyber_core::worktrees::Managed>,
+            String,
+            CancellationToken,
+        )
+            -> BoxFuture<'static, Result<Vec<cyber_core::worktrees::CheckoutLease>, LspError>>
+        + Send
+        + Sync,
+>;
+
 /// Immutable user-selected loader inputs for one Location service generation.
 #[derive(Clone)]
 pub struct LaunchOptions {
+    pub checkout_claim: Option<CheckoutClaim>,
     pub paths: Paths,
     pub home: PathBuf,
     pub environment: HashMap<String, String>,
@@ -38,6 +50,7 @@ pub struct LaunchOptions {
 
 pub struct LocalLauncher {
     location: PathBuf,
+    checkouts: Vec<cyber_core::worktrees::Managed>,
     options: LaunchOptions,
 }
 
@@ -83,7 +96,12 @@ impl LocalLauncher {
         if !location.is_dir() {
             return Err(refused("Location is not a directory"));
         }
-        Ok(Self { location, options })
+        let checkouts = checkout_records(&location)?;
+        Ok(Self {
+            location,
+            options,
+            checkouts,
+        })
     }
 
     pub fn servers(&self) -> Result<Vec<DetectedServer>, LaunchError> {
@@ -138,6 +156,11 @@ impl LocalLauncher {
         {
             return Err(refused("root is outside its Location"));
         }
+        if checkout_records(&location)? != self.checkouts
+            || checkout_records(&root)? != request.checkouts
+        {
+            return Err(refused("managed checkout creation changed"));
+        }
         let resolved = self.resolved()?;
         let selected = self
             .detected(&resolved)?
@@ -170,7 +193,19 @@ impl LocalLauncher {
         check_cancel(&cancel)?;
         let resolved = self.observe(&request).await?;
         check_cancel(&cancel)?;
-        let mut resources = self.prepare(&resolved).await?;
+        let mut pins = self.claim_checkouts(&request, cancel.clone()).await?;
+        check_cancel(&cancel).map_err(|mut error| {
+            error.acknowledged = pins.settle();
+            error
+        })?;
+        let mut resources = match self.prepare(&resolved).await {
+            Ok(resources) => resources,
+            Err(mut error) => {
+                error.acknowledged = pins.settle();
+                return Err(error);
+            }
+        };
+        resources.pins = pins;
         let prepared = self
             .prepared(&request, &resolved, &resources, &cancel)
             .await;
@@ -189,6 +224,7 @@ impl LocalLauncher {
             });
         }
         // Never drop a started native-spawn future: it owns platform startup settlement.
+        resources.pins_safe = false;
         let process = HookCommandProcess::spawn_with_stdin(
             &wrapped.program,
             &wrapped.args,
@@ -206,10 +242,13 @@ impl LocalLauncher {
         )
         .await;
         match process {
-            Ok(process) => Ok(AuthorizedProcess {
-                process,
-                keepalive: Box::new(resources),
-            }),
+            Ok(process) => {
+                resources.pins_safe = true;
+                Ok(AuthorizedProcess {
+                    process,
+                    keepalive: Box::new(resources),
+                })
+            }
             Err(_) => {
                 let _ = resources.close().await;
                 Err(LaunchError {
@@ -270,6 +309,53 @@ impl LocalLauncher {
         Ok((wrapped, environment))
     }
 
+    async fn claim_checkouts(
+        &self,
+        request: &LaunchRequest,
+        cancel: CancellationToken,
+    ) -> Result<Pins, LaunchError> {
+        let mut expected = self.checkouts.clone();
+        for checkout in &request.checkouts {
+            if !expected.contains(checkout) {
+                expected.push(checkout.clone());
+            }
+        }
+        if expected.is_empty() {
+            return Ok(Pins::default());
+        }
+        let claim = self
+            .options
+            .checkout_claim
+            .as_ref()
+            .ok_or_else(|| refused("managed checkout claim unavailable"))?;
+        let owner = cyber_core::ids::new_id("lsp");
+        let leases = claim(expected.clone(), owner.clone(), cancel)
+            .await
+            .map_err(|error| LaunchError {
+                error,
+                acknowledged: false,
+            })?;
+        let observed: std::collections::BTreeSet<_> =
+            leases.iter().map(|lease| lease.worktree_id()).collect();
+        let wanted: std::collections::BTreeSet<_> = expected
+            .iter()
+            .map(|checkout| checkout.id.as_str())
+            .collect();
+        if observed != wanted
+            || leases.len() != expected.len()
+            || leases.iter().any(|lease| lease.owner_id() != owner)
+        {
+            return Err(LaunchError {
+                error: LspError::Protocol("managed checkout claims do not match launch"),
+                acknowledged: false,
+            });
+        }
+        Ok(Pins {
+            leases,
+            acknowledged: None,
+        })
+    }
+
     async fn prepare(&self, resolved: &Resolved) -> Result<Resources, LaunchError> {
         let config = SandboxConfig::resolve(
             &resolved.value,
@@ -297,6 +383,8 @@ impl LocalLauncher {
             None
         };
         Ok(Resources {
+            pins: Pins::default(),
+            pins_safe: true,
             config,
             scratch,
             proxy,
@@ -383,6 +471,8 @@ fn scratch(parent: &Path) -> Result<PathBuf, LaunchError> {
 }
 
 struct Resources {
+    pins: Pins,
+    pins_safe: bool,
     config: SandboxConfig,
     scratch: PathBuf,
     proxy: Option<Proxy>,
@@ -404,10 +494,40 @@ impl ResourceLease for Resources {
                 None => true,
             };
             self.shutdown.take();
+            let acknowledged = acknowledged && self.pins_safe && self.pins.settle();
             self.acknowledged = Some(acknowledged);
             acknowledged
         })
     }
+}
+
+#[derive(Default)]
+struct Pins {
+    leases: Vec<cyber_core::worktrees::CheckoutLease>,
+    acknowledged: Option<bool>,
+}
+impl Pins {
+    fn settle(&mut self) -> bool {
+        if let Some(acknowledged) = self.acknowledged {
+            return acknowledged;
+        }
+        let result = std::mem::take(&mut self.leases)
+            .into_iter()
+            .map(|lease| lease.settle_retained())
+            .collect::<std::io::Result<Vec<_>>>();
+        let acknowledged = result.is_ok();
+        if let Ok(retained) = result {
+            self.leases = retained;
+        }
+        self.acknowledged = Some(acknowledged);
+        acknowledged
+    }
+}
+
+fn checkout_records(directory: &Path) -> Result<Vec<cyber_core::worktrees::Managed>, LaunchError> {
+    cyber_core::worktrees::Repository::managed_locations_at(directory)
+        .map(|locations| locations.into_iter().map(|(_, managed)| managed).collect())
+        .map_err(|_| refused("managed checkout identity unavailable"))
 }
 
 #[cfg(test)]
@@ -421,6 +541,8 @@ mod tests {
 
     fn resources(root: &Path) -> Resources {
         Resources {
+            pins: Pins::default(),
+            pins_safe: true,
             config: SandboxConfig::resolve(&serde_json::json!({}), &BTreeMap::new(), None, root),
             scratch: root.into(),
             proxy: None,

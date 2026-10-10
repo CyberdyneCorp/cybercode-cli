@@ -63,6 +63,20 @@ pub struct BuiltinHost {
 }
 
 impl BuiltinHost {
+    pub fn lsp_checkout_claim(self: &Arc<Self>) -> crate::lsp::CheckoutClaim {
+        let host = Arc::downgrade(self);
+        Arc::new(move |expected, owner, cancel| {
+            let host = host.clone();
+            Box::pin(async move {
+                let host = host.upgrade().ok_or(crate::lsp::LspError::Protocol(
+                    "checkout claim host unavailable",
+                ))?;
+                host.claim_lsp_checkouts(expected, owner, cancel)
+                    .await
+                    .map_err(|_| crate::lsp::LspError::Protocol("managed checkout claim failed"))
+            })
+        })
+    }
     pub fn attach_lsp(&self, factory: crate::lsp::PoolFactory) -> Result<(), String> {
         self.lsp
             .set(crate::lsp::Locations::new(factory))
@@ -384,7 +398,11 @@ impl BuiltinHost {
         self.policy_for(inv, Some(&inv.agent)).await
     }
 
-    async fn policy_for(&self, inv: &Invocation, agent: Option<&str>) -> Result<Policy, String> {
+    pub(crate) async fn policy_for(
+        &self,
+        inv: &Invocation,
+        agent: Option<&str>,
+    ) -> Result<Policy, String> {
         let location = PathBuf::from(&inv.directory);
         let root = cyber_core::config::project_root(&location);
         let mut rules = self.session_rules(&location, agent, &inv.rules)?;

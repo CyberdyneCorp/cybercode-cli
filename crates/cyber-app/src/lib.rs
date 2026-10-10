@@ -138,6 +138,7 @@ impl App {
             cyber_core::trust::TrustStore::new(opts.paths.trust_file()),
         )?;
         let lsp_options = cyber_tools::lsp::LaunchOptions {
+            checkout_claim: Some(host.lsp_checkout_claim()),
             paths: opts.paths.clone(),
             home: opts.home.clone(),
             environment: std::env::vars().collect(),

@@ -60,6 +60,9 @@ jobs:
       - name: Native language-server checkout ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test worktree_repository lsp_
+      - name: Native managed language-server launch and settlement
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test worktree_setup lsp_
       - name: Native read background warming
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test tools successful_read_warms_in_background_without_waiting_for_discovery
