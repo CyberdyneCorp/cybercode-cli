@@ -6,10 +6,15 @@ use super::storage::private_builder;
 use super::storage::{verify_private_directory, verify_private_file, verify_regular};
 #[cfg(not(windows))]
 use cap_fs_ext::DirExt;
+#[cfg(not(windows))]
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
-use cap_std::fs::{Dir, OpenOptions};
+use cap_std::fs::Dir;
+#[cfg(not(windows))]
+use cap_std::fs::OpenOptions;
 use std::fs::{File, TryLockError};
-use std::io::{Read, Write};
+use std::io::Read;
+#[cfg(not(windows))]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
 #[path = "client_state/windows.rs"]
@@ -86,6 +91,8 @@ impl MemoryClientStore {
             previous: None,
         };
         store.verify_binding()?;
+        #[cfg(windows)]
+        windows::recover(&store)?;
         store.previous = store.read()?;
         Ok(store)
     }
@@ -98,6 +105,17 @@ impl MemoryClientStore {
 
     pub fn save(&mut self, bytes: &[u8]) -> Result<(), MemoryStorageError> {
         native()?;
+        #[cfg(windows)]
+        {
+            windows::save(self, bytes)
+        }
+        #[cfg(not(windows))]
+        {
+            self.save_local(bytes)
+        }
+    }
+    #[cfg(not(windows))]
+    fn save_local(&mut self, bytes: &[u8]) -> Result<(), MemoryStorageError> {
         if bytes.len() > LIMIT {
             return Err(MemoryStorageError::TooLarge);
         }
@@ -244,6 +262,7 @@ fn client_file(dir: &Dir, name: &str) -> Result<File, MemoryStorageError> {
         Ok(dir.open_with(name, &options)?.into_std())
     }
 }
+#[cfg(not(windows))]
 fn private_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options.follow(FollowSymlinks::No);

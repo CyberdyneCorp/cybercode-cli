@@ -1,7 +1,10 @@
 //! Native checkpoint capabilities; public activation awaits durable replacement/recovery.
 use super::*;
 use crate::memory::windows as native;
-use std::io;
+use std::io::{self, Write};
+#[path = "journal.rs"]
+mod journal;
+pub(super) use journal::{recover, save};
 use std::os::windows::fs::OpenOptionsExt;
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
@@ -23,8 +26,15 @@ pub(super) fn state_directory(path: &Path) -> Result<Dir, MemoryStorageError> {
     Ok(Dir::from_std_file(file))
 }
 pub(super) fn directory(parent: &Dir, create: bool) -> Result<Option<Dir>, MemoryStorageError> {
+    child_directory(parent, DIRECTORY, create)
+}
+fn child_directory(
+    parent: &Dir,
+    name: &str,
+    create: bool,
+) -> Result<Option<Dir>, MemoryStorageError> {
     let parent = parent.try_clone()?.into_std_file();
-    match native::open_pinned_private_directory(&parent, DIRECTORY, true) {
+    match native::open_pinned_private_directory(&parent, name, true) {
         Ok(file) => return Ok(Some(Dir::from_std_file(file))),
         Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
@@ -32,7 +42,7 @@ pub(super) fn directory(parent: &Dir, create: bool) -> Result<Option<Dir>, Memor
     if !create {
         return Ok(None);
     }
-    let expected = match native::create_private_directory(&parent, DIRECTORY) {
+    let expected = match native::create_private_directory(&parent, name) {
         Ok(file) => {
             native::sync_private(&file)?;
             Some(native::identity(&file)?)
@@ -40,7 +50,7 @@ pub(super) fn directory(parent: &Dir, create: bool) -> Result<Option<Dir>, Memor
         Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::AlreadyExists => None,
         Err(error) => return Err(error),
     };
-    let file = native::open_pinned_private_directory(&parent, DIRECTORY, true)?;
+    let file = native::open_pinned_private_directory(&parent, name, true)?;
     if let Some(expected) = expected
         && native::identity(&file)? != expected
     {

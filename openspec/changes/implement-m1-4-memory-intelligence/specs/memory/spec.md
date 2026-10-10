@@ -443,3 +443,11 @@
 - **AND** creation SHALL atomically apply protected current-user/SYSTEM privacy; unsafe existing objects SHALL refuse without repair
 - **AND** existing-only admission SHALL not create missing directories or checkpoints; bounded reads SHALL verify bytes and full object identity on retained native handles
 - **AND** native durability SHALL use normal verified file/directory flushes; public checkpoint admission SHALL remain gated until exact-source durable replacement and complete crash acceptance
+
+#### Scenario: Windows recoverable checkpoint replacement
+- **WHEN** a Windows private checkpoint changes
+- **THEN** storage SHALL flush a versioned private journal recording full state/client/lock/journal/intent, original and staged file identities and bounded content proofs before target effects
+- **AND** capture and installation SHALL durably rename exact retained sources without replacing another destination; original, captured and installed recovery slots SHALL match recorded identities and content
+- **AND** reopening SHALL resume only validated checkpoint effects, without replaying already installed objects or granting restored bytes request/review authority
+- **AND** changed, aliased, malformed or incomplete evidence SHALL refuse without repair or rollback, preserving user files and journal evidence
+- **AND** completion SHALL retain exact installed objects during terminal verification and exact-source journal archival; native killed-owner/retention/full lifecycle acceptance SHALL precede public activation
