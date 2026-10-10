@@ -325,3 +325,20 @@ Feedback SHALL use publications received after save admission, revalidate curren
 #### Scenario: Concurrent edit during feedback
 - **WHEN** one edit waits for diagnostics and a second edit changes the same file
 - **THEN** the first diagnostic wait SHALL NOT retain the file-write lock or overwrite the second edit upon cancellation
+
+### Requirement: Document-scoped feedback debounce and supersession
+(P1) Diagnostic collection SHALL wait for a shared 150 ms quiet period following the most recent successful save notification of that document in its server generation, including saves with identical contents. New saves SHALL reset the quiet period without extending any caller's configured diagnostic deadline. Save-time clock tracking SHALL follow the bounded document cache and be removed on eviction. Save notifications SHALL NOT be coalesced away.
+
+A pending feedback receipt SHALL be completed without any primary or other-file diagnostics if its observed client version, saved content or managed creation identity becomes obsolete. This SHALL apply to external edits even when no newer save notification is delivered. Matching observations and omitted server versions SHALL NOT be represented as stronger proof of server computation than the protocol supplies.
+
+#### Scenario: Rapid saves with unchanged content
+- **WHEN** a second save occurs during an earlier save's quiet period with the same document version and contents
+- **THEN** both waiting collections SHALL defer until the most recent save's quiet period ends or their individual deadlines expire
+
+#### Scenario: Superseded save with other-file diagnostics
+- **WHEN** a newer save changes the document before an older receipt collects fresh errors from other files
+- **THEN** the older receipt SHALL report no diagnostic blocks
+
+#### Scenario: External modification while waiting
+- **WHEN** a user changes saved contents without sending another save notification
+- **THEN** pending feedback SHALL discard all diagnostics for the obsolete save without changing the user's contents

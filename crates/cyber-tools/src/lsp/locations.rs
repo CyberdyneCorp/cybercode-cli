@@ -601,7 +601,6 @@ async fn wait_feedback(
     other: bool,
     deadline: Instant,
 ) -> Vec<super::DiagnosticSnapshot> {
-    tokio::time::sleep_until((Instant::now() + Duration::from_millis(150)).min(deadline)).await;
     let mut latest = vec![];
     loop {
         if Instant::now() >= deadline {
@@ -620,7 +619,10 @@ async fn wait_feedback(
         if packet.complete || Instant::now() >= deadline {
             return latest;
         }
-        tokio::time::sleep_until((Instant::now() + Duration::from_millis(25)).min(deadline)).await;
+        let next = packet
+            .retry_at
+            .unwrap_or_else(|| Instant::now() + Duration::from_millis(25));
+        tokio::time::sleep_until(next.min(deadline)).await;
     }
 }
 

@@ -30,6 +30,7 @@ pub(super) struct Documents {
     entries: BTreeMap<PathBuf, (i32, [u8; 32])>,
     // Eviction must not let delayed diagnostics collide with a reopened document's version.
     next_version: i32,
+    saved: BTreeMap<PathBuf, tokio::time::Instant>,
 }
 
 impl Documents {
@@ -51,8 +52,15 @@ impl Documents {
         }
         self.open(connection, path.clone(), text, language).await?;
         notify(connection, "textDocument/didSave", params).await?;
+        self.saved.insert(path.clone(), tokio::time::Instant::now());
         self.version(&path)
             .ok_or(LspError::Protocol("saved document unavailable"))
+    }
+
+    pub fn quiet_deadline(&self, path: &std::path::Path) -> Option<tokio::time::Instant> {
+        self.saved
+            .get(path)
+            .map(|saved| *saved + Duration::from_millis(150))
     }
 
     pub fn version(&self, path: &std::path::Path) -> Option<i32> {
@@ -100,6 +108,7 @@ impl Documents {
                     )
                     .await?;
                     self.entries.remove(&first);
+                    self.saved.remove(&first);
                 }
                 (
                     "textDocument/didOpen",

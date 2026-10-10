@@ -1,5 +1,16 @@
 # P1 implementation status
 
+## Document feedback debounce and supersession evidence (2026-10-10)
+
+Diagnostic collection now uses a shared per-document quiet deadline updated after each successful didSave, including identical-content saves. Waiting callers consult the current server-generation deadline, so a rapid later save defers both collections; each caller retains its original configured timeout. All save notifications remain delivered. Quiet-clock state follows the bounded document cache and is removed on eviction.
+
+Save receipts retain the immutable admitted content/managed-creation observation. Before collecting primary or other-file feedback, workers reject superseded client versions or changed observations and complete the old waiter with no blocks. This also covers user edits without another save notification. It preserves the distinction between optional server versions and observed client state; an unversioned publication is still not proof that the server computed a particular edit.
+
+Three real sandboxed-server regressions fail against main at f87f8c5: an earlier identical-save waiter ignores the later quiet period, and superseded/external changes still leak other-file errors. All three pass with the changes restored. Six host feedback cases, 53 LSP library the remaining 104 tool/protocol/runtime integration cases and seven managed-checkout LSP cases pass locally (170 total). Workspace all-target Clippy with warnings/complexity denied, formatting/diff and generated SDK consistency checks pass. All 59 strict OpenSpec items pass; cross-spec lint reports zero errors and 21 warnings. Prior revision f87f8c5 is genuinely in progress in CI run 38047241389; fresh native acceptance remains required.
+
+Deletion/rename notifications, broader delayed unversioned-publication ambiguity, navigation, sandboxed formatters, client-wide lifecycle controls, enforced Windows launch and the complete remaining P1 scope stay open. No full milestone is accepted, and the canonical Diagnostics after edits contract remains unaccepted pending complete lifecycle/native evidence. P0 local-model processes/data/artifacts and its independent exit gate are preserved.
+
+
 ## Edit-tool diagnostic feedback evidence (2026-10-10)
 
 All four built-in edit tools now capture managed ancestry before writing, release their file-write lock and enqueue owned LSP save synchronization. Matching servers receive didOpen/didChange and didSave after fresh authority, creation and disk-content checks; save text is included when requested by server capabilities. Configured waiting covers queued discovery/save and diagnostic retrieval. A timeout or unavailable service leaves the successful file edit successful. Zero-wait synchronization retains service activity and notification ownership after its caller stops waiting.

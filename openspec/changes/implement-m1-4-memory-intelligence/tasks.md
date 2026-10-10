@@ -83,6 +83,7 @@
   - [x] Add bounded typed diagnostic publication validation, replacement/clear semantics, revalidated retrieval, error-only block rendering and retained managed-scope admission for unopened files. All four edit-tool synchronization paths, diagnostics debounce/wait, other-file feedback, navigation and full native acceptance remain open.
   - [x] Fence LSP document versions across bounded-cache eviction/reopening within each server generation, with real subprocess regression and checked exhaustion refusal. Diagnostic validation, edit synchronization and complete code-intelligence acceptance remain open.
   - [x] Connect all four edit tools to owned save synchronization and bounded fresh error feedback; release write locks before waiting and retain zero-wait notifications. Local real-server host cases pass. Complete debounce, deletion/rename, stale-publication races and native Windows acceptance remain required.
+  - [x] Share the 150 ms collection quiet period across rapid same-document saves and discard superseded or externally changed receipts including other-file feedback. Three real-server regressions fail on main and pass after the change; deletion/rename and complete native lifecycle acceptance remain open.
   - [ ] Implement HTTP status, owned LSP protocol and shutdown, read warming, diagnostics, navigation tool and sandboxed formatter execution with public integrations.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.
 - [ ] Validate documentation, native behavior and complete M1.4 acceptance.

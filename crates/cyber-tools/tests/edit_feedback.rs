@@ -39,7 +39,7 @@ while True:
         with (root/'save-events').open('a') as f: f.write(json.dumps({'uri':uri,'version':versions[uri],'text':path.read_text(),'project':project})+'\n')
         if sys.argv[1]=='silent': continue
         errors=[diagnostic('fresh <error> & detail')]+[diagnostic('error %d'%i) for i in range(21)]+[diagnostic('warning hidden',2)]
-        send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':uri,'version':versions[uri],'diagnostics':errors}})
+        if sys.argv[1]!='other-only': send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':uri,'version':versions[uri],'diagnostics':errors}})
         for other in sorted(root.glob('other*.txt')):
             send({'jsonrpc':'2.0','method':'textDocument/publishDiagnostics','params':{'uri':other.as_uri(),'diagnostics':[diagnostic('other error')]}})
     elif method=='shutdown': send({'jsonrpc':'2.0','id':msg['id'],'result':None})
@@ -228,6 +228,10 @@ async fn diagnostic_wait_releases_write_lock_and_cancellation_retains_saved_file
     })
     .await
     .unwrap();
+    assert!(
+        !first.is_finished(),
+        "first save should still be waiting for diagnostics"
+    );
     fixture.set_config(json!({"lsp":{"diagnostics_wait_ms":0}}));
     let second = tokio::time::timeout(
         Duration::from_millis(500),
@@ -240,16 +244,148 @@ async fn diagnostic_wait_releases_write_lock_and_cancellation_retains_saved_file
     .await
     .expect("diagnostic waiter held the write lock");
     assert!(!ok(second).contains("<diagnostics"));
-    assert!(
-        !first.is_finished(),
-        "first save should still be waiting for diagnostics"
-    );
     cancel.cancel();
     tokio::time::timeout(Duration::from_millis(500), first)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(fixture.read("file.txt"), "second");
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+async fn wait_saves(fixture: &Fixture, count: usize) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let events =
+                std::fs::read_to_string(fixture.repo.join("save-events")).unwrap_or_default();
+            if events.lines().count() >= count {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn rapid_identical_saves_share_the_latest_quiet_period() {
+    use cyber_server::runtime::ToolHost;
+    use tokio_util::sync::CancellationToken;
+    let (fixture, locations) = setup("errors", 2000);
+    let host = fixture.host.clone();
+    let invocation = fixture.invocation(
+        "accept-edits",
+        "write",
+        json!({"path":"file.txt","content":"same"}),
+    );
+    let first =
+        tokio::spawn(async move { host.execute(invocation, CancellationToken::new()).await });
+    wait_saves(&fixture, 1).await;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    let second_started = tokio::time::Instant::now();
+    let second = fixture.call(
+        "accept-edits",
+        "write",
+        json!({"path":"file.txt","content":"same"}),
+    );
+    let first_result = async {
+        let output = first.await.unwrap();
+        assert!(
+            second_started.elapsed() >= Duration::from_millis(145),
+            "earlier waiter ignored latest save"
+        );
+        output
+    };
+    let (first, second) = tokio::join!(first_result, second);
+    assert_errors(&ok(first), "file.txt");
+    assert_errors(&ok(second), "file.txt");
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn superseded_save_never_reports_other_file_errors() {
+    use cyber_server::runtime::ToolHost;
+    use tokio_util::sync::CancellationToken;
+    let (fixture, locations) = setup("other-only", 500);
+    fixture.write("other0.txt", "other");
+    let host = fixture.host.clone();
+    let invocation = fixture.invocation(
+        "accept-edits",
+        "write",
+        json!({"path":"file.txt","content":"first"}),
+    );
+    let first =
+        tokio::spawn(async move { host.execute(invocation, CancellationToken::new()).await });
+    wait_saves(&fixture, 1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    fixture.set_config(json!({"lsp":{"diagnostics_wait_ms":0}}));
+    ok(fixture
+        .call(
+            "accept-edits",
+            "write",
+            json!({"path":"file.txt","content":"second"}),
+        )
+        .await);
+    wait_saves(&fixture, 2).await;
+    let output = ok(tokio::time::timeout(Duration::from_secs(2), first)
+        .await
+        .unwrap()
+        .unwrap());
+    assert!(
+        !output.contains("<diagnostics"),
+        "superseded feedback: {output}"
+    );
+    assert_eq!(fixture.read("file.txt"), "second");
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
+}
+
+#[tokio::test]
+async fn external_change_discards_all_pending_feedback() {
+    use cyber_server::runtime::ToolHost;
+    use tokio_util::sync::CancellationToken;
+    let (fixture, locations) = setup("other-only", 500);
+    fixture.write("other0.txt", "other");
+    let host = fixture.host.clone();
+    let invocation = fixture.invocation(
+        "accept-edits",
+        "write",
+        json!({"path":"file.txt","content":"first"}),
+    );
+    let first =
+        tokio::spawn(async move { host.execute(invocation, CancellationToken::new()).await });
+    wait_saves(&fixture, 1).await;
+    fixture.write("file.txt", "user edit");
+    let output = ok(tokio::time::timeout(Duration::from_secs(2), first)
+        .await
+        .unwrap()
+        .unwrap());
+    assert!(
+        !output.contains("<diagnostics"),
+        "external change feedback: {output}"
+    );
+    assert_eq!(fixture.read("file.txt"), "user edit");
     assert!(
         locations
             .close()

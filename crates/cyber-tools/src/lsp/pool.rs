@@ -138,6 +138,7 @@ enum Command {
 }
 
 pub(super) struct SaveReceipt {
+    observation: super::diagnostics::Observation,
     version: i32,
     sequence: u64,
     previous: BTreeMap<PathBuf, Vec<super::Diagnostic>>,
@@ -145,6 +146,7 @@ pub(super) struct SaveReceipt {
 
 pub(super) struct Feedback {
     pub complete: bool,
+    pub retry_at: Option<tokio::time::Instant>,
     pub snapshots: Vec<super::DiagnosticSnapshot>,
 }
 
@@ -751,16 +753,17 @@ async fn dispatch_event(
         else {
             return false;
         };
-        if !observation.is_some_and(|observation| observation.matches_text(&text)) {
+        let Some(observation) = observation.filter(|observation| observation.matches_text(&text))
+        else {
             let _ = reply.send(Err(unavailable()));
             return true;
-        }
+        };
         let sequence = diagnostics.sequence();
         let previous = diagnostics.baseline();
         let result = tokio::select! {
             biased;
             _ = cancel.cancelled() => return false,
-            result = documents.save(connection, path, text) => result.map(|version| Arc::new(SaveReceipt { version, sequence, previous })),
+            result = documents.save(connection, path, text) => result.map(|version| Arc::new(SaveReceipt { version, sequence, previous, observation })),
         };
         let healthy = result.is_ok();
         let _ = reply.send(result);
@@ -820,8 +823,60 @@ async fn collect_feedback(
     receipt: &SaveReceipt,
     other: bool,
 ) -> Result<Feedback, LspError> {
+    if documents.version(path) != Some(receipt.version) {
+        return Ok(Feedback {
+            complete: true,
+            retry_at: None,
+            snapshots: vec![],
+        });
+    }
+    if let Some(quiet) = documents.quiet_deadline(path)
+        && tokio::time::Instant::now() < quiet
+    {
+        return Ok(Feedback {
+            complete: false,
+            retry_at: Some(quiet),
+            snapshots: vec![],
+        });
+    }
+    let observation = retained(
+        connection,
+        cancel,
+        super::diagnostics::observe(path.to_path_buf()),
+    )
+    .await
+    .ok_or_else(unavailable)?;
+    if observation.as_ref() != Some(&receipt.observation) {
+        return Ok(Feedback {
+            complete: true,
+            retry_at: None,
+            snapshots: vec![],
+        });
+    }
+    collect_feedback_snapshots(
+        connection,
+        documents,
+        diagnostics,
+        cancel,
+        path,
+        receipt,
+        other,
+    )
+    .await
+}
+
+async fn collect_feedback_snapshots(
+    connection: &mut StdioConnection,
+    documents: &super::documents::Documents,
+    diagnostics: &mut Diagnostics,
+    cancel: &CancellationToken,
+    path: &Path,
+    receipt: &SaveReceipt,
+    other: bool,
+) -> Result<Feedback, LspError> {
     let mut feedback = Feedback {
         complete: false,
+        retry_at: None,
         snapshots: vec![],
     };
     let mut paths = diagnostics.paths_after(receipt.sequence);
