@@ -60,6 +60,19 @@ impl BuiltinHost {
                 Some(&authority.effective_agent),
                 &parent.rules,
             )?;
+            let state = runtime
+                .state(&parent.id)
+                .await
+                .map_err(|error| error.to_string())?;
+            inherited.rules.extend(
+                crate::skill_permissions::scope_rules(&state, None)
+                    .into_iter()
+                    .filter(|rule| rule.effect == Effect::Deny)
+                    .map(|mut rule| {
+                        rule.source = format!("parent:{}:{}", parent.id, rule.source);
+                        rule
+                    }),
+            );
             inherited.rules.extend(
                 rules
                     .into_iter()

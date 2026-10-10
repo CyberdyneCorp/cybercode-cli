@@ -20,7 +20,7 @@ impl Tool for SkillTool {
             "Load a skill listed in <available_skills> by name. arguments are substituted into the skill body.",
             json!({"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "arguments": {"type": "string"}}}),
             RetrySafety::ReadOnly,
-            true,
+            false,
         )
     }
 
@@ -55,6 +55,14 @@ impl Tool for SkillTool {
             } else {
                 format!("\n\nFiles in this skill:\n{}", files.join("\n"))
             };
+            *ctx.loaded_skill
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(skills::SkillActivation {
+                    name: skill.name.clone(),
+                    allowed_tools: skill.allowed_tools.clone(),
+                    disallowed_tools: skill.disallowed_tools.clone(),
+                });
             Ok(format!(
                 "<skill name=\"{}\" base=\"{}\">\n{}{listing}\n</skill>",
                 skill.name,

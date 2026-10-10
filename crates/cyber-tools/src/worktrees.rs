@@ -88,6 +88,7 @@ impl BuiltinHost {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
@@ -148,6 +149,7 @@ impl BuiltinHost {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
@@ -258,6 +260,7 @@ impl BuiltinHost {
         }
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
@@ -324,6 +327,7 @@ impl BuiltinHost {
     ) -> io::Result<Vec<WorktreeListing>> {
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
@@ -531,6 +535,7 @@ impl BuiltinHost {
         let location = Path::new(&inv.directory).canonicalize()?;
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
@@ -709,6 +714,7 @@ impl BuiltinHost {
         }
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,

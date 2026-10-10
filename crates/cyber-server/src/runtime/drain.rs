@@ -1283,6 +1283,7 @@ fn settled(
     detail: Option<&str>,
 ) -> cyber_store::NewEvent {
     let payload = ToolSettled {
+        skill_activation: None,
         skill_reminders: Vec::new(),
         structured_output: None,
         call_id: call_id.into(),
@@ -1345,6 +1346,7 @@ pub(super) fn settlement_with_skills(
     event(
         TOOL_SETTLED,
         &ToolSettled {
+            skill_activation: None,
             skill_reminders: names,
             structured_output: value,
             call_id: call_id.into(),
@@ -1367,6 +1369,18 @@ pub(super) fn settlement(
 ) -> cyber_store::NewEvent {
     let read_only = def.retry_safety == RetrySafety::ReadOnly;
     match outcome {
+        ToolOutcome::SkillLoaded { output, activation } => event(
+            TOOL_SETTLED,
+            &ToolSettled {
+                skill_activation: Some(activation),
+                skill_reminders: Vec::new(),
+                structured_output: None,
+                call_id: call_id.into(),
+                status: CallStatus::Ok,
+                output,
+                detail: None,
+            },
+        ),
         ToolOutcome::SkillSuggestions {
             failed: true,
             output,
@@ -1386,6 +1400,7 @@ pub(super) fn settlement(
         } => event(
             TOOL_SETTLED,
             &ToolSettled {
+                skill_activation: None,
                 skill_reminders: Vec::new(),
                 structured_output: Some(value),
                 call_id: call_id.into(),

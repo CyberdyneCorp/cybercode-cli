@@ -145,6 +145,8 @@ impl CallStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CallState {
+    #[serde(skip)]
+    pub skill_activation: Option<cyber_core::skills::SkillActivation>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -322,6 +324,33 @@ impl SessionState {
             ));
         }
         Ok(())
+    }
+
+    /// Provider completion precedes tool dispatch; the Turn remains active through its batch.
+    pub fn active_skill_scopes(
+        &self,
+        message_id: Option<&str>,
+    ) -> Vec<cyber_core::skills::SkillActivation> {
+        let latest = self.entries.iter().rev().find_map(|entry| match entry {
+            Entry::Assistant(assistant) => Some(assistant.id.as_str()),
+            _ => None,
+        });
+        let Some(message) = message_id.or(latest) else {
+            return Vec::new();
+        };
+        if latest != Some(message)
+            || !self
+                .calls
+                .values()
+                .any(|call| call.message_id == message && !call.status.is_settled())
+        {
+            return Vec::new();
+        }
+        self.calls
+            .values()
+            .filter(|call| call.status == CallStatus::Ok && call.message_id == message)
+            .filter_map(|call| call.skill_activation.clone())
+            .collect()
     }
 
     pub fn child_worktree_setup_pending(&self) -> bool {
@@ -841,6 +870,7 @@ impl SessionState {
         self.calls.insert(
             c.call_id.clone(),
             CallState {
+                skill_activation: None,
                 structured_output: None,
                 call_id: c.call_id,
                 message_id: c.message_id,
@@ -869,6 +899,11 @@ impl SessionState {
             {
                 epoch.reminded_skills.extend(s.skill_reminders);
             }
+            call.skill_activation = if s.status == CallStatus::Ok {
+                s.skill_activation
+            } else {
+                None
+            };
             call.status = s.status;
             call.output = Some(s.output);
             call.structured_output = s.structured_output;

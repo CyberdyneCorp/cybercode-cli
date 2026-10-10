@@ -224,6 +224,10 @@ pub struct SkillSuggestion {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolOutcome {
     Ok(String),
+    SkillLoaded {
+        output: String,
+        activation: cyber_core::skills::SkillActivation,
+    },
     /// Suggestions are deduplicated and persisted atomically with the tool settlement.
     SkillSuggestions {
         failed: bool,

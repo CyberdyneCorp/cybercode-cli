@@ -1096,6 +1096,7 @@ impl Runtime {
             ),
         };
         let payload = ToolSettled {
+            skill_activation: None,
             skill_reminders: Vec::new(),
             structured_output: None,
             call_id: call_id.into(),

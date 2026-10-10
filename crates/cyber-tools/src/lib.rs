@@ -20,6 +20,7 @@ mod reconcile;
 mod registered;
 mod sandboxing;
 mod schema;
+mod skill_permissions;
 mod subagents;
 mod tool_hooks;
 pub use tool_hooks::HookConfigFn;

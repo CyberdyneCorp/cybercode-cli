@@ -206,7 +206,7 @@ impl Fixture {
 
 pub fn ok(outcome: ToolOutcome) -> String {
     match outcome {
-        ToolOutcome::Ok(text) => text,
+        ToolOutcome::Ok(text) | ToolOutcome::SkillLoaded { output: text, .. } => text,
         other => panic!("expected Ok, got {other:?}"),
     }
 }

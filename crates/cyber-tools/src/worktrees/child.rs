@@ -145,6 +145,7 @@ impl BuiltinHost {
     ) -> io::Result<(Repository, Managed, SetupRecipe)> {
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: self,
@@ -480,6 +481,7 @@ impl ChildWorktree {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: &host,
@@ -536,6 +538,7 @@ impl ChildWorktree {
         }
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             policy: host

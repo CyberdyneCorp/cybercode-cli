@@ -84,6 +84,9 @@ impl BuiltinHost {
             if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
                 return ToolOutcome::Failed(error.to_string());
             }
+            if let Err(error) = self.check_skill_tool(&inv).await {
+                return ToolOutcome::Failed(error);
+            }
             if let Err(error) = self.check_agent_tool(&inv) {
                 return ToolOutcome::Failed(error);
             }
@@ -101,6 +104,9 @@ impl BuiltinHost {
                 Ok(policy) => policy,
                 Err(error) => return ToolOutcome::Failed(error),
             };
+            if let Some(reason) = policy.skill_tool_denial(&inv.name) {
+                return ToolOutcome::Failed(reason);
+            }
             let index = policy
                 .rules
                 .iter()
@@ -121,6 +127,7 @@ impl BuiltinHost {
             );
             let ctx = Ctx {
                 skill_paths: Default::default(),
+                loaded_skill: Default::default(),
                 compiler_feedback: Default::default(),
                 host: self,
                 inv: &inv,

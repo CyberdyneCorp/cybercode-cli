@@ -101,6 +101,9 @@ jobs:
       - name: Native path-triggered skill reminders
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test path_skills
+      - name: Native skill-scoped permissions
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test skill_scopes
       - name: Native read-time command discovery
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test command_discovery

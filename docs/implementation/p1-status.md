@@ -1,5 +1,17 @@
 # P1 implementation status
 
+## Model-loaded skill permission scopes (2026-10-10)
+
+The model skill loader now captures bounded allowed/disallowed declarations as typed metadata; output budgeting and post-hooks must succeed before the same settlement event publishes the activation. Replay restores captured declarations independently of instruction text.
+
+Later groups in the same model Turn use scoped grants through the existing saved-approval matcher, preserving explicit denials and Mode/protected-path ceilings. Disallowed tool/resource patterns override grants and bypass. Bare tool denials apply before hooks and after awaited hook processing at built-in and registered-tool boundaries. Descendants inherit only denials. Skill loading is a batch barrier; ending the Turn expires its scope, even without new user input.
+
+Local validation passes 489 Rust cases: 41 core units, two CI contracts, 154 tool units, 19 existing tool flows, six forked subagent, 14 ancestor-permission, 11 parent-mode, nine reminder, four recovery, six skill-scope, 20 hook-dispatch, 11 web/skill, 15 application-host, 39 CLI, 42 server unit, 60 HTTP and 36 runtime lifecycle cases. The new scope flows exercise same-Turn load barriers, expiry across a forced next Turn without new input, captured metadata replay, ordinary deny/tool matching, spoofed instruction refusal, bare dispatch denials and an actual forked child. Strict specification validation passes all 60 items; lint reports zero errors and 21 warnings. SDK generation, canonical inventory, formatting/diff checks and workspace all-target Clippy with warnings denied pass. The native CI job independently runs the new scope suite.
+
+The previous revision’s [Windows job 114307047063](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38084168403/job/114307047063) reports the native reminder step successful, while retained metadata-only review and migration snapshot steps fail. The job remains running at this observation. This increment still requires native skill-scope execution.
+
+Full skill acceptance remains open: exact lifecycle across all Turn/compaction/rewind boundaries, user-command activation/model overrides, inspection, context-fork routing, remote sources and bundles still require implementation or acceptance. All 225 P1 contracts remain in scope and no milestone is accepted. P0 models, services, evaluations and data artifacts remain preserved.
+
 ## Skill reminder output-budget admission (2026-10-10)
 
 A new actual file-flow regression reproduced output-budget overrun on unchanged main `69c13ff`: file text was truncated by the host before the runtime appended reminders outside the configured limit. Finalization now reserves the entire rendered reminder inside the configured line and UTF-8 byte payload budgets, truncates earlier text as necessary and preserves complete combined text in an exclusive managed artifact. The normal overflow notice remains outside the payload limit and precedes the reminder.

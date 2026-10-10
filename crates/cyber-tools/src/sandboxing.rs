@@ -450,6 +450,7 @@ mod tests {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
             host: &host,

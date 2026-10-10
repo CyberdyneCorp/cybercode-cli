@@ -145,6 +145,7 @@ impl BuiltinHost {
     ) -> Result<(), ToolError> {
         let (kind, output) = match outcome {
             ToolOutcome::Ok(output)
+            | ToolOutcome::SkillLoaded { output, .. }
             | ToolOutcome::Structured { output, .. }
             | ToolOutcome::SkillSuggestions {
                 failed: false,

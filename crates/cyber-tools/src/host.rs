@@ -162,7 +162,15 @@ impl BuiltinHost {
         match self.budget(&ctx.location).apply(output, keep_tail) {
             Ok(output) => match value {
                 Some(value) => ToolOutcome::Structured { output, value },
-                None => ToolOutcome::Ok(output),
+                None => match ctx
+                    .loaded_skill
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+                {
+                    Some(activation) => ToolOutcome::SkillLoaded { output, activation },
+                    None => ToolOutcome::Ok(output),
+                },
             },
             Err(error) => ToolOutcome::Crashed(error),
         }
@@ -476,9 +484,17 @@ impl BuiltinHost {
             Default::default()
         };
         rules.extend(inherited.rules);
+        let mut saved = saved::rules(&self.opts.store, &root).unwrap_or_default();
+        for rule in self.skill_scope_rules(inv).await? {
+            if rule.effect == Effect::Deny {
+                rules.push(rule);
+            } else {
+                saved.push(rule);
+            }
+        }
         Ok(Policy {
             rules,
-            saved: saved::rules(&self.opts.store, &root).unwrap_or_default(),
+            saved,
             mode: Mode::parse(&inv.mode),
             parent_modes: inherited.modes,
             plan_file: location
@@ -791,6 +807,9 @@ impl ToolHost for BuiltinHost {
             let Some(tool) = self.tools.iter().find(|t| t.def().spec.name == inv.name) else {
                 return ToolOutcome::Failed(format!("Unknown tool: {}", inv.name));
             };
+            if let Err(error) = self.check_skill_tool(&inv).await {
+                return ToolOutcome::Failed(error);
+            }
             if let Err(error) = self.check_agent_tool(&inv) {
                 return ToolOutcome::Failed(error);
             }
@@ -810,8 +829,12 @@ impl ToolHost for BuiltinHost {
                 Ok(policy) => policy,
                 Err(error) => return ToolOutcome::Failed(error),
             };
+            if let Some(reason) = policy.skill_tool_denial(&inv.name) {
+                return ToolOutcome::Failed(reason);
+            }
             let ctx = Ctx {
                 skill_paths: Default::default(),
+                loaded_skill: Default::default(),
                 compiler_feedback: Default::default(),
                 host: self,
                 policy,
@@ -931,6 +954,7 @@ impl ToolHost for BuiltinHost {
             self.check_agent_tool(&inv)?;
             let ctx = Ctx {
                 skill_paths: Default::default(),
+                loaded_skill: Default::default(),
                 compiler_feedback: Default::default(),
                 hook_decision: None,
                 host: self,
@@ -989,6 +1013,7 @@ impl ToolHost for BuiltinHost {
         Box::pin(async move {
             let ctx = Ctx {
                 skill_paths: Default::default(),
+                loaded_skill: Default::default(),
                 compiler_feedback: Default::default(),
                 hook_decision: None,
                 host: self,
@@ -1059,6 +1084,7 @@ fn fully_denied_scoped(rules: &[permissions::Rule], action: &str, tool: &str) ->
 /// Everything a tool needs for one call.
 pub(crate) struct Ctx<'a> {
     pub skill_paths: Mutex<Vec<PathBuf>>,
+    pub loaded_skill: Mutex<Option<skills::SkillActivation>>,
     pub compiler_feedback: std::sync::atomic::AtomicBool,
     pub host: &'a BuiltinHost,
     pub inv: &'a Invocation,

@@ -30,6 +30,8 @@ impl Effect {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argv_prefix: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
@@ -42,6 +44,7 @@ pub struct Rule {
 impl Rule {
     pub fn new(action: &str, resource: &str, effect: Effect, source: &str) -> Self {
         Self {
+            tool_pattern: None,
             argv_prefix: None,
             tool: None,
             action: action.into(),
@@ -212,6 +215,10 @@ fn rule_matches_argv(
     matches(&rule.action, action)
         && resource_matches(rule, resource, argv)
         && rule.tool.as_deref().is_none_or(|scope| Some(scope) == tool)
+        && rule
+            .tool_pattern
+            .as_deref()
+            .is_none_or(|pattern| tool.is_some_and(|tool| matches(pattern, tool)))
 }
 
 fn resource_matches(rule: &Rule, resource: &str, argv: Option<&[String]>) -> bool {
@@ -361,6 +368,20 @@ pub struct Policy {
 const PLAN_DENY: &str = "Plan mode is read-only. Present the plan with plan_exit.";
 
 impl Policy {
+    pub(crate) fn skill_tool_denial(&self, tool: &str) -> Option<String> {
+        self.rules
+            .iter()
+            .find(|rule| {
+                rule.effect == Effect::Deny
+                    && rule.resource == "*"
+                    && rule
+                        .tool_pattern
+                        .as_deref()
+                        .is_some_and(|pattern| matches(pattern, tool))
+            })
+            .map(|_| format!("Skill disallows tool: {tool}"))
+    }
+
     pub fn decide(&self, req: &Request) -> Decision {
         let ruled = request_effect(&self.rules, req);
         if let Some(denied) = self.rule_denial(req, ruled) {

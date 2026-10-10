@@ -8,6 +8,7 @@ use support::Fixture;
 
 fn call(name: &str, input: Value) -> CallState {
     CallState {
+        skill_activation: None,
         structured_output: None,
         call_id: "c1".into(),
         message_id: "m1".into(),

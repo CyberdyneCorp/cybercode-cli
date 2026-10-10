@@ -3,7 +3,15 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+/// Captured declarations from an authorized load; instruction text is not authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillActivation {
+    pub name: String,
+    pub allowed_tools: Vec<String>,
+    pub disallowed_tools: Vec<String>,
+}
 
 /// Where to look for skills.
 #[derive(Debug, Clone)]
@@ -23,6 +31,7 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub allowed_tools: Vec<String>,
+    pub disallowed_tools: Vec<String>,
     pub paths: Vec<String>,
     pub model: Option<String>,
     pub disable_model_invocation: bool,
@@ -48,6 +57,8 @@ struct Frontmatter {
     description: String,
     #[serde(default)]
     allowed_tools: Tools,
+    #[serde(default)]
+    disallowed_tools: Tools,
     #[serde(default)]
     paths: Vec<String>,
     model: Option<String>,
@@ -174,10 +185,15 @@ pub fn load(dir: &Path) -> Result<Skill, String> {
     {
         return Err("paths must contain at most 64 bounded project-relative globs".into());
     }
+    let allowed_tools = fm.allowed_tools.into_vec();
+    let disallowed_tools = fm.disallowed_tools.into_vec();
+    validate_tool_patterns(&allowed_tools)?;
+    validate_tool_patterns(&disallowed_tools)?;
     Ok(Skill {
         name: fm.name,
         description: fm.description.trim().to_string(),
-        allowed_tools: fm.allowed_tools.into_vec(),
+        allowed_tools,
+        disallowed_tools,
         paths: fm.paths,
         model: fm.model,
         disable_model_invocation: fm.disable_model_invocation,
@@ -199,6 +215,24 @@ fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
         &rest[..end],
         after.split_once('\n').map_or("", |(_, body)| body),
     ))
+}
+
+fn validate_tool_patterns(patterns: &[String]) -> Result<(), String> {
+    if patterns.len() > 64
+        || patterns.iter().any(|pattern| {
+            let (tool, resource) = pattern.split_once(':').unwrap_or((pattern, "*"));
+            pattern.len() > 256
+                || pattern.chars().any(char::is_control)
+                || tool.is_empty()
+                || resource.is_empty()
+        })
+    {
+        return Err(
+            "tool declarations must contain at most 64 bounded tool[:resource] wildcard patterns"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 pub fn validate_name(name: &str) -> Result<(), String> {
@@ -327,6 +361,23 @@ fn regex_lite_positions(template: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_tool_scopes_capture_lists_and_refuse_unbounded_declarations() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("SKILL.md"), "---\nname: release\ndescription: Release\nallowed-tools: [read, 'bash:git tag *']\ndisallowed-tools: 'write:blocked*, mcp__*'\n---\nBody\n").unwrap();
+        let skill = load(tmp.path()).unwrap();
+        assert_eq!(skill.allowed_tools, ["read", "bash:git tag *"]);
+        assert_eq!(skill.disallowed_tools, ["write:blocked*", "mcp__*"]);
+        for pattern in ["", ":resource", "tool:", "tool:bad\0", "tool:bad\n"] {
+            assert!(
+                validate_tool_patterns(&[pattern.into()]).is_err(),
+                "{pattern:?}"
+            );
+        }
+        assert!(validate_tool_patterns(&vec!["read".into(); 65]).is_err());
+        assert!(validate_tool_patterns(&["x".repeat(257)]).is_err());
+    }
 
     fn write_skill(dir: &Path, name: &str, description: &str) {
         std::fs::create_dir_all(dir).unwrap();
