@@ -284,6 +284,20 @@ fn mcp_inputs(tool: SourceTool, raw: &Value, pointer: &str) -> Vec<String> {
             };
             vec![format!("{base}/{key}{}", &f[3..])]
         }
+        f if tool == SourceTool::Codex && f.starts_with("headers/") => {
+            let suffix = &f["headers/".len()..];
+            let environment = format!("{base}/env_http_headers/{suffix}");
+            if raw.pointer(&environment).is_some() {
+                vec![environment]
+            } else {
+                let key = if input.is_some_and(|v| v.get("http_headers").is_some()) {
+                    "http_headers"
+                } else {
+                    "headers"
+                };
+                vec![format!("{base}/{key}/{suffix}")]
+            }
+        }
         "" => vec![root.into()],
         _ => vec![format!("{base}/{field}")],
     }

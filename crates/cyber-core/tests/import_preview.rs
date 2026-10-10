@@ -893,3 +893,82 @@ fn claude_global_state_does_not_import_unrelated_settings_or_project_association
             .any(|r| r.reason.contains("project association"))
     );
 }
+
+#[test]
+fn codex_remote_mcp_preview_attributes_static_and_environment_headers_to_their_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        "[mcp_servers.audit]\nurl='https://example.test/mcp'\nrequired=true\n[mcp_servers.audit.http_headers]\nAuthorization='Bearer private-token'\n[mcp_servers.audit.env_http_headers]\nX-Organization='ORGANIZATION'\n",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    assert_eq!(output.required_environment.len(), 2);
+    for (variable, pointer) in [
+        (
+            "ORGANIZATION",
+            "/mcp_servers/audit/env_http_headers/X-Organization",
+        ),
+        (
+            "CYBER_IMPORT_MCP_CODEX_6175646974_HEADER_417574686F72697A6174696F6E",
+            "/mcp_servers/audit/http_headers/Authorization",
+        ),
+    ] {
+        assert!(
+            output
+                .required_environment
+                .iter()
+                .any(|r| r.requirement.variable == variable
+                    && r.sources.iter().any(|s| s.field == pointer))
+        );
+    }
+    assert!(output.report.iter().any(|r| {
+        r.field == "/mcp/audit/required"
+            && r.sources
+                .iter()
+                .any(|s| s.field == "/mcp_servers/audit/required")
+    }));
+    assert!(
+        !serde_json::to_string(output)
+            .unwrap()
+            .contains("private-token")
+    );
+    assert!(!roots.directory.join("cyber.jsonc").exists());
+}
+
+#[test]
+fn generated_mcp_bindings_cannot_collide_with_other_source_provider_bindings() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    let source = serde_json::json!({"mcp":{"audit":{"type":"local","command":["server"],"environment":{"API_KEY":"private-mcp-key"}}}});
+    let converted = cyber_core::import::mcp_config(SourceTool::OpenCode, &source).unwrap();
+    let binding = &converted.required_environment[0].variable;
+    write(
+        &roots.directory,
+        "opencode.json",
+        &serde_json::to_string(&source).unwrap(),
+    );
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        &format!(
+            "[model_providers.local]\nbase_url='https://example.test/v1'\nenv_key='{binding}'\n"
+        ),
+    );
+    let error = match preview_import(&roots, None, ImportScope::Project, &global(&root)) {
+        Ok(_) => panic!("colliding source bindings must refuse the preview"),
+        Err(error) => error,
+    };
+    assert!(!error.to_string().contains("private-mcp-key"));
+    assert!(!roots.directory.join("cyber.jsonc").exists());
+}

@@ -98,3 +98,43 @@ fn malformed_documents_and_declared_credentials_in_metadata_are_refused() {
         assert!(!error.to_string().contains("private-key"));
     }
 }
+
+#[test]
+fn codex_http_header_sources_and_required_state_are_native_and_secret_safe() {
+    let source = json!({"mcp_servers":{"audit":{"url":"https://example.test/mcp","http_headers":{"Authorization":"Bearer private-source-token"},"env_http_headers":{"X-Organization":"ORGANIZATION"},"required":true}}});
+    let mapped = mcp_config(SourceTool::Codex, &source).unwrap();
+    assert_eq!(
+        mapped.config["mcp"]["audit"]["headers"]["X-Organization"],
+        "{env:ORGANIZATION}"
+    );
+    assert_eq!(mapped.required_environment.len(), 2);
+    assert!(McpSettings::from_config(&mapped.config).unwrap().servers["audit"].required());
+    assert!(mapped.not_imported.is_empty());
+    assert!(
+        !serde_json::to_string(&mapped)
+            .unwrap()
+            .contains("private-source-token")
+    );
+}
+
+#[test]
+fn codex_header_aliases_collisions_and_invalid_environment_names_refuse_whole_batch() {
+    for server in [
+        json!({"url":"https://example.test/mcp","headers":{"X-Key":"value"},"http_headers":{"X-Key":"other"}}),
+        json!({"url":"https://example.test/mcp","http_headers":{"Authorization":"private-token"},"env_http_headers":{"authorization":"TOKEN"}}),
+        json!({"url":"https://example.test/mcp","env_http_headers":{"X-Key":"INVALID-NAME"}}),
+        json!({"url":"https://example.test/mcp","env_http_headers":{"Bad\r\nName":"TOKEN"}}),
+        json!({"url":"https://example.test/mcp","required":"private-value"}),
+    ] {
+        let error =
+            mcp_config(SourceTool::Codex, &json!({"mcp_servers":{"audit":server}})).unwrap_err();
+        assert!(!error.to_string().contains("private-"));
+    }
+}
+
+#[test]
+fn environment_header_metadata_cannot_echo_declared_credentials() {
+    let source = json!({"mcp_servers":{"audit":{"url":"https://example.test/mcp","http_headers":{"X-Secret":"PRIVATE_TOKEN"},"env_http_headers":{"X-Other":"PRIVATE_TOKEN"}}}});
+    let error = mcp_config(SourceTool::Codex, &source).unwrap_err();
+    assert!(!error.to_string().contains("PRIVATE_TOKEN"));
+}

@@ -177,3 +177,36 @@ fn ancestor_container_rename_and_same_content_replacement_invalidate_review() {
     assert!(snapshot.verify().is_err());
     replacement.verify().unwrap();
 }
+
+#[test]
+fn sibling_reviews_allow_directory_moves_and_refuse_recreated_source_bindings() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let (roots, first) = fixture(&root, b"first-private-value");
+    let parent = first.path.parent().unwrap();
+    std::fs::write(parent.join("settings.local.json"), "second-private-value").unwrap();
+    let second = discover_sources(&roots)
+        .unwrap()
+        .files
+        .into_iter()
+        .find(|f| f.path.ends_with("settings.local.json"))
+        .unwrap();
+    let first_review = SourceSnapshot::read(&roots, &first).unwrap();
+    let second_review = SourceSnapshot::read(&roots, &second).unwrap();
+    std::fs::rename(parent, roots.project_root.join("retained-siblings")).unwrap();
+    std::fs::create_dir(parent).unwrap();
+    std::fs::write(&first.path, first_review.bytes()).unwrap();
+    std::fs::write(&second.path, second_review.bytes()).unwrap();
+    for review in [&first_review, &second_review] {
+        assert!(review.verify().is_err());
+        assert!(!format!("{review:?}").contains("private-value"));
+    }
+    SourceSnapshot::read(&roots, &first)
+        .unwrap()
+        .verify()
+        .unwrap();
+    SourceSnapshot::read(&roots, &second)
+        .unwrap()
+        .verify()
+        .unwrap();
+}

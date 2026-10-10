@@ -209,6 +209,17 @@ pub fn preview_import(
             }));
         fill_existing(&mut proposed, &config, "", &origins, &mut context.report);
     }
+    let bindings: Vec<_> = context
+        .required
+        .iter()
+        .map(|entry| entry.requirement.clone())
+        .collect();
+    super::codex_providers::validate_environment_bindings(&bindings).map_err(|_| {
+        error(
+            &target,
+            "generated credential variable conflicts across source adapters",
+        )
+    })?;
     redact_report_fields(&mut context.report, &mut context.required, &context.secrets);
     reject_unsafe_strings(&proposed, &existing, &context.secrets, &target)?;
     let diff = render_diff(&target, &existing, &proposed, &context.secrets)?;

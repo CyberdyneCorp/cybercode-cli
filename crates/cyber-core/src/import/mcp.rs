@@ -195,6 +195,66 @@ fn local(
     }
     Ok(output)
 }
+fn remote_headers(
+    tool: SourceTool,
+    name: &str,
+    source: &Map<String, Value>,
+    field: &str,
+    required: &mut Vec<RequiredEnvironment>,
+) -> Result<Value, ConversionError> {
+    let key = if tool == SourceTool::Codex && source.contains_key("http_headers") {
+        if source.contains_key("headers") {
+            return Err(error(field, "ambiguous static HTTP header fields"));
+        }
+        "http_headers"
+    } else {
+        "headers"
+    };
+    let mut output = references(
+        tool,
+        name,
+        "HEADER",
+        source.get(key),
+        &format!("{field}.{key}"),
+        required,
+    )?;
+    if tool == SourceTool::Codex
+        && let Some(environment) = source.get("env_http_headers")
+    {
+        let environment = environment
+            .as_object()
+            .filter(|m| m.len() <= 128)
+            .ok_or_else(|| error(field, "expected at most 128 environment HTTP headers"))?;
+        let mut bindings = Map::new();
+        for (index, (key, value)) in environment.iter().enumerate() {
+            let location = format!("{field}.env_http_headers[{index}]");
+            let name = value
+                .as_str()
+                .filter(|s| env_name(s))
+                .ok_or_else(|| error(&location, "invalid HTTP header environment name"))?;
+            bindings.insert(key.clone(), json!(format!("{{env:{name}}}")));
+        }
+        let environment = references(
+            tool,
+            name,
+            "HEADER",
+            Some(&Value::Object(bindings)),
+            &format!("{field}.env_http_headers"),
+            required,
+        )?;
+        let output = output.as_object_mut().unwrap();
+        for (key, value) in environment.as_object().unwrap() {
+            if output
+                .keys()
+                .any(|existing| existing.eq_ignore_ascii_case(key))
+            {
+                return Err(error(field, "static and environment HTTP header collision"));
+            }
+            output.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(output)
+}
 fn remote(
     tool: SourceTool,
     name: &str,
@@ -223,15 +283,9 @@ fn remote(
         ));
     }
     let mut output = json!({"type":"remote","url":value});
-    if source.contains_key("headers") {
-        output["headers"] = references(
-            tool,
-            name,
-            "HEADER",
-            source.get("headers"),
-            &format!("{field}.headers"),
-            required,
-        )?;
+    let headers = remote_headers(tool, name, source, field, required)?;
+    if headers.as_object().is_some_and(|m| !m.is_empty()) {
+        output["headers"] = headers;
     }
     if let Some(oauth) = source.get("oauth") {
         if oauth.as_bool() != Some(false) {
@@ -293,6 +347,15 @@ fn server(
         }
         output["disabled"] = json!(disabled);
     }
+    if tool == SourceTool::Codex
+        && let Some(required) = source.get("required")
+    {
+        output["required"] = json!(
+            required
+                .as_bool()
+                .ok_or_else(|| error(field, "required must be boolean"))?
+        );
+    }
     for (index, key) in source.keys().enumerate() {
         let supported = if has_command {
             &[
@@ -308,7 +371,10 @@ fn server(
         } else {
             &["type", "url", "headers", "oauth", "enabled", "disabled"][..]
         };
-        if !supported.contains(&key.as_str()) {
+        let codex_option = tool == SourceTool::Codex
+            && (key == "required"
+                || (!has_command && matches!(key.as_str(), "http_headers" | "env_http_headers")));
+        if !supported.contains(&key.as_str()) && !codex_option {
             result.not_imported.push(McpMappingIssue {
                 field: format!("{field}[{index}]"),
                 reason: "server option requires an additional adapter; value withheld",
@@ -376,6 +442,17 @@ pub fn mcp_config(tool: SourceTool, document: &Value) -> Result<McpImportConfig,
             "retained server fields contain declared credentials or unsafe substitutions",
         )
     })?;
+    if result.required_environment.iter().any(|binding| {
+        !binding.from_literal
+            && secrets
+                .iter()
+                .any(|secret| binding.variable.contains(secret))
+    }) {
+        return Err(error(
+            key,
+            "source environment reference contains a declared credential",
+        ));
+    }
     reject_secret_keys(&result.config, &secrets)?;
     crate::config::McpSettings::from_config(&result.config)
         .map_err(|_| error(key, "converted server definitions fail native validation"))?;

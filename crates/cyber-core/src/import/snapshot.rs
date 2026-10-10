@@ -160,7 +160,7 @@ impl OpenSource {
         }
         let mut handles = Vec::new();
         for (binding, expected) in paths.iter().zip(&self.bindings) {
-            let retained = windows::retain_directory_identity(binding).map_err(|e| {
+            let retained = windows::retain_identity(binding).map_err(|e| {
                 let reason = match e.raw_os_error() {
                     Some(5) => "source review identity handoff denied access",
                     Some(6) => "source review identity handoff rejected the directory handle",
@@ -178,6 +178,14 @@ impl OpenSource {
             }
             handles.push(retained);
         }
+        let file = windows::retain_identity(path)
+            .map_err(|_| error(path, "source file identity cannot be retained for review"))?;
+        if state(&file, path)? != self.state {
+            return Err(error(path, "source file changed during review handoff"));
+        }
+        // Keep the object alive without retaining data access that can prevent
+        // NTFS ancestor renames. All content verification uses fresh fenced reads.
+        self.file = file;
         self._identity_handles = handles;
         self._directories.clear();
         Ok(())

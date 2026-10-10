@@ -1,4 +1,4 @@
-//! Attribute-only retention checked against the still-pinned source directory chain.
+//! Attribute-only retention checked against the still-pinned source lookup chain.
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -10,10 +10,10 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
 
-pub(super) fn retain_directory_identity(path: &Path) -> io::Result<File> {
+pub(super) fn retain_identity(path: &Path) -> io::Result<File> {
     // The caller retains every original lookup handle until all identities match.
     // Query only attributes, reject final reparse points through the identity check,
-    // and permit user renames after the original lookup handles are released.
+    // and permit user renames after lookup and file data-read handles are released.
     OpenOptions::new()
         .read(true)
         .access_mode(FILE_READ_ATTRIBUTES)
