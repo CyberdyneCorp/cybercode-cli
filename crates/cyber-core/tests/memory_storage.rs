@@ -256,6 +256,56 @@ fn independent_opened_handles_cannot_borrow_or_replace_an_active_scope_claim() {
 }
 
 #[test]
+fn identical_byte_note_or_index_replacement_invalidates_edit_review_without_writes() {
+    for target in ["rule.md", "MEMORY.md"] {
+        let data = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(data.path(), "global").unwrap();
+        write(&store.path().join("rule.md"), note("rule").as_bytes());
+        write(&store.path().join("MEMORY.md"), b"- [rule](rule.md)\n");
+        let scope = store.claim().unwrap();
+        let review = scope.inspect_edit("rule").unwrap();
+        let path = store.path().join(target);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::rename(&path, store.path().join("retained-original")).unwrap();
+        write(&path, &bytes);
+        assert!(matches!(
+            scope.verify_edit_review("rule", &review.fingerprint),
+            Err(MemoryStorageError::ReviewConflict)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(store.path().join("retained-original")).unwrap(),
+            bytes
+        );
+        assert!(!store.path().join(".memory-transaction").exists());
+    }
+}
+
+#[test]
+fn replacement_scope_invalidates_review_even_when_note_and_index_objects_are_preserved() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    write(&store.path().join("rule.md"), note("rule").as_bytes());
+    write(&store.path().join("MEMORY.md"), b"- [rule](rule.md)\n");
+    let review = store.claim().unwrap().inspect_edit("rule").unwrap();
+    let path = store.path().to_owned();
+    drop(store);
+    let retained = data.path().join("memory").join("retained-scope");
+    std::fs::rename(&path, &retained).unwrap();
+    let replacement = MemoryStore::open(data.path(), "global").unwrap();
+    for name in ["rule.md", "MEMORY.md"] {
+        std::fs::rename(retained.join(name), replacement.path().join(name)).unwrap();
+    }
+    let scope = replacement.claim().unwrap();
+    assert!(matches!(
+        scope.verify_edit_review("rule", &review.fingerprint),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert_eq!(scope.read("rule").unwrap().body, "A preference");
+    assert!(!replacement.path().join(".memory-transaction").exists());
+}
+
+#[test]
 fn memory_lock_child() {
     let Some(data) = std::env::var_os("CYBER_MEMORY_LOCK_TEST") else {
         return;

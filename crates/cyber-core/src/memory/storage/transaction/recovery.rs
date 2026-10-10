@@ -1,5 +1,6 @@
 //! Explicit read-only review followed by fingerprint-bound storage recovery.
 use super::*;
+use crate::memory::identity::{ObjectIdentity, file_identity, verify_identity};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryRecoveryReview {
@@ -123,7 +124,7 @@ impl PreparedMemory<'_, '_> {
 #[derive(Serialize)]
 pub(super) struct ReviewedFile {
     pub(super) digest: String,
-    identity: Option<(u64, u64)>,
+    identity: Option<ObjectIdentity>,
 }
 
 pub(super) fn reviewed_file(
@@ -131,30 +132,25 @@ pub(super) fn reviewed_file(
     name: &str,
     limit: u64,
 ) -> Result<Option<ReviewedFile>, MemoryStorageError> {
-    let Some(bytes) = optional_bytes(dir, name, limit)? else {
+    let Some(mut file) = optional_file(dir, name)? else {
         return Ok(None);
     };
-    let identity = file_identity(&dir.symlink_metadata(name)?);
+    let identity = file_identity(&file)?;
+    let mut bytes = Vec::new();
+    (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(MemoryStorageError::TooLarge);
+    }
+    let current = optional_file(dir, name)?.ok_or(MemoryStorageError::ReviewConflict)?;
+    verify_identity(&current, &file)?;
     Ok(Some(ReviewedFile {
         digest: hash(&bytes),
         identity,
     }))
 }
 
-pub(super) fn directory_identity(dir: &Dir) -> Result<Option<(u64, u64)>, MemoryStorageError> {
-    Ok(file_identity(&dir.dir_metadata()?))
-}
-
-fn file_identity(metadata: &cap_std::fs::Metadata) -> Option<(u64, u64)> {
-    #[cfg(unix)]
-    {
-        Some((metadata.dev(), metadata.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        None
-    }
+pub(super) fn directory_identity(dir: &Dir) -> Result<Option<ObjectIdentity>, MemoryStorageError> {
+    file_identity(&dir.try_clone()?.into_std_file())
 }
 
 #[cfg(all(test, unix))]

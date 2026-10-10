@@ -332,6 +332,17 @@
 - **AND** preflight refusal SHALL leave the namespace unchanged; a failure after rename SHALL retain source/journal evidence without rollback or inferred durable completion
 - **AND** native flush acceptance SHALL NOT by itself enable mutation/checkpoints before journal/client integration, caller path/content binding and complete native lifecycle acceptance
 
+#### Scenario: Native identity-bound memory reviews and checkpoints
+- **WHEN** a memory review or client binding captures native object identity
+- **THEN** Unix SHALL retain device/inode identity and its existing review serialization shape; Windows SHALL retain the full volume/128-bit file identity without a missing or truncated fallback
+- **AND** unsupported native identity SHALL refuse rather than treat two absent identities as a match
+- **WHEN** a memory review reads a note/index
+- **THEN** its digest and identity SHALL come from the same bounded verified regular-file handle, and the current named object SHALL still match that handle before review return
+- **WHEN** a reviewed target/index is replaced with an object containing identical bytes
+- **THEN** fresh review identity SHALL differ and the earlier review SHALL refuse without file mutation
+- **AND** fresh scope directory identity SHALL participate in the review fingerprint, while missing notes/indexes remain missing
+- **AND** client identity checks SHALL compare actual native handles; Windows journal/checkpoint activation SHALL still require complete durability/lifecycle integration and native acceptance
+
 #### Scenario: Durable TUI memory draft and request retention
 - **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
 - **THEN** it SHALL checkpoint bounded draft text and its original Session/Location/scope identity through the private client store

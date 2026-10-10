@@ -1,5 +1,6 @@
 //! Private client checkpoints. Retained bytes grant no memory mutation authority.
 use super::MemoryStorageError;
+use super::identity::{ObjectIdentity, file_identity, verify_identity};
 use super::storage::{
     private_builder, verify_private_directory, verify_private_file, verify_regular,
 };
@@ -25,7 +26,7 @@ pub struct MemoryClientStore {
 #[derive(PartialEq, Eq)]
 struct Checkpoint {
     bytes: Vec<u8>,
-    identity: Option<(u64, u64)>,
+    identity: Option<ObjectIdentity>,
 }
 impl MemoryClientStore {
     /// Missing client storage remains missing. Existing unsafe storage is never repaired.
@@ -201,32 +202,5 @@ fn native() -> Result<(), MemoryStorageError> {
             "client checkpoint privacy and durability require native support",
         ));
     }
-    Ok(())
-}
-fn file_identity(file: &File) -> Result<Option<(u64, u64)>, MemoryStorageError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = file.metadata()?;
-        Ok(Some((metadata.dev(), metadata.ino())))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = file;
-        Ok(None)
-    }
-}
-fn verify_identity(current: &File, retained: &File) -> Result<(), MemoryStorageError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let current = current.metadata()?;
-        let retained = retained.metadata()?;
-        if (current.dev(), current.ino()) != (retained.dev(), retained.ino()) {
-            return Err(MemoryStorageError::ReviewConflict);
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = (current, retained);
     Ok(())
 }

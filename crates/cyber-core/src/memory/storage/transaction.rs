@@ -447,6 +447,17 @@ fn optional_bytes(
     name: &str,
     limit: u64,
 ) -> Result<Option<Vec<u8>>, MemoryStorageError> {
+    let Some(file) = optional_file(dir, name)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(MemoryStorageError::TooLarge);
+    }
+    Ok(Some(bytes))
+}
+fn optional_file(dir: &Dir, name: &str) -> Result<Option<File>, MemoryStorageError> {
     match dir.symlink_metadata(name) {
         Ok(metadata) if !metadata.is_file() => {
             return Err(MemoryStorageError::Unsafe(
@@ -457,17 +468,21 @@ fn optional_bytes(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     }
-    let mut options = OpenOptions::new();
-    options.read(true).follow(FollowSymlinks::No);
-    let file = dir.open_with(name, &options)?.into_std();
+    #[cfg(windows)]
+    let file = super::super::windows::open_private_file(
+        &dir.try_clone()?.into_std_file(),
+        name,
+        super::super::windows::Access::Read,
+    )?;
+    #[cfg(not(windows))]
+    let file = {
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        dir.open_with(name, &options)?.into_std()
+    };
     verify_regular(&file)?;
     verify_private_file(&file)?;
-    let mut bytes = Vec::new();
-    file.take(limit + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        return Err(MemoryStorageError::TooLarge);
-    }
-    Ok(Some(bytes))
+    Ok(Some(file))
 }
 fn desired_bytes(
     stage: &Dir,
