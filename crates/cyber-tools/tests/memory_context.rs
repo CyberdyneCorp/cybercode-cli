@@ -4,7 +4,7 @@ use cyber_server::runtime::{ContextObservation, ToolHost, TurnContext};
 use serde_json::{Value, json};
 use support::Fixture;
 use support::flow::{Flow, text};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use support::ok;
 
 fn turn(f: &Fixture) -> TurnContext {
@@ -30,7 +30,7 @@ fn value(observation: ContextObservation) -> String {
     };
     text
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn note(body: &str) -> String {
     format!("---\nname: coding-policy\ndescription: Small patches\ntype: reference\n---\n{body}\n")
 }
@@ -76,7 +76,7 @@ async fn readonly_guidance_never_instructs_generation_and_invalid_settings_are_u
     ));
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn only_bounded_index_is_loaded_without_opening_individual_notes() {
     let f = Fixture::new();
@@ -90,7 +90,14 @@ async fn only_bounded_index_is_loaded_without_opening_individual_notes() {
         .map(|n| format!("Row {n:03}\n"))
         .collect::<String>();
     std::fs::write(store.path().join("MEMORY.md"), index).unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink("/does-not-exist", store.path().join("unreadable-note.md")).unwrap();
+    #[cfg(windows)]
+    std::fs::hard_link(
+        store.path().join("coding-policy.md"),
+        store.path().join("unreadable-note.md"),
+    )
+    .unwrap();
     let context = value(observe(&f).await);
     assert_eq!(context.matches("Memory index (scope=global)").count(), 1);
     assert!(context.contains("Row 199"));
@@ -99,7 +106,7 @@ async fn only_bounded_index_is_loaded_without_opening_individual_notes() {
     assert!(!context.contains("PRIVATE NOTE BODY"));
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn denied_global_scope_cannot_be_loaded_through_project_fallback() {
     let f = Fixture::new();
@@ -109,7 +116,7 @@ async fn denied_global_scope_cannot_be_loaded_through_project_fallback() {
     assert_eq!(observe(&f).await, ContextObservation::Absent);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn busy_and_pending_scopes_are_unavailable_instead_of_withdrawn() {
     let f = Fixture::new();
@@ -128,7 +135,7 @@ async fn busy_and_pending_scopes_are_unavailable_instead_of_withdrawn() {
     assert!(store.path().join(".memory-transaction").exists());
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn another_session_receives_index_change_without_rewriting_its_baseline() {
     let flow = Flow::new(vec![text("a"), text("b"), text("b updated")], false);
@@ -198,7 +205,7 @@ async fn disabling_memory_withdraws_context_at_next_boundary() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn unavailable_initial_index_keeps_input_retryable_until_explicit_recovery() {
     let flow = Flow::new(vec![text("recovered")], false);
@@ -228,7 +235,7 @@ async fn unavailable_initial_index_keeps_input_retryable_until_explicit_recovery
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn child_context_cannot_widen_parent_memory_denials() {
     use cyber_server::runtime::CreateSession;
@@ -281,7 +288,7 @@ async fn child_context_cannot_widen_parent_memory_denials() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn unavailable_existing_index_retains_previous_context_until_recovered() {
     let flow = Flow::new(
@@ -341,7 +348,7 @@ async fn unavailable_existing_index_retains_previous_context_until_recovered() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn repository_baseline_combines_project_and_global_indexes_with_scope_labels() {
     let f = Fixture::new();
@@ -416,7 +423,7 @@ async fn plan_parent_prevents_generation_guidance_in_child_context() {
     assert!(!source.contains("Save durable user preferences"));
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn actual_memory_tool_publishes_one_independent_durable_change_after_note_and_index() {
     use cyber_server::runtime::LiveEvent;
@@ -476,6 +483,76 @@ async fn actual_memory_tool_publishes_one_independent_durable_change_after_note_
     assert_eq!(
         journal["intent_fingerprint"],
         format!("{:x}", sha2::Sha256::digest(intent))
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn runtime_backed_memory_retries_replay_write_update_and_delete_without_effects() {
+    let flow = Flow::new(vec![], false);
+    let session = flow.session("default").await;
+    let mut live = flow.runtime.subscribe();
+    for operation in ["write", "update", "delete"] {
+        let mut input = json!({"operation":operation,"scope":"global","name":"coding-policy"});
+        if operation != "delete" {
+            input["content"] = json!(note(operation));
+        }
+        let mut invocation = flow.f.invocation("default", "memory", input);
+        invocation.session_id = session.clone();
+        invocation.operation_key = format!("memory-retry-{operation}");
+        let first = ok(flow
+            .f
+            .host
+            .execute(
+                invocation.clone(),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await);
+        let cyber_server::runtime::LiveEvent::MemoryUpdated { update, .. } =
+            live.try_recv().unwrap()
+        else {
+            panic!("one memory acknowledgement");
+        };
+        let before = flow
+            .f
+            .store
+            .read_events(&update.id, -1, 10)
+            .unwrap()
+            .events
+            .len();
+        assert_eq!(before, 3);
+        assert!(live.try_recv().is_err());
+        invocation.attempt = 2;
+        let replay = ok(flow
+            .f
+            .host
+            .execute(invocation, tokio_util::sync::CancellationToken::new())
+            .await);
+        assert_eq!(replay, first);
+        assert_eq!(
+            flow.f
+                .store
+                .read_events(&update.id, -1, 10)
+                .unwrap()
+                .events
+                .len(),
+            before
+        );
+        assert!(live.try_recv().is_err());
+    }
+    let memory = cyber_core::memory::MemoryStore::existing(flow.f.dir.path(), "global")
+        .unwrap()
+        .unwrap();
+    let scope = memory.claim().unwrap();
+    assert!(scope.list().unwrap().memories.is_empty());
+    assert!(scope.index().unwrap().text.is_empty());
+    assert!(!memory.path().join(".memory-transaction").exists());
+    assert_eq!(
+        std::fs::read_dir(memory.path().join(".memory-history"))
+            .unwrap()
+            .count(),
+        3
     );
     flow.runtime.shutdown().await;
 }

@@ -195,7 +195,7 @@ fn operate(
 ) -> Result<String, ToolError> {
     let operation = text(input, "operation");
     let mutation = matches!(operation, "write" | "update" | "delete");
-    if mutation && !cfg!(unix) {
+    if mutation && !cfg!(any(unix, windows)) {
         return Err(failed(
             "Memory mutations require platform privacy and durability support",
         ));

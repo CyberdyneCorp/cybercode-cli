@@ -528,3 +528,11 @@
 - **THEN** authenticated application memory CRUD, conditional edits and reviewed recovery SHALL admit Windows through the same private native protocol and durable database ownership as Unix
 - **AND** actual TCP integration SHALL verify authentication, scope/Location isolation, disabled/read-only settings, busy/stale review refusal, request-key replay, cache disposal, acknowledgement publication and shutdown fencing on Windows
 - **AND** private native malformed-file and hard-link refusal fixtures SHALL preserve user evidence; CLI and model-tool admission SHALL keep their independent acceptance gates
+
+#### Scenario: Native Windows model memory tool integration
+- **WHEN** the built-in memory tool dispatches an authorized write, update or deletion on Windows
+- **THEN** it SHALL use the shared native private scope and durable journal protocol with fresh settings/Mode/permission/cancellation checks, refusing pending recovery and unsafe aliases without repair
+- **AND** actual runtime tool execution SHALL bind SQLite admission before effects, acknowledge and publish one durable change after note/index installation, and deliver bounded index context at Safe Boundaries without preloading note bodies
+- **AND** retrying the same runtime operation key for write/update/delete SHALL return its original receipt without another durable event, notification, installation or archive
+- **AND** configured scope permissions SHALL apply before project-to-global fallback; Windows context tests SHALL verify bounded index-only loading despite an unsafe individual note alias
+- **AND** CLI editor admission SHALL remain independently gated until native private draft identity and editor lifecycle acceptance

@@ -139,7 +139,7 @@ async fn cancelled_admission_creates_no_storage() {
     assert!(!f.dir.path().join("memory").exists());
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn writes_replace_same_name_update_requires_existing_and_delete_keeps_index() {
     let f = Fixture::new();
@@ -191,7 +191,7 @@ async fn writes_replace_same_name_update_requires_existing_and_delete_keeps_inde
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn pending_storage_is_not_automatically_recovered_and_scope_contention_refuses() {
     let f = Fixture::new();
@@ -222,7 +222,7 @@ async fn pending_storage_is_not_automatically_recovered_and_scope_contention_ref
     assert!(!f.dir.path().join("memory/global/coding-policy.md").exists());
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn project_and_global_scopes_do_not_alias_in_a_repository() {
     let f = Fixture::new();
@@ -262,7 +262,7 @@ async fn project_and_global_scopes_do_not_alias_in_a_repository() {
     assert!(f.dir.path().join("memory/global/coding-policy.md").exists());
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[tokio::test]
 async fn unsupported_mutation_refuses_before_storage_admission() {
     let f = Fixture::new();
@@ -319,7 +319,7 @@ async fn configuration_revocation_while_permission_waits_refuses_effects() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn memory_read_uses_managed_output_budget() {
     let f = Fixture::new();
@@ -368,7 +368,7 @@ async fn tool_refuses_symlinked_scope_without_outside_effects() {
     assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn project_fallback_to_global_cannot_bypass_global_permission_denial() {
     let f = Fixture::new();
@@ -382,6 +382,67 @@ async fn project_fallback_to_global_cannot_bypass_global_permission_denial() {
         .await;
     assert!(matches!(result, ToolOutcome::Failed(_)), "{result:?}");
     assert!(!f.dir.path().join("memory").exists());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn native_tool_refuses_hard_linked_note_without_effects_or_repairs() {
+    let f = Fixture::new();
+    ok(f.call(
+        "default",
+        "memory",
+        json!({"operation":"write","scope":"global","content":note("original")}),
+    )
+    .await);
+    let path = f.dir.path().join("memory/global/coding-policy.md");
+    let outside = f.dir.path().join("outside.md");
+    std::fs::hard_link(&path, &outside).unwrap();
+    let original = std::fs::read(&outside).unwrap();
+    for input in [
+        json!({"operation":"read","scope":"global","name":"coding-policy"}),
+        json!({"operation":"write","scope":"global","content":note("changed")}),
+        json!({"operation":"delete","scope":"global","name":"coding-policy"}),
+    ] {
+        failed(f.call("default", "memory", input).await);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read(&outside).unwrap(), original);
+        assert!(
+            !f.dir
+                .path()
+                .join("memory/global/.memory-transaction")
+                .exists()
+        );
+    }
+    std::fs::remove_file(outside).unwrap();
+    let read: Value = serde_json::from_str(&ok(f
+        .call(
+            "default",
+            "memory",
+            json!({"operation":"read","scope":"global","name":"coding-policy"}),
+        )
+        .await))
+    .unwrap();
+    assert_eq!(read["body"], "original");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn native_tool_refuses_inherited_scope_privacy_without_changing_user_files() {
+    let f = Fixture::new();
+    let path = f.dir.path().join("memory/global");
+    std::fs::create_dir_all(&path).unwrap();
+    let user = path.join("user.txt");
+    std::fs::write(&user, "User file").unwrap();
+    failed(
+        f.call(
+            "default",
+            "memory",
+            json!({"operation":"write","scope":"global","content":note("fact")}),
+        )
+        .await,
+    );
+    assert_eq!(std::fs::read_to_string(user).unwrap(), "User file");
+    assert_eq!(std::fs::read_dir(path).unwrap().count(), 1);
 }
 
 #[tokio::test]
