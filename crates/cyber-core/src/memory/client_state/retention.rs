@@ -207,6 +207,8 @@ impl Cleanup {
         let result = Self { plan, owner };
         result.verify(store, history)?;
         result.preflight(history)?;
+        #[cfg(test)]
+        tests::barrier("prepared", &store.dir)?;
         Ok(result)
     }
     fn open(store: &MemoryClientStore) -> Result<Option<Self>, MemoryStorageError> {
@@ -289,6 +291,8 @@ impl Cleanup {
         for target in &self.plan.targets {
             self.verify(store, &history)?;
             remove_target(&history, target)?;
+            #[cfg(test)]
+            tests::barrier("directory", &store.dir)?;
         }
         native::sync_private(&descriptor(&history)?)?;
         store.sync()?;
@@ -302,7 +306,10 @@ impl Cleanup {
         let source = native::dispose_private_file(&descriptor(&store.dir)?, CLEANUP, proof.id)?;
         checked(source.file(), &proof)?;
         source.remove_durable()?;
-        store.sync()
+        store.sync()?;
+        #[cfg(test)]
+        tests::barrier("cleared", &store.dir)?;
+        Ok(())
     }
 }
 fn encoded(plan: &Plan) -> Result<Vec<u8>, MemoryStorageError> {
@@ -392,6 +399,8 @@ fn remove_target(history: &Dir, target: &Target) -> Result<(), MemoryStorageErro
         };
         checked(source.file(), proof)?;
         source.remove_durable()?;
+        #[cfg(test)]
+        tests::barrier("file", history)?;
     }
     directory.remove_durable()
 }

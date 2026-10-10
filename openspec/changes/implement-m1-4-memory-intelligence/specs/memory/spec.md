@@ -473,3 +473,9 @@
 - **AND** cleanup SHALL verify remaining targets before effects and dispose only exact recorded objects, allowing recorded absence during restart while preserving changed/replaced objects and unexpected children
 - **AND** interrupted cleanup SHALL resume through shared claim before new save effects; foreign names SHALL remain untouched and malformed managed evidence SHALL fence cleanup without repair
 - **AND** the cleanup plan SHALL remain on uncertain effects and be removed only after flushed target absence; process-death/failure/context/full lifecycle acceptance SHALL precede public activation
+
+#### Scenario: Owned Windows checkpoint cleanup process death
+- **WHEN** the cleanup owner dies after plan preparation, durable file deletion, durable directory deletion or durable cleanup-plan disposal
+- **THEN** fresh shared claim SHALL resume recorded remaining cleanup without replacing the installed checkpoint or replaying an already disposed plan
+- **AND** the selected expired archives SHALL disappear while two retained managed archives and the full installed checkpoint identity SHALL survive
+- **AND** test interruption barriers SHALL be absent from production and bound to the explicitly owned fixture; native runtime and complete failure/context/lifecycle acceptance SHALL remain required before public admission
