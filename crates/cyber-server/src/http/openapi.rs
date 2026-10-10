@@ -354,6 +354,13 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<crate::runtime::Delegation>>(g),
         op(
             "post",
+            "/sessions/{sessionID}/delegations/{requestID}/reconcile",
+            "v1.session.reconcileDelegation",
+            "Link a lost admission receipt to an exactly bound existing Job without dispatch",
+        )
+        .ok::<Data<crate::runtime::Delegation>>(g),
+        op(
+            "post",
             "/sessions/{sessionID}/delegations/{requestID}/stop",
             "v1.session.stopDelegation",
             "Cancel one admission request or its recorded Job",

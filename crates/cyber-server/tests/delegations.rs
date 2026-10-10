@@ -299,6 +299,14 @@ async fn recorded_job_without_a_live_owner_cannot_acknowledge_cancellation() {
     assert_eq!(h.runtime.job(&job.id).unwrap().status, JobStatus::Running);
     assert_eq!(
         h.runtime
+            .reconcile_delegation(&parent, &data.id)
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Unknown
+    );
+    assert_eq!(
+        h.runtime
             .delegation(&parent, &data.id)
             .unwrap()
             .unwrap()
@@ -378,6 +386,14 @@ async fn launching_foreign_actor_cannot_be_acknowledged_as_no_dispatch() {
         .unwrap();
     assert_eq!(stopped.status, DelegationStatus::Unknown);
     assert_eq!(stopped.phase, DelegationPhase::Launching);
+    assert_eq!(
+        second
+            .reconcile_delegation(&parent, "op_foreign_launch")
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Unknown
+    );
     assert_eq!(
         second
             .start_delegation(&parent, "op_foreign_launch", request())
@@ -569,4 +585,28 @@ async fn missing_admission_owner_cannot_advance_a_reserved_launch_marker() {
         .await
         .unwrap();
     second.shutdown().await;
+}
+
+#[tokio::test]
+async fn reconciliation_does_not_replace_a_live_launch_owner() {
+    let h = Harness::new(Setup::default());
+    let (first, host) = runtime(&h, true, false);
+    let parent = source(&first, &h).await;
+    first
+        .start_delegation(&parent, "op_live_reconcile", request())
+        .await
+        .unwrap();
+    host.entered.cancelled().await;
+    let seq = h.store.aggregate_seq("op_live_reconcile").unwrap();
+    assert_eq!(
+        first
+            .reconcile_delegation(&parent, "op_live_reconcile")
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Pending
+    );
+    assert_eq!(h.store.aggregate_seq("op_live_reconcile").unwrap(), seq);
+    assert_eq!(host.calls.load(Ordering::Relaxed), 1);
+    first.shutdown().await;
 }

@@ -33,6 +33,42 @@ pub(super) struct Binding {
     guards: Vec<Boundary>,
 }
 
+/// Compare historical launch authority without applying today's cancellation boundary.
+pub(super) fn operation_origin_matches(
+    data: &serde_json::Value,
+    captured: &[Binding],
+    source: &str,
+    operation: &str,
+) -> Result<bool, String> {
+    let observed: Vec<Binding> = serde_json::from_value(
+        data.get("admission_bindings")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .map_err(|error| error.to_string())?;
+    if observed.len() != captured.len()
+        || !observed.first().is_some_and(|binding| {
+            binding.id == source && binding.operations.iter().any(|id| id == operation)
+        })
+    {
+        return Ok(false);
+    }
+    Ok(observed
+        .into_iter()
+        .zip(captured)
+        .all(|(mut actual, prior)| {
+            if !prior
+                .operations
+                .iter()
+                .all(|id| actual.operations.contains(id))
+            {
+                return false;
+            }
+            actual.operations = prior.operations.clone();
+            actual == *prior
+        }))
+}
+
 pub(super) fn binding_sessions(bindings: &[Binding]) -> HashSet<String> {
     bindings
         .iter()
@@ -618,5 +654,50 @@ fn shell_receipt(tx: &Transaction<'_>, event: &StoredEvent) -> Result<bool, Stri
                 }
             }),
         _ => Err("Invalid shell settlement receipt".into()),
+    }
+}
+
+#[cfg(test)]
+mod receipt_evidence_tests {
+    use super::*;
+    #[test]
+    fn receipt_proof_requires_the_captured_incarnation_boundary_and_operation() {
+        let captured = vec![Binding {
+            id: "ses_source".into(),
+            created_id: "evt_created".into(),
+            parent: None,
+            subtree_seq: 4,
+            local_seq: Some(7),
+            operations: vec![],
+            guards: vec![],
+        }];
+        let mut launched = captured.clone();
+        launched[0].operations.push("op_request".into());
+        let evidence = serde_json::json!({"admission_bindings":launched});
+        assert!(
+            operation_origin_matches(&evidence, &captured, "ses_source", "op_request").unwrap()
+        );
+        for (field, value) in [
+            ("created_id", serde_json::json!("different")),
+            ("subtree_seq", serde_json::json!(5)),
+            ("local_seq", serde_json::json!(8)),
+            ("id", serde_json::json!("ses_other")),
+            ("operations", serde_json::json!([])),
+        ] {
+            let mut changed = evidence.clone();
+            changed["admission_bindings"][0][field] = value;
+            assert!(
+                !operation_origin_matches(&changed, &captured, "ses_source", "op_request").unwrap()
+            );
+        }
+        assert!(
+            operation_origin_matches(
+                &serde_json::json!({"admission_bindings":"invalid"}),
+                &captured,
+                "ses_source",
+                "op_request"
+            )
+            .is_err()
+        );
     }
 }

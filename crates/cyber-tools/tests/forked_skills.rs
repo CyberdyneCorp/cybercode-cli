@@ -958,6 +958,14 @@ async fn unknown_reserved_skill_requires_explicit_fenced_cancellation() {
             .status,
         DelegationStatus::Unknown
     );
+    assert_eq!(
+        flow.runtime
+            .reconcile_delegation(&parent, &id)
+            .await
+            .unwrap()
+            .status,
+        DelegationStatus::Unknown
+    );
     flow.runtime.resume(&parent).await.unwrap();
     flow.settle(&parent).await;
     assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());

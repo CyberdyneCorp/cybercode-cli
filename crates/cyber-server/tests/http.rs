@@ -3457,3 +3457,57 @@ async fn lsp_lifecycle_reports_unavailable_in_a_custom_host() {
     }
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn delegation_reconciliation_api_authenticates_and_preserves_uncertain_ownership() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let stranger = h.session().await;
+    let id = "op_http_reconcile";
+    h.store.append(id,cyber_store::Expected::Seq(-1),vec![cyber_store::NewEvent::new("delegation.changed.1",json!({"data":{"id":id,"session_id":parent,"status":"pending","phase":"launching","job_id":null,"error":null},"hash":null}))]).unwrap();
+    let seq = h.store.aggregate_seq(id).unwrap();
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{parent}/delegations/{id}/reconcile");
+    assert_eq!(
+        client.post(&path).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let response = client
+        .post(&path)
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response: Value = response.json().await.unwrap();
+    assert_eq!(response["data"]["status"], "unknown");
+    assert_eq!(h.store.aggregate_seq(id).unwrap(), seq);
+    assert!(h.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert_eq!(
+        client
+            .post(format!(
+                "{base}/sessions/{stranger}/delegations/{id}/reconcile"
+            ))
+            .basic_auth("cyber", Some("secret"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let response = client
+        .post(format!(
+            "{base}/sessions/{parent}/delegations/op_missing/reconcile"
+        ))
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["_tag"],
+        "RequestNotFoundError"
+    );
+    h.runtime.shutdown().await;
+}

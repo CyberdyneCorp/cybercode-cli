@@ -104,7 +104,7 @@ test("typed delegation retains image attachments and the reviewed turn ceiling",
   assert.equal(calls[0]?.headers.get("idempotency-key"), "typed-child");
 });
 
-test("durable delegation start, lookup and stop share a scoped client-selected identity", async () => {
+test("durable delegation start, lookup, reconciliation and stop share a scoped identity", async () => {
   const { client, calls } = mockClient(() => json(202, { data: {
     id: "op_owned", session_id: "ses/parent", status: "pending", phase: "reserved",
     job_id: null, error: null,
@@ -113,14 +113,19 @@ test("durable delegation start, lookup and stop share a scoped client-selected i
   const started = await client.session.startDelegation("ses/parent", "op_owned", body);
   assert.equal(started.id, "op_owned");
   await client.session.delegation("ses/parent", "op_owned");
+  await client.session.reconcileDelegation("ses/parent", "op_owned", { idempotencyKey: "reconcile-owned" });
   await client.session.stopDelegation("ses/parent", "op_owned", { idempotencyKey: "stop-owned" });
   assert.deepEqual(calls.map(call => [call.method, call.url.pathname]), [
     ["POST", "/api/v1/sessions/ses%2Fparent/delegations/op_owned"],
     ["GET", "/api/v1/sessions/ses%2Fparent/delegations/op_owned"],
+    ["POST", "/api/v1/sessions/ses%2Fparent/delegations/op_owned/reconcile"],
     ["POST", "/api/v1/sessions/ses%2Fparent/delegations/op_owned/stop"],
   ]);
   assert.deepEqual(JSON.parse(calls[0]!.body!), body);
-  assert.equal(calls[2]?.headers.get("idempotency-key"), "stop-owned");
+  assert.equal(calls[2]?.headers.get("idempotency-key"), "reconcile-owned");
+  assert.equal(calls[3]?.headers.get("idempotency-key"), "stop-owned");
+  assert.equal(calls[2]?.headers.get("authorization"), `Basic ${btoa("cyber:secret")}`);
+  assert.equal(calls[2]?.headers.get("x-cyber-directory"), null);
 });
 
 test("usage.get preserves scope identity and incomplete billing without a Location override", async () => {

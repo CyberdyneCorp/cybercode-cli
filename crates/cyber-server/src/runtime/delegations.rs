@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, PoisonError};
 use tokio_util::sync::CancellationToken;
 
+mod recovery;
+
 const CHANGED: &str = "delegation.changed.1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

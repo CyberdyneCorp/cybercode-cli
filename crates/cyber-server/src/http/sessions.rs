@@ -241,6 +241,10 @@ pub fn routes() -> Router<AppState> {
             &format!("{s}/delegations/{{request_id}}/stop"),
             post(stop_delegation),
         )
+        .route(
+            &format!("{s}/delegations/{{request_id}}/reconcile"),
+            post(reconcile_delegation),
+        )
         .route(&format!("{s}/prompt"), post(prompt))
         .route(&format!("{s}/interrupt"), post(interrupt))
         .route(&format!("{s}/stop-subtree"), post(stop_subtree))
@@ -459,6 +463,19 @@ async fn delegation(
         .ok_or_else(|| ApiError::not_found("RequestNotFoundError", "No delegation request"))?;
     Ok(Json(Data { data }))
 }
+async fn reconcile_delegation(
+    State(state): State<AppState>,
+    Path((id, request)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::Delegation>>> {
+    state
+        .runtime
+        .delegation(&id, &request)?
+        .ok_or_else(|| ApiError::not_found("RequestNotFoundError", "No delegation request"))?;
+    Ok(Json(Data {
+        data: state.runtime.reconcile_delegation(&id, &request).await?,
+    }))
+}
+
 async fn stop_delegation(
     State(state): State<AppState>,
     Path((id, request)): Path<(String, String)>,

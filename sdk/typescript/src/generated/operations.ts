@@ -461,6 +461,12 @@ export interface Operations {
     body: S.PromptBody;
     response: S.Receipt;
   };
+  "v1.session.reconcileDelegation": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Delegation;
+  };
   "v1.session.reopenSubtree": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1316,6 +1322,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.reconcileDelegation": {
+    tag: "session",
+    name: "reconcileDelegation",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/delegations/{requestID}/reconcile",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.reopenSubtree": {
     tag: "session",
     name: "reopenSubtree",
@@ -1767,6 +1785,9 @@ export function createGroups(caller: Caller) {
       /** Durably admit a prompt (`POST /api/v1/sessions/{sessionID}/prompt`) */
       prompt: (sessionID: string, body: Operations["v1.session.prompt"]["body"], options?: RequestOptions): Promise<Operations["v1.session.prompt"]["response"]> =>
         caller.call("v1.session.prompt", { path: { sessionID }, body }, options),
+      /** Link a lost admission receipt to an exactly bound existing Job without dispatch (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}/reconcile`) */
+      reconcileDelegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.reconcileDelegation"]["response"]> =>
+        caller.call("v1.session.reconcileDelegation", { path: { sessionID, requestID } }, options),
       /** Reopen a reviewed acknowledged scope with fresh durable and native proof (`POST /api/v1/sessions/{sessionID}/reopen-subtree`) */
       reopenSubtree: (sessionID: string, body: Operations["v1.session.reopenSubtree"]["body"], options?: RequestOptions): Promise<Operations["v1.session.reopenSubtree"]["response"]> =>
         caller.call("v1.session.reopenSubtree", { path: { sessionID }, body }, options),

@@ -107,6 +107,12 @@ jobs:
       - name: Native ordinary permission regression
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test agent_permissions
+      - name: Native authenticated delegation reconciliation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --test http delegation_reconciliation_api
+      - name: Native delegation receipt reconciliation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test delegation_recovery
       - name: Native forked skill execution
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test forked_skills
