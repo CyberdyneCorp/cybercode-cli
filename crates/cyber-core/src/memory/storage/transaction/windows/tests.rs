@@ -27,23 +27,23 @@ fn native_live_intent_replacement_with_identical_bytes_refuses_before_effects() 
     let bytes = optional_bytes(&pending.dir, "intent.json", INTENT_LIMIT)
         .unwrap()
         .unwrap();
-    std::fs::rename(
-        store.path().join(TRANSACTION).join("intent.json"),
-        store.path().join(TRANSACTION).join("retained-intent"),
-    )
-    .unwrap();
-    create_file(&pending.dir, "intent.json", &bytes).unwrap();
-    let mut acknowledged = false;
-    assert!(matches!(
-        pending.commit_with_acknowledgement(|_| {
-            acknowledged = true;
-            Ok(())
-        }),
-        Err(MemoryStorageError::ReviewConflict)
-    ));
-    assert!(!acknowledged);
+    let identity = object(&pending.dir, "intent.json");
+    let intent = store.path().join(TRANSACTION).join("intent.json");
+    let retained = intent.with_file_name("retained-intent");
+    assert!(std::fs::rename(&intent, &retained).is_err());
+    assert!(std::fs::remove_file(&intent).is_err());
+    assert!(!retained.exists());
+    assert_eq!(object(&pending.dir, "intent.json"), identity);
+    assert_eq!(std::fs::read(&intent).unwrap(), bytes);
     assert!(!store.path().join("rule.md").exists());
     assert!(!store.path().join("MEMORY.md").exists());
+    drop(pending);
+    std::fs::rename(&intent, &retained).unwrap();
+    std::fs::rename(&retained, &intent).unwrap();
+    let recovered = scope.read_prepared().unwrap().unwrap();
+    assert_eq!(object(&recovered.dir, "intent.json"), identity);
+    assert!(std::fs::rename(&intent, &retained).is_err());
+    recovered.commit().unwrap();
 }
 
 #[test]
@@ -52,34 +52,58 @@ fn native_live_intent_content_change_refuses_before_effects_or_acknowledgement()
     let store = MemoryStore::open(data.path(), "global").unwrap();
     let mut scope = store.claim().unwrap();
     let pending = prepare(&mut scope, "Proposed");
-    let mut value: serde_json::Value = serde_json::from_slice(
-        &optional_bytes(&pending.dir, "intent.json", INTENT_LIMIT)
+    let parent = pending.dir.try_clone().unwrap().into_std_file();
+    let bytes = optional_bytes(&pending.dir, "intent.json", INTENT_LIMIT)
+        .unwrap()
+        .unwrap();
+    let identity = object(&pending.dir, "intent.json");
+    assert!(native::open_private_file(&parent, "intent.json", native::Access::DataWrite).is_err());
+    assert!(native::open_private_file(&parent, "intent.json", native::Access::Write).is_err());
+    assert_eq!(
+        optional_bytes(&pending.dir, "intent.json", INTENT_LIMIT)
             .unwrap()
             .unwrap(),
-    )
-    .unwrap();
-    value["after_note"] = "0".repeat(64).into();
-    let mut file = native::open_private_file(
-        &pending.dir.try_clone().unwrap().into_std_file(),
-        "intent.json",
-        native::Access::Write,
-    )
-    .unwrap();
-    file.set_len(0).unwrap();
-    file.write_all(&serde_json::to_vec(&value).unwrap())
-        .unwrap();
-    drop(file);
-    let mut acknowledged = false;
-    assert!(matches!(
-        pending.commit_with_acknowledgement(|_| {
-            acknowledged = true;
-            Ok(())
-        }),
-        Err(MemoryStorageError::ReviewConflict)
-    ));
-    assert!(!acknowledged);
+        bytes
+    );
     assert!(!store.path().join("rule.md").exists());
     assert!(!store.path().join("MEMORY.md").exists());
+    drop(pending);
+    let mut file =
+        native::open_private_file(&parent, "intent.json", native::Access::DataWrite).unwrap();
+    file.write_all(&bytes).unwrap();
+    drop(file);
+    // Release the fixture's writable journal directory before exclusive archival.
+    drop(parent);
+    let recovered = scope.read_prepared().unwrap().unwrap();
+    assert_eq!(object(&recovered.dir, "intent.json"), identity);
+    assert!(
+        native::open_private_file(
+            &recovered.dir.try_clone().unwrap().into_std_file(),
+            "intent.json",
+            native::Access::DataWrite
+        )
+        .is_err()
+    );
+    recovered.commit().unwrap();
+}
+
+#[test]
+fn native_existing_intent_writer_refuses_recovery_admission_until_released() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = prepare(&mut scope, "Proposed");
+    let journal = pending.dir.try_clone().unwrap().into_std_file();
+    drop(pending);
+    let writer =
+        native::open_private_file(&journal, "intent.json", native::Access::DataWrite).unwrap();
+    assert!(scope.read_prepared().is_err());
+    assert!(!store.path().join("rule.md").exists());
+    assert!(!store.path().join("MEMORY.md").exists());
+    drop(writer);
+    drop(journal);
+    scope.read_prepared().unwrap().unwrap().commit().unwrap();
+    assert_eq!(scope.read("rule").unwrap().body, "Proposed");
 }
 
 #[test]

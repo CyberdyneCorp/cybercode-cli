@@ -82,13 +82,16 @@ impl<'store> MemoryScope<'store> {
         };
         verify_private_directory(&dir)?;
         verify_history(&self.store.dir)?;
-        let (intent, intent_file) = read_intent(&dir)?;
-        Ok(Some(PreparedMemory {
+        let (intent, file) = read_intent(&dir)?;
+        let intent_file = retain_intent(&dir, file)?;
+        let prepared = PreparedMemory {
             scope: self,
             dir,
             intent,
             intent_file,
-        }))
+        };
+        prepared.verify_binding()?;
+        Ok(Some(prepared))
     }
 }
 

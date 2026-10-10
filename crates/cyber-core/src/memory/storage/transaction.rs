@@ -20,6 +20,10 @@ use windows::{
 const INDEX_LIMIT: u64 = 8 * NOTE_LIMIT;
 const INTENT_LIMIT: u64 = 4 * NOTE_LIMIT;
 const HISTORY: &str = ".memory-history";
+#[cfg(windows)]
+type IntentHandle = super::super::windows::RetainedChild;
+#[cfg(not(windows))]
+type IntentHandle = File;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,7 +57,7 @@ pub struct PreparedMemory<'guard, 'store> {
     scope: &'guard mut MemoryScope<'store>,
     dir: Dir,
     intent: Intent,
-    intent_file: File,
+    intent_file: IntentHandle,
 }
 
 impl<'store> MemoryScope<'store> {
@@ -147,14 +151,17 @@ impl<'store> MemoryScope<'store> {
         create_file(&dir, "intent.json", &json)?;
         sync_dir(&dir)?;
         self.verify_binding()?;
-        let intent_file =
+        let file =
             optional_file(&dir, "intent.json")?.ok_or(MemoryStorageError::RecoveryRequired)?;
-        Ok(PreparedMemory {
+        let intent_file = retain_intent(&dir, file)?;
+        let prepared = PreparedMemory {
             scope: self,
             dir,
             intent,
             intent_file,
-        })
+        };
+        prepared.verify_binding()?;
+        Ok(prepared)
     }
     pub fn recover(&mut self) -> Result<Option<MemoryMutation>, MemoryStorageError> {
         self.recovery_prepared()?
@@ -270,7 +277,7 @@ impl PreparedMemory<'_, '_> {
             &self.dir.try_clone()?.into_std_file(),
         )?;
         let (persisted, current) = read_intent(&self.dir)?;
-        verify_identity(&current, &self.intent_file)?;
+        verify_identity(&current, intent_descriptor(&self.intent_file))?;
         if serde_json::to_vec(&persisted).map_err(|_| MemoryStorageError::RecoveryRequired)?
             != serde_json::to_vec(&self.intent).map_err(|_| MemoryStorageError::RecoveryRequired)?
         {
@@ -1062,4 +1069,30 @@ fn read_intent(dir: &Dir) -> Result<(Intent, File), MemoryStorageError> {
         serde_json::from_slice(&json).map_err(|_| MemoryStorageError::RecoveryRequired)?;
     validate_intent(&intent)?;
     Ok((intent, file))
+}
+
+fn retain_intent(dir: &Dir, file: File) -> Result<IntentHandle, MemoryStorageError> {
+    #[cfg(windows)]
+    {
+        super::super::windows::retain_private_file(
+            &dir.try_clone()?.into_std_file(),
+            "intent.json",
+            super::super::windows::identity(&file)?,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        Ok(file)
+    }
+}
+fn intent_descriptor(handle: &IntentHandle) -> &File {
+    #[cfg(windows)]
+    {
+        handle.file()
+    }
+    #[cfg(not(windows))]
+    {
+        handle
+    }
 }

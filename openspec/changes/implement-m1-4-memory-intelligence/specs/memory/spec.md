@@ -402,3 +402,12 @@
 - **THEN** its directory SHALL deny delete sharing until exact-source history archival releases the writable journal handle and acquires the identity-verified exclusive source
 - **AND** failed competing renames/deletions SHALL leave objects/bytes unchanged; disposal SHALL release pins and allow namespace changes
 - **AND** pinning SHALL NOT itself activate public Windows mutations before persisted identity, intent/crash/client checkpoint integration and native acceptance
+
+#### Scenario: Immutable live Windows journal intent
+- **WHEN** Windows admits a prepared or recovered journal
+- **THEN** it SHALL retain the exact intent object under an exclusive source guard, and revalidate canonical intent bytes under that guard before returning the prepared capability
+- **AND** competing content-write/delete/rename access SHALL refuse while the capability owns the guard
+- **WHEN** the capability is disposed or archived
+- **THEN** the intent guard SHALL release without deleting evidence or replaying effects, and SHALL close before exclusive journal-directory archival
+- **AND** a fresh recovery SHALL admit and validate current evidence again rather than inherit disposed authority
+- **AND** Unix replacement/content conflict checks and Windows persisted target identity/crash/client checkpoint gates SHALL remain intact
