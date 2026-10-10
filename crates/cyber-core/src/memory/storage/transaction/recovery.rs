@@ -75,21 +75,19 @@ impl<'store> MemoryScope<'store> {
     pub(super) fn read_prepared(
         &mut self,
     ) -> Result<Option<PreparedMemory<'_, 'store>>, MemoryStorageError> {
+        self.verify_binding()?;
         verify_private_directory(&self.store.dir)?;
         let Some(dir) = existing_journal_directory(&self.store.dir)? else {
             return Ok(None);
         };
         verify_private_directory(&dir)?;
         verify_history(&self.store.dir)?;
-        let json = optional_bytes(&dir, "intent.json", INTENT_LIMIT)?
-            .ok_or(MemoryStorageError::RecoveryRequired)?;
-        let intent: Intent =
-            serde_json::from_slice(&json).map_err(|_| MemoryStorageError::RecoveryRequired)?;
-        validate_intent(&intent)?;
+        let (intent, intent_file) = read_intent(&dir)?;
         Ok(Some(PreparedMemory {
             scope: self,
             dir,
             intent,
+            intent_file,
         }))
     }
 }

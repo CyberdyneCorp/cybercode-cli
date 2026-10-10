@@ -282,6 +282,76 @@ fn identical_byte_note_or_index_replacement_invalidates_edit_review_without_writ
 }
 
 #[test]
+fn replaced_scope_binding_refuses_claim_before_creating_a_replacement_lock() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let path = store.path().to_owned();
+    let retained = data.path().join("memory").join("retained-scope");
+    std::fs::rename(&path, &retained).unwrap();
+    let replacement = MemoryStore::open(data.path(), "global").unwrap();
+    assert!(matches!(
+        store.claim(),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(!path.join(".memory.lock").exists());
+    assert!(!retained.join(".memory.lock").exists());
+    assert!(replacement.claim().is_ok());
+}
+
+#[test]
+fn replaced_lock_binding_refuses_reads_and_reviews_without_repair() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    write(&store.path().join("rule.md"), note("rule").as_bytes());
+    let scope = store.claim().unwrap();
+    let lock = store.path().join(".memory.lock");
+    let original = store.path().join("retained-lock");
+    std::fs::rename(&lock, &original).unwrap();
+    write(&lock, b"replacement lock evidence");
+    assert!(matches!(
+        scope.read("rule"),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(matches!(
+        scope.inspect_edit("rule"),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert_eq!(std::fs::read(&lock).unwrap(), b"replacement lock evidence");
+    assert!(original.exists());
+    assert!(!store.path().join(".memory-transaction").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn replaced_data_or_root_binding_refuses_owned_reads_without_writes() {
+    for replace_data in [false, true] {
+        let container = tempfile::tempdir().unwrap();
+        let data = container.path().join("data");
+        std::fs::create_dir(&data).unwrap();
+        let store = MemoryStore::open(&data, "global").unwrap();
+        write(&store.path().join("rule.md"), note("rule").as_bytes());
+        let scope = store.claim().unwrap();
+        let target = if replace_data {
+            data.clone()
+        } else {
+            data.join("memory")
+        };
+        let retained = container.path().join("retained");
+        std::fs::rename(&target, &retained).unwrap();
+        if replace_data {
+            std::fs::create_dir(&data).unwrap();
+        }
+        let replacement = MemoryStore::open(&data, "global").unwrap();
+        assert!(matches!(
+            scope.read("rule"),
+            Err(MemoryStorageError::ReviewConflict)
+        ));
+        assert!(!replacement.path().join(".memory.lock").exists());
+        assert!(!replacement.path().join("rule.md").exists());
+    }
+}
+
+#[test]
 fn replacement_scope_invalidates_review_even_when_note_and_index_objects_are_preserved() {
     let data = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(data.path(), "global").unwrap();

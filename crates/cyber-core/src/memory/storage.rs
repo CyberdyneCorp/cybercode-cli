@@ -1,4 +1,5 @@
 //! Directory-bound memory reads and exclusive per-scope ownership.
+mod binding;
 mod transaction;
 use super::{IndexSnapshot, MemoryDocument, MemoryError, MemoryMetadata, directory, validate_name};
 #[cfg(not(windows))]
@@ -50,6 +51,7 @@ impl From<io::Error> for MemoryStorageError {
 pub struct MemoryStore {
     dir: Dir,
     path: PathBuf,
+    binding: binding::Binding,
 }
 
 pub struct MemoryScope<'a> {
@@ -77,15 +79,21 @@ impl MemoryStore {
     /// Explicit storage admission creates private directories, never note/index files.
     pub fn open(data: &Path, project_id: &str) -> Result<Self, MemoryStorageError> {
         let path = directory(data, project_id)?;
-        let data = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
-        let root = private_directory(&data, "memory")?;
+        let parent = binding::data_directory(data)?;
+        let root = private_directory(&parent, "memory")?;
         let dir = private_directory(&root, project_id)?;
-        Ok(Self { dir, path })
+        let store = Self {
+            dir,
+            path,
+            binding: binding::Binding::new(data, parent, root, project_id),
+        };
+        store.verify_binding()?;
+        Ok(store)
     }
 
     #[cfg(windows)]
     pub(crate) fn ensure_root(data: &Path) -> Result<(), MemoryStorageError> {
-        let data = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
+        let data = binding::data_directory(data)?;
         private_directory(&data, "memory")?;
         Ok(())
     }
@@ -95,33 +103,48 @@ impl MemoryStore {
         let path = directory(data, project_id)?;
         #[cfg(windows)]
         {
-            let data = match Dir::open_ambient_dir(data, cap_std::ambient_authority()) {
-                Ok(data) => data,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-                Err(error) => return Err(error.into()),
+            let parent = match binding::data_directory(data) {
+                Ok(parent) => parent,
+                Err(MemoryStorageError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
             };
-            let Some(root) = existing_private_directory(&data, "memory")? else {
+            let Some(root) = existing_private_directory(&parent, "memory")? else {
                 return Ok(None);
             };
             let Some(dir) = existing_private_directory(&root, project_id)? else {
                 return Ok(None);
             };
-            Ok(Some(Self { dir, path }))
+            let store = Self {
+                dir,
+                path,
+                binding: binding::Binding::new(data, parent, root, project_id),
+            };
+            store.verify_binding()?;
+            Ok(Some(store))
         }
         #[cfg(not(windows))]
         {
-            let open = || -> io::Result<Dir> {
-                let data = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
-                data.open_dir_nofollow("memory")?
-                    .open_dir_nofollow(project_id)
+            let open = || -> io::Result<(Dir, Dir, Dir)> {
+                let parent = Dir::open_ambient_dir(data, cap_std::ambient_authority())?;
+                let root = parent.open_dir_nofollow("memory")?;
+                let dir = root.open_dir_nofollow(project_id)?;
+                Ok((parent, root, dir))
             };
-            let dir = match open() {
-                Ok(dir) => dir,
+            let (parent, root, dir) = match open() {
+                Ok(dirs) => dirs,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(error.into()),
             };
             verify_private_directory(&dir)?;
-            Ok(Some(Self { dir, path }))
+            let store = Self {
+                dir,
+                path,
+                binding: binding::Binding::new(data, parent, root, project_id),
+            };
+            store.verify_binding()?;
+            Ok(Some(store))
         }
     }
 
@@ -132,6 +155,7 @@ impl MemoryStore {
     /// Callers retain this guard through their complete read or mutation/recovery.
     /// Contention is explicit so async consumers can wait/cancel without blocking.
     pub fn claim(&self) -> Result<MemoryScope<'_>, MemoryStorageError> {
+        self.verify_binding()?;
         verify_private_directory(&self.dir)?;
         match self.dir.symlink_metadata(".memory.lock") {
             Ok(metadata) if !metadata.is_file() => {
@@ -176,7 +200,11 @@ impl MemoryStore {
         verify_regular(&lock)?;
         make_private_file(&lock)?;
         match lock.try_lock() {
-            Ok(()) => Ok(MemoryScope { store: self, lock }),
+            Ok(()) => {
+                let scope = MemoryScope { store: self, lock };
+                scope.verify_binding()?;
+                Ok(scope)
+            }
             Err(TryLockError::WouldBlock) => Err(MemoryStorageError::Busy),
             Err(TryLockError::Error(error)) => Err(error.into()),
         }
@@ -188,6 +216,7 @@ impl MemoryScope<'_> {
         &self.store.path
     }
     fn ready(&self) -> Result<(), MemoryStorageError> {
+        self.verify_binding()?;
         match self.store.dir.symlink_metadata(TRANSACTION) {
             Ok(_) => Err(MemoryStorageError::RecoveryRequired),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),

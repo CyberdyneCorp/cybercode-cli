@@ -53,6 +53,7 @@ pub struct PreparedMemory<'guard, 'store> {
     scope: &'guard mut MemoryScope<'store>,
     dir: Dir,
     intent: Intent,
+    intent_file: File,
 }
 
 impl<'store> MemoryScope<'store> {
@@ -145,10 +146,14 @@ impl<'store> MemoryScope<'store> {
         create_file(&dir, "index.after", index.as_bytes())?;
         create_file(&dir, "intent.json", &json)?;
         sync_dir(&dir)?;
+        self.verify_binding()?;
+        let intent_file =
+            optional_file(&dir, "intent.json")?.ok_or(MemoryStorageError::RecoveryRequired)?;
         Ok(PreparedMemory {
             scope: self,
             dir,
             intent,
+            intent_file,
         })
     }
     pub fn recover(&mut self) -> Result<Option<MemoryMutation>, MemoryStorageError> {
@@ -208,6 +213,7 @@ impl PreparedMemory<'_, '_> {
         acknowledge: impl FnOnce(&MemoryMutation) -> Result<(), MemoryStorageError>,
     ) -> Result<MemoryMutation, MemoryStorageError> {
         validate_intent(&self.intent)?;
+        self.verify_binding()?;
         verify_private_directory(&self.scope.store.dir)?;
         verify_private_directory(&self.dir)?;
         verify_history(&self.scope.store.dir)?;
@@ -220,7 +226,9 @@ impl PreparedMemory<'_, '_> {
         self.verify_catalog()?;
         self.verify_desired()?;
         self.verify_slots()?;
+        self.verify_binding()?;
         self.apply_note()?;
+        self.verify_binding()?;
         self.apply_index()?;
         self.verify_terminal()?;
         sync_dir(&self.scope.store.dir)?;
@@ -233,13 +241,16 @@ impl PreparedMemory<'_, '_> {
             name: self.intent.name.clone(),
             deleted: self.intent.after_note.is_none(),
         };
+        self.verify_binding()?;
         acknowledge(&receipt)?;
+        self.verify_binding()?;
         let history = private_directory(&self.scope.store.dir, HISTORY)?;
         match history.symlink_metadata(&self.intent.id) {
             Ok(_) => return Err(MemoryStorageError::Conflict),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
+        drop(self.intent_file);
         archive_journal(&self.scope.store.dir, self.dir, &history, &self.intent.id)?;
         sync_dir(&history)?;
         sync_dir(&self.scope.store.dir)?;
@@ -248,6 +259,24 @@ impl PreparedMemory<'_, '_> {
             name: self.intent.name.clone(),
             deleted: self.intent.after_note.is_none(),
         })
+    }
+    fn verify_binding(&self) -> Result<(), MemoryStorageError> {
+        use crate::memory::identity::verify_identity;
+        self.scope.verify_binding()?;
+        let current = existing_journal_directory(&self.scope.store.dir)?
+            .ok_or(MemoryStorageError::ReviewConflict)?;
+        verify_identity(
+            &current.try_clone()?.into_std_file(),
+            &self.dir.try_clone()?.into_std_file(),
+        )?;
+        let (persisted, current) = read_intent(&self.dir)?;
+        verify_identity(&current, &self.intent_file)?;
+        if serde_json::to_vec(&persisted).map_err(|_| MemoryStorageError::RecoveryRequired)?
+            != serde_json::to_vec(&self.intent).map_err(|_| MemoryStorageError::RecoveryRequired)?
+        {
+            return Err(MemoryStorageError::ReviewConflict);
+        }
+        Ok(())
     }
     fn normalize_links(&self) -> Result<(), MemoryStorageError> {
         normalize_pair(
@@ -1007,4 +1036,20 @@ impl ReviewedMemory<'_, '_> {
             )?
             .commit()
     }
+}
+
+fn read_intent(dir: &Dir) -> Result<(Intent, File), MemoryStorageError> {
+    let mut file =
+        optional_file(dir, "intent.json")?.ok_or(MemoryStorageError::RecoveryRequired)?;
+    let mut json = Vec::new();
+    (&mut file).take(INTENT_LIMIT + 1).read_to_end(&mut json)?;
+    if json.len() as u64 > INTENT_LIMIT {
+        return Err(MemoryStorageError::TooLarge);
+    }
+    let named = optional_file(dir, "intent.json")?.ok_or(MemoryStorageError::ReviewConflict)?;
+    crate::memory::identity::verify_identity(&named, &file)?;
+    let intent: Intent =
+        serde_json::from_slice(&json).map_err(|_| MemoryStorageError::RecoveryRequired)?;
+    validate_intent(&intent)?;
+    Ok((intent, file))
 }

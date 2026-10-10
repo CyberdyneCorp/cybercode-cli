@@ -384,3 +384,12 @@
 - **THEN** installed note/index identities SHALL be preserved, original versions SHALL remain journal evidence, and hard-link aliases SHALL refuse without Unix link normalization
 - **AND** a failed acknowledgement SHALL leave completed evidence for recovery without replaying installed file effects
 - **AND** complete journal/client path binding and native lifecycle acceptance SHALL remain required before public Windows mutation admission
+
+#### Scenario: Retained scope lock and live journal bindings
+- **WHEN** an admitted memory store or scope is used
+- **THEN** its current data path, named memory root and named scope SHALL match retained native directory identities
+- **AND** its named private regular lock SHALL still match the held lock before read/preparation/recovery effects
+- **WHEN** a prepared journal commits
+- **THEN** its named journal directory and intent object/bytes SHALL match retained evidence before file effects and acknowledgement
+- **AND** moved/replaced scopes, roots, locks, journals or intent objects SHALL refuse without repairing or deleting replacement evidence
+- **AND** Windows bootstrap directory handles SHALL permit delete sharing and reject final reparse objects, while public mutation admission remains gated pending complete lifecycle acceptance

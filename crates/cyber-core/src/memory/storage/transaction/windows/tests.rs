@@ -19,6 +19,70 @@ fn object(dir: &Dir, name: &str) -> native::FileIdentity {
 }
 
 #[test]
+fn native_live_intent_replacement_with_identical_bytes_refuses_before_effects() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = prepare(&mut scope, "Proposed");
+    let bytes = optional_bytes(&pending.dir, "intent.json", INTENT_LIMIT)
+        .unwrap()
+        .unwrap();
+    std::fs::rename(
+        store.path().join(TRANSACTION).join("intent.json"),
+        store.path().join(TRANSACTION).join("retained-intent"),
+    )
+    .unwrap();
+    create_file(&pending.dir, "intent.json", &bytes).unwrap();
+    let mut acknowledged = false;
+    assert!(matches!(
+        pending.commit_with_acknowledgement(|_| {
+            acknowledged = true;
+            Ok(())
+        }),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(!acknowledged);
+    assert!(!store.path().join("rule.md").exists());
+    assert!(!store.path().join("MEMORY.md").exists());
+}
+
+#[test]
+fn native_live_intent_content_change_refuses_before_effects_or_acknowledgement() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = prepare(&mut scope, "Proposed");
+    let mut value: serde_json::Value = serde_json::from_slice(
+        &optional_bytes(&pending.dir, "intent.json", INTENT_LIMIT)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    value["after_note"] = "0".repeat(64).into();
+    let mut file = native::open_private_file(
+        &pending.dir.try_clone().unwrap().into_std_file(),
+        "intent.json",
+        native::Access::Write,
+    )
+    .unwrap();
+    file.set_len(0).unwrap();
+    file.write_all(&serde_json::to_vec(&value).unwrap())
+        .unwrap();
+    drop(file);
+    let mut acknowledged = false;
+    assert!(matches!(
+        pending.commit_with_acknowledgement(|_| {
+            acknowledged = true;
+            Ok(())
+        }),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(!acknowledged);
+    assert!(!store.path().join("rule.md").exists());
+    assert!(!store.path().join("MEMORY.md").exists());
+}
+
+#[test]
 fn native_journal_commit_update_delete_preserves_original_objects_and_private_history() {
     let data = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(data.path(), "global").unwrap();

@@ -2,6 +2,97 @@
 #![cfg(unix)]
 use cyber_core::memory::{MemoryStorageError, MemoryStore};
 
+#[test]
+fn replaced_live_journal_directory_refuses_before_effects_or_acknowledgement() {
+    use std::os::unix::fs::PermissionsExt;
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = scope.prepare_write(&note("rule", "Proposed")).unwrap();
+    let journal = store.path().join(".memory-transaction");
+    let original = store.path().join("retained-journal");
+    std::fs::rename(&journal, &original).unwrap();
+    std::fs::create_dir(&journal).unwrap();
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut acknowledged = false;
+    assert!(matches!(
+        pending.commit_with_acknowledgement(|_| {
+            acknowledged = true;
+            Ok(())
+        }),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(!acknowledged);
+    assert_eq!(std::fs::read_dir(&journal).unwrap().count(), 0);
+    assert!(original.join("intent.json").exists());
+    assert!(!store.path().join("rule.md").exists());
+    assert!(!store.path().join("MEMORY.md").exists());
+}
+
+#[test]
+fn changed_live_intent_bytes_refuse_before_effects_or_acknowledgement() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = scope.prepare_write(&note("rule", "Proposed")).unwrap();
+    let intent = store.path().join(".memory-transaction").join("intent.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&intent).unwrap()).unwrap();
+    value["after_note"] = "0".repeat(64).into();
+    let changed = serde_json::to_vec(&value).unwrap();
+    std::fs::write(&intent, &changed).unwrap();
+    let mut acknowledged = false;
+    assert!(matches!(
+        pending.commit_with_acknowledgement(|_| {
+            acknowledged = true;
+            Ok(())
+        }),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(!acknowledged);
+    assert_eq!(std::fs::read(&intent).unwrap(), changed);
+    assert!(!store.path().join("rule.md").exists());
+}
+
+#[test]
+fn replaced_live_intent_object_with_identical_bytes_refuses_before_effects_or_acknowledgement() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = scope.prepare_write(&note("rule", "Proposed")).unwrap();
+    let intent = store.path().join(".memory-transaction").join("intent.json");
+    let original = intent.with_file_name("retained-intent");
+    let bytes = std::fs::read(&intent).unwrap();
+    std::fs::rename(&intent, &original).unwrap();
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&intent)
+        .unwrap()
+        .write_all(&bytes)
+        .unwrap();
+    let mut acknowledged = false;
+    assert!(matches!(
+        pending.commit_with_acknowledgement(|_| {
+            acknowledged = true;
+            Ok(())
+        }),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert!(!acknowledged);
+    assert_eq!(std::fs::read(&intent).unwrap(), bytes);
+    assert_eq!(std::fs::read(&original).unwrap(), bytes);
+    assert!(!store.path().join("rule.md").exists());
+    assert!(!store.path().join("MEMORY.md").exists());
+    assert_eq!(
+        std::fs::metadata(intent).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
+
 fn note(name: &str, body: &str) -> String {
     format!("---\nname: {name}\ndescription: useful fact\ntype: user\n---\n{body}\n")
 }
