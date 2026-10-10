@@ -73,3 +73,10 @@
 - **THEN** it SHALL expose every built-in and configured integration from trusted resolved settings without starting a model, creating a database, downloading or running an integration
 - **AND** formatter discovery SHALL require a local executable and any built-in project marker, while configured commands SHALL enable their extensions unless explicitly disabled
 - **AND** Prettier SHALL detect its supported config filenames, package.json configuration or declared dependency using bounded regular no-follow reads without evaluating configuration code
+
+#### Scenario: Authenticated Location formatter status
+- **WHEN** a client requests `GET /api/v1/formatters`
+- **THEN** the server SHALL authenticate the request and return Location-scoped formatter ids, extensions, enabled and detected_by fields from fresh trust-filtered configuration and shared discovery
+- **AND** query Location SHALL take precedence over header Location, with invalid Locations refused before discovery
+- **AND** status SHALL NOT execute candidates, evaluate project configuration code or publish formatter environment/command secrets
+- **AND** unavailable service hosts SHALL return a typed service-unavailable error rather than an empty success list

@@ -4086,6 +4086,55 @@
           "revoked"
         ]
       },
+      "Located_Array_of_FormatterStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FormatterStatus"
+            }
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "FormatterStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "detected_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "extensions",
+          "enabled",
+          "installed",
+          "detected_by"
+        ]
+      },
       "Located_Array_of_McpServerStatus": {
         "type": "object",
         "properties": {
@@ -8250,6 +8299,55 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/HookTrustBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/formatters": {
+      "get": {
+        "operationId": "v1.formatter.status",
+        "summary": "Inspect local formatter detection without execution",
+        "tags": [
+          "formatter"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Array_of_FormatterStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

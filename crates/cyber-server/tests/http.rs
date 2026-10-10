@@ -3420,3 +3420,14 @@ async fn shutdown_waits_for_disposed_handler_memory_work_and_refuses_new_leases(
         .unwrap();
     assert!(h.runtime.memory_mutation_lease().await.is_err());
 }
+
+#[tokio::test]
+async fn formatter_status_reports_unavailable_in_a_custom_host() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let (status, body, _) = api.call(Method::GET, "/formatters", None, &[]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["_tag"], "ServiceUnavailableError");
+    assert_eq!(body["service"], "formatters");
+    h.runtime.shutdown().await;
+}

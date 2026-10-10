@@ -178,8 +178,7 @@ impl App {
             Arc::clone(&host),
             Arc::clone(&remote_tools),
             config,
-            opts.paths.state.join("model.json"),
-            opts.paths.data.clone(),
+            opts.paths.clone(),
             withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
         );
         let state = AppState {

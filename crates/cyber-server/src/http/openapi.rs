@@ -630,6 +630,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Located<super::hooks::HookRevocation>>(g),
         op(
             "get",
+            "/formatters",
+            "v1.formatter.status",
+            "Inspect local formatter detection without execution",
+        )
+        .located()
+        .ok::<Located<Vec<super::FormatterStatus>>>(g),
+        op(
+            "get",
             "/mcp",
             "v1.mcp.status",
             "Inspect configured MCP state and retained ownership observations without startup",

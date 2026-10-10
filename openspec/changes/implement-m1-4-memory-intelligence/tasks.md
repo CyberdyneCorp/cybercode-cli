@@ -65,6 +65,7 @@
   - [x] Add typed LSP/formatter configuration with defaults, built-in overrides, custom extension validation and trust-gated loading; parsing grants no process authority. Four typed configuration and 43 actual configuration loading tests pass locally; full runtime and native acceptance remain open.
   - [x] Add all fourteen built-in server launch/install definitions and local PATH/cache detection, trusted override resolution and Location-bounded nearest-root selection; five real discovery/root tests pass locally. No spawning or downloads; native/public/runtime acceptance remains open.
   - [x] Add all twelve built-in formatter definitions, bounded project-marker/dependency detection, trusted overrides, local CLI LSP/formatter status and doctor installation reporting. Local discovery/configuration, actual CLI/status and memory regression tests pass; native/public/runtime acceptance remains open.
+  - [x] Add authenticated Location formatter status through shared discovery, typed OpenAPI/SDK and actual TCP authentication/isolation/settings/trust/error tests. Four actual TCP cases, nineteen memory regressions, custom-host unavailability and 77 SDK cases pass locally; fresh native API acceptance remains open.
   - [ ] Implement HTTP status, owned LSP protocol and shutdown, read warming, diagnostics, navigation tool and sandboxed formatter execution with public integrations.
 - [ ] Implement all P1 browser verification and revision-linked artifact contracts.
 - [ ] Validate documentation, native behavior and complete M1.4 acceptance.

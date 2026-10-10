@@ -77,6 +77,12 @@ export interface Operations {
     body: undefined;
     response: S.EventEnvelope;
   };
+  "v1.formatter.status": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Array_of_FormatterStatus;
+  };
   "v1.fs.find": {
     path: Record<string, never>;
     query: {
@@ -607,6 +613,18 @@ export const operations = {
     located: true,
     unwrap: false,
     stream: true,
+  },
+  "v1.formatter.status": {
+    tag: "formatter",
+    name: "status",
+    method: "GET",
+    path: "/api/v1/formatters",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
   },
   "v1.fs.find": {
     tag: "fs",
@@ -1494,6 +1512,11 @@ export function createGroups(caller: Caller) {
       /** Live events for a Location (scope=all for every Location) (`GET /api/v1/event`) */
       subscribe: (query?: Operations["v1.event.subscribe"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.event.subscribe", { query }, options),
+    },
+    formatter: {
+      /** Inspect local formatter detection without execution (`GET /api/v1/formatters`) */
+      status: (options?: RequestOptions): Promise<Operations["v1.formatter.status"]["response"]> =>
+        caller.call("v1.formatter.status", {}, options),
     },
     fs: {
       /** Find files for @ mentions (`GET /api/v1/fs/find`) */

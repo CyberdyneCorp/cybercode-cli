@@ -48,6 +48,9 @@ jobs:
       - name: Native CLI commands and intelligence status
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test cli
+      - name: Native authenticated formatter status
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --test intelligence
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: 'cargo test --locked -p cyber-core --lib memory::'

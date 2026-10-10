@@ -309,6 +309,14 @@ export type ForkBody = {
   message_id?: string | null;
 };
 
+export type FormatterStatus = {
+  id: string;
+  extensions: string[];
+  enabled: boolean;
+  installed: boolean;
+  detected_by: string;
+};
+
 export type Health = {
   healthy: boolean;
   version: string;
@@ -494,6 +502,12 @@ export type Located_Array_of_AgentInfo = {
 export type Located_Array_of_CommandInfo = {
   location: LocationInfo;
   data: CommandInfo[];
+};
+
+/** A Location-scoped response. */
+export type Located_Array_of_FormatterStatus = {
+  location: LocationInfo;
+  data: FormatterStatus[];
 };
 
 /** A Location-scoped response. */

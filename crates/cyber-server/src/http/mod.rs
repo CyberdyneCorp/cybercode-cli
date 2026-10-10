@@ -12,6 +12,7 @@ mod events;
 mod guard;
 mod hooks;
 mod idempotency;
+mod intelligence;
 mod jobs;
 mod mcp;
 mod memory;
@@ -40,6 +41,7 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
 pub use idempotency::request_fingerprint;
+pub use intelligence::FormatterStatus;
 pub use memory::{
     MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, RecoverMemory,
     validate_edit_fingerprint,
@@ -218,6 +220,20 @@ pub trait Services: Send + Sync {
             "Hook revocation is unavailable in this host",
         ))
     }
+    fn formatters(
+        &self,
+        _location: PathBuf,
+    ) -> BoxFuture<'_, Result<Vec<FormatterStatus>, ApiError>> {
+        Box::pin(async {
+            let mut error = ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "Formatter status is unavailable in this host",
+            );
+            error.body.service = Some("formatters".into());
+            Err(error)
+        })
+    }
     fn mcp_status(
         &self,
         _location: &Path,
@@ -309,6 +325,7 @@ pub fn router(state: AppState) -> Router {
         .merge(jobs::routes())
         .merge(hooks::routes())
         .merge(mcp::routes())
+        .merge(intelligence::routes())
         .merge(memory::routes())
         .merge(usage::routes())
         .merge(worktrees::routes())

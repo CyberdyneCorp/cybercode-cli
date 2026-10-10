@@ -1,4 +1,5 @@
 //! Catalog and Location lookups for the HTTP API.
+mod intelligence;
 mod memory;
 
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ pub struct AppServices {
     config: Arc<ConfigFn>,
     recent_file: PathBuf,
     data: PathBuf,
+    cache: PathBuf,
     hook_review: Arc<HookReviewFn>,
 }
 
@@ -30,8 +32,7 @@ impl AppServices {
         host: Arc<BuiltinHost>,
         remote: Arc<RemoteTools>,
         config: Arc<ConfigFn>,
-        recent_file: PathBuf,
-        data: PathBuf,
+        paths: cyber_core::paths::Paths,
         hook_review: Arc<HookReviewFn>,
     ) -> Self {
         Self {
@@ -39,8 +40,9 @@ impl AppServices {
             host,
             remote,
             config,
-            recent_file,
-            data,
+            recent_file: paths.state.join("model.json"),
+            data: paths.data,
+            cache: paths.cache,
             hook_review,
         }
     }
@@ -74,6 +76,17 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 ];
 
 impl Services for AppServices {
+    fn formatters(
+        &self,
+        directory: PathBuf,
+    ) -> BoxFuture<'_, Result<Vec<cyber_server::http::FormatterStatus>, cyber_server::http::ApiError>>
+    {
+        Box::pin(intelligence::formatters(
+            self.config.clone(),
+            self.cache.clone(),
+            directory,
+        ))
+    }
     fn memory_recovery(
         &self,
         runtime: cyber_server::runtime::Runtime,
