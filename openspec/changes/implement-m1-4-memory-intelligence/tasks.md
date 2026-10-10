@@ -1,4 +1,5 @@
 - [ ] Implement the complete P1 memory lifecycle.
+  - [x] Add create-only handle-relative Windows private child primitives with atomic protected security, safe-name/type/parent guards and collision/moved-parent native tests. Target type/lint checks pass; storage/client integration, durability and native acceptance remain open.
   - [x] Add shared native Windows handle identity/private-ACL verification and memory-read alias refusal with native tests and target type/lint checks. Native execution, private creation/durable mutation/checkpoint integration and complete native acceptance remain open.
   - [x] Add authenticated read-only retained save/delete outcome lookup from the durable ledger, generated SDK and corruption/isolation/no-effect regressions. TUI reconciliation/record controls and full native acceptance remain open.
   - [x] Integrate TUI retained-request selection, scoped read-only save/delete lookup with exact fingerprint validation, draft-preserving completed reconciliation and explicit durable forgetting; validate restart and real TCP outcomes. Native/multi-client retention and full canonical acceptance remain open.

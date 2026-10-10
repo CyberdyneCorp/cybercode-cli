@@ -1,5 +1,8 @@
 //! Handle-bound native evidence. Verification never changes ACLs or grants mutation authority.
+#[path = "windows/creation.rs"]
+mod creation;
 use super::MemoryStorageError;
+pub use creation::{create_private_directory, create_private_file};
 use std::fs::File;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};

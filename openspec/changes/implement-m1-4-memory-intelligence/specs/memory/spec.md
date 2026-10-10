@@ -279,6 +279,16 @@
 - **AND** foreign grants, unsupported ACE types, malformed or out-of-bounds token/SID evidence and unprotected or null DACLs SHALL refuse without changing permissions
 - **AND** these checks SHALL NOT enable mutation or checkpoints until private creation, identity binding, durable updates and native acceptance are implemented
 
+#### Scenario: Native Windows private child creation
+- **WHEN** native memory creates a directory under a retained caller-selected directory handle
+- **THEN** it SHALL resolve one bounded safe child component relative to that handle and atomically install a protected current-user/SYSTEM-only security descriptor
+- **AND** regular-file creation SHALL additionally require a private parent directory before native creation
+- **AND** create-only admission SHALL refuse existing children without opening, truncating or repairing them; returned handles SHALL be verified for private security and expected type before caller content writes
+- **AND** traversal, separators, alternate streams, reserved device names, trailing-dot/space aliases, unsupported names and reparse parents SHALL refuse without child effects
+- **WHEN** the retained parent is moved and its original path is replaced
+- **THEN** native creation SHALL remain under the retained parent, without reopening the replacement path
+- **AND** caller path binding, durable installation and lifecycle integration SHALL remain required before enabling Windows mutation/checkpoint workflows
+
 
 #### Scenario: Durable TUI memory draft and request retention
 - **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
