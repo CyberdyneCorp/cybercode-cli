@@ -960,3 +960,19 @@ Inspected [Windows job 114137918412](https://github.com/CyberdyneCorp/cybercode-
 The fixture now supplies a distinct private-directory backup path and additionally verifies retained original placeholder content/privacy. Production readback, ACL and full-identity checks are unchanged. Fresh native execution of the corrected seventeen cases remains required; the partial native result does not accept complete CLI or memory/P1 delivery. P0 model/runtime/evaluation artifacts remain preserved.
 
 Correction validation passes all 15 local CLI memory cases and all 59 strict OpenSpec items, with formatting/diff checks passing. The Windows-only editor fixture is not executed locally; corrected native execution remains pending.
+
+
+## 2026-10-10 formatter discovery and CLI intelligence status
+
+Core defines all twelve required formatters with commands/extensions, default executable and project-marker detection, and trusted overrides. Prettier accepts config filenames or package.json configuration/dependencies without evaluating code. Bounded regular no-follow package reads refuse malformed/oversized manifests, symlinks and Unix FIFOs; explicit commands bypass detection unless disabled. Discovery performs no download or formatting.
+
+The actual CLI exposes `cyber lsp status` with enabled/installed/running columns and `cyber fmt status` with extensions, enablement and detection reasons, in text or JSON. Status loads trusted resolved settings and starts no database, model or integration process. Doctor reports each language server's installation without invoking it. Owned LSP runtime is not yet implemented, so local running fields are false; HTTP status, owned services, diagnostics/navigation and formatting remain required.
+
+Local verification passes 56 core configuration/discovery cases, 26 real CLI cases and 15 memory CLI cases (97 selected tests). New binary tests verify default/marker detection, section disabling, withheld untrusted commands, custom command override, text columns and no database creation. The memory recovery settings test now supplies the real `--config memory.generate=false` option and requires the read-only diagnostic while preserving note/journal evidence. These are local executions; native detection/status and strengthened recovery acceptance require fresh CI. No full code-intelligence contract or P1 milestone is accepted, all 225 P1 contracts remain in scope and P0 local-model/runtime/evaluation artifacts remain preserved.
+
+
+## 2026-10-10 corrected native Windows CLI acceptance evidence
+
+Inspected [Windows job 114140175441](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38027108248/job/114140175441) at `dbae0ad` completes successfully. All seventeen actual CLI memory cases pass, including private atomic editor replacement and preserved original backup privacy, and all three database identity guard cases pass. This verifies the corrected fixture and named CLI suite; the strengthened `--config` read-only recovery assertion in the current revision still requires fresh native execution.
+
+The new revision also runs independent early Windows code-intelligence configuration/discovery and complete CLI command/status targets, so formatter detection and client status receive actual native tests. Local workspace all-target Clippy with warnings and cognitive complexity denied passes; all 59 strict specs pass and cross-spec lint reports zero errors and 21 warnings. Complete memory and code-intelligence acceptance, all broader P1 contracts and the independent P0 local-model baseline remain open.

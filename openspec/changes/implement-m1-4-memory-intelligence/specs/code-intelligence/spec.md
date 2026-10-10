@@ -51,3 +51,25 @@
 - **AND** executable discovery SHALL search the supplied PATH followed by `<cache>/bin`, refuse non-executable files on Unix and never run candidate executables
 - **AND** root discovery SHALL select the nearest existing root marker without ascending above the canonical Location or accepting files outside it
 - **AND** missing executables SHALL remain uninstalled without downloading during discovery
+
+### Requirement: Formatter enablement and detection
+(P1) When `formatters` is omitted, the system SHALL enable each built-in formatter whose detection succeeds: its binary is on PATH and, where defined, a project marker exists. Built-ins SHALL include `rustfmt`, `prettier`, `biome`, `ruff`, `black`, `gofmt`, `clang-format`, `shfmt`, `stylua`, `zig fmt`, `forge fmt` and `verible-verilog-format`. `formatters: false` SHALL disable all of them.
+
+#### Scenario: Prettier requires config
+- **WHEN** `prettier` is on PATH but the project has no prettier config or dependency
+- **THEN** prettier is not enabled
+
+
+### Requirement: Formatter status
+(P1) The server SHALL expose `GET /api/v1/formatters` returning `{ id, extensions, enabled, detected_by }`, and the CLI SHALL provide `cyber fmt status`.
+
+#### Scenario: Formatter status listing
+- **WHEN** a client requests formatter status
+- **THEN** each formatter is returned with whether detection currently succeeds
+
+
+#### Scenario: Local status without integration effects
+- **WHEN** `cyber lsp status` or `cyber fmt status` inspects the current Location
+- **THEN** it SHALL expose every built-in and configured integration from trusted resolved settings without starting a model, creating a database, downloading or running an integration
+- **AND** formatter discovery SHALL require a local executable and any built-in project marker, while configured commands SHALL enable their extensions unless explicitly disabled
+- **AND** Prettier SHALL detect its supported config filenames, package.json configuration or declared dependency using bounded regular no-follow reads without evaluating configuration code

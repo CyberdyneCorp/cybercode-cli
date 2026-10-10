@@ -20,14 +20,14 @@ enum Status {
 }
 
 struct Check {
-    name: &'static str,
+    name: String,
     status: Status,
     detail: String,
 }
 
-fn check(name: &'static str, status: Status, detail: impl Into<String>) -> Check {
+fn check(name: impl Into<String>, status: Status, detail: impl Into<String>) -> Check {
     Check {
-        name,
+        name: name.into(),
         status,
         detail: detail.into(),
     }
@@ -41,6 +41,7 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
         Err(e) => check("config", Status::Fail, e.message.clone()),
     }];
     let config = config.map(|c| c.value).unwrap_or(Value::Null);
+    checks.extend(lsp_checks(ctx, &config));
     checks.extend(rt.block_on(catalog_checks(ctx, &config)));
     checks.push(database(ctx));
     checks.push(sandbox());
@@ -48,6 +49,39 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     checks.push(tool("rg", &["--version"], Status::Warn));
     checks.push(rt.block_on(server(ctx)));
     report(global, &checks)
+}
+
+fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {
+    let Ok(settings) = cyber_core::config::LspSettings::from_config(config) else {
+        return Vec::new();
+    };
+    let search =
+        cyber_core::intelligence::ExecutableSearch::new(&ctx.location, &ctx.paths.cache, &ctx.env);
+    cyber_core::intelligence::detect_servers(&settings, &search)
+        .into_iter()
+        .map(|server| {
+            let disabled = !settings.enabled
+                || settings
+                    .servers
+                    .get(&server.definition.id)
+                    .is_some_and(|s| s.disabled);
+            let detail = match (server.installed, disabled) {
+                (false, true) => "disabled; not installed",
+                (false, false) => "not installed",
+                (true, true) => "installed; disabled",
+                (true, false) => "installed",
+            };
+            check(
+                format!("lsp:{}", server.definition.id),
+                if server.installed || disabled {
+                    Status::Pass
+                } else {
+                    Status::Warn
+                },
+                detail,
+            )
+        })
+        .collect()
 }
 
 async fn catalog_checks(ctx: &Context, config: &Value) -> Vec<Check> {

@@ -42,6 +42,12 @@ jobs:
           key: windows-lint
       - name: Check native Windows lint
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Native code intelligence configuration and discovery
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test config --test intelligence_config --test intelligence_discovery --test formatter_discovery
+      - name: Native CLI commands and intelligence status
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-cli --test cli
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: 'cargo test --locked -p cyber-core --lib memory::'

@@ -113,6 +113,16 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Inspect installed language servers for the current Location.
+    Lsp {
+        #[command(subcommand)]
+        cmd: crate::commands::intelligence::StatusCmd,
+    },
+    /// Inspect detected formatters for the current Location.
+    Fmt {
+        #[command(subcommand)]
+        cmd: crate::commands::intelligence::StatusCmd,
+    },
     /// Review and edit durable project/global memory.
     Memory(MemoryArgs),
     /// Review MCP server definitions and individual server approvals.

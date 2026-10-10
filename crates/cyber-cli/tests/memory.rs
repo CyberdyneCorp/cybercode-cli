@@ -373,12 +373,15 @@ fn stale_recovery_and_fresh_settings_preserve_files_and_journal() {
                 command.env("CYBER_DISABLE_MEMORY", "1");
             }
             "readonly" => {
-                command.args(["-c", "memory.generate=false"]);
+                command.args(["--config", "memory.generate=false"]);
             }
             _ => unreachable!(),
         }
         let output = command.output().unwrap();
         assert!(!output.status.success(), "{mode}");
+        if mode == "readonly" {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("Memory is read-only"));
+        }
         let current = std::fs::read_to_string(env.note_path()).unwrap();
         assert!(current.contains(if mode == "stale" {
             "External fact"

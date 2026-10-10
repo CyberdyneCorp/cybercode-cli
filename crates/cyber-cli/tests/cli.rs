@@ -265,7 +265,11 @@ fn doctor_reports_every_check_as_json() {
         .filter_map(|c| c["check"].as_str())
         .collect();
     assert_eq!(
-        names,
+        names
+            .iter()
+            .copied()
+            .filter(|name| !name.starts_with("lsp:"))
+            .collect::<Vec<_>>(),
         vec![
             "config",
             "catalog",
@@ -276,6 +280,11 @@ fn doctor_reports_every_check_as_json() {
             "rg",
             "server"
         ]
+    );
+    assert!(names.contains(&"lsp:gopls"));
+    assert_eq!(
+        names.iter().filter(|name| name.starts_with("lsp:")).count(),
+        14
     );
     let failed = v["checks"]
         .as_array()
@@ -639,4 +648,141 @@ fn hook_listing_reviews_withheld_literals_without_approval_or_execution() {
         .status
         .success()
     );
+}
+
+fn status_candidate(env: &Env, name: &str) {
+    let path = env.root.join("cyber-home/cache/bin").join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "Discovery must not execute candidates").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+}
+
+fn status_row<'a>(rows: &'a Value, id: &str) -> &'a Value {
+    rows.as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap()
+}
+
+#[test]
+fn lsp_status_lists_local_integrations_without_database_or_process_startup() {
+    let env = Env::new();
+    status_candidate(&env, "rust-analyzer");
+    let run = |args: &[&str]| {
+        env.command(args)
+            .env("PATH", env.root.join("empty-path"))
+            .output()
+            .unwrap()
+    };
+    let output = run(&["lsp", "status", "--format", "json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let rows = json(&output);
+    assert_eq!(rows.as_array().unwrap().len(), 14);
+    let rust = status_row(&rows, "rust-analyzer");
+    assert_eq!(rust["enabled"], true);
+    assert_eq!(rust["installed"], true);
+    assert_eq!(rust["running"], false);
+    let human = run(&["lsp", "status"]);
+    assert!(stdout(&human).contains("ENABLED"));
+    assert!(stdout(&human).contains("INSTALLED"));
+    assert!(stdout(&human).contains("RUNNING"));
+    assert!(!env.root.join("cyber-home/data/cyber-dev.db").exists());
+}
+
+#[test]
+fn formatter_status_observes_project_markers_without_evaluating_configuration() {
+    let env = Env::new();
+    status_candidate(&env, "prettier");
+    let run = |args: &[&str]| {
+        env.command(args)
+            .env("PATH", env.root.join("empty-path"))
+            .output()
+            .unwrap()
+    };
+    let output = run(&["fmt", "status", "--format", "json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let rows = json(&output);
+    assert_eq!(rows.as_array().unwrap().len(), 12);
+    assert_eq!(status_row(&rows, "prettier")["enabled"], false);
+    std::fs::write(
+        env.root.join("prettier.config.js"),
+        "throw new Error('must not evaluate');",
+    )
+    .unwrap();
+    let rows = json(&run(&["fmt", "status", "--format", "json"]));
+    let prettier = status_row(&rows, "prettier");
+    assert_eq!(prettier["enabled"], true);
+    assert_eq!(prettier["detected_by"], "prettier.config.js");
+    assert!(!env.root.join("cyber-home/data/cyber-dev.db").exists());
+}
+
+#[test]
+fn intelligence_status_honors_disabling_and_withholds_untrusted_commands() {
+    let env = Env::new();
+    status_candidate(&env, "rust-analyzer");
+    let disabled = env
+        .command(&["lsp", "status", "--format", "json", "--config", "lsp=false"])
+        .env("PATH", env.root.join("empty-path"))
+        .output()
+        .unwrap();
+    assert!(disabled.status.success(), "{}", stderr(&disabled));
+    assert!(
+        json(&disabled)
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["enabled"] == false)
+    );
+    let repo=env.repo(r#"{"lsp":{"untrusted":{"command":["malicious"],"extensions":[".x"]}},"formatters":{"untrusted":{"command":["malicious","$FILE"],"extensions":[".x"]}}}"#);
+    for verb in ["lsp", "fmt"] {
+        let output = env
+            .command(&[verb, "status", "--format", "json"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert!(
+            json(&output)
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["id"] != "untrusted")
+        );
+    }
+    let forced=env.command(&["fmt","status","--format","json","--config",r#"formatters.taplo={"command":["missing-taplo","fmt","$FILE"],"extensions":[".toml"]}"#]).output().unwrap();
+    assert!(forced.status.success(), "{}", stderr(&forced));
+    let rows = json(&forced);
+    let taplo = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "taplo")
+        .unwrap();
+    assert_eq!(taplo["enabled"], true);
+    assert_eq!(taplo["detected_by"], "config");
+}
+
+#[test]
+fn doctor_disabled_lsp_does_not_report_missing_servers_as_warnings() {
+    let env = Env::new();
+    let output = env
+        .command(&["doctor", "--format", "json", "--config", "lsp=false"])
+        .env("PATH", env.root.join("empty-path"))
+        .output()
+        .unwrap();
+    let rows = json(&output);
+    let lsp: Vec<_> = rows["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["check"].as_str().unwrap().starts_with("lsp:"))
+        .collect();
+    assert_eq!(lsp.len(), 14);
+    assert!(lsp.iter().all(|r| r["status"] == "pass"));
+    assert!(lsp.iter().all(|r| r["detail"] == "disabled; not installed"));
 }
