@@ -1,4 +1,5 @@
 //! Read-only reviewed proposals; no destination mutation or executable source loading.
+use super::provenance::{self, Origins, SourceReference};
 use super::{
     ConversionError, DiscoveryError, RequiredEnvironment, SourceFile, SourceKind, SourceLayer,
     SourceRoots, SourceSnapshot, SourceTool, claude_permissions, codex_provider_config,
@@ -6,10 +7,7 @@ use super::{
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -20,9 +18,16 @@ pub enum ImportScope {
 #[derive(Debug, Clone, Serialize)]
 pub struct MappingRecord {
     pub source: PathBuf,
+    pub sources: Vec<SourceReference>,
     pub field: String,
     pub status: &'static str,
     pub reason: &'static str,
+}
+#[derive(Debug, Serialize)]
+pub struct PreviewEnvironment {
+    #[serde(flatten)]
+    pub requirement: RequiredEnvironment,
+    pub sources: Vec<SourceReference>,
 }
 #[derive(Debug, Serialize)]
 pub struct PreviewOutput {
@@ -31,7 +36,7 @@ pub struct PreviewOutput {
     /// Raw file layers influencing the proposal; no profile or substitution evaluation.
     pub native_layers: Vec<PathBuf>,
     pub report: Vec<MappingRecord>,
-    pub required_environment: Vec<RequiredEnvironment>,
+    pub required_environment: Vec<PreviewEnvironment>,
     /// This increment does not implement every source adapter or destination transactions.
     pub complete: bool,
 }
@@ -80,9 +85,14 @@ fn record(
     status: &'static str,
     reason: &'static str,
 ) -> MappingRecord {
+    let field = field.into();
     MappingRecord {
         source: source.into(),
-        field: field.into(),
+        sources: vec![SourceReference {
+            source: source.into(),
+            field: field.clone(),
+        }],
+        field,
         status,
         reason,
     }
@@ -126,7 +136,8 @@ pub fn preview_import(
         }
         let mut raw = json!({});
         let mut rules = json!({});
-        let mut origins = BTreeMap::new();
+        let mut raw_origins = Origins::new();
+        let mut rule_origins = Origins::new();
         let mut representative = None;
         for source in inventory.files.iter().filter(|f| {
             f.tool == family && (scope == ImportScope::Project || f.layer != SourceLayer::Project)
@@ -135,24 +146,70 @@ pub fn preview_import(
                 continue;
             };
             if source.kind == SourceKind::Rule {
-                overlay(&mut rules, &delta, "", true);
+                provenance::overlay(
+                    &mut rules,
+                    &delta,
+                    "",
+                    &source.path,
+                    true,
+                    &mut rule_origins,
+                )?;
             } else {
-                overlay(&mut raw, &delta, "", family == SourceTool::Claude);
+                provenance::overlay(
+                    &mut raw,
+                    &delta,
+                    "",
+                    &source.path,
+                    family == SourceTool::Claude,
+                    &mut raw_origins,
+                )?;
                 representative = Some(source);
             }
-            record_origins(&delta, "", &source.path, &mut origins);
         }
+        let mut required = Vec::new();
+        let report_start = context.report.len();
         let mut config = if let Some(source) = representative {
-            let result = document_config(source, &raw, &mut context.required, &mut context.report)?;
-            record_origins(&result, "", &source.path, &mut origins);
-            result
+            document_config(source, &raw, &mut required, &mut context.report)?
         } else {
             json!({})
         };
-        overlay(&mut config, &rules, "", true);
-        strongest_permissions(family, &mut config);
+        for item in &mut context.report[report_start..] {
+            if let Some(pointer) = provenance::indexed_field(&raw, &item.field) {
+                let sources = provenance::references(&raw_origins, &pointer);
+                if let Some(first) = sources.first() {
+                    item.source = first.source.clone();
+                    item.sources = sources;
+                }
+            }
+        }
+        for refs in rule_origins.values_mut() {
+            for reference in refs {
+                reference.field = format!("converted:{}", reference.field);
+            }
+        }
+        let mut origins = if let Some(source) = representative {
+            provenance::converted(family, &raw, &config, &raw_origins, &source.path)?
+        } else {
+            Origins::new()
+        };
+        provenance::append_rules(&mut config, &rules, &mut origins, &rule_origins);
+        provenance::strongest_permissions(family, &mut config, &mut origins);
+        let environment_origins = provenance::environment_origins(&config, &origins)
+            .map_err(|e| error(&target, e.reason))?;
+        context
+            .required
+            .extend(required.into_iter().map(|requirement| {
+                PreviewEnvironment {
+                    sources: environment_origins
+                        .get(&requirement.variable)
+                        .cloned()
+                        .unwrap_or_default(),
+                    requirement,
+                }
+            }));
         fill_existing(&mut proposed, &config, "", &origins, &mut context.report);
     }
+    redact_report_fields(&mut context.report, &mut context.required, &context.secrets);
     reject_unsafe_strings(&proposed, &existing, &context.secrets, &target)?;
     let diff = render_diff(&target, &existing, &proposed, &context.secrets)?;
     let preview = ImportPreview {
@@ -243,7 +300,7 @@ struct SourceContext<'a> {
     snapshots: Vec<SourceSnapshot>,
     secrets: Vec<String>,
     remaining: usize,
-    required: Vec<RequiredEnvironment>,
+    required: Vec<PreviewEnvironment>,
     report: Vec<MappingRecord>,
 }
 fn source_config(
@@ -416,51 +473,11 @@ fn map_model(
     }
     Ok(())
 }
-fn overlay(base: &mut Value, extra: &Value, pointer: &str, append_rules: bool) {
-    if let (Some(base), Some(extra)) = (base.as_object_mut(), extra.as_object()) {
-        for (key, value) in extra {
-            if let Some(previous) = base.get_mut(key) {
-                overlay(previous, value, &format!("{pointer}/{key}"), append_rules);
-            } else {
-                base.insert(key.clone(), value.clone());
-            }
-        }
-    } else if let (Some(base), Some(extra)) = (base.as_array_mut(), extra.as_array()) {
-        if append_rules
-            && (pointer == "/permissions/rules"
-                || matches!(
-                    pointer,
-                    "/permissions/allow" | "/permissions/ask" | "/permissions/deny"
-                ))
-        {
-            base.extend(extra.iter().cloned());
-        } else {
-            *base = extra.clone();
-        }
-    } else {
-        *base = extra.clone();
-    }
-}
-fn strongest_permissions(tool: SourceTool, config: &mut Value) {
-    if tool == SourceTool::OpenCode {
-        return;
-    }
-    if let Some(rules) = config
-        .pointer_mut("/permissions/rules")
-        .and_then(Value::as_array_mut)
-    {
-        rules.sort_by_key(|r| match r["effect"].as_str() {
-            Some("allow") => 0,
-            Some("ask") => 1,
-            _ => 2,
-        });
-    }
-}
 fn fill_existing(
     base: &mut Value,
     extra: &Value,
     pointer: &str,
-    origins: &BTreeMap<String, PathBuf>,
+    origins: &Origins,
     report: &mut Vec<MappingRecord>,
 ) {
     for (key, value) in extra.as_object().into_iter().flatten() {
@@ -469,17 +486,69 @@ fn fill_existing(
             if previous.is_object() && value.is_object() {
                 fill_existing(previous, value, &child, origins, report);
             } else {
-                report.push(record(
-                    origins.get(&child).unwrap(),
-                    child,
+                report_mapping(
+                    report,
+                    origins,
+                    &child,
                     "merged",
                     "existing native or earlier auto-source key kept",
-                ));
+                );
             }
         } else {
             base.as_object_mut()
                 .unwrap()
                 .insert(key.clone(), value.clone());
+            for field in provenance::fields(origins, &child) {
+                report_mapping(
+                    report,
+                    origins,
+                    field,
+                    "imported",
+                    "supported source field proposed without writing",
+                );
+            }
+        }
+    }
+}
+fn report_mapping(
+    report: &mut Vec<MappingRecord>,
+    origins: &Origins,
+    pointer: &str,
+    status: &'static str,
+    reason: &'static str,
+) {
+    let sources = provenance::references(origins, pointer);
+    if let Some(first) = sources.first() {
+        report.push(MappingRecord {
+            source: first.source.clone(),
+            sources,
+            field: pointer.into(),
+            status,
+            reason,
+        });
+    }
+}
+fn redact_report_fields(
+    report: &mut [MappingRecord],
+    required: &mut [PreviewEnvironment],
+    secrets: &[String],
+) {
+    let mut secrets: Vec<_> = secrets.iter().collect();
+    secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    let redact = |field: &mut String| {
+        for secret in &secrets {
+            *field = field.replace(secret.as_str(), "***");
+        }
+    };
+    for item in report {
+        redact(&mut item.field);
+        for source in &mut item.sources {
+            redact(&mut source.field);
+        }
+    }
+    for required in required {
+        for source in &mut required.sources {
+            redact(&mut source.field);
         }
     }
 }
@@ -619,21 +688,4 @@ fn render_diff(
             "import proposal (redacted)",
         )
         .to_string())
-}
-
-fn record_origins(
-    value: &Value,
-    pointer: &str,
-    source: &Path,
-    origins: &mut BTreeMap<String, PathBuf>,
-) {
-    origins.insert(pointer.into(), source.into());
-    for (key, value) in value.as_object().into_iter().flatten() {
-        record_origins(
-            value,
-            &format!("{pointer}/{}", key.replace('~', "~0").replace('/', "~1")),
-            source,
-            origins,
-        );
-    }
 }

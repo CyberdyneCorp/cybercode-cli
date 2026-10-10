@@ -1040,6 +1040,10 @@ fn import_preview_is_read_only_and_preserves_diff_escaping() {
     let view = json(&preview);
     assert_eq!(view["complete"], false);
     assert_eq!(view["required_environment"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        view["required_environment"][0]["sources"][0]["field"],
+        "/model_providers/local/api_key"
+    );
     assert!(!stdout(&preview).contains("private-secret"));
     let text = e.cyber(&["import", "auto", "--dry-run"]);
     assert!(text.status.success(), "{}", stderr(&text));

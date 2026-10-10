@@ -61,6 +61,10 @@ pub fn run(args: &ImportArgs, global: &GlobalArgs) -> Result<(), CliError> {
     if output::is_json(global.format) {
         return output::json(view);
     }
+    print_preview(view);
+    Ok(())
+}
+fn print_preview(view: &cyber_core::import::PreviewOutput) {
     println!("Target: {}", escaped(&view.target.to_string_lossy()));
     println!("Raw file-layer preview; profiles and substitutions are not evaluated.");
     for layer in &view.native_layers {
@@ -79,17 +83,30 @@ pub fn run(args: &ImportArgs, global: &GlobalArgs) -> Result<(), CliError> {
             escaped(&item.field),
             item.reason
         );
+        for source in &item.sources {
+            println!(
+                "  from: {} {}",
+                escaped(&source.source.to_string_lossy()),
+                escaped(&source.field)
+            );
+        }
     }
     for required in &view.required_environment {
+        for source in &required.sources {
+            println!(
+                "  Credential source: {} {}",
+                escaped(&source.source.to_string_lossy()),
+                escaped(&source.field)
+            );
+        }
         println!(
             "Set {} from the source field {}",
-            required.variable, required.field
+            required.requirement.variable, required.requirement.field
         );
     }
     println!(
         "Incomplete preview: remaining source adapters, exact byte diffs, complete provenance and reviewed writes are not implemented. No files written."
     );
-    Ok(())
 }
 fn source_roots(global: &GlobalArgs) -> Result<SourceRoots, CliError> {
     let env = ProcessEnv;

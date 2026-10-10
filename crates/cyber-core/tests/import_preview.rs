@@ -382,3 +382,279 @@ fn linked_native_layers_refuse_without_returning_external_configuration() {
     assert!(error.reason.contains("linked native"));
     assert!(!error.to_string().contains("private-secret"));
 }
+
+#[test]
+fn inherited_provider_leaves_and_credentials_keep_their_own_source_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".codex/config.toml",
+        "model='first'\nmodel_provider='local'\n[model_providers.local]\nwire_api='chat'\nbase_url='http://localhost:8000/v1'\napi_key='private-source-key'\n",
+    );
+    write(&roots.directory, ".codex/config.toml", "model='second'\n");
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let view = preview.output();
+    let model = view
+        .report
+        .iter()
+        .find(|r| r.field == "/model" && r.status == "imported")
+        .unwrap();
+    assert!(
+        model
+            .sources
+            .iter()
+            .any(|s| s.source == roots.directory.join(".codex/config.toml") && s.field == "/model")
+    );
+    assert!(
+        model
+            .sources
+            .iter()
+            .any(|s| s.source == roots.home.join(".codex/config.toml")
+                && s.field == "/model_provider")
+    );
+    let protocol = view
+        .report
+        .iter()
+        .find(|r| r.field == "/providers/local/api/type")
+        .unwrap();
+    assert_eq!(protocol.sources.len(), 1);
+    assert_eq!(
+        protocol.sources[0].source,
+        roots.home.join(".codex/config.toml")
+    );
+    assert_eq!(protocol.sources[0].field, "/model_providers/local/wire_api");
+    let required = &view.required_environment[0];
+    assert_eq!(required.sources.len(), 1);
+    assert_eq!(
+        required.sources[0].source,
+        roots.home.join(".codex/config.toml")
+    );
+    assert_eq!(required.sources[0].field, "/model_providers/local/api_key");
+    assert!(
+        !serde_json::to_string(view)
+            .unwrap()
+            .contains("private-source-key")
+    );
+}
+
+#[test]
+fn appended_claude_permissions_and_sorted_codex_rules_keep_individual_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".claude/settings.json",
+        r#"{"permissions":{"allow":[],"deny":["Bash(git push:*)"]}}"#,
+    );
+    write(
+        &roots.directory,
+        ".claude/settings.json",
+        r#"{"permissions":{"allow":["Bash(git status)"]}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let allow = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/permissions/rules/0/resource")
+        .unwrap();
+    let deny = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/permissions/rules/1/resource")
+        .unwrap();
+    assert_eq!(allow.sources.len(), 1);
+    assert_eq!(
+        allow.sources[0].source,
+        roots.directory.join(".claude/settings.json")
+    );
+    assert_eq!(allow.sources[0].field, "/permissions/allow/0");
+    assert_eq!(
+        deny.sources[0].source,
+        roots.home.join(".claude/settings.json")
+    );
+    write(
+        &roots.home,
+        ".codex/rules/a.rules",
+        "prefix_rule(pattern=['git','push'], decision='forbidden')\n",
+    );
+    write(
+        &roots.directory,
+        ".codex/rules/b.rules",
+        "prefix_rule(pattern=['git','status'], decision='allow')\n",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let allow = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/permissions/rules/0/resource")
+        .unwrap();
+    let deny = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/permissions/rules/1/resource")
+        .unwrap();
+    assert_eq!(
+        allow.sources[0].source,
+        roots.directory.join(".codex/rules/b.rules")
+    );
+    assert_eq!(
+        deny.sources[0].source,
+        roots.home.join(".codex/rules/a.rules")
+    );
+}
+
+#[test]
+fn ignored_permission_pattern_secrets_do_not_leak_through_provenance() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"permissions":{"rules":[]}}"#,
+    );
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"env":{"API_KEY":"private-source-key"},"permission":{"read":{"private-source-key":"deny"}}}"#,
+    );
+    let preview = preview_import(&roots, None, ImportScope::Project, &global(&root)).unwrap();
+    assert!(
+        !serde_json::to_string(preview.output())
+            .unwrap()
+            .contains("private-source-key")
+    );
+    assert!(
+        preview
+            .output()
+            .report
+            .iter()
+            .any(|r| r.status == "merged" && r.field == "/permissions/rules")
+    );
+}
+
+#[test]
+fn appended_selector_indices_and_pending_inherited_fields_reference_original_documents() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".claude/settings.json",
+        r#"{"permissions":{"allow":["Bash(git status)"]},"env":{"EXAMPLE":"global-only"}}"#,
+    );
+    write(
+        &roots.directory,
+        ".claude/settings.json",
+        r#"{"permissions":{"allow":["Read(src/*)"]}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let second = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/permissions/rules/1/resource")
+        .unwrap();
+    assert_eq!(second.sources[0].field, "/permissions/allow/0");
+    assert_eq!(
+        second.sources[0].source,
+        roots.directory.join(".claude/settings.json")
+    );
+    let pending = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.status == "not imported" && r.sources.iter().any(|s| s.field == "/env/EXAMPLE"))
+        .unwrap();
+    assert_eq!(pending.source, roots.home.join(".claude/settings.json"));
+    assert!(
+        !serde_json::to_string(preview.output())
+            .unwrap()
+            .contains("global-only")
+    );
+}
+
+#[test]
+fn source_provenance_limit_refuses_without_creating_native_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    let source = serde_json::json!({"unsupported":vec!["small";16_385]}).to_string();
+    write(&roots.directory, "opencode.json", &source);
+    let error = preview_import(&roots, None, ImportScope::Project, &global(&root))
+        .err()
+        .unwrap();
+    assert!(error.reason.contains("provenance"));
+    assert!(!roots.directory.join("cyber.jsonc").exists());
+}
+
+#[test]
+fn empty_converted_config_does_not_contaminate_codex_rule_provenance() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".codex/config.toml",
+        "approval_policy='on-request'\n",
+    );
+    write(
+        &roots.directory,
+        ".codex/rules/git.rules",
+        "prefix_rule(pattern=['git'], decision='prompt')\n",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let rule = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/permissions/rules/0/resource")
+        .unwrap();
+    assert!(
+        rule.sources
+            .iter()
+            .all(|s| s.source == roots.directory.join(".codex/rules/git.rules"))
+    );
+    assert!(
+        rule.sources
+            .iter()
+            .all(|s| s.field.starts_with("converted:"))
+    );
+}

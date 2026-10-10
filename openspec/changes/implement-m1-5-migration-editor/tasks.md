@@ -16,6 +16,7 @@
   - [x] Convert bounded Codex provider/model TOML with native catalog shapes, credential/header environment references, value-free pending mappings and actual native loader/catalog validation. Complete provider/profile/sandbox/source adapters and reviewed writes remain open.
 - [ ] Implement dry-run unified diffs, explicit write confirmation, secret safety, source-linked reports and idempotent annotations.
   - [x] Expose partial read-only previews for supported configuration/permission/provider fields, canonical auto fill order, source layering, redacted normalized diffs and review invalidation. Exact file-byte diffs, full layered provenance, remaining adapters, confirmation/writes and idempotency remain open.
+  - [x] Track supported converted leaf sources through overlays, permission append/sorting and inherited provider selection; attach source references to value-free environment requirements and pending fields. Full canonical kept-value provenance/comparisons and unsupported adapters remain open.
   - [x] Preserve explicit native global/ancestor/`.cyber` file layers using shared runtime discovery/merge rules; hold present/missing files under review and enforce a shared parse budget. Runtime-effective profiles/substitutions/trust handling remain open.
 - [ ] Implement canonical ACP lifecycle, buffers/write-through, editor MCP, permissions and streaming.
 - [ ] Implement the P1 VS Code extension and editor acceptance coverage.
