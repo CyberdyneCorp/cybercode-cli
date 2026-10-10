@@ -334,3 +334,13 @@ Four registry/native library cases verify lazy acquisition/full-cache independen
 Validation passes 130 Rust cases: 45 LSP library, 25 managed worktree/setup, 19 runtime flow, 35 built-in tool and six App TCP cases. Both real managed activity cases pass again after the final cache-capacity change. Workspace all-target Clippy with warnings denied, formatting, diff and generated SDK consistency checks pass. All 59 strict OpenSpec items pass; cross-spec lint reports zero errors and 21 warnings. Public HTTP schemas/SDK sources are unchanged by this activity increment.
 
 Client-wide Location activity outside runtime admission, live CLI/TUI lifecycle controls, reviewed unknown recovery, diagnostic document/path/version validation, edit synchronization, navigation/formatting, enforced Windows launch and the broader P1 contracts remain open. No canonical full lifecycle contract or complete milestone is accepted. P0 local-model work/data and its independent acceptance are preserved.
+
+
+### Document versions across bounded eviction
+
+Each running server now allocates document versions from one checked signed 32-bit counter. Unchanged text retains its version without another notification; changed snapshots and newly opened documents consume the next version only after successful dispatch. Eviction removes document content/digest state but cannot reset this counter. Reopened files therefore cannot reuse a former version while delayed notifications from that generation remain possible. Version exhaustion refuses a changed snapshot before dispatch. This bounds retained per-document state without keeping an unbounded history of closed paths.
+
+The strengthened actual subprocess regression fails against unchanged main at the reopened-document assertion (version 1 instead of 131). With this change, the same 128-document eviction sequence reopens at 131 and changes at 132; unchanged reopen deduplication and strictly increasing outgoing versions are checked. A second actual subprocess case reaches the maximum signed version and verifies unchanged snapshots remain deduplicated while changed snapshots refuse without another outgoing document message. These version fences do not yet validate incoming diagnostic publications. The bounded typed diagnostic cache, managed diagnostic-path admission, all four edit-tool synchronization paths, debounce/wait, feedback rendering, navigation and remaining P1 acceptance stay required.
+
+
+Validation passes 46 LSP library and 29 protocol/transport integration cases, all-target workspace Clippy with warnings denied, formatting/diff and generated SDK checks. All 59 strict specification items pass; cross-spec lint has zero errors and 21 warnings. Fresh native CI for this increment remains required.

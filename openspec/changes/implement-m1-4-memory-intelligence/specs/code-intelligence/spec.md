@@ -96,12 +96,17 @@
 - **AND** it SHALL remain broken until its service generation is recreated
 
 ### Requirement: Owned background LSP warming
-(P1) Successfully read text files SHALL enqueue background warming in a canonical Location-owned LSP generation without awaiting discovery, initialization or diagnostics. Matching installed servers SHALL receive one didOpen per document and versioned full-content didChange for changed read snapshots. Bounded queues and document state SHALL prevent unbounded background admission. Host shutdown and Location idle expiry SHALL fence admission and retain native/resource cleanup ownership through joined settlement.
+(P1) Successfully read text files SHALL enqueue background warming in a canonical Location-owned LSP generation without awaiting discovery, initialization or diagnostics. Matching installed servers SHALL receive one didOpen per document and versioned full-content didChange for changed read snapshots. Document versions SHALL increase across the entire running server generation, including eviction and reopening; unchanged snapshots SHALL consume no version. Exhausted versions SHALL refuse changed snapshots before dispatch rather than wrap or reuse a version. Bounded queues and document state SHALL prevent unbounded background admission. Host shutdown and Location idle expiry SHALL fence admission and retain native/resource cleanup ownership through joined settlement.
 
 #### Scenario: Read remains independent of initialization
 - **WHEN** a matching server initializes slowly while a text file is read
 - **THEN** read SHALL return without awaiting that server
 - **AND** repeated unchanged snapshots SHALL NOT duplicate didOpen
+
+#### Scenario: Evicted document is reopened
+- **WHEN** a document is evicted and later reopened in the same running server generation
+- **THEN** its new didOpen version SHALL exceed every prior document version in that generation
+- **AND** an unchanged subsequent snapshot SHALL NOT dispatch another notification
 
 #### Scenario: Generation disposal
 - **WHEN** host shutdown or Location idle expiry starts

@@ -128,6 +128,13 @@ async fn document_snapshots_open_once_change_versions_and_evict_bounded_state() 
         std::fs::write(&path, "").unwrap();
         handle.open_document(&path, "bounded".into()).await.unwrap();
     }
+    // Reopening the evicted document must not reuse an earlier server-generation version.
+    handle.open_document(&file, "changed".into()).await.unwrap();
+    handle.open_document(&file, "changed".into()).await.unwrap();
+    handle
+        .open_document(&file, "changed again".into())
+        .await
+        .unwrap();
     // A subsequent RPC witnesses that the server consumed all preceding notifications.
     handle
         .request("fixture", json!({}), Duration::from_secs(3))
@@ -138,7 +145,7 @@ async fn document_snapshots_open_once_change_versions_and_evict_bounded_state() 
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(events.len(), 131);
+    assert_eq!(events.len(), 134);
     assert_eq!(events[0]["method"], "textDocument/didOpen");
     assert_eq!(events[0]["params"]["textDocument"]["languageId"], "rust");
     assert_eq!(events[0]["params"]["textDocument"]["text"], "λ🦀");
@@ -152,6 +159,17 @@ async fn document_snapshots_open_once_change_versions_and_evict_bounded_state() 
             .unwrap()
             .as_str()
     );
+    assert_eq!(events[131]["method"], "textDocument/didClose");
+    assert_eq!(events[132]["method"], "textDocument/didOpen");
+    assert_eq!(events[132]["params"]["textDocument"]["version"], 131);
+    assert_eq!(events[132]["params"]["textDocument"]["text"], "changed");
+    assert_eq!(events[133]["method"], "textDocument/didChange");
+    assert_eq!(events[133]["params"]["textDocument"]["version"], 132);
+    let versions: Vec<i64> = events
+        .iter()
+        .filter_map(|event| event["params"]["textDocument"]["version"].as_i64())
+        .collect();
+    assert!(versions.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(launches.load(Ordering::SeqCst), 1);
     assert!(pool.close().await.unwrap()[0].acknowledged);
 }

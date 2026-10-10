@@ -26,7 +26,11 @@ pub(super) async fn verify_origin(
 }
 
 #[derive(Default)]
-pub(super) struct Documents(BTreeMap<PathBuf, (i32, [u8; 32])>);
+pub(super) struct Documents {
+    entries: BTreeMap<PathBuf, (i32, [u8; 32])>,
+    // Eviction must not let delayed diagnostics collide with a reopened document's version.
+    next_version: i32,
+}
 
 impl Documents {
     pub async fn open(
@@ -38,38 +42,42 @@ impl Documents {
     ) -> Result<(), LspError> {
         let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
         let document_uri = uri(&path)?;
-        let (method, params, version) = match self.0.get(&path) {
-            Some((_, previous)) if previous == &digest => return Ok(()),
-            Some((version, _)) => {
-                let version = version
-                    .checked_add(1)
-                    .ok_or(LspError::Protocol("document version exhausted"))?;
-                (
-                    "textDocument/didChange",
-                    json!({"textDocument":{"uri":document_uri,"version":version},"contentChanges":[{"text":text}]}),
-                    version,
-                )
-            }
+        if self
+            .entries
+            .get(&path)
+            .is_some_and(|(_, previous)| previous == &digest)
+        {
+            return Ok(());
+        }
+        let version = self
+            .next_version
+            .checked_add(1)
+            .ok_or(LspError::Protocol("document version exhausted"))?;
+        let (method, params) = match self.entries.get(&path) {
+            Some(_) => (
+                "textDocument/didChange",
+                json!({"textDocument":{"uri":document_uri,"version":version},"contentChanges":[{"text":text}]}),
+            ),
             None => {
-                if self.0.len() == MAX_DOCUMENTS {
-                    let first = self.0.first_key_value().unwrap().0.clone();
+                if self.entries.len() == MAX_DOCUMENTS {
+                    let first = self.entries.first_key_value().unwrap().0.clone();
                     notify(
                         connection,
                         "textDocument/didClose",
                         json!({"textDocument":{"uri":uri(&first)?}}),
                     )
                     .await?;
-                    self.0.remove(&first);
+                    self.entries.remove(&first);
                 }
                 (
                     "textDocument/didOpen",
-                    json!({"textDocument":{"uri":document_uri,"languageId":language,"version":1,"text":text}}),
-                    1,
+                    json!({"textDocument":{"uri":document_uri,"languageId":language,"version":version,"text":text}}),
                 )
             }
         };
         notify(connection, method, params).await?;
-        self.0.insert(path, (version, digest));
+        self.next_version = version;
+        self.entries.insert(path, (version, digest));
         Ok(())
     }
 }
@@ -113,4 +121,74 @@ pub(super) fn language(path: &std::path::Path) -> String {
         other => other,
     }
     .into()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn version_exhaustion_refuses_changed_snapshots_without_wrapping_or_dispatch() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.rs");
+        std::fs::write(&path, "unchanged").unwrap();
+        let path = path.canonicalize().unwrap();
+        let mut connection = StdioConnection::connect_with_timeout(
+            crate::lsp::connection::tests::process("normal").await,
+            root.path(),
+            json!({"fixture":true}),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+        let mut documents = Documents {
+            next_version: i32::MAX - 1,
+            ..Documents::default()
+        };
+        documents
+            .open(
+                &mut connection,
+                path.clone(),
+                "unchanged".into(),
+                "rust".into(),
+            )
+            .await
+            .unwrap();
+        documents
+            .open(
+                &mut connection,
+                path.clone(),
+                "unchanged".into(),
+                "rust".into(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            documents
+                .open(
+                    &mut connection,
+                    path.clone(),
+                    "changed".into(),
+                    "rust".into()
+                )
+                .await,
+            Err(LspError::Protocol("document version exhausted"))
+        ));
+        assert_eq!(documents.next_version, i32::MAX);
+        assert_eq!(documents.entries[&path].0, i32::MAX);
+        connection
+            .request("fixture", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap();
+        let events: Vec<Value> = std::fs::read_to_string(root.path().join("document-events"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["method"], "textDocument/didOpen");
+        assert_eq!(events[0]["params"]["textDocument"]["version"], i32::MAX);
+        assert!(connection.shutdown().await.acknowledged);
+    }
 }
