@@ -60,6 +60,19 @@ pub fn open_pinned_private_file(parent: &File, name: &str) -> Result<File, Memor
     verify_private(parent)?;
     child(parent, name, false, Mode::Pinned(Access::DataWrite))
 }
+/// Read-only exact-object ownership denying other content writes and namespace changes.
+pub fn freeze_private_file(
+    parent: &File,
+    name: &str,
+    expected: FileIdentity,
+) -> Result<File, MemoryStorageError> {
+    verify_private(parent)?;
+    let file = child(parent, name, false, Mode::Frozen)?;
+    if identity(&file)? != expected {
+        return Err(MemoryStorageError::ReviewConflict);
+    }
+    Ok(file)
+}
 
 /// Open an existing private directory under its retained parent, without creation or ACL repair.
 pub fn open_private_directory(
@@ -83,18 +96,21 @@ pub(super) enum Mode {
     Create,
     Open(Access),
     Pinned(Access),
+    Frozen,
     Retain,
 }
 impl Mode {
     fn disposition(self) -> u32 {
         match self {
             Self::Create => FILE_CREATE,
-            Self::Open(_) | Self::Pinned(_) | Self::Retain => FILE_OPEN,
+            Self::Open(_) | Self::Pinned(_) | Self::Frozen | Self::Retain => FILE_OPEN,
         }
     }
     fn access(self) -> u32 {
         match self {
-            Self::Open(Access::Read) | Self::Pinned(Access::Read) => FILE_GENERIC_READ,
+            Self::Open(Access::Read) | Self::Pinned(Access::Read) | Self::Frozen => {
+                FILE_GENERIC_READ
+            }
             Self::Open(Access::DataWrite) | Self::Pinned(Access::DataWrite) => {
                 FILE_GENERIC_READ | FILE_GENERIC_WRITE
             }
@@ -104,7 +120,7 @@ impl Mode {
     fn information(self) -> usize {
         match self {
             Self::Create => 2,
-            Self::Open(_) | Self::Pinned(_) | Self::Retain => 1,
+            Self::Open(_) | Self::Pinned(_) | Self::Frozen | Self::Retain => 1,
         }
     }
 }
@@ -190,7 +206,7 @@ pub(super) fn child(
     }
     let descriptor = match mode {
         Mode::Create => Some(private_descriptor()?),
-        Mode::Open(_) | Mode::Pinned(_) | Mode::Retain => None,
+        Mode::Open(_) | Mode::Pinned(_) | Mode::Frozen | Mode::Retain => None,
     };
     let unicode = UNICODE_STRING {
         Length: (name.len() * 2) as u16,
@@ -219,7 +235,7 @@ pub(super) fn child(
             &mut status,
             null(),
             FILE_ATTRIBUTE_NORMAL,
-            if matches!(mode, Mode::Retain) {
+            if matches!(mode, Mode::Retain | Mode::Frozen) {
                 FILE_SHARE_READ
             } else if matches!(mode, Mode::Pinned(_)) {
                 FILE_SHARE_READ | FILE_SHARE_WRITE

@@ -18,6 +18,154 @@ fn object(dir: &Dir, name: &str) -> native::FileIdentity {
     native::identity(&optional_file(dir, name).unwrap().unwrap()).unwrap()
 }
 
+fn assert_frozen(dir: &Dir, path: &std::path::Path, name: &str) {
+    let bytes = optional_bytes(dir, name, INTENT_LIMIT).unwrap().unwrap();
+    assert!(
+        native::open_private_file(
+            &dir.try_clone().unwrap().into_std_file(),
+            name,
+            native::Access::DataWrite
+        )
+        .is_err()
+    );
+    assert!(std::fs::rename(path, path.with_extension("blocked")).is_err());
+    assert!(std::fs::remove_file(path).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn native_acknowledgement_owns_installed_catalog_original_and_marker_objects() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    prepare(&mut scope, "Before").commit().unwrap();
+    let other =
+        MemoryDocument::for_write(&text("Other").replace("name: rule", "name: other")).unwrap();
+    let rendered = other.render_for_write().unwrap();
+    scope
+        .prepare("other", Some((other, rendered)), None, None)
+        .unwrap()
+        .commit()
+        .unwrap();
+    let pending = prepare(&mut scope, "Proposed");
+    let mut acknowledged = false;
+    let receipt = pending
+        .commit_with_acknowledgement(|_| {
+            for name in ["rule.md", "MEMORY.md", "other.md"] {
+                assert_frozen(&store.dir, &store.path().join(name), name);
+            }
+            let journal = existing_private_directory(&store.dir, TRANSACTION)
+                .unwrap()
+                .unwrap();
+            for name in ["note.before", "index.before", "completed"] {
+                assert_frozen(&journal, &store.path().join(TRANSACTION).join(name), name);
+            }
+            acknowledged = true;
+            Ok(())
+        })
+        .unwrap();
+    assert!(acknowledged);
+    assert!(store.path().join(HISTORY).join(receipt.id).exists());
+    assert!(!store.path().join(TRANSACTION).exists());
+    assert!(
+        native::open_private_file(
+            &store.dir.try_clone().unwrap().into_std_file(),
+            "rule.md",
+            native::Access::DataWrite
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn native_preexisting_installed_writer_fences_acknowledgement_and_releases_for_recovery() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let mut pending = prepare(&mut scope, "Proposed");
+    pending.apply_note().unwrap();
+    pending.apply_index().unwrap();
+    let installed = object(&store.dir, "rule.md");
+    let writer = native::open_private_file(
+        &store.dir.try_clone().unwrap().into_std_file(),
+        "rule.md",
+        native::Access::DataWrite,
+    )
+    .unwrap();
+    let mut acknowledged = false;
+    assert!(
+        pending
+            .commit_with_acknowledgement(|_| {
+                acknowledged = true;
+                Ok(())
+            })
+            .is_err()
+    );
+    assert!(!acknowledged);
+    assert!(!store.path().join(TRANSACTION).join("completed").exists());
+    assert_eq!(object(&store.dir, "rule.md"), installed);
+    drop(writer);
+    scope.read_prepared().unwrap().unwrap().commit().unwrap();
+    assert_eq!(object(&store.dir, "rule.md"), installed);
+}
+
+#[test]
+fn native_failed_acknowledgement_releases_terminal_guards_without_rolling_back_files() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = prepare(&mut scope, "Proposed");
+    assert!(
+        pending
+            .commit_with_acknowledgement(|_| {
+                assert_frozen(&store.dir, &store.path().join("rule.md"), "rule.md");
+                Err(MemoryStorageError::Busy)
+            })
+            .is_err()
+    );
+    let installed = object(&store.dir, "rule.md");
+    let bytes = std::fs::read(store.path().join("rule.md")).unwrap();
+    let mut writer = native::open_private_file(
+        &store.dir.try_clone().unwrap().into_std_file(),
+        "rule.md",
+        native::Access::DataWrite,
+    )
+    .unwrap();
+    writer.write_all(&bytes).unwrap();
+    drop(writer);
+    scope.read_prepared().unwrap().unwrap().commit().unwrap();
+    assert_eq!(object(&store.dir, "rule.md"), installed);
+}
+
+#[test]
+fn native_new_catalog_name_during_acknowledgement_is_preserved_and_fences_disposal() {
+    let data = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(data.path(), "global").unwrap();
+    let mut scope = store.claim().unwrap();
+    let pending = prepare(&mut scope, "Proposed");
+    let extra = text("User added").replace("name: rule", "name: extra");
+    let mut acknowledged = false;
+    assert!(matches!(
+        pending.commit_with_acknowledgement(|_| {
+            create_file(&store.dir, "extra.md", extra.as_bytes())?;
+            acknowledged = true;
+            Ok(())
+        }),
+        Err(MemoryStorageError::Conflict)
+    ));
+    assert!(acknowledged);
+    assert_eq!(
+        std::fs::read(store.path().join("extra.md")).unwrap(),
+        extra.as_bytes()
+    );
+    assert!(store.path().join(TRANSACTION).join("completed").exists());
+    assert!(scope.read_prepared().unwrap().unwrap().commit().is_err());
+    assert_eq!(
+        std::fs::read(store.path().join("extra.md")).unwrap(),
+        extra.as_bytes()
+    );
+}
+
 #[test]
 fn native_recovery_refuses_identical_byte_replacements_of_every_recorded_file() {
     for target in [

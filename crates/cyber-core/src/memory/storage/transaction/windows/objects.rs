@@ -1,6 +1,71 @@
 //! Persisted Windows journal object identities, including partial installation slots.
 use super::*;
 type Id = native::FileIdentity;
+pub(crate) struct FileProof {
+    pub(crate) name: String,
+    pub(crate) identity: Id,
+    pub(crate) digest: String,
+    pub(crate) limit: u64,
+    pub(crate) journal: bool,
+}
+pub(crate) fn terminal_files(intent: &Intent) -> Result<Vec<FileProof>, MemoryStorageError> {
+    let objects = plan(intent)?;
+    let mut files = Vec::new();
+    for (name, id, digest, limit, journal) in [
+        (
+            format!("{}.md", intent.name),
+            objects.after_note,
+            intent.after_note.as_deref(),
+            NOTE_LIMIT,
+            false,
+        ),
+        (
+            "MEMORY.md".into(),
+            objects.after_index,
+            Some(intent.after_index.as_str()),
+            INDEX_LIMIT,
+            false,
+        ),
+        (
+            "note.before".into(),
+            objects.before_note,
+            intent.before_note.as_deref(),
+            NOTE_LIMIT,
+            true,
+        ),
+        (
+            "index.before".into(),
+            objects.before_index,
+            intent.before_index.as_deref(),
+            INDEX_LIMIT,
+            true,
+        ),
+    ] {
+        if let Some(identity) = id {
+            files.push(FileProof {
+                name,
+                identity,
+                digest: digest.ok_or(MemoryStorageError::RecoveryRequired)?.into(),
+                limit,
+                journal,
+            });
+        }
+    }
+    for (name, identity) in &objects.catalog {
+        files.push(FileProof {
+            name: format!("{name}.md"),
+            identity: *identity,
+            digest: intent
+                .catalog
+                .get(name)
+                .ok_or(MemoryStorageError::RecoveryRequired)?
+                .clone(),
+            limit: NOTE_LIMIT,
+            journal: false,
+        });
+    }
+    Ok(files)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

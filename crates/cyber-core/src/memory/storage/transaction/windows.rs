@@ -4,6 +4,9 @@ use crate::memory::windows as native;
 #[path = "windows/objects.rs"]
 mod objects;
 pub(super) use objects::{Objects, persist_intent, target_ids, validate_shape, verify_objects};
+#[path = "windows/terminal.rs"]
+mod terminal;
+pub(super) use terminal::TerminalOwnership;
 
 pub(super) fn create_journal_directory(root: &Dir) -> Result<Dir, MemoryStorageError> {
     let parent = root.try_clone()?.into_std_file();

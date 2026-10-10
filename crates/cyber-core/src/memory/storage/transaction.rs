@@ -250,12 +250,16 @@ impl PreparedMemory<'_, '_> {
         self.apply_note()?;
         self.verify_binding()?;
         self.apply_index()?;
+        #[cfg(windows)]
+        let mut terminal = windows::TerminalOwnership::acquire(&self)?;
         self.verify_terminal()?;
         sync_dir(&self.scope.store.dir)?;
         if optional_bytes(&self.dir, "completed", NOTE_LIMIT)?.is_none() {
             create_file(&self.dir, "completed", b"committed\n")?;
         }
         sync_dir(&self.dir)?;
+        #[cfg(windows)]
+        terminal.marker(&self.dir)?;
         let receipt = MemoryMutation {
             id: self.intent.id.clone(),
             name: self.intent.name.clone(),
@@ -264,6 +268,8 @@ impl PreparedMemory<'_, '_> {
         self.verify_binding()?;
         acknowledge(&receipt)?;
         self.verify_binding()?;
+        #[cfg(windows)]
+        self.verify_terminal()?;
         let history = private_directory(&self.scope.store.dir, HISTORY)?;
         match history.symlink_metadata(&self.intent.id) {
             Ok(_) => return Err(MemoryStorageError::Conflict),
@@ -271,6 +277,8 @@ impl PreparedMemory<'_, '_> {
             Err(error) => return Err(error.into()),
         }
         drop(self.intent_file);
+        #[cfg(windows)]
+        terminal.release_journal();
         archive_journal(&self.scope.store.dir, self.dir, &history, &self.intent.id)?;
         sync_dir(&history)?;
         sync_dir(&self.scope.store.dir)?;

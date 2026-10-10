@@ -421,3 +421,12 @@
 - **AND** source retention for capture/installation SHALL use the recorded identity rather than a newly observed replacement identity
 - **AND** incomplete/legacy Windows intent SHALL refuse without repair; Unix version-1 serialization and recovery SHALL remain supported
 - **AND** complete crash acceptance, terminal ownership and client checkpoint integration SHALL remain required before public Windows mutation activation
+
+#### Scenario: Windows terminal ownership through acknowledgement
+- **WHEN** Windows verifies installed memory before publishing its receipt
+- **THEN** it SHALL retain readonly exact-ID guards denying competing content-write/delete/rename access to installed note/index, catalog and captured-original objects through acknowledgement
+- **AND** completed evidence SHALL be guarded and checked without granting it mutation authority
+- **AND** a pre-existing writer SHALL refuse acknowledgement while retaining journal evidence
+- **WHEN** acknowledgement fails or succeeds
+- **THEN** failure SHALL release guards without rollback and keep recovery evidence; success SHALL release journal descendants only for exact-source archival while installed/catalog guards stay owned until commit returns
+- **AND** ordinary readonly inspection SHALL remain possible; full crash/checkpoint/canonical acceptance SHALL remain required before public Windows activation
