@@ -87,7 +87,7 @@ fn native_editor_private_atomic_replacement_commits() {
 $replacement = $draft + '.new'
 [System.IO.File]::WriteAllText($replacement, [System.IO.File]::ReadAllText($source), [System.Text.UTF8Encoding]::new($false))
 Get-Acl -LiteralPath $draft | Set-Acl -LiteralPath $replacement
-[System.IO.File]::Replace($replacement, $draft, $null)";
+[System.IO.File]::Replace($replacement, $draft, $draft + '.backup')";
     let receipt = body(
         env.windows_editor(script, &note("Atomic editor fact"))
             .output()
@@ -98,6 +98,13 @@ Get-Acl -LiteralPath $draft | Set-Acl -LiteralPath $replacement
         body(env.run(&["memory", "show", "coding-policy", "--global"]))["body"],
         "Atomic editor fact"
     );
+    let backup = PathBuf::from(format!("{}.backup", env.draft().display()));
+    assert!(
+        std::fs::read_to_string(&backup)
+            .unwrap()
+            .contains("Replace with a durable fact")
+    );
+    cyber_core::memory::windows::verify_private(&std::fs::File::open(backup).unwrap()).unwrap();
     env.no_database();
 }
 
