@@ -114,7 +114,7 @@ fn mutation_settings(config: &cyber_tools::ConfigFn, directory: &Path) -> Result
     if !settings.generate {
         return Err(ApiError::forbidden("Memory is read-only"));
     }
-    if !cfg!(unix) {
+    if !cfg!(any(unix, windows)) {
         return Err(ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             "ServiceUnavailableError",

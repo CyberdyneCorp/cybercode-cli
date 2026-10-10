@@ -79,7 +79,7 @@ impl Fixture {
         self.app.runtime.shutdown().await;
         drop(self.root);
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn store(&self, scope: &str) -> cyber_core::memory::MemoryStore {
         let project = if scope == "global" {
             "global".into()
@@ -186,7 +186,7 @@ async fn retained_write_lookup_is_authenticated_scoped_and_read_only_before_jour
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn retained_save_delete_lookup_survives_cache_loss_and_disabled_memory_without_updates() {
     let f = Fixture::new(false).await;
@@ -310,12 +310,12 @@ async fn empty_review_authentication_and_invalid_routing_create_no_scope() {
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn text(name: &str, body: &str) -> String {
     format!("---\nname: {name}\ndescription: Durable policy\ntype: reference\n---\n\n{body}\n")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn scope_and_location_review_match_cli_storage_without_model_settings() {
     let f = Fixture::new(true).await;
@@ -423,6 +423,83 @@ async fn busy_pending_invalid_and_alias_review_preserve_evidence() {
     f.close().await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn native_busy_private_invalid_and_hard_link_review_preserve_evidence() {
+    use std::io::Write;
+    let f = Fixture::new(false).await;
+    let store = f.store("global");
+    let mut owner = store.claim().unwrap();
+    owner.write(&text("policy", "durable fact")).unwrap();
+    assert_eq!(
+        f.get("/memory").send().await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    drop(owner);
+    let parent = cap_std::fs::Dir::open_ambient_dir(store.path(), cap_std::ambient_authority())
+        .unwrap()
+        .into_std_file();
+    let mut malformed =
+        cyber_core::memory::windows::create_private_file(&parent, "malformed.md").unwrap();
+    malformed.write_all(b"private invalid text").unwrap();
+    cyber_core::memory::windows::sync_private(&malformed).unwrap();
+    drop(malformed);
+    drop(parent);
+    let response: Value = f.get("/memory").send().await.unwrap().json().await.unwrap();
+    assert_eq!(response["data"]["memories"].as_array().unwrap().len(), 1);
+    assert_eq!(response["data"]["invalid"][0]["filename"], "malformed.md");
+    assert!(!response.to_string().contains("private invalid text"));
+    assert_eq!(
+        f.get("/memory/global/malformed")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let policy = store.path().join("policy.md");
+    let alias = store.path().join("alias.md");
+    std::fs::hard_link(&policy, &alias).unwrap();
+    assert_eq!(
+        f.get("/memory/global/alias").send().await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        f.get("/memory/global/policy")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert!(
+        std::fs::read_to_string(&policy)
+            .unwrap()
+            .contains("durable fact")
+    );
+    std::fs::remove_file(alias).unwrap();
+    let mut owner = store.claim().unwrap();
+    drop(
+        owner
+            .prepare_write(&text("policy", "updated fact"))
+            .unwrap(),
+    );
+    drop(owner);
+    for route in ["/memory", "/memory/global/policy"] {
+        assert_eq!(
+            f.get(route).send().await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+    }
+    assert!(store.path().join(".memory-transaction").exists());
+    assert!(
+        std::fs::read_to_string(policy)
+            .unwrap()
+            .contains("durable fact")
+    );
+    f.close().await;
+}
+
 impl Fixture {
     fn put(&self, name: &str, content: &str) -> reqwest::RequestBuilder {
         self.client
@@ -430,7 +507,7 @@ impl Fixture {
             .basic_auth("cyber", Some("memory-test"))
             .json(&json!({"content":content}))
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn delete(&self, name: &str) -> reqwest::RequestBuilder {
         self.client
             .delete(format!("{}/memory/global/{name}", self.url))
@@ -484,7 +561,7 @@ async fn mutation_validation_settings_and_shutdown_refuse_before_scope_creation(
         invalid.json::<Value>().await.unwrap()["_tag"],
         "InvalidRequestError"
     );
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     assert_eq!(
         f.put("policy", content).send().await.unwrap().status(),
         StatusCode::SERVICE_UNAVAILABLE
@@ -513,7 +590,7 @@ async fn mutation_validation_settings_and_shutdown_refuse_before_scope_creation(
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn actual_http_crud_publishes_once_and_replays_after_response_cache_disposal() {
     use cyber_server::runtime::LiveEvent;
@@ -673,7 +750,7 @@ async fn actual_http_crud_publishes_once_and_replays_after_response_cache_dispos
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn busy_http_mutation_remains_retryable_with_the_same_key() {
     let f = Fixture::new(false).await;
@@ -756,7 +833,7 @@ async fn recovery_auth_absent_and_malformed_requests_create_no_scope() {
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Fixture {
     fn prepare_recovery(&self, scope: &str) -> cyber_core::memory::MemoryStore {
         use cyber_server::runtime::{MemoryAdmission, MemoryWrite};
@@ -809,7 +886,7 @@ impl Fixture {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn paired_recovery_acknowledges_once_and_cached_replay_preserves_receipt() {
     use cyber_server::runtime::LiveEvent;
@@ -879,7 +956,7 @@ async fn paired_recovery_acknowledges_once_and_cached_replay_preserves_receipt()
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn recovery_rechecks_settings_and_preserves_stale_target_without_takeover() {
     let f = Fixture::new(false).await;
@@ -906,8 +983,11 @@ async fn recovery_rechecks_settings_and_preserves_stale_target_without_takeover(
     );
     let target = memory.path().join("policy.md");
     std::fs::write(&target, text("policy", "User edit")).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     assert_eq!(
         f.recover("global", &review).send().await.unwrap().status(),
         StatusCode::CONFLICT
@@ -933,7 +1013,7 @@ async fn recovery_rechecks_settings_and_preserves_stale_target_without_takeover(
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn recovery_busy_retry_and_closed_runtime_preserve_owned_fencing() {
     let f = Fixture::new(false).await;
@@ -983,7 +1063,7 @@ async fn recovery_busy_retry_and_closed_runtime_preserve_owned_fencing() {
     closed.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn recovery_refuses_foreign_location_and_unbound_journal_without_releasing_evidence() {
     let f = Fixture::new(false).await;
@@ -1046,7 +1126,7 @@ async fn recovery_refuses_foreign_location_and_unbound_journal_without_releasing
     local.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn durable_recovery_lookup_and_global_key_conflicts_survive_cache_loss() {
     let f = Fixture::new(true).await;
@@ -1137,13 +1217,13 @@ async fn durable_recovery_lookup_and_global_key_conflicts_survive_cache_loss() {
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct DelayedMemoryReply {
     inner: std::sync::Arc<dyn cyber_server::http::Services>,
     reached: std::sync::Arc<tokio::sync::Notify>,
     release: std::sync::Arc<tokio::sync::Notify>,
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl cyber_server::http::Services for DelayedMemoryReply {
     fn models(
         &self,
@@ -1194,7 +1274,7 @@ impl cyber_server::http::Services for DelayedMemoryReply {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn acknowledged_memory_retry_is_not_blocked_by_a_delayed_first_response() {
     let f = Fixture::new(false).await;
@@ -1281,7 +1361,7 @@ async fn edit_review_routing_and_authentication_do_not_create_missing_storage() 
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Fixture {
     fn reviewed_put(&self, name: &str, content: &str, review: &str) -> reqwest::RequestBuilder {
         self.client
@@ -1300,7 +1380,7 @@ impl Fixture {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn conditional_edits_preserve_external_changes_without_durable_admission() {
     let f = Fixture::new(true).await;
@@ -1356,7 +1436,7 @@ async fn conditional_edits_preserve_external_changes_without_durable_admission()
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn conditional_write_and_delete_replay_consumed_reviews_and_bind_header_identity() {
     let f = Fixture::new(true).await;
@@ -1451,7 +1531,7 @@ async fn conditional_write_and_delete_replay_consumed_reviews_and_bind_header_id
     f.close().await;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn conditional_edit_validation_missing_scope_foreign_reviews_and_settings_are_fenced() {
     let f = Fixture::new(true).await;

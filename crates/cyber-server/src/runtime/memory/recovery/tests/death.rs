@@ -65,7 +65,8 @@ fn paired_memory_owner_child() {
     let memory = MemoryStore::open(&root, "global").unwrap();
     let mut scope = memory.claim().unwrap();
     scope.write(&CONTENT.replace("Fact", "Original")).unwrap();
-    let MemoryAdmission::Owned(mut owner) = admit(db, Bus::new(), request(&root, deleted)).unwrap()
+    let MemoryAdmission::Owned(mut owner) =
+        admit(db.clone(), Bus::new(), request(&root, deleted)).unwrap()
     else {
         panic!("fresh owner");
     };
@@ -82,6 +83,10 @@ fn paired_memory_owner_child() {
         .commit_with_acknowledgement(|receipt| {
             boundary(&root, "before-ack");
             let change = owner.finish(receipt.clone()).unwrap();
+            assert_eq!(
+                lookup(&db, &request(&root, deleted)).unwrap(),
+                Some(change.clone())
+            );
             synced(&root, "receipt", &serde_json::to_vec(&change).unwrap());
             boundary(&root, "after-ack");
             Ok(())

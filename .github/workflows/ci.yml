@@ -57,6 +57,9 @@ jobs:
       - name: Native memory database reconciliation
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-server --lib runtime::memory
+      - name: Native authenticated application memory lifecycle
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --test memory
       - name: Native public client checkpoint storage
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test memory_client_state

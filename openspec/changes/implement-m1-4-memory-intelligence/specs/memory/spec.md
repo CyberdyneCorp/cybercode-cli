@@ -520,4 +520,11 @@
 - **WHEN** the actual owning child process is killed after database/journal binding, inside terminal acknowledgement before or after SQLite receipt commit, or after archival, for a write or deletion
 - **THEN** fresh scope ownership and reopened file-backed SQLite SHALL inspect matching durable evidence and require reviewed reconciliation for pending journals, preserving the original receipt and exactly one completion event
 - **AND** already acknowledged recovery SHALL not publish another completion, archived outcomes SHALL not recreate a journal, and a second reopen SHALL replay the original durable request without another effect or archive
+- **AND** the child SHALL retain a live SQLite store through post-acknowledgement and archival readiness, checking the committed receipt through that store before the parent kills it
 - **AND** the harness SHALL kill and reap only its owned child after a synced fixture-bound readiness witness; persisted test witnesses SHALL grant no live mutation authority
+
+#### Scenario: Native Windows authenticated application mutation integration
+- **WHEN** core mutation, paired SQLite reconciliation and actual paired owner-death recovery have native execution evidence
+- **THEN** authenticated application memory CRUD, conditional edits and reviewed recovery SHALL admit Windows through the same private native protocol and durable database ownership as Unix
+- **AND** actual TCP integration SHALL verify authentication, scope/Location isolation, disabled/read-only settings, busy/stale review refusal, request-key replay, cache disposal, acknowledgement publication and shutdown fencing on Windows
+- **AND** private native malformed-file and hard-link refusal fixtures SHALL preserve user evidence; CLI and model-tool admission SHALL keep their independent acceptance gates
