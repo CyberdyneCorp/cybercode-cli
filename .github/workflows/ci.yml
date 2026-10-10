@@ -51,6 +51,12 @@ jobs:
       - name: Native private memory storage
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test memory_storage
+      - name: Native public client checkpoint storage
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test memory_client_state
+      - name: Native TUI memory retention
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tui --lib memory
       - name: Native private memory startup
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test paths ensure_

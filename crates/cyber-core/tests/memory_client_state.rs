@@ -127,7 +127,7 @@ fn replaced_scope_lock_or_state_directory_refuses_the_retained_owner() {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[test]
 fn unsupported_native_privacy_refuses_before_creating_client_storage() {
     let state = tempfile::tempdir().unwrap();
@@ -226,4 +226,45 @@ fn dangling_directory_and_checkpoint_aliases_are_not_treated_as_missing_state() 
         assert!(path.symlink_metadata().unwrap().is_symlink());
         assert!(!missing.exists());
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn public_windows_checkpoint_saves_bounds_history_and_preserves_user_edits() {
+    let state = tempfile::tempdir().unwrap();
+    assert!(MemoryClientStore::existing(state.path()).unwrap().is_none());
+    assert_eq!(std::fs::read_dir(state.path()).unwrap().count(), 0);
+    let mut owner = MemoryClientStore::open(state.path()).unwrap();
+    assert!(matches!(
+        MemoryClientStore::open(state.path()),
+        Err(MemoryStorageError::Busy)
+    ));
+    for index in 0..6 {
+        let bytes = format!("public checkpoint {index}");
+        owner.save(bytes.as_bytes()).unwrap();
+        assert_eq!(owner.checkpoint(), Some(bytes.as_bytes()));
+    }
+    let history = state.path().join("memory-client/.checkpoint-history");
+    assert_eq!(std::fs::read_dir(&history).unwrap().count(), 2);
+    std::fs::write(history.join("user-history"), b"preserve history").unwrap();
+    owner.save(b"public checkpoint final").unwrap();
+    assert_eq!(std::fs::read_dir(&history).unwrap().count(), 3);
+    drop(owner);
+    let mut restored = MemoryClientStore::existing(state.path()).unwrap().unwrap();
+    assert_eq!(
+        restored.checkpoint(),
+        Some(b"public checkpoint final".as_slice())
+    );
+    let path = state.path().join("memory-client/state.json");
+    std::fs::write(&path, b"external user edit").unwrap();
+    assert!(matches!(
+        restored.save(b"refuse overwrite"),
+        Err(MemoryStorageError::ReviewConflict)
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), b"external user edit");
+    assert_eq!(
+        std::fs::read(history.join("user-history")).unwrap(),
+        b"preserve history"
+    );
+    assert!(!state.path().join("memory").exists());
 }

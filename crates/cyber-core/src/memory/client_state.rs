@@ -274,7 +274,7 @@ fn private_options() -> OpenOptions {
     options
 }
 fn native() -> Result<(), MemoryStorageError> {
-    if !cfg!(unix) {
+    if !cfg!(any(unix, windows)) {
         return Err(MemoryStorageError::Unsafe(
             "client checkpoint privacy and durability require native support",
         ));

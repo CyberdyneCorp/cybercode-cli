@@ -1,4 +1,4 @@
-//! Real shared checkpoint claim/read paths, without enabling incomplete native saves.
+//! Public native checkpoint admission and private capability/refusal boundaries.
 use super::*;
 fn state() -> tempfile::TempDir {
     let outer = tempfile::tempdir().unwrap();
@@ -20,7 +20,7 @@ fn write(dir: &Dir, name: &str, bytes: &[u8]) {
     native::sync_private(&file).unwrap();
 }
 #[test]
-fn native_client_existing_only_is_readonly_and_public_admission_remains_closed() {
+fn native_client_existing_only_preserves_absence_and_public_open_claims_native_storage() {
     let data = state();
     let path = data.path().join("state");
     let parent = state_directory(&path).unwrap();
@@ -28,31 +28,29 @@ fn native_client_existing_only_is_readonly_and_public_admission_remains_closed()
     assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
     assert!(state_directory(&path.join("missing")).is_err());
     assert!(!path.join("missing").exists());
-    assert!(MemoryClientStore::existing(&path).is_err());
-    assert!(MemoryClientStore::open(&path).is_err());
+    assert!(MemoryClientStore::existing(&path).unwrap().is_none());
     assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+    let owner = MemoryClientStore::open(&path).unwrap();
+    assert!(owner.checkpoint().is_none());
+    native::verify_private(&owner.dir.try_clone().unwrap().into_std_file()).unwrap();
 }
 #[test]
 fn native_client_private_claim_reads_reopens_and_excludes_another_owner() {
     let data = state();
     let path = data.path().join("state");
-    let mut owner = admit(&path);
+    let mut owner = MemoryClientStore::open(&path).unwrap();
     assert!(owner.checkpoint().is_none());
-    assert!(owner.save(b"unaccepted native save").is_err());
-    assert!(!path.join(DIRECTORY).join(CHECKPOINT).exists());
     let parent = state_directory(&path).unwrap();
     let dir = directory(&parent, true).unwrap().unwrap();
     assert!(matches!(
         MemoryClientStore::claim(&path, parent, dir),
         Err(MemoryStorageError::Busy)
     ));
-    write(
-        &owner.dir,
-        CHECKPOINT,
-        b"retained draft, no mutation authority",
-    );
+    owner
+        .save(b"retained draft, no mutation authority")
+        .unwrap();
     drop(owner);
-    let reopened = admit(&path);
+    let reopened = MemoryClientStore::existing(&path).unwrap().unwrap();
     assert_eq!(
         reopened.checkpoint(),
         Some(b"retained draft, no mutation authority".as_slice())
@@ -172,13 +170,15 @@ fn native_client_actual_startup_inherited_container_saves_retains_and_reopens_pr
         tmp: data.path().join("tmp"),
     };
     paths.ensure().unwrap();
-    let mut store = admit(&paths.state);
+    let mut store = MemoryClientStore::open(&paths.state).unwrap();
     let parent_id = native::identity(&store.parent.try_clone().unwrap().into_std_file()).unwrap();
     assert!(native::verify_private(&store.parent.try_clone().unwrap().into_std_file()).is_err());
     native::verify_private(&store.dir.try_clone().unwrap().into_std_file()).unwrap();
     std::fs::write(paths.state.join("unrelated-state"), b"preserve me").unwrap();
     for index in 0..6 {
-        save(&mut store, format!("startup checkpoint {index}").as_bytes()).unwrap();
+        store
+            .save(format!("startup checkpoint {index}").as_bytes())
+            .unwrap();
     }
     let bytes = store.checkpoint().unwrap().to_vec();
     let file = native::open_private_file(
@@ -201,7 +201,7 @@ fn native_client_actual_startup_inherited_container_saves_retains_and_reopens_pr
     );
     assert!(native::verify_private(&store.parent.try_clone().unwrap().into_std_file()).is_err());
     drop(store);
-    let restored = admit(&paths.state);
+    let restored = MemoryClientStore::existing(&paths.state).unwrap().unwrap();
     assert_eq!(restored.checkpoint(), Some(bytes.as_slice()));
     let file = native::open_private_file(
         &restored.dir.try_clone().unwrap().into_std_file(),

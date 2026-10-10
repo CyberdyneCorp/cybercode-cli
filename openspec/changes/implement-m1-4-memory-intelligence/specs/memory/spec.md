@@ -491,3 +491,9 @@
 - **THEN** private checkpoint directories and files SHALL still require current-user ownership and protected private ACLs without repairing existing objects
 - **AND** the retained state container SHALL be pinned against namespace changes and flushed normally with full identity and directory-type checks before/after the operation, without changing its ACL or accepting non-directory handles
 - **AND** the actual startup path SHALL support private checkpoint saves, bounded history and reopening while preserving unrelated container files; native execution SHALL be required before public activation
+
+#### Scenario: Public Windows client checkpoints and TUI retention
+- **WHEN** the native checkpoint storage protocol and actual startup container are validated
+- **THEN** public existing/open/save SHALL use the native private checkpoint journal and bounded retention on Windows, with existing-only absence, independent ownership exclusion, user-edit refusal and no ACL repair
+- **AND** TUI restoration SHALL preserve draft text and request keys without restoring review confirmation or automatically dispatching actions; durable forgetting/discard and storage-error dispatch/exit fencing SHALL match the Unix behavior
+- **AND** checkpoint admission SHALL grant no note mutation or database receipt authority; public memory mutation and complete canonical native acceptance SHALL retain independent gates

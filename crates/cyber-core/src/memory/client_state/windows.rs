@@ -1,4 +1,4 @@
-//! Native checkpoint capabilities; public activation awaits durable replacement/recovery.
+//! Native private checkpoint capabilities and retained startup-container synchronization.
 use super::*;
 use crate::memory::windows as native;
 use std::io::{self, Write};

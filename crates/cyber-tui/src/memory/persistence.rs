@@ -395,7 +395,7 @@ mod tests {
         save.content = "invalid".into();
         assert!(validate_intent(&foreign).is_err());
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn restart_restores_draft_and_key_without_review_or_automatic_actions() {
         let state = tempfile::tempdir().unwrap();
@@ -444,7 +444,7 @@ mod tests {
         assert!(persistence.gate(&mut resumed, Vec::new()).is_empty());
         assert!(resumed.memory.draft.is_some());
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn confirmed_record_forgetting_is_durable_and_cancellation_preserves_restart_evidence() {
         let state = tempfile::tempdir().unwrap();
@@ -479,7 +479,7 @@ mod tests {
         assert!(restored.intents.is_empty());
         assert!(restored.draft.is_some());
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn external_checkpoint_edit_withholds_dispatch_and_exit_and_preserves_both_drafts() {
         let state = tempfile::tempdir().unwrap();
@@ -510,7 +510,7 @@ mod tests {
         assert!(!app.memory.pending);
         assert!(!app.quit);
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn malformed_saved_state_is_preserved_and_never_replaced_by_new_intent() {
         let state = tempfile::tempdir().unwrap();
@@ -528,7 +528,7 @@ mod tests {
             b"invalid JSON"
         );
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn stale_actions_cannot_dispatch_and_successful_discard_persists_a_tombstone() {
         let state = tempfile::tempdir().unwrap();
@@ -547,7 +547,7 @@ mod tests {
         assert!(resumed.memory.draft.is_none());
         assert!(resumed.memory.intents.is_empty());
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn unchanged_failed_checkpoint_waits_for_explicit_activity_instead_of_rewriting_on_ticks() {
         let state = tempfile::tempdir().unwrap();
@@ -580,7 +580,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[test]
     fn unsupported_private_retention_refuses_memory_effects_before_creation() {
         let state = tempfile::tempdir().unwrap();
