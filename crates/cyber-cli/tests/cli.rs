@@ -868,6 +868,42 @@ fn lsp_status_refuses_unavailable_foreign_and_invalid_live_snapshots() {
 }
 
 #[cfg(unix)]
+fn prepare_status_socket(stream: std::os::unix::net::UnixStream) -> std::os::unix::net::UnixStream {
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    stream
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_status_fixture_waits_for_a_delayed_request_on_a_nonblocking_accepted_stream() {
+    use std::io::{Read, Write};
+    let env = Env::new();
+    let listener = std::os::unix::net::UnixListener::bind(env.root.join("delayed.sock")).unwrap();
+    let mut client =
+        std::os::unix::net::UnixStream::connect(env.root.join("delayed.sock")).unwrap();
+    let (stream, _) = listener.accept().unwrap();
+    stream.set_nonblocking(true).unwrap();
+    let stream = prepare_status_socket(stream);
+    let (ready, waiting) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        ready.send(()).unwrap();
+        status_reply(stream, serde_json::json!({"data":[]}), "200 OK")
+    });
+    waiting.recv().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    client
+        .write_all(b"GET /api/v1/lsp HTTP/1.1\r\nHost: local\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    client.read_to_string(&mut response).unwrap();
+    assert!(server.join().unwrap().starts_with("GET /api/v1/lsp"));
+    assert!(response.contains("200 OK"));
+}
+
+#[cfg(unix)]
 #[test]
 fn lsp_status_reads_a_registered_unix_socket_without_tcp_startup() {
     let env = Env::new();
@@ -888,9 +924,7 @@ fn lsp_status_reads_a_registered_unix_socket_without_tcp_startup() {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
-        stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-            .unwrap();
+        let stream = prepare_status_socket(stream);
         status_reply(
             stream,
             serde_json::json!({"location":{"directory":root},"data":[]}),
@@ -1200,17 +1234,70 @@ fn inline_agent_and_compaction_imports_are_source_linked_without_runtime_state()
     );
     let diff = view["diff"].as_str().unwrap();
     assert!(diff.contains("12000"));
+    assert!(!diff.contains("never-read-source-instruction"));
+    assert!(diff.contains("never-execute-source-command"));
     assert!(
-        [
-            "never-read-source-instruction",
-            "never-execute-source-command"
-        ]
-        .iter()
-        .all(|value| !diff.contains(value))
+        report
+            .iter()
+            .any(|r| r["field"] == "/commands/audit/template"
+                && r["sources"][0]["field"] == "/commands/audit/template")
     );
     assert!(
         ["cyber.jsonc", ".cyber", "cyber-home"]
             .iter()
             .all(|path| !e.root.join(path).exists())
     );
+}
+
+#[test]
+fn markdown_command_import_is_read_only_and_links_body_and_frontmatter() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    let commands = e.root.join(".opencode/commands/team");
+    std::fs::create_dir_all(&commands).unwrap();
+    let path = commands.join("review.md");
+    let original =
+        "---\ndescription: Review code\nargument-hint: '<paths>'\n---\nReview $ARGUMENTS";
+    std::fs::write(&path, original).unwrap();
+    std::fs::write(commands.join("shell.md"), "!`touch never-created-sentinel`").unwrap();
+    let legacy = e.root.join(".opencode/command");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(legacy.join("legacy.md"), "Legacy review").unwrap();
+    let output = e.cyber(&["import", "opencode", "--dry-run", "--format", "json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let view = json(&output);
+    let report = view["report"].as_array().unwrap();
+    assert!(
+        report.iter().any(
+            |r| r["field"] == "/commands/legacy/template" && r["sources"][0]["field"] == "body"
+        )
+    );
+    assert!(
+        report
+            .iter()
+            .any(|r| r["field"] == "/commands/team~1review/template"
+                && r["sources"][0]["field"] == "body")
+    );
+    assert!(
+        report
+            .iter()
+            .any(|r| r["field"] == "/commands/team~1review/argument_hint"
+                && r["sources"][0]["field"] == "frontmatter:argument-hint")
+    );
+    assert!(report.iter().any(|r| {
+        r["source"]
+            .as_str()
+            .is_some_and(|s| s.ends_with("shell.md"))
+            && r["status"] == "not imported"
+    }));
+    assert!(!stdout(&output).contains("never-created-sentinel"));
+    assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+    for path in [
+        "cyber.jsonc",
+        ".cyber",
+        "cyber-home",
+        "never-created-sentinel",
+    ] {
+        assert!(!e.root.join(path).exists());
+    }
 }

@@ -1425,3 +1425,240 @@ fn layered_opencode_agents_append_permissions_with_original_indices_and_keep_nat
     );
     preview.verify().unwrap();
 }
+
+#[test]
+fn markdown_commands_keep_body_frontmatter_provenance_and_source_precedence() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let mut roots = roots(&root);
+    roots.directory = roots.project_root.join("nested");
+    std::fs::create_dir_all(&roots.directory).unwrap();
+    write(
+        &roots.home,
+        ".config/opencode/commands/db/migrate.sql.md",
+        "Global migration $ARGUMENTS",
+    );
+    write(
+        &roots.project_root,
+        "opencode.json",
+        r#"{"commands":{"db/migrate.sql":{"template":"Inline migration"},"inline-wins":{"template":"Project inline"}}}"#,
+    );
+    write(
+        &roots.home,
+        ".config/opencode/commands/inline-wins.md",
+        "Global lower priority",
+    );
+    write(
+        &roots.project_root,
+        ".opencode/commands/db/migrate.sql.md",
+        "Ancestor migration",
+    );
+    write(
+        &roots.directory,
+        ".opencode/commands/db/migrate.sql.md",
+        "---\ndescription: Migration\nargument-hint: '<targets>'\n---\nNearest migration $ARGUMENTS",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    assert!(output.diff.contains("Nearest migration"));
+    assert!(output.diff.contains("Project inline"));
+    assert!(
+        !output.diff.contains("Global migration")
+            && !output.diff.contains("Ancestor migration")
+            && !output.diff.contains("Global lower priority")
+    );
+    let template = output
+        .report
+        .iter()
+        .find(|r| r.field == "/commands/db~1migrate.sql/template")
+        .unwrap();
+    assert_eq!(template.sources[0].field, "body");
+    assert_eq!(
+        template.sources[0].source,
+        roots.directory.join(".opencode/commands/db/migrate.sql.md")
+    );
+    let hint = output
+        .report
+        .iter()
+        .find(|r| r.field == "/commands/db~1migrate.sql/argument_hint")
+        .unwrap();
+    assert_eq!(hint.sources[0].field, "frontmatter:argument-hint");
+    preview.verify().unwrap();
+    write(
+        &roots.home,
+        ".config/opencode/commands/inline-wins.md",
+        "Changed lower priority source",
+    );
+    assert!(preview.verify().is_err());
+    assert!(!output.complete);
+}
+
+#[test]
+fn claude_markdown_commands_keep_native_values_and_pending_advanced_definitions() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        ".claude/commands/team/review.md",
+        "---\ndescription: Reviewer\n---\nReview $ARGUMENTS",
+    );
+    write(
+        &roots.directory,
+        ".claude/commands/advanced.md",
+        "---\nallowed-tools: bash\n---\nprivate-source-template",
+    );
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"commands":{"team/review":{"template":"Native review"}}}"#,
+    );
+    let before = std::fs::read(roots.directory.join("cyber.jsonc")).unwrap();
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(!preview.output().diff.contains("private-source-template"));
+    assert!(
+        preview
+            .output()
+            .report
+            .iter()
+            .any(|r| r.source.ends_with("advanced.md") && r.status == "not imported")
+    );
+    let kept = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/commands/team~1review/template")
+        .unwrap();
+    assert_eq!(kept.status, "merged");
+    assert_eq!(kept.sources[0].field, "body");
+    assert_eq!(
+        std::fs::read(roots.directory.join("cyber.jsonc")).unwrap(),
+        before
+    );
+    preview.verify().unwrap();
+}
+
+#[test]
+fn markdown_command_credential_echo_and_combined_registry_bounds_refuse() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        ".opencode/commands/review.md",
+        "Review private-source-secret",
+    );
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"providers":{"corp":{"package":"@ai-sdk/openai","settings":{"apiKey":"private-source-secret"}}}}"#,
+    );
+    let error = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .err()
+    .unwrap();
+    assert!(!error.to_string().contains("private-source-secret"));
+    std::fs::remove_file(roots.directory.join("opencode.json")).unwrap();
+    for index in 0..128 {
+        write(
+            &roots.directory,
+            &format!(".opencode/commands/cmd{index}.md"),
+            "Review code",
+        );
+    }
+    assert!(
+        preview_import(
+            &roots,
+            Some(SourceTool::OpenCode),
+            ImportScope::Project,
+            &global(&root)
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn unsupported_higher_priority_commands_suppress_static_fallbacks() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".config/opencode/commands/suppressed.md",
+        "Old global template",
+    );
+    write(
+        &roots.directory,
+        ".opencode/commands/suppressed.md",
+        "---\nmodel: private-unsupported-model\n---\nprivate-new-body",
+    );
+    write(
+        &roots.home,
+        ".config/opencode/commands/inline-blocked.md",
+        "Old fallback for unsupported inline",
+    );
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"commands":{"inline-blocked":{"template":"private-inline-body","agent":"reviewer"}}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(!preview.output().diff.contains("commands"));
+    assert!(!preview.output().diff.contains("Old") && !preview.output().diff.contains("private-"));
+    assert!(
+        !preview
+            .output()
+            .report
+            .iter()
+            .any(|r| r.field.starts_with("/commands/") && r.status == "imported")
+    );
+    assert!(
+        preview
+            .output()
+            .report
+            .iter()
+            .any(|r| r.source.ends_with("suppressed.md") && r.status == "not imported")
+    );
+    preview.verify().unwrap();
+    write(
+        &roots.directory,
+        ".opencode/commands/ambiguous.md",
+        "Plural command",
+    );
+    write(
+        &roots.directory,
+        ".opencode/command/ambiguous.md",
+        "Legacy command",
+    );
+    assert!(
+        preview_import(
+            &roots,
+            Some(SourceTool::OpenCode),
+            ImportScope::Project,
+            &global(&root)
+        )
+        .is_err()
+    );
+}

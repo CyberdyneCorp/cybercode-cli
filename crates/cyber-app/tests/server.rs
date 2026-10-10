@@ -38,12 +38,17 @@ async fn app(root: &std::path::Path) -> App {
 async fn imported_static_commands_reach_live_catalogue_and_expansion_with_skill_precedence() {
     let tmp = tempfile::tempdir().unwrap();
     let application = app(tmp.path()).await;
-    let converted = cyber_core::import::opencode_settings_config(&serde_json::json!({"command":{
+    let mut converted = cyber_core::import::opencode_settings_config(&serde_json::json!({"command":{
         "db/migrate":{"template":"Migrate $1 in $2","description":"Migration","argument_hint":"<step> <targets>"},
         "goal":{"template":"Project goal $ARGUMENTS"},
         "review":{"template":"Configured review"},
         "unsupported":{"template":"Review","agent":"explore"}
     }})).unwrap();
+    converted.config["commands"]["markdown/review.rs"] = cyber_core::commands::markdown(
+        "---\ndescription: Markdown review\nargument-hint: '<paths>'\n---\nReview $ARGUMENTS",
+    )
+    .unwrap()
+    .definition;
     std::fs::write(
         application.paths.config.join("cyber.json"),
         serde_json::to_vec(&converted.config).unwrap(),
@@ -68,6 +73,18 @@ async fn imported_static_commands_reach_live_catalogue_and_expansion_with_skill_
     let entry = commands.iter().find(|c| c.name == "db/migrate").unwrap();
     assert_eq!(entry.source, "command");
     assert_eq!(entry.argument_hint.as_deref(), Some("<step> <targets>"));
+    let markdown = commands
+        .iter()
+        .find(|c| c.name == "markdown/review.rs")
+        .unwrap();
+    assert_eq!(markdown.description, "Markdown review");
+    assert_eq!(markdown.argument_hint.as_deref(), Some("<paths>"));
+    assert_eq!(
+        services
+            .expand_command(tmp.path(), "markdown/review.rs", "src")
+            .as_deref(),
+        Some("Review src")
+    );
     assert!(!commands.iter().any(|c| c.name == "unsupported"));
     assert_eq!(commands.iter().filter(|c| c.name == "review").count(), 1);
     assert_eq!(

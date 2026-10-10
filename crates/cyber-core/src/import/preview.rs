@@ -143,8 +143,11 @@ pub fn preview_import(
         let mut raw_origins = Origins::new();
         let mut rule_origins = Origins::new();
         let mut representative = None;
+        let markdown = markdown_sources(&mut context, &inventory.files, family, scope)?;
         for source in inventory.files.iter().filter(|f| {
-            f.tool == family && (scope == ImportScope::Project || f.layer != SourceLayer::Project)
+            f.tool == family
+                && f.kind != SourceKind::Command
+                && (scope == ImportScope::Project || f.layer != SourceLayer::Project)
         }) {
             let Some(delta) = source_config(&mut context, source)? else {
                 continue;
@@ -202,6 +205,13 @@ pub fn preview_import(
         };
         provenance::append_rules(&mut config, &rules, &mut origins, &rule_origins);
         provenance::strongest_permissions(family, &mut config, &mut origins);
+        merge_markdown_commands(
+            &mut config,
+            &mut origins,
+            markdown,
+            &inventory.files,
+            &raw_origins,
+        )?;
         let mut accepted = Origins::new();
         fill_existing(
             &mut proposed,
@@ -233,6 +243,16 @@ pub fn preview_import(
     context.required = super::environment_setup::coalesce(context.required);
     redact_report_fields(&mut context.report, &mut context.required, &context.secrets);
     reject_unsafe_strings(&proposed, &existing, &context.secrets, &target)?;
+    if proposed
+        .get("commands")
+        .and_then(Value::as_object)
+        .is_some_and(|m| m.len() > 128)
+    {
+        return Err(error(
+            &target,
+            "combined command definitions exceed the native registry bound",
+        ));
+    }
     let diff = render_diff(&target, &existing, &proposed, &context.secrets)?;
     let preview = ImportPreview {
         output: PreviewOutput {
@@ -324,6 +344,203 @@ struct SourceContext<'a> {
     remaining: usize,
     required: Vec<PreviewEnvironment>,
     report: Vec<MappingRecord>,
+}
+
+fn command_root(source: &SourceFile) -> Option<&Path> {
+    source.path.ancestors().skip(1).find(|dir| {
+        dir.file_name()
+            .is_some_and(|n| n == "commands" || n == "command")
+            && dir
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|n| n == ".claude" || n == ".opencode" || n == "opencode")
+    })
+}
+
+fn command_rank(source: &SourceFile) -> (u8, usize) {
+    if source.layer != SourceLayer::Project {
+        return (0, 0);
+    }
+    let directory = if source.kind == SourceKind::Command {
+        command_root(source)
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+    } else {
+        source.path.parent().map(|dir| {
+            if dir
+                .file_name()
+                .is_some_and(|n| n == ".opencode" || n == ".claude")
+            {
+                dir.parent().unwrap_or(dir)
+            } else {
+                dir
+            }
+        })
+    };
+    (1, directory.map_or(0, |dir| dir.components().count()))
+}
+
+struct MarkdownSource {
+    name: String,
+    command: Option<crate::commands::MarkdownCommand>,
+}
+
+fn markdown_sources<'a>(
+    context: &mut SourceContext<'_>,
+    files: &'a [SourceFile],
+    family: SourceTool,
+    scope: ImportScope,
+) -> Result<Vec<(&'a SourceFile, MarkdownSource)>, DiscoveryError> {
+    let mut commands = Vec::new();
+    for source in files.iter().filter(|f| {
+        f.tool == family
+            && f.kind == SourceKind::Command
+            && (scope == ImportScope::Project || f.layer != SourceLayer::Project)
+    }) {
+        if let Some(command) = markdown_command(context, source)? {
+            commands.push((source, command));
+        }
+    }
+    Ok(commands)
+}
+
+fn markdown_command(
+    context: &mut SourceContext<'_>,
+    source: &SourceFile,
+) -> Result<Option<MarkdownSource>, DiscoveryError> {
+    let snapshot = SourceSnapshot::read_admitted(context.roots, source, context.inventory)?;
+    context.remaining = context
+        .remaining
+        .checked_sub(snapshot.bytes().len())
+        .ok_or_else(|| {
+            error(
+                &source.path,
+                "preview exceeds aggregate sixteen MiB parse limit",
+            )
+        })?;
+    let parsed = crate::commands::markdown(snapshot.text()?);
+    context.snapshots.push(snapshot);
+    let name = source
+        .path
+        .strip_prefix(
+            command_root(source)
+                .ok_or_else(|| error(&source.path, "command source root is unavailable"))?,
+        )
+        .map_err(|_| error(&source.path, "command source name is unavailable"))?
+        .with_extension("")
+        .components()
+        .map(|c| c.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join("/"))
+        .ok_or_else(|| error(&source.path, "command name is not UTF-8"))?;
+    if !crate::commands::valid_name(&name) {
+        context.report.push(record(
+            &source.path,
+            "source",
+            "not imported",
+            "command name is unsupported",
+        ));
+        return Ok(None);
+    }
+    let command = match parsed {
+        Ok(command) => {
+            context.report.push(record(
+                &source.path,
+                "source",
+                "read",
+                "Markdown command parsed without execution",
+            ));
+            Some(command)
+        }
+        Err(_) => {
+            context.report.push(record(
+                &source.path,
+                "source",
+                "not imported",
+                "Markdown command needs additional fields or execution support; value withheld",
+            ));
+            None
+        }
+    };
+    Ok(Some(MarkdownSource { name, command }))
+}
+
+fn merge_markdown_commands(
+    config: &mut Value,
+    origins: &mut Origins,
+    commands: Vec<(&SourceFile, MarkdownSource)>,
+    inventory: &[SourceFile],
+    raw_origins: &Origins,
+) -> Result<(), DiscoveryError> {
+    let mut claimed = std::collections::BTreeMap::new();
+    let mut declared_roots = std::collections::BTreeMap::new();
+    for (source, definition) in commands {
+        let MarkdownSource { name, command } = definition;
+        let root = command_root(source).unwrap();
+        let rank = command_rank(source);
+        let declaration = (name.clone(), rank);
+        if let Some(previous) = declared_roots.insert(declaration, root)
+            && previous != root
+        {
+            return Err(error(
+                &source.path,
+                "ambiguous legacy and plural command definitions at one scope",
+            ));
+        }
+        let pointer = provenance::child("/commands", &name);
+        let mut references = provenance::references(origins, &pointer);
+        for key in ["command", "commands"] {
+            references.extend(provenance::references(
+                raw_origins,
+                &provenance::child(&format!("/{key}"), &name),
+            ));
+        }
+        let earlier = references
+            .iter()
+            .filter_map(|r| inventory.iter().find(|s| s.path == r.source))
+            .map(command_rank)
+            .chain(claimed.get(&name).copied())
+            .max();
+        if earlier.is_some_and(|rank| rank > command_rank(source)) {
+            continue;
+        }
+        if !config.get("commands").is_some_and(Value::is_object) {
+            config["commands"] = json!({})
+        }
+        claimed.insert(name.clone(), command_rank(source));
+        origins.retain(|key, _| key != &pointer && !key.starts_with(&format!("{pointer}/")));
+        let Some(command) = command else {
+            config["commands"].as_object_mut().unwrap().remove(&name);
+            continue;
+        };
+        config["commands"][&name] = command.definition;
+        for (field, descriptor) in command.sources {
+            origins.insert(
+                provenance::child(&pointer, &field),
+                vec![SourceReference {
+                    source: source.path.clone(),
+                    field: descriptor.into(),
+                }],
+            );
+        }
+        if config["commands"]
+            .as_object()
+            .is_some_and(|m| m.len() > 128)
+        {
+            return Err(error(
+                &source.path,
+                "combined command definitions exceed the native registry bound",
+            ));
+        }
+    }
+    if config
+        .get("commands")
+        .and_then(Value::as_object)
+        .is_some_and(|m| m.is_empty())
+    {
+        config.as_object_mut().unwrap().remove("commands");
+    }
+    Ok(())
 }
 fn source_config(
     context: &mut SourceContext<'_>,

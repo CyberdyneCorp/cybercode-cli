@@ -537,6 +537,7 @@ impl Scanner {
         for (name, kind) in [
             ("agents", SourceKind::Agent),
             ("commands", SourceKind::Command),
+            ("command", SourceKind::Command),
             ("modes", SourceKind::Mode),
         ] {
             self.tree(tool, layer, kind, &root.join(name), Filter::Markdown, true)?;

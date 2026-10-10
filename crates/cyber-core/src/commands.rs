@@ -20,6 +20,78 @@ pub struct Commands {
     pub unavailable: Vec<String>,
 }
 
+pub struct MarkdownCommand {
+    pub definition: Value,
+    /// Markdown descriptors, distinct from JSON pointers.
+    pub sources: BTreeMap<String, &'static str>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Frontmatter {
+    description: Option<String>,
+    argument_hint: Option<String>,
+    #[serde(rename = "argument-hint")]
+    dashed_hint: Option<String>,
+}
+
+pub fn markdown(text: &str) -> Result<MarkdownCommand, &'static str> {
+    if text.len() > 1024 * 1024 {
+        return Err("command document exceeds byte limit");
+    }
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut header = Frontmatter::default();
+    let mut body = text;
+    if let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    {
+        let mut offset = 0;
+        let mut closing = None;
+        for line in rest.split_inclusive('\n') {
+            if line.trim_end_matches(['\r', '\n']) == "---" {
+                closing = Some((offset, offset + line.len()));
+                break;
+            }
+            offset += line.len();
+            if offset > 16384 {
+                return Err("command frontmatter exceeds byte limit");
+            }
+        }
+        let (end, after) = closing.ok_or("command frontmatter has no closing delimiter")?;
+        if !rest[..end].trim().is_empty() {
+            header = serde_yaml_ng::from_str(&rest[..end])
+                .map_err(|_| "command frontmatter requires supported static fields")?;
+        }
+        body = &rest[after..];
+    }
+    if header.argument_hint.is_some() && header.dashed_hint.is_some() {
+        return Err("command argument hint aliases conflict");
+    }
+    let mut definition = serde_json::json!({"template":body.trim_start_matches(['\r', '\n'])});
+    let mut sources = BTreeMap::from([("template".into(), "body")]);
+    if let Some(description) = header.description {
+        definition["description"] = Value::String(description);
+        sources.insert("description".into(), "frontmatter:description");
+    }
+    if let Some(hint) = header.argument_hint.or(header.dashed_hint.clone()) {
+        definition["argument_hint"] = Value::String(hint);
+        sources.insert(
+            "argument_hint".into(),
+            if header.dashed_hint.is_some() {
+                "frontmatter:argument-hint"
+            } else {
+                "frontmatter:argument_hint"
+            },
+        );
+    }
+    StaticCommand::parse(&definition)?;
+    Ok(MarkdownCommand {
+        definition,
+        sources,
+    })
+}
+
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
@@ -28,7 +100,7 @@ pub fn valid_name(name: &str) -> bool {
                 && ![".", ".."].contains(&part)
                 && part
                     .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                    .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
         })
 }
 
@@ -55,7 +127,7 @@ impl StaticCommand {
         let command: Self = serde_json::from_value(value.clone())
             .map_err(|_| "command requires a supported static definition")?;
         let bounded = |s: &str| s.len() <= 65536 && !s.contains('\0');
-        if command.template.is_empty()
+        if command.template.trim().is_empty()
             || !bounded(&command.template)
             || !bounded(&command.description)
             || command
