@@ -187,6 +187,10 @@ while True:
     if request is None: break
     method = request['method']
     if method == 'initialize': send(request['id'],{'capabilities':{}})
+    elif method == 'witness': send(request['id'],True)
+    elif method in ['textDocument/didOpen','textDocument/didChange']:
+        with pathlib.Path('document-events').open('a') as events:
+            events.write(json.dumps(request)+'\n')
     elif method == 'probe':
         try: pathlib.Path(sys.argv[2]).read_text(); credentials_readable=True
         except OSError: credentials_readable=False
@@ -257,6 +261,99 @@ while True:
                 .starts_with(fixture.paths.tmp.canonicalize().unwrap())
         );
         result
+    }
+
+    async fn running(
+        trusted_project: bool,
+    ) -> (Fixture, Pool, cyber_tools::lsp::ServerHandle, PathBuf) {
+        assert!(
+            cyber_sandbox::available(),
+            "native sandbox prerequisites are required"
+        );
+        let mut fixture = Fixture::new();
+        fixture
+            .environment
+            .insert("PATH".into(), std::env::var("PATH").unwrap());
+        std::fs::write(&fixture.binary, SCRIPT).unwrap();
+        if trusted_project {
+            std::fs::write(
+                fixture.repo.join("cyber.jsonc"),
+                json!({"lsp":{"fixture":{"env":{"GOOD":"approved-project"}}}}).to_string(),
+            )
+            .unwrap();
+            let report = config::load(&LoadRequest {
+                location: &fixture.repo,
+                paths: &fixture.paths,
+                home: fixture.root.path(),
+                env: &fixture.environment,
+                profile: None,
+                overrides: &[],
+                flags: json!({}),
+            })
+            .unwrap()
+            .trust;
+            TrustStore::new(fixture.paths.trust_file())
+                .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+                .unwrap();
+        }
+        let pool = fixture.launcher().pool().unwrap();
+        let file = fixture.repo.join("file.rs");
+        std::fs::write(&file, "").unwrap();
+        let handle = pool.ensure("fixture", &file).unwrap();
+        assert_eq!(
+            handle
+                .request("witness", json!({}), Duration::from_secs(3))
+                .await
+                .unwrap(),
+            true
+        );
+        (fixture, pool, handle, file)
+    }
+
+    #[tokio::test]
+    async fn revoked_running_project_server_cannot_receive_another_document() {
+        let (fixture, pool, handle, file) = running(true).await;
+        handle
+            .open_document(&file, "before-revocation".into())
+            .await
+            .unwrap();
+        handle
+            .request("witness", json!({}), Duration::from_secs(3))
+            .await
+            .unwrap();
+        TrustStore::new(fixture.paths.trust_file())
+            .revoke(&fixture.repo.canonicalize().unwrap())
+            .unwrap();
+        assert!(
+            handle
+                .open_document(&file, "private-after-revocation".into())
+                .await
+                .is_err()
+        );
+        assert!(pool.close().await.unwrap()[0].acknowledged);
+        let events = std::fs::read_to_string(fixture.repo.join("document-events")).unwrap();
+        assert_eq!(events.lines().count(), 1);
+        assert!(!events.contains("private-after-revocation"));
+        assert_eq!(
+            handle.status().status,
+            cyber_tools::lsp::ServerState::Broken
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_idle_configuration_fences_and_settles_a_running_root() {
+        let (fixture, pool, handle, file) = running(false).await;
+        fixture.global(json!({"lsp":false,"sandbox":{"network":"off"}}));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while handle.status().status != cyber_tools::lsp::ServerState::Broken {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(pool.close().await.unwrap()[0].acknowledged);
+        assert!(pool.ensure("fixture", &file).is_err());
+        assert!(!fixture.repo.join("document-events").exists());
     }
 
     #[tokio::test]

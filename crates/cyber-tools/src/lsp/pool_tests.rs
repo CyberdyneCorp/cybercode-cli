@@ -238,6 +238,68 @@ async fn cancelled_location_close_retains_actual_native_shutdown_settlement() {
 }
 
 #[tokio::test]
+async fn cancellation_settles_native_descendants_before_a_blocked_authority_review() {
+    use std::sync::atomic::AtomicBool;
+    let (root, file) = fixture();
+    let marker = root.path().join("authority-review-escape");
+    let block = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(AtomicBool::new(false));
+    let permit = Arc::new(tokio::sync::Semaphore::new(0));
+    let admission: AdmissionFn = {
+        let block = block.clone();
+        let entered = entered.clone();
+        let permit = permit.clone();
+        Arc::new(move |_| {
+            let block = block.clone();
+            let entered = entered.clone();
+            let permit = permit.clone();
+            Box::pin(async move {
+                if block.load(Ordering::Acquire) {
+                    entered.store(true, Ordering::Release);
+                    permit.acquire().await.unwrap().forget();
+                }
+                Ok(())
+            })
+        })
+    };
+    let pool = Pool::new(
+        root.path(),
+        vec![server()],
+        launcher("normal", Arc::new(AtomicUsize::new(0))),
+    )
+    .unwrap()
+    .with_admission(admission)
+    .unwrap();
+    let handle = pool.ensure("fixture", &file).unwrap();
+    handle
+        .request(
+            "descendant",
+            json!({"marker":marker}),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    block.store(true, Ordering::Release);
+    let pending = tokio::spawn(async move {
+        handle
+            .request("fixture", json!({}), Duration::from_secs(3))
+            .await
+    });
+    wait_for(|| entered.load(Ordering::Acquire)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), pool.close())
+            .await
+            .is_err()
+    );
+    tokio::time::sleep(Duration::from_millis(650)).await;
+    assert!(!marker.exists());
+    permit.add_permits(1);
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+    assert!(pending.await.unwrap().is_err());
+    assert!(pool.close().await.unwrap()[0].acknowledged);
+}
+
+#[tokio::test]
 async fn nearest_roots_get_independent_owned_processes() {
     let (root, file) = fixture();
     let nested = root.path().join("nested");

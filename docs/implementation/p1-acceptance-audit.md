@@ -1,5 +1,9 @@
 # P1 acceptance audit
 
+## Live LSP generation authority evidence (2026-10-10)
+
+The App now selects guarded local pools whose command/idle-message boundary freshly validates the selected executable/definition, resolved configuration/provenance and trust. One-second idle reviews fence revoked roots even without foreground activity. Two actual macOS cases prove post-initialization trust revocation prevents a subsequent document from reaching the process and changed idle configuration settles the root. A Unix blocked-authority case proves cancellation terminates a real descendant before waiting for retained observation, and final/repeated close remains acknowledged only after observation/settlement. All 34 library cases pass. Windows protocol, resource/Location and background read steps at the preceding `7a4731c` revision are successful in run 38034525696; fresh running-server authority and enforced Windows launch acceptance remain open. Managed-checkout pins, full activity/reload/close controls, live CLI state, diagnostics/edit/navigation/formatter integration and broader P1 acceptance remain required. No complete canonical lifecycle requirement or milestone is accepted.
+
 ## Location-owned LSP warming and status evidence (2026-10-10)
 
 Successful built-in text reads now enqueue background warming through App-attached canonical Location generations. Owned blocking discovery, bounded queues/document state, deduplicated didOpen, versioned full-content didChange and didClose eviction have local evidence. Native pool cases prove protocol traffic, idle shutdown/recreation and retained native cleanup after cancelled Location close; platform-neutral registry cases prove queue bounds, discovery deduplication, interrupted joins, sticky failure and external/oversized refusal. All 33 library cases pass. The 35 built-in tool cases include an actual read returning while discovery is blocked and cancelled/repeated host shutdown retaining that discovery.

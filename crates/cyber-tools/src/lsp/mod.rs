@@ -14,6 +14,6 @@ pub use framing::{Framed, TransportError};
 pub use launch::{LaunchOptions, LocalLauncher};
 pub use locations::{Locations, PoolFactory};
 pub use pool::{
-    AuthorizedProcess, LaunchError, LaunchFn, LaunchRequest, Pool, ResourceLease, ServerHandle,
-    ServerState, ServerStatus, Settlement,
+    AdmissionFn, AuthorizedProcess, LaunchError, LaunchFn, LaunchRequest, Pool, ResourceLease,
+    ServerHandle, ServerState, ServerStatus, Settlement,
 };

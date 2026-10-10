@@ -1,5 +1,18 @@
 ## ADDED Requirements
 
+### Requirement: Live LSP generation authority
+(P1) Local LSP generations SHALL recheck current trust-filtered configuration before dispatching queued document, notification, diagnostic or navigation commands. Changed definitions, executable selection, resolved configuration, provenance or trust SHALL fence that root and retain process/resource settlement. Periodic idle authority reviews SHALL stop revoked roots without requiring a foreground command. Joined configuration observations SHALL retain ownership when a close caller is cancelled.
+
+#### Scenario: Revoked running server
+- **WHEN** trust or effective configuration changes after initialization
+- **THEN** subsequent queued commands SHALL NOT reach the server
+- **AND** the root SHALL become broken and native/resource ownership SHALL be settled
+
+#### Scenario: Idle review
+- **WHEN** a running root loses authority without another command
+- **THEN** a periodic review SHALL fence and settle it
+- **AND** it SHALL remain broken until its service generation is recreated
+
 ### Requirement: Owned background LSP warming
 (P1) Successfully read text files SHALL enqueue background warming in a canonical Location-owned LSP generation without awaiting discovery, initialization or diagnostics. Matching installed servers SHALL receive one didOpen per document and versioned full-content didChange for changed read snapshots. Bounded queues and document state SHALL prevent unbounded background admission. Host shutdown and Location idle expiry SHALL fence admission and retain native/resource cleanup ownership through joined settlement.
 

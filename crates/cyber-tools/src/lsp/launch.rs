@@ -42,6 +42,40 @@ pub struct LocalLauncher {
 }
 
 impl LocalLauncher {
+    pub fn pool(self: Arc<Self>) -> Result<super::Pool, LaunchError> {
+        let selected = Arc::new(self.resolved()?);
+        let servers = self.detected(&selected)?;
+        let pool = super::Pool::new(&self.location, servers, self.clone().callback()).map_err(
+            |error| LaunchError {
+                error,
+                acknowledged: true,
+            },
+        )?;
+        let admission: super::AdmissionFn = Arc::new(move |request| {
+            let launcher = self.clone();
+            let selected = selected.clone();
+            Box::pin(async move {
+                let fresh = launcher
+                    .observe(&request)
+                    .await
+                    .map_err(|error| error.error)?;
+                if fresh.value != selected.value
+                    || fresh.sources != selected.sources
+                    || fresh.trust.digest != selected.trust.digest
+                    || fresh.trust.trusted != selected.trust.trusted
+                {
+                    return Err(LspError::Protocol(
+                        "language service generation authority changed",
+                    ));
+                }
+                Ok(())
+            })
+        });
+        pool.with_admission(admission).map_err(|error| LaunchError {
+            error,
+            acknowledged: true,
+        })
+    }
     pub fn new(location: &Path, options: LaunchOptions) -> Result<Self, LaunchError> {
         let location = location
             .canonicalize()

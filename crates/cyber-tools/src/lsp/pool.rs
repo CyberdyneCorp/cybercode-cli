@@ -59,6 +59,9 @@ pub type LaunchFn = Arc<
         + Sync,
 >;
 
+pub type AdmissionFn =
+    Arc<dyn Fn(LaunchRequest) -> BoxFuture<'static, Result<(), LspError>> + Send + Sync>;
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerState {
@@ -212,6 +215,7 @@ struct Inner {
     location: PathBuf,
     servers: BTreeMap<String, DetectedServer>,
     launcher: LaunchFn,
+    admission: Option<AdmissionFn>,
     table: Mutex<Table>,
     cancel: CancellationToken,
     close: tokio::sync::Mutex<()>,
@@ -231,6 +235,12 @@ pub struct Pool {
 }
 
 impl Pool {
+    pub fn with_admission(mut self, admission: AdmissionFn) -> Result<Self, LspError> {
+        Arc::get_mut(&mut self.inner)
+            .ok_or_else(unavailable)?
+            .admission = Some(admission);
+        Ok(self)
+    }
     pub async fn warm(&self, file: &Path, text: String) {
         let handles: Vec<_> = self
             .inner
@@ -270,6 +280,7 @@ impl Pool {
                 location,
                 servers: definitions,
                 launcher,
+                admission: None,
                 table: Mutex::default(),
                 cancel: CancellationToken::new(),
                 close: tokio::sync::Mutex::new(()),
@@ -319,6 +330,7 @@ impl Pool {
                     status,
                     commands,
                     self.inner.initialize_timeout,
+                    self.inner.admission.clone(),
                 ));
                 Arc::new(Entry {
                     status: receiver,
@@ -412,6 +424,7 @@ async fn serve(
     status: watch::Sender<ServerStatus>,
     commands: mpsc::Receiver<Command>,
     initialize_timeout: Duration,
+    admission: Option<AdmissionFn>,
 ) -> Settlement {
     let identity = Settlement {
         id: request.server.definition.id.clone(),
@@ -430,7 +443,7 @@ async fn serve(
             }
         };
     status.send_modify(|s| s.status = ServerState::Connected);
-    run(&mut connection, &cancel, commands).await;
+    run(&mut connection, &cancel, commands, &request, admission).await;
     status.send_modify(|s| s.status = ServerState::Broken);
     settle_connection(&mut connection).await;
     settle_resources(&mut *keepalive).await;
@@ -492,20 +505,27 @@ async fn run(
     connection: &mut StdioConnection,
     cancel: &CancellationToken,
     mut commands: mpsc::Receiver<Command>,
+    request: &LaunchRequest,
+    admission: Option<AdmissionFn>,
 ) {
     let mut health = tokio::time::interval(Duration::from_millis(100));
+    let mut review = tokio::time::interval(Duration::from_secs(1));
     let mut documents = super::documents::Documents::default();
-    loop {
-        let event = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => break,
-            _ = health.tick() => {
-                if connection.leader_exited().unwrap_or(true) { break; }
-                continue;
-            },
-            command = commands.recv() => match command {Some(c) => Event::Command(c), None => break},
-            message = connection.next_idle() => match message {Ok(message) => Event::Message(message), Err(_) => break}
-        };
+    while let Some(event) = next_event(
+        connection,
+        &mut commands,
+        &mut health,
+        &mut review,
+        admission.is_some(),
+        cancel,
+    )
+    .await
+    {
+        if !matches!(event, Event::Health)
+            && !admitted(connection, &admission, request, cancel).await
+        {
+            break;
+        }
         let healthy = tokio::select! { biased; _ = cancel.cancelled() => break, healthy = handle_event(connection, &mut documents, event) => healthy };
         if !healthy {
             break;
@@ -513,7 +533,53 @@ async fn run(
     }
 }
 
+async fn next_event(
+    connection: &mut StdioConnection,
+    commands: &mut mpsc::Receiver<Command>,
+    health: &mut tokio::time::Interval,
+    review: &mut tokio::time::Interval,
+    authorized: bool,
+    cancel: &CancellationToken,
+) -> Option<Event> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => None,
+        _ = review.tick(), if authorized => Some(Event::Review),
+        _ = health.tick() => Some(Event::Health),
+        command = commands.recv() => command.map(Event::Command),
+        message = connection.next_idle() => message.ok().map(Event::Message),
+    }
+}
+
+async fn admitted(
+    connection: &mut StdioConnection,
+    admission: &Option<AdmissionFn>,
+    request: &LaunchRequest,
+    cancel: &CancellationToken,
+) -> bool {
+    let observation = async {
+        match admission {
+            Some(admit) => admit(request.clone()).await,
+            None => Ok(()),
+        }
+    };
+    tokio::pin!(observation);
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            // Retain the observation, but do not defer native termination behind filesystem IO.
+            settle_connection(connection).await;
+            let _ = observation.await;
+            return false;
+        },
+        result = &mut observation => result,
+    };
+    result.is_ok() && !cancel.is_cancelled()
+}
+
 enum Event {
+    Health,
+    Review,
     Message(Value),
     Command(Command),
 }
@@ -524,6 +590,8 @@ async fn handle_event(
     event: Event,
 ) -> bool {
     match event {
+        Event::Health => connection.leader_exited().is_ok_and(|exited| !exited),
+        Event::Review => true,
         Event::Command(command) => execute(connection, documents, command).await,
         Event::Message(message) => {
             tokio::time::timeout(Duration::from_secs(30), connection.handle_idle(message))

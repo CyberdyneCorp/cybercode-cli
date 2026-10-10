@@ -153,11 +153,7 @@ impl App {
                 cyber_tools::lsp::LocalLauncher::new(location, lsp_options.clone())
                     .map_err(|error| error.error)?,
             );
-            cyber_tools::lsp::Pool::new(
-                location,
-                launcher.servers().map_err(|error| error.error)?,
-                launcher.callback(),
-            )
+            launcher.pool().map_err(|error| error.error)
         }))?;
         let snapshots: Arc<dyn Snapshots> = if opts.snapshots {
             let loader = Arc::clone(&config);
