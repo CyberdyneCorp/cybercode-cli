@@ -113,6 +113,11 @@ pub enum Format {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Detect migration sources without changing files.
+    Import {
+        #[arg(long, required = true)]
+        detect: bool,
+    },
     /// Inspect installed language servers for the current Location.
     Lsp {
         #[command(subcommand)]

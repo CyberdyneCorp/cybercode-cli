@@ -1,5 +1,15 @@
 # P1 acceptance audit
 
+## Read-only migration detection and Windows junction fixture (2026-10-10)
+
+`cyber import --detect [--format json]` now inventories static migration sources and parses JSON/JSONC/TOML configuration through verified snapshots. It reports raw agent/command/skill-file and inline-definition counts, MCP-server definitions and hook handlers, while withholding configuration values and parser details. Detection dispatch bypasses Context bootstrap/logging, uses metadata-only libgit2 worktree discovery and creates no Cyber configuration/database/runtime storage. Parsing is bounded by one MiB per source and sixteen MiB aggregate admitted document bytes; inventory is shared across reads rather than rescanned for every file.
+
+Counts include raw definitions repeated across layers. Referenced custom sources, session counts, per-item/effective read-time coverage and first-run TUI offer remain required; session/coverage fields are unknown and completeness flags false. Import conversion/diffs/confirmation/writing/report/idempotency and ACP/VS Code remain open. No complete detection/import requirement or milestone is accepted; all 225 P1 requirements remain in scope.
+
+Local validation passes 45 selected cases: three detection, five inventory, six snapshots and 31 binary CLI cases. Fixtures cover all three configuration shapes, nested hook handlers, disabled MCP definitions, malformed/secret-bearing sources, aggregate parse limits, source replacement/link refusal and actual read-only text/JSON CLI output. Workspace all-target Clippy passes with warnings/complexity denied. All 60 strict specification items pass; cross-spec lint has zero errors and 21 warnings; SDK and canonical inventory checks pass.
+
+Windows run 38059366671/job 114234299636 is terminal with one failed discovery/configuration step. Its junction fixture failed before scanner assertions: cmd interpreted the forward slash in the `.opencode/plugins` argument as an invalid `plugins` switch. The fixture now constructs that path with separate native components; its actual native junction regression remains required. All other steps in that Windows job pass, as do Linux/macOS and all six build targets. Snapshot/detection/new-fixture native acceptance requires fresh CI. P0 services/models/evaluations/artifacts remain preserved.
+
 ## Verified migration source snapshots (2026-10-10)
 
 Inventoried files now have a bounded, read-only source snapshot for migration review. Reads open each path component through no-follow directory handles, retain native directory/file identities and refuse linked, reparse, nonregular or hard-linked source files. Contents are limited to one MiB. Verification compares fresh directory bindings, file identity, length/modification metadata and SHA-256 content, then reopens the path to check bindings again. Snapshot debug output and errors omit source contents. This detects reviewed-source changes; it does not freeze concurrent writers, grant trust or implement destination transactions.

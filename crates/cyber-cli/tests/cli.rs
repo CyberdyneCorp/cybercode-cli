@@ -998,3 +998,33 @@ fn doctor_disabled_lsp_does_not_report_missing_servers_as_warnings() {
     assert!(lsp.iter().all(|r| r["status"] == "pass"));
     assert!(lsp.iter().all(|r| r["detail"] == "disabled; not installed"));
 }
+
+#[test]
+fn import_detection_is_read_only_and_outputs_counts_without_configuration_secrets() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::create_dir_all(e.root.join(".claude/agents")).unwrap();
+    std::fs::write(e.root.join(".claude/agents/check.md"), "private-secret").unwrap();
+    std::fs::write(
+        e.root.join(".claude/settings.json"),
+        r#"{"env":{"TOKEN":"private-secret"},"hooks":{}}"#,
+    )
+    .unwrap();
+    let o = e.cyber(&["import", "--detect", "--format", "json"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let v = json(&o);
+    assert_eq!(v["tools"][0]["tool"], "claude");
+    assert_eq!(v["tools"][0]["counts"]["agents"], 1);
+    assert!(v["tools"][0]["counts"]["sessions"].is_null());
+    assert_eq!(v["complete"], false);
+    assert!(!stdout(&o).contains("private-secret"));
+    assert!(!e.root.join("cyber-home").exists());
+    assert!(!e.root.join(".cyber").exists());
+    let text = e.cyber(&["import", "--detect"]);
+    assert!(text.status.success(), "{}", stderr(&text));
+    assert!(stdout(&text).contains("claude: 1 agents"));
+    assert!(stdout(&text).contains("sessions: unknown"));
+    let unavailable = e.cyber(&["import", "auto", "--dry-run"]);
+    assert_eq!(unavailable.status.code(), Some(2));
+    assert!(!e.root.join("cyber-home").exists());
+}

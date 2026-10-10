@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod eval;
 pub mod exec;
 pub mod hooks;
+pub mod import;
 pub mod intelligence;
 pub mod mcp;
 pub mod memory;
@@ -39,6 +40,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         }
         return Err(tree::external(args));
     }
+    if let Command::Import { .. } = &command {
+        return import::detect(&cli.global);
+    }
     let ctx = Context::new(&cli.global)?;
     start_logging(&ctx, &cli.global)?;
     match command {
@@ -59,7 +63,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
-        Command::External(_) => unreachable!("handled above"),
+        Command::External(_) | Command::Import { .. } => unreachable!("handled above"),
     }
 }
 

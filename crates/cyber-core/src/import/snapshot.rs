@@ -181,7 +181,14 @@ impl std::fmt::Debug for SourceSnapshot {
 impl SourceSnapshot {
     pub fn read(roots: &SourceRoots, source: &SourceFile) -> Result<Self, DiscoveryError> {
         let inventory = discover_sources(roots)?;
-        if !inventory.files.contains(source) {
+        Self::read_admitted(roots, source, &inventory.files)
+    }
+    pub(super) fn read_admitted(
+        roots: &SourceRoots,
+        source: &SourceFile,
+        files: &[SourceFile],
+    ) -> Result<Self, DiscoveryError> {
+        if !files.contains(source) {
             return Err(error(
                 &source.path,
                 "source is not admitted by the current inventory",

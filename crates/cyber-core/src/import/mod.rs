@@ -2,12 +2,14 @@
 mod claude;
 mod codex;
 mod codex_source;
+mod detection;
 mod discovery;
 mod opencode;
 mod snapshot;
 pub use claude::{ClaudePermissions, ConversionError, PermissionRule, claude_permissions};
 pub use codex::codex_prefix_rules;
 pub use codex_source::{CodexRuleSource, CodexRules, codex_rules};
+pub use detection::{DefinitionCounts, DetectedTool, DetectionReport, detect_sources};
 pub use discovery::{
     DiscoveryError, DiscoveryIssue, SourceFile, SourceInventory, SourceKind, SourceLayer,
     SourceRoots, SourceTool, discover_sources,

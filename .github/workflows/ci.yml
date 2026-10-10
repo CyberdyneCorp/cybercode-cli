@@ -50,7 +50,7 @@ jobs:
         run: cargo test --locked -p cyber-tools --lib tools::bash::shell_tests
       - name: Native code intelligence configuration and discovery
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test config --test intelligence_config --test intelligence_discovery --test formatter_discovery --test import_permissions --test import_discovery --test import_snapshot
+        run: cargo test --locked -p cyber-core --test config --test intelligence_config --test intelligence_discovery --test formatter_discovery --test import_permissions --test import_discovery --test import_snapshot --test import_detection
       - name: Native imported permission engine decisions
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test import_permissions

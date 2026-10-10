@@ -41,3 +41,7 @@ Use explicit canonical root inputs, walk project layers from repository root to 
 ## Verified source snapshots
 
 Admission checks the static inventory and explicit layer root, then opens the complete path from its volume/root through no-follow component handles. Retain native identities and compare fresh path bindings, file identity, modification metadata and a bounded content digest. Windows uses existing full native file identities and reparse refusal without requiring memory ACL policy; Unix compares device/inode and refuses multiply-linked files. Do not expose bytes in Debug or errors. This is the source-review primitive; atomic destination writes and review/confirmation/idempotency remain mandatory.
+
+## Incremental CLI detection
+
+Dispatch detection before Context bootstrap/logging. Use metadata-only libgit2 worktree discovery, explicit HOME/Location/CODEX_HOME inputs, verified source snapshots and a sixteen MiB aggregate parse budget. Parse TOML using the maintained serde-compatible toml parser and JSONC using the existing core parser, replacing parser details with static issues. Count raw definitions/files without returning values or executing handlers. Incomplete referenced-source/session/compatibility resolution is explicit, with unknown fields and false completeness flags; this increment does not meet the complete canonical Source detection contract.

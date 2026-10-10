@@ -268,7 +268,7 @@ fn windows_source_junctions_are_reported_without_inventorying_their_targets() {
     for path in [
         roots.project_root.join(".claude"),
         roots.home.join(".codex"),
-        roots.project_root.join(".opencode/plugins"),
+        roots.project_root.join(".opencode").join("plugins"),
     ] {
         let output = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])

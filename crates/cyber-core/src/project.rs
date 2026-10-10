@@ -18,6 +18,14 @@ pub struct Project {
 
 const CACHE_FILE: &str = "cyber-project-id";
 
+/// Find a worktree without running Git or writing project identity caches.
+pub fn worktree_root(location: &Path) -> Option<PathBuf> {
+    git2::Repository::discover(location)
+        .ok()?
+        .workdir()
+        .map(Into::into)
+}
+
 pub fn identify(location: &Path) -> Project {
     let Some(worktree) = git(location, &["rev-parse", "--show-toplevel"]) else {
         return Project {
