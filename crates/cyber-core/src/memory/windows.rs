@@ -2,7 +2,10 @@
 #[path = "windows/creation.rs"]
 mod creation;
 use super::MemoryStorageError;
-pub use creation::{create_private_directory, create_private_file};
+pub use creation::{
+    Access, create_private_directory, create_private_file, open_private_directory,
+    open_private_file,
+};
 use std::fs::File;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -349,7 +352,7 @@ mod tests {
         );
         drop(allocation);
     }
-    fn security(file: &File) -> String {
+    pub(super) fn security(file: &File) -> String {
         let descriptor = Descriptor::read(file).unwrap();
         let mut raw = null_mut();
         let mut length = 0;

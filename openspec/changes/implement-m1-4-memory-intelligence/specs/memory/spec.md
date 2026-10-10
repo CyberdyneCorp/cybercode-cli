@@ -290,6 +290,16 @@
 - **AND** caller path binding, durable installation and lifecycle integration SHALL remain required before enabling Windows mutation/checkpoint workflows
 
 
+#### Scenario: Native Windows existing private child opening
+- **WHEN** native memory opens an existing private child under a retained directory handle
+- **THEN** it SHALL use open-only disposition without a creation security descriptor, creation, truncation or permission repair
+- **AND** it SHALL validate the returned object's private owner/DACL, expected type, reparse status and regular-file link count before returning it
+- **AND** regular-file opening SHALL require a private parent; read access SHALL grant no data writes, and write access SHALL preserve existing bytes until the caller explicitly writes
+- **WHEN** the parent moves and its original path is replaced
+- **THEN** opening SHALL resolve under the retained parent rather than the replacement path
+- **AND** missing children, unsafe names, broad permissions, wrong types and file aliases SHALL refuse without changing child bytes or creating missing children
+- **AND** durable installation, caller path binding and storage/checkpoint integration SHALL remain required before enabling Windows writes
+
 #### Scenario: Durable TUI memory draft and request retention
 - **WHEN** the TUI changes a memory draft on a platform with private native checkpoint support
 - **THEN** it SHALL checkpoint bounded draft text and its original Session/Location/scope identity through the private client store
