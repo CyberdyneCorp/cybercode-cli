@@ -37,3 +37,14 @@
 - **WHEN** a source rule allows git followed by a space and wildcard
 - **THEN** git status SHALL match
 - **AND** bare git SHALL retain its separate decision
+
+### Requirement: Pure Codex argv-prefix conversion
+(P1) Import planning SHALL convert parsed constant Codex prefix rules to native bash rules. It SHALL support nonempty literal argv-prefix lists and nonempty alternatives per position, default decision allow and allow/prompt/forbidden effects. It SHALL order output allow, ask, deny, preserving source order within each group, so the most restrictive matching decision survives native last-match-wins evaluation. Expansion SHALL be bounded at 4096 rules and one MiB of command text per batch. Native rules SHALL retain an optional argv_prefix and compare literal Bash argv with exact case, preserving quotes/whitespace normalization rather than matching only source text. Unresolved argv SHALL not receive an imported allow; matching ask/deny rules SHALL conservatively retain their refusal/review boundary. Tokens that cannot be safely represented as literal native command patterns, malformed fields and unknown decisions SHALL refuse the entire batch with indexed static errors without echoing source values. Conversion SHALL neither execute source Starlark nor grant sandbox escalation. Starlark parsing, examples/metadata, source discovery and full Codex configuration/profile/sandbox migration SHALL remain separate required work.
+
+#### Scenario: Later allow cannot erase a forbidden prefix
+- **WHEN** a parsed batch forbids git push and later allows git generally
+- **THEN** native evaluation SHALL deny git push and allow unrelated git commands
+
+#### Scenario: Literal argv cannot become a wildcard grant
+- **WHEN** a prefix token contains a native wildcard or whitespace
+- **THEN** conversion SHALL refuse the batch instead of widening the command grant

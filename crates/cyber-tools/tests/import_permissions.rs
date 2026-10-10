@@ -346,3 +346,85 @@ async fn opencode_imported_edit_group_denies_all_native_mutations_in_bypass() {
         assert!(!names.contains(&hidden.into()), "{hidden}");
     }
 }
+
+#[test]
+fn codex_strongest_match_survives_later_allow_and_native_prefix_boundaries() {
+    let converted = cyber_core::import::codex_prefix_rules(&json!([
+        {"pattern":["git","push"],"decision":"forbidden"},
+        {"pattern":["git",["fetch","pull"]],"decision":"prompt"},
+        {"pattern":["git"],"decision":"allow"}
+    ]))
+    .unwrap();
+    let rules = parse_rules(&serde_json::to_value(converted).unwrap(), &BTreeMap::new());
+    for (command, effect) in [
+        ("git push", Effect::Deny),
+        ("git push origin main", Effect::Deny),
+        ("\"git\" 'push' origin main", Effect::Deny),
+        ("git   push", Effect::Deny),
+        ("g'it' p\"u\"sh", Effect::Deny),
+        ("GIT push", Effect::Ask),
+        ("git status $UNKNOWN", Effect::Deny),
+        ("git pushy", Effect::Allow),
+        ("git fetch", Effect::Ask),
+        ("git pull origin main", Effect::Ask),
+        ("git status", Effect::Allow),
+        ("git", Effect::Allow),
+        ("github", Effect::Ask),
+    ] {
+        assert_eq!(evaluate(&rules, "bash", command).0, effect, "{command}");
+    }
+}
+
+#[tokio::test]
+async fn codex_imported_argv_deny_blocks_quoted_and_compound_commands_before_launch() {
+    let fixture = support::Fixture::new();
+    let converted = cyber_core::import::codex_prefix_rules(&json!([
+        {"pattern":["git","push"],"decision":"forbidden"},
+        {"pattern":["git"],"decision":"allow"},
+        {"pattern":["echo"],"decision":"allow"}
+    ]))
+    .unwrap();
+    fixture.set_config(json!({"permissions":converted}));
+    for command in [
+        "git push",
+        "git  push",
+        "'git' \"push\"",
+        "echo allowed && 'git' push",
+        "g'it' p\"u\"sh",
+    ] {
+        let error = support::failed(
+            fixture
+                .call("bypass", "bash", json!({"command":command}))
+                .await,
+        );
+        assert!(error.contains("denied"), "{command}: {error}");
+        assert!(!error.contains("Could not start"));
+    }
+}
+
+#[test]
+fn malformed_argv_metadata_cannot_become_an_allow_rule() {
+    for prefix in [
+        json!(null),
+        json!([]),
+        json!([42]),
+        json!([""]),
+        json!(["git\n"]),
+    ] {
+        let rules = parse_rules(
+            &json!([{"action":"bash","resource":"*","effect":"allow","argv_prefix":prefix}]),
+            &BTreeMap::new(),
+        );
+        assert_eq!(evaluate(&rules, "bash", "git push").0, Effect::Deny);
+    }
+    let rules = parse_rules(
+        &json!([{"action":"bash","resource":"echo *","effect":"allow","argv_prefix":["echo"]}]),
+        &BTreeMap::new(),
+    );
+    assert_eq!(evaluate(&rules, "bash", "echo plain").0, Effect::Allow);
+    assert_eq!(evaluate(&rules, "bash", "echo $UNKNOWN").0, Effect::Ask);
+    assert_eq!(
+        evaluate(&rules, "bash", "echo one; git push").0,
+        Effect::Ask
+    );
+}

@@ -29,6 +29,7 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
 similar = "3"
+shell-words = "1.1"
 thiserror.workspace = true
 ulid.workspace = true
 tokio = { version = "1", features = ["rt", "process", "io-util", "time", "sync", "fs", "macros"] }

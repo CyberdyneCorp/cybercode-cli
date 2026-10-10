@@ -140,6 +140,7 @@ fn rule(
         resource.into()
     };
     Ok(PermissionRule {
+        argv_prefix: None,
         tool: None,
         action: action.into(),
         resource,

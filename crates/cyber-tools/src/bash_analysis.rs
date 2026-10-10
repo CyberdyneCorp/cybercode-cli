@@ -60,6 +60,52 @@ pub struct Analysis {
     pub unparseable: bool,
 }
 
+/// Literal argv for imported prefix rules. Expansion/control syntax requires review or refusal.
+pub(crate) fn literal_argv(command: &str) -> Option<Vec<String>> {
+    if command
+        .chars()
+        .any(|ch| matches!(ch, '$' | '`' | '*' | '?'))
+    {
+        return None;
+    }
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_bash::LANGUAGE.into())
+        .ok()?;
+    let tree = parser.parse(command, None)?;
+    let root = tree.root_node();
+    let node = root.named_child(0)?;
+    if root.has_error()
+        || root.named_child_count() != 1
+        || node.kind() != "command"
+        || !literal_node(node)
+    {
+        return None;
+    }
+    shell_words::split(command)
+        .ok()
+        .filter(|argv| !argv.is_empty())
+}
+
+fn literal_node(node: Node<'_>) -> bool {
+    if !matches!(
+        node.kind(),
+        "command"
+            | "command_name"
+            | "word"
+            | "string"
+            | "raw_string"
+            | "string_content"
+            | "concatenation"
+            | "escape_sequence"
+            | "number"
+    ) {
+        return false;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).all(literal_node)
+}
+
 pub fn analyze(command: &str, cwd: &Path) -> Analysis {
     let mut parser = Parser::new();
     let parsed = parser

@@ -4,6 +4,8 @@ use serde_json::Value;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PermissionRule {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub argv_prefix: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
     pub action: String,
     pub resource: String,
@@ -115,6 +117,7 @@ fn selector(text: &str, effect: &str, field: &str) -> Result<PermissionRule, Con
         return Err(refused(field, "empty resource"));
     }
     Ok(PermissionRule {
+        argv_prefix: None,
         tool: tool_scope(tool).map(str::to_owned),
         action: action.into(),
         resource,

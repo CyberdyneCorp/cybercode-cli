@@ -187,3 +187,92 @@ fn opencode_invalid_or_unmapped_entries_refuse_the_whole_batch_safely() {
         assert!(error.to_string().len() < 180);
     }
 }
+
+#[test]
+fn codex_prefix_rules_group_by_strength_and_expand_position_alternatives() {
+    let rules = cyber_core::import::codex_prefix_rules(&json!([
+        {"pattern":["git","push"],"decision":"forbidden"},
+        {"pattern":["git",["fetch","pull"]],"decision":"prompt"},
+        {"pattern":["git"]},
+        {"pattern":["cargo","test"],"decision":"allow"}
+    ]))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(rules).unwrap(),
+        json!([
+            {"action":"bash","resource":"git *","effect":"allow","argv_prefix":["git"]},
+            {"action":"bash","resource":"cargo test *","effect":"allow","argv_prefix":["cargo","test"]},
+            {"action":"bash","resource":"git fetch *","effect":"ask","argv_prefix":["git","fetch"]},
+            {"action":"bash","resource":"git pull *","effect":"ask","argv_prefix":["git","pull"]},
+            {"action":"bash","resource":"git push *","effect":"deny","argv_prefix":["git","push"]}
+        ])
+    );
+}
+
+#[test]
+fn codex_prefix_conversion_refuses_unsafe_literal_tokens_without_echoing_them() {
+    for token in [
+        "",
+        "private-token*",
+        "private-token?",
+        "private-token\\path",
+        "private-token value",
+        "private-token\n",
+        "$(private-token)",
+        "'private-token'",
+        "private-token;",
+        "private-token|",
+        "private-tokené",
+    ] {
+        let error = cyber_core::import::codex_prefix_rules(&json!([
+            {"pattern":["git"],"decision":"allow"},
+            {"pattern":[token],"decision":"forbidden"}
+        ]))
+        .unwrap_err();
+        assert_eq!(error.field, "rules[1].pattern[0]");
+        assert!(!error.to_string().contains("private-token"));
+    }
+    for rule in [
+        json!(null),
+        json!({}),
+        json!({"pattern":[]}),
+        json!({"pattern":[[]]}),
+        json!({"pattern":[["git",42]]}),
+        json!({"pattern":["git"],"decision":null}),
+        json!({"pattern":["git"],"decision":"private-token"}),
+        json!({"pattern":["git"],"private-token":true}),
+    ] {
+        let error = cyber_core::import::codex_prefix_rules(&json!([rule])).unwrap_err();
+        assert!(!error.to_string().contains("private-token"));
+    }
+}
+
+#[test]
+fn codex_prefix_expansion_is_bounded_before_allocating_the_cartesian_product() {
+    let pattern = vec![json!(["a", "b"]); 13];
+    assert!(
+        cyber_core::import::codex_prefix_rules(&json!([{"pattern":pattern}]))
+            .unwrap_err()
+            .reason
+            .contains("expansion limit")
+    );
+    let large_choices = vec!["a".repeat(4096); 257];
+    assert!(
+        cyber_core::import::codex_prefix_rules(&json!([{"pattern":[large_choices]}]))
+            .unwrap_err()
+            .reason
+            .contains("text limit")
+    );
+    assert!(
+        cyber_core::import::codex_prefix_rules(&json!([{"pattern":vec!["git";129]}]))
+            .unwrap_err()
+            .reason
+            .contains("length limit")
+    );
+    assert!(
+        cyber_core::import::codex_prefix_rules(&json!(vec![json!({"pattern":["git"]}); 4097]))
+            .unwrap_err()
+            .reason
+            .contains("expansion limit")
+    );
+}

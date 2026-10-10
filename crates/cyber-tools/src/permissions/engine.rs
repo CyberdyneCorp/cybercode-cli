@@ -30,6 +30,8 @@ impl Effect {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argv_prefix: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
     pub action: String,
     pub resource: String,
@@ -40,6 +42,7 @@ pub struct Rule {
 impl Rule {
     pub fn new(action: &str, resource: &str, effect: Effect, source: &str) -> Self {
         Self {
+            argv_prefix: None,
             tool: None,
             action: action.into(),
             resource: resource.into(),
@@ -100,6 +103,28 @@ fn ordered_rule(index: usize, item: &Value, sources: &BTreeMap<String, String>) 
             None => rule.effect = Effect::Deny,
         }
     }
+    if let Some(prefix) = item.get("argv_prefix") {
+        match prefix
+            .as_array()
+            .filter(|items| !items.is_empty() && items.len() <= 128)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        item.as_str()
+                            .filter(|token| {
+                                !token.is_empty()
+                                    && token.len() <= 4096
+                                    && !token.chars().any(char::is_control)
+                            })
+                            .map(str::to_owned)
+                    })
+                    .collect::<Option<Vec<_>>>()
+            }) {
+            Some(prefix) => rule.argv_prefix = Some(prefix),
+            None => rule.effect = Effect::Deny,
+        }
+    }
     Some(rule)
 }
 
@@ -141,17 +166,46 @@ pub fn evaluate_scoped<'a>(
     resource: &str,
     tool: Option<&str>,
 ) -> (Effect, Option<&'a Rule>) {
+    // Decode a resource once even when an imported batch contains many prefixes.
+    let argv = rules
+        .iter()
+        .any(|rule| rule.argv_prefix.is_some() && matches(&rule.action, action))
+        .then(|| crate::bash_analysis::literal_argv(resource))
+        .flatten();
     rules
         .iter()
         .rev()
-        .find(|rule| rule_matches(rule, action, resource, tool))
+        .find(|rule| rule_matches_argv(rule, action, resource, tool, argv.as_deref()))
         .map_or((Effect::Ask, None), |rule| (rule.effect, Some(rule)))
 }
 
 fn rule_matches(rule: &Rule, action: &str, resource: &str, tool: Option<&str>) -> bool {
+    let argv = rule
+        .argv_prefix
+        .as_ref()
+        .and_then(|_| crate::bash_analysis::literal_argv(resource));
+    rule_matches_argv(rule, action, resource, tool, argv.as_deref())
+}
+
+fn rule_matches_argv(
+    rule: &Rule,
+    action: &str,
+    resource: &str,
+    tool: Option<&str>,
+    argv: Option<&[String]>,
+) -> bool {
     matches(&rule.action, action)
-        && matches(&rule.resource, resource)
+        && resource_matches(rule, resource, argv)
         && rule.tool.as_deref().is_none_or(|scope| Some(scope) == tool)
+}
+
+fn resource_matches(rule: &Rule, resource: &str, argv: Option<&[String]>) -> bool {
+    let Some(prefix) = &rule.argv_prefix else {
+        return matches(&rule.resource, resource);
+    };
+    argv.map_or(rule.effect != Effect::Allow, |argv| {
+        argv.starts_with(prefix)
+    })
 }
 
 fn request_effect(rules: &[Rule], req: &Request) -> Effect {
