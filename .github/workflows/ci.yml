@@ -66,6 +66,9 @@ jobs:
       - name: Native read background warming
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test tools successful_read_warms_in_background_without_waiting_for_discovery
+      - name: Native notebook cell editing and output contract
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test notebook --test golden
       - name: Native memory handle privacy and namespace operations
         if: ${{ !cancelled() }}
         run: 'cargo test --locked -p cyber-core --lib memory::'

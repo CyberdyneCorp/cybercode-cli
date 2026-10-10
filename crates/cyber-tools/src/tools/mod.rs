@@ -5,6 +5,7 @@ pub(crate) mod bash;
 mod fs;
 mod mcp;
 pub(crate) mod memory;
+mod notebook;
 pub(crate) mod patch;
 pub(crate) mod powershell;
 pub(crate) mod process;
@@ -42,6 +43,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(fs::Write),
         Box::new(fs::Edit),
         Box::new(patch::ApplyPatch),
+        Box::new(notebook::NotebookEdit),
         Box::new(fs::List),
         Box::new(search::Glob),
         Box::new(search::Grep),
@@ -72,7 +74,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
 /// The permission action a tool checks.
 pub(crate) fn action_of(name: &str) -> &str {
     match name {
-        "write" | "edit" | "apply_patch" => "edit",
+        "write" | "edit" | "apply_patch" | "notebook_edit" => "edit",
         "powershell" => "bash",
         other => other,
     }

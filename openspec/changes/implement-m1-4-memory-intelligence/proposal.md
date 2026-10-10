@@ -14,6 +14,7 @@ M1.4 requires durable memory, code intelligence and isolated browser verificatio
 ### Modified Capabilities
 - `memory`: implement the P1 memory lifecycle and public surfaces.
 - `code-intelligence`: implement P1 language intelligence and formatter delivery.
+- `builtin-tools`: deliver notebook cell editing needed by the four-tool diagnostics integration.
 - `browser-verification`: implement P1 browser execution and linked verification artifacts.
 
 ## Impact

@@ -101,6 +101,23 @@ async fn filesystem_goldens() {
 }
 
 #[tokio::test]
+async fn notebook_edit_golden() {
+    let fixture = Fixture::new();
+    fixture.write("work.ipynb", &json!({"nbformat":4,"nbformat_minor":0,"metadata":{},"cells":[{"cell_type":"code","metadata":{},"source":["old"],"outputs":[],"execution_count":null}]}).to_string());
+    support::golden(
+        &fixture,
+        "notebook_edit",
+        &ok(fixture
+            .call(
+                "accept-edits",
+                "notebook_edit",
+                json!({"path":"work.ipynb","mode":"replace","cell_index":0,"new_source":"new"}),
+            )
+            .await),
+    );
+}
+
+#[tokio::test]
 async fn bash_golden() {
     let f = Fixture::new();
     f.set_config(json!({"permissions":{"bash":"allow"}}));

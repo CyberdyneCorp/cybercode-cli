@@ -1,5 +1,15 @@
 # P1 acceptance audit
 
+## Notebook editing evidence (2026-10-10)
+
+The previously absent notebook_edit tool is now registered for both ordinary and apply-patch-preferring model catalogs, excluded from plan mode and routed through edit permission and the shared guarded-write boundary. It replaces, inserts or deletes using zero-based indices or unique cell IDs, refuses conflicting selectors, preserves untouched cells/metadata/attachments/outputs and clears edited code outputs/execution counts. Insertions produce valid modern IDs without upgrading legacy notebook versions. No kernel or notebook code runs. README feature coverage and the per-tool golden include notebook editing.
+
+Opaque notebook/cell metadata and untouched cell bodies remain raw JSON. A regression against the initial new implementation proves whole-document Value serialization rounded large numbers. The corrected adapter rewrites only controlled fields of the selected cell and preserves exact large integer and 1e9999 literals in notebook metadata, target-cell metadata and untouched MIME output data. serde_json raw_value support adds no general numeric conversion change.
+
+Valid no-ops still require edit permission and preserve original bytes. Real interactive-runtime cases change the notebook during approval for a mutation and a no-op, then approve and prove refusal retains the user's content. An actual auto-mode classifier admits a notebook file edit. Host cases cover default unattended refusal, accept-edits, explicit denial, plan/model catalog admission, external-directory refusal, empty/Unicode source, selection/type changes, ID validation, malformed requests/documents and legacy insertion. Local validation passes 12 notebook, nine complete tool goldens, 35 built-in tool and 19 runtime flow cases, plus the Windows CI command-propagation regression (76 total). Workspace all-target Clippy with warnings/complexity denied, formatting/diff and generated SDK consistency checks pass. All 59 strict OpenSpec items pass; cross-spec lint has zero errors and 21 warnings.
+
+Early Windows CI now executes the complete notebook and golden targets. Fresh native notebook acceptance remains pending; preceding diagnostics run 38044079378 at `75885de` remains live at observation. The four-tool LSP synchronization/diagnostics debounce/wait/feedback, other-file write reporting, sandboxed formatters and all remaining P1 contracts stay required. No complete milestone is accepted. P0 local-model services, data, artifacts and its independent exit gate are preserved.
+
 ## Validated LSP diagnostic cache evidence (2026-10-10)
 
 The worker now validates typed diagnostic publications for canonical regular UTF-8 files under its root, retaining a bounded 128-file/1 MiB cache and an independently bounded raw notification archive. Opened-document server versions must match the client version; omitted server versions remain omitted, and unopened project-system files do not claim client-version correlation. Valid sets replace prior data, including empty clears. Invalid publications leave prior sets intact. Retrieval revalidates disk contents, managed creation identities and observed client versions. Arbitrary server metadata and related-information URIs do not reach typed snapshots.
@@ -195,7 +205,7 @@ Canonical source: [builtin-tools](../../openspec/specs/builtin-tools/spec.md).
 
 - [ ] Capability-owned tool catalog
 - [ ] powershell tool
-- [ ] notebook_edit tool
+- [ ] notebook_edit tool — local implementation and tests pass; fresh native CI remains pending.
 - [ ] monitor tool
 
 ### client-sdk (1)

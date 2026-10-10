@@ -287,16 +287,7 @@ pub(crate) async fn guarded_write(
     diff: String,
 ) -> Result<(), ToolError> {
     ctx.check_external(&[path.to_path_buf()]).await?;
-    let resource = ctx.resource(path);
-    let req = Request {
-        action: "edit".into(),
-        resources: vec![resource.clone()],
-        mutates: vec![path.to_path_buf()],
-        file_edit: true,
-        ..Request::default()
-    };
-    ctx.authorize(req, vec![resource], json!({ "diff": diff }))
-        .await?;
+    authorize_edit(ctx, path, diff).await?;
     let lock = ctx.host.path_lock(path);
     let _guard = lock.lock().await;
     let current = tokio::fs::read(path).await.ok();
@@ -315,6 +306,23 @@ pub(crate) async fn guarded_write(
         .map_err(|e| failed(format!("Could not write {}: {e}", path.display())))?;
     ctx.host.mark_read(&ctx.inv.session_id, path);
     Ok(())
+}
+
+pub(crate) async fn authorize_edit(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    diff: String,
+) -> Result<(), ToolError> {
+    let resource = ctx.resource(path);
+    let req = Request {
+        action: "edit".into(),
+        resources: vec![resource.clone()],
+        mutates: vec![path.to_path_buf()],
+        file_edit: true,
+        ..Request::default()
+    };
+    ctx.authorize(req, vec![resource], json!({ "diff": diff }))
+        .await
 }
 
 impl Tool for Write {
