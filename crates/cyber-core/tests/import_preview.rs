@@ -627,7 +627,7 @@ fn empty_converted_config_does_not_contaminate_codex_rule_provenance() {
     write(
         &roots.home,
         ".codex/config.toml",
-        "approval_policy='on-request'\n",
+        "unknown_policy='future-policy'\n",
     );
     write(
         &roots.directory,
@@ -657,4 +657,102 @@ fn empty_converted_config_does_not_contaminate_codex_rule_provenance() {
             .iter()
             .all(|s| s.field.starts_with("converted:"))
     );
+}
+
+#[test]
+fn layered_codex_approval_and_sandbox_are_proposed_with_exact_field_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.home,
+        ".codex/config.toml",
+        "approval_policy='never'\nsandbox_mode='read-only'\n",
+    );
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        "sandbox_mode='workspace-write'\n",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(preview.output().diff.contains("dont-ask"));
+    assert!(preview.output().diff.contains("workspace-write"));
+    let policy = preview
+        .output()
+        .report
+        .iter()
+        .find(|r| r.field == "/sandbox/policy")
+        .unwrap();
+    assert_eq!(
+        policy.sources[0].source,
+        roots.directory.join(".codex/config.toml")
+    );
+    assert_eq!(policy.sources[0].field, "/sandbox_mode");
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"mode":"plan","sandbox":{"policy":"read-only"}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(preview.output().diff.is_empty());
+    assert!(
+        preview
+            .output()
+            .report
+            .iter()
+            .any(|r| r.field == "/mode" && r.status == "merged")
+    );
+}
+
+#[test]
+fn retired_codex_approval_emits_a_note_and_unsupported_policy_refuses_the_whole_preview() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        "approval_policy='untrusted'\n",
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    assert!(
+        preview
+            .output()
+            .report
+            .iter()
+            .any(|r| r.reason.contains("deprecation note"))
+    );
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        "model='coder'\napproval_policy='private-source-secret'\n",
+    );
+    let error = preview_import(
+        &roots,
+        Some(SourceTool::Codex),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .err()
+    .unwrap();
+    assert!(!error.to_string().contains("private-source-secret"));
+    assert!(!roots.directory.join("cyber.jsonc").exists());
 }

@@ -160,3 +160,20 @@ fn reviewed_snapshot_allows_project_root_rename_and_refuses_same_content_replace
     assert!(snapshot.verify().is_err());
     assert_eq!(snapshot.bytes(), b"same-content");
 }
+
+#[test]
+fn ancestor_container_rename_and_same_content_replacement_invalidate_review() {
+    let temp = tempfile::tempdir().unwrap();
+    let outer = temp.path().canonicalize().unwrap();
+    let container = outer.join("container");
+    std::fs::create_dir(&container).unwrap();
+    let (roots, source) = fixture(&container, b"same-content");
+    let snapshot = SourceSnapshot::read(&roots, &source).unwrap();
+    std::fs::rename(&container, outer.join("retained-container")).unwrap();
+    std::fs::create_dir(&container).unwrap();
+    let (replacement_roots, replacement_source) = fixture(&container, b"same-content");
+    let replacement = SourceSnapshot::read(&replacement_roots, &replacement_source).unwrap();
+    assert_eq!(replacement.bytes(), snapshot.bytes());
+    assert!(snapshot.verify().is_err());
+    replacement.verify().unwrap();
+}

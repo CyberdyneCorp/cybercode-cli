@@ -11,7 +11,6 @@ use std::{
 
 #[cfg(windows)]
 #[path = "snapshot_windows.rs"]
-#[allow(unsafe_code)] // Attribute-only handle retention is isolated in this native backend.
 mod windows;
 
 const LIMIT: u64 = 1024 * 1024;
@@ -154,13 +153,14 @@ impl OpenSource {
     }
     #[cfg(windows)]
     fn retain_review_identities(&mut self, path: &Path) -> Result<(), DiscoveryError> {
+        let mut paths: Vec<_> = path.ancestors().skip(1).collect();
+        paths.reverse();
+        if paths.len() != self._directories.len() {
+            return Err(error(path, "source directory identity chain is incomplete"));
+        }
         let mut handles = Vec::new();
-        for (directory, expected) in self._directories.iter().zip(&self.bindings) {
-            let original = directory
-                .try_clone()
-                .map_err(|_| error(path, "source directory handle is unavailable"))?
-                .into_std_file();
-            let retained = windows::retain_directory_identity(&original).map_err(|e| {
+        for (binding, expected) in paths.iter().zip(&self.bindings) {
+            let retained = windows::retain_directory_identity(binding).map_err(|e| {
                 let reason = match e.raw_os_error() {
                     Some(5) => "source review identity handoff denied access",
                     Some(6) => "source review identity handoff rejected the directory handle",

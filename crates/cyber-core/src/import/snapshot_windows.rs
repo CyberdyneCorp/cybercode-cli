@@ -1,31 +1,23 @@
-//! Retain an already-open directory identity without pathname lookup or mutation access.
+//! Attribute-only retention checked against the still-pinned source directory chain.
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io,
-    os::windows::io::{AsRawHandle, FromRawHandle},
+    os::windows::fs::OpenOptionsExt,
+    path::Path,
 };
-use windows_sys::Win32::{
-    Foundation::INVALID_HANDLE_VALUE,
-    Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, ReOpenFile,
-    },
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
 
-pub(super) fn retain_directory_identity(original: &File) -> io::Result<File> {
-    // The borrowed File owns a live handle. Attribute access adds neither enumeration nor writes.
-    // Delete sharing permits user renames after lookup handles are released by the caller.
-    let handle = unsafe {
-        ReOpenFile(
-            original.as_raw_handle(),
-            FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
-    }
-    // Success returns an independent handle. File owns it and closes it on every subsequent path.
-    Ok(unsafe { File::from_raw_handle(handle) })
+pub(super) fn retain_directory_identity(path: &Path) -> io::Result<File> {
+    // The caller retains every original lookup handle until all identities match.
+    // Query only attributes, reject final reparse points through the identity check,
+    // and permit user renames after the original lookup handles are released.
+    OpenOptions::new()
+        .read(true)
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
 }

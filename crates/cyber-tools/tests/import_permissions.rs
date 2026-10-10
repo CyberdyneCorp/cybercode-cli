@@ -446,3 +446,33 @@ async fn codex_rules_text_retains_forbidden_prefix_through_the_actual_host() {
     assert!(error.contains("denied"), "{error}");
     assert!(!error.contains("Could not start"));
 }
+
+#[test]
+fn converted_codex_sandbox_policies_resolve_without_bypassing_project_restrictions() {
+    use cyber_sandbox::{Policy, SandboxConfig};
+    let home = std::path::Path::new("/home/user");
+    for (source, expected) in [
+        ("read-only", Policy::ReadOnly),
+        ("workspace-write", Policy::WorkspaceWrite),
+        ("danger-full-access", Policy::FullAccess),
+    ] {
+        let mapped = cyber_core::import::codex_policy_config(
+            &json!({"approval_policy":"never","sandbox_mode":source}),
+        )
+        .unwrap();
+        let global = BTreeMap::from([("/sandbox/policy".into(), "global:cyber.jsonc".into())]);
+        assert_eq!(
+            SandboxConfig::resolve(&mapped.config, &global, None, home).policy,
+            expected
+        );
+        let project = BTreeMap::from([("/sandbox/policy".into(), "project:cyber.jsonc".into())]);
+        assert_eq!(
+            SandboxConfig::resolve(&mapped.config, &project, None, home).policy,
+            if expected == Policy::FullAccess {
+                Policy::WorkspaceWrite
+            } else {
+                expected
+            }
+        );
+    }
+}

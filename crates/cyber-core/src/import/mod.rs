@@ -1,6 +1,7 @@
 //! Read-only source discovery and pure migration planning; neither grants trust or execution authority.
 mod claude;
 mod codex;
+mod codex_policy;
 mod codex_providers;
 mod codex_source;
 mod detection;
@@ -11,6 +12,7 @@ mod provenance;
 mod snapshot;
 pub use claude::{ClaudePermissions, ConversionError, PermissionRule, claude_permissions};
 pub use codex::codex_prefix_rules;
+pub use codex_policy::{CodexPolicyConfig, codex_policy_config};
 pub use codex_providers::{
     CodexProviderConfig, ProviderMappingIssue, RequiredEnvironment, codex_provider_config,
     codex_provider_source,

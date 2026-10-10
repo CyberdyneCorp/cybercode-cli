@@ -376,6 +376,46 @@ fn source_config(
     snapshots.push(snapshot);
     Ok(Some(config))
 }
+fn codex_config(
+    source: &SourceFile,
+    document: &Value,
+    required: &mut Vec<RequiredEnvironment>,
+    report: &mut Vec<MappingRecord>,
+) -> Result<Value, DiscoveryError> {
+    let converted = converted(source, codex_provider_config(document))?;
+    let mut config = converted.config;
+    let policy = super::codex_policy_config(document).map_err(|_| {
+        error(
+            &source.path,
+            "approval/sandbox conversion refused; advanced source policy adapter required",
+        )
+    })?;
+    for (key, value) in policy.config.as_object().into_iter().flatten() {
+        config[key] = value.clone();
+    }
+    if policy.deprecated_untrusted {
+        report.push(record(
+            &source.path,
+            "approval_policy",
+            "imported",
+            "retired untrusted approval policy; deprecation note",
+        ));
+    }
+    required.extend(converted.required_environment);
+    for pending in converted.not_imported {
+        let field = provenance::indexed_field(document, &pending.field);
+        if matches!(field.as_deref(), Some("/approval_policy" | "/sandbox_mode")) {
+            continue;
+        }
+        report.push(record(
+            &source.path,
+            pending.field,
+            "not imported",
+            pending.reason,
+        ));
+    }
+    Ok(config)
+}
 fn document_config(
     source: &SourceFile,
     document: &Value,
@@ -384,20 +424,7 @@ fn document_config(
 ) -> Result<Value, DiscoveryError> {
     let mut config = json!({});
     let supported: &[&str] = match source.tool {
-        SourceTool::Codex => {
-            let converted = converted(source, codex_provider_config(document))?;
-            config = converted.config;
-            required.extend(converted.required_environment);
-            for pending in converted.not_imported {
-                report.push(record(
-                    &source.path,
-                    pending.field,
-                    "not imported",
-                    pending.reason,
-                ));
-            }
-            return Ok(config);
-        }
+        SourceTool::Codex => return codex_config(source, document, required, report),
         SourceTool::Claude => {
             let permissions = converted(source, claude_permissions(document))?;
             if !permissions.rules.is_empty() {

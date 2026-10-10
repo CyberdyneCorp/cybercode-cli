@@ -264,7 +264,17 @@ pub(super) fn converted(
                     vec!["/model".into(), "/model_provider".into()]
                 }
                 "/model" => vec!["/model".into()],
+                "/mode" if tool == SourceTool::Codex => {
+                    vec!["/approval_policy".into(), "/sandbox_mode".into()]
+                }
                 "/mode" => vec!["/permissions/defaultMode".into()],
+                "/sandbox/policy" if tool == SourceTool::Codex => {
+                    vec![if raw.get("sandbox_mode").is_some() {
+                        "/sandbox_mode".into()
+                    } else {
+                        "/approval_policy".into()
+                    }]
+                }
                 _ if tool == SourceTool::Codex && pointer.starts_with("/providers/") => {
                     provider_inputs(&pointer, raw)
                 }
