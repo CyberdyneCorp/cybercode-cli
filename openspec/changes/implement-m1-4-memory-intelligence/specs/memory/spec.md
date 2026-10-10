@@ -458,3 +458,10 @@
 - **AND** already archived saves SHALL reopen without a second installation or archival; restored bytes SHALL remain evidence without request authority
 - **AND** test interruption barriers SHALL exist only in test builds and operate only on their explicitly owned child fixture
 - **AND** bounded history retention and full native lifecycle acceptance SHALL remain required before public activation
+
+#### Scenario: Windows exact-object private disposal
+- **WHEN** native storage disposes a recorded private file or empty directory
+- **THEN** it SHALL acquire an exact-ID no-sharing capability, refuse independent readers/writers and aliases, and normally flush the source and retained private parent before native delete disposition
+- **AND** it SHALL check disposition and close outcomes, close the source before post-deletion operations, normally flush the parent and verify named absence before acknowledging removal
+- **AND** wrong identity, unsafe objects, nonempty directories, failed preflight/settlement/flush or recreated names SHALL refuse without deleting a replacement or rolling back effects
+- **AND** persisted bounded history cleanup/recovery and full lifecycle acceptance SHALL remain required before public checkpoint activation

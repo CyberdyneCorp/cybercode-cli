@@ -97,13 +97,16 @@ pub(super) enum Mode {
     Open(Access),
     Pinned(Access),
     Frozen,
+    Dispose,
     Retain,
 }
 impl Mode {
     fn disposition(self) -> u32 {
         match self {
             Self::Create => FILE_CREATE,
-            Self::Open(_) | Self::Pinned(_) | Self::Frozen | Self::Retain => FILE_OPEN,
+            Self::Open(_) | Self::Pinned(_) | Self::Frozen | Self::Dispose | Self::Retain => {
+                FILE_OPEN
+            }
         }
     }
     fn access(self) -> u32 {
@@ -120,7 +123,7 @@ impl Mode {
     fn information(self) -> usize {
         match self {
             Self::Create => 2,
-            Self::Open(_) | Self::Pinned(_) | Self::Frozen | Self::Retain => 1,
+            Self::Open(_) | Self::Pinned(_) | Self::Frozen | Self::Dispose | Self::Retain => 1,
         }
     }
 }
@@ -206,7 +209,7 @@ pub(super) fn child(
     }
     let descriptor = match mode {
         Mode::Create => Some(private_descriptor()?),
-        Mode::Open(_) | Mode::Pinned(_) | Mode::Frozen | Mode::Retain => None,
+        Mode::Open(_) | Mode::Pinned(_) | Mode::Frozen | Mode::Dispose | Mode::Retain => None,
     };
     let unicode = UNICODE_STRING {
         Length: (name.len() * 2) as u16,
@@ -235,7 +238,9 @@ pub(super) fn child(
             &mut status,
             null(),
             FILE_ATTRIBUTE_NORMAL,
-            if matches!(mode, Mode::Retain | Mode::Frozen) {
+            if matches!(mode, Mode::Dispose) {
+                0
+            } else if matches!(mode, Mode::Retain | Mode::Frozen) {
                 FILE_SHARE_READ
             } else if matches!(mode, Mode::Pinned(_)) {
                 FILE_SHARE_READ | FILE_SHARE_WRITE
