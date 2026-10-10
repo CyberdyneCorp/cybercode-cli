@@ -158,7 +158,7 @@ fn mutation_admission(ctx: &Context) -> Result<(), CliError> {
     if !settings.generate {
         return Err(CliError::usage("Memory is read-only"));
     }
-    if !cfg!(unix) {
+    if !cfg!(any(unix, windows)) {
         return Err(CliError::unavailable(
             "Memory mutations",
             "M1.4 native storage privacy",

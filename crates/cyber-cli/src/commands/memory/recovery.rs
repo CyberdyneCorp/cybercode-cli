@@ -2,6 +2,8 @@
 use super::*;
 use cyber_core::{memory::MemoryRecoveryReview, paths::DatabaseLocation};
 use rusqlite::{Connection, OpenFlags};
+#[cfg(windows)]
+mod native;
 
 pub(super) fn validate_review(review: &str) -> Result<(), CliError> {
     if review.len() != 64
@@ -63,8 +65,10 @@ pub(super) fn database_admission(ctx: &Context, project: &str) -> Result<(), Cli
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(_) => return Err(unavailable()),
     }
+    #[cfg(windows)]
+    let identity = native::DatabaseInspection::new(&path).map_err(|_| unavailable())?;
     let db = Connection::open_with_flags(
-        path,
+        &path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )
     .map_err(|_| unavailable())?;
@@ -75,6 +79,8 @@ pub(super) fn database_admission(ctx: &Context, project: &str) -> Result<(), Cli
         [], |row| row.get(0),
     ).map_err(|_| unavailable())?;
     if !table {
+        #[cfg(windows)]
+        identity.verify().map_err(|_| unavailable())?;
         return Ok(());
     }
     let pending: bool = db
@@ -84,6 +90,8 @@ pub(super) fn database_admission(ctx: &Context, project: &str) -> Result<(), Cli
             |row| row.get(0),
         )
         .map_err(|_| unavailable())?;
+    #[cfg(windows)]
+    identity.verify().map_err(|_| unavailable())?;
     if pending {
         return Err(CliError::runtime(
             "Memory database admission is unresolved; database/file reconciliation is required",

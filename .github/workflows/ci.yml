@@ -63,6 +63,12 @@ jobs:
       - name: Native authenticated application memory lifecycle
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-app --test memory
+      - name: Native CLI memory database identity inspection
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-cli --bin cyber commands::memory::recovery::native
+      - name: Native CLI memory editor and recovery lifecycle
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-cli --test memory
       - name: Native public client checkpoint storage
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test memory_client_state

@@ -37,7 +37,7 @@ impl Env {
     fn data(&self) -> PathBuf {
         self.root.join("cyber/data")
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn note_path(&self) -> PathBuf {
         self.data().join("memory/global/coding-policy.md")
     }
@@ -71,7 +71,7 @@ fn body(output: Output) -> Value {
     );
     serde_json::from_slice(&output.stdout).unwrap()
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn note(fact: &str) -> String {
     format!("---\nname: coding-policy\ndescription: Coding policy\ntype: reference\n---\n{fact}\n")
 }
@@ -290,7 +290,7 @@ fn disabled_readonly_and_unsupported_mutations_refuse_editor_start() {
         assert!(!env.data().join("memory/global").exists());
         env.no_database();
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let env = Env::new();
         assert!(
@@ -315,7 +315,7 @@ fn absent_recovery_and_invalid_review_create_no_scope_or_database() {
     env.no_database();
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn prepare_recovery(env: &Env) -> cyber_core::memory::MemoryStore {
     std::fs::create_dir_all(env.data()).unwrap();
     let store = cyber_core::memory::MemoryStore::open(&env.data(), "global").unwrap();
@@ -326,7 +326,7 @@ fn prepare_recovery(env: &Env) -> cyber_core::memory::MemoryStore {
     store
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn reviewed_recovery_commits_once_without_creating_a_database() {
     let env = Env::new();
@@ -358,7 +358,7 @@ fn reviewed_recovery_commits_once_without_creating_a_database() {
     env.no_database();
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn stale_recovery_and_fresh_settings_preserve_files_and_journal() {
     for mode in ["stale", "disabled", "readonly"] {
@@ -394,7 +394,7 @@ fn stale_recovery_and_fresh_settings_preserve_files_and_journal() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn durable_pending_admission_and_unverifiable_database_refuse_file_recovery() {
     for mode in [
@@ -549,7 +549,7 @@ fn server_recovery_requires_explicit_confirmation_and_existing_registration() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_loss() {
     use cyber_core::paths::{DatabaseLocation, Paths};
@@ -747,3 +747,7 @@ async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_l
     server.await.unwrap().unwrap();
     app.runtime.shutdown().await;
 }
+
+#[cfg(windows)]
+#[path = "memory/windows.rs"]
+mod native;
