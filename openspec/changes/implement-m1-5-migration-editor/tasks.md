@@ -2,7 +2,7 @@
 
 - [ ] Implement pure permission and mode conversion with faithful precedence and bounded errors.
   - [x] Add the initial pure Claude group ordering and supported action/mode converter, bounded errors and shared engine/tool decision tests. Full source mapping remains open.
-  - [ ] Preserve distinct Claude edit-tool permission granularity and complete remaining selector conversion.
+  - [x] Preserve distinct Claude edit-tool selectors through exact native tool scopes, current/ancestor mode ceilings, deny ceilings and catalog filtering; test actual write/edit/notebook operations. Remaining source selectors and complete migration acceptance stay open.
   - [ ] Convert Codex policies/profiles/execpolicy and OpenCode ordered/legacy permissions.
 - [ ] Discover every canonical Claude/Codex/OpenCode project/global source, including auto precedence and detection summaries.
 - [ ] Convert providers, credentials/env, agents, commands, skills, rules, instructions, hooks, MCP and remaining canonical configuration fields.

@@ -76,10 +76,23 @@ fn command_arguments_are_retained_without_shell_evaluation() {
 }
 
 #[test]
-fn distinct_edit_selectors_cannot_silently_grant_the_shared_edit_action() {
-    for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
+fn distinct_edit_selectors_retain_exact_native_tool_scope() {
+    for (tool, native) in [
+        ("Edit", "edit"),
+        ("Write", "write"),
+        ("MultiEdit", "edit"),
+        ("NotebookEdit", "notebook_edit"),
+    ] {
         let selector = format!("{tool}(./src/*.rs)");
-        assert!(claude_permissions(&json!({"permissions":{"allow":[selector]}})).is_err());
+        let converted = claude_permissions(&json!({"permissions":{"allow":[selector]}})).unwrap();
+        assert_eq!(converted.rules.len(), 1);
+        assert_eq!(converted.rules[0].action, "edit");
+        assert_eq!(converted.rules[0].resource, "src/*.rs");
+        assert_eq!(converted.rules[0].tool.as_deref(), Some(native));
+        assert_eq!(
+            serde_json::to_value(&converted.rules).unwrap()[0]["tool"],
+            native
+        );
     }
 }
 

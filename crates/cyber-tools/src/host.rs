@@ -681,7 +681,7 @@ impl ToolHost for BuiltinHost {
                     .then(|| tools::memory::definition(settings.generate && mode != Mode::Plan))
             })
             .filter(|d| offered(&d.spec.name, turn.prefers_apply_patch, mode, d.retry_safety))
-            .filter(|d| !fully_denied(&rules, tools::action_of(&d.spec.name)))
+            .filter(|d| !fully_denied_scoped(&rules, tools::action_of(&d.spec.name), &d.spec.name))
             .filter(|d| {
                 d.spec.name != "websearch" || self.websearch_available(Path::new(&turn.directory))
             })
@@ -988,7 +988,11 @@ fn profile_allows_tool(profile: &cyber_core::config::AgentProfile, name: &str) -
 
 /// Hidden when the last rule matching the action with resource `*` denies it.
 pub(crate) fn fully_denied(rules: &[permissions::Rule], action: &str) -> bool {
-    matches!(permissions::evaluate(rules, action, "*"), (Effect::Deny, Some(rule)) if rule.resource == "*")
+    fully_denied_scoped(rules, action, action)
+}
+
+fn fully_denied_scoped(rules: &[permissions::Rule], action: &str, tool: &str) -> bool {
+    matches!(permissions::evaluate_scoped(rules, action, "*", Some(tool)), (Effect::Deny, Some(rule)) if rule.resource == "*")
 }
 
 /// Everything a tool needs for one call.
@@ -1051,10 +1055,11 @@ impl Ctx<'_> {
     /// Decide, asking the user when the policy says `ask`.
     pub async fn authorize(
         &self,
-        req: Request,
+        mut req: Request,
         always: Vec<String>,
         mut metadata: Value,
     ) -> Result<(), ToolError> {
+        req.tool = Some(self.inv.name.clone());
         let decision = self.policy.decide(&req);
         if let Decision::Deny(reason) = decision {
             return Err(ToolError::Failed(deny_message(&reason)));

@@ -739,6 +739,7 @@ fn tcp_status(env: &Env, body: Value, status: &'static str) -> std::thread::Join
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if let Ok((stream, _)) = listener.accept() {
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(2)))
                     .unwrap();
@@ -818,7 +819,14 @@ fn lsp_status_live_empty_snapshot_is_stopped_and_human_roots_are_visible() {
     assert!(stdout(&output).contains("unknown"));
     assert!(
         stdout(&output).contains("starting:")
-            && stdout(&output).contains(&env.root.display().to_string())
+            && stdout(&output).contains(
+                &env.root
+                    .display()
+                    .to_string()
+                    .chars()
+                    .flat_map(char::escape_debug)
+                    .collect::<String>(),
+            )
     );
 }
 

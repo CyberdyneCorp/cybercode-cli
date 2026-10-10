@@ -3,6 +3,8 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PermissionRule {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
     pub action: String,
     pub resource: String,
     pub effect: String,
@@ -113,6 +115,7 @@ fn selector(text: &str, effect: &str, field: &str) -> Result<PermissionRule, Con
         return Err(refused(field, "empty resource"));
     }
     Ok(PermissionRule {
+        tool: tool_scope(tool).map(str::to_owned),
         action: action.into(),
         resource,
         effect: effect.into(),
@@ -123,10 +126,20 @@ fn action(tool: &str) -> Option<&'static str> {
     match tool {
         "Bash" => Some("bash"),
         "Read" => Some("read"),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => Some("edit"),
         "Glob" => Some("glob"),
         "Grep" => Some("grep"),
         "Skill" => Some("skill"),
         "Task" | "Agent" => Some("agent"),
+        _ => None,
+    }
+}
+
+fn tool_scope(tool: &str) -> Option<&'static str> {
+    match tool {
+        "Write" => Some("write"),
+        "NotebookEdit" => Some("notebook_edit"),
+        "Edit" | "MultiEdit" => Some("edit"),
         _ => None,
     }
 }

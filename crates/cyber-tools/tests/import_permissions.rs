@@ -63,3 +63,223 @@ async fn converted_read_deny_blocks_actual_tools_even_in_bypass_mode() {
     );
     assert!(allowed.contains("public-value"));
 }
+
+#[tokio::test]
+async fn write_allow_cannot_authorize_edit_or_patch_calls() {
+    let fixture = support::Fixture::new();
+    fixture.write("a.txt", "old");
+    let converted =
+        claude_permissions(&json!({"permissions":{"allow":["Read", "Write(./a.txt)"]}})).unwrap();
+    fixture.set_config(json!({"permissions":converted.rules,"lsp":false,"formatters":false}));
+    support::ok(
+        fixture
+            .call("default", "read", json!({"path":"a.txt"}))
+            .await,
+    );
+    support::ok(
+        fixture
+            .call(
+                "default",
+                "write",
+                json!({"path":"a.txt","content":"written"}),
+            )
+            .await,
+    );
+    let edit = support::failed(
+        fixture
+            .call(
+                "default",
+                "edit",
+                json!({"path":"a.txt","old_string":"written","new_string":"edited"}),
+            )
+            .await,
+    );
+    assert!(edit.contains("no interactive approver"), "{edit}");
+    let patch=support::failed(fixture.call("default","apply_patch",json!({"patch":"*** Begin Patch\n*** Update File: a.txt\n@@\n-written\n+patched\n*** End Patch"})).await);
+    assert!(patch.contains("no interactive approver"), "{patch}");
+    assert_eq!(fixture.read("a.txt"), "written");
+}
+
+#[tokio::test]
+async fn scoped_write_deny_keeps_other_edit_tools_available() {
+    let fixture = support::Fixture::new();
+    fixture.write("a.txt", "old");
+    let converted =
+        claude_permissions(&json!({"permissions":{"allow":["Read", "Edit"],"deny":["Write"]}}))
+            .unwrap();
+    fixture.set_config(json!({"permissions":converted.rules,"lsp":false,"formatters":false}));
+    let tools = fixture.tool_names("default", false);
+    assert!(!tools.contains(&"write".into()));
+    assert!(tools.contains(&"edit".into()));
+    assert!(tools.contains(&"notebook_edit".into()));
+    support::ok(
+        fixture
+            .call("default", "read", json!({"path":"a.txt"}))
+            .await,
+    );
+    for mode in ["default", "bypass", "accept-edits", "auto", "dont-ask"] {
+        let denied = support::failed(
+            fixture
+                .call(mode, "write", json!({"path":"a.txt","content":"forbidden"}))
+                .await,
+        );
+        assert!(denied.contains("denied"), "{mode}: {denied}");
+    }
+    support::ok(
+        fixture
+            .call(
+                "default",
+                "edit",
+                json!({"path":"a.txt","old_string":"old","new_string":"edited"}),
+            )
+            .await,
+    );
+    assert_eq!(fixture.read("a.txt"), "edited");
+}
+
+fn policy(
+    rules: Vec<cyber_tools::permissions::Rule>,
+    mode: cyber_tools::permissions::Mode,
+) -> cyber_tools::permissions::Policy {
+    cyber_tools::permissions::Policy {
+        rules,
+        saved: vec![],
+        mode,
+        parent_modes: vec![],
+        location: "/repo".into(),
+        home: "/home/user".into(),
+        plan_file: "/repo/.cyber/plans/plan.md".into(),
+    }
+}
+
+#[test]
+fn scoped_rules_require_identity_and_keep_modes_and_user_ceilings() {
+    use cyber_tools::permissions::{Decision, Mode, Request, Rule, evaluate_scoped};
+    let converted =
+        claude_permissions(&json!({"permissions":{"allow":["Write"],"deny":["NotebookEdit"]}}))
+            .unwrap();
+    let rules = parse_rules(
+        &serde_json::to_value(converted.rules).unwrap(),
+        &BTreeMap::new(),
+    );
+    assert_eq!(evaluate(&rules, "edit", "a.txt").0, Effect::Ask);
+    assert_eq!(
+        evaluate_scoped(&rules, "edit", "a.txt", Some("write")).0,
+        Effect::Allow
+    );
+    assert_eq!(
+        evaluate_scoped(&rules, "edit", "a.txt", Some("edit")).0,
+        Effect::Ask
+    );
+    let req = Request {
+        action: "edit".into(),
+        resources: vec!["a.txt".into()],
+        tool: Some("write".into()),
+        file_edit: true,
+        mutates: vec!["/repo/a.txt".into()],
+        ..Request::default()
+    };
+    let mut p = policy(rules, Mode::Default);
+    assert_eq!(p.decide(&req), Decision::Allow);
+    p.parent_modes.push(Mode::Plan);
+    assert!(matches!(p.decide(&req), Decision::Deny(_)));
+    p.parent_modes.clear();
+    let mut denied = Rule::new("edit", "*", Effect::Deny, "global");
+    denied.tool = Some("write".into());
+    p.rules.push(denied);
+    p.rules
+        .push(Rule::new("edit", "*", Effect::Allow, "session"));
+    p.saved.push(Rule::new("edit", "*", Effect::Allow, "saved"));
+    for mode in [
+        Mode::Default,
+        Mode::Bypass,
+        Mode::AcceptEdits,
+        Mode::Auto,
+        Mode::DontAsk,
+    ] {
+        p.mode = mode;
+        assert!(matches!(p.decide(&req), Decision::Deny(_)));
+    }
+}
+
+#[test]
+fn invalid_scope_cannot_turn_into_an_unscoped_allow() {
+    for tool in [json!(null), json!(true), json!(""), json!("write\n")] {
+        let rules = parse_rules(
+            &json!([{"action":"edit","resource":"*","effect":"allow","tool":tool}]),
+            &BTreeMap::new(),
+        );
+        assert_eq!(evaluate(&rules, "edit", "a.txt").0, Effect::Deny);
+        assert_eq!(
+            cyber_tools::permissions::evaluate_scoped(&rules, "edit", "a.txt", Some("write")).0,
+            Effect::Deny
+        );
+    }
+}
+
+#[test]
+fn protected_exact_allow_is_bound_to_its_action_and_tool() {
+    use cyber_tools::permissions::{Decision, Mode, Request, Rule, slash};
+    let root = tempfile::tempdir().unwrap();
+    let location = root.path().canonicalize().unwrap();
+    let target = location.join("cyber.jsonc");
+    let mut p = policy(
+        vec![Rule::new("read", &slash(&target), Effect::Allow, "global")],
+        Mode::Bypass,
+    );
+    p.location = location;
+    let mut req = Request {
+        action: "edit".into(),
+        resources: vec!["cyber.jsonc".into()],
+        tool: Some("write".into()),
+        mutates: vec![target.clone()],
+        file_edit: true,
+        ..Request::default()
+    };
+    assert_eq!(p.decide(&req), Decision::Ask);
+    let mut scoped = Rule::new("edit", &slash(&target), Effect::Allow, "global");
+    scoped.tool = Some("write".into());
+    p.rules = vec![scoped];
+    assert_eq!(p.decide(&req), Decision::Allow);
+    req.tool = Some("edit".into());
+    assert_eq!(p.decide(&req), Decision::Ask);
+}
+
+#[tokio::test]
+async fn notebook_allow_and_write_deny_remain_independent() {
+    let fixture = support::Fixture::new();
+    fixture.write("work.ipynb",&json!({"nbformat":4,"nbformat_minor":0,"metadata":{},"cells":[{"cell_type":"code","metadata":{},"source":["old"],"outputs":[],"execution_count":null}]}).to_string());
+    let converted=claude_permissions(&json!({"permissions":{"allow":["NotebookEdit(./work.ipynb)"],"deny":["Write(./work.ipynb)"]}})).unwrap();
+    fixture.set_config(json!({"permissions":converted.rules,"lsp":false,"formatters":false}));
+    support::ok(
+        fixture
+            .call(
+                "default",
+                "notebook_edit",
+                json!({"path":"work.ipynb","mode":"replace","cell_index":0,"new_source":"new"}),
+            )
+            .await,
+    );
+    let after = fixture.read("work.ipynb");
+    assert!(after.contains("new"));
+    let denied = support::failed(
+        fixture
+            .call(
+                "bypass",
+                "write",
+                json!({"path":"work.ipynb","content":"forbidden"}),
+            )
+            .await,
+    );
+    assert!(denied.contains("denied"));
+    assert_eq!(fixture.read("work.ipynb"), after);
+}
+
+#[test]
+fn legacy_rule_wire_shape_is_unchanged_and_old_records_deserialize() {
+    use cyber_tools::permissions::Rule;
+    let json = json!({"action":"edit","resource":"*","effect":"allow","source":"global"});
+    let rule: Rule = serde_json::from_value(json.clone()).unwrap();
+    assert!(rule.tool.is_none());
+    assert_eq!(serde_json::to_value(rule).unwrap(), json);
+}

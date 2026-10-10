@@ -122,7 +122,13 @@ async fn bash_golden() {
     #[cfg(not(windows))]
     let f = Fixture::new();
     #[cfg(windows)]
-    let f = Fixture::with_policy("bash", None, Some("full-access".into()));
+    let f = Fixture::with_policy(
+        "bash",
+        Some(
+            cyber_sandbox::find_helper().expect("build cyber-sandbox-exec before Windows goldens"),
+        ),
+        Some("full-access".into()),
+    );
     f.set_config(json!({"permissions":{"bash":"allow"}}));
     support::golden(
         &f,

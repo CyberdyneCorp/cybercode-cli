@@ -314,17 +314,22 @@ mod removal_tests {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().canonicalize().unwrap();
         let path = directory.join("deleted.rs");
+        // PathBuf::join normalizes parent components on Windows verbatim paths.
+        let mut raw = directory.as_os_str().to_os_string();
+        for part in ["missing", "..", "deleted.rs"] {
+            raw.push(std::path::MAIN_SEPARATOR_STR);
+            raw.push(part);
+        }
+        let noncanonical = PathBuf::from(raw);
+        assert!(
+            noncanonical
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+        );
         verify_removed(path.clone(), vec![]).await.unwrap();
         std::fs::write(&path, "replacement").unwrap();
         verify_origin(path.clone(), vec![]).await.unwrap();
-        assert!(
-            verify_origin(
-                directory.join("missing").join("..").join("deleted.rs"),
-                vec![]
-            )
-            .await
-            .is_err()
-        );
+        assert!(verify_origin(noncanonical.clone(), vec![]).await.is_err());
         assert!(
             verify_removed(PathBuf::from("deleted.rs"), vec![])
                 .await
@@ -332,14 +337,7 @@ mod removal_tests {
         );
         assert!(verify_removed(path.clone(), vec![]).await.is_err());
         std::fs::remove_file(&path).unwrap();
-        assert!(
-            verify_removed(
-                directory.join("missing").join("..").join("deleted.rs"),
-                vec![]
-            )
-            .await
-            .is_err()
-        );
+        assert!(verify_removed(noncanonical.clone(), vec![]).await.is_err());
         assert!(verify_removed(directory.clone(), vec![]).await.is_err());
         #[cfg(unix)]
         {

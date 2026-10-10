@@ -42,6 +42,8 @@ jobs:
           key: windows-lint
       - name: Check native Windows lint
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Build Windows process ownership helper
+        run: cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - name: Native code intelligence configuration and discovery
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test config --test intelligence_config --test intelligence_discovery --test formatter_discovery --test import_permissions

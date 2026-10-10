@@ -29,6 +29,8 @@ impl Effect {
 /// One ordered rule. `source` is the config layer it came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
     pub action: String,
     pub resource: String,
     pub effect: Effect,
@@ -38,6 +40,7 @@ pub struct Rule {
 impl Rule {
     pub fn new(action: &str, resource: &str, effect: Effect, source: &str) -> Self {
         Self {
+            tool: None,
             action: action.into(),
             resource: resource.into(),
             effect,
@@ -82,12 +85,22 @@ fn ordered_rule(index: usize, item: &Value, sources: &BTreeMap<String, String>) 
         .or_else(|| sources.get(&base))
         .or_else(|| sources.get("/permissions"))
         .map_or("config", String::as_str);
-    Some(Rule::new(
+    let mut rule = Rule::new(
         item.get("action")?.as_str()?,
         item.get("resource")?.as_str()?,
         Effect::parse(item.get("effect")?.as_str()?)?,
         source,
-    ))
+    );
+    if let Some(scope) = item.get("tool") {
+        match scope
+            .as_str()
+            .filter(|tool| !tool.is_empty() && !tool.chars().any(char::is_control))
+        {
+            Some(tool) => rule.tool = Some(tool.into()),
+            None => rule.effect = Effect::Deny,
+        }
+    }
+    Some(rule)
 }
 
 fn action_rules(action: &str, spec: &Value, source_of: &dyn Fn(&str) -> String) -> Vec<Rule> {
@@ -118,11 +131,39 @@ fn escape(key: &str) -> String {
 
 /// The last rule whose action and resource match, else `ask`.
 pub fn evaluate<'a>(rules: &'a [Rule], action: &str, resource: &str) -> (Effect, Option<&'a Rule>) {
+    evaluate_scoped(rules, action, resource, None)
+}
+
+/// A scoped rule requires the exact bound invocation; unscoped rules keep their meaning.
+pub fn evaluate_scoped<'a>(
+    rules: &'a [Rule],
+    action: &str,
+    resource: &str,
+    tool: Option<&str>,
+) -> (Effect, Option<&'a Rule>) {
     rules
         .iter()
         .rev()
-        .find(|r| matches(&r.action, action) && matches(&r.resource, resource))
-        .map_or((Effect::Ask, None), |r| (r.effect, Some(r)))
+        .find(|rule| rule_matches(rule, action, resource, tool))
+        .map_or((Effect::Ask, None), |rule| (rule.effect, Some(rule)))
+}
+
+fn rule_matches(rule: &Rule, action: &str, resource: &str, tool: Option<&str>) -> bool {
+    matches(&rule.action, action)
+        && matches(&rule.resource, resource)
+        && rule.tool.as_deref().is_none_or(|scope| Some(scope) == tool)
+}
+
+fn request_effect(rules: &[Rule], req: &Request) -> Effect {
+    req.resources
+        .iter()
+        .map(|resource| evaluate_scoped(rules, &req.action, resource, req.tool.as_deref()).0)
+        .max_by_key(|effect| match effect {
+            Effect::Allow => 0,
+            Effect::Ask => 1,
+            Effect::Deny => 2,
+        })
+        .unwrap_or(Effect::Ask)
 }
 
 /// Several resources: `deny` if any is denied, else `ask` if any asks, else `allow`.
@@ -211,6 +252,8 @@ impl Mode {
 /// What is being asked: the action, its resources, and facts the Mode needs.
 #[derive(Debug, Clone, Default)]
 pub struct Request {
+    /// Bound by the host from the actual invocation before authorization.
+    pub tool: Option<String>,
     pub action: String,
     pub resources: Vec<String>,
     /// The tool is read-only.
@@ -250,7 +293,7 @@ const PLAN_DENY: &str = "Plan mode is read-only. Present the plan with plan_exit
 
 impl Policy {
     pub fn decide(&self, req: &Request) -> Decision {
-        let ruled = evaluate_all(&self.rules, &req.action, &req.resources);
+        let ruled = request_effect(&self.rules, req);
         if let Some(denied) = self.rule_denial(req, ruled) {
             return denied;
         }
@@ -270,26 +313,20 @@ impl Policy {
     pub(crate) fn auto_review_allowed(&self, req: &Request) -> bool {
         (self.mode == Mode::Auto || self.parent_modes.contains(&Mode::Auto))
             && (self.mode == Mode::Auto
-                || self.decide_in_mode(
-                    req,
-                    evaluate_all(&self.rules, &req.action, &req.resources),
-                    self.mode,
-                ) != Decision::Ask)
+                || self.decide_in_mode(req, request_effect(&self.rules, req), self.mode)
+                    != Decision::Ask)
             && req.removal_risk.is_none()
             && !self.touches_protected(req)
             && self.parent_modes.iter().all(|mode| {
                 *mode == Mode::Auto
-                    || self.decide_in_mode(
-                        req,
-                        evaluate_all(&self.rules, &req.action, &req.resources),
-                        *mode,
-                    ) != Decision::Ask
+                    || self.decide_in_mode(req, request_effect(&self.rules, req), *mode)
+                        != Decision::Ask
             })
     }
 
     /// Explicit user delegation approves only spawn admission; child tools still use decide.
     pub(crate) fn user_delegation(&self, req: &Request) -> Decision {
-        let ruled = evaluate_all(&self.rules, &req.action, &req.resources);
+        let ruled = request_effect(&self.rules, req);
         self.rule_denial(req, ruled).unwrap_or(Decision::Allow)
     }
 
@@ -347,16 +384,16 @@ impl Policy {
             })
             .cloned()
             .collect();
-        req.resources
-            .iter()
-            .any(|res| evaluate(&ceilings, &req.action, res).0 == Effect::Deny)
+        req.resources.iter().any(|res| {
+            evaluate_scoped(&ceilings, &req.action, res, req.tool.as_deref()).0 == Effect::Deny
+        })
     }
 
     fn saved_allows(&self, req: &Request) -> bool {
         req.resources.iter().all(|res| {
             self.saved
                 .iter()
-                .any(|r| matches(&r.action, &req.action) && matches(&r.resource, res))
+                .any(|r| rule_matches(r, &req.action, res, req.tool.as_deref()))
         })
     }
 
@@ -393,9 +430,12 @@ impl Policy {
     fn exact_allow(&self, req: &Request) -> bool {
         req.mutates.iter().all(|p| {
             let path = slash(p);
-            self.rules
-                .iter()
-                .any(|r| r.effect == Effect::Allow && r.source != "default" && r.resource == path)
+            self.rules.iter().any(|r| {
+                r.effect == Effect::Allow
+                    && r.source != "default"
+                    && r.resource == path
+                    && rule_matches(r, &req.action, &path, req.tool.as_deref())
+            })
         })
     }
 }

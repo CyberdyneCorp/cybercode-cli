@@ -10,6 +10,6 @@ pub(crate) use filesystem::literal_edits;
 pub use removals::{RemovalRisk, RemovalScope, bash_removal, powershell_analysis};
 
 pub use engine::{
-    Decision, Effect, Mode, Policy, Request, Rule, defaults, evaluate, evaluate_all, is_protected,
-    parse_rules, slash,
+    Decision, Effect, Mode, Policy, Request, Rule, defaults, evaluate, evaluate_all,
+    evaluate_scoped, is_protected, parse_rules, slash,
 };
