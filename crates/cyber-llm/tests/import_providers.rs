@@ -79,3 +79,84 @@ fn migrated_provider_credentials_headers_and_models_resolve_through_native_confi
         );
     }
 }
+
+#[test]
+fn opencode_versions_resolve_aliases_limits_headers_and_ordered_environment_fallback() {
+    for (root_key, package_key, settings_key, package, kind, alias) in [
+        (
+            "provider",
+            "npm",
+            "options",
+            "@ai-sdk/openai-compatible",
+            ApiKind::OpenaiCompatible,
+            "id",
+        ),
+        (
+            "providers",
+            "package",
+            "settings",
+            "@opencode/ai/providers/openai/responses",
+            ApiKind::OpenaiResponses,
+            "modelID",
+        ),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let source = json!({root_key:{"corp":{package_key:package,settings_key:{"baseURL":"https://example.com/v1"},"env":["ABSENT_KEY","FALLBACK_KEY"],"headers":{"X-Account":"private-header"},"models":{"coder/v1":{alias:"wire-model","name":"Coder","limit":{"context":8192,"input":4096,"output":1024}}}}}});
+        let mut imported = cyber_core::import::opencode_provider_config(&source).unwrap();
+        imported.config["model"] = json!("corp/coder/v1");
+        let mut env = HashMap::from([
+            (
+                "CYBER_HOME".into(),
+                root.join("cyber-home").display().to_string(),
+            ),
+            ("FALLBACK_KEY".into(), "runtime-key".into()),
+        ]);
+        for required in &imported.required_environment {
+            env.insert(required.variable.clone(), "runtime-header".into());
+        }
+        let paths = Paths::resolve(&env, &root);
+        std::fs::create_dir_all(&paths.config).unwrap();
+        std::fs::write(
+            paths.config.join("cyber.jsonc"),
+            serde_json::to_string(&imported.config).unwrap(),
+        )
+        .unwrap();
+        let loaded = config::load(&LoadRequest {
+            location: &root,
+            paths: &paths,
+            env: &env,
+            home: &root,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .unwrap();
+        let catalog = Catalog::build(&BuildInputs {
+            data: &json!({}),
+            config: &loaded.value,
+            env: &env,
+        });
+        let reference = ModelRef::parse("corp/coder/v1").unwrap();
+        let (_, model) = catalog.find(&reference).unwrap();
+        assert_eq!(catalog.availability(model), Availability::Available);
+        assert_eq!(
+            (
+                model.limits.context,
+                model.limits.input,
+                model.limits.output
+            ),
+            (8192, Some(4096), 1024)
+        );
+        let resolved = catalog.resolve(&reference, None).unwrap();
+        assert_eq!(resolved.kind, kind);
+        assert_eq!(resolved.endpoint.api_key.as_deref(), Some("runtime-key"));
+        assert_eq!(resolved.request.model, "wire-model");
+        assert!(
+            resolved
+                .request
+                .headers
+                .contains(&("X-Account".into(), "runtime-header".into()))
+        );
+    }
+}

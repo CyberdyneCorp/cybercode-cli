@@ -312,6 +312,16 @@ pub(super) fn converted(
     if config.as_object().is_some_and(|map| map.is_empty()) {
         return Ok(Origins::new());
     }
+    let provider_sources = if tool == SourceTool::OpenCode {
+        super::opencode_provider_config(raw)
+            .map_err(|_| DiscoveryError {
+                path: source.into(),
+                reason: "provider source attribution is unavailable",
+            })?
+            .field_sources
+    } else {
+        BTreeMap::new()
+    };
     let permissions = permission_inputs(tool, raw);
     let mut pointers = Vec::new();
     leaves(config, "", &mut pointers);
@@ -342,6 +352,9 @@ pub(super) fn converted(
                 }
                 _ if pointer == "/mcp" || pointer.starts_with("/mcp/") => {
                     mcp_inputs(tool, raw, &pointer)
+                }
+                _ if tool == SourceTool::OpenCode && pointer.starts_with("/providers/") => {
+                    provider_sources.get(&pointer).cloned().unwrap_or_default()
                 }
                 _ if tool == SourceTool::Codex && pointer.starts_with("/providers/") => {
                     provider_inputs(&pointer, raw)
@@ -438,6 +451,9 @@ pub(super) fn environment_origins(
 }
 
 pub(super) fn indexed_field(raw: &Value, descriptor: &str) -> Option<String> {
+    if descriptor.starts_with('/') {
+        return raw.pointer(descriptor).map(|_| descriptor.into());
+    }
     if let Some(index) = descriptor
         .strip_prefix("settings[")
         .and_then(|s| s.strip_suffix(']'))

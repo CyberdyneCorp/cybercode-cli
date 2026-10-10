@@ -1142,3 +1142,37 @@ fn import_kept_credentials_do_not_ask_to_set_ignored_variables() {
     );
     assert!(!e.root.join("cyber-home").exists());
 }
+
+#[test]
+fn opencode_provider_import_reports_credentials_without_writing_or_loading_packages() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    std::fs::write(e.root.join("opencode.json"), r#"{"model":"corp/coder","providers":{"corp":{"package":"@opencode/ai/providers/openai/responses","settings":{"baseURL":"https://example.com/v1","apiKey":"private-provider-secret"},"models":{"coder":{"modelID":"wire-model","limit":{"context":8192}}}},"custom":{"package":"file:never-load-source-package"}}}"#).unwrap();
+    let preview = e.cyber(&["import", "opencode", "--dry-run", "--format", "json"]);
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    let view = json(&preview);
+    assert_eq!(view["complete"], false);
+    assert_eq!(view["required_environment"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        view["required_environment"][0]["sources"][0]["field"],
+        "/providers/corp/settings/apiKey"
+    );
+    assert!(view["diff"].as_str().unwrap().contains("openai-responses"));
+    assert!(view["diff"].as_str().unwrap().contains("wire-model"));
+    assert!(
+        view["report"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["field"] == "/providers/custom"
+                && record["status"] == "not imported")
+    );
+    assert!(!stdout(&preview).contains("private-provider-secret"));
+    assert!(!stdout(&preview).contains("never-load-source-package"));
+    let text = e.cyber(&["import", "opencode", "--dry-run"]);
+    assert!(text.status.success(), "{}", stderr(&text));
+    assert!(!stdout(&text).contains("private-provider-secret"));
+    assert!(!e.root.join("cyber.jsonc").exists());
+    assert!(!e.root.join(".cyber").exists());
+    assert!(!e.root.join("cyber-home").exists());
+}

@@ -34,3 +34,6 @@ pub use preview::{
 };
 pub use provenance::SourceReference;
 pub use snapshot::SourceSnapshot;
+
+mod opencode_providers;
+pub use opencode_providers::{OpenCodeProviderConfig, opencode_provider_config};

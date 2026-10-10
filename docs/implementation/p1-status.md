@@ -1,5 +1,15 @@
 # P1 implementation status
 
+## OpenCode provider proposals and native failure evidence (2026-10-10)
+
+The early Windows artifacts from run 38072373773 now contradict the zero-access candidate: [backend artifact 11677630967](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38072373773/artifacts/11677630967) proves full identity/size queries and read refusal succeed, but ancestor rename still fails with access denied 5. [Snapshot artifact 11677461218](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38072373773/artifacts/11677461218) again records four passing cases and the same five directory-rename failures. Compilation succeeds; the retained-handle design still needs a working native solution. Neither Windows review retention nor a P1 milestone is accepted.
+
+Static OpenCode v1 `provider/npm/options` and v2 `providers/package/settings` adapters now propose explicit supported Chat Completions, Responses and Anthropic protocols without loading source packages. Endpoints, API keys, headers, ordered credential environment names, model aliases/names/disabled flags and positive context/input/output limits map to native catalog fields. Literal credentials become environment references; collision checks include ordered fallback names. Preview setup follows accepted leaves and exact source JSON pointers, including escaped model IDs. Unsupported packages and advanced provider/model fields remain pending; credential-bearing metadata and unsafe endpoints/substitutions refuse without exposing values.
+
+Local validation passes 84 cases: six OpenCode provider, seven Codex provider, 33 preview, two actual loader/catalog and 36 actual CLI tests. Workspace all-target Clippy with warnings denied, formatting/diff, generated SDK/inventory and 60 strict OpenSpec checks pass; specification lint reports zero errors and 21 warnings. Full scope remains all 225 P1 contracts.
+
+The native loader/catalog regression resolves both source versions with model aliases, limits, header references and the second configured credential environment variable. Complete source auth/account stores, arbitrary packages, advanced request options/variants, runtime-effective provenance, reviewed writes/editor integration and all remaining P1 requirements stay open. P0 local-model work is preserved.
+
 ## Zero-access native review metadata (2026-10-10)
 
 The native diagnostic artifact from run 38071367713 confirms all five rename regressions still fail with access denied under the retained FILE_READ_ATTRIBUTES handles, while capture/content/file-replacement checks pass. Review retention now requests zero desired access, which [CreateFileW documents](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew) for metadata queries without file access. This is a candidate fix, not native acceptance evidence. The original no-follow lookup chain remains pinned while retained directory and file identities are compared; full volume/file identifiers, regular-file/reparse/hard-link checks, file state and fresh namespace/content verification remain unchanged. Retained metadata handles are not used for reads or mutations.

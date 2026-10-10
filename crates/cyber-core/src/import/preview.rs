@@ -487,7 +487,28 @@ fn document_config(
             if let Some(model) = document.get("model") {
                 map_model(source, model, false, &mut config, report)?;
             }
-            &["permission", "permissions", "tools", "model", "mcp"]
+            let providers = converted(source, super::opencode_provider_config(document))?;
+            for (key, value) in providers.config.as_object().into_iter().flatten() {
+                config[key] = value.clone();
+            }
+            required.extend(providers.required_environment);
+            for pending in providers.not_imported {
+                report.push(record(
+                    &source.path,
+                    pending.field,
+                    "not imported",
+                    pending.reason,
+                ));
+            }
+            &[
+                "permission",
+                "permissions",
+                "tools",
+                "model",
+                "mcp",
+                "provider",
+                "providers",
+            ]
         }
     };
     let mcp = converted(source, super::mcp_config(source.tool, document))?;

@@ -32,6 +32,9 @@ pub(super) fn accepted(
     Ok(output)
 }
 fn descriptor_pointer(raw: &Value, descriptor: &str) -> Option<String> {
+    if descriptor.starts_with('/') {
+        return raw.pointer(descriptor).map(|_| descriptor.into());
+    }
     let root_end = descriptor.find('[').unwrap_or(descriptor.len());
     let root = &descriptor[..root_end];
     let mut pointer = super::provenance::child("", root);

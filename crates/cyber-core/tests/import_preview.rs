@@ -1256,3 +1256,54 @@ fn same_family_provider_and_mcp_collisions_are_checked_before_shared_setup_coale
     );
     assert_eq!(requirement.sources.len(), 1);
 }
+
+#[test]
+fn opencode_provider_preview_tracks_escaped_model_fields_and_accepted_credentials() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"model":"corp/coder/v1","provider":{"corp":{"npm":"@ai-sdk/openai-compatible","options":{"apiKey":"private-source-key","headers":{"X-Account":"{env:ACCOUNT}"}},"models":{"coder/v1":{"name":"Coder","limit":{"context":8192}}}}}}"#,
+    );
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"providers":{"corp":{"api":{"settings":{"api_key":"{env:NATIVE_KEY}"}}}}}"#,
+    );
+    let original = std::fs::read(roots.directory.join("cyber.jsonc")).unwrap();
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let output = preview.output();
+    assert_eq!(output.required_environment.len(), 1);
+    assert_eq!(
+        output.required_environment[0].requirement.variable,
+        "ACCOUNT"
+    );
+    assert_eq!(
+        output.required_environment[0].sources[0].field,
+        "/provider/corp/options/headers/X-Account"
+    );
+    assert!(output.report.iter().any(|r| {
+        r.field == "/providers/corp/models/coder~1v1/name"
+            && r.sources
+                .iter()
+                .any(|s| s.field == "/provider/corp/models/coder~1v1/name")
+    }));
+    assert!(
+        !serde_json::to_string(output)
+            .unwrap()
+            .contains("private-source-key")
+    );
+    assert_eq!(
+        std::fs::read(roots.directory.join("cyber.jsonc")).unwrap(),
+        original
+    );
+    preview.verify().unwrap();
+}

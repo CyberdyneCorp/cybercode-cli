@@ -97,7 +97,7 @@ jobs:
         run: cargo test --locked -p cyber-core --test import_mcp --test mcp_config
       - name: Native migration provider conversion
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test import_providers
+        run: cargo test --locked -p cyber-core --test import_providers --test import_opencode_providers
       - name: Native imported provider configuration and catalog
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test import_providers
