@@ -451,7 +451,7 @@ impl PreparedMemory<'_, '_> {
 }
 
 fn mutation_platform() -> Result<(), MemoryStorageError> {
-    if cfg!(unix) {
+    if cfg!(any(unix, windows)) {
         Ok(())
     } else {
         Err(MemoryStorageError::Unsafe(

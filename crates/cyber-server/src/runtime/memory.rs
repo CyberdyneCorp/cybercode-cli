@@ -807,7 +807,7 @@ mod tests {
         assert!(admit(store, bus, write(root.path())).is_err());
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn disposed_bound_owner_preserves_correlated_uninstalled_journal() {
         let store = store();

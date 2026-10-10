@@ -503,4 +503,10 @@
 - **THEN** process-held scope ownership SHALL release and fresh private recovery SHALL accept only recorded slots, preserve original/installed/intent/journal/marker full identities and finish the original receipt without replaying installed effects
 - **AND** terminal installed objects SHALL remain readonly during live completion/release/archive ownership, with ordinary readonly inspection and no claim of reservation for absent deleted filenames
 - **AND** already archived outcomes SHALL reopen without a second archival; restored test witnesses SHALL grant no database receipt or mutation authority
-- **AND** interruption barriers SHALL be absent from production and bound to the explicitly owned child fixture; actual native runtime and database reconciliation SHALL remain required before public note mutation admission
+- **AND** interruption barriers SHALL be absent from production and bound to the explicitly owned child fixture; actual native runtime and database reconciliation SHALL remain required before public application/tool/CLI note mutation admission
+
+#### Scenario: Verified Windows core mutation and independent application admission
+- **WHEN** native private storage creation, original/installed identity checks, terminal ownership and actual write/delete interruption/recovery are verified
+- **THEN** core storage write/delete, conditional edits and reviewed recovery SHALL use that native protocol on Windows, preserving scope isolation and user edits
+- **AND** actual SQLite admission/receipt/reviewed-recovery tests SHALL execute on Windows, including stale ownership/review refusal, acknowledged-but-unarchived replay without another event and copied native journal context refusal
+- **AND** application, CLI and model-tool mutation admission SHALL keep independent gates until their coupled native lifecycle acceptance; core publication SHALL not claim full P1 or application/database acceptance

@@ -51,6 +51,12 @@ jobs:
       - name: Native private memory storage
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test memory_storage
+      - name: Native public memory core mutation and recovery
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test memory_mutation_windows
+      - name: Native memory database reconciliation
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-server --lib runtime::memory
       - name: Native public client checkpoint storage
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test memory_client_state

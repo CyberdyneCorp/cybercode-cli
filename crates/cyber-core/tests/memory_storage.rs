@@ -522,7 +522,7 @@ fn directory_entry_budget_counts_non_memory_entries_as_well() {
     );
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[test]
 fn mutation_admission_refuses_until_platform_privacy_and_durability_are_integrated() {
     let data = tempfile::tempdir().unwrap();

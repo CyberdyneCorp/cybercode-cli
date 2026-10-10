@@ -95,7 +95,7 @@ pub(crate) fn review(
     })
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 fn claim(
     store: Arc<Store>,
     bus: Bus,
@@ -273,7 +273,7 @@ pub(super) fn project_review(tx: &Transaction<'_>, event: &StoredEvent) -> Resul
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 mod tests {
     use super::*;
     use cyber_core::memory::MemoryStore;
@@ -282,6 +282,29 @@ mod tests {
         db: Arc<Store>,
         memory: MemoryStore,
         bus: Bus,
+    }
+    fn private_directory(path: &Path) {
+        #[cfg(windows)]
+        {
+            let parent = cap_std::fs::Dir::open_ambient_dir(
+                path.parent().unwrap(),
+                cap_std::ambient_authority(),
+            )
+            .unwrap()
+            .into_std_file();
+            let child = cyber_core::memory::windows::create_private_directory(
+                &parent,
+                path.file_name().unwrap().to_str().unwrap(),
+            )
+            .unwrap();
+            cyber_core::memory::windows::sync_private(&child).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::create_dir(path).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
     }
     impl Fixture {
         fn new() -> Self {
@@ -430,10 +453,13 @@ mod tests {
             let storage = f.prepare();
             let admission = f.review(&storage);
             if stale_file {
-                use std::os::unix::fs::PermissionsExt;
                 let path = f.memory.path().join("policy.md");
                 std::fs::write(&path, "User edit").unwrap();
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+                }
             } else {
                 drop(claim(f.db.clone(), f.bus.clone(), &admission).unwrap());
             }
@@ -521,12 +547,10 @@ mod tests {
         let f = Fixture::new();
         let storage = f.prepare();
         let admission = f.review(&storage);
-        use std::os::unix::fs::PermissionsExt;
         let history = f.memory.path().join(".memory-history");
-        std::fs::create_dir(&history).unwrap();
-        std::fs::set_permissions(&history, std::fs::Permissions::from_mode(0o700)).unwrap();
+        private_directory(&history);
         let collision = history.join(&storage.receipt.id);
-        std::fs::create_dir(&collision).unwrap();
+        private_directory(&collision);
         let mut live = f.bus.subscribe();
         let mut scope = f.memory.claim().unwrap();
         assert!(
@@ -565,6 +589,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn copied_journal_cannot_reconcile_another_project_scope() {
         let f = Fixture::new();
@@ -584,6 +609,44 @@ mod tests {
         assert_eq!(copied.journal, storage.journal);
         assert!(recover(f.db.clone(), f.bus.clone(), &mut scope, &copied, &admission).is_err());
         assert!(!other.path().join("policy.md").exists());
+        assert_eq!(f.review(&storage).fingerprint, admission.fingerprint);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn copied_native_journal_refuses_before_database_reconciliation_and_preserves_both_scopes() {
+        let f = Fixture::new();
+        let storage = f.prepare();
+        let admission = f.review(&storage);
+        let other = MemoryStore::open(f.root.path(), "prj_other").unwrap();
+        let target = other.path().join(".memory-transaction");
+        private_directory(&target);
+        let parent = cap_std::fs::Dir::open_ambient_dir(&target, cap_std::ambient_authority())
+            .unwrap()
+            .into_std_file();
+        for entry in std::fs::read_dir(f.memory.path().join(".memory-transaction")).unwrap() {
+            let entry = entry.unwrap();
+            let bytes = std::fs::read(entry.path()).unwrap();
+            let mut file = cyber_core::memory::windows::create_private_file(
+                &parent,
+                entry.file_name().to_str().unwrap(),
+            )
+            .unwrap();
+            std::io::Write::write_all(&mut file, &bytes).unwrap();
+            cyber_core::memory::windows::sync_private(&file).unwrap();
+        }
+        drop(parent);
+        let mut scope = other.claim().unwrap();
+        assert!(scope.inspect_recovery().is_err());
+        assert!(!other.path().join("policy.md").exists());
+        assert!(!other.path().join("MEMORY.md").exists());
+        assert!(target.join("intent.json").exists());
+        assert!(
+            f.memory
+                .path()
+                .join(".memory-transaction/intent.json")
+                .exists()
+        );
         assert_eq!(f.review(&storage).fingerprint, admission.fingerprint);
     }
 

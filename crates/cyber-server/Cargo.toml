@@ -32,6 +32,7 @@ jsonschema = { version = "0.58.6", default-features = false }
 hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
 
 [dev-dependencies]
+cap-std = "4.0"
 tempfile.workspace = true
 reqwest = { version = "0.13", features = ["json", "stream"] }
 http-body-util = "0.1"

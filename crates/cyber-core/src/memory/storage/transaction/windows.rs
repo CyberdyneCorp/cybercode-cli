@@ -1,4 +1,4 @@
-//! Native journal operations; public mutation admission still requires lifecycle acceptance.
+//! Native journal operations; application/tool/CLI admission remains independently gated.
 use super::*;
 use crate::memory::windows as native;
 #[path = "windows/objects.rs"]

@@ -1,4 +1,4 @@
-//! Exercise the real private journal pipeline without activating public mutation admission.
+//! Native private journal and public core API; application admission stays independent.
 use super::*;
 
 fn text(body: &str) -> String {
@@ -661,13 +661,7 @@ fn native_journal_commit_update_delete_preserves_original_objects_and_private_hi
     let data = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(data.path(), "global").unwrap();
     let mut scope = store.claim().unwrap();
-    assert!(
-        scope
-            .write(&text("Public admission is still closed"))
-            .is_err()
-    );
-    assert!(!store.path().join(TRANSACTION).exists());
-    prepare(&mut scope, "Original").commit().unwrap();
+    scope.write(&text("Original")).unwrap();
     let original = object(&store.dir, "rule.md");
     let original_index = object(&store.dir, "MEMORY.md");
     let update = prepare(&mut scope, "Updated").commit().unwrap();

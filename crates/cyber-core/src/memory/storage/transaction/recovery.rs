@@ -71,7 +71,7 @@ impl<'store> MemoryScope<'store> {
         self.read_prepared()
     }
 
-    // Native integration tests exercise this reader while public admission remains gated.
+    // Internal validation stays separate from the caller's public admission check.
     pub(super) fn read_prepared(
         &mut self,
     ) -> Result<Option<PreparedMemory<'_, 'store>>, MemoryStorageError> {
