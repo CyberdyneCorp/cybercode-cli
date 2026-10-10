@@ -1,6 +1,6 @@
 # Local core guide
 
-Detailed commands, client behavior, limits and terminology for the implemented local core and partial P1 features. Start with the [README](../README.md); the [P1 status](implementation/p1-status.md) records acceptance evidence and remaining work.
+Detailed commands, client behavior, limits and terminology for the implemented local core and partial P1 features. Start with the [README](../README.md) or [documentation index](README.md); the [P1 status](implementation/p1-status.md) records acceptance evidence and remaining work.
 
 ## Build and development
 

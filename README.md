@@ -1,58 +1,50 @@
 # Cyber Code (`cyber`)
 
-A model-independent coding agent with durable local sessions, repository tools, a terminal UI and a public server API.
+A model-independent coding agent with durable local sessions, repository tools and a terminal UI.
 
-Inspect and edit a repository, run verification, preserve user changes and resume after interruption. The local core uses SQLite and runs without a Cyber account; hosted model calls need provider credentials and connectivity.
+Inspect code, edit files, run tests and resume interrupted work. Sessions stay on your machine in SQLite. Use OpenAI, Anthropic or an OpenAI-compatible endpoint, including a local model server. No Cyber account is required; hosted models require provider credentials.
 
-## Status
+![Cyber Code terminal UI, captured from an isolated offline startup](docs/screenshots/tui.png)
 
-**P0 implementation is built; its release gates are not closed.** A complete local-model coding baseline, including the long task, remains open. An Ollama/Qwen3.5 9B pilot passed one small task. Recovery/trust tests, per-tool goldens, storage measurements and all six macOS/Linux build targets have passing evidence. Recorded default-service startup meets the 150 ms first-frame target on the named M2 Max machine; embedded mode retains an outlier. See [P0 evidence](docs/measurements/p0-exit-evidence.md) and [evaluation setup/results](eval/README.md).
+Actual TUI capture, with no model inference. [Screenshots and reproduction](docs/screenshots/README.md).
 
-**P1 implementation is active in M1.1–M1.4; no P1 milestone is fully accepted.** Native Windows long-root inspection and isolated-child execution have passing CI evidence, while complete Windows confinement remains open. Subagents, worktrees and cancellation have substantial partial implementations. Hook configuration, individual trust review and Unix command hooks around built-in tools are implemented locally; complete hook delivery remains open. M1.4 has local Unix memory storage, a model tool, CLI management, reviewed local recovery and paired reconciliation through a running server, plus HTTP/SDK CRUD and pinned-journal recovery with session updates and durable change events. Memory now has reviewed TUI editing with private draft/request checkpoints and fresh review after restart. Windows private memory reads and native client checkpoint storage are implemented; Windows public checkpoint and TUI persistence tests pass; Windows core note mutation, paired SQLite reconciliation and owner-death recovery have native evidence. Windows application mutation tests pass natively; model-tool and context tests also pass natively. Windows private editor drafts and all seventeen CLI editor/recovery cases pass native tests; broader canonical acceptance remains open. Complete outcome/recovery controls remain open. The [P1 status](docs/implementation/p1-status.md) and [roadmap](ROADMAP.md) track remaining contracts and acceptance gates.
+<details>
+<summary>See the CLI command reference</summary>
 
-## Quick start
+![Cyber Code command list from cyber --help](docs/screenshots/cli.png)
 
-Requires Rust 1.89 or newer; SQLite is bundled. Linux sandboxed commands also require bubblewrap (`apt install bubblewrap`).
+</details>
+
+## Start here
+
+Requires **Rust 1.89+**. SQLite is bundled. On Linux, install **bubblewrap** for sandboxed commands (`apt install bubblewrap`).
 
 ```bash
 cargo build --locked -p cyber-cli
 export OPENAI_API_KEY="your-key"
 
-# Open the TUI in the current repository.
-./target/debug/cyber
-
-# Run a task without the TUI.
-./target/debug/cyber exec "fix the failing test"
-
-# Inspect configuration, providers, storage and sandbox support.
-./target/debug/cyber doctor
+./target/debug/cyber                            # terminal UI
+./target/debug/cyber exec "fix the failing test" # one task
+./target/debug/cyber --continue                 # resume the latest session
+./target/debug/cyber doctor                     # check your setup
 ```
 
-OpenAI Responses, Anthropic Messages and OpenAI-compatible Chat endpoints are supported, including local servers. See the [local core guide](docs/local-core-guide.md) for commands and [evaluation guide](eval/README.md) for local-model setup.
+Use `--model provider/model` to select a model. See the [local core guide](docs/local-core-guide.md) for configuration and [evaluation guide](eval/README.md) for local-model setup.
 
-## Features
+## What it does
 
-“Available” describes implemented local-core behavior. “Partial P1” means working pieces exist and the full contract still needs implementation or acceptance.
+| Area | Current behavior |
+|---|---|
+| Coding | Read/search repositories, edit files and notebook cells, run commands and use web tools |
+| Sessions | Durable prompt admission, streaming, interrupt/resume, crash recovery and compaction |
+| Safety | Checkout trust, tool permissions, protected paths, credential masking and macOS/Linux sandboxing |
+| Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
+| Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
+| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks/local MCP, memory, LSP navigation and edit feedback, automatic formatting |
 
-| Area | What you can use today | Status |
-|---|---|---|
-| Models | Provider adapters, model catalog, credentials and usage pricing | Available; broader catalog work remains |
-| Sessions | Durable inbox, streaming tool loops, interrupt/resume, crash recovery and compaction | Available |
-| Tools | Repository inspection/editing, notebook cell editing, command execution, web tools and instruction/skill loading | Available; broader skills/commands remain |
-| Safety | Workspace trust, permission rules, protected paths, auto classification with confirmed `/approve`, macOS/Linux sandboxing and credential masking | Available; Windows enforcement, proxy coverage and full auto-mode controls remain partial P1 |
-| File recovery | Shadow-git snapshots and conflict-aware restore preserving user edits | Available; broader rewind UI remains |
-| Clients | TUI, noninteractive `exec`, background service, HTTP/SSE/WebSocket/stdio API and generated TypeScript SDK | Available; complete P1 client surfaces remain |
-| Subagents | Foreground/background children, named resume, forked context, structured results, approvals and task controls | Partial P1 |
-| Worktrees | Managed startup and isolated children, setup journals, file summaries, cleanup and reviewed setup retry | Partial P1; public lifecycle and unknown-effect recovery remain |
-| Cancellation | Durable admission closure, exclusive child result ownership, bounded stop reports and matched reopening | Partial P1; unknown-effect recovery, cross-process actor cancellation and exec/TUI adoption remain |
-| Spending | Durable own/descendant billing, atomic usage API, TUI `/cost` and soft Session budgets | Partial P1; reservations, daily caps and complete enforcement/displays remain |
-| Hooks | CLI/TUI definition and receipt review, exact handler trust, Unix command, HTTP, prompt and local MCP-tool hooks, plus synthetic `cyber hooks test` | Partial P1; other handlers/events, complete scheduling, Windows confinement and plugins remain |
-| MCP | Local approvals, shared tools/status, startup waiting, schema search and bounded reconnect | Partial P1; remote transports and resources/prompts remain |
-| Memory | Durable project/global notes, built-in memory tool, session index updates, CLI management and local/server recovery, authenticated HTTP/SDK CRUD/recovery, TUI review/editing/deletion/recovery, private draft/request checkpoints, request outcome lookup/record controls and durable change events | Partial P1; legacy recovery, strengthened native recovery checks, broader client acceptance and multi-client retention remain |
-| Code intelligence | Local discovery/status; LSP read warming, edit error feedback and eight navigation operations including rename preview; automatic sandboxed formatting after edits; owned services with activity-aware idle release, scoped close/reload and HTTP/SDK status; fourteen servers/twelve formatters | Partial P1; native acceptance, enforced Windows launch, CLI live state and full diagnostic lifecycle remain |
-| Operations | Database-plus-artifact backup, verify/restore, retention, logs and diagnostics | Available; broader observability remains |
+**P0 is implemented, with release gates still open:** the full local-model baseline, including the long coding task, remains incomplete. **P1 is in progress; no P1 milestone is fully accepted.** Windows confinement, remote MCP/OAuth, plugins, complete client controls, browser verification and migration/editor integration still need work or acceptance. Later phases cover workflows, goals, remote control and cloud runners.
 
-Remaining P1 scope includes hooks/plugins/MCP (M1.3), memory/code intelligence/browser verification (M1.4), migration/editor integration (M1.5), the local web client and the other P1-tagged APIs. Workflows, goals, loops, remote control and cloud runners belong to later phases. The [capability map](docs/local-core-guide.md#specification-capability-map) covers the full planned product; [OpenSpec](openspec/specs) defines the contracts by phase.
+See the [complete feature reference](docs/features.md), [P0 evidence](docs/measurements/p0-exit-evidence.md), [P1 status](docs/implementation/p1-status.md) and [roadmap](ROADMAP.md).
 
 ## Architecture
 
@@ -65,23 +57,67 @@ flowchart TD
     Api --> Runtime["Durable session runtime"]
     Runtime --> Store["SQLite WAL and one writer"]
     Runtime --> Models["Model adapters"]
-    Runtime --> Tools["Tool host and permission rules"]
+    Runtime --> Tools["Tools and permissions"]
     Tools --> Sandbox["OS sandbox"]
     Tools --> Snapshots["Shadow-git snapshots"]
     Sandbox --> Repo["Repository and worktrees"]
     Snapshots --> Repo
 ```
 
-The server owns prompt admission, Turn execution, compaction and recovery. Clients share its API over HTTP, SSE, WebSocket or stdio JSON-RPC. SQLite stores local execution state with FULL synchronization; snapshots preserve repository recovery data. Model adapters connect to OpenAI, Anthropic and compatible endpoints.
+The server owns execution, compaction and recovery. Clients use HTTP, SSE, WebSocket or stdio JSON-RPC. SQLite stores execution state; snapshots store file recovery data. Built with Rust, tokio, axum, rusqlite and ratatui. [Architecture details](docs/local-core-guide.md#architecture).
 
-Built with Rust, tokio, axum, rusqlite and ratatui. See the [workspace crate map](docs/local-core-guide.md#workspace-and-specifications) and [storage architecture decision](docs/decisions/0001-storage-architecture.md). PostgreSQL is reserved for later hosted services.
+```mermaid
+flowchart LR
+    Prompt["Submit prompt"] --> Save["Persist admission"]
+    Save --> Model["Call model"]
+    Model --> Review["Check tool permission"]
+    Review --> Execute["Run allowed tool"]
+    Execute --> Record["Persist result and stream events"]
+    Record --> Model
+    Model --> Done["Finish turn"]
+```
+
+## How it compares
+
+Scope: **Cyber Code, Claude Code, Codex and OpenCode coding tools**, checked **2026-10-10**. This compares documented capabilities, not coding quality or speed. Partial means our implementation has working pieces and remaining contracts or acceptance gates.
+
+| Feature | Cyber Code | Claude Code | Codex | OpenCode |
+|---|---|---|---|---|
+| Edit files and run commands | Yes | Yes [docs][C1] | Yes [docs][X1] | Yes [docs][O1] |
+| Model providers | OpenAI, Anthropic, compatible endpoints | Claude through supported providers [docs][C1] | OpenAI and custom providers [docs][X2] | Multiple providers [docs][O2] |
+| Local models | Compatible adapter; full baseline pending | Not established by cited docs | Ollama / LM Studio [docs][X2] | Ollama / LM Studio [docs][O2] |
+| Terminal and automation | TUI and `exec` | CLI and SDK [docs][C1] | CLI and `exec` [docs][X1] | TUI and CLI [docs][O1] |
+| Editor / desktop / web clients | Full clients planned | Available [docs][C1] | IDE and cloud surfaces [docs][X1] | Desktop and IDE [docs][O1] |
+| Tool permissions | Yes; full auto mode partial | Yes [docs][C2] | Yes [docs][X3] | Yes [docs][O3] |
+| OS sandbox | macOS/Linux; Windows incomplete | macOS/Linux/WSL2; native Windows unsandboxed [docs][C2] | Documented sandbox controls [docs][X3] | Permission rules documented [docs][O3]; OS isolation not established here |
+| Subagents | Partial P1 | Yes [docs][C3] | Yes [docs][X1] | Yes [docs][O4] |
+| MCP integration | Local partial; remote/OAuth pending | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
+| File undo / recovery | Snapshots preserving user edits | Edit checkpoints and rewind [docs][C5] | Git checkpoints recommended [docs][X1] | Undo/redo [docs][O1] |
+| Programmatic server | HTTP/events, stdio API, TS SDK | Agent SDK [docs][C1] | App Server [docs][X4] | HTTP/OpenAPI and SDK [docs][O6] |
+| LSP integration | Navigation/feedback partial P1 | Language-server plugins [docs][C6] | Not established by cited docs | Built-in LSP support [docs][O7] |
+
+“Not established” means the linked sources do not establish support; it does not mean the feature is absent. These products have different defaults, platform limits and release channels. Cyber's [feature reference](docs/features.md) records our implementation limits.
 
 ## Documentation and development
 
-- [Local core guide](docs/local-core-guide.md): commands, subagents, worktrees, budgets, recovery, configuration paths and terminology.
-- [Roadmap](ROADMAP.md) and [P1 implementation status](docs/implementation/p1-status.md): delivery scope, evidence and remaining work.
-- [TypeScript SDK](sdk/typescript/README.md) and [OpenAPI document](sdk/openapi.json): programmatic access.
-- [Evaluation guide](eval/README.md): fixtures, provider baselines and local-model setup.
-- [OpenSpec contracts](openspec/specs): implemented and planned behavior, tagged by phase.
+[Documentation index](docs/README.md) · [Commands and configuration](docs/local-core-guide.md) · [Roadmap](ROADMAP.md) · [SDK](sdk/typescript/README.md) · [OpenAPI](sdk/openapi.json) · [Evaluations](eval/README.md) · [OpenSpec contracts](openspec/specs)
 
-Run `just` to list development tasks, `just build` to build and `just ci` for local lint, tests, specification and SDK checks. Platform builds run in [CI](.github/workflows/ci.yml). Raw commands and the pinned specification validator are in the [development guide](docs/local-core-guide.md#build-and-development).
+Run `just` to list tasks, `just build` to build and `just ci` for local checks. Platform builds run in [CI](.github/workflows/ci.yml). See the [development guide](docs/local-core-guide.md#build-and-development) for raw commands and the pinned specification validator.
+
+[C1]: https://code.claude.com/docs/en/overview
+[C2]: https://code.claude.com/docs/en/sandboxing
+[C3]: https://code.claude.com/docs/en/sub-agents
+[C4]: https://code.claude.com/docs/en/mcp
+[C5]: https://code.claude.com/docs/en/checkpointing
+[C6]: https://code.claude.com/docs/en/discover-plugins
+[X1]: https://learn.chatgpt.com/docs/codex/cli
+[X2]: https://learn.chatgpt.com/docs/config-file/config-reference
+[X3]: https://learn.chatgpt.com/docs/security
+[X4]: https://learn.chatgpt.com/docs/app-server
+[O1]: https://opencode.ai/docs/
+[O2]: https://opencode.ai/docs/providers/
+[O3]: https://opencode.ai/docs/permissions/
+[O4]: https://opencode.ai/docs/agents/
+[O5]: https://opencode.ai/docs/mcp-servers/
+[O6]: https://opencode.ai/docs/server/
+[O7]: https://opencode.ai/docs/lsp/
