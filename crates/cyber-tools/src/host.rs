@@ -285,8 +285,30 @@ impl BuiltinHost {
         Some(skills::expand(&skill.body, arguments))
     }
 
-    pub fn configured_commands(&self, location: &Path) -> cyber_core::commands::Commands {
-        cyber_core::commands::configured(&self.config_for(location))
+    pub fn command_registry(&self, location: &Path) -> cyber_core::commands::Commands {
+        let (config, sources) = match (self.opts.config)(location) {
+            Ok(config) => config,
+            Err(_) => {
+                return cyber_core::commands::Commands {
+                    issues: vec![cyber_core::commands::CommandIssue {
+                        path: location.into(),
+                        reason: "command configuration is unavailable",
+                    }],
+                    ..Default::default()
+                };
+            }
+        };
+        cyber_core::commands::discover(
+            &cyber_core::commands::CommandScope {
+                location: location.into(),
+                home: self.opts.home.clone(),
+                global_config_dir: self.opts.global_config_dir.clone(),
+                project: !self.opts.env.flag("CYBER_DISABLE_PROJECT_CONFIG"),
+                compat: true,
+            },
+            &config,
+            &sources,
+        )
     }
 
     /// Skills have later precedence; configured reserved names use the project namespace.
@@ -300,7 +322,7 @@ impl BuiltinHost {
             .unwrap_or(name);
         self.expand_skill(location, skill_name, arguments)
             .or_else(|| {
-                self.configured_commands(location)
+                self.command_registry(location)
                     .entries
                     .get(name)
                     .map(|c| c.expand(arguments))

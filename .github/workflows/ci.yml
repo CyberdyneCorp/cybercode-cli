@@ -98,9 +98,15 @@ jobs:
       - name: Native migration provider conversion
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test commands --test import_providers --test import_opencode_providers --test import_opencode_settings
+      - name: Native read-time command discovery
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-core --test command_discovery
+      - name: Native host command scope controls
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-tools --test command_discovery
       - name: Native imported static command consumption
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-app --test server imported_static_commands
+        run: cargo test --locked -p cyber-app --test server commands_
       - name: Native imported provider configuration and catalog
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-llm --test import_providers

@@ -1,4 +1,6 @@
 //! Static configured commands consumed by the public command API.
+mod discovery;
+pub use discovery::{CommandIssue, CommandScope, discover};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -18,6 +20,7 @@ pub struct Commands {
     pub entries: BTreeMap<String, StaticCommand>,
     /// Definition names only; never include template or parser error values.
     pub unavailable: Vec<String>,
+    pub issues: Vec<CommandIssue>,
 }
 
 pub struct MarkdownCommand {

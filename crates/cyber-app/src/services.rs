@@ -491,7 +491,7 @@ impl Services for AppServices {
                 });
         let configured = self
             .host
-            .configured_commands(location)
+            .command_registry(location)
             .entries
             .into_iter()
             .map(|(name, command)| CommandInfo {

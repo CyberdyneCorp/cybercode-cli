@@ -34,6 +34,7 @@ pub use preview::{
 };
 pub use provenance::SourceReference;
 pub use snapshot::SourceSnapshot;
+pub(crate) use snapshot::{command_directory, verify_command_directory};
 
 mod opencode_providers;
 pub use opencode_providers::{OpenCodeProviderConfig, opencode_provider_config};

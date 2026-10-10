@@ -89,40 +89,53 @@ fn state(file: &File, path: &Path) -> Result<FileState, DiscoveryError> {
             .map_err(|_| error(path, "source modification time is unavailable"))?,
     })
 }
+fn directory_chain(path: &Path) -> Result<(Vec<Dir>, Vec<Identity>), DiscoveryError> {
+    let root = path
+        .ancestors()
+        .last()
+        .filter(|root| root.is_absolute())
+        .ok_or_else(|| error(path, "source path is not absolute"))?;
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| error(path, "source path root is invalid"))?;
+    let mut directories = vec![
+        Dir::open_ambient_dir(root, cap_std::ambient_authority())
+            .map_err(|_| error(path, "source volume root is unavailable"))?,
+    ];
+    let mut bindings = vec![directory_identity(&directories[0], path)?];
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return Err(error(path, "source path contains traversal"));
+        };
+        let dir = directories
+            .last()
+            .unwrap()
+            .open_dir_nofollow(name)
+            .map_err(|_| error(path, "source directory binding is unavailable or linked"))?;
+        bindings.push(directory_identity(&dir, path)?);
+        directories.push(dir);
+    }
+    Ok((directories, bindings))
+}
+
+/// Internal read-time command discovery keeps every directory binding live during enumeration.
+pub(crate) fn command_directory(path: &Path) -> Result<Vec<Dir>, DiscoveryError> {
+    directory_chain(path).map(|(directories, _)| directories)
+}
+
+pub(crate) fn verify_command_directory(dir: &Dir, path: &Path) -> Result<(), DiscoveryError> {
+    directory_identity(dir, path).map(|_| ())
+}
+
 impl OpenSource {
     fn open(path: &Path) -> Result<Self, DiscoveryError> {
-        let root = path
-            .ancestors()
-            .last()
-            .filter(|root| root.is_absolute())
-            .ok_or_else(|| error(path, "source path is not absolute"))?;
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| error(path, "source path root is invalid"))?;
-        let components: Vec<_> = relative
-            .components()
-            .map(|c| match c {
-                Component::Normal(name) => Ok(name.to_owned()),
-                _ => Err(error(path, "source path contains traversal")),
-            })
-            .collect::<Result<_, _>>()?;
-        let (name, parents) = components
-            .split_last()
+        let name = path
+            .file_name()
             .ok_or_else(|| error(path, "source file name is missing"))?;
-        let mut directories = vec![
-            Dir::open_ambient_dir(root, cap_std::ambient_authority())
-                .map_err(|_| error(path, "source volume root is unavailable"))?,
-        ];
-        let mut bindings = vec![directory_identity(&directories[0], path)?];
-        for component in parents {
-            let dir = directories
-                .last()
-                .unwrap()
-                .open_dir_nofollow(component)
-                .map_err(|_| error(path, "source directory binding is unavailable or linked"))?;
-            bindings.push(directory_identity(&dir, path)?);
-            directories.push(dir);
-        }
+        let parent_path = path
+            .parent()
+            .ok_or_else(|| error(path, "source directory is missing"))?;
+        let (directories, bindings) = directory_chain(parent_path)?;
         let parent = directories.last().unwrap();
         let metadata = parent
             .symlink_metadata(name)
@@ -256,6 +269,12 @@ impl SourceSnapshot {
             return Err(error(&source.path, "source is outside its declared root"));
         }
         Self::capture(&source.path)
+    }
+    pub(crate) fn read_command(path: &Path) -> Result<Self, DiscoveryError> {
+        if !path.is_absolute() || path.extension().is_none_or(|e| e != "md") {
+            return Err(error(path, "invalid native command source"));
+        }
+        Self::capture(path)
     }
     pub(super) fn read_native_config(path: &Path) -> Result<Option<Self>, DiscoveryError> {
         let path = std::path::absolute(path)

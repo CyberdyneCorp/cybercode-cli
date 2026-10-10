@@ -1,5 +1,16 @@
 # P1 implementation status
 
+## Live static Markdown command discovery (2026-10-10)
+
+The application catalogue and expansion service now discover native global/project and Claude-compatible static Markdown commands without requiring import. Global-to-project, ancestor-to-Location and compatibility-to-native precedence use the runtime configuration's source attribution; unattributed runtime/profile inline overrides retain highest precedence. Unsupported winning files suppress older fallbacks. Later skills and reserved-name namespaces remain intact. Each request rereads files and returns owned templates, without retaining handles after catalogue return.
+
+Traversal retains no-follow directory handles while enumerating and verifies each source file's identity and content independently. Linked directories, Windows reparse points and hard-linked files refuse. Entry/depth/file/aggregate/registry limits bound discovery; incomplete scans withhold the registry rather than returning partial fallbacks. Project discovery follows `CYBER_DISABLE_PROJECT_CONFIG`. This is static read-time support, not complete command acceptance: advanced execution fields, inspection/provenance APIs, plugin/MCP command sources, full override semantics, reviewed migration writes and editor integration remain open.
+
+Local validation passes 103 cases: seven read-time discovery, four parser, nine snapshot, 39 preview, two CI contract, one actual host scope-control, two actual application catalogue/expansion and 39 CLI tests. Workspace all-target Clippy with warnings denied passes. The original snapshot regressions remain unchanged. Native CI independently runs discovery, host scope controls and both application consumption tests.
+
+The prior push's [Windows job 114288143306](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/38077742008/job/114288143306) is still running at this observation, but its native metadata-only retention and migration snapshot steps have already failed. Transient command-reader handles do not solve the retained review-handle ancestor-rename blocker. Native acceptance for the new discovery tests remains required. Full goal scope remains all 225 P1 contracts, no milestone is accepted, and P0 local-model services/models/evaluations/artifacts remain preserved.
+
+
 ## Verified Markdown command migration (2026-10-10)
 
 Discovered Claude/OpenCode command Markdown now becomes static native command proposals through the inventory-admitted snapshot reader. Optional BOM/CRLF YAML frontmatter retains description and argument hints; nested filenames become command names with only the final `.md` suffix removed. Reports distinguish `body` and exact `frontmatter:<key>` descriptors from JSON pointers. Source files share the sixteen MiB preview budget and every read, including unsupported and overridden definitions, remains verified for later review invalidation. Legacy singular OpenCode command directories are also inventoried.

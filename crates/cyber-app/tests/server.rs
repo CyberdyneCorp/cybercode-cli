@@ -1665,3 +1665,77 @@ for line in sys.stdin:
         McpConnectionPhase::Settled
     );
 }
+
+#[tokio::test]
+async fn native_markdown_commands_reach_live_catalogue_and_refresh_after_edits() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join(".git")).unwrap();
+    let application = app(tmp.path()).await;
+    let location = tmp.path().join("nested");
+    let commands = location.join(".cyber/commands");
+    std::fs::create_dir_all(&commands).unwrap();
+    let global = application.paths.config.join("commands");
+    std::fs::create_dir_all(&global).unwrap();
+    std::fs::write(global.join("review.md"), "Global review").unwrap();
+    std::fs::write(
+        commands.join("review.md"),
+        "---\ndescription: Native review\nargument-hint: '<paths>'\n---\nReview $ARGUMENTS",
+    )
+    .unwrap();
+    std::fs::write(commands.join("mode.md"), "Project mode $ARGUMENTS").unwrap();
+    std::fs::write(commands.join("shell.md"), "!`touch never-created-sentinel`").unwrap();
+    let compat = location.join(".claude/commands");
+    std::fs::create_dir_all(&compat).unwrap();
+    std::fs::write(compat.join("compat.md"), "Compatibility $ARGUMENTS").unwrap();
+    let services = &application.state.services;
+    let rows = services.commands(&location);
+    let review = rows.iter().find(|c| c.name == "review").unwrap();
+    assert_eq!(review.source, "command");
+    assert_eq!(review.argument_hint.as_deref(), Some("<paths>"));
+    assert!(!rows.iter().any(|c| c.name == "shell"));
+    assert!(
+        rows.iter()
+            .any(|c| c.name == "mode" && c.source == "builtin")
+    );
+    assert!(
+        rows.iter()
+            .any(|c| c.name == "project:mode" && c.source == "command")
+    );
+    assert_eq!(
+        services
+            .expand_command(&location, "review", "src")
+            .as_deref(),
+        Some("Review src")
+    );
+    assert_eq!(
+        services
+            .expand_command(&location, "compat", "src")
+            .as_deref(),
+        Some("Compatibility src")
+    );
+    assert_eq!(
+        services
+            .expand_command(&location, "project:mode", "test")
+            .as_deref(),
+        Some("Project mode test")
+    );
+    std::fs::write(commands.join("review.md"), "Updated review $ARGUMENTS").unwrap();
+    assert_eq!(
+        services
+            .expand_command(&location, "review", "src")
+            .as_deref(),
+        Some("Updated review src")
+    );
+    std::fs::write(
+        commands.join("review.md"),
+        "---\nagent: explore\n---\nUnsupported new review",
+    )
+    .unwrap();
+    assert!(
+        services
+            .expand_command(&location, "review", "src")
+            .is_none()
+    );
+    assert!(!location.join("never-created-sentinel").exists());
+    application.runtime.shutdown().await;
+}
