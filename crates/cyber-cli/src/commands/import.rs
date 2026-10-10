@@ -83,6 +83,17 @@ fn print_preview(view: &cyber_core::import::PreviewOutput) {
             escaped(&item.field),
             item.reason
         );
+        if let Some(comparison) = &item.comparison {
+            println!(
+                "  kept: {}",
+                serde_json::to_string(&comparison.kept).unwrap_or_else(|_| "<unavailable>".into())
+            );
+            println!(
+                "  ignored: {}",
+                serde_json::to_string(&comparison.ignored)
+                    .unwrap_or_else(|_| "<unavailable>".into())
+            );
+        }
         for source in &item.sources {
             println!(
                 "  from: {} {}",

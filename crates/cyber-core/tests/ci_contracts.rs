@@ -71,3 +71,35 @@ fn native_powershell_batches_stop_on_first_failure_even_when_later_commands_succ
         assert_eq!(output.status.code(), Some(7), "{name}: {output:?}");
     }
 }
+
+#[test]
+fn windows_snapshot_logs_are_published_immediately_without_hiding_test_failures() {
+    let workflow: Value =
+        serde_yaml_ng::from_str(include_str!("../../../.github/workflows/ci.yml")).unwrap();
+    let job = workflow["jobs"]
+        .as_mapping()
+        .unwrap()
+        .values()
+        .find(|job| job["runs-on"].as_str() == Some("windows-2025"))
+        .unwrap();
+    let steps = job["steps"].as_sequence().unwrap();
+    let index = steps
+        .iter()
+        .position(|step| step["name"].as_str() == Some("Native migration source snapshots"))
+        .unwrap();
+    let run = steps[index]["run"].as_str().unwrap();
+    assert!(
+        run.contains("--test import_snapshot 2>&1 | Tee-Object -FilePath migration-snapshot.log")
+    );
+    assert_eq!(
+        run.lines().nth(1),
+        Some("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
+    );
+    let upload = &steps[index + 1];
+    assert_eq!(upload["uses"].as_str(), Some("actions/upload-artifact@v4"));
+    assert_eq!(upload["if"].as_str(), Some("${{ !cancelled() }}"));
+    assert_eq!(
+        upload["with"]["path"].as_str(),
+        Some("migration-snapshot.log")
+    );
+}

@@ -9,6 +9,8 @@ mod discovery;
 mod mcp;
 mod opencode;
 mod preview;
+mod report_values;
+pub use report_values::ValueComparison;
 mod provenance;
 mod snapshot;
 pub use claude::{ClaudePermissions, ConversionError, PermissionRule, claude_permissions};

@@ -1082,3 +1082,36 @@ fn mcp_import_preview_is_secret_safe_source_linked_and_does_not_create_runtime_s
     assert!(!e.root.join(".cyber").exists());
     assert!(!e.root.join("cyber-home").exists());
 }
+
+#[test]
+fn import_merged_reports_include_comparisons_in_json_and_text_without_writing() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.root.join("home")).unwrap();
+    let native = r#"{"model":"native/kept"}"#;
+    std::fs::write(e.root.join("cyber.jsonc"), native).unwrap();
+    std::fs::write(
+        e.root.join("opencode.json"),
+        r#"{"model":"source/ignored"}"#,
+    )
+    .unwrap();
+    let preview = e.cyber(&["import", "opencode", "--dry-run", "--format", "json"]);
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    let view = json(&preview);
+    let model = view["report"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["field"] == "/model" && r["status"] == "merged")
+        .unwrap();
+    assert_eq!(model["comparison"]["kept"], "native/kept");
+    assert_eq!(model["comparison"]["ignored"], "source/ignored");
+    let text = e.cyber(&["import", "opencode", "--dry-run"]);
+    assert!(text.status.success(), "{}", stderr(&text));
+    assert!(stdout(&text).contains("kept: \"native/kept\""));
+    assert!(stdout(&text).contains("ignored: \"source/ignored\""));
+    assert_eq!(
+        std::fs::read_to_string(e.root.join("cyber.jsonc")).unwrap(),
+        native
+    );
+    assert!(!e.root.join("cyber-home").exists());
+}

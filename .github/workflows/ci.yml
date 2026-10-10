@@ -62,7 +62,17 @@ jobs:
         run: cargo test --locked -p cyber-core --test import_discovery
       - name: Native migration source snapshots
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-core --test import_snapshot
+        run: |
+          cargo test --locked -p cyber-core --test import_snapshot 2>&1 | Tee-Object -FilePath migration-snapshot.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish native migration snapshot log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-migration-snapshot-${{ github.run_id }}
+          path: migration-snapshot.log
+          retention-days: 7
+          if-no-files-found: error
       - name: Native migration detection
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test import_detection

@@ -22,6 +22,9 @@ pub struct MappingRecord {
     pub field: String,
     pub status: &'static str,
     pub reason: &'static str,
+    /// Normalized values; credential fields and known credential echoes are redacted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<super::report_values::ValueComparison>,
 }
 #[derive(Debug, Serialize)]
 pub struct PreviewEnvironment {
@@ -95,6 +98,7 @@ fn record(
         field,
         status,
         reason,
+        comparison: None,
     }
 }
 /// `tool=None` means canonical auto order. Project adoption reads global defaults and project layers.
@@ -569,6 +573,10 @@ fn fill_existing(
                     &child,
                     "merged",
                     "existing native or earlier auto-source key kept",
+                    Some(super::report_values::ValueComparison {
+                        kept: previous.clone(),
+                        ignored: value.clone(),
+                    }),
                 );
             }
         } else {
@@ -582,6 +590,7 @@ fn fill_existing(
                     field,
                     "imported",
                     "supported source field proposed without writing",
+                    None,
                 );
             }
         }
@@ -593,6 +602,7 @@ fn report_mapping(
     pointer: &str,
     status: &'static str,
     reason: &'static str,
+    comparison: Option<super::report_values::ValueComparison>,
 ) {
     let sources = provenance::references(origins, pointer);
     if let Some(first) = sources.first() {
@@ -602,6 +612,7 @@ fn report_mapping(
             field: pointer.into(),
             status,
             reason,
+            comparison,
         });
     }
 }
@@ -610,6 +621,11 @@ fn redact_report_fields(
     required: &mut [PreviewEnvironment],
     secrets: &[String],
 ) {
+    for item in report.iter_mut() {
+        if let Some(comparison) = &mut item.comparison {
+            super::report_values::redact(comparison, &item.field, secrets);
+        }
+    }
     let mut secrets: Vec<_> = secrets.iter().collect();
     secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
     let redact = |field: &mut String| {

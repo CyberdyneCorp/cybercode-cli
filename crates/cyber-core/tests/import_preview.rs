@@ -972,3 +972,124 @@ fn generated_mcp_bindings_cannot_collide_with_other_source_provider_bindings() {
     assert!(!error.to_string().contains("private-mcp-key"));
     assert!(!roots.directory.join("cyber.jsonc").exists());
 }
+
+#[test]
+fn merged_model_report_shows_both_normalized_values() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"model":"native/kept"}"#,
+    );
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"model":"source/ignored"}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::OpenCode),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let report = serde_json::to_value(&preview.output().report).unwrap();
+    let model = report
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["field"] == "/model" && r["status"] == "merged")
+        .unwrap();
+    assert_eq!(model["comparison"]["kept"], "native/kept");
+    assert_eq!(model["comparison"]["ignored"], "source/ignored");
+    assert!(preview.output().diff.is_empty());
+}
+
+#[test]
+fn merged_reports_redact_credential_fields_and_later_source_credential_echoes() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    write(
+        &roots.directory,
+        "cyber.jsonc",
+        r#"{"model":"native/private-later-value","providers":{"local":{"api":{"settings":{"api_key":"private-native-key"}},"request":{"headers":{"Authorization":"private-native-header"}}}}}"#,
+    );
+    write(
+        &roots.directory,
+        "opencode.json",
+        r#"{"model":"source/ignored"}"#,
+    );
+    write(
+        &roots.directory,
+        ".codex/config.toml",
+        "[model_providers.local]\nbase_url='https://example.test/v1'\napi_key='private-source-key'\n[model_providers.local.http_headers]\nAuthorization='private-source-header'\n",
+    );
+    write(
+        &roots.directory,
+        ".claude/settings.json",
+        r#"{"env":{"API_KEY":"private-later-value"}}"#,
+    );
+    let preview = preview_import(&roots, None, ImportScope::Project, &global(&root)).unwrap();
+    let output = serde_json::to_value(preview.output()).unwrap();
+    let records = output["report"].as_array().unwrap();
+    let credential = records
+        .iter()
+        .find(|r| r["field"] == "/providers/local/api/settings/api_key" && r["status"] == "merged")
+        .unwrap();
+    assert_eq!(credential["comparison"]["kept"], "***");
+    assert_eq!(credential["comparison"]["ignored"], "***");
+    let header = records
+        .iter()
+        .find(|r| {
+            r["field"] == "/providers/local/request/headers/Authorization"
+                && r["status"] == "merged"
+        })
+        .unwrap();
+    assert_eq!(header["comparison"]["kept"], "***");
+    assert_eq!(header["comparison"]["ignored"], "***");
+    let model = records
+        .iter()
+        .find(|r| r["field"] == "/model" && r["status"] == "merged")
+        .unwrap();
+    assert_eq!(model["comparison"]["kept"], "native/***");
+    assert_eq!(model["comparison"]["ignored"], "source/ignored");
+    assert!(!output.to_string().contains("private-"));
+}
+
+#[test]
+fn merged_permission_arrays_show_redacted_values_without_changing_kept_rules() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let roots = roots(&root);
+    let native = r#"{"permissions":{"rules":[{"action":"read","resource":"private-token","effect":"deny"}]}}"#;
+    write(&roots.directory, "cyber.jsonc", native);
+    write(
+        &roots.directory,
+        ".claude/settings.json",
+        r#"{"permissions":{"allow":["Read(src/*)"]},"env":{"API_KEY":"private-token"}}"#,
+    );
+    let preview = preview_import(
+        &roots,
+        Some(SourceTool::Claude),
+        ImportScope::Project,
+        &global(&root),
+    )
+    .unwrap();
+    let report = serde_json::to_value(&preview.output().report).unwrap();
+    let rules = report
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["field"] == "/permissions/rules" && r["status"] == "merged")
+        .unwrap();
+    assert_eq!(rules["comparison"]["kept"][0]["resource"], "***");
+    assert_eq!(rules["comparison"]["ignored"][0]["resource"], "src/*");
+    assert!(preview.output().diff.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(roots.directory.join("cyber.jsonc")).unwrap(),
+        native
+    );
+}

@@ -419,3 +419,7 @@ Read-only imports accept static Claude `mcpServers` (including `.mcp.json`), Cod
 Unsupported server options appear as pending fields. Advanced authentication, additional transports, timeout conversion, source-relative working-directory semantics and Claude per-project state associations still need adapters. Global Claude state contributes only top-level server declarations. These previews remain incomplete and do not provide confirmed writes.
 
 Codex HTTP server previews map `http_headers` and `env_http_headers` to native headers and preserve `required`. Static values become environment setup references; existing environment bindings remain references with source provenance. Conflicting header names/aliases and generated credential names colliding with another source binding refuse the whole preview. Command header helpers are not executed or imported.
+
+### Kept-field comparisons
+
+When a supported source field is ignored because a native or earlier auto-source key already exists, its `merged` report includes a `comparison` object with `kept` and `ignored` values. Text output prints both below the field. Values use the normalized native proposal shape, not original source formatting. Credential/header fields and known credential echoes are redacted, including echoes discovered in later source layers. Existing configuration remains unchanged. Complete native winning-layer provenance, runtime-effective values, remaining adapters and report-file writes still need implementation.

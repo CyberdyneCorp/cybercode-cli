@@ -21,6 +21,7 @@
   - [x] Expose partial read-only previews for supported configuration/permission/provider fields, canonical auto fill order, source layering, redacted normalized diffs and review invalidation. Exact file-byte diffs, full layered provenance, remaining adapters, confirmation/writes and idempotency remain open.
   - [x] Track supported converted leaf sources through overlays, permission append/sorting and inherited provider selection; attach source references to value-free environment requirements and pending fields. Full canonical kept-value provenance/comparisons and unsupported adapters remain open.
   - [x] Preserve explicit native global/ancestor/`.cyber` file layers using shared runtime discovery/merge rules; hold present/missing files under review and enforce a shared parse budget. Runtime-effective profiles/substitutions/trust handling remain open.
+  - [x] Include redacted normalized kept/ignored values for supported merged fields in JSON/text previews, covering credentials, later-layer echoes and arrays. Full native winning-layer provenance/runtime-effective comparisons and persisted reports remain open.
 - [ ] Implement canonical ACP lifecycle, buffers/write-through, editor MCP, permissions and streaming.
 - [ ] Implement the P1 VS Code extension and editor acceptance coverage.
 - [ ] Audit every P1 compat-import/editor-integration requirement against implementation and native evidence.
