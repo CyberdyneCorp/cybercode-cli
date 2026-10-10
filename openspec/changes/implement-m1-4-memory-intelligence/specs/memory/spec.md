@@ -465,3 +465,11 @@
 - **AND** it SHALL check disposition and close outcomes, close the source before post-deletion operations, normally flush the parent and verify named absence before acknowledging removal
 - **AND** wrong identity, unsafe objects, nonempty directories, failed preflight/settlement/flush or recreated names SHALL refuse without deleting a replacement or rolling back effects
 - **AND** persisted bounded history cleanup/recovery and full lifecycle acceptance SHALL remain required before public checkpoint activation
+
+#### Scenario: Windows bounded recoverable checkpoint history retention
+- **WHEN** private Windows checkpoint saves produce history
+- **THEN** retention SHALL preserve the current checkpoint's archive and one recent other managed archive, with bounded scanning and bounded cleanup batches
+- **AND** a private cleanup plan SHALL be fully flushed before deletion, recording full state/client/lock/history/plan and selected directory/file identities plus bounded content proofs
+- **AND** cleanup SHALL verify remaining targets before effects and dispose only exact recorded objects, allowing recorded absence during restart while preserving changed/replaced objects and unexpected children
+- **AND** interrupted cleanup SHALL resume through shared claim before new save effects; foreign names SHALL remain untouched and malformed managed evidence SHALL fence cleanup without repair
+- **AND** the cleanup plan SHALL remain on uncertain effects and be removed only after flushed target absence; process-death/failure/context/full lifecycle acceptance SHALL precede public activation

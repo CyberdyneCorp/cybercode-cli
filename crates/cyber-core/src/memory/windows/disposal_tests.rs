@@ -168,3 +168,19 @@ fn native_disposal_pending_or_unknown_status_is_never_success() {
     assert!(settlement(0x103).is_err());
     assert!(settlement(-1).is_err());
 }
+#[test]
+fn native_disposal_directory_enumerates_owned_handle_with_restart_and_bounds() {
+    let (_data, parent) = fixture();
+    let dir = create_private_directory(&parent, "journal").unwrap();
+    let id = identity(&dir).unwrap();
+    staged(&dir, "before", b"draft");
+    staged(&dir, "completed", b"committed\n");
+    drop(dir);
+    let source = dispose_private_directory(&parent, "journal", id).unwrap();
+    assert!(source.child_names(1).is_err());
+    let mut names = source.child_names(2).unwrap();
+    names.sort();
+    assert_eq!(names, ["before", "completed"]);
+    assert_eq!(source.child_names(2).unwrap().len(), 2);
+    assert!(source.child_names(4097).is_err());
+}

@@ -52,6 +52,13 @@ impl DisposableChild {
     pub fn file(&self) -> &File {
         &self.file
     }
+    /// Enumerate the held directory without opening another pathname handle.
+    pub fn child_names(&self, limit: usize) -> Result<Vec<String>, MemoryStorageError> {
+        if !self.directory {
+            return Err(refusal("expected a disposal directory"));
+        }
+        listing::names(&self.file, limit)
+    }
     /// Consumes the source and acknowledges only flushed named absence.
     /// Failure after disposition/close leaves effects for the caller's recorded recovery plan.
     pub fn remove_durable(self) -> Result<(), MemoryStorageError> {

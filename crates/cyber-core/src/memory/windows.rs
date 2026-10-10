@@ -5,6 +5,8 @@ mod creation;
 mod disposal;
 #[path = "windows/durability.rs"]
 mod durability;
+#[path = "windows/listing.rs"]
+mod listing;
 #[path = "windows/namespace.rs"]
 mod namespace;
 use super::MemoryStorageError;

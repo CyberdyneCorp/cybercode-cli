@@ -1,6 +1,6 @@
 //! Actual private native save/recovery, with public activation kept closed.
 use super::*;
-fn fixture() -> (tempfile::TempDir, MemoryClientStore) {
+pub(super) fn fixture() -> (tempfile::TempDir, MemoryClientStore) {
     let data = tempfile::tempdir().unwrap();
     let parent = Dir::open_ambient_dir(data.path(), cap_std::ambient_authority()).unwrap();
     drop(native::create_private_directory(&parent.into_std_file(), "state").unwrap());
@@ -10,7 +10,7 @@ fn fixture() -> (tempfile::TempDir, MemoryClientStore) {
     let store = MemoryClientStore::claim(&path, parent, dir).unwrap();
     (data, store)
 }
-fn reopen(path: &Path) -> MemoryClientStore {
+pub(super) fn reopen(path: &Path) -> MemoryClientStore {
     let parent = state_directory(path).unwrap();
     let dir = directory(&parent, false).unwrap().unwrap();
     MemoryClientStore::claim(path, parent, dir).unwrap()

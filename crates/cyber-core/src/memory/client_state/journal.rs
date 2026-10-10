@@ -2,6 +2,8 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[path = "retention.rs"]
+mod retention;
 const PENDING: &str = ".checkpoint-pending";
 const HISTORY: &str = ".checkpoint-history";
 const INTENT_LIMIT: u64 = 16 * 1024;
@@ -50,6 +52,8 @@ pub(in crate::memory::client_state) fn save(
     if store.read()? != store.previous {
         return Err(MemoryStorageError::ReviewConflict);
     }
+    retention::recover(store)?;
+    retention::prune(store)?;
     if store.checkpoint() == Some(bytes) {
         let proof = snapshot(&store.dir, CHECKPOINT)?.ok_or(MemoryStorageError::ReviewConflict)?;
         if Some(proof.clone()) != proof_of(store.previous.as_ref())? {
@@ -62,6 +66,7 @@ pub(in crate::memory::client_state) fn save(
     let journal = Journal::prepare(store, bytes)?;
     let expected = journal.intent.after.clone();
     journal.commit(store)?;
+    retention::prune(store)?;
     let restored = store.read()?;
     if proof_of(restored.as_ref())? != Some(expected) {
         return Err(MemoryStorageError::ReviewConflict);
@@ -72,9 +77,11 @@ pub(in crate::memory::client_state) fn save(
 pub(in crate::memory::client_state) fn recover(
     store: &MemoryClientStore,
 ) -> Result<(), MemoryStorageError> {
+    retention::recover(store)?;
     if let Some(journal) = Journal::open(store)? {
         journal.commit(store)?;
     }
+    retention::prune(store)?;
     Ok(())
 }
 fn proof_of(checkpoint: Option<&Checkpoint>) -> Result<Option<Proof>, MemoryStorageError> {
