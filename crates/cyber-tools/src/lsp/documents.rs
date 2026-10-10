@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::{Component, PathBuf},
+    time::Duration,
+};
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -13,7 +17,8 @@ pub(super) async fn verify_origin(
     expected: Vec<cyber_core::worktrees::Managed>,
 ) -> Result<(), LspError> {
     tokio::task::spawn_blocking(move || {
-        if path.canonicalize().ok().as_ref() != Some(&path)
+        if !canonical_shape(&path)
+            || path.canonicalize().ok().as_ref() != Some(&path)
             || !path.is_file()
             || super::locations::checkout_records(&path)? != expected
         {
@@ -31,13 +36,21 @@ pub(super) async fn verify_removed(
 ) -> Result<(), LspError> {
     tokio::task::spawn_blocking(move || {
         let parent = path.parent().ok_or(LspError::Protocol("removed document parent unavailable"))?;
-        if parent.canonicalize().ok().as_deref() != Some(parent)
+        if !canonical_shape(&path)
+            || parent.canonicalize().ok().as_deref() != Some(parent)
             || !matches!(std::fs::symlink_metadata(&path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
             || super::locations::checkout_records(parent)? != expected {
             return Err(LspError::Protocol("removed document creation changed"));
         }
         Ok(())
     }).await.map_err(|_| LspError::Protocol("removed document observation failed"))?
+}
+
+fn canonical_shape(path: &std::path::Path) -> bool {
+    path.is_absolute()
+        && !path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
 }
 
 pub(super) async fn verify_scope(
@@ -303,6 +316,20 @@ mod removal_tests {
         let path = directory.join("deleted.rs");
         verify_removed(path.clone(), vec![]).await.unwrap();
         std::fs::write(&path, "replacement").unwrap();
+        verify_origin(path.clone(), vec![]).await.unwrap();
+        assert!(
+            verify_origin(
+                directory.join("missing").join("..").join("deleted.rs"),
+                vec![]
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            verify_removed(PathBuf::from("deleted.rs"), vec![])
+                .await
+                .is_err()
+        );
         assert!(verify_removed(path.clone(), vec![]).await.is_err());
         std::fs::remove_file(&path).unwrap();
         assert!(

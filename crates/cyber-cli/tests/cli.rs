@@ -686,12 +686,216 @@ fn lsp_status_lists_local_integrations_without_database_or_process_startup() {
     let rust = status_row(&rows, "rust-analyzer");
     assert_eq!(rust["enabled"], true);
     assert_eq!(rust["installed"], true);
-    assert_eq!(rust["running"], false);
+    assert!(rust["running"].is_null());
+    assert!(rust["roots"].is_null());
     let human = run(&["lsp", "status"]);
     assert!(stdout(&human).contains("ENABLED"));
     assert!(stdout(&human).contains("INSTALLED"));
     assert!(stdout(&human).contains("RUNNING"));
+    assert!(stdout(&human).contains("unknown"));
     assert!(!env.root.join("cyber-home/data/cyber-dev.db").exists());
+}
+
+fn register_status_listener(env: &Env, url: &str, socket: Option<&Path>) {
+    let state = env.root.join("cyber-home/state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("password"), "status-password\n").unwrap();
+    std::fs::write(
+        state.join("server.json"),
+        serde_json::json!({
+            "id":"srv_status","version":"test","url":url,"socket":socket,"pid":std::process::id()
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+fn status_reply(
+    mut stream: impl std::io::Read + std::io::Write,
+    body: Value,
+    status: &str,
+) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0; 1024];
+    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+        let count = stream.read(&mut buffer).unwrap();
+        assert!(count > 0 && request.len() < 16384);
+        request.extend_from_slice(&buffer[..count]);
+    }
+    let body = body.to_string();
+    write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+    String::from_utf8(request).unwrap()
+}
+
+fn tcp_status(env: &Env, body: Value, status: &'static str) -> std::thread::JoinHandle<String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    register_status_listener(
+        env,
+        &format!("http://{}", listener.local_addr().unwrap()),
+        None,
+    );
+    listener.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Ok((stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                return status_reply(stream, body, status);
+            }
+            if std::time::Instant::now() >= deadline {
+                return String::new();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    })
+}
+
+#[test]
+fn lsp_status_joins_authenticated_live_roots_and_retains_removed_server_ids() {
+    let env = Env::new();
+    let child = env.root.join("nested");
+    std::fs::create_dir(&child).unwrap();
+    let server = tcp_status(
+        &env,
+        serde_json::json!({"location":{"directory":env.root},"data":[
+            {"id":"rust-analyzer","root":env.root,"status":"connected"},
+            {"id":"rust-analyzer","root":child,"status":"starting"},
+            {"id":"removed-custom","root":env.root,"status":"broken"}
+        ]}),
+        "200 OK",
+    );
+    let output = env.cyber(&["lsp", "status", "--format", "json"]);
+    let request = server.join().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let rows = json(&output);
+    assert_eq!(status_row(&rows, "rust-analyzer")["running"], true);
+    assert_eq!(
+        status_row(&rows, "rust-analyzer")["roots"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let removed = status_row(&rows, "removed-custom");
+    assert!(
+        removed["running"].is_null()
+            && removed["enabled"].is_null()
+            && removed["installed"].is_null()
+    );
+    assert_eq!(removed["roots"][0]["status"], "broken");
+    let request = request.to_ascii_lowercase();
+    assert!(request.starts_with("get /api/v1/lsp?"));
+    assert!(request.contains("location%5bdirectory%5d="));
+    assert!(request.contains("authorization: basic y3lizxi6c3rhdhvzlxbhc3n3b3jk"));
+    assert!(!env.root.join("cyber-home/data/cyber-dev.db").exists());
+}
+
+#[test]
+fn lsp_status_live_empty_snapshot_is_stopped_and_human_roots_are_visible() {
+    let env = Env::new();
+    let server = tcp_status(
+        &env,
+        serde_json::json!({"location":{"directory":env.root},"data":[]}),
+        "200 OK",
+    );
+    let output = env.cyber(&["lsp", "status", "--format", "json"]);
+    server.join().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        status_row(&json(&output), "rust-analyzer")["running"],
+        false
+    );
+    let server = tcp_status(
+        &env,
+        serde_json::json!({"location":{"directory":env.root},"data":[{"id":"rust-analyzer","root":env.root,"status":"starting"}]}),
+        "200 OK",
+    );
+    let output = env.cyber(&["lsp", "status"]);
+    server.join().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("unknown"));
+    assert!(
+        stdout(&output).contains("starting:")
+            && stdout(&output).contains(&env.root.display().to_string())
+    );
+}
+
+#[test]
+fn lsp_status_refuses_unavailable_foreign_and_invalid_live_snapshots() {
+    let env = Env::new();
+    let cases = [
+        serde_json::json!({"location":{"directory":"/another-location"},"data":[]}),
+        serde_json::json!({"location":{"directory":env.root},"data":[{"id":"fixture","root":env.root.join("../outside"),"status":"connected"}]}),
+        serde_json::json!({"location":{"directory":env.root},"data":[{"id":"fixture","root":env.root,"status":"invented"}]}),
+    ];
+    for body in cases {
+        let server = tcp_status(&env, body, "200 OK");
+        let output = env.cyber(&["lsp", "status", "--format", "json"]);
+        server.join().unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!stderr(&output).contains("status-password"));
+    }
+    let server = tcp_status(
+        &env,
+        serde_json::json!({"message":"private-server-error"}),
+        "401 Unauthorized",
+    );
+    let output = env.cyber(&["lsp", "status"]);
+    server.join().unwrap();
+    assert!(!output.status.success());
+    assert!(!stderr(&output).contains("private-server-error"));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    register_status_listener(
+        &env,
+        &format!("http://{}", listener.local_addr().unwrap()),
+        None,
+    );
+    drop(listener);
+    let output = env.cyber(&["lsp", "status"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("unavailable"));
+}
+
+#[cfg(unix)]
+#[test]
+fn lsp_status_reads_a_registered_unix_socket_without_tcp_startup() {
+    let env = Env::new();
+    let socket = env.root.join("server.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    register_status_listener(&env, "", Some(&socket));
+    let root = env.root.clone();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let stream = loop {
+            if let Ok((stream, _)) = listener.accept() {
+                break stream;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Unix status listener received no request"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        status_reply(
+            stream,
+            serde_json::json!({"location":{"directory":root},"data":[]}),
+            "200 OK",
+        )
+    });
+    let output = env.cyber(&["lsp", "status", "--format", "json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(server.join().unwrap().contains("/api/v1/lsp?"));
+    assert_eq!(
+        status_row(&json(&output), "rust-analyzer")["running"],
+        false
+    );
 }
 
 #[test]

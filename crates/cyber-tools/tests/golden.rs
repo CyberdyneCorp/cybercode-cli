@@ -119,7 +119,10 @@ async fn notebook_edit_golden() {
 
 #[tokio::test]
 async fn bash_golden() {
+    #[cfg(not(windows))]
     let f = Fixture::new();
+    #[cfg(windows)]
+    let f = Fixture::with_policy("bash", None, Some("full-access".into()));
     f.set_config(json!({"permissions":{"bash":"allow"}}));
     support::golden(
         &f,
@@ -223,5 +226,20 @@ async fn lsp_unavailable_golden() {
                 .await
         ),
         "LSP services are unavailable"
+    );
+}
+
+#[test]
+fn golden_normalization_retains_non_path_text() {
+    let fixture = Fixture::new();
+    fixture.write("nested/file.txt", "content");
+    let input = format!(
+        "{}\n{}\nuser text: \\literal\\n",
+        fixture.repo.join("nested/file.txt").display(),
+        fixture.repo.join("nested").display()
+    );
+    assert_eq!(
+        support::normalized_fixture_paths(&fixture, &input),
+        "<repo>/nested/file.txt\n<repo>/nested\nuser text: \\literal\\n"
     );
 }

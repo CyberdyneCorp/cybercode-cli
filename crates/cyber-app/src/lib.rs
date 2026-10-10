@@ -4,6 +4,7 @@
 
 pub mod backup;
 mod host;
+mod registered_status;
 mod registration;
 pub mod retention;
 mod server;
@@ -26,6 +27,7 @@ use cyber_store::{Store, StoreOptions};
 use cyber_tools::{BuiltinHost, ConfigFn, HookConfigFn, HostOptions};
 use serde_json::{Value, json};
 
+pub use registered_status::registered_lsp_status;
 pub use registration::{
     Registration, ServerClientInfo, health, read_registration, registration_path, start_service,
     stop_service,

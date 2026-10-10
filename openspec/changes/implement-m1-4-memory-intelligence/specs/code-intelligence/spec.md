@@ -1,5 +1,24 @@
 ## ADDED Requirements
 
+### Requirement: Existing-server CLI LSP observation
+(P1) The CLI `cyber lsp status` SHALL join local enabled/installed discovery with authenticated `GET /api/v1/lsp` observations from the existing registered server for the canonical Location. Status SHALL NOT create a database, start a service, launch a model or spawn a language server. It SHALL preserve retained server/root entries even when their definitions are no longer discovered. Running SHALL be true for a connected root and false for an observed empty root set; unavailable observation and starting/broken roots without a connected root SHALL remain unknown rather than assert native-process settlement. Human output SHALL escape terminal controls. JSON SHALL retain typed root states, with null local metadata for undiscovered retained definitions.
+
+The observer SHALL use existing credentials, bypass ambient proxies, reject redirects and embedded listener credentials, limit response bodies to one MiB and bound requests to five seconds. It SHALL reject mismatched Locations, malformed states, roots outside the Location and registration replacement during observation. Missing registration SHALL preserve local-only discovery with unknown live state. Invalid registrations, unavailable registered listeners, missing credentials and refused responses SHALL fail with bounded safe errors rather than fabricate stopped status or echo secret bodies.
+
+#### Scenario: Connected retained root
+- **WHEN** the registered server reports a connected root for the requested Location
+- **THEN** CLI status SHALL report running true with its typed root entry
+- **AND** retained entries whose definitions were removed SHALL remain visible with unknown discovery metadata
+
+#### Scenario: No service registration
+- **WHEN** no server is registered
+- **THEN** CLI status SHALL list local definitions and installations with unknown running state
+- **AND** it SHALL start no service and create no database
+
+#### Scenario: Observation refuses another generation
+- **WHEN** a registration changes during status observation, the response exceeds its budget or names another Location
+- **THEN** the CLI SHALL refuse the observation without echoing credentials or response bodies
+
 ### Requirement: Bounded peer publication scheduling before feedback
 (P1) Owned language-server workers SHALL service already ready peer messages before queued feedback observation commands so a slow publication authority/checkout admission does not leave an already buffered diagnostic batch behind complete edited-file feedback. Peer priority SHALL be bounded: after sixteen peer messages the worker SHALL offer a queued command a turn before reading further peer messages. Health/review events SHALL NOT reset this burst counter. Queued commands SHALL retain existing fresh authority and document admission. Cancellation SHALL take priority without consuming queued commands; closed command queues SHALL stop the worker at the fairness boundary. This ordering SHALL NOT infer freshness of delayed unversioned publications, extend the configured diagnostic deadline, reset document versions, or weaken scope/ownership checks.
 

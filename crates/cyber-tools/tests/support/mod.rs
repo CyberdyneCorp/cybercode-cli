@@ -261,9 +261,42 @@ where
     format!("http://{addr}")
 }
 
-/// Normalize only the fixture's absolute checkout path; retain all output formatting.
+/// Normalize known fixture paths component-wise; retain content and unrelated backslashes.
+pub fn normalized_fixture_paths(f: &Fixture, output: &str) -> String {
+    let mut pending = vec![f.repo.clone()];
+    let mut paths = Vec::new();
+    while let Some(path) = pending.pop() {
+        if path.is_dir() && !path.is_symlink() {
+            pending.extend(
+                std::fs::read_dir(&path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        }
+        paths.push(path);
+    }
+    paths.sort_by_key(|path| std::cmp::Reverse(path.as_os_str().len()));
+    let mut actual = output.to_owned();
+    for path in paths {
+        let suffix = path
+            .strip_prefix(&f.repo)
+            .unwrap()
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        let normalized = if suffix.is_empty() {
+            "<repo>".into()
+        } else {
+            format!("<repo>/{suffix}")
+        };
+        actual = actual.replace(&path.display().to_string(), &normalized);
+    }
+    actual
+}
+
 pub fn golden(f: &Fixture, name: &str, output: &str) {
-    let actual = output.replace(&f.repo.display().to_string(), "<repo>");
+    let actual = normalized_fixture_paths(f, output);
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/goldens")
         .join(format!("{name}.txt"));

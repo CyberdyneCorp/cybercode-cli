@@ -11,9 +11,9 @@ use axum::{
     routing::{get, post},
 };
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LspState {
     Starting,
@@ -21,7 +21,7 @@ pub enum LspState {
     Broken,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct LspStatus {
     pub id: String,
     pub root: std::path::PathBuf,

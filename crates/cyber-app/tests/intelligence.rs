@@ -1,5 +1,5 @@
 //! Actual authenticated TCP formatter discovery through application services.
-use cyber_app::{App, AppOptions};
+use cyber_app::{App, AppOptions, registered_lsp_status};
 use cyber_core::paths::{DatabaseLocation, Paths};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -100,6 +100,24 @@ async fn lsp_status_authenticates_observes_actual_roots_and_does_not_start_serve
         f.client.get(&url).send().await.unwrap().status(),
         reqwest::StatusCode::UNAUTHORIZED
     );
+    assert!(
+        registered_lsp_status(&f.app.paths, &f.root)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    std::fs::write(f.app.paths.state.join("password"), "status-password").unwrap();
+    std::fs::write(
+        cyber_app::registration_path(&f.app.paths),
+        json!({"id":"srv_status","version":"test","url":f.url.replace("/api/v1/formatters", ""),"socket":null,"pid":std::process::id()}).to_string(),
+    ).unwrap();
+    assert!(
+        registered_lsp_status(&f.app.paths, &f.root)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
     let before: Value = f
         .client
         .get(&url)
@@ -155,6 +173,13 @@ async fn lsp_status_authenticates_observes_actual_roots_and_does_not_start_serve
     assert_eq!(row(&after, "fixture")["root"], f.root.display().to_string());
     assert!(!after.to_string().contains("private-lsp-environment"));
     assert!(!after.to_string().contains("fixture-server.exe"));
+    let live = registered_lsp_status(&f.app.paths, &f.root)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(live.iter().any(|entry| entry.id == "fixture"
+        && entry.root == f.root
+        && matches!(entry.status, cyber_server::http::LspState::Broken)));
     let second = f.root.join("second");
     std::fs::create_dir(&second).unwrap();
     let foreign: Value = f
@@ -170,6 +195,13 @@ async fn lsp_status_authenticates_observes_actual_roots_and_does_not_start_serve
         .await
         .unwrap();
     assert_eq!(foreign["data"], json!([]));
+    assert!(
+        registered_lsp_status(&f.app.paths, &second)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         foreign["location"]["directory"],
         second.display().to_string()
