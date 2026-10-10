@@ -9,6 +9,11 @@ use std::{
     time::SystemTime,
 };
 
+#[cfg(windows)]
+#[path = "snapshot_windows.rs"]
+#[allow(unsafe_code)] // Attribute-only handle retention is isolated in this native backend.
+mod windows;
+
 const LIMIT: u64 = 1024 * 1024;
 fn error(path: &Path, reason: &'static str) -> DiscoveryError {
     DiscoveryError {
@@ -149,43 +154,22 @@ impl OpenSource {
     }
     #[cfg(windows)]
     fn retain_review_identities(&mut self, path: &Path) -> Result<(), DiscoveryError> {
-        use std::os::windows::io::{AsRawHandle, FromRawHandle};
-        use windows_sys::Win32::{
-            Foundation::INVALID_HANDLE_VALUE,
-            Storage::FileSystem::{
-                FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, ReOpenFile,
-            },
-        };
         let mut handles = Vec::new();
         for (directory, expected) in self._directories.iter().zip(&self.bindings) {
             let original = directory
                 .try_clone()
                 .map_err(|_| error(path, "source directory handle is unavailable"))?
                 .into_std_file();
-            // Reopen the same object with delete sharing; never use these handles for path lookup.
-            // Only attribute access is requested; no enumeration or mutation authority is added.
-            // The original owns a live handle, and success returns a distinct owned handle.
-            let handle = unsafe {
-                ReOpenFile(
-                    original.as_raw_handle(),
-                    FILE_READ_ATTRIBUTES,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                )
-            };
-            if handle == INVALID_HANDLE_VALUE {
-                let reason = match std::io::Error::last_os_error().raw_os_error() {
+            let retained = windows::retain_directory_identity(&original).map_err(|e| {
+                let reason = match e.raw_os_error() {
                     Some(5) => "source review identity handoff denied access",
                     Some(6) => "source review identity handoff rejected the directory handle",
                     Some(32) => "source review identity handoff encountered incompatible sharing",
                     Some(87) => "source review identity handoff rejected native parameters",
                     _ => "source directory identity cannot be retained for review",
                 };
-                return Err(error(path, reason));
-            }
-            // ReOpenFile returned a valid independent handle; File closes it on every error path.
-            let retained = unsafe { File::from_raw_handle(handle) };
+                error(path, reason)
+            })?;
             if identity(&retained, path)? != *expected {
                 return Err(error(
                     path,
@@ -269,9 +253,9 @@ impl SourceSnapshot {
         let path = std::path::absolute(path)
             .map_err(|_| error(path, "native configuration path is unavailable"))?;
         if path.components().any(|c| matches!(c, Component::ParentDir))
-            || !path
-                .file_name()
-                .is_some_and(|n| n == "cyber.json" || n == "cyber.jsonc")
+            || !path.file_name().is_some_and(|n| {
+                n == "cyber.json" || n == "cyber.jsonc" || n == "cyber.local.jsonc"
+            })
         {
             return Err(error(&path, "invalid native configuration target"));
         }
@@ -327,6 +311,9 @@ impl SourceSnapshot {
         {
             Ok(self)
         }
+    }
+    pub(super) fn path(&self) -> &Path {
+        &self.path
     }
     pub fn bytes(&self) -> &[u8] {
         &self.bytes

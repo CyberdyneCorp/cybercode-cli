@@ -168,7 +168,7 @@ fn defaults_layer(req: &LoadRequest<'_>) -> Layer {
 
 fn read_global_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {
     let dir = &req.paths.config;
-    let files = [dir.join("cyber.json"), dir.join("cyber.jsonc")];
+    let files = global_layer_paths(dir);
     read_layers(&files, "global")
 }
 
@@ -177,16 +177,20 @@ fn read_project_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError>
         return Ok(Vec::new());
     }
     let root = project_root(req.location);
-    let mut dirs: Vec<&Path> = req
-        .location
+    read_layers(&project_layer_paths(req.location, &root), "project")
+}
+
+pub(crate) fn global_layer_paths(directory: &Path) -> [PathBuf; 2] {
+    [directory.join("cyber.json"), directory.join("cyber.jsonc")]
+}
+
+pub(crate) fn project_layer_paths(location: &Path, root: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<&Path> = location
         .ancestors()
-        .take_while(|d| d.starts_with(&root))
+        .take_while(|d| d.starts_with(root))
         .collect();
     dirs.reverse();
-    let mut files: Vec<PathBuf> = dirs
-        .iter()
-        .flat_map(|d| [d.join("cyber.json"), d.join("cyber.jsonc")])
-        .collect();
+    let mut files: Vec<PathBuf> = dirs.iter().flat_map(|d| global_layer_paths(d)).collect();
     files.extend(dirs.iter().flat_map(|d| {
         let cyber = d.join(".cyber");
         [
@@ -195,7 +199,7 @@ fn read_project_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError>
             cyber.join("cyber.local.jsonc"),
         ]
     }));
-    read_layers(&files, "project")
+    files
 }
 
 fn read_env_layers(req: &LoadRequest<'_>) -> Result<Vec<Layer>, ConfigError> {

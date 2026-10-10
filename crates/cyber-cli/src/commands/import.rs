@@ -62,6 +62,10 @@ pub fn run(args: &ImportArgs, global: &GlobalArgs) -> Result<(), CliError> {
         return output::json(view);
     }
     println!("Target: {}", escaped(&view.target.to_string_lossy()));
+    println!("Raw file-layer preview; profiles and substitutions are not evaluated.");
+    for layer in &view.native_layers {
+        println!("Native layer: {}", escaped(&layer.to_string_lossy()));
+    }
     if view.diff.is_empty() {
         println!("nothing to do for supported fields");
     } else {

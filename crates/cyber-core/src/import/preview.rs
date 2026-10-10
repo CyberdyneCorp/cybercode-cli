@@ -28,6 +28,8 @@ pub struct MappingRecord {
 pub struct PreviewOutput {
     pub target: PathBuf,
     pub diff: String,
+    /// Raw file layers influencing the proposal; no profile or substitution evaluation.
+    pub native_layers: Vec<PathBuf>,
     pub report: Vec<MappingRecord>,
     pub required_environment: Vec<RequiredEnvironment>,
     /// This increment does not implement every source adapter or destination transactions.
@@ -101,7 +103,9 @@ pub fn preview_import(
         ImportScope::Global => std::path::absolute(native_global)
             .map_err(|_| error(native_global, "global target is unavailable"))?,
     };
-    let (target, existing, destinations, missing) = native_config(&directory)?;
+    let native = native_config(roots, scope, native_global, &directory)?;
+    let existing = native.value;
+    let target = native.target;
     let mut proposed = existing.clone();
     let mut report = Vec::new();
     for issue in inventory.issues {
@@ -113,7 +117,7 @@ pub fn preview_import(
         snapshots: Vec::new(),
         required: Vec::new(),
         secrets: sensitive_values(&existing),
-        remaining: 16 * 1024 * 1024,
+        remaining: native.remaining,
         report,
     };
     for family in [SourceTool::OpenCode, SourceTool::Codex, SourceTool::Claude] {
@@ -155,40 +159,83 @@ pub fn preview_import(
         output: PreviewOutput {
             target,
             diff,
+            native_layers: native
+                .snapshots
+                .iter()
+                .map(|s| s.path().to_owned())
+                .collect(),
             report: context.report,
             required_environment: context.required,
             complete: false,
         },
         sources: context.snapshots,
-        destinations,
-        missing,
+        destinations: native.snapshots,
+        missing: native.missing,
     };
     preview.verify()?;
     Ok(preview)
 }
+struct NativeConfig {
+    target: PathBuf,
+    value: Value,
+    snapshots: Vec<SourceSnapshot>,
+    missing: Vec<PathBuf>,
+    remaining: usize,
+}
 fn native_config(
+    roots: &SourceRoots,
+    scope: ImportScope,
+    native_global: &Path,
     directory: &Path,
-) -> Result<(PathBuf, Value, Vec<SourceSnapshot>, Vec<PathBuf>), DiscoveryError> {
-    let mut snapshots = Vec::new();
-    let mut missing = Vec::new();
-    let mut value = json!({});
-    let mut target = directory.join("cyber.jsonc");
-    for name in ["cyber.json", "cyber.jsonc"] {
-        let path = directory.join(name);
+) -> Result<NativeConfig, DiscoveryError> {
+    let global = std::path::absolute(native_global)
+        .map_err(|_| error(native_global, "native global path is unavailable"))?;
+    let mut paths = crate::config::global_layer_paths(&global).to_vec();
+    if scope == ImportScope::Project {
+        let root = roots
+            .project_root
+            .canonicalize()
+            .map_err(|_| error(&roots.project_root, "project root is unavailable"))?;
+        if !directory.starts_with(&root) {
+            return Err(error(directory, "Location is outside its project root"));
+        }
+        paths.extend(crate::config::project_layer_paths(directory, &root));
+    }
+    if paths.len() > 4096 {
+        return Err(error(
+            directory,
+            "native file-layer candidate limit exceeded",
+        ));
+    }
+    let mut native = NativeConfig {
+        target: directory.join("cyber.jsonc"),
+        value: json!({}),
+        snapshots: Vec::new(),
+        missing: Vec::new(),
+        remaining: 16 * 1024 * 1024,
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for path in paths.into_iter().filter(|p| seen.insert(p.clone())) {
         if let Some(snapshot) = SourceSnapshot::read_native_config(&path)? {
-            let document = crate::config::parse_jsonc("native import target", snapshot.text()?)
+            native.remaining = native
+                .remaining
+                .checked_sub(snapshot.bytes().len())
+                .ok_or_else(|| error(&path, "preview exceeds aggregate sixteen MiB parse limit"))?;
+            let document = crate::config::parse_jsonc("native import file layer", snapshot.text()?)
                 .map_err(|_| error(&path, "invalid native configuration JSON/JSONC"))?;
             if !document.is_object() {
                 return Err(error(&path, "native configuration must be an object"));
             }
-            overlay(&mut value, &document, "", false);
-            target = path;
-            snapshots.push(snapshot);
+            crate::config::merge_raw_layer(&mut native.value, &document);
+            if path.parent() == Some(directory) {
+                native.target = path.clone();
+            }
+            native.snapshots.push(snapshot);
         } else {
-            missing.push(path);
+            native.missing.push(path);
         }
     }
-    Ok((target, value, snapshots, missing))
+    Ok(native)
 }
 struct SourceContext<'a> {
     roots: &'a SourceRoots,

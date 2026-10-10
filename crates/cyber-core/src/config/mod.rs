@@ -85,3 +85,9 @@ pub struct Resolved {
     /// Labels of the layers that were merged, lowest priority first.
     pub layers: Vec<String>,
 }
+
+/// Merge raw file layers without substitution, validation or trust side effects.
+pub(crate) fn merge_raw_layer(base: &mut serde_json::Value, overlay: &serde_json::Value) {
+    merge::merge_layer(base, overlay, "raw file layer", &mut merge::Sources::new());
+}
+pub(crate) use load::{global_layer_paths, project_layer_paths};
