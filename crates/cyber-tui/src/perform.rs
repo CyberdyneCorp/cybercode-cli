@@ -52,7 +52,18 @@ pub enum Msg {
     },
     Sessions(Vec<Choice>),
     Models(Vec<Choice>),
-    Commands(Vec<Choice>),
+    Commands {
+        items: Vec<Choice>,
+        /// `review` resolves to the bundled skill rather than an override.
+        bundled_review: bool,
+    },
+    /// The server refused a command before admission; nothing runs.
+    Refused {
+        command: String,
+        message: String,
+    },
+    /// The awaited review's delegation record.
+    ReviewDelegation(Value),
     Files(Vec<String>),
     Agents {
         directory: String,
@@ -224,6 +235,56 @@ async fn submit_prompt(
     .await
 }
 
+/// Posts a command, with a client-chosen message ID when one is given.
+async fn command(
+    client: &Client,
+    session: &str,
+    name: String,
+    arguments: String,
+    message: Option<String>,
+) -> Result<Msg, String> {
+    let mut body = json!({ "name": name, "arguments": arguments });
+    if let Some(message) = message {
+        body["id"] = message.into();
+    }
+    match client
+        .post(&format!("/sessions/{session}/command"), body)
+        .await
+    {
+        Ok(_) => Ok(Msg::Done),
+        Err(error) => refused(name, error),
+    }
+}
+
+/// The awaited review's delegation record, which names its reviewer Job.
+async fn review_delegation(
+    client: &Client,
+    session: &str,
+    delegation: &str,
+) -> Result<Msg, String> {
+    let record = client
+        .get(&format!("/sessions/{session}/delegations/{delegation}"))
+        .await
+        .map_err(err)?;
+    Ok(Msg::ReviewDelegation(record["data"].clone()))
+}
+
+/// A command the server did not admit. A permission denial or review target
+/// error is a refusal; any failure of a `review` post is too, so the review
+/// is not left awaiting a Job that will never exist.
+fn refused(command: String, error: cyber_client::ClientError) -> Result<Msg, String> {
+    match error {
+        cyber_client::ClientError::Api {
+            status, message, ..
+        } if status == 403 || status == 422 => Ok(Msg::Refused { command, message }),
+        error if command == "review" => Ok(Msg::Refused {
+            command,
+            message: error.to_string(),
+        }),
+        error => Err(err(error)),
+    }
+}
+
 #[cfg(test)]
 pub async fn perform(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     perform_owned(client, session, action, None).await
@@ -365,14 +426,15 @@ async fn converse(
             .await?;
             snapshot(client, id).await
         }
-        Action::Command { name, arguments } => {
-            post(
-                client,
-                &format!("/sessions/{id}/command"),
-                json!({ "name": name, "arguments": arguments }),
-            )
-            .await
-        }
+        Action::Command {
+            name,
+            arguments,
+            id: message,
+        } => command(client, id, name, arguments, message).await,
+        Action::ReviewDelegation {
+            session,
+            delegation,
+        } => review_delegation(client, &session, &delegation).await,
         Action::Interrupt => post(client, &format!("/sessions/{id}/interrupt"), json!({})).await,
         Action::Reply { request, body } => {
             post(
@@ -514,17 +576,22 @@ async fn models(client: &Client) -> Result<Msg, String> {
 
 pub async fn commands(client: &Client) -> Result<Msg, String> {
     let list = client.get("/commands").await.map_err(err)?;
-    let items = list["data"]
-        .as_array()
-        .into_iter()
-        .flatten()
+    let entries = list["data"].as_array().map_or(&[][..], Vec::as_slice);
+    let bundled_review = entries
+        .iter()
+        .any(|c| c["name"] == "review" && c["source"] == "builtin");
+    let items = entries
+        .iter()
         .map(|c| Choice {
             key: c["name"].as_str().unwrap_or_default().into(),
             label: c["name"].as_str().unwrap_or_default().into(),
             detail: c["description"].as_str().unwrap_or_default().into(),
         })
         .collect();
-    Ok(Msg::Commands(items))
+    Ok(Msg::Commands {
+        items,
+        bundled_review,
+    })
 }
 
 fn agent_choices(data: &Value) -> Vec<Choice> {

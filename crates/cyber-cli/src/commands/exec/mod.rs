@@ -2,7 +2,7 @@
 
 mod background;
 mod delegation;
-mod report;
+pub(crate) mod report;
 pub(crate) mod setup;
 
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ use crate::error::CliError;
 use background::{Owned, Settle};
 use report::{Out, Run};
 
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub struct ExecArgs {
     /// Start a new Session in a managed worktree; omit NAME to generate one.
     #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "NAME")]
@@ -107,6 +107,27 @@ pub fn run(args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), Cli
                 .with_hint("cyber exec \"fix the failing tests\""),
         );
     }
+    launch(args, ctx, global, prompt, None)
+}
+
+/// `cyber review`: the `review` command over the normalized target, reported as findings.
+pub(crate) fn review(
+    args: ExecArgs,
+    ctx: &Context,
+    global: &GlobalArgs,
+    target: cyber_core::review::Target,
+) -> Result<(), CliError> {
+    let prompt = target.normalized();
+    launch(args, ctx, global, prompt, Some(target))
+}
+
+fn launch(
+    args: ExecArgs,
+    ctx: &Context,
+    global: &GlobalArgs,
+    prompt: String,
+    review: Option<cyber_core::review::Target>,
+) -> Result<(), CliError> {
     setup::validate(&args)?;
     let timeout = args.timeout.as_deref().map(parse_duration).transpose()?;
     let format = global.format.unwrap_or(Format::Text);
@@ -126,8 +147,14 @@ pub fn run(args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), Cli
         } else {
             client
         };
-        let out = Out::new(format, &args, &session);
-        execute(&client, &session, &args, prompt, timeout, out).await
+        let mut out = Out::new(format, &args, &session);
+        match review {
+            Some(target) => {
+                out.review(target);
+                execute_session(&client, &session, &args, prompt, timeout, out).await
+            }
+            None => execute(&client, &session, &args, prompt, timeout, out).await,
+        }
     })?;
     if code == 0 {
         Ok(())
@@ -176,7 +203,11 @@ async fn execute_session(
         );
     let id = session["id"].as_str().unwrap_or_default();
     let mut owned = Owned::capture(client, id).await?;
-    let message = setup::send(client, id, args, prompt).await?;
+    let (path, body) = setup::request(id, args, prompt)?;
+    let message = match client.post(&path, body).await {
+        Ok(receipt) => receipt["data"]["message_id"].as_str().map(str::to_string),
+        Err(error) => return out.refused(error, &run, args, session),
+    };
     if let (Some(_), Some(message)) = (&args.command, &message) {
         owned.command(message)?;
     }
@@ -188,6 +219,14 @@ async fn execute_session(
         owned: &mut owned,
     };
     follow.run(&mut events, timeout).await;
+    if out.is_review() {
+        match owned.fork_job(client).await {
+            Ok(job) => out.review_job(owned.fork_id(), job),
+            Err(error) => {
+                run.error.get_or_insert(error.message);
+            }
+        }
+    }
     if let Err(error) = refresh_usage(client, id, &mut run).await {
         run.error.get_or_insert(error.message);
     } else if run.over_budget() {

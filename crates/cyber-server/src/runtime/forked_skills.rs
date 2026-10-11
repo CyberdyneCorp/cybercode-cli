@@ -2,7 +2,8 @@
 use super::events::{Promoted, SKILL_FORWARDED, event};
 use super::model::{Delivery, InboxRow, SessionState};
 use super::{
-    Admission, Delegation, DelegationStatus, Handle, Inner, Runtime, RuntimeError, UserSubtask,
+    Admission, CommandRequest, Delegation, DelegationStatus, Handle, Inner, Receipt, Runtime,
+    RuntimeError, UserSubtask, receipt_for,
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -14,6 +15,28 @@ impl Runtime {
             "op_skill_{:x}",
             Sha256::digest(format!("{session}\0{message}"))
         )
+    }
+
+    /// A retried command whose admission captured its request is matched by
+    /// that request before planning runs again, so environment-dependent
+    /// planning (such as a review target) cannot change retry identity.
+    pub async fn command_receipt(
+        &self,
+        session: &str,
+        message_id: &str,
+        request: &CommandRequest,
+    ) -> Result<Option<Receipt>, RuntimeError> {
+        let state = self.state(session).await?;
+        let Some(row) = state.input(message_id) else {
+            return Ok(None);
+        };
+        let Some(captured) = row.skill_command.as_ref().and_then(|s| s.request.as_ref()) else {
+            return Ok(None);
+        };
+        if captured != request {
+            return Err(RuntimeError::PromptConflict(message_id.into()));
+        }
+        Ok(Some(receipt_for(&state, message_id, row.admitted_seq)))
     }
 
     /// Terminal pre-admission outcomes use the inbox's existing retry fence.

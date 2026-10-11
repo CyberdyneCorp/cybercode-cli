@@ -525,11 +525,24 @@ async fn command(
         prefers_apply_patch: false,
         rules: info.rules,
     };
+    if let Some(message) = &b.id {
+        let request = crate::runtime::CommandRequest {
+            name: b.name.clone(),
+            arguments: b.arguments.clone(),
+            delivery: b.delivery,
+        };
+        if let Some(receipt) = state
+            .runtime
+            .command_receipt(&id, message, &request)
+            .await?
+        {
+            return Ok((StatusCode::ACCEPTED, Json(Data { data: receipt })).into_response());
+        }
+    }
     let plan = state
         .services
         .command_plan(&turn, &b.name, &b.arguments)
-        .await
-        .map_err(ApiError::forbidden)?
+        .await?
         .ok_or_else(|| {
             ApiError::not_found(
                 "CommandNotFoundError",

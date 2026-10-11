@@ -17,6 +17,12 @@ fn main() -> ExitCode {
     {
         return git_inspect();
     }
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--git-review")
+    {
+        return git_review();
+    }
 
     #[cfg(windows)]
     if let Some(mode) = std::env::args_os().nth(1)
@@ -38,21 +44,9 @@ fn main() -> ExitCode {
 fn git_inspect() -> ExitCode {
     use cyber_core::worktrees::inspection::{MAX_RESPONSE, Request};
     let result = (|| -> Result<Vec<u8>, String> {
-        let args: Vec<_> = std::env::args_os().skip(2).collect();
-        let [request] = args.as_slice() else {
-            return Err("expected one inspection request".into());
-        };
-        let request = request
-            .to_str()
-            .filter(|request| request.len() <= 8192)
-            .ok_or("invalid inspection request")?;
-        let request: Request = serde_json::from_str(request).map_err(|error| error.to_string())?;
-        let parent = request
-            .overrides
-            .parent()
-            .ok_or("inspection configuration has no parent")?;
-        let isolated = tempfile::tempdir_in(parent).map_err(|error| error.to_string())?;
-        isolate_config(isolated.path())?;
+        let request: Request =
+            serde_json::from_str(&request(8192)?).map_err(|error| error.to_string())?;
+        let _isolated = isolated(&request.overrides)?;
         let report =
             cyber_core::worktrees::inspection::read(&request).map_err(|error| error.to_string())?;
         let response = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
@@ -61,18 +55,80 @@ fn git_inspect() -> ExitCode {
         }
         Ok(response)
     })();
-    match result {
-        Ok(bytes) => {
-            use std::io::Write;
-            match std::io::stdout().write_all(&bytes) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(_) => ExitCode::from(74),
+    respond(result.map_err(Failure::Internal))
+}
+
+/// Resolves a review target. A typed target failure is written to stdout as
+/// JSON with exit status 2; protocol and internal failures go to stderr (65).
+fn git_review() -> ExitCode {
+    use cyber_core::review::resolve::{MAX_REQUEST, MAX_RESPONSE, Request, ResolveError, resolve};
+    let result = (|| -> Result<Vec<u8>, Failure> {
+        let request = request(MAX_REQUEST).map_err(Failure::Internal)?;
+        let request: Request =
+            serde_json::from_str(&request).map_err(|error| Failure::Internal(error.to_string()))?;
+        let _isolated = isolated(&request.overrides).map_err(Failure::Internal)?;
+        let diff = resolve(&request).map_err(|error| match error {
+            ResolveError::Target(error) => Failure::Target(error),
+            ResolveError::Io(error) => Failure::Internal(error.to_string()),
+        })?;
+        let response = serde_json::to_vec(&diff).map_err(|e| Failure::Internal(e.to_string()))?;
+        if response.len() > MAX_RESPONSE {
+            return Err(Failure::Internal(
+                "review response exceeds supported size".into(),
+            ));
+        }
+        Ok(response)
+    })();
+    respond(result)
+}
+
+enum Failure {
+    Target(cyber_core::review::TargetError),
+    Internal(String),
+}
+
+fn request(limit: usize) -> Result<String, String> {
+    let args: Vec<_> = std::env::args_os().skip(2).collect();
+    let [request] = args.as_slice() else {
+        return Err("expected one inspection request".into());
+    };
+    let request = request
+        .to_str()
+        .filter(|request| request.len() <= limit)
+        .ok_or("invalid inspection request")?;
+    Ok(request.to_owned())
+}
+
+/// Confines libgit2's ambient configuration search to an empty directory that
+/// lives until the returned guard drops.
+fn isolated(overrides: &std::path::Path) -> Result<tempfile::TempDir, String> {
+    let parent = overrides
+        .parent()
+        .ok_or("inspection configuration has no parent")?;
+    let isolated = tempfile::tempdir_in(parent).map_err(|error| error.to_string())?;
+    isolate_config(isolated.path())?;
+    Ok(isolated)
+}
+
+fn respond(result: Result<Vec<u8>, Failure>) -> ExitCode {
+    use std::io::Write;
+    let (bytes, code) = match result {
+        Ok(bytes) => (bytes, ExitCode::SUCCESS),
+        Err(Failure::Target(error)) => {
+            eprintln!("cyber-sandbox-exec: {error}");
+            match serde_json::to_vec(&error) {
+                Ok(bytes) => (bytes, ExitCode::from(2)),
+                Err(_) => return ExitCode::from(65),
             }
         }
-        Err(error) => {
+        Err(Failure::Internal(error)) => {
             eprintln!("cyber-sandbox-exec: {error}");
-            ExitCode::from(65)
+            return ExitCode::from(65);
         }
+    };
+    match std::io::stdout().write_all(&bytes) {
+        Ok(()) => code,
+        Err(_) => ExitCode::from(74),
     }
 }
 
@@ -84,7 +140,7 @@ fn isolate_config(directory: &std::path::Path) -> Result<(), String> {
         git2::ConfigLevel::XDG,
         git2::ConfigLevel::ProgramData,
     ] {
-        // SAFETY: --git-inspect runs on the sole main thread, before any other
+        // SAFETY: --git-inspect and --git-review run on the sole main thread, before any other
         // libgit2 access or runtime/thread creation. The directory stays alive throughout inspection.
         unsafe { git2::opts::set_search_path(level, directory) }
             .map_err(|error| error.to_string())?;

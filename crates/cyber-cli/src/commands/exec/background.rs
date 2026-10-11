@@ -25,6 +25,15 @@ pub(super) enum Settle {
     Wait,
 }
 
+/// How a forked command ended.
+pub enum ForkOutcome {
+    /// Its Job: status, `result` and `error`.
+    Job(Value),
+    /// Failed or cancelled before a Job existed (a hook or admission denied
+    /// the spawn); carries the delegation's error.
+    Ended(String),
+}
+
 pub(super) struct Owned {
     session: String,
     /// Jobs that belonged to the Session before this run: never awaited or cancelled.
@@ -159,6 +168,40 @@ impl Owned {
         Err(CliError::runtime(format!(
             "Background handback was not admitted; inspect {id}: {detail}"
         )))
+    }
+
+    /// The forked command's delegation ID; `None` once known not to be forked.
+    pub fn fork_id(&self) -> Option<&str> {
+        self.fork.as_ref().map(|fork| fork.id.as_str())
+    }
+
+    /// The forked command's Job (its status, `result` and `error`), from the
+    /// Jobs this run owns; `None` for an inline command.
+    pub async fn fork_job(&self, client: &Client) -> Result<Option<ForkOutcome>, CliError> {
+        let Some(fork) = &self.fork else {
+            return Ok(None);
+        };
+        let Some(record) = fork.find(client).await? else {
+            return Ok(None);
+        };
+        let Some(job) = record.job_id else {
+            return Ok(match record.status {
+                DelegationStatus::Failed | DelegationStatus::Cancelled => {
+                    Some(ForkOutcome::Ended(record.error.unwrap_or_else(|| {
+                        format!(
+                            "The forked command ended without a Job; inspect {}",
+                            fork.id
+                        )
+                    })))
+                }
+                _ => None,
+            });
+        };
+        let owned = self.owned_jobs(client).await?;
+        Ok(owned
+            .into_iter()
+            .find(|candidate| candidate["id"] == job.as_str())
+            .map(ForkOutcome::Job))
     }
 
     async fn owned_jobs(&self, client: &Client) -> Result<Vec<Value>, CliError> {

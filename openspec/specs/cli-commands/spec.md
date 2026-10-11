@@ -68,6 +68,34 @@ This list is the single registry of top-level commands; no other spec SHALL intr
 - **WHEN** the user runs `cyber exec --format json "summarize README"`
 - **THEN** stdout contains exactly one JSON object with `session_id`, `result`, `usage` and `cost_usd`
 
+### Requirement: Review command
+(P1) `cyber review [target]` SHALL run the local review (`vcs-integration` → Local review command) non-interactively. The target is empty (uncommitted changes), `<base>..<head>`, a commit, or `pr <number>`; it SHALL be validated with the review target grammar before any server contact. The command SHALL accept `--session`, `--continue`, `--embedded`, `--attach`, `--password`, `--timeout`, `--max-cost`, `--max-tokens`, the global `--format text|json|stream-json`, `--fail-on-deny`, `--ephemeral` and `--worktree`, with the meanings they have for `cyber exec`. It SHALL admit the `review` command through the same Session command path and owned-work rules as `cyber exec --command review` (`exec-mode` → Background work owned by the run). The `review` subcommand SHALL take precedence over a directory named `review`; `cyber ./review` opens the TUI there.
+
+Exit codes SHALL be:
+- 0: the review completed (with any number of findings), or the diff was empty.
+- 1: the reviewer failed, returned an invalid result (`SchemaMismatch`), or its handback failed.
+- 2: the target is invalid or could not be resolved (`invalid_target`, `invalid_ref`, `unresolved_ref`, `not_a_repository`, `gh_unavailable`, `pr_unresolved`, `pr_commits_missing`), or read policy leaves nothing reviewable (`all_withheld`: every changed file is withheld, or files were withheld and no remaining file has patch text), so changes nobody reviewed never pass as a clean tree.
+- Permission denial, timeout and budget stops use the `cyber exec` exit codes. A review refused by a permission rule before admission (HTTP 403, such as an `external_directory` deny of the repository or a `bash` deny of `gh *` for `pr <number>`) SHALL exit 5 with `--fail-on-deny` and 1 otherwise, create no Job, and still print the result shape below with `findings: null`, `stop_reason: "error"` and the denial in `error`.
+- A reviewer fork that fails or is cancelled before its Job exists (for example an `agent` rule denies `reviewer` at delegation admission) SHALL exit 1 with `reviewed: false` and the delegation's error.
+
+`--format json` SHALL print one object, and `stream-json` SHALL end with a `result` line of the same shape: `target`, `target_kind` (`uncommitted|range|commit|pr`), `reviewed`, `findings` (validated and ordered as in `vcs-integration`), `limitations`, `counts` (`critical`, `high`, `medium`, `low`), `result` (the handback text), `session_id`, `parent_session_id`, `delegation_id`, `job_id`, `usage`, `cost_usd`, `duration_ms`, `stop_reason`, `error` and `exit_code`. `findings` SHALL be `null` when an overriding `review` skill or command ran or the review did not complete, and `[]` with `reviewed: false` when the diff was empty. `reviewed` SHALL be `true` only when validated findings were reported or an override completed. A target error SHALL add its `code`. Text output SHALL print the findings most severe first, then the limitations, or `No findings.`, `No changes to review` for an empty diff, and the handback text when an override ran.
+
+#### Scenario: Review JSON output
+- **WHEN** the user runs `cyber review main..HEAD --format json` and the reviewer reports one high finding
+- **THEN** stdout is one JSON object with `target` `main..HEAD`, `target_kind` `range`, that finding in `findings`, `counts.high` 1 and `exit_code` 0
+
+#### Scenario: Review refused by a permission rule
+- **WHEN** `permissions.bash."gh *"` is `deny` and the user runs `cyber review --format json pr 3`
+- **THEN** stdout is one review object with `target` `pr 3`, `findings: null` and the denial in `error`, the command exits 1 (5 with `--fail-on-deny`), and no Job is created
+
+#### Scenario: Invalid target before any Session
+- **WHEN** the user runs `cyber review a...b`
+- **THEN** the command exits 2 with an `invalid_target` error and no Session is created
+
+#### Scenario: Directory named review
+- **WHEN** the Location contains a directory named `review` and the user runs `cyber ./review`
+- **THEN** the TUI opens on that directory, while `cyber review` runs the review command
+
 ### Requirement: Server and service commands
 (P0) `cyber serve` SHALL run the API server in the foreground on `--hostname` (default `127.0.0.1`) and `--port` (default `4747`, `0` = random). `cyber service start|stop|restart|status` SHALL manage one background server per user, registered in `<state>/server.json` (mode 0600) with `id`, `version`, `url` and `pid`. `service status` SHALL print `running <url>` or `stopped`. `cyber service password [value]` SHALL print or set the local server password.
 

@@ -718,7 +718,7 @@ fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
-pub(super) fn linked_git_directory(directory: &Path) -> io::Result<PathBuf> {
+pub(crate) fn linked_git_directory(directory: &Path) -> io::Result<PathBuf> {
     let marker = directory.join(".git");
     if !std::fs::symlink_metadata(&marker)?.is_file() {
         return Err(invalid("Managed worktree Git marker is not a regular file"));
@@ -738,7 +738,7 @@ pub(super) fn linked_git_directory(directory: &Path) -> io::Result<PathBuf> {
     Ok(metadata)
 }
 
-pub(super) fn read_pointer(path: &Path) -> io::Result<String> {
+pub(crate) fn read_pointer(path: &Path) -> io::Result<String> {
     let mut value = String::new();
     std::fs::File::open(path)?
         .take(65537)

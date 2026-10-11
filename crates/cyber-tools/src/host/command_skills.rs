@@ -1,7 +1,9 @@
 //! Capture user-invoked skill declarations together with their expanded body.
 use super::BuiltinHost;
 use crate::permissions::{Decision, Request};
-use cyber_server::runtime::{CommandPlan, Invocation, SkillCommand, TurnContext};
+use cyber_server::runtime::{
+    CommandPlan, CommandPlanError, CommandRequest, Delivery, Invocation, SkillCommand, TurnContext,
+};
 use serde_json::json;
 use std::path::Path;
 
@@ -38,7 +40,7 @@ impl BuiltinHost {
         turn: &TurnContext,
         name: &str,
         arguments: &str,
-    ) -> Result<Option<CommandPlan>, String> {
+    ) -> Result<Option<CommandPlan>, CommandPlanError> {
         if ["help", "exit", "goal", "loop", "workflows", "mode"].contains(&name) {
             return Ok(None);
         }
@@ -52,7 +54,7 @@ impl BuiltinHost {
         };
         if let Some(model) = &skill.model {
             if model.len() > 256 || model.chars().any(char::is_control) {
-                return Err("Invalid skill model reference".into());
+                return Err("Invalid skill model reference".to_string().into());
             }
             cyber_llm::catalog::ModelRef::parse(model).map_err(|error| error.to_string())?;
         }
@@ -80,14 +82,24 @@ impl BuiltinHost {
             ..Default::default()
         };
         if let Decision::Deny(reason) = policy.user_delegation(&request) {
-            return Err(format!("Permission denied: {reason}"));
+            return Err(format!("Permission denied: {reason}").into());
         }
+        // Only the bundled review resolves its target; an override runs as defined.
+        let review = skill.is_bundled() && skill.name == "review";
+        let text = if review {
+            let target = cyber_core::review::Target::parse(arguments)?;
+            let block = self.review_target(&inv, policy, arguments).await?;
+            format!(
+                "{block}\n\n{}",
+                cyber_core::skills::instruction_frame(&skill, &target.normalized())
+            )
+        } else if skill.context == cyber_core::skills::SkillContext::Fork {
+            cyber_core::skills::instruction_frame(&skill, arguments)
+        } else {
+            cyber_core::skills::expand(&skill.body, arguments)
+        };
         Ok(Some(CommandPlan {
-            text: if skill.context == cyber_core::skills::SkillContext::Fork {
-                cyber_core::skills::instruction_frame(&skill, arguments)
-            } else {
-                cyber_core::skills::expand(&skill.body, arguments)
-            },
+            text,
             skill: Some(SkillCommand {
                 agent: skill.agent.clone(),
                 fork: skill.context == cyber_core::skills::SkillContext::Fork,
@@ -97,7 +109,36 @@ impl BuiltinHost {
                     disallowed_tools: skill.disallowed_tools.clone(),
                 },
                 model: skill.model.clone(),
+                output_schema: review.then(|| cyber_core::review::FINDINGS_SCHEMA.clone()),
+                // Delivery is bound when the plan is admitted.
+                request: review.then(|| CommandRequest {
+                    name: name.into(),
+                    arguments: arguments.into(),
+                    delivery: Delivery::Steer,
+                }),
             }),
         }))
+    }
+
+    async fn review_target(
+        &self,
+        inv: &Invocation,
+        policy: crate::permissions::Policy,
+        arguments: &str,
+    ) -> Result<String, CommandPlanError> {
+        // Withholding follows the reviewer's own ceiling, not the invoker's mode.
+        let reader = self.policy_for(inv, Some("reviewer")).await?;
+        let ctx = super::Ctx {
+            skill_paths: Default::default(),
+            loaded_skill: Default::default(),
+            compiler_feedback: Default::default(),
+            host: self,
+            inv,
+            policy,
+            location: super::canonical(Path::new(&inv.directory)),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            hook_decision: None,
+        };
+        super::review::target_block(&ctx, &reader, arguments).await
     }
 }

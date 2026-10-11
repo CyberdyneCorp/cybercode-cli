@@ -6,7 +6,7 @@ mod includes;
 pub mod inspection;
 mod location;
 mod removal;
-mod repository;
+pub(crate) mod repository;
 mod setup;
 pub use activity::{CheckoutActivity, CheckoutLease};
 pub use changes::{ChangedFile, Changes};

@@ -259,6 +259,8 @@ pub(crate) async fn fork_skill(
                 disallowed_tools: skill.disallowed_tools.clone(),
             },
             model: skill.model.clone(),
+            output_schema: None,
+            request: None,
         }),
     )
     .await

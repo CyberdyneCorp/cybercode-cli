@@ -36,6 +36,7 @@ windows-sys = { version = "0.61.2", features = ["Wdk_Foundation", "Wdk_Storage_F
 
 [dev-dependencies]
 futures = "0.3"
+jsonschema = { version = "0.58.6", default-features = false }
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]

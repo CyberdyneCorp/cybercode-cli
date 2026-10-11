@@ -348,7 +348,15 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         }
         Msg::Sessions(items) => app.open_picker(PickerKind::Sessions, "Sessions", items),
         Msg::Models(items) => app.open_picker(PickerKind::Models, "Models", items),
-        Msg::Commands(items) => app.commands = items,
+        Msg::Commands {
+            items,
+            bundled_review,
+        } => {
+            app.commands = items;
+            app.review.set_bundled(bundled_review);
+        }
+        Msg::Refused { command, message } => app.refused(&command, &message),
+        Msg::ReviewDelegation(record) => app.review_delegation(&record),
         Msg::Files(files) => app.files = files,
         Msg::Agents { directory, items } => {
             if directory == app.session.directory {

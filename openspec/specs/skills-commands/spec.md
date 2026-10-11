@@ -115,6 +115,14 @@ Skills are reusable instruction packages (`SKILL.md` plus supporting files) that
 - **WHEN** `/review` has `subtask: true` and `agent: reviewer`
 - **THEN** a child session with agent `reviewer` runs it and the parent receives the summary
 
+#### Scenario: Model cannot invoke the bundled review
+- **WHEN** the model calls the skill tool with name `review` and no discovered skill overrides the bundled one
+- **THEN** the call fails with `Skill "review" not found` and no reviewer child starts
+
+#### Scenario: Bundled review receives a resolved diff
+- **WHEN** the bundled `review` skill runs as `/review main..HEAD`
+- **THEN** its `reviewer` child receives the host-resolved, permission-filtered diff in a data block and the findings structured-result schema, and does not fetch the diff itself
+
 ### Requirement: Argument hints and autocomplete data
 (P0) The system SHALL expose for each command and skill its name, description, source, `argument_hint` (or derived placeholders) and namespace via `GET /api/v1/commands`, which clients use for slash autocomplete.
 
@@ -130,7 +138,7 @@ Skills are reusable instruction packages (`SKILL.md` plus supporting files) that
 - **THEN** an `AGENTS.md` is generated through the normal permission flow
 
 ### Requirement: Bundled skills
-(P1) The system SHALL bundle skills `review` (single-agent code review of a diff producing the structured findings defined by `vcs-integration`), `batch` (split a large change into 5-30 worktree-isolated subagents), `simplify` (review changed code for reuse and simplification), `security-review` (review pending changes for vulnerabilities) and `customize-cyber` (how to edit Cyber Code config, agents, skills, hooks and MCP). Each SHALL be replaceable by a discovered skill of the same name.
+(P1) The system SHALL bundle skills `review` (single-agent code review of a diff producing the structured findings defined by `vcs-integration`), `batch` (split a large change into 5-30 worktree-isolated subagents), `simplify` (review changed code for reuse and simplification), `security-review` (review pending changes for vulnerabilities) and `customize-cyber` (how to edit Cyber Code config, agents, skills, hooks and MCP). Each SHALL be replaceable by a discovered skill of the same name. The bundled `review` skill SHALL receive a host-resolved, permission-filtered diff in a data block instead of fetching it itself, and its child SHALL be created with the findings structured-result schema (`vcs-integration` → Local review command). Because only `/review` and `cyber review` resolve that target, the bundled `review` skill SHALL set `disable-model-invocation` so the model cannot invoke it through the skill tool without a diff; the other bundled skills remain model-invocable. An overriding `review` skill or command SHALL replace these behaviors.
 
 #### Scenario: Override bundled skill
 - **WHEN** a project defines `.cyber/skills/simplify/SKILL.md`

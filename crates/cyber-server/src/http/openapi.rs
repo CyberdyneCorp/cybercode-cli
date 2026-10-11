@@ -31,6 +31,8 @@ pub struct Op {
     located: bool,
     stream: bool,
     websocket: bool,
+    /// Declared error responses beyond the default tagged error.
+    errors: Vec<(u16, &'static str, Schema)>,
 }
 
 fn op(method: &'static str, path: &'static str, id: &'static str, summary: &'static str) -> Op {
@@ -47,6 +49,7 @@ fn op(method: &'static str, path: &'static str, id: &'static str, summary: &'sta
         located: false,
         stream: false,
         websocket: false,
+        errors: Vec::new(),
     }
 }
 
@@ -90,6 +93,17 @@ impl Op {
 
     fn stream(mut self) -> Self {
         self.stream = true;
+        self
+    }
+
+    fn error<T: JsonSchema>(
+        mut self,
+        g: &mut SchemaGenerator,
+        status: u16,
+        description: &'static str,
+    ) -> Self {
+        self.errors
+            .push((status, description, g.subschema_for::<T>()));
         self
     }
 }
@@ -383,7 +397,12 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .status(202)
         .body::<CommandBody>(g)
-        .ok::<Data<Receipt>>(g),
+        .ok::<Data<Receipt>>(g)
+        .error::<super::error::ReviewTargetError>(
+            g,
+            422,
+            "The bundled review target could not be resolved; nothing was admitted",
+        ),
         op(
             "post",
             "/sessions/{sessionID}/approve",
@@ -784,6 +803,9 @@ fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {
     };
     let mut responses = Map::new();
     responses.insert(o.status.to_string(), success);
+    for (status, description, schema) in &o.errors {
+        responses.insert(status.to_string(), json!({ "description": description, "content": { "application/json": { "schema": schema } } }));
+    }
     responses.insert("default".into(), json!({ "description": "Tagged error", "content": { "application/json": { "schema": error } } }));
     let mut out = json!({ "operationId": o.id, "summary": o.summary, "tags": [group], "parameters": parameters, "responses": responses });
     if o.method != "get"

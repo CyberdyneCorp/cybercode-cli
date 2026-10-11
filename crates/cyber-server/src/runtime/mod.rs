@@ -215,6 +215,22 @@ pub struct SkillCommand {
     pub fork: bool,
     pub activation: cyber_core::skills::SkillActivation,
     pub model: Option<String>,
+    /// Structured-result schema for the forked child (the bundled review's findings).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
+    /// The originating command when planning depends on the environment, so a
+    /// retry is matched by request instead of being planned again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<CommandRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CommandRequest {
+    pub name: String,
+    pub arguments: String,
+    /// The delivery originally requested, set at admission; a later release
+    /// does not change it.
+    pub delivery: Delivery,
 }
 
 #[derive(Debug, Clone)]
@@ -223,11 +239,32 @@ pub struct CommandPlan {
     pub skill: Option<SkillCommand>,
 }
 
+/// Why a command could not be planned; nothing is admitted in either case.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CommandPlanError {
+    #[error("{0}")]
+    Forbidden(String),
+    #[error(transparent)]
+    Review(#[from] cyber_core::review::TargetError),
+    /// The host could not run its planning helper.
+    #[error("{0}")]
+    Unavailable(String),
+}
+
+impl From<String> for CommandPlanError {
+    fn from(message: String) -> Self {
+        Self::Forbidden(message)
+    }
+}
+
 impl CommandPlan {
     pub fn plain(text: String) -> Self {
         Self { text, skill: None }
     }
-    pub fn admission(self, message_id: Option<String>, delivery: Delivery) -> Admission {
+    pub fn admission(mut self, message_id: Option<String>, delivery: Delivery) -> Admission {
+        if let Some(request) = self.skill.as_mut().and_then(|skill| skill.request.as_mut()) {
+            request.delivery = delivery;
+        }
         Admission {
             skill_command: self.skill,
             message_id,

@@ -57,6 +57,34 @@ impl Services for FakeServices {
     fn expand_command(&self, _location: &Path, name: &str, arguments: &str) -> Option<String> {
         (name == "greet").then(|| format!("Say hello to {arguments}"))
     }
+    /// `review` validates its target like the bundled review, and every
+    /// valid target is reported as an empty diff; `denied` is a permission denial.
+    fn command_plan<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        name: &'a str,
+        arguments: &'a str,
+    ) -> BoxFuture<
+        'a,
+        Result<Option<cyber_server::runtime::CommandPlan>, cyber_server::runtime::CommandPlanError>,
+    > {
+        use cyber_core::review::{ErrorCode, Target, TargetError};
+        use cyber_server::runtime::{CommandPlan, CommandPlanError};
+        Box::pin(async move {
+            match name {
+                "review" => {
+                    Target::parse(arguments)?;
+                    Err(TargetError::new(ErrorCode::EmptyDiff, "No changes to review").into())
+                }
+                "denied" => Err(CommandPlanError::Forbidden(
+                    "Permission denied: rule".into(),
+                )),
+                _ => Ok(self
+                    .expand_command(Path::new(&turn.directory), name, arguments)
+                    .map(CommandPlan::plain)),
+            }
+        })
+    }
 }
 
 fn state(h: &Harness, password: Option<&str>) -> AppState {
@@ -900,6 +928,46 @@ async fn commands_expand_into_the_prompt() {
     assert_eq!(
         (status, body["_tag"].as_str()),
         (StatusCode::NOT_FOUND, Some("CommandNotFoundError"))
+    );
+}
+
+#[tokio::test]
+async fn unresolvable_review_targets_and_denials_are_typed_and_admit_nothing() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let id = h.session().await;
+    let before = h.runtime.state(&id).await.unwrap().last_seq;
+    let path = format!("/sessions/{id}/command");
+    for (arguments, code) in [
+        ("HEAD@{1}", "invalid_ref"),
+        ("--output=/tmp/x", "invalid_ref"),
+        ("main...HEAD", "invalid_target"),
+        ("", "empty_diff"),
+    ] {
+        let (status, body) = api
+            .post(
+                &path,
+                json!({"name": "review", "arguments": arguments, "id": "msg_review"}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["_tag"], "ReviewTargetError");
+        assert_eq!(body["code"], code, "{arguments}");
+    }
+    let (status, body) = api.post(&path, json!({"name": "denied"})).await;
+    assert_eq!(
+        (status, body["_tag"].as_str()),
+        (StatusCode::FORBIDDEN, Some("ForbiddenError"))
+    );
+    assert!(body.get("code").is_none());
+    let state = h.runtime.state(&id).await.unwrap();
+    assert_eq!(state.last_seq, before);
+    assert!(state.input("msg_review").is_none());
+    let document = http::openapi::document("1");
+    let responses = &document["paths"]["/api/v1/sessions/{sessionID}/command"]["post"]["responses"];
+    assert_eq!(
+        responses["422"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ReviewTargetError"
     );
 }
 

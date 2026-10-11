@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::runtime::RuntimeError;
+use crate::runtime::{CommandPlanError, RuntimeError};
 
 /// The JSON body of every declared failure.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -25,10 +25,22 @@ pub struct ErrorBody {
     pub service: Option<Box<str>>,
 }
 
+/// `422` from `v1.command.run` when a review target cannot be resolved; nothing is admitted.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ReviewTargetError {
+    /// Always `ReviewTargetError`.
+    #[serde(rename = "_tag")]
+    pub tag: String,
+    pub code: cyber_core::review::ErrorCode,
+    pub message: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ApiError {
     pub status: StatusCode,
     pub body: ErrorBody,
+    /// `code` of a `ReviewTargetError`, added to the body when present.
+    pub code: Option<cyber_core::review::ErrorCode>,
 }
 
 impl ApiError {
@@ -42,6 +54,7 @@ impl ApiError {
                 paths: None,
                 service: None,
             },
+            code: None,
         }
     }
 
@@ -67,6 +80,16 @@ impl ApiError {
 
     pub fn forbidden(message: impl Into<String>) -> Self {
         Self::new(StatusCode::FORBIDDEN, "ForbiddenError", message)
+    }
+
+    pub fn review_target(error: cyber_core::review::TargetError) -> Self {
+        let mut e = Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "ReviewTargetError",
+            error.message,
+        );
+        e.code = Some(error.code);
+        e
     }
 
     /// An unexpected failure: the detail is logged under a reference, never returned.
@@ -123,8 +146,31 @@ impl From<RuntimeError> for ApiError {
     }
 }
 
+impl From<CommandPlanError> for ApiError {
+    fn from(e: CommandPlanError) -> Self {
+        match e {
+            CommandPlanError::Forbidden(message) => Self::forbidden(message),
+            CommandPlanError::Review(error) => Self::review_target(error),
+            CommandPlanError::Unavailable(message) => {
+                let mut error = Self::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "ServiceUnavailableError",
+                    message,
+                );
+                error.body.service = Some("review".into());
+                error
+            }
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(self.body)).into_response()
+        let Some(code) = self.code else {
+            return (self.status, Json(self.body)).into_response();
+        };
+        let mut body = serde_json::to_value(&self.body).unwrap_or_default();
+        body["code"] = serde_json::json!(code);
+        (self.status, Json(body)).into_response()
     }
 }

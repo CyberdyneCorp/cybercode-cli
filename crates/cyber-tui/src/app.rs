@@ -45,6 +45,14 @@ pub enum Action {
     Command {
         name: String,
         arguments: String,
+        /// A client-chosen message ID, so a bundled review's reviewer
+        /// delegation is known before the command is posted.
+        id: Option<String>,
+    },
+    /// Fetch the awaited review's delegation record to learn its Job.
+    ReviewDelegation {
+        session: String,
+        delegation: String,
     },
     Interrupt,
     Reply {
@@ -185,6 +193,8 @@ pub enum Overlay {
     Memory,
     ConfirmBypass,
     ConfirmStopTasks,
+    /// Validated findings of the last bundled review, most severe first.
+    Findings,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -202,6 +212,7 @@ pub struct App {
     pub hooks: crate::hooks::View,
     pub hook_definitions: crate::hook_definitions::View,
     pub memory: crate::memory::View,
+    pub review: crate::review::View,
     pub(crate) mode_selection: Option<String>,
     pub items: Vec<Item>,
     /// Text streaming in for assistant messages not yet durable.
@@ -237,6 +248,7 @@ impl App {
             hooks: Default::default(),
             hook_definitions: Default::default(),
             memory: Default::default(),
+            review: Default::default(),
             mode_selection: None,
             items: Vec::new(),
             streaming: BTreeMap::new(),
@@ -422,7 +434,65 @@ impl App {
                 self.overlay = Overlay::None;
                 Vec::new()
             }
+            Overlay::Findings => {
+                self.findings_key(key);
+                Vec::new()
+            }
         }
+    }
+
+    fn findings_key(&mut self, key: KeyEvent) {
+        let scroll = &mut self.review.scroll;
+        match key.code {
+            KeyCode::Up => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down => *scroll = scroll.saturating_add(1),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            _ => self.overlay = Overlay::None,
+        }
+    }
+
+    /// The server refused a command before admission (an invalid review target,
+    /// an empty diff or a permission denial); nothing runs.
+    pub fn refused(&mut self, command: &str, message: &str) {
+        if command == "review" {
+            self.review.refused();
+        }
+        self.toast(cyber_core::review::escape(message));
+    }
+
+    /// The awaited review's delegation record arrived.
+    pub fn review_delegation(&mut self, record: &Value) {
+        let outcome = self.review.delegation(record);
+        self.review_outcome(outcome);
+    }
+
+    fn job_ended(&mut self, job: &Value) -> Vec<Action> {
+        let outcome = self.review.job_ended(job);
+        self.review_outcome(outcome)
+    }
+
+    fn review_outcome(&mut self, outcome: crate::review::Ended) -> Vec<Action> {
+        match outcome {
+            crate::review::Ended::Findings if matches!(self.overlay, Overlay::None) => {
+                self.overlay = Overlay::Findings;
+            }
+            crate::review::Ended::Findings => {
+                self.toast("Review findings are ready; close this view to see them");
+            }
+            crate::review::Ended::Failed(error) => self.toast(format!("review failed: {error}")),
+            crate::review::Ended::Lookup {
+                session,
+                delegation,
+            } => {
+                return vec![Action::ReviewDelegation {
+                    session,
+                    delegation,
+                }];
+            }
+            crate::review::Ended::Unrelated => {}
+        }
+        Vec::new()
     }
 
     fn hook_definitions_key(&mut self, key: KeyEvent) -> Vec<Action> {
@@ -857,9 +927,21 @@ impl App {
                 Vec::new()
             }
             "exit" | "quit" => vec![Action::Quit],
+            "review" => match self.review.submit(&self.session.id, args) {
+                Ok(id) => vec![Action::Command {
+                    name: name.into(),
+                    arguments: args.into(),
+                    id,
+                }],
+                Err(message) => {
+                    self.toast(format!("review: {message}"));
+                    Vec::new()
+                }
+            },
             _ => vec![Action::Command {
                 name: name.into(),
                 arguments: args.into(),
+                id: None,
             }],
         }
     }
@@ -1183,6 +1265,20 @@ impl App {
 
     /// Apply a server event; returns actions such as a refresh.
     pub fn on_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
+        let mut actions = if kind == "job.ended.1" {
+            self.job_ended(data)
+        } else if kind.starts_with("session.prompt.admitted") {
+            let message = data["message_id"].as_str().unwrap_or_default();
+            let outcome = self.review.admitted(message);
+            self.review_outcome(outcome)
+        } else {
+            Vec::new()
+        };
+        actions.extend(self.apply_event(kind, data));
+        actions
+    }
+
+    fn apply_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
         match kind {
             "server.connected" => vec![Action::Refresh],
             "session.worktree.rebound.1" => {

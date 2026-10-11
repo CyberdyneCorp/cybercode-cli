@@ -1,6 +1,7 @@
 //! The built-in tool host (`tool-registry`, `builtin-tools`, `permissions-modes`).
 mod command_skills;
 mod path_skills;
+mod review;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -959,6 +960,12 @@ impl ToolHost for BuiltinHost {
                 .and_then(|skill| skill.model.as_ref())
             {
                 input["model"] = model.clone().into();
+            }
+            if let Some(schema) = skill_command
+                .as_ref()
+                .and_then(|skill| skill.output_schema.as_ref())
+            {
+                input["output_schema"] = schema.clone();
             }
             let inv = Invocation {
                 registration: None,

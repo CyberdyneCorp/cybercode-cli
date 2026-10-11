@@ -25,6 +25,7 @@ export OPENAI_API_KEY="your-key"
 
 ./target/debug/cyber                            # terminal UI
 ./target/debug/cyber exec "fix the failing test" # one task
+./target/debug/cyber review main..HEAD            # read-only review with sorted findings
 ./target/debug/cyber --continue                 # resume the latest session
 ./target/debug/cyber doctor                     # check your setup
 ```
@@ -39,7 +40,7 @@ Use `--model provider/model` to select a model. See the [local core guide](docs/
 | Sessions | Durable prompt admission, streaming, interrupt/resume, crash recovery and compaction |
 | Safety | Checkout trust, tool permissions, protected paths, credential masking and macOS/Linux sandboxing |
 | Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
-| Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks |
+| Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks; `cyber review [target]` and TUI `/review` resolve uncommitted changes, ranges, commits or `pr <number>` and report validated findings most severe first |
 | Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
 | Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks/local MCP, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
 

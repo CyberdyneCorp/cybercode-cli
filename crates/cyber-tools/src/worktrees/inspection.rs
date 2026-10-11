@@ -5,13 +5,25 @@ use std::path::{Path, PathBuf};
 
 use cyber_core::worktrees::inspection::{Inspection, MAX_RESPONSE, OVERRIDES, Request, Target};
 
-use super::{Capture, GitPort, tool_error};
+use super::{GitPort, tool_error};
+use crate::host::Ctx;
 
-struct Override(PathBuf);
+/// A private helper input file, removed on drop.
+pub(crate) struct OwnedFile(pub(crate) PathBuf);
 
-impl Override {
-    fn create(directory: &Path) -> io::Result<Self> {
-        let path = directory.join(format!("git-inspect-{}.config", ulid::Ulid::new()));
+impl OwnedFile {
+    /// The fixed read-only Git overrides.
+    pub(crate) fn overrides(directory: &Path) -> io::Result<Self> {
+        Self::create(directory, "git-inspect", "config", OVERRIDES.as_bytes())
+    }
+
+    pub(crate) fn create(
+        directory: &Path,
+        stem: &str,
+        extension: &str,
+        contents: &[u8],
+    ) -> io::Result<Self> {
+        let path = directory.join(format!("{stem}-{}.{extension}", ulid::Ulid::new()));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -21,19 +33,28 @@ impl Override {
         }
         let mut file = options.open(&path)?;
         let owned = Self(path);
-        file.write_all(OVERRIDES.as_bytes())?;
+        file.write_all(contents)?;
         Ok(owned)
     }
 }
 
-impl Drop for Override {
+impl Drop for OwnedFile {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
 }
 
-pub(super) async fn run(port: &GitPort<'_>, target: &Target) -> io::Result<Inspection> {
-    let helper = port.ctx.host.opts.sandbox_helper.as_ref().ok_or_else(|| {
+/// Runs one owned helper mode (`--git-inspect`, `--git-review`) in the command
+/// sandbox with ambient Git configuration excluded.
+pub(crate) async fn run_helper(
+    ctx: &Ctx<'_>,
+    credentials: &[String],
+    mode: &str,
+    request: String,
+    directory: &Path,
+    limit: usize,
+) -> io::Result<std::process::Output> {
+    let helper = ctx.host.opts.sandbox_helper.as_ref().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Unsupported,
             "Repository inspection helper is unavailable",
@@ -42,8 +63,21 @@ pub(super) async fn run(port: &GitPort<'_>, target: &Target) -> io::Result<Inspe
     let program = helper
         .to_str()
         .ok_or_else(|| io::Error::other("Helper path is not Unicode"))?;
+    let mut prepared = crate::sandboxing::prepare_worktree_command(
+        ctx,
+        program,
+        &[mode.into(), request],
+        credentials,
+    )
+    .await
+    .map_err(tool_error)?;
+    super::isolate_git_config(&mut prepared);
+    super::run_captured(ctx, prepared, directory, limit).await
+}
+
+pub(super) async fn run(port: &GitPort<'_>, target: &Target) -> io::Result<Inspection> {
     let directory = crate::sandboxing::session_tmp(port.ctx).map_err(tool_error)?;
-    let owned = Override::create(&directory)?;
+    let owned = OwnedFile::overrides(&directory)?;
     let request = serde_json::to_string(&Request {
         target: target.clone(),
         overrides: owned.0.clone(),
@@ -53,42 +87,27 @@ pub(super) async fn run(port: &GitPort<'_>, target: &Target) -> io::Result<Inspe
             "Repository inspection request exceeds supported size",
         ));
     }
-    let mut prepared = crate::sandboxing::prepare_worktree_command(
+    let output = run_helper(
         port.ctx,
-        program,
-        &["--git-inspect".into(), request],
         port.credentials,
+        "--git-inspect",
+        request,
+        &target.metadata,
+        MAX_RESPONSE,
     )
-    .await
-    .map_err(tool_error)?;
-    prepared
-        .env
-        .retain(|(key, _)| !key.to_ascii_uppercase().starts_with("GIT_"));
-    prepared.env.extend([
-        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-        (
-            "GIT_CONFIG_GLOBAL".into(),
-            if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
-        ),
-    ]);
-    let capture = Capture::default();
-    let status = super::run(port.ctx, prepared, &target.metadata, &capture).await?;
-    let (stdout, stderr) = capture
-        .0
-        .into_inner()
-        .map_err(|_| io::Error::other("Inspection capture poisoned"))?;
-    if !status.success() {
+    .await?;
+    if !output.status.success() {
         return Err(io::Error::other(format!(
             "Repository inspection failed: {}",
-            String::from_utf8_lossy(&stderr)
+            String::from_utf8_lossy(&output.stderr)
         )));
     }
-    if stdout.len() > MAX_RESPONSE {
+    if output.stdout.len() > MAX_RESPONSE {
         return Err(io::Error::other(
             "Repository inspection response exceeds supported size",
         ));
     }
-    let report: Inspection = serde_json::from_slice(&stdout)?;
+    let report: Inspection = serde_json::from_slice(&output.stdout)?;
     if report.target != *target {
         return Err(io::Error::other(
             "Repository inspection response identity changed",

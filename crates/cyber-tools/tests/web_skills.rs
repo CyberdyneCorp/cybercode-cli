@@ -191,9 +191,10 @@ async fn unknown_skills_list_the_available_names() {
         "---\nname: hidden\ndescription: user only\ndisable-model-invocation: true\n---\nH",
     );
     let out = failed(f.call("default", "skill", json!({"name": "nope"})).await);
+    // The bundled `review` needs a host-resolved diff, so it is user-only.
     assert_eq!(
         out,
-        "Skill \"nope\" not found. Available: alpha, batch, customize-cyber, review, security-review, simplify"
+        "Skill \"nope\" not found. Available: alpha, batch, customize-cyber, security-review, simplify"
     );
 }
 

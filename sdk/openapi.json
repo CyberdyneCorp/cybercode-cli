@@ -2587,6 +2587,42 @@
           "name"
         ]
       },
+      "ReviewTargetError": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "description": "Always `ReviewTargetError`."
+          },
+          "code": {
+            "$ref": "#/components/schemas/ReviewTargetCode"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
+          "code",
+          "message"
+        ],
+        "description": "`422` from `v1.command.run` when a review target cannot be resolved; nothing is admitted."
+      },
+      "ReviewTargetCode": {
+        "type": "string",
+        "enum": [
+          "invalid_target",
+          "invalid_ref",
+          "unresolved_ref",
+          "not_a_repository",
+          "empty_diff",
+          "all_withheld",
+          "gh_unavailable",
+          "pr_unresolved",
+          "pr_commits_missing"
+        ],
+        "description": "Typed reasons a review target cannot be resolved; reported before admission."
+      },
       "Data_AutoOverrideReceipt": {
         "type": "object",
         "properties": {
@@ -6753,6 +6789,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_Receipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The bundled review target could not be resolved; nothing was admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewTargetError"
                 }
               }
             }

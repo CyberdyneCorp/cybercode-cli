@@ -1866,6 +1866,7 @@ export const errorTags = [
   "MessageNotFoundError",
   "MemoryNotFoundError",
   "RequestNotFoundError",
+  "ReviewTargetError",
   "RewindConflictError",
   "ServiceUnavailableError",
   "BudgetExceededError",
@@ -1918,6 +1919,10 @@ export function isMemoryNotFoundError(err: unknown): err is TaggedError<"MemoryN
 
 export function isRequestNotFoundError(err: unknown): err is TaggedError<"RequestNotFoundError"> {
   return hasTag(err, "RequestNotFoundError");
+}
+
+export function isReviewTargetError(err: unknown): err is TaggedError<"ReviewTargetError"> {
+  return hasTag(err, "ReviewTargetError");
 }
 
 export function isRewindConflictError(err: unknown): err is TaggedError<"RewindConflictError"> {

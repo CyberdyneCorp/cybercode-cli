@@ -191,7 +191,8 @@ async fn explicit_skill_denial_refuses_user_command_before_admission() {
         .host
         .command_plan(&frame, "release", "")
         .await
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("Permission denied"), "{error}");
     assert_eq!(flow.runtime.state(&id).await.unwrap().last_seq, before);
     assert!(flow.main.requests().is_empty());

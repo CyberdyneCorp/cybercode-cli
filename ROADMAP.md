@@ -170,7 +170,7 @@ The table counts requirements in `openspec/specs` by phase tag (47 capabilities,
 | `browser-verification` |  | 2 |  |  |  | 2 |
 | `builtin-tools` | 16 | 4 | 1 |  |  | 21 |
 | `channels` |  |  |  | 16 |  | 16 |
-| `cli-commands` | 18 |  |  | 2 |  | 20 |
+| `cli-commands` | 18 | 1 |  | 2 |  | 21 |
 | `client-sdk` | 14 | 1 | 2 | 1 |  | 18 |
 | `code-intelligence` |  | 12 |  |  | 1 | 13 |
 | `compaction` | 15 | 3 | 1 |  |  | 19 |
@@ -179,7 +179,7 @@ The table counts requirements in `openspec/specs` by phase tag (47 capabilities,
 | `cross-session-messaging` |  | 18 | 1 | 1 |  | 20 |
 | `cyber-account` |  |  |  | 17 |  | 17 |
 | `editor-integration` |  | 13 |  | 1 | 1 | 15 |
-| `exec-mode` | 11 | 4 | 2 | 1 |  | 18 |
+| `exec-mode` | 11 | 5 | 2 | 1 |  | 19 |
 | `goals` |  |  | 21 |  |  | 21 |
 | `harness-evaluation` | 4 |  |  |  |  | 4 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
@@ -211,7 +211,7 @@ The table counts requirements in `openspec/specs` by phase tag (47 capabilities,
 | `workflows` |  |  | 26 | 2 | 1 | 29 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 9 | 4 |  |  | 13 |
-| **Total** | **330** | **225** | **102** | **145** | **15** | **817** |
+| **Total** | **330** | **227** | **102** | **145** | **15** | **819** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.

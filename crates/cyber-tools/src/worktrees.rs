@@ -4,6 +4,7 @@ mod child;
 mod inspection;
 mod recovery;
 pub(crate) use child::ChildWorktree;
+pub(crate) use inspection::{OwnedFile, run_helper};
 
 use std::ffi::OsString;
 use std::io;
@@ -1037,43 +1038,69 @@ impl GitExecution for GitPort<'_> {
                 }
             }
             .map_err(tool_error)?;
-            prepared
-                .env
-                .retain(|(key, _)| !key.to_ascii_uppercase().starts_with("GIT_"));
-            prepared.env.extend([
-                ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-                (
-                    "GIT_CONFIG_GLOBAL".into(),
-                    if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
-                ),
-            ]);
-            let capture = Capture::default();
-            let status = run(self.ctx, prepared, directory, &capture).await?;
-            let (stdout, stderr) = capture
-                .0
-                .into_inner()
-                .map_err(|_| io::Error::other("Git capture poisoned"))?;
-            Ok(Output {
-                status,
-                stdout,
-                stderr,
-            })
+            isolate_git_config(&mut prepared);
+            run_captured(self.ctx, prepared, directory, GIT_CAPTURE).await
         })
     }
 }
 
-#[derive(Default)]
-struct Capture(Mutex<(Vec<u8>, Vec<u8>)>);
+const GIT_CAPTURE: usize = 1024 * 1024;
+
+/// Strips ambient `GIT_*` variables and excludes system and global configuration.
+pub(crate) fn isolate_git_config(prepared: &mut crate::sandboxing::Prepared) {
+    prepared
+        .env
+        .retain(|(key, _)| !key.to_ascii_uppercase().starts_with("GIT_"));
+    prepared.env.extend([
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        (
+            "GIT_CONFIG_GLOBAL".into(),
+            if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
+        ),
+    ]);
+}
+
+/// Runs a prepared command under the owned process tree, cancellation and
+/// deadline, failing once the combined output exceeds `limit` bytes.
+pub(crate) async fn run_captured(
+    ctx: &Ctx<'_>,
+    prepared: crate::sandboxing::Prepared,
+    directory: &Path,
+    limit: usize,
+) -> io::Result<Output> {
+    let capture = Capture {
+        limit,
+        output: Mutex::default(),
+    };
+    let status = run(ctx, prepared, directory, &capture).await?;
+    let (stdout, stderr) = capture
+        .output
+        .into_inner()
+        .map_err(|_| io::Error::other("Git capture poisoned"))?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+struct Capture {
+    limit: usize,
+    output: Mutex<(Vec<u8>, Vec<u8>)>,
+}
 
 impl SetupSink for Capture {
     fn emit(&self, event: SetupEvent<'_>) -> io::Result<()> {
         if let SetupEvent::Output { stream, bytes } = event {
             let mut capture = self
-                .0
+                .output
                 .lock()
                 .map_err(|_| io::Error::other("Git capture poisoned"))?;
-            if capture.0.len() + capture.1.len() + bytes.len() > 1024 * 1024 {
-                return Err(io::Error::other("Git verification output exceeds 1 MiB"));
+            if capture.0.len() + capture.1.len() + bytes.len() > self.limit {
+                return Err(io::Error::other(format!(
+                    "Captured output exceeds {} bytes",
+                    self.limit
+                )));
             }
             match stream {
                 SetupStream::Stdout => capture.0.extend_from_slice(bytes),

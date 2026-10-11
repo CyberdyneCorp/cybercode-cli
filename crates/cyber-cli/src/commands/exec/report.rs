@@ -5,11 +5,14 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::time::Instant;
 
-use cyber_client::Client;
+use cyber_client::{Client, ClientError};
+use cyber_core::review::{Counts, ErrorCode, Findings, Target, TargetError};
 use serde_json::{Value, json};
 
+use super::background::ForkOutcome;
 use super::{EXIT_BUDGET, EXIT_DENIED, EXIT_ERROR, EXIT_INTERRUPTED, ExecArgs};
 use crate::cli::Format;
+use crate::error::{CliError, EXIT_USAGE};
 
 const RESULT_LIMIT: usize = 2000;
 
@@ -252,6 +255,7 @@ pub struct Out {
     session_id: String,
     delegation: Option<(String, String)>,
     admission: Option<(String, String)>,
+    review: Option<Review>,
 }
 
 fn now_ms() -> i64 {
@@ -287,7 +291,60 @@ impl Out {
             session_id: session["id"].as_str().unwrap_or_default().into(),
             delegation: None,
             admission: None,
+            review: None,
         }
+    }
+
+    /// Report this run as `cyber review` of `target`.
+    pub fn review(&mut self, target: Target) {
+        self.review = Some(Review {
+            target,
+            delegation: None,
+            fork: None,
+        });
+    }
+
+    pub fn is_review(&self) -> bool {
+        self.review.is_some()
+    }
+
+    /// The settled reviewer delegation and its Job, when the command forked.
+    pub fn review_job(&mut self, delegation: Option<&str>, fork: Option<ForkOutcome>) {
+        if let Some(review) = &mut self.review {
+            review.delegation = delegation.map(str::to_string);
+            review.fork = fork;
+        }
+    }
+
+    /// A refused admission. For `cyber review` a target error or a permission
+    /// denial is the outcome (an empty diff is a completed review with nothing
+    /// to report); both print the review result shape.
+    pub fn refused(
+        mut self,
+        error: ClientError,
+        run: &Run,
+        args: &ExecArgs,
+        session: &Value,
+    ) -> Result<u8, CliError> {
+        let Some(review) = self.review.take() else {
+            return Err(super::setup::api(error));
+        };
+        let (target, kind) = (review.target.normalized(), Some(review.target.kind()));
+        let mut result = self.summary(run, 0);
+        let (code, text, message) = if let Some(rejected) = target_error(&error) {
+            let (code, text) = rejection(&mut result, &target, kind, &rejected);
+            (code, text, rejected.message)
+        } else if let Some(message) = forbidden(&error) {
+            let code = denied(&mut result, &target, kind, &message, args.fail_on_deny);
+            (code, String::new(), message)
+        } else {
+            return Err(super::setup::api(error));
+        };
+        if code != 0 {
+            self.error(&message);
+        }
+        self.emit(result, &text, args, session);
+        Ok(code)
     }
 
     pub fn admission(&mut self, parent: &str, request: &str) {
@@ -422,8 +479,18 @@ impl Out {
     }
 
     /// Print the result and return the exit code.
-    pub fn finish(self, run: &Run, args: &ExecArgs, session: &Value) -> u8 {
-        let code = run.exit_code(args.fail_on_deny);
+    pub fn finish(mut self, run: &Run, args: &ExecArgs, session: &Value) -> u8 {
+        let mut code = run.exit_code(args.fail_on_deny);
+        let mut result = self.summary(run, code);
+        let text = match self.review.take() {
+            Some(review) => review.report(&mut result, &mut code, run, &self),
+            None => run.text.clone(),
+        };
+        self.emit(result, &text, args, session);
+        code
+    }
+
+    fn summary(&self, run: &Run, code: u8) -> Value {
         let mut result = json!({
             "result": run.text,
             "session_id": self.session_id,
@@ -462,20 +529,198 @@ impl Out {
             result["parent_session_id"] = parent.clone().into();
             result["job_id"] = job.clone().into();
         }
+        result
+    }
+
+    fn emit(&self, result: Value, text: &str, args: &ExecArgs, session: &Value) {
         match self.format {
             Format::StreamJson => self.line("result", result),
             Format::Json => println!("{result}"),
             _ => {
-                if !run.text.is_empty() {
-                    println!("{}", run.text);
+                if !text.is_empty() {
+                    println!("{}", text.trim_end());
                 }
             }
         }
         if !args.ephemeral && !self.quiet && session["id"].is_string() {
             eprintln!("session: {}", self.session_id);
         }
-        code
     }
+}
+
+/// `cyber review`: the target and, once the run settled, the reviewer Job.
+struct Review {
+    target: Target,
+    delegation: Option<String>,
+    /// `None` for an inline (overriding) command.
+    fork: Option<ForkOutcome>,
+}
+
+/// What the reviewer Job reported.
+enum Verdict {
+    Findings(Findings),
+    /// An overriding command: no fork Job, or one without a structured result.
+    Unstructured,
+    Failed(String),
+}
+
+impl Review {
+    fn job(&self) -> Option<&Value> {
+        match &self.fork {
+            Some(ForkOutcome::Job(job)) => Some(job),
+            _ => None,
+        }
+    }
+
+    fn verdict(&self) -> Verdict {
+        let job = match &self.fork {
+            None => return Verdict::Unstructured,
+            Some(ForkOutcome::Ended(error)) => return Verdict::Failed(error.clone()),
+            Some(ForkOutcome::Job(job)) => job,
+        };
+        if job["status"] != "completed" {
+            let error = job["error"]
+                .as_str()
+                .unwrap_or("The reviewer did not complete");
+            return Verdict::Failed(error.into());
+        }
+        match job["result"].get("result") {
+            Some(value) => Findings::from_result(value).map_or_else(
+                |error| Verdict::Failed(error.to_string()),
+                Verdict::Findings,
+            ),
+            None => Verdict::Unstructured,
+        }
+    }
+
+    /// Adds the review fields to `result`; returns the text output. Findings
+    /// are reported only when the run itself completed.
+    fn report(&self, result: &mut Value, code: &mut u8, run: &Run, out: &Out) -> String {
+        target_fields(result, &self.target.normalized(), Some(self.target.kind()));
+        if let Some(id) = &self.delegation {
+            result["delegation_id"] = json!(id);
+        }
+        if let Some(job) = self.job() {
+            result["job_id"] = job["id"].clone();
+            result["parent_session_id"] = result["session_id"].clone();
+            result["session_id"] = job["child_id"].clone();
+        }
+        if run.error.is_some() || run.stop_reason.is_some() {
+            return run.text.clone();
+        }
+        match self.verdict() {
+            Verdict::Findings(findings) => {
+                result["reviewed"] = json!(true);
+                result["findings"] = json!(findings.findings);
+                result["limitations"] = json!(findings.limitations);
+                result["counts"] = json!(findings.counts());
+                findings.render_text()
+            }
+            Verdict::Unstructured => {
+                result["reviewed"] = json!(true);
+                run.text.clone()
+            }
+            Verdict::Failed(message) => {
+                out.error(&message);
+                *code = EXIT_ERROR;
+                result["error"] = json!(message);
+                result["stop_reason"] = json!("error");
+                result["exit_code"] = json!(EXIT_ERROR);
+                String::new()
+            }
+        }
+    }
+}
+
+/// The review fields every outcome carries; findings stay `null` until validated.
+fn target_fields(result: &mut Value, target: &str, kind: Option<&str>) {
+    result["target"] = json!(target);
+    result["target_kind"] = json!(kind);
+    result["reviewed"] = json!(false);
+    result["findings"] = Value::Null;
+    result["limitations"] = json!([]);
+    result["counts"] = json!(Counts::default());
+}
+
+/// Fills a rejected target's outcome and returns its exit code and text output:
+/// an empty diff is a completed review with no findings, anything else exits 2.
+fn rejection(
+    result: &mut Value,
+    target: &str,
+    kind: Option<&str>,
+    error: &TargetError,
+) -> (u8, String) {
+    target_fields(result, target, kind);
+    if error.code == ErrorCode::EmptyDiff {
+        result["findings"] = json!([]);
+        result["exit_code"] = json!(0);
+        return (0, error.message.clone());
+    }
+    result["code"] = json!(error.code);
+    result["error"] = json!(error.message);
+    result["stop_reason"] = json!("error");
+    result["exit_code"] = json!(EXIT_USAGE);
+    (EXIT_USAGE, String::new())
+}
+
+/// Fills a review refused by a permission rule (HTTP 403) before admission
+/// and returns its exit code: 5 with `--fail-on-deny`, otherwise 1.
+fn denied(
+    result: &mut Value,
+    target: &str,
+    kind: Option<&str>,
+    message: &str,
+    fail_on_deny: bool,
+) -> u8 {
+    target_fields(result, target, kind);
+    let code = if fail_on_deny {
+        EXIT_DENIED
+    } else {
+        EXIT_ERROR
+    };
+    result["error"] = json!(message);
+    result["stop_reason"] = json!("error");
+    result["exit_code"] = json!(code);
+    code
+}
+
+/// The message of a `ForbiddenError` (permission) refusal of the admission.
+fn forbidden(error: &ClientError) -> Option<String> {
+    match error {
+        ClientError::Api { tag, message, .. } if tag == "ForbiddenError" => Some(message.clone()),
+        _ => None,
+    }
+}
+
+/// A `ReviewTargetError` refusal of the command admission.
+fn target_error(error: &ClientError) -> Option<TargetError> {
+    let ClientError::Api {
+        tag, message, body, ..
+    } = error
+    else {
+        return None;
+    };
+    if tag != "ReviewTargetError" {
+        return None;
+    }
+    let code = serde_json::from_value(body["code"].clone()).ok()?;
+    Some(TargetError::new(code, message.clone()))
+}
+
+/// `cyber review` with a target rejected before any server contact; returns the exit code.
+pub fn target_rejected(format: Format, target: &str, error: &TargetError) -> u8 {
+    let mut result = json!({ "result": "", "session_id": null, "error": null });
+    let (code, _) = rejection(&mut result, target, None, error);
+    match format {
+        Format::Json => println!("{result}"),
+        Format::StreamJson => {
+            result["type"] = json!("result");
+            result["ts"] = json!(now_ms());
+            println!("{result}");
+        }
+        _ => eprintln!("Error: {}", cyber_core::review::escape(&error.message)),
+    }
+    code
 }
 
 /// A short description of a tool input for progress and denial lines.
@@ -513,6 +758,68 @@ mod tests {
         );
         assert!(run.error.is_none());
         assert_eq!(run.exit_code(false), 0);
+    }
+
+    /// Regression: a reviewer fork that failed before a Job existed (delegation
+    /// admission denied the spawn) was reported as a completed override review.
+    #[test]
+    fn a_review_fork_that_ended_without_a_job_fails_the_review() {
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut out = Out::new(Format::Json, &args, &json!({ "id": "ses_1" }));
+        out.review(Target::Uncommitted);
+        out.review_job(
+            Some("op_skill_1"),
+            Some(ForkOutcome::Ended(
+                "Permission denied: agent reviewer".into(),
+            )),
+        );
+        let run = Run::new(&args, Instant::now());
+        let review = out.review.take().unwrap();
+        let mut code = 0;
+        let mut result = out.summary(&run, code);
+        review.report(&mut result, &mut code, &run, &out);
+        assert_eq!(code, EXIT_ERROR);
+        assert_eq!(result["reviewed"], false);
+        assert_eq!(result["findings"], Value::Null);
+        assert_eq!(result["error"], "Permission denied: agent reviewer");
+        assert_eq!(result["delegation_id"], "op_skill_1");
+        assert_eq!(result["exit_code"], EXIT_ERROR);
+
+        let mut out = Out::new(Format::Json, &args, &json!({ "id": "ses_1" }));
+        out.review(Target::Uncommitted);
+        out.review_job(None, None);
+        let review = out.review.take().unwrap();
+        let (mut code, mut result) = (0, out.summary(&run, 0));
+        review.report(&mut result, &mut code, &run, &out);
+        assert_eq!(
+            (code, &result["reviewed"]),
+            (0, &json!(true)),
+            "inline override"
+        );
+    }
+
+    #[test]
+    fn only_forbidden_refusals_become_review_denials() {
+        let api = |tag: &str| ClientError::Api {
+            status: 403,
+            tag: tag.into(),
+            message: "Permission denied: denied by rule for bash".into(),
+            body: Value::Null,
+        };
+        assert_eq!(
+            forbidden(&api("ForbiddenError")).as_deref(),
+            Some("Permission denied: denied by rule for bash")
+        );
+        assert_eq!(forbidden(&api("ConflictError")), None);
+        let mut result = json!({});
+        assert_eq!(
+            denied(&mut result, "pr 3", Some("pr"), "denied", true),
+            EXIT_DENIED
+        );
+        assert_eq!(result["findings"], Value::Null);
+        assert_eq!(result["reviewed"], false);
+        assert_eq!(result["target"], "pr 3");
+        assert_eq!(denied(&mut result, "", None, "denied", false), EXIT_ERROR);
     }
 
     #[test]

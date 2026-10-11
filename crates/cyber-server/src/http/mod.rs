@@ -301,7 +301,8 @@ pub trait Services: Send + Sync {
         turn: &'a TurnContext,
         name: &'a str,
         arguments: &'a str,
-    ) -> BoxFuture<'a, Result<Option<crate::runtime::CommandPlan>, String>> {
+    ) -> BoxFuture<'a, Result<Option<crate::runtime::CommandPlan>, crate::runtime::CommandPlanError>>
+    {
         Box::pin(async move {
             Ok(self
                 .expand_command(Path::new(&turn.directory), name, arguments)

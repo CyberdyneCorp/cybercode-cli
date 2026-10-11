@@ -332,6 +332,24 @@ pub fn cost(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines).block(frame(app, "Cost")), rect);
 }
 
+pub fn findings(f: &mut Frame, app: &App, area: Rect) {
+    let lines: Vec<Line> = app
+        .review
+        .lines
+        .iter()
+        .map(|line| Line::from(line.as_str()))
+        .collect();
+    let rect = centered(area, 100, lines.len() as u16 + 2);
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((app.review.scroll, 0))
+            .block(frame(app, "Review findings · ↑↓ scroll · Esc close")),
+        rect,
+    );
+}
+
 pub fn help(f: &mut Frame, app: &App, area: Rect) {
     let rows = [
         ("Enter", "send (steer while running)"),
@@ -346,6 +364,10 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
             "page recorded hook outcomes without replay",
         ),
         ("/admissions", "inspect or cancel pending delegation"),
+        (
+            "/review [target]",
+            "review changes, a range, a commit or pr <n>",
+        ),
         ("Tab / Alt+Enter", "queue while running"),
         ("Shift+Enter, Ctrl+J", "newline"),
         ("Esc", "interrupt"),

@@ -38,6 +38,7 @@ ERROR_TAGS = [
     "MessageNotFoundError",
     "MemoryNotFoundError",
     "RequestNotFoundError",
+    "ReviewTargetError",
     "RewindConflictError",
     "ServiceUnavailableError",
     "BudgetExceededError",

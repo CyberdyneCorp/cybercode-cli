@@ -220,33 +220,20 @@ async fn reuse(client: &Client, args: &ExecArgs) -> Result<Option<Value>, CliErr
         .ok_or_else(|| CliError::runtime("Session not found"))
 }
 
-/// Admit the prompt, or run `--command` with the prompt as its arguments;
-/// returns the receipt's message ID.
-pub async fn send(
-    client: &Client,
-    id: &str,
-    args: &ExecArgs,
-    prompt: String,
-) -> Result<Option<String>, CliError> {
-    let receipt = if let Some(name) = &args.command {
-        client
-            .post(
-                &format!("/sessions/{id}/command"),
-                json!({ "name": name.trim_start_matches('/'), "arguments": prompt }),
-            )
-            .await
-            .map_err(api)?
-    } else {
-        let mut parts = vec![json!({ "type": "text", "text": prompt })];
-        for file in &args.files {
-            parts.push(file_part(file)?);
-        }
-        client
-            .post(&format!("/sessions/{id}/prompt"), json!({ "parts": parts }))
-            .await
-            .map_err(api)?
-    };
-    Ok(receipt["data"]["message_id"].as_str().map(str::to_string))
+/// The admission request: the prompt, or `--command` with the prompt as its
+/// arguments. Built before sending so a refusal keeps the server's typed error.
+pub fn request(id: &str, args: &ExecArgs, prompt: String) -> Result<(String, Value), CliError> {
+    if let Some(name) = &args.command {
+        return Ok((
+            format!("/sessions/{id}/command"),
+            json!({ "name": name.trim_start_matches('/'), "arguments": prompt }),
+        ));
+    }
+    let mut parts = vec![json!({ "type": "text", "text": prompt })];
+    for file in &args.files {
+        parts.push(file_part(file)?);
+    }
+    Ok((format!("/sessions/{id}/prompt"), json!({ "parts": parts })))
 }
 
 pub(super) fn file_part(path: &std::path::Path) -> Result<Value, CliError> {
@@ -291,7 +278,7 @@ pub(super) fn urlencode(s: &str) -> String {
         .collect()
 }
 
-fn api(e: cyber_client::ClientError) -> CliError {
+pub(super) fn api(e: cyber_client::ClientError) -> CliError {
     match e.tag() {
         Some("InvalidRequestError") => CliError::usage(e.to_string()),
         _ => CliError::runtime(e.to_string()),

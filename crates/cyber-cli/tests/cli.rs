@@ -102,6 +102,38 @@ fn unshipped_command_is_explicitly_unavailable() {
 }
 
 #[test]
+fn review_is_a_shipped_command_that_documents_its_target_grammar() {
+    let env = Env::new();
+    let help = env.cyber(&["review", "--help"]);
+    assert!(help.status.success(), "{}", stderr(&help));
+    for text in [
+        "<base>..<head>",
+        "pr <number>",
+        "--fail-on-deny",
+        "--worktree",
+    ] {
+        assert!(stdout(&help).contains(text), "{text}: {}", stdout(&help));
+    }
+    // The subcommand wins over a directory named `review`; `./review` opens the TUI.
+    std::fs::create_dir_all(env.root.join("review")).unwrap();
+    let invalid = env.cyber(&["review", "a...b"]);
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(
+        stderr(&invalid).contains("three-dot"),
+        "{}",
+        stderr(&invalid)
+    );
+    assert!(!stderr(&invalid).contains("not available in this build"));
+    let tui = env.cyber(&["./review"]);
+    assert_eq!(tui.status.code(), Some(2));
+    assert!(
+        stderr(&tui).contains("the TUI needs a terminal"),
+        "{}",
+        stderr(&tui)
+    );
+}
+
+#[test]
 fn unknown_flag_exits_2() {
     let o = Env::new().cyber(&["debug", "paths", "--nope"]);
     assert_eq!(o.status.code(), Some(2));

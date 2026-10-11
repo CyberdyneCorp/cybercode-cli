@@ -987,6 +987,17 @@ export type RevertState = {
 /** What a rewind restores (`snapshots-checkpoints` → Three-phase revert). */
 export type RevertTarget = "code" | "conversation" | "both";
 
+/** Typed reasons a review target cannot be resolved; reported before admission. */
+export type ReviewTargetCode = "invalid_target" | "invalid_ref" | "unresolved_ref" | "not_a_repository" | "empty_diff" | "all_withheld" | "gh_unavailable" | "pr_unresolved" | "pr_commits_missing";
+
+/** `422` from `v1.command.run` when a review target cannot be resolved; nothing is admitted. */
+export type ReviewTargetError = {
+  /** Always `ReviewTargetError`. */
+  _tag: string;
+  code: ReviewTargetCode;
+  message: string;
+};
+
 export type ReviewedHook = {
   event: string;
   scope: HookScope;

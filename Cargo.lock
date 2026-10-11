@@ -798,6 +798,7 @@ dependencies = [
  "git2",
  "globset",
  "ignore",
+ "jsonschema",
  "libc",
  "regex",
  "schemars",

@@ -11,6 +11,7 @@ mod hooks;
 mod memory;
 mod model;
 mod perform;
+mod review;
 mod runner;
 mod store;
 mod theme;

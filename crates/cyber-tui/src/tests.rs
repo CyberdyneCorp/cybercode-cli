@@ -93,7 +93,8 @@ fn shift_enter_inserts_a_newline_and_shell_and_slash_inputs_route() {
         app.on_key(key(KeyCode::Enter)),
         vec![Action::Command {
             name: "release-notes".into(),
-            arguments: "v1.2".into()
+            arguments: "v1.2".into(),
+            id: None,
         }]
     );
     typed(&mut app, "/mode plan");
@@ -2290,4 +2291,378 @@ fn admissions_picker_reconciliation_is_explicit_and_does_not_repeat_busy_work() 
         app.on_key(recover),
         vec![Action::ReconcileAdmission(request)]
     );
+}
+
+#[test]
+fn review_validates_the_bundled_target_locally_and_routes_valid_targets() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    typed(&mut app, "/review HEAD@{1}");
+    app.completion = None;
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    let toast = &app.toast.as_ref().unwrap().0;
+    assert!(
+        toast.contains("review") && toast.contains("HEAD@{1}"),
+        "{toast}"
+    );
+    let delegation = submit_review(&mut app, "main..HEAD");
+    assert!(delegation.starts_with("op_skill_"), "{delegation}");
+    // An overriding `review` skill or command receives its raw arguments.
+    app.review.set_bundled(false);
+    typed(&mut app, "/review HEAD@{1}");
+    app.completion = None;
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        vec![Action::Command {
+            name: "review".into(),
+            arguments: "HEAD@{1}".into(),
+            id: None,
+        }]
+    );
+}
+
+/// Submits a bundled `/review` and returns its reviewer delegation ID, derived
+/// from the client-chosen message ID as the server derives it.
+fn submit_review(app: &mut App, arguments: &str) -> String {
+    let command = if arguments.is_empty() {
+        "/review".to_string()
+    } else {
+        format!("/review {arguments}")
+    };
+    typed(app, &command);
+    app.completion = None;
+    let actions = app.on_key(key(KeyCode::Enter));
+    let [
+        Action::Command {
+            name,
+            arguments: posted,
+            id: Some(message),
+        },
+    ] = actions.as_slice()
+    else {
+        panic!("expected one review command with an ID, got {actions:?}");
+    };
+    assert_eq!((name.as_str(), posted.as_str()), ("review", arguments));
+    assert!(message.starts_with("msg_"), "{message}");
+    cyber_server::runtime::Runtime::skill_command_delegation_id("ses_1", message)
+}
+
+/// The delegation lookups among an event's actions (a Job event also refreshes).
+fn lookups(actions: Vec<Action>) -> Vec<Action> {
+    actions
+        .into_iter()
+        .filter(|action| matches!(action, Action::ReviewDelegation { .. }))
+        .collect()
+}
+
+fn delegation_record(id: &str, status: &str, job: Option<&str>) -> serde_json::Value {
+    let phase = if job.is_some() {
+        "launching"
+    } else {
+        "reserved"
+    };
+    json!({"id": id, "session_id": "ses_1", "status": status, "phase": phase,
+        "job_id": job, "error": job.is_none().then_some("Permission denied: agent reviewer")})
+}
+
+/// Delivers `job.ended.1` for a Job while the review's Job is unknown and
+/// answers the resulting delegation lookup with `review_job`.
+fn end_job_before_lookup(
+    app: &mut App,
+    job: &serde_json::Value,
+    delegation: &str,
+    review_job: &str,
+) {
+    let lookup = Action::ReviewDelegation {
+        session: "ses_1".into(),
+        delegation: delegation.into(),
+    };
+    assert_eq!(lookups(app.on_event("job.ended.1", job)), vec![lookup]);
+    app.review_delegation(&delegation_record(delegation, "admitted", Some(review_job)));
+}
+
+fn review_job(id: &str, status: &str, result: serde_json::Value) -> serde_json::Value {
+    json!({"id": id, "session_id": "ses_1", "child_id": "ses_child", "name": "review",
+        "status": status, "result": result, "error": null})
+}
+
+#[test]
+fn completed_review_job_renders_findings_most_severe_first_with_controls_escaped() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    let delegation = submit_review(&mut app, "");
+    let finding = |file: &str, line: u64, severity: &str, summary: &str| {
+        json!({"file": file, "line": line, "severity": severity, "summary": summary,
+            "failure_scenario": "input -> wrong output"})
+    };
+    let result = json!({"text": "done", "result": {"findings": [
+        finding("b.rs", 3, "low", "minor"),
+        finding("z.rs", 9, "critical", "\u{1b}[31mred alert"),
+        finding("a.rs", 20, "high", "second"),
+        finding("a.rs", 4, "high", "first"),
+    ], "limitations": [".env withheld by read policy"]}});
+    end_job_before_lookup(
+        &mut app,
+        &review_job("job_1", "completed", result),
+        &delegation,
+        "job_1",
+    );
+    assert!(matches!(app.overlay, Overlay::Findings));
+    let shown = screen(&app);
+    let at = |needle: &str| {
+        shown
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} missing:\n{shown}"))
+    };
+    assert!(at("z.rs:9") < at("a.rs:4"));
+    assert!(at("a.rs:4") < at("a.rs:20"));
+    assert!(at("a.rs:20") < at("b.rs:3"));
+    assert!(!shown.contains('\u{1b}'));
+    assert!(shown.contains("\\u{1b}[31mred alert"), "{shown}");
+    assert!(shown.contains(".env withheld"));
+    app.on_key(key(KeyCode::Esc));
+    assert_eq!(app.overlay, Overlay::None);
+    // The same Job is not shown twice, for example after an event replay.
+    let replay = lookups(app.on_event(
+        "job.ended.1",
+        &review_job(
+            "job_1",
+            "completed",
+            json!({"result": {"findings": [], "limitations": []}}),
+        ),
+    ));
+    assert!(replay.is_empty());
+    assert_eq!(app.overlay, Overlay::None);
+}
+
+#[test]
+fn failed_or_invalid_review_job_shows_the_job_error() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    let delegation = submit_review(&mut app, "HEAD~1");
+    let mut job = review_job("job_2", "error", serde_json::Value::Null);
+    job["error"] = json!("SchemaMismatch: result does not match the schema");
+    end_job_before_lookup(&mut app, &job, &delegation, "job_2");
+    assert_eq!(app.overlay, Overlay::None);
+    assert!(app.toast.as_ref().unwrap().0.contains("SchemaMismatch"));
+    let delegation = submit_review(&mut app, "");
+    let invalid = json!({"result": {"findings": [{"file": "/etc/passwd", "line": 1,
+        "severity": "high", "summary": "s", "failure_scenario": "f"}], "limitations": []}});
+    end_job_before_lookup(
+        &mut app,
+        &review_job("job_3", "completed", invalid),
+        &delegation,
+        "job_3",
+    );
+    assert_eq!(app.overlay, Overlay::None);
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("Invalid review findings")
+    );
+}
+
+/// Regression: any Job that ended while a review was pending was reported as
+/// the review, and cleared it so the real reviewer's failure was dropped.
+#[test]
+fn unrelated_jobs_ending_during_a_review_are_not_the_review() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    let findings = json!({"result": {"findings": [], "limitations": []}});
+    // No review pending: even a findings-shaped result opens nothing.
+    let ended = app.on_event(
+        "job.ended.1",
+        &review_job("job_0", "completed", findings.clone()),
+    );
+    assert!(lookups(ended).is_empty());
+    assert_eq!(app.overlay, Overlay::None);
+    let delegation = submit_review(&mut app, "");
+    let mut explore = review_job("job_explore", "error", serde_json::Value::Null);
+    explore["name"] = json!("explore");
+    explore["error"] = json!("explore failed");
+    end_job_before_lookup(&mut app, &explore, &delegation, "job_review");
+    let other = review_job("job_other", "completed", json!({"result": {"answer": 42}}));
+    assert!(lookups(app.on_event("job.ended.1", &other)).is_empty());
+    assert!(app.toast.is_none());
+    assert_eq!(app.overlay, Overlay::None);
+    let mut reviewer = review_job("job_review", "error", serde_json::Value::Null);
+    reviewer["error"] = json!("reviewer crashed");
+    assert!(lookups(app.on_event("job.ended.1", &reviewer)).is_empty());
+    let toast = &app.toast.as_ref().unwrap().0;
+    assert!(toast.contains("review failed: reviewer crashed"), "{toast}");
+    // A review Job that ends before its lookup completes is shown once known.
+    app.toast = None;
+    let delegation = submit_review(&mut app, "");
+    end_job_before_lookup(
+        &mut app,
+        &review_job("job_fast", "completed", findings),
+        &delegation,
+        "job_fast",
+    );
+    assert!(matches!(app.overlay, Overlay::Findings));
+}
+
+/// Regression: a reviewer fork that failed before its Job existed left the
+/// review pending forever.
+#[test]
+fn a_review_fork_that_failed_before_its_job_reports_the_delegation_error() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    let delegation = submit_review(&mut app, "");
+    let mut job = review_job("job_x", "completed", serde_json::Value::Null);
+    job["name"] = json!("other");
+    app.on_event("job.ended.1", &job);
+    app.review_delegation(&delegation_record(&delegation, "failed", None));
+    let toast = &app.toast.as_ref().unwrap().0;
+    assert!(
+        toast.contains("review failed: Permission denied: agent reviewer"),
+        "{toast}"
+    );
+    app.toast = None;
+    assert!(lookups(app.on_event("job.ended.1", &job)).is_empty());
+    assert!(app.toast.is_none());
+}
+
+/// Regression: a reviewer fork refused before its Job existed (a delegation
+/// admission denial) ends no Job; the server's handback admission must still
+/// trigger the delegation lookup that reports the error.
+#[test]
+fn a_review_fork_handback_admission_looks_up_the_failed_delegation() {
+    let mut app = App::new(session(false), vec![], "cyber");
+    let delegation = submit_review(&mut app, "");
+    let unrelated = json!({"message_id": "msg_skill_handback_op_skill_other", "parts": []});
+    assert!(lookups(app.on_event("session.prompt.admitted.1", &unrelated)).is_empty());
+    let handback = json!({"message_id": format!("msg_skill_handback_{delegation}"), "parts": []});
+    let lookup = Action::ReviewDelegation {
+        session: "ses_1".into(),
+        delegation: delegation.clone(),
+    };
+    assert_eq!(
+        lookups(app.on_event("session.prompt.admitted.1", &handback)),
+        vec![lookup]
+    );
+    app.review_delegation(&delegation_record(&delegation, "failed", None));
+    let toast = &app.toast.as_ref().unwrap().0;
+    assert!(
+        toast.contains("review failed: Permission denied: agent reviewer"),
+        "{toast}"
+    );
+    app.toast = None;
+    assert!(lookups(app.on_event("session.prompt.admitted.1", &handback)).is_empty());
+}
+
+/// A local HTTP server that answers one request with `status` and `body`
+/// and returns the request it received.
+fn one_response(
+    status: &'static str,
+    body: &'static str,
+) -> (String, std::thread::JoinHandle<String>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut bytes = [0; 4096];
+        let complete = |request: &[u8]| {
+            let text = String::from_utf8_lossy(request).to_ascii_lowercase();
+            let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                return false;
+            };
+            let length = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+            body.len() >= length
+        };
+        while !complete(&request) {
+            let count = socket.read(&mut bytes).unwrap();
+            assert!(count > 0);
+            request.extend_from_slice(&bytes[..count]);
+        }
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        String::from_utf8(request).unwrap()
+    });
+    (base, server)
+}
+
+/// Regression: a review post failing with a status other than 403/422 left
+/// the review pending, so later unrelated Job failures were shown as it.
+#[tokio::test]
+async fn a_failed_review_post_is_a_refusal() {
+    let (base, server) = one_response(
+        "503 Service Unavailable",
+        r#"{"_tag":"UnavailableError","message":"Review helper unavailable"}"#,
+    );
+    let client = cyber_client::Client::http(&base, None);
+    let mut app = App::new(session(false), vec![], "cyber");
+    typed(&mut app, "/review");
+    app.completion = None;
+    let [action] = <[Action; 1]>::try_from(app.on_key(key(KeyCode::Enter))).unwrap();
+    let message = crate::perform::perform(&client, &app.session, action)
+        .await
+        .unwrap();
+    server.join().unwrap();
+    let crate::perform::Msg::Refused { command, message } = message else {
+        panic!("expected a refusal, got {message:?}");
+    };
+    app.refused(&command, &message);
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("Review helper unavailable")
+    );
+    app.toast = None;
+    let mut job = review_job("job_9", "error", serde_json::Value::Null);
+    job["error"] = json!("unrelated");
+    assert!(lookups(app.on_event("job.ended.1", &job)).is_empty());
+    assert!(app.toast.is_none());
+}
+
+#[tokio::test]
+async fn review_target_error_shows_the_server_message_without_a_task() {
+    let (base, server) = one_response(
+        "422 Unprocessable Entity",
+        r#"{"_tag":"ReviewTargetError","code":"empty_diff","message":"No changes to review"}"#,
+    );
+    let client = cyber_client::Client::http(&base, None);
+    let mut app = App::new(session(false), vec![], "cyber");
+    typed(&mut app, "/review");
+    app.completion = None;
+    let actions = app.on_key(key(KeyCode::Enter));
+    let [action] = <[Action; 1]>::try_from(actions).unwrap();
+    let message = crate::perform::perform(&client, &app.session, action)
+        .await
+        .unwrap();
+    let request = server.join().unwrap();
+    assert!(
+        request.starts_with("POST /api/v1/sessions/ses_1/command"),
+        "{request}"
+    );
+    assert!(request.contains(r#""id":"msg_"#), "{request}");
+    let crate::perform::Msg::Refused { command, message } = message else {
+        panic!("expected a refusal, got {message:?}");
+    };
+    app.refused(&command, &message);
+    let shown = screen(&app);
+    assert!(shown.contains("No changes to review"), "{shown}");
+    assert!(!shown.contains("ReviewTargetError"));
+    assert!(app.items.is_empty());
+    assert_eq!(app.overlay, Overlay::None);
+    // No reviewer Job will end, so a later unrelated failure is not reported as the review.
+    let mut job = review_job("job_9", "error", serde_json::Value::Null);
+    job["error"] = json!("unrelated");
+    app.toast = None;
+    assert!(lookups(app.on_event("job.ended.1", &job)).is_empty());
+    assert!(app.toast.is_none());
 }

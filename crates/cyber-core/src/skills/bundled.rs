@@ -60,7 +60,7 @@ mod tests {
         for skill in found.skills.values() {
             assert!(skill.is_bundled());
             assert!(skill.directory().is_none());
-            assert!(skill.user_invocable && !skill.disable_model_invocation);
+            assert!(skill.user_invocable);
             assert!(sibling_files(skill, 20).is_empty());
             let frame = instruction_frame(skill, "test target");
             assert!(frame.contains(&format!("base=\"builtin:{}\"", skill.name)));
@@ -76,6 +76,28 @@ mod tests {
             found.skills["customize-cyber"].context,
             SkillContext::Inline
         );
+    }
+
+    /// The bundled review needs the host-resolved target, which only `/review`
+    /// and `cyber review` supply, so the model cannot invoke it.
+    #[test]
+    fn only_the_bundled_review_disables_model_invocation() {
+        for skill in discover().skills.values() {
+            assert_eq!(
+                skill.disable_model_invocation,
+                skill.name == "review",
+                "{}",
+                skill.name
+            );
+        }
+    }
+
+    #[test]
+    fn review_package_consumes_the_host_resolved_target() {
+        let review = &discover().skills["review"].body;
+        assert!(review.contains("`<review-target>` block"), "{review}");
+        assert!(review.contains("do not obtain the diff yourself"));
+        assert!(review.contains("failure_scenario") && review.contains("limitations"));
     }
 
     #[test]

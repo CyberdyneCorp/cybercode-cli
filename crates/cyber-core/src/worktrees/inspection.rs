@@ -1,7 +1,7 @@
 //! Read-only engine for the owned inspection subprocess; never called by the manager.
 
 use std::io::{self, Read};
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -68,8 +68,22 @@ fn open(request: &Request) -> io::Result<git2::Repository> {
     {
         return Err(invalid("Inspection repository identity changed"));
     }
+    let config = read_only_config(&target.common_dir, &target.metadata, &request.overrides)?;
+    repo.set_config(&config).map_err(git_error)?;
+    repo.set_workdir(&target.worktree, false)
+        .map_err(git_error)?;
+    Ok(repo)
+}
+
+/// Repository-local configuration plus the fixed read-only overrides; ambient
+/// system and global files are excluded by the helper's isolated search path.
+pub(crate) fn read_only_config(
+    common_dir: &Path,
+    metadata: &Path,
+    overrides: &Path,
+) -> io::Result<git2::Config> {
     let mut contents = String::new();
-    std::fs::File::open(&request.overrides)?
+    std::fs::File::open(overrides)?
         .take(4096)
         .read_to_string(&mut contents)?;
     if contents != OVERRIDES {
@@ -79,32 +93,23 @@ fn open(request: &Request) -> io::Result<git2::Repository> {
     }
     let mut config = git2::Config::new().map_err(git_error)?;
     config
-        .add_file(
-            &target.common_dir.join("config"),
-            git2::ConfigLevel::Local,
-            false,
-        )
+        .add_file(&common_dir.join("config"), git2::ConfigLevel::Local, false)
         .map_err(git_error)?;
     let worktree_config = match config.get_bool("extensions.worktreeconfig") {
         Ok(enabled) => enabled,
         Err(error) if error.code() == git2::ErrorCode::NotFound => false,
         Err(error) => return Err(git_error(error)),
     };
-    if worktree_config {
-        let path = target.metadata.join("config.worktree");
-        if path.exists() {
-            config
-                .add_file(&path, git2::ConfigLevel::Worktree, false)
-                .map_err(git_error)?;
-        }
+    let path = metadata.join("config.worktree");
+    if worktree_config && path.exists() {
+        config
+            .add_file(&path, git2::ConfigLevel::Worktree, false)
+            .map_err(git_error)?;
     }
     config
-        .add_file(&request.overrides, git2::ConfigLevel::App, false)
+        .add_file(overrides, git2::ConfigLevel::App, false)
         .map_err(git_error)?;
-    repo.set_config(&config).map_err(git_error)?;
-    repo.set_workdir(&target.worktree, false)
-        .map_err(git_error)?;
-    Ok(repo)
+    Ok(config)
 }
 
 fn head(repo: &git2::Repository, branch: &str) -> io::Result<git2::Oid> {
@@ -117,7 +122,7 @@ fn head(repo: &git2::Repository, branch: &str) -> io::Result<git2::Oid> {
         .ok_or_else(|| invalid("Inspection HEAD is unresolved"))
 }
 
-fn relative(bytes: &[u8]) -> io::Result<PathBuf> {
+pub(crate) fn relative(bytes: &[u8]) -> io::Result<PathBuf> {
     let path = PathBuf::from(std::str::from_utf8(bytes).map_err(invalid)?);
     if path.as_os_str().is_empty()
         || path

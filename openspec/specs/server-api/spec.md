@@ -140,7 +140,7 @@ The server API is the single public contract every Cyber Code client uses: the T
 - **THEN** the upgrade is refused with `401`
 
 ### Requirement: Tagged error model
-(P0) Declared failures SHALL be JSON objects tagged by `_tag`, with these statuses: `InvalidRequestError` 400, `InvalidCursorError` 400, `UnauthorizedError` 401, `ForbiddenError` 403, `EntitlementRequiredError` 402, `NotFoundError` variants 404 (`SessionNotFoundError`, `MessageNotFoundError`, `RunNotFoundError`, …), `ConflictError` 409, `SessionBusyError` 409, `RateLimitedError` 429 with `retryAfterMs`, `UnknownError` 500 with a `ref` of the form `err_<id>` logged server-side, and `ServiceUnavailableError` 503.
+(P0) Declared failures SHALL be JSON objects tagged by `_tag`, with these statuses: `InvalidRequestError` 400, `InvalidCursorError` 400, `UnauthorizedError` 401, `ForbiddenError` 403, `EntitlementRequiredError` 402, `NotFoundError` variants 404 (`SessionNotFoundError`, `MessageNotFoundError`, `RunNotFoundError`, …), `ConflictError` 409, `SessionBusyError` 409, `ReviewTargetError` 422 with `code` (from `v1.command.run`, `vcs-integration` → Local review command), `RateLimitedError` 429 with `retryAfterMs`, `UnknownError` 500 with a `ref` of the form `err_<id>` logged server-side, and `ServiceUnavailableError` 503.
 
 #### Scenario: Unexpected failure
 - **WHEN** a handler fails with an undeclared error

@@ -13,6 +13,7 @@ use crate::commands::{
     mcp::McpCmd,
     memory::MemoryArgs,
     models::ModelsArgs,
+    review::ReviewArgs,
     serve::{ServeArgs, ServiceCmd},
     trust::TrustCmd,
     worktrees::WorktreeCmd,
@@ -166,6 +167,8 @@ pub enum Command {
     },
     /// Run one prompt non-interactively (alias: cyber -p).
     Exec(Box<ExecArgs>),
+    /// Review uncommitted changes, a range, a commit or a pull request.
+    Review(Box<ReviewArgs>),
     /// Run the server in the foreground.
     Serve(ServeArgs),
     /// Manage the background server.

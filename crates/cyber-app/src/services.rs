@@ -537,7 +537,10 @@ impl Services for AppServices {
         turn: &'a TurnContext,
         name: &'a str,
         arguments: &'a str,
-    ) -> BoxFuture<'a, Result<Option<cyber_server::runtime::CommandPlan>, String>> {
+    ) -> BoxFuture<
+        'a,
+        Result<Option<cyber_server::runtime::CommandPlan>, cyber_server::runtime::CommandPlanError>,
+    > {
         Box::pin(self.host.command_plan(turn, name, arguments))
     }
 

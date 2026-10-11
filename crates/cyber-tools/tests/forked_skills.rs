@@ -136,8 +136,10 @@ impl cyber_server::http::Services for Services {
         turn: &'a cyber_server::runtime::TurnContext,
         name: &'a str,
         arguments: &'a str,
-    ) -> futures::future::BoxFuture<'a, Result<Option<cyber_server::runtime::CommandPlan>, String>>
-    {
+    ) -> futures::future::BoxFuture<
+        'a,
+        Result<Option<cyber_server::runtime::CommandPlan>, cyber_server::runtime::CommandPlanError>,
+    > {
         Box::pin(self.0.command_plan(turn, name, arguments))
     }
 }
@@ -1000,5 +1002,133 @@ async fn unknown_reserved_skill_requires_explicit_fenced_cancellation() {
     assert!(format!("{:?}", state.entries).contains("cancelled"));
     assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
     assert_eq!(flow.main.requests().len(), 1);
+    flow.runtime.shutdown().await;
+}
+
+fn git(repo: &std::path::Path, arguments: &[&str]) {
+    let output = std::process::Command::new("git")
+        .current_dir(repo)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .args([
+            "-c",
+            "user.name=Review test",
+            "-c",
+            "user.email=test@example.invalid",
+        ])
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn retried_review_command_keeps_its_receipt_after_the_working_tree_changes() {
+    let flow = Flow::new(
+        vec![
+            call(
+                "result",
+                "return_result",
+                json!({"findings":[],"limitations":[]}),
+            ),
+            text("review handback received"),
+        ],
+        false,
+    );
+    git(&flow.f.repo, &["init", "--quiet", "-b", "main"]);
+    flow.f.write("a.rs", "baseline\n");
+    git(&flow.f.repo, &["add", "-A"]);
+    git(&flow.f.repo, &["commit", "--quiet", "-m", "baseline"]);
+    flow.f.write("a.rs", "changed\n");
+    let parent = flow.session("default").await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!(
+        "http://{}/api/v1/sessions/{parent}/command",
+        listener.local_addr().unwrap()
+    );
+    let router = cyber_server::http::router(cyber_server::http::AppState {
+        service: None,
+        runtime: flow.runtime.clone(),
+        remote_tools: Arc::default(),
+        store: flow.f.store.clone(),
+        services: Arc::new(Services(flow.f.host.clone())),
+        options: Arc::new(cyber_server::http::HttpOptions {
+            version: "test".into(),
+            password: None,
+            cors_origins: vec![],
+            default_directory: flow.f.repo.clone(),
+            features: vec![],
+        }),
+    });
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(router, listener, async {
+        let _ = stopped.await;
+    }));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let post = |body: serde_json::Value| {
+        let request = client.post(&base).json(&body);
+        async move {
+            let response = request.send().await.unwrap();
+            let status = response.status();
+            (
+                status,
+                response
+                    .json::<serde_json::Value>()
+                    .await
+                    .unwrap_or_default(),
+            )
+        }
+    };
+    let body = json!({"id":"msg_review","name":"review","arguments":""});
+    let (status, admitted) = post(body.clone()).await;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED, "{admitted}");
+    let request =
+        cyber_server::runtime::Runtime::skill_command_delegation_id(&parent, "msg_review");
+    let job = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Some(job) = flow
+                .runtime
+                .delegation(&parent, &request)
+                .unwrap()
+                .and_then(|d| d.job_id)
+            {
+                break job;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(terminal(&flow, &job).await.status, JobStatus::Completed);
+    flow.settle(&parent).await;
+    // The tree is now clean, so planning again would fail with `empty_diff`.
+    git(&flow.f.repo, &["checkout", "--quiet", "--", "a.rs"]);
+    let (status, retry) = post(body.clone()).await;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED, "{retry}");
+    assert_eq!(
+        retry["data"]["admitted_seq"],
+        admitted["data"]["admitted_seq"]
+    );
+    flow.f.write("a.rs", "changed again\n");
+    let (status, retry) = post(body.clone()).await;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED, "{retry}");
+    assert_eq!(
+        retry["data"]["admitted_seq"],
+        admitted["data"]["admitted_seq"]
+    );
+    let (status, _) = post(json!({"id":"msg_review","name":"review","arguments":"HEAD"})).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    let (status, _) =
+        post(json!({"id":"msg_review","name":"review","arguments":"","delivery":"queue"})).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    flow.settle(&parent).await;
+    assert_eq!(flow.runtime.jobs(Some(&parent)).unwrap().len(), 1);
+    assert_eq!(flow.main.requests().len(), 2);
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
     flow.runtime.shutdown().await;
 }
