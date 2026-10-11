@@ -220,32 +220,33 @@ async fn reuse(client: &Client, args: &ExecArgs) -> Result<Option<Value>, CliErr
         .ok_or_else(|| CliError::runtime("Session not found"))
 }
 
-/// Admit the prompt, or run `--command` with the prompt as its arguments.
+/// Admit the prompt, or run `--command` with the prompt as its arguments;
+/// returns the receipt's message ID.
 pub async fn send(
     client: &Client,
     id: &str,
     args: &ExecArgs,
     prompt: String,
-) -> Result<(), CliError> {
-    if let Some(name) = &args.command {
+) -> Result<Option<String>, CliError> {
+    let receipt = if let Some(name) = &args.command {
         client
             .post(
                 &format!("/sessions/{id}/command"),
                 json!({ "name": name.trim_start_matches('/'), "arguments": prompt }),
             )
             .await
-            .map_err(api)?;
-        return Ok(());
-    }
-    let mut parts = vec![json!({ "type": "text", "text": prompt })];
-    for file in &args.files {
-        parts.push(file_part(file)?);
-    }
-    client
-        .post(&format!("/sessions/{id}/prompt"), json!({ "parts": parts }))
-        .await
-        .map_err(api)?;
-    Ok(())
+            .map_err(api)?
+    } else {
+        let mut parts = vec![json!({ "type": "text", "text": prompt })];
+        for file in &args.files {
+            parts.push(file_part(file)?);
+        }
+        client
+            .post(&format!("/sessions/{id}/prompt"), json!({ "parts": parts }))
+            .await
+            .map_err(api)?
+    };
+    Ok(receipt["data"]["message_id"].as_str().map(str::to_string))
 }
 
 pub(super) fn file_part(path: &std::path::Path) -> Result<Value, CliError> {
@@ -278,7 +279,7 @@ pub(super) fn file_part(path: &std::path::Path) -> Result<Value, CliError> {
     )
 }
 
-fn urlencode(s: &str) -> String {
+pub(super) fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| {
             if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {

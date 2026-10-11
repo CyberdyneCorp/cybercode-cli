@@ -63,6 +63,43 @@ fn send_idle(
     let _ = write!(stream, "data: {event}\n\n");
 }
 
+/// The Session totals before (`current == false`) and after the prompt.
+fn snapshot(current: bool, legacy: bool) -> Value {
+    let mut data = json!({"id":"ses_ordinary","directory":"/workspace","totals":{"usage":{"input":if current {11} else {10},"output":if current {12} else {10},"reasoning":if current {13} else {10},"cache_read":if current {14} else {10},"cache_write":if current {15} else {10}},"cost":if current {12.0} else {10.0},"steps":if current {3} else {2},"unpriced_steps":0}});
+    if !legacy {
+        data["children_cost"] = json!(if current { 24.0 } else { 20.0 });
+        data["children_tokens"] = json!(if current { 115 } else { 100 });
+        data["children_unpriced_steps"] = json!(0);
+        data["children_usage_complete"] = json!(true);
+    }
+    data
+}
+
+/// The mocked server's JSON answer to one non-streaming request.
+fn response(
+    method: &str,
+    path: &str,
+    sent: &AtomicBool,
+    cancelled: &AtomicBool,
+    legacy: bool,
+) -> Value {
+    if path == "/api/v1/agents" {
+        json!({"data":[]})
+    } else if method == "GET" && path.starts_with("/api/v1/jobs?session_id=ses_ordinary&") {
+        json!({"data":[],"cursor":{}})
+    } else if path == "/api/v1/sessions/ses_ordinary/prompt" {
+        sent.store(true, Ordering::SeqCst);
+        json!({"data":{}})
+    } else if path == "/api/v1/sessions/ses_ordinary/interrupt" {
+        cancelled.store(true, Ordering::SeqCst);
+        json!({"data":{}})
+    } else if method == "GET" && path == "/api/v1/sessions/ses_ordinary" {
+        json!({"data": snapshot(sent.load(Ordering::SeqCst), legacy)})
+    } else {
+        panic!("Unexpected request {method} {path}")
+    }
+}
+
 fn run(legacy: bool, budget: bool) -> (std::process::Output, bool) {
     run_with_ack(legacy, budget, true)
 }
@@ -95,22 +132,7 @@ fn run_with_ack(legacy: bool, budget: bool, acknowledge: bool) -> (std::process:
                     send_idle(&mut stream, &stop, &cancelled, acknowledge);
                     return;
                 }
-                let body = if path == "/api/v1/agents" { json!({"data":[]}) }
-                else if path == "/api/v1/sessions/ses_ordinary/prompt" {
-                    sent.store(true, Ordering::SeqCst); json!({"data":{}})
-                } else if path == "/api/v1/sessions/ses_ordinary/interrupt" {
-                    cancelled.store(true, Ordering::SeqCst); json!({"data":{}})
-                } else if method == "GET" && path == "/api/v1/sessions/ses_ordinary" {
-                    let current = sent.load(Ordering::SeqCst);
-                    let mut data = json!({"id":"ses_ordinary","directory":"/workspace","totals":{"usage":{"input":if current {11} else {10},"output":if current {12} else {10},"reasoning":if current {13} else {10},"cache_read":if current {14} else {10},"cache_write":if current {15} else {10}},"cost":if current {12.0} else {10.0},"steps":if current {3} else {2},"unpriced_steps":0}});
-                    if !legacy {
-                        data["children_cost"] = json!(if current {24.0} else {20.0});
-                        data["children_tokens"] = json!(if current {115} else {100});
-                        data["children_unpriced_steps"] = json!(0);
-                        data["children_usage_complete"] = json!(true);
-                    }
-                    json!({"data":data})
-                } else { panic!("Unexpected request {method} {path}") };
+                let body = response(&method, &path, &sent, &cancelled, legacy);
                 let body = body.to_string();
                 let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
             }));

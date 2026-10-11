@@ -1,16 +1,26 @@
 //! The request ID exists before a POST, so even a lost response remains stoppable.
-use super::{Scope, api, safe_id};
+use super::{Scope, api, safe_id, stop_job};
 use crate::error::CliError;
 use cyber_client::Client;
 use cyber_server::runtime::{Delegation, DelegationPhase, DelegationStatus};
 use serde_json::{Value, json};
 use std::time::Duration;
 
-pub(super) struct Admission {
+pub(in crate::commands::exec) struct Admission {
     pub id: String,
     parent: String,
 }
 impl Admission {
+    /// An admission the server derived itself (a forwarded `context: fork` command).
+    pub fn existing(parent: &str, id: &str) -> Result<Self, CliError> {
+        if !safe_id(parent, "ses") || !safe_id(id, "op") {
+            return Err(CliError::runtime("Invalid delegation admission identity"));
+        }
+        Ok(Self {
+            id: id.into(),
+            parent: parent.into(),
+        })
+    }
     pub fn new(parent: &str) -> Result<Self, CliError> {
         if !safe_id(parent, "ses") {
             return Err(CliError::runtime("Invalid source Session identity"));
@@ -49,8 +59,22 @@ impl Admission {
         }
         Ok(record)
     }
-    async fn lookup(&self, client: &Client) -> Result<Delegation, CliError> {
+    pub(in crate::commands::exec) async fn lookup(
+        &self,
+        client: &Client,
+    ) -> Result<Delegation, CliError> {
         self.check(&client.get(&self.path()).await.map_err(api)?)
+    }
+    /// Like `lookup`, but a request the server never recorded is `None`.
+    pub(in crate::commands::exec) async fn find(
+        &self,
+        client: &Client,
+    ) -> Result<Option<Delegation>, CliError> {
+        match client.get(&self.path()).await {
+            Ok(response) => self.check(&response).map(Some),
+            Err(error) if error.tag() == Some("RequestNotFoundError") => Ok(None),
+            Err(error) => Err(api(error)),
+        }
     }
     async fn scope(&self, client: &Client, id: &str) -> Result<Scope, CliError> {
         let response = client.get(&format!("/jobs/{id}")).await.map_err(api)?;
@@ -93,7 +117,11 @@ impl Admission {
             record = self.lookup(client).await?;
         }
     }
-    pub async fn stop(&self, client: &Client, owned: &mut Option<Scope>) -> Result<(), CliError> {
+    pub(in crate::commands::exec) async fn stop(
+        &self,
+        client: &Client,
+        owned: &mut Option<Scope>,
+    ) -> Result<(), CliError> {
         let response = client
             .post(&format!("{}/stop", self.path()), json!({}))
             .await
@@ -103,15 +131,7 @@ impl Admission {
             if let Some(job) = &record.job_id {
                 *owned = Some(self.scope(client, job).await?);
                 let scope = owned.as_ref().expect("validated scope");
-                let response = client
-                    .post(&format!("/jobs/{job}/stop"), json!({}))
-                    .await
-                    .map_err(api)?;
-                scope.check(&response["data"])?;
-                if response["data"]["status"] == "running" {
-                    return Err(CliError::runtime(format!("Job {job} is still running")));
-                }
-                return Ok(());
+                return scope.check(&stop_job(client, job).await?);
             }
             match record.status {
                 DelegationStatus::Cancelled | DelegationStatus::Failed => return Ok(()),

@@ -1,5 +1,6 @@
 //! `cyber exec` (`exec-mode`): one non-interactive run against a Session.
 
+mod background;
 mod delegation;
 mod report;
 pub(crate) mod setup;
@@ -15,6 +16,7 @@ use serde_json::{Value, json};
 use crate::cli::{Format, GlobalArgs};
 use crate::context::Context;
 use crate::error::CliError;
+use background::{Owned, Settle};
 use report::{Out, Run};
 
 #[derive(Debug, Args)]
@@ -173,8 +175,19 @@ async fn execute_session(
             }),
         );
     let id = session["id"].as_str().unwrap_or_default();
-    setup::send(client, id, args, prompt).await?;
-    follow_session(client, id, &mut events, &mut run, &mut out, timeout).await;
+    let mut owned = Owned::capture(client, id).await?;
+    let message = setup::send(client, id, args, prompt).await?;
+    if let (Some(_), Some(message)) = (&args.command, &message) {
+        owned.command(message)?;
+    }
+    let mut follow = Follow {
+        client,
+        id,
+        run: &mut run,
+        out: &mut out,
+        owned: &mut owned,
+    };
+    follow.run(&mut events, timeout).await;
     if let Err(error) = refresh_usage(client, id, &mut run).await {
         run.error.get_or_insert(error.message);
     } else if run.over_budget() {
@@ -184,45 +197,94 @@ async fn execute_session(
     Ok(out.finish(&run, args, session))
 }
 
-async fn follow_session<S: futures::Stream<Item = Event> + Unpin>(
-    client: &Client,
-    id: &str,
-    events: &mut S,
-    run: &mut Run,
-    out: &mut Out,
-    timeout: Option<Duration>,
-) {
-    let mut billing = tokio::time::interval(Duration::from_millis(200));
-    billing.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let deadline = tokio::time::sleep(timeout.unwrap_or(Duration::from_secs(u64::MAX / 4)));
-    tokio::pin!(deadline);
-    loop {
-        tokio::select! {
-            event = events.next() => match event {
-                Some(event) => {
-                    if handle(run, out, client, id, event).await {
-                        break;
+/// What one event means for the run.
+enum Step {
+    Continue,
+    Idle,
+    End,
+}
+
+/// A run following its Session until it and the background work it owns settle.
+struct Follow<'a> {
+    client: &'a Client,
+    id: &'a str,
+    run: &'a mut Run,
+    out: &'a mut Out,
+    owned: &'a mut Owned,
+}
+
+impl Follow<'_> {
+    async fn run<S: futures::Stream<Item = Event> + Unpin>(
+        &mut self,
+        events: &mut S,
+        timeout: Option<Duration>,
+    ) {
+        let mut billing = tokio::time::interval(Duration::from_millis(200));
+        billing.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut settle_poll = tokio::time::interval(Duration::from_millis(500));
+        settle_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut waiting = false;
+        let deadline = tokio::time::sleep(timeout.unwrap_or(Duration::from_secs(u64::MAX / 4)));
+        tokio::pin!(deadline);
+        loop {
+            let done = tokio::select! {
+                event = events.next() => match event {
+                    Some(event) => self.event(event, &mut waiting).await,
+                    None => {
+                        self.run.error = Some("the server closed the event stream".into());
+                        true
                     }
+                },
+                _ = settle_poll.tick(), if waiting => self.settled().await,
+                _ = billing.tick() => monitor_billing(self.client, self.id, self.run, self.owned).await,
+                _ = &mut deadline, if self.run.stop_requested.is_none() => {
+                    stop(self.client, self.id, self.run, self.owned, "timeout").await;
+                    false
                 }
-                None => {
-                    run.error = Some("the server closed the event stream".into());
-                    break;
+                _ = tokio::signal::ctrl_c(), if self.run.stop_requested.is_none() => {
+                    stop(self.client, self.id, self.run, self.owned, "interrupted").await;
+                    false
                 }
-            },
-            _ = billing.tick() => {
-                if monitor_billing(client, id, run).await { break; }
+            };
+            if done {
+                break;
             }
-            _ = &mut deadline, if run.stop_reason.is_none() => {
-                stop(client, id, run, "timeout").await;
+        }
+    }
+
+    /// Apply one event; true when the run is over.
+    async fn event(&mut self, event: Event, waiting: &mut bool) -> bool {
+        self.owned.observe(&event);
+        match handle(self.run, self.out, self.client, self.id, self.owned, event).await {
+            Step::Continue => false,
+            Step::End => true,
+            Step::Idle => {
+                let done = self.settled().await;
+                *waiting = !done;
+                done
             }
-            _ = tokio::signal::ctrl_c(), if run.stop_reason.is_none() => {
-                stop(client, id, run, "interrupted").await;
+        }
+    }
+
+    /// Idle is final only once the background work this run owns has settled.
+    async fn settled(&mut self) -> bool {
+        let stopping = self.run.stop_requested.is_some();
+        if stopping {
+            // Work the Drain started before it acknowledged the interrupt.
+            self.owned.stop(self.client, self.run).await;
+        }
+        match self.owned.settle(self.client, stopping).await {
+            Ok(Settle::Done) => true,
+            Ok(Settle::Wait) => false,
+            Err(error) => {
+                self.run.error = Some(error.message);
+                true
             }
         }
     }
 }
 
-async fn monitor_billing(client: &Client, id: &str, run: &mut Run) -> bool {
+async fn monitor_billing(client: &Client, id: &str, run: &mut Run, owned: &mut Owned) -> bool {
     if run
         .stop_requested
         .is_some_and(|started| started.elapsed() >= Duration::from_secs(5))
@@ -234,9 +296,9 @@ async fn monitor_billing(client: &Client, id: &str, run: &mut Run) -> bool {
     }
     if let Err(error) = refresh_usage(client, id, run).await {
         run.error = Some(error.message);
-        stop(client, id, run, "error").await;
+        stop(client, id, run, owned, "error").await;
     } else if run.over_budget() {
-        stop(client, id, run, "budget_exceeded").await;
+        stop(client, id, run, owned, "budget_exceeded").await;
     }
     false
 }
@@ -252,31 +314,40 @@ async fn refresh_usage(client: &Client, id: &str, run: &mut Run) -> Result<(), C
     run.session_snapshot(&snapshot["data"])
 }
 
-/// Interrupt the Drain; the run ends when it reports idle.
-async fn stop(client: &Client, id: &str, run: &mut Run, reason: &str) {
-    if run.stop_reason.is_none() {
-        run.stop_reason = Some(reason.into());
-        run.stop_requested = Some(Instant::now());
-        match tokio::time::timeout(
-            Duration::from_secs(2),
-            client.post(&format!("/sessions/{id}/interrupt"), json!({})),
-        )
-        .await
-        {
-            Ok(Ok(_)) => {}
-            _ => {
-                run.error.get_or_insert_with(|| {
-                    "Session interruption request was not acknowledged".into()
-                });
-            }
+/// Cancel the background work the run owns, then interrupt the Drain so no
+/// cancellation handback runs after exit; the run ends when it reports idle.
+async fn stop(client: &Client, id: &str, run: &mut Run, owned: &mut Owned, reason: &str) {
+    if run.stop_requested.is_some() {
+        return;
+    }
+    run.stop_reason.get_or_insert_with(|| reason.into());
+    owned.stop(client, run).await;
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        client.post(&format!("/sessions/{id}/interrupt"), json!({})),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        _ => {
+            run.error
+                .get_or_insert_with(|| "Session interruption request was not acknowledged".into());
         }
     }
+    // The acknowledgement watchdog measures only the interrupt.
+    run.stop_requested = Some(Instant::now());
 }
 
-/// Apply one event; true when the run is over.
-async fn handle(run: &mut Run, out: &mut Out, client: &Client, id: &str, event: Event) -> bool {
+async fn handle(
+    run: &mut Run,
+    out: &mut Out,
+    client: &Client,
+    id: &str,
+    owned: &mut Owned,
+    event: Event,
+) -> Step {
     match event.kind.as_str() {
-        "session.idle" => return true,
+        "session.idle" => return Step::Idle,
         "session.hook.notice" => {
             eprintln!(
                 "hook {}: {}",
@@ -298,20 +369,28 @@ async fn handle(run: &mut Run, out: &mut Out, client: &Client, id: &str, event: 
         }
         "session.deleted" => {
             run.error = Some("the Session was deleted".into());
-            return true;
+            return Step::End;
         }
         kind => {
             out.durable(run, kind, &event.data);
             if kind.starts_with("session.step.ended") && run.over_budget() {
-                stop(client, id, run, "budget_exceeded").await;
+                stop(client, id, run, owned, "budget_exceeded").await;
             }
         }
     }
-    false
+    Step::Continue
 }
 
 fn api(e: cyber_client::ClientError) -> CliError {
     CliError::runtime(e.to_string())
+}
+
+/// A server-issued ID with the expected prefix that is safe inside a URL path.
+fn safe_id(id: &str, prefix: &str) -> bool {
+    cyber_core::ids::has_prefix(id, prefix)
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
 }
 
 /// `30m`, `90s`, `1h`, `500ms` or bare seconds.

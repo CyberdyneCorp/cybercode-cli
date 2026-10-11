@@ -1,9 +1,9 @@
 //! Exec owns durable admission before waiting for a child Job.
-mod admission;
+pub(super) mod admission;
 use super::{
     ExecArgs, api,
     report::{Out, Run},
-    setup,
+    safe_id, setup,
 };
 use crate::error::CliError;
 use cyber_client::Client;
@@ -38,7 +38,7 @@ pub(super) async fn target(
     Ok(Some((agent, prompt.into())))
 }
 
-struct Scope {
+pub(super) struct Scope {
     parent: String,
     job: String,
     child: String,
@@ -83,12 +83,6 @@ impl Scope {
         }
         Ok(session)
     }
-}
-fn safe_id(id: &str, prefix: &str) -> bool {
-    cyber_core::ids::has_prefix(id, prefix)
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
 }
 
 enum End {
@@ -349,17 +343,20 @@ async fn history(
         }
     }
 }
+/// Stop one background Job; the server answers once it has settled.
+pub(super) async fn stop_job(client: &Client, job: &str) -> Result<Value, CliError> {
+    let response = client
+        .post(&format!("/jobs/{job}/stop"), json!({}))
+        .await
+        .map_err(api)?;
+    if response["data"]["status"] == "running" {
+        return Err(CliError::runtime(format!("Job {job} is still running")));
+    }
+    Ok(response["data"].clone())
+}
 async fn cancel(client: &Client, scope: &Scope, run: &mut Run) {
     let result = tokio::time::timeout(Duration::from_secs(3), async {
-        let response = client
-            .post(&format!("/jobs/{}/stop", scope.job), json!({}))
-            .await
-            .map_err(api)?;
-        scope.check(&response["data"])?;
-        if response["data"]["status"] == "running" {
-            return Err(CliError::runtime("Job is still running"));
-        }
-        Ok::<_, CliError>(())
+        scope.check(&stop_job(client, &scope.job).await?)
     })
     .await;
     if !matches!(result, Ok(Ok(()))) {

@@ -85,6 +85,21 @@
 - **WHEN** a user runs `cyber exec --format json "count TODOs"`
 - **THEN** stdout contains exactly one JSON object whose `result` holds the final text and whose `exit_code` is 0
 
+### Requirement: Background work owned by the run
+(P1) A run SHALL NOT finish while background work it started is unsettled. That work is background subagent Jobs and forked skill commands, including a forked command that was forwarded but has no Job yet. After the Session goes idle, exec SHALL keep following it until every Job the run started has settled, its handback has been admitted, and the Turn that handles the handback has gone idle. `result` SHALL be the final assistant text of that last Turn, and usage SHALL include descendant spend. Background tasks that already existed on a reused Session are not owned by the run and SHALL NOT be awaited or cancelled. A forked command whose admission outcome is unknown SHALL end the run with an error that names the delegation to inspect. Owned work that ended but whose handback was not admitted (the server reported a `background_settlement` error, or no handback arrived within a bounded grace period) SHALL end the run with an error that names the Job or delegation to inspect instead of waiting indefinitely. When `--timeout`, `--max-cost`, `--max-tokens` or SIGINT stops a run, exec SHALL cancel only the background work it owns, then interrupt the Drain so no handback Turn runs after exit, and report the usual `stop_reason` and exit code. Owned work the Drain started before it acknowledged the interrupt SHALL also be cancelled before the run ends.
+
+#### Scenario: Forked command answer
+- **WHEN** a user runs `cyber exec --command audit --format json` and `audit` declares `context: fork`
+- **THEN** exec exits after the forked child completes and the parent's handback Turn goes idle, with that Turn's final text as `result` and `exit_code` 0
+
+#### Scenario: Timeout while a child runs
+- **WHEN** `--timeout 30s` elapses while the parent is idle and an owned background Job is still running
+- **THEN** the Job is cancelled, no handback Turn runs after exit, `stop_reason` is `timeout` and the exit code is 4
+
+#### Scenario: Handback admission fails
+- **WHEN** an owned background Job ends but the server reports that its handback could not be admitted
+- **THEN** exec exits with code 1 and an `error` naming the Job instead of waiting for a handback that will never run
+
 ### Requirement: Stream JSON event schema
 (P0) In `stream-json` mode, each line SHALL be an object with `type`, `ts` (epoch ms) and `session_id`. The types are:
 
