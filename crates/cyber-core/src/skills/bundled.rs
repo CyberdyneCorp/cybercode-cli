@@ -132,21 +132,16 @@ mod tests {
         );
         assert_eq!(local.diagnostics.len(), 5);
         assert!(local.diagnostics.iter().all(|d| d.contains("builtin:")));
-        std::fs::write(
-            scope.global_config_dir.join("skills/review/SKILL.md"),
-            "invalid document",
-        )
-        .unwrap();
+        let review_path = scope
+            .global_config_dir
+            .join("skills")
+            .join("review")
+            .join("SKILL.md");
+        std::fs::write(&review_path, "invalid document").unwrap();
         let invalid = all(&scope);
         assert!(invalid.skills["review"].is_bundled());
         assert!(invalid.diagnostics.iter().any(|d| {
-            d.contains(
-                &scope
-                    .global_config_dir
-                    .join("skills/review/SKILL.md")
-                    .display()
-                    .to_string(),
-            ) && d.contains("frontmatter")
+            d.contains(&review_path.display().to_string()) && d.contains("frontmatter")
         }));
         assert_eq!(
             invalid

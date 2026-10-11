@@ -42,6 +42,17 @@ impl Fixture {
         Self::with_shell("bash", cyber_sandbox::find_helper())
     }
 
+    /// Native git helpers need sandbox enforcement, which Windows does not
+    /// provide yet, so this selects explicit full access there only. It
+    /// matches the native worktree fixtures and is not confinement evidence.
+    pub fn native_git() -> Self {
+        Self::with_policy(
+            "bash",
+            cyber_sandbox::find_helper(),
+            cfg!(windows).then(|| "full-access".into()),
+        )
+    }
+
     pub fn with_shell(shell: &str, helper: Option<PathBuf>) -> Self {
         Self::with_policy(shell, helper, None)
     }

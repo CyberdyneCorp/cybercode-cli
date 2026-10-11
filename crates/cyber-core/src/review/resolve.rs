@@ -188,7 +188,7 @@ pub fn global_excludes(var: impl Fn(&str) -> Option<String>) -> Option<PathBuf> 
     let home = set("HOME").or_else(|| set("USERPROFILE"));
     let xdg = set("XDG_CONFIG_HOME").or_else(|| home.as_ref().map(|home| home.join(".config")));
     let configured = configured_excludes(
-        xdg.as_ref().map(|xdg| xdg.join("git/config")),
+        xdg.as_ref().map(|xdg| xdg.join("git").join("config")),
         home.as_ref().map(|home| home.join(".gitconfig")),
     );
     let path = match configured {
@@ -196,7 +196,7 @@ pub fn global_excludes(var: impl Fn(&str) -> Option<String>) -> Option<PathBuf> 
             (Some(rest), Some(home)) => home.join(rest),
             _ => PathBuf::from(value),
         },
-        None => xdg?.join("git/ignore"),
+        None => xdg?.join("git").join("ignore"),
     };
     (path.is_absolute() && path.is_file()).then_some(path)
 }

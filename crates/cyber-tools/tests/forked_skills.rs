@@ -1028,7 +1028,9 @@ fn git(repo: &std::path::Path, arguments: &[&str]) {
 
 #[tokio::test]
 async fn retried_review_command_keeps_its_receipt_after_the_working_tree_changes() {
-    let flow = Flow::new(
+    // Review resolution runs the native git helper (explicit full access on Windows only).
+    let flow = Flow::with(
+        support::Fixture::native_git(),
         vec![
             call(
                 "result",
@@ -1038,6 +1040,7 @@ async fn retried_review_command_keeps_its_receipt_after_the_working_tree_changes
             text("review handback received"),
         ],
         false,
+        Arc::new(NoSnapshots),
     );
     git(&flow.f.repo, &["init", "--quiet", "-b", "main"]);
     flow.f.write("a.rs", "baseline\n");

@@ -87,7 +87,7 @@ async fn embedded_packages_keep_skill_denials_and_do_not_authorize_external_dire
 
 #[tokio::test]
 async fn bundled_review_command_uses_one_readonly_reviewer_and_keeps_instructions_out_of_parent() {
-    let flow = Flow::new(
+    let flow = review_host(
         vec![
             call("inspect", "read", json!({"path":"changed.txt"})),
             call(
@@ -240,7 +240,10 @@ async fn bundled_batch_load_can_delegate_five_real_isolated_coding_tasks() {
         .set_config(json!({"permissions":{"agent":"allow","worktree":"allow","edit":"allow"}}));
     let parent = flow.session("bypass").await;
     flow.prompt(&parent, "use batch").await;
-    flow.settle(&parent).await;
+    // Five real worktrees and child runs share the runner with this binary's
+    // other git-backed tests; the shared 10s drain bound is too tight on Windows.
+    flow.settle_within(&parent, std::time::Duration::from_secs(60))
+        .await;
     let jobs = finished(&flow, &parent, 5).await;
     let mut directories = std::collections::BTreeSet::new();
     for job in jobs {
@@ -271,9 +274,20 @@ fn finding(severity: &str, file: &str, line: u64) -> serde_json::Value {
     json!({"file":file,"line":line,"severity":severity,"summary":"Example finding","failure_scenario":"Example failing input"})
 }
 
+/// Review resolution runs the native git helper, so these hosts use
+/// `Fixture::native_git` (explicit full access on Windows only).
+fn review_host(script: Vec<Vec<cyber_llm::adapters::ScriptStep>>, interactive: bool) -> Flow {
+    Flow::with(
+        support::Fixture::native_git(),
+        script,
+        interactive,
+        Arc::new(NoSnapshots),
+    )
+}
+
 /// A committed repository with four tracked files, plus a session over it.
 async fn review_flow(script: Vec<Vec<cyber_llm::adapters::ScriptStep>>) -> (Flow, String) {
-    let flow = Flow::new(script, false);
+    let flow = review_host(script, false);
     init_repo(&flow.f);
     for name in ["a.rs", "b.rs", "c.rs", ".env"] {
         flow.f.write(name, &format!("{name} baseline\n"));
@@ -549,7 +563,7 @@ async fn bundled_review_refuses_a_global_excludes_file_over_the_limit() {
     let before = flow.runtime.state(&parent).await.unwrap().last_seq;
     match review_plan(&flow, &parent, "").await {
         Err(CommandPlanError::Unavailable(message)) => assert!(
-            message.contains(".config/git/ignore") && message.contains("64 KiB"),
+            message.replace('\\', "/").contains(".config/git/ignore") && message.contains("64 KiB"),
             "{message}"
         ),
         other => panic!("expected an unavailable review, got {other:?}"),
@@ -599,7 +613,7 @@ async fn bundled_review_withholds_by_the_reviewer_ceiling_when_the_invoker_bypas
 
 #[tokio::test]
 async fn bundled_review_in_a_subdirectory_withholds_denied_external_paths() {
-    let flow = Flow::new(vec![text("unused")], false);
+    let flow = review_host(vec![text("unused")], false);
     init_repo(&flow.f);
     flow.f.write("sub/inside.rs", "inside\n");
     flow.f.write("other/outside.rs", "outside\n");
@@ -637,11 +651,34 @@ async fn bundled_review_in_a_subdirectory_withholds_denied_external_paths() {
     flow.runtime.shutdown().await;
 }
 
+/// Without an explicit full-access selection, review resolution fails closed
+/// on Windows like every other native git helper (no AppContainer route yet).
+#[cfg(windows)]
+#[tokio::test]
+async fn bundled_review_refuses_unavailable_windows_enforcement_without_explicit_opt_out() {
+    let flow = Flow::new(vec![text("unused")], false);
+    init_repo(&flow.f);
+    flow.f.write("a.rs", "baseline\n");
+    commit(&flow.f.repo, "baseline");
+    flow.f.write("a.rs", "changed\n");
+    let parent = flow.session("default").await;
+    let before = flow.runtime.state(&parent).await.unwrap().last_seq;
+    match review_plan(&flow, &parent, "").await {
+        Err(CommandPlanError::Unavailable(message)) => {
+            assert!(message.contains("SandboxUnavailableError"), "{message}")
+        }
+        other => panic!("expected an unavailable review, got {other:?}"),
+    }
+    assert_nothing_admitted(&flow, &parent, before).await;
+    flow.runtime.shutdown().await;
+}
+
 async fn plan_error(flow: &Flow, parent: &str) -> CommandPlanError {
     review_plan(flow, parent, "").await.unwrap_err()
 }
 
 /// A fake `gh` on the host PATH that records each run and prints `output`.
+#[cfg(unix)]
 fn fake_gh(flow: &Flow, output: &str) -> std::path::PathBuf {
     let bin = flow.f.dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -655,11 +692,8 @@ fn fake_gh(flow: &Flow, output: &str) -> std::path::PathBuf {
         ),
     )
     .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     flow.f.env.set("PATH", &bin.display().to_string());
     marker
 }

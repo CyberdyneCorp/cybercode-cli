@@ -215,7 +215,11 @@ impl Flow {
     }
 
     pub async fn settle(&self, id: &str) {
-        tokio::time::timeout(Duration::from_secs(10), self.runtime.wait_idle(id))
+        self.settle_within(id, Duration::from_secs(10)).await;
+    }
+
+    pub async fn settle_within(&self, id: &str, deadline: Duration) {
+        tokio::time::timeout(deadline, self.runtime.wait_idle(id))
             .await
             .expect("drain did not settle");
     }
