@@ -944,7 +944,10 @@ impl ToolHost for BuiltinHost {
                     return Err(format!("Agent {name:?} cannot run a user subagent"));
                 }
             }
-            let mut input = serde_json::json!({"prompt":prompt,"fork":agent.is_none(),"background":true,"attachments":attachments,"max_steps":max_steps});
+            // A named @agent delegation is a fresh child; a forwarded
+            // `context: fork` skill always forks, even with a declared agent.
+            let fork = agent.is_none() || skill_command.as_ref().is_some_and(|skill| skill.fork);
+            let mut input = serde_json::json!({"prompt":prompt,"fork":fork,"background":true,"attachments":attachments,"max_steps":max_steps});
             if let Some(agent) = agent {
                 input["agent"] = agent.into();
             }

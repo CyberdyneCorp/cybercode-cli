@@ -255,3 +255,147 @@ async fn model_loaded_fork_selects_the_declared_reviewer() {
     );
     flow.runtime.shutdown().await;
 }
+
+/// Runs a user-invoked `context: fork` skill after a settled parent Turn and
+/// asserts the child received the parent's projected history (agents-subagents
+/// "Forked subagents"; skills-commands "Path-triggered and forked skills").
+/// Without a declared `model:` the child runs on the parent's model, even under
+/// a named agent: forks inherit the command's effective model (m1-3 design,
+/// "Captured user skill command admission").
+async fn assert_user_fork_inherits_parent_history(
+    agent: Option<&str>,
+    expected_agent: &str,
+    model: Option<&'static str>,
+) {
+    let flow = user_fork_flow(agent, model);
+    let parent = flow.session("default").await;
+    flow.prompt(&parent, "original objective").await;
+    flow.settle(&parent).await;
+    let source = flow.runtime.state(&parent).await.unwrap();
+    let job = run_user_fork(&flow, &parent).await;
+    assert_eq!(job.status, JobStatus::Completed);
+    let child = flow.runtime.state(&job.child_id).await.unwrap();
+    let child_model = model.unwrap_or("test/main");
+    assert_forked_child(&child, &source, expected_agent, child_model);
+    let request = forked_request(&flow, child_model);
+    assert!(
+        request.contains("original objective") && request.contains("parent answer"),
+        "forked child request lacks inherited parent messages: {request}"
+    );
+    flow.settle(&parent).await;
+    let parent_entries = format!("{:?}", flow.runtime.state(&parent).await.unwrap().entries);
+    assert!(!parent_entries.contains("PRIVATE FORK BODY"));
+    assert!(parent_entries.contains("audit summary"), "{parent_entries}");
+    flow.runtime.shutdown().await;
+}
+
+/// The child is a fork of `source`: its own copy of the parent's history,
+/// running as `agent` on `model`.
+fn assert_forked_child(
+    child: &cyber_server::runtime::SessionState,
+    source: &cyber_server::runtime::SessionState,
+    agent: &str,
+    model: &str,
+) {
+    assert_eq!(
+        child.info.parent_id.as_deref(),
+        Some(source.info.id.as_str())
+    );
+    assert_eq!(child.info.agent, agent);
+    assert_eq!(child.info.model, model);
+    let entries = format!("{:?}", child.entries);
+    assert!(
+        entries.contains("original objective") && entries.contains("parent answer"),
+        "forked child did not inherit parent history: {entries}"
+    );
+    assert_ne!(child.entries[0].id(), source.entries[0].id());
+}
+
+/// The parent answers on `test/main`; the child answers on its declared model,
+/// or on the parent's when the skill declares none.
+fn user_fork_flow(agent: Option<&str>, model: Option<&'static str>) -> Flow {
+    let (main, extra) = match model {
+        Some(model) => (
+            vec![text("parent answer"), text("handback handled")],
+            vec![(model, vec![text("audit summary")])],
+        ),
+        None => (
+            vec![
+                text("parent answer"),
+                text("audit summary"),
+                text("handback handled"),
+            ],
+            Vec::new(),
+        ),
+    };
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        main,
+        false,
+        Arc::new(NoSnapshots),
+        extra,
+    );
+    flow.f.set_config(json!({"permissions":"allow"}));
+    let agent_line = agent.map_or_else(String::new, |name| format!("agent: {name}\n"));
+    let model_line = model.map_or_else(String::new, |model| format!("model: {model}\n"));
+    flow.f.write(
+        ".cyber/skills/audit/SKILL.md",
+        &format!(
+            "---\nname: audit\ndescription: Audit\ncontext: fork\n{agent_line}{model_line}---\nPRIVATE FORK BODY\n"
+        ),
+    );
+    flow
+}
+
+/// Admits `/audit` as a user command and waits for its forked child Job.
+async fn run_user_fork(flow: &Flow, parent: &str) -> cyber_server::runtime::Job {
+    let source = flow.runtime.state(parent).await.unwrap();
+    let turn = cyber_server::runtime::TurnContext {
+        session_id: parent.into(),
+        directory: source.info.directory.clone(),
+        agent: source.info.agent.clone(),
+        mode: source.info.mode.clone(),
+        prefers_apply_patch: false,
+        rules: source.info.rules.clone(),
+    };
+    let plan = flow
+        .f
+        .host
+        .command_plan(&turn, "audit", "")
+        .await
+        .unwrap()
+        .unwrap();
+    let mut admission = plan.admission(Some("msg_fork_history".into()), Delivery::Hold);
+    admission.resume = false;
+    flow.runtime.admit_user(parent, admission).await.unwrap();
+    flow.runtime
+        .release(parent, "msg_fork_history", Delivery::Queue)
+        .await
+        .unwrap();
+    completed(flow, parent).await
+}
+
+/// The forked child's provider request, found by its private skill body.
+fn forked_request(flow: &Flow, model: &str) -> String {
+    flow.requests(model)
+        .iter()
+        .map(|request| format!("{:?}", request.messages))
+        .find(|messages| messages.contains("PRIVATE FORK BODY"))
+        .unwrap_or_else(|| panic!("no forked child request on {model}"))
+}
+
+#[tokio::test]
+async fn user_forked_skill_inherits_parent_history() {
+    assert_user_fork_inherits_parent_history(None, "build", Some("test/review")).await;
+}
+
+#[tokio::test]
+async fn user_forked_skill_with_named_agent_inherits_parent_history() {
+    assert_user_fork_inherits_parent_history(Some("reviewer"), "reviewer", Some("test/review"))
+        .await;
+}
+
+#[tokio::test]
+async fn user_forked_skill_with_named_agent_and_no_model_inherits_parent_model() {
+    assert_user_fork_inherits_parent_history(Some("reviewer"), "reviewer", None).await;
+}
