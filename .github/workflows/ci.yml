@@ -303,6 +303,15 @@ jobs:
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test mcp_review
+      - name: Native remote MCP Streamable HTTP transport
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-tools --test mcp_remote
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib mcp::http::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test mcp_remote_exec
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native memory documents and storage ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test memory --test memory_storage

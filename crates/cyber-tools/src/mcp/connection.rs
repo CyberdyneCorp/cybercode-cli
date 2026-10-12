@@ -26,6 +26,16 @@ pub struct ConnectionError {
     pub stderr: StderrCapture,
 }
 
+impl ConnectionError {
+    /// The remote transport's typed authorization outcome (HTTP 401/403).
+    pub fn needs_auth(&self) -> bool {
+        matches!(
+            self.error,
+            McpError::Http(super::HttpFailure::Unauthorized(_))
+        )
+    }
+}
+
 /// Launch authorization, sandboxing and durable admission belong to the caller.
 /// Dropping this owner terminates the tree but supplies no settlement acknowledgement.
 pub struct StdioConnection {
@@ -44,7 +54,7 @@ pub struct StartupOptions {
     pub cancellation: Option<tokio_util::sync::CancellationToken>,
 }
 
-async fn startup_cancelled(cancel: Option<&tokio_util::sync::CancellationToken>) {
+pub(super) async fn startup_cancelled(cancel: Option<&tokio_util::sync::CancellationToken>) {
     match cancel {
         Some(cancel) => cancel.cancelled().await,
         None => std::future::pending().await,

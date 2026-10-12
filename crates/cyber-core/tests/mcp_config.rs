@@ -281,3 +281,181 @@ fn disabled_config_alias_preserves_server_state_and_normalized_approval_identity
         assert!(McpSettings::from_config(&json!({"mcp":{"audit":definition}})).is_err());
     }
 }
+
+#[test]
+fn remote_transport_owned_header_names_are_refused_at_parse() {
+    for name in [
+        "Mcp-Session-Id",
+        "MCP-Protocol-Version",
+        "Host",
+        "Content-Length",
+        "Transfer-Encoding",
+        "Connection",
+        "Proxy-Authorization",
+        "Proxy-Anything",
+        "Accept",
+        "Content-Type",
+    ] {
+        let error = McpSettings::from_config(&json!({"mcp":{"audit":{
+            "type":"remote","url":"https://example.test/mcp","headers":{name:"private secret"}
+        }}}))
+        .unwrap_err();
+        assert!(error.starts_with("mcp.audit"), "{name}: {error}");
+        assert!(!error.contains("private secret"));
+    }
+    let allowed = McpSettings::from_config(&json!({"mcp":{"audit":{
+        "type":"remote","url":"https://example.test/mcp","headers":{"Authorization":"Bearer x","X-Api-Key":"y"}
+    }}}));
+    assert!(allowed.is_ok());
+}
+
+/// Header values are hashed after `{env:NAME}` substitution, so rotating the environment
+/// value changes the approval digest and a project-defined server needs re-approval.
+#[test]
+fn substituted_header_values_bind_the_approval_digest() {
+    let dir = tempfile::tempdir().unwrap();
+    let digest = |token: &str| {
+        let env = HashMap::from([
+            (
+                "CYBER_HOME".into(),
+                dir.path().join("home").display().to_string(),
+            ),
+            ("MCP_TOKEN".into(), token.to_string()),
+        ]);
+        let paths = Paths::resolve(&env, dir.path());
+        paths.ensure().unwrap();
+        std::fs::write(
+            paths.config.join("cyber.jsonc"),
+            json!({"mcp":{"audit":{"type":"remote","url":"https://example.test/mcp","headers":{"authorization":"{env:MCP_TOKEN}"}}}}).to_string(),
+        )
+        .unwrap();
+        let resolved = config::load(&LoadRequest {
+            location: dir.path(),
+            paths: &paths,
+            env: &env,
+            home: dir.path(),
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .unwrap();
+        McpSettings::from_config(&resolved.value).unwrap().servers["audit"]
+            .digest("audit")
+            .unwrap()
+    };
+    let first = digest("first token");
+    assert_eq!(first, digest("first token"));
+    assert_ne!(first, digest("rotated token"));
+}
+
+#[test]
+fn headers_command_and_refresh_are_typed_bounded_and_digest_bound() {
+    let parse = |extra: Value| {
+        let mut definition = json!({"type":"remote","url":"https://example.test/mcp"});
+        definition
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        McpSettings::from_config(&json!({"mcp":{"audit":definition}}))
+    };
+    let plain = parse(json!({})).unwrap();
+    let command = parse(json!({"headers_command":"print-token one"})).unwrap();
+    let other = parse(json!({"headers_command":"print-token two"})).unwrap();
+    let refresh =
+        parse(json!({"headers_command":"print-token one","headers_refresh_seconds":60})).unwrap();
+    let server = &command.servers["audit"];
+    assert_eq!(server.headers_command(), Some("print-token one"));
+    assert_eq!(server.headers_refresh_seconds(), 3600);
+    assert_eq!(refresh.servers["audit"].headers_refresh_seconds(), 60);
+    assert_eq!(plain.servers["audit"].headers_command(), None);
+    let digests = [&plain, &command, &other, &refresh]
+        .map(|settings| settings.servers["audit"].digest("audit").unwrap());
+    for (index, digest) in digests.iter().enumerate() {
+        assert_eq!(
+            digests.iter().filter(|other| *other == digest).count(),
+            1,
+            "digest {index} is not unique"
+        );
+    }
+    // Definitions without a command keep their earlier approval digest.
+    assert_eq!(
+        plain.servers["audit"].digest("audit").unwrap(),
+        McpServer::Remote {
+            url: "https://example.test/mcp".into(),
+            headers: Default::default(),
+            headers_command: None,
+            headers_refresh_seconds: None,
+            oauth: None,
+            enabled: true,
+            timeout: None,
+            tools: Default::default(),
+            required: false,
+            output_token_limit: None,
+        }
+        .digest("audit")
+        .unwrap()
+    );
+    for invalid in [
+        json!({"headers_command":""}),
+        json!({"headers_command":"private secret\u{0}"}),
+        json!({"headers_command":["private secret"]}),
+        json!({"headers_command":"x","headers_refresh_seconds":0}),
+        json!({"headers_command":"x","headers_refresh_seconds":86_401}),
+        json!({"headers_command":"x","headers_refresh_seconds":"private secret"}),
+        json!({"headers_refresh_seconds":60}),
+    ] {
+        let error = parse(invalid.clone()).unwrap_err();
+        assert!(!error.contains("private secret"), "{invalid}: {error}");
+        assert!(error.starts_with("mcp.audit"), "{invalid}: {error}");
+    }
+    let local = McpSettings::from_config(
+        &json!({"mcp":{"audit":{"type":"local","command":"x","headers_command":"y"}}}),
+    );
+    assert!(local.is_err(), "local servers have no HTTP headers");
+}
+
+#[test]
+fn untrusted_project_headers_command_is_withheld_before_parsing() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let env = HashMap::from([(
+        "CYBER_HOME".into(),
+        dir.path().join("home").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(
+        repo.join("cyber.jsonc"),
+        json!({"mcp":{"audit":{"type":"remote","url":"https://example.test/mcp","headers_command":"print-token","headers_refresh_seconds":120}}}).to_string(),
+    )
+    .unwrap();
+    let request = LoadRequest {
+        location: &repo,
+        paths: &paths,
+        env: &env,
+        home: dir.path(),
+        profile: None,
+        overrides: &[],
+        flags: json!({}),
+    };
+    let untrusted = config::load(&request).unwrap();
+    assert!(untrusted.value.get("mcp").is_none());
+    let report = config::trust_report(&request).unwrap();
+    assert!(
+        report
+            .definitions
+            .iter()
+            .any(|entry| entry.contains("/mcp"))
+    );
+    TrustStore::new(paths.trust_file())
+        .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+        .unwrap();
+    let trusted = config::load(&request).unwrap();
+    let settings = McpSettings::from_config(&trusted.value).unwrap();
+    assert_eq!(
+        settings.servers["audit"].headers_command(),
+        Some("print-token")
+    );
+    assert_eq!(settings.servers["audit"].headers_refresh_seconds(), 120);
+}

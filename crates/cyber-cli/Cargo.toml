@@ -40,8 +40,10 @@ libc = "0.2"
 tempfile.workspace = true
 
 [dev-dependencies]
+axum = "0.8"
 rusqlite.workspace = true
 tempfile.workspace = true
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "macros"] }
 
 [lints]
 workspace = true

@@ -86,9 +86,14 @@ async fn permission_denial_hides_and_refuses_wait_tool() {
 async fn required_terminal_servers_fail_before_model_or_prompt_promotion() {
     use cyber_server::runtime::{InputStatus, LiveEvent};
     use support::flow::{Flow, text};
+    // An unreachable loopback remote fails its real connection attempt without DNS.
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
     for server in [
         json!({"type":"local","command":"not-installed","enabled":false,"required":true}),
-        json!({"type":"remote","url":"https://example.invalid/mcp","headers":{"Authorization":"private-secret"},"required":true}),
+        json!({"type":"remote","url":format!("http://127.0.0.1:{port}/mcp?token=private-secret"),"headers":{"Authorization":"private-secret"},"required":true}),
     ] {
         let flow = Flow::new(vec![text("should not run")], false);
         flow.f.configure_mcp_status(json!({"db":server}));
@@ -112,7 +117,15 @@ async fn required_terminal_servers_fail_before_model_or_prompt_promotion() {
         assert!(
             cyber_server::runtime::mcp_connections(&flow.f.store, &flow.f.repo)
                 .unwrap()
-                .is_empty()
+                .iter()
+                .all(
+                    |record| record.phase == cyber_server::runtime::McpConnectionPhase::Settled
+                        && !record
+                            .error
+                            .as_deref()
+                            .unwrap_or_default()
+                            .contains("private-secret")
+                )
         );
         flow.runtime.shutdown().await;
     }

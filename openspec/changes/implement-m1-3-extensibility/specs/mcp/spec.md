@@ -51,6 +51,86 @@
 - **AND** invalid, duplicate or cyclic catalogs SHALL refuse readiness and close the owned local transport with explicit termination evidence
 - **AND** native acknowledgement SHALL NOT itself authorize cleanup before durable caller settlement
 
+#### Scenario: Transport-owned remote headers are refused
+- **WHEN** a remote entry configures a header named `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Accept`, `Content-Type`, `Mcp-Session-Id`, `MCP-Protocol-Version` or any `Proxy-*` name, in any case
+- **THEN** the definition SHALL be refused at parse time without echoing header values
+- **AND** the remote transport SHALL refuse the same names again before any request
+
+#### Scenario: Substituted header values bind approval
+- **WHEN** a remote header value uses `{env:NAME}` substitution
+- **THEN** the approval digest SHALL hash the substituted value
+- **AND** rotating the environment value SHALL change the digest, so a project-defined server SHALL require re-approval before it is contacted again
+- **AND** for a definition that requires individual approval, `cyber mcp definitions` and `cyber mcp get` SHALL show each `url`, `headers` or `env` value that a project layer supplied with an `{env:}` or `{file:}` placeholder as its unsubstituted template, so the approver sees which local values would be sent, and SHALL NOT print the resolved value
+
+### Requirement: Transports
+(P0) The system SHALL connect local servers over stdio (stderr captured to `<data>/log/mcp/<server>.log`), and remote servers via Streamable HTTP first, falling back to SSE when the first attempt fails for a non-authentication reason. An authentication failure SHALL NOT trigger a fallback.
+
+#### Scenario: SSE fallback
+- **WHEN** a remote server rejects Streamable HTTP with 405
+- **THEN** the system retries with the SSE transport
+
+#### Scenario: Fallback is decided once per connect inside the original deadline
+- **WHEN** the first initialize attempt of a remote connect fails before any valid initialize response with HTTP 400, 404 or 405, a content type that is not JSON or an event stream, or a transport error
+- **THEN** the first bridge and its in-flight requests SHALL be stopped and joined before the other transport starts on a fresh bridge
+- **AND** the retry SHALL stay inside the connect's original absolute `timeout`, which SHALL NOT be reset
+- **AND** other failures, including timeouts, oversized bodies, invalid bodies, other statuses, cancellation and any failure after a valid initialize response, SHALL NOT fall back
+- **AND** the transport that connected SHALL be recorded so a reconnect tries it first
+
+#### Scenario: Legacy SSE message exchange
+- **WHEN** a remote server is used over the legacy HTTP+SSE transport
+- **THEN** the system SHALL open one GET with `Accept: text/event-stream` and the configured headers and wait for its first `endpoint` event
+- **AND** an endpoint that does not resolve to the configured URL's scheme, host and port (or that changes its credentials) SHALL fail the connect closed before any request or header reaches it
+- **AND** each client JSON-RPC message SHALL be one POST with `Content-Type: application/json` to that endpoint, whose 2xx body is discarded
+- **AND** responses and notifications SHALL arrive as `message` events on the GET stream, bounded to 1 MiB per event, and the stream ending SHALL close the transport
+- **AND** the endpoint SHALL leave through the same owned proxy and network decision as the configured URL
+
+#### Scenario: Authentication failure does not fall back
+- **WHEN** a remote server answers the initialize request, the legacy event stream or a legacy POST with 401 or 403
+- **THEN** the connect SHALL fail with a typed authentication outcome without sending any further request and without trying the other transport
+- **AND** the connection SHALL settle with status `needs_auth` as specified by the Status model
+
+#### Scenario: Streamable HTTP message exchange
+- **WHEN** a configured remote server is connected
+- **THEN** each client JSON-RPC message SHALL be one POST with `Content-Type: application/json` and `Accept: application/json, text/event-stream`
+- **AND** a JSON body or each `message` event of a `text/event-stream` body SHALL be delivered to the shared protocol client, with 202 accepting notifications and responses
+- **AND** the `Mcp-Session-Id` returned by initialize SHALL be sent on every later request, and `MCP-Protocol-Version` SHALL carry the negotiated version after initialize
+- **AND** progress events in an event stream SHALL reset the call timer as for local servers
+- **AND** response bodies and individual events over 1 MiB, redirects, other statuses and other content types SHALL close the transport without following a redirect
+
+#### Scenario: Streamable HTTP event stream
+- **WHEN** a Streamable HTTP server has accepted `notifications/initialized`
+- **THEN** the system SHALL open one GET with `Accept: text/event-stream`, the configured headers, `Mcp-Session-Id` and `MCP-Protocol-Version`, and 405 or any other 4xx except 401, 403 and a 404 for a request carrying `Mcp-Session-Id` SHALL mean the server offers no stream, recorded as a diagnostic carrying only the status
+- **AND** notifications, server requests and progress from that stream SHALL reach the same protocol client as POST responses, and client replies SHALL be POSTed back expecting 202
+- **AND** delivery SHALL be flow-controlled by the bounded client pipe, so the idle pump handles a bounded batch per tick and no stream is buffered without bound
+- **AND** while idle, `ping` SHALL be answered, `roots/list` SHALL be refused because remote servers receive no local roots, form elicitation SHALL be declined and sampling SHALL be refused
+
+#### Scenario: Event stream resumption
+- **WHEN** a Streamable HTTP GET event stream ends cleanly, or a request's POST event stream ends before that request's response
+- **THEN** the system SHALL reopen it with a GET carrying the configured headers, `Mcp-Session-Id`, `MCP-Protocol-Version` and `Last-Event-ID` set to the stream's last event id, after the server's last `retry` delay (default 1 s, bounded to 100 ms..60 s)
+- **AND** a GET stream SHALL be reopened on the same session without reporting loss, withdrawing tools or interrupting in-flight calls, and a reopen answered as "no stream" SHALL leave liveness to client pings
+- **AND** a POST event stream that carried no event id, whose resumption is answered as "no stream", or whose resumptions end three consecutive times without a new event id SHALL fail as transport loss promptly instead of waiting out the call timeout
+
+#### Scenario: Remote liveness signals
+- **WHEN** a connected remote server's GET event stream reopen or legacy event stream ends or fails, a request fails at the transport, or a request carrying `Mcp-Session-Id` is answered 404
+- **THEN** the connection SHALL be reported lost to the idle monitor, and a 404 SHALL be the typed session-expired outcome rather than a tool error, with no DELETE for the expired session
+- **AND** a 401 or 403 on any request of an established connection, including a GET stream (re)open, SHALL settle `needs_auth` as specified by the Status model instead of reconnecting, except for a server with `headers_command`, where it SHALL be loss so the reconnect re-runs the command and settles `needs_auth` only if that connect is refused
+- **AND** a Streamable HTTP server without a GET stream SHALL be pinged by the idle monitor at most every 10 s, and a ping unanswered within 5 s or failing at the transport SHALL be loss, while any JSON-RPC answer, including an error, SHALL prove liveness
+- **AND** no client ping SHALL be sent while an event stream is open
+
+#### Scenario: Remote network policy
+- **WHEN** a remote server is selected by `sandbox.apply_to` with an effective policy other than full access, or runs as a sandboxed MCP-tool hook
+- **THEN** network `off` SHALL refuse before contact, and network `proxy` SHALL refuse a URL host outside `allowed_domains` before contact
+- **AND** every remote request, whether restricted or not, SHALL leave through an owned loopback TCP proxy that ignores ambient proxy variables and never retries or keeps idle connections
+- **AND** stopping that proxy SHALL be part of the shutdown acknowledgement
+
+#### Scenario: Remote project trust before contact
+- **WHEN** a project-controlled remote definition lacks current checkout approval or individual digest approval
+- **THEN** the remote endpoint SHALL NOT be contacted, and approval SHALL be rechecked immediately before the first request
+
+#### Scenario: Remote diagnostics are redacted
+- **WHEN** a remote connection or request fails
+- **THEN** diagnostics, logs, status and durable connection records SHALL NOT contain the URL query or header values
+
 
 ### Requirement: Timeouts
 (P0) Connecting and initial listing SHALL time out after `timeout` (default 30 s). Each tool call SHALL time out after `timeout` or `mcp.tool_timeout` (default 300 s), and progress notifications SHALL reset the call timer.
@@ -76,6 +156,11 @@
 - **THEN** it SHALL NOT reset the active request's inactivity deadline
 - **AND** finite increasing fractional progress SHALL remain valid
 - **AND** timeout SHALL preserve unresolved RPC ownership until independent native settlement
+
+#### Scenario: Remote request lifetime and progress
+- **WHEN** a remote call is waiting for its response
+- **THEN** progress delivered on the POST event stream or on the GET event stream SHALL reset the call timer
+- **AND** every HTTP request SHALL be owned by the connection's bridge, so a call that times out leaves the connection unresolved and closing it SHALL end every in-flight HTTP request instead of letting it outlive the RPC deadline
 
 ### Requirement: Tool naming and schema
 (P0) The system SHALL expose each MCP tool as `mcp__<server>__<tool>`, replacing characters outside `[A-Za-z0-9_-]` with `_` and truncating to 64 characters with a stable hash suffix. Input schemas SHALL be forced to `type: "object"`, and tool annotations (`readOnlyHint`, `destructiveHint`) SHALL be retained for permission defaults.
@@ -110,6 +195,20 @@
 #### Scenario: Reconnect after drop
 - **WHEN** a connected remote server drops the connection
 - **THEN** its tools are removed, status becomes `failed`, and reconnection is retried with backoff
+
+#### Scenario: Remote reconnect after loss
+- **WHEN** a remote server is reported lost and its bridge and proxy are acknowledged stopped
+- **THEN** its tools SHALL be withdrawn, the owner SHALL settle with status `failed`, and reconnection SHALL use the shared backoff (1 s doubling to 60 s, at most 10 attempts)
+- **AND** each attempt SHALL be a new durable owner with a fresh session that re-resolves configuration and trust and re-authorizes before contact, publishing `connecting` then `connected` events without header values
+- **AND** an authentication failure during reconnection SHALL stop further attempts and settle `needs_auth`
+- **AND** `notifications/tools/list_changed` received over HTTP SHALL refresh the catalog through the same path as local servers, retiring removed tools as stale aliases without reconnecting
+
+#### Scenario: Remote server needs authentication
+- **WHEN** a remote connect or reconnect fails with the typed authentication outcome (HTTP 401/403), or an established remote connection is lost to that outcome, and its bridge and proxy are acknowledged stopped
+- **THEN** the durable owner SHALL commit phase `settled`, `acknowledged: true` and status `needs_auth`, and `mcp.status.changed.1` SHALL publish that transition without header values
+- **AND** an unacknowledged stop SHALL instead commit phase `unknown` with status `failed`, and the ownership validator SHALL reject `needs_auth` in any phase other than acknowledged `settled`
+- **AND** GET `/api/v1/mcp` SHALL report `needs_auth` with the error ``MCP server <name> needs authentication; run `cyber mcp auth <name>` or /mcp``
+- **AND** reconnection SHALL stop without further attempts, and a `required: true` server SHALL fail the first Turn with `McpRequiredError`
 
 #### Scenario: Independent durable local connection owner
 - **WHEN** a configured local server is admitted for a canonical Location and server name
@@ -216,6 +315,12 @@
 - **AND** the unreaped leader identity SHALL remain retained for five seconds before SIGKILL and native acknowledgement
 - **AND** cooperative descendants SHALL have time to finish cleanup even if the leader exits first
 - **AND** stubborn descendants SHALL NOT survive acknowledged close
+
+#### Scenario: Remote session close
+- **WHEN** a connected remote server is closed with its Location or on host shutdown
+- **THEN** its bridge and in-flight requests SHALL be stopped and joined, then the session SHALL be ended with DELETE carrying `Mcp-Session-Id` under a short deadline
+- **AND** 405 SHALL count as success, and any other DELETE failure SHALL be a redacted diagnostic that does not withhold acknowledgement
+- **AND** the owned proxy SHALL be stopped and joined before durable settlement
 
 #### Scenario: Retained grace deadline and concurrent owners
 - **WHEN** a graceful close future is cancelled and retried
@@ -358,9 +463,24 @@
 - **AND** full original text SHALL be preserved in a managed overflow file and structured data SHALL remain unchanged
 - **AND** failed overflow persistence SHALL fail settlement instead of returning lossy success
 
+#### Scenario: Remote header command
+- **WHEN** a remote entry sets `headers_command`
+- **THEN** when the server is selected by `sandbox.apply_to` with an effective policy other than full access, or is connected for a sandboxed MCP-tool hook, the connect SHALL fail closed with a fixed diagnostic before the command runs or any request is sent
+- **AND** otherwise, only after durable admission and fresh approval, and before any request, the system SHALL run it once outside the sandbox (full access; `/bin/sh -c` on POSIX, PowerShell on Windows under owned Job-object process ownership) in the Location directory with stdin closed, bounded by the remaining connect deadline, and SHALL recheck approval before first contact
+- **AND** its stdout SHALL be at most 64 KiB and exactly one JSON object whose values are all strings; those headers SHALL override static `headers` case-insensitively and SHALL be refused when a name is transport-owned or a name or value is invalid
+- **AND** a launch failure, non-zero exit, timeout, cancellation or invalid output SHALL fail the connect closed before contact; diagnostics SHALL be fixed messages plus at most the exit status, and command output and header values SHALL NOT reach diagnostics, logs, events, status or durable records
+- **AND** `headers_command` and `headers_refresh_seconds` (1 to 86400, default 3600, accepted only with `headers_command`) SHALL be part of the approval digest, so a project-defined command runs only after workspace and individual digest approval
+
+#### Scenario: Remote header refresh
+- **WHEN** `headers_refresh_seconds` have elapsed since the last run on a connected remote server
+- **THEN** before the next tool call, catalog refresh or idle ping, the system SHALL recheck approval, re-run the command and atomically replace the bridge's headers, so later requests on the same session use them without reconnecting, even when a busy connection skips the pool monitor's tick
+- **AND** a failed refresh SHALL stay due and be reported as connection loss, so no request reuses the stale headers, the existing reconnect backoff re-runs the command and stale credentials are never used past their refresh window
+- **AND** a command whose termination is not acknowledged SHALL prevent the connection's shutdown acknowledgement
+
 #### Scenario: Resolved server review has no effects
 - **WHEN** cyber mcp get <name> reviews a loaded server
-- **THEN** it SHALL display resolved required and output-budget settings, provenance and authorization observations with header values redacted
+- **THEN** it SHALL display resolved required and output-budget settings, provenance and authorization observations with header values and URL queries redacted, and the effective `headers_refresh_seconds` when a command is set
+- **AND** a project-defined `headers_command` (one that requires individual digest approval) SHALL be displayed verbatim, as a local `command` is, because it is code that runs outside the sandbox once approved, while a command from the user's own configuration SHALL be redacted
 - **AND** it SHALL NOT connect, execute commands, start model work or create a database
 
 ### Requirement: Elicitation

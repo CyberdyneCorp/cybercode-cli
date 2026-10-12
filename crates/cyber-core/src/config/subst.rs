@@ -44,6 +44,37 @@ pub fn substitute(
     }
 }
 
+/// Collect `(pointer, template, label)` for every string leaf of an unsubstituted layer that
+/// holds a placeholder, so review can show placeholder names instead of resolved values.
+pub fn templates(
+    value: &Value,
+    pointer: &str,
+    label: &str,
+    found: &mut Vec<(String, String, String)>,
+) {
+    match value {
+        Value::String(s) if has_placeholder(s) => {
+            found.push((pointer.to_string(), s.clone(), label.to_string()));
+        }
+        Value::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                templates(item, &format!("{pointer}/{i}"), label, found);
+            }
+        }
+        Value::Object(map) => {
+            for (key, item) in map {
+                templates(
+                    item,
+                    &super::merge::child_pointer(pointer, key),
+                    label,
+                    found,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn has_placeholder(s: &str) -> bool {
     find_placeholder(s).is_some()
 }

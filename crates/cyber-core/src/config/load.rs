@@ -46,7 +46,11 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     let mut value = Value::Object(Map::new());
     let mut sources = Sources::new();
     let mut labels = Vec::new();
+    let mut templates = Vec::new();
     for layer in &mut layers {
+        if layer.label.starts_with("project:") {
+            subst::templates(&layer.value, "", &layer.label, &mut templates);
+        }
         substitute_layer(layer, req, &mut issues);
         merge::merge_layer(&mut value, &layer.value, &layer.label, &mut sources);
         labels.push(layer.label.clone());
@@ -62,8 +66,15 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     if !issues.is_empty() {
         return Err(ConfigError::Invalid { issues });
     }
+    // Keep a template only where its project layer still supplies the merged leaf.
+    let templates = templates
+        .into_iter()
+        .filter(|(pointer, _, label)| sources.get(pointer) == Some(label))
+        .map(|(pointer, template, _)| (pointer, template))
+        .collect();
     Ok(Resolved {
         value,
+        templates,
         sources,
         warnings,
         trust,

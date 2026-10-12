@@ -118,15 +118,28 @@ fn server_report(
         .iter()
         .filter(|(key, _)| *key == &pointer || key.starts_with(&prefix))
         .collect();
+    let mut definition = redacted(
+        &serde_json::to_value(&server.definition)
+            .map_err(|error| CliError::runtime(error.to_string()))?,
+        server.requires_approval,
+    );
+    if server.requires_approval {
+        show_templates(&mut definition, resolved, &pointer);
+    }
+    if server.definition.headers_command().is_some() {
+        definition["headers_refresh_seconds"] = json!(server.definition.headers_refresh_seconds());
+    }
     Ok(
-        json!({"name":name,"digest":server.digest,"call_timeout_seconds":call_timeout,"definition":redacted(&serde_json::to_value(&server.definition).map_err(|error| CliError::runtime(error.to_string()))?),
+        json!({"name":name,"digest":server.digest,"call_timeout_seconds":call_timeout,"definition":definition,
             "origins":origins,"requires_individual_approval":server.requires_approval,"sandbox_required":server.requires_sandbox,
             "individually_approved":store.is_mcp_approved(&resolved.trust.checkout_root,&server.digest)?,
             "authorized":authorize_server(resolved,store,&ctx.location,name).is_ok()}),
     )
 }
 
-fn redacted(definition: &Value) -> Value {
+/// `review` keeps `headers_command` verbatim: a project-defined command is code that runs
+/// outside the sandbox once its digest is approved, so it is shown like a local `command`.
+fn redacted(definition: &Value, review: bool) -> Value {
     let mut value = cyber_core::config::redact_secrets(definition);
     // This numeric budget is not an authentication token.
     if let Some(limit) = definition
@@ -143,6 +156,14 @@ fn redacted(definition: &Value) -> Value {
             }
         }
     }
+    // A user's own command line may embed credentials and needs no review.
+    if value["headers_command"].is_string() {
+        value["headers_command"] = if review {
+            definition["headers_command"].clone()
+        } else {
+            json!("***")
+        };
+    }
     if value["oauth"].is_object() {
         value["oauth"] = json!("***");
     }
@@ -153,6 +174,25 @@ fn redacted(definition: &Value) -> Value {
         value["url"] = json!(url);
     }
     value
+}
+
+/// A project definition can pull local values into what it sends through `{env:}` and
+/// `{file:}` placeholders. Review shows those leaves as their unsubstituted templates so
+/// the approver sees which values would leave the machine; resolved values never print.
+fn show_templates(definition: &mut Value, resolved: &Resolved, pointer: &str) {
+    let prefix = format!("{pointer}/");
+    for (key, template) in &resolved.templates {
+        let Some(leaf) = key.strip_prefix(&prefix) else {
+            continue;
+        };
+        // Leaves redacted to a non-object (e.g. `oauth`) have no path and stay redacted.
+        if let Some(field) = definition
+            .pointer_mut(&format!("/{leaf}"))
+            .filter(|field| field.is_string())
+        {
+            *field = json!(template);
+        }
+    }
 }
 
 fn report(global: &GlobalArgs, value: &Value) -> Result<(), CliError> {

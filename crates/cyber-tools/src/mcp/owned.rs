@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cyber_core::config::McpServer;
 use cyber_core::worktrees::{CheckoutLease, Repository};
 use cyber_server::runtime::{
     McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
@@ -13,8 +12,8 @@ use cyber_store::Store;
 use serde_json::Value;
 
 use super::{
-    DiscoveredTool, LocalLaunchError, LocalLauncher, LocalServer, McpError, StderrCapture,
-    authorize_server,
+    DiscoveredTool, LaunchFailure, LocalLaunchError, LocalLauncher, LocalServer, McpError,
+    RemoteTransport, StderrCapture, authorize_server,
 };
 
 /// Real checkout leases; immutable owner/creation identities come from the locked records.
@@ -84,6 +83,9 @@ impl OwnedLocalServer {
     }
     pub fn metadata(&self) -> &Value {
         self.server.metadata()
+    }
+    pub fn remote_transport(&self) -> Option<RemoteTransport> {
+        self.server.remote_transport()
     }
     pub async fn poll_idle(&mut self, timeout: Duration) -> Result<super::IdleUpdate, McpError> {
         self.running()?;
@@ -177,6 +179,7 @@ impl OwnedLocalServer {
                 .owner
                 .finish(false, "MCP native shutdown is unverified".into());
             return Err(LocalLaunchError {
+                kind: LaunchFailure::Failed,
                 settled: false,
                 diagnostic: "MCP native shutdown is unverified".into(),
                 acknowledged: false,
@@ -189,11 +192,15 @@ impl OwnedLocalServer {
         }
         let owner = &mut self.owner;
         let pin = &mut self.pin;
+        // A server that refused authorization mid-session cannot recover by reconnecting.
+        let refusal = self.server.auth_refusal();
         let settled = self.server.settle_after_shutdown(|| {
             if owner.record().phase != McpConnectionPhase::Settled {
-                owner
-                    .finish(true, "MCP server stopped".into())
-                    .map_err(|error| error.to_string())?;
+                match refusal {
+                    Some(refusal) => owner.needs_auth(true, refusal.to_string()),
+                    None => owner.finish(true, "MCP server stopped".into()),
+                }
+                .map_err(|error| error.to_string())?;
             }
             pin.take()
                 .ok_or("MCP checkout settlement requires recovery")?
@@ -205,6 +212,7 @@ impl OwnedLocalServer {
                 Ok((self.owner.record().clone(), stderr))
             }
             Err(error) => Err(LocalLaunchError {
+                kind: LaunchFailure::Failed,
                 settled: false,
                 diagnostic: error,
                 acknowledged: true,
@@ -226,14 +234,17 @@ impl LocalLauncher<'_> {
     where
         F: Future<Output = Result<McpLocationPin, String>>,
     {
-        self.connect_owned_observed(name, store, None, claim).await
+        self.connect_owned_observed(name, store, None, RemoteTransport::default(), claim)
+            .await
     }
 
+    /// `first` is the remote transport tried first; reconnects pass the last connected one.
     pub async fn connect_owned_observed<F>(
         &self,
         name: &str,
         store: Arc<Store>,
         observer: Option<McpConnectionObserver>,
+        first: RemoteTransport,
         claim: impl FnOnce(String) -> F,
     ) -> Result<OwnedLocalServer, LocalLaunchError>
     where
@@ -241,11 +252,6 @@ impl LocalLauncher<'_> {
     {
         let selected = authorize_server(self.resolved, self.trust, self.location, name)
             .map_err(LocalLaunchError::before_launch)?;
-        if !matches!(selected.definition, McpServer::Local { .. }) {
-            return Err(LocalLaunchError::before_launch(
-                "MCP server requires remote transport",
-            ));
-        }
         let deadline =
             tokio::time::Instant::now() + Duration::from_secs(selected.definition.timeout().into());
         let mut owner = McpConnectionOwner::admit_observed(
@@ -263,6 +269,7 @@ impl LocalLauncher<'_> {
         let pin = tokio::time::timeout_at(deadline, claim(owner.record().id.clone()))
             .await
             .map_err(|_| LocalLaunchError {
+                kind: LaunchFailure::Failed,
                 settled: false,
                 diagnostic: "MCP native preparation timed out; settlement is unverified".into(),
                 acknowledged: false,
@@ -270,6 +277,7 @@ impl LocalLauncher<'_> {
                 scratch: None,
             })?
             .map_err(|diagnostic| LocalLaunchError {
+                kind: LaunchFailure::Failed,
                 settled: false,
                 diagnostic,
                 acknowledged: false,
@@ -278,6 +286,7 @@ impl LocalLauncher<'_> {
             })?;
         pin.verify(self.location, &owner.record().id)
             .map_err(|diagnostic| LocalLaunchError {
+                kind: LaunchFailure::Failed,
                 settled: false,
                 diagnostic,
                 acknowledged: false,
@@ -290,6 +299,7 @@ impl LocalLauncher<'_> {
                 name,
                 || owner.launching(ids).map_err(|error| error.to_string()),
                 Some(deadline),
+                first,
             )
             .await
         {
@@ -311,6 +321,7 @@ impl LocalLauncher<'_> {
                         false
                     };
                     return Err(LocalLaunchError {
+                        kind: LaunchFailure::Failed,
                         settled,
                         diagnostic: error.to_string(),
                         acknowledged,
@@ -328,21 +339,26 @@ impl LocalLauncher<'_> {
             }
             Err(mut error) => {
                 // Acknowledged preparation/spawn failure still needs durable settlement.
-                owner
-                    .finish(error.acknowledged, error.diagnostic.clone())
-                    .map_err(|failure| LocalLaunchError {
-                        settled: false,
-                        diagnostic: failure.to_string(),
-                        acknowledged: error.acknowledged,
-                        stderr: StderrCapture::default(),
-                        scratch: error.scratch.clone(),
-                    })?;
+                let terminal = if error.kind == LaunchFailure::NeedsAuth {
+                    owner.needs_auth(error.acknowledged, error.diagnostic.clone())
+                } else {
+                    owner.finish(error.acknowledged, error.diagnostic.clone())
+                };
+                terminal.map_err(|failure| LocalLaunchError {
+                    kind: LaunchFailure::Failed,
+                    settled: false,
+                    diagnostic: failure.to_string(),
+                    acknowledged: error.acknowledged,
+                    stderr: StderrCapture::default(),
+                    scratch: error.scratch.clone(),
+                })?;
                 if error.acknowledged {
                     let _retained = pin
                         .settle_retained()
                         .map_err(LocalLaunchError::before_launch)?;
                     if let Some(scratch) = &error.scratch {
                         std::fs::remove_dir_all(scratch).map_err(|failure| LocalLaunchError {
+                            kind: LaunchFailure::Failed,
                             diagnostic: failure.to_string(),
                             acknowledged: true,
                             settled: false,

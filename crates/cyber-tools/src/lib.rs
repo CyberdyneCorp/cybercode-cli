@@ -15,6 +15,7 @@ mod lifecycle_hooks;
 pub mod lsp;
 pub mod mcp;
 mod memory_context;
+mod net_client;
 mod parent_permissions;
 pub mod permissions;
 mod reconcile;

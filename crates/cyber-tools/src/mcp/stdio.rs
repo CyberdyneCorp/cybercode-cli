@@ -18,6 +18,8 @@ pub enum McpError {
     Remote(i64),
     #[error("Stale tool call: {0}")]
     StaleTool(String),
+    #[error("MCP remote transport failed: {0}")]
+    Http(super::HttpFailure),
 }
 impl From<std::io::Error> for McpError {
     fn from(error: std::io::Error) -> Self {
@@ -231,6 +233,14 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         self.initialized = true;
         self.metadata = Some(result.clone());
         Ok(result)
+    }
+
+    /// A client liveness probe; any response, including a JSON-RPC error, is an answer.
+    pub async fn ping(&mut self, timeout: Duration) -> Result<Value, McpError> {
+        if !self.initialized {
+            return Err(McpError::Protocol("server is not initialized"));
+        }
+        self.request("ping", json!({}), timeout).await
     }
 
     pub async fn list_tools(

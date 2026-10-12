@@ -34,6 +34,12 @@ pub enum McpServer {
         url: String,
         #[serde(default)]
         headers: BTreeMap<String, String>,
+        /// A shell command whose stdout is a JSON object of string headers that override
+        /// `headers`. It runs outside the sandbox, only once the definition is authorized.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        headers_command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        headers_refresh_seconds: Option<u32>,
         oauth: Option<Value>,
         #[serde(default = "enabled")]
         enabled: bool,
@@ -51,6 +57,10 @@ pub enum McpServer {
         output_token_limit: Option<usize>,
     },
 }
+/// Default and upper bound for `headers_refresh_seconds`.
+pub const HEADERS_REFRESH_DEFAULT: u32 = 3600;
+pub const HEADERS_REFRESH_MAX: u32 = 86_400;
+
 fn not_required(value: &bool) -> bool {
     !value
 }
@@ -133,6 +143,25 @@ impl McpServer {
             } => *output_token_limit,
         }
     }
+    /// The configured remote header command, if any.
+    pub fn headers_command(&self) -> Option<&str> {
+        match self {
+            Self::Remote {
+                headers_command, ..
+            } => headers_command.as_deref(),
+            Self::Local { .. } => None,
+        }
+    }
+    /// Seconds between header command runs on a live connection.
+    pub fn headers_refresh_seconds(&self) -> u32 {
+        match self {
+            Self::Remote {
+                headers_refresh_seconds: Some(seconds),
+                ..
+            } => *seconds,
+            _ => HEADERS_REFRESH_DEFAULT,
+        }
+    }
     pub fn timeout(&self) -> u32 {
         self.call_timeout().unwrap_or(30)
     }
@@ -180,9 +209,12 @@ impl McpServer {
             Self::Remote {
                 url,
                 headers,
+                headers_command,
+                headers_refresh_seconds,
                 oauth,
                 ..
             } => {
+                validate_headers_command(headers_command.as_deref(), *headers_refresh_seconds)?;
                 let parsed = url::Url::parse(url).map_err(|_| "invalid remote URL".to_string())?;
                 if !matches!(parsed.scheme(), "http" | "https")
                     || parsed.host_str().is_none()
@@ -199,6 +231,9 @@ impl McpServer {
                 }) {
                     return Err("invalid headers".into());
                 }
+                if headers.keys().any(|key| transport_owned_header(key)) {
+                    return Err("headers cannot set transport-owned names".into());
+                }
                 if oauth
                     .as_ref()
                     .is_some_and(|oauth| !oauth.is_boolean() && !oauth.is_object())
@@ -209,6 +244,36 @@ impl McpServer {
         }
         Ok(())
     }
+}
+
+fn validate_headers_command(command: Option<&str>, refresh: Option<u32>) -> Result<(), String> {
+    match (command, refresh) {
+        (Some(command), _) if command.trim().is_empty() || command.contains('\0') => {
+            Err("invalid headers_command".into())
+        }
+        (None, Some(_)) => Err("headers_refresh_seconds requires headers_command".into()),
+        (_, Some(seconds)) if seconds == 0 || seconds > HEADERS_REFRESH_MAX => Err(format!(
+            "headers_refresh_seconds must be between 1 and {HEADERS_REFRESH_MAX}"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Names the remote MCP transport owns: framing, routing, session and content negotiation.
+pub fn transport_owned_header(name: &str) -> bool {
+    let name = name.trim().to_ascii_lowercase();
+    name.starts_with("proxy-")
+        || matches!(
+            name.as_str(),
+            "host"
+                | "content-length"
+                | "transfer-encoding"
+                | "connection"
+                | "mcp-session-id"
+                | "mcp-protocol-version"
+                | "accept"
+                | "content-type"
+        )
 }
 
 fn normalize_enabled(value: &Value) -> Result<Value, &'static str> {

@@ -1,16 +1,15 @@
 //! HTTP hooks with durable receipts, explicit network policy and owned transport cleanup.
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use cyber_core::config::{HookKind, Resolved};
 use cyber_core::hooks::{HookDecision, HookDefinition, HookEvent};
 use cyber_core::trust::{HookInvocationTrust, TrustStore};
-use cyber_sandbox::proxy::{Decide, Endpoint, Proxy};
+use cyber_sandbox::proxy::Proxy;
 use cyber_sandbox::{NetworkMode, SandboxConfig};
 use cyber_server::runtime::{HookExecutionResult, Runtime};
 use futures::StreamExt;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tokio_util::sync::CancellationToken;
 
 use crate::BuiltinHost;
@@ -275,41 +274,9 @@ impl HookHttpRunner<'_> {
         } else {
             NetworkMode::On
         };
-        if network == NetworkMode::Off {
-            return Err("HTTP hook network is disabled".into());
-        }
-        let host = url.host_str().ok_or("HTTP hook URL has no host")?;
-        let host = host
-            .strip_prefix('[')
-            .and_then(|host| host.strip_suffix(']'))
-            .unwrap_or(host);
-        if network == NetworkMode::Proxy
-            && !cyber_sandbox::matches_domain(host, &sandbox.allowed_domains)
-        {
-            return Err("HTTP hook destination is outside the network allowlist".into());
-        }
-        let decide: Decide = Arc::new(move |host| {
-            let allowed = network == NetworkMode::On
-                || cyber_sandbox::matches_domain(&host, &sandbox.allowed_domains);
-            Box::pin(async move { allowed })
-        });
-        let proxy = Proxy::start(decide)
-            .await
-            .map_err(|_| "could not start HTTP hook proxy".to_string())?;
-        let Endpoint::Tcp(port) = proxy.endpoint else {
-            return Err("HTTP hook requires a TCP proxy".into());
-        };
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .proxy(
-                reqwest::Proxy::all(format!("http://127.0.0.1:{port}"))
-                    .map_err(|_| "invalid HTTP hook proxy".to_string())?,
-            )
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .pool_max_idle_per_host(0)
-            .build()
-            .map_err(|_| "could not create HTTP hook client".to_string())?;
+        let crate::net_client::PolicyClient { client, proxy } =
+            crate::net_client::policy_client(&url, network, sandbox.allowed_domains, "HTTP hook")
+                .await?;
         Ok(Prepared {
             client,
             proxy,
@@ -404,27 +371,17 @@ struct Prepared {
 }
 
 fn headers(configured: &std::collections::BTreeMap<String, String>) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
-    for (name, value) in configured {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| "invalid HTTP hook header name".to_string())?;
-        if matches!(
-            name.as_str(),
+    let mut headers = crate::net_client::headers(configured, "HTTP hook", |name| {
+        matches!(
+            name,
             "host"
                 | "content-length"
                 | "transfer-encoding"
                 | "connection"
                 | "proxy-authorization"
                 | "proxy-connection"
-        ) {
-            return Err(format!("HTTP hook cannot override transport header {name}"));
-        }
-        headers.insert(
-            name,
-            HeaderValue::from_str(value)
-                .map_err(|_| "invalid HTTP hook header value".to_string())?,
-        );
-    }
+        )
+    })?;
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     Ok(headers)
 }

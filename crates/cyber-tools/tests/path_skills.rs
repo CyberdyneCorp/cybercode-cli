@@ -337,6 +337,7 @@ async fn post_hook_failure_keeps_the_mutation_failure_and_durable_reminder() {
                 }
                 Ok(Resolved {
                     value: json!({}),
+                    templates: Default::default(),
                     sources: Default::default(),
                     warnings: Vec::new(),
                     layers: Vec::new(),

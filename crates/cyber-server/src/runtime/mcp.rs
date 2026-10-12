@@ -81,6 +81,11 @@ impl From<&McpConnectionRecord> for McpStatusUpdate {
             acknowledged: record.acknowledged,
             error: record.error.as_ref().map(|_| {
                 match record.phase {
+                    McpConnectionPhase::Settled
+                        if record.status == McpConnectionStatus::NeedsAuth =>
+                    {
+                        "MCP server needs authentication"
+                    }
                     McpConnectionPhase::Settled => "MCP connection stopped",
                     McpConnectionPhase::Unknown => "MCP native settlement is unverified",
                     _ => "MCP connection failed; inspect local logs",
@@ -204,6 +209,27 @@ impl McpConnectionOwner {
         };
         record.status = McpConnectionStatus::Failed;
         record.acknowledged = Some(acknowledged);
+        record.error = Some(error);
+        self.commit(record)?;
+        self.terminal = true;
+        Ok(self.record.clone())
+    }
+
+    /// The server refused authorization (HTTP 401/403) while connecting or on an
+    /// established session. With acknowledged local settlement this is a terminal
+    /// `needs_auth` observation; otherwise it is unverified settlement like any other failure.
+    pub fn needs_auth(
+        &mut self,
+        acknowledged: bool,
+        error: String,
+    ) -> Result<McpConnectionRecord, StoreError> {
+        if !acknowledged {
+            return self.finish(false, error);
+        }
+        let mut record = self.record.clone();
+        record.phase = McpConnectionPhase::Settled;
+        record.status = McpConnectionStatus::NeedsAuth;
+        record.acknowledged = Some(true);
         record.error = Some(error);
         self.commit(record)?;
         self.terminal = true;
@@ -401,8 +427,10 @@ fn validate(record: &McpConnectionRecord, event: &StoredEvent) -> Result<(), Str
                 && record.error.is_none()
         }
         McpConnectionPhase::Settled => {
-            record.status == McpConnectionStatus::Failed
-                && record.acknowledged == Some(true)
+            matches!(
+                record.status,
+                McpConnectionStatus::Failed | McpConnectionStatus::NeedsAuth
+            ) && record.acknowledged == Some(true)
                 && record.error.is_some()
         }
         McpConnectionPhase::Unknown => {

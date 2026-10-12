@@ -36,7 +36,7 @@ pub use load::{
     LoadRequest, RawHookSection, ensure_global_config, load, project_root, trust_report,
     withheld_hook_sections,
 };
-pub use mcp::{McpServer, McpSettings, McpToolFilter};
+pub use mcp::{McpServer, McpSettings, McpToolFilter, transport_owned_header};
 pub use validate::redact_secrets;
 
 /// Published JSON Schema URL written into new config documents.
@@ -78,6 +78,11 @@ pub struct TrustReport {
 #[derive(Debug, Clone, Serialize)]
 pub struct Resolved {
     pub value: Value,
+    /// JSON pointer of each merged string leaf a project layer supplied with an
+    /// `{env:}`/`{file:}` placeholder → that unsubstituted template. Review shows these so
+    /// an approver sees which local values a project definition would send.
+    #[serde(skip)]
+    pub templates: BTreeMap<String, String>,
     /// JSON pointer of each leaf → label of the layer that set it.
     /// Hook groups and handlers also retain their own indexed origin labels.
     pub sources: BTreeMap<String, String>,

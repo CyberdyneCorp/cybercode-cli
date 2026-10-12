@@ -743,6 +743,7 @@ dependencies = [
 name = "cyber-cli"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
@@ -913,6 +914,7 @@ dependencies = [
 name = "cyber-tools"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "cyber-core",
  "cyber-llm",

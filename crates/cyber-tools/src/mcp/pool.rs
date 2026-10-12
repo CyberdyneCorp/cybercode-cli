@@ -14,7 +14,10 @@ use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::{DiscoveredTool, LocalLaunchError, LocalLauncher, OwnedLocalServer, authorize_server};
+use super::{
+    DiscoveredTool, LaunchFailure, LocalLaunchError, LocalLauncher, OwnedLocalServer,
+    RemoteTransport, authorize_server,
+};
 use crate::host::BuiltinHost;
 use crate::tools::ToolError;
 
@@ -51,6 +54,8 @@ struct Entry {
     monitor: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     startup_finished: AtomicBool,
     lost: AtomicBool,
+    /// The remote transport that last connected; reconnects try it first.
+    transport: Mutex<RemoteTransport>,
 }
 
 struct Published {
@@ -220,17 +225,28 @@ async fn reconnect_once(
                 &error.diagnostic,
                 json!({"server":entry.name,"acknowledged":error.acknowledged,"retry_safe":error.retry_safe()}),
             );
-            if error.retry_safe() {
-                Attempt::Retry
-            } else {
-                Attempt::Stop
-            }
+            failed_attempt(&error)
         }
+    }
+}
+
+/// Authentication cannot succeed by retrying, and unsettled failures must not re-admit.
+fn failed_attempt(error: &LocalLaunchError) -> Attempt {
+    if error.kind() == LaunchFailure::NeedsAuth || !error.retry_safe() {
+        Attempt::Stop
+    } else {
+        Attempt::Retry
     }
 }
 
 async fn publish_server(entry: &Entry, server: OwnedLocalServer) {
     entry.lost.store(false, Ordering::Release);
+    if let Some(transport) = server.remote_transport() {
+        *entry
+            .transport
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = transport;
+    }
     *entry
         .published
         .lock()
@@ -286,10 +302,18 @@ async fn connect_entry(
             publish(record, seq);
         }
     });
+    let first = *entry
+        .transport
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     launcher
-        .connect_owned_observed(&entry.name, host.opts.store.clone(), Some(observer), |id| {
-            host.claim_mcp_location(info, id, entry.cancel.child_token())
-        })
+        .connect_owned_observed(
+            &entry.name,
+            host.opts.store.clone(),
+            Some(observer),
+            first,
+            |id| host.claim_mcp_location(info, id, entry.cancel.child_token()),
+        )
         .await
 }
 
@@ -322,7 +346,7 @@ async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> Healt
     entry.clear_published();
     cyber_core::log::error("mcp", "MCP connection lost", json!({"server":entry.name}));
     match owner.shutdown().await {
-        Ok(_) => {
+        Ok((record, _)) => {
             if let Err(error) = std::fs::remove_dir_all(owner.scratch_path())
                 && error.kind() != std::io::ErrorKind::NotFound
             {
@@ -330,7 +354,12 @@ async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> Healt
                 return Health::Stop;
             }
             server.take();
-            Health::Retry
+            // An authorization refusal settled `needs_auth`; retrying cannot succeed.
+            if record.status == McpConnectionStatus::NeedsAuth {
+                Health::Stop
+            } else {
+                Health::Retry
+            }
         }
         Err(error) => {
             cyber_core::log::error(
@@ -431,7 +460,7 @@ impl BuiltinHost {
                     || authorize_server(&resolved, &config.trust, &directory, &name).is_ok(),
                 );
                 let (status, error) = match problem {
-                    Some((status, error)) => (status, Some(error.into())),
+                    Some((status, error)) => (status, Some(error.into_owned())),
                     None => (
                         connection
                             .as_ref()
@@ -502,7 +531,7 @@ impl BuiltinHost {
             return;
         }
         for (name, definition) in settings.servers {
-            if !matches!(definition, McpServer::Local { .. }) || !definition.enabled() {
+            if !definition.enabled() {
                 continue;
             }
             let key = (directory.clone(), name.clone());
@@ -524,6 +553,7 @@ impl BuiltinHost {
                 monitor: tokio::sync::Mutex::default(),
                 startup_finished: AtomicBool::new(false),
                 lost: AtomicBool::new(false),
+                transport: Mutex::default(),
             });
             let owned = entry.clone();
             let host = host.clone();
@@ -921,19 +951,19 @@ fn status_problem(
     connection: &Option<McpStatusUpdate>,
     closing: bool,
     authorized: impl FnOnce() -> bool,
-) -> Option<(McpConnectionStatus, &'static str)> {
-    let failed = |message| Some((McpConnectionStatus::Failed, message));
+) -> Option<(McpConnectionStatus, std::borrow::Cow<'static, str>)> {
+    let failed = |message: &'static str| Some((McpConnectionStatus::Failed, message.into()));
     let Some(definition) = definition else {
         return failed("MCP server is absent from loaded configuration");
     };
     if !definition.enabled() {
-        return Some((McpConnectionStatus::Disabled, "MCP server is disabled"));
+        return Some((
+            McpConnectionStatus::Disabled,
+            "MCP server is disabled".into(),
+        ));
     }
     if !authorized() {
         return failed("MCP server definition is not authorized");
-    }
-    if matches!(definition, McpServer::Remote { .. }) {
-        return failed("Remote MCP transport is not available");
     }
     if closing {
         return failed("MCP Location is closing or requires recovery");
@@ -969,6 +999,17 @@ fn status_problem(
         })
     {
         return failed("MCP connection lost; native settlement requires retry or recovery");
+    }
+    if connection.as_ref().is_some_and(|record| {
+        record.phase == McpConnectionPhase::Settled
+            && record.status == McpConnectionStatus::NeedsAuth
+    }) {
+        let name = &entry.name;
+        return Some((
+            McpConnectionStatus::NeedsAuth,
+            format!("MCP server {name} needs authentication; run `cyber mcp auth {name}` or /mcp")
+                .into(),
+        ));
     }
     if connection
         .as_ref()
@@ -1074,6 +1115,7 @@ mod tests {
             monitor: tokio::sync::Mutex::default(),
             startup_finished: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            transport: Mutex::default(),
             task: tokio::sync::Mutex::new(Some(tokio::spawn(async move {
                 let _ = blocked.await;
             }))),
@@ -1123,6 +1165,22 @@ mod tests {
             assert_eq!(calls, 1);
             assert_eq!(start.elapsed().as_secs(), 1);
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn authentication_failure_stops_reconnection_after_one_attempt() {
+        let mut error = LocalLaunchError::before_launch("authorization required (HTTP 401)");
+        error.settled = true;
+        assert!(matches!(failed_attempt(&error), Attempt::Retry));
+        error.kind = super::super::LaunchFailure::NeedsAuth;
+        let mut calls = 0;
+        let connected = retry_with_backoff(&CancellationToken::new(), || {
+            calls += 1;
+            std::future::ready(failed_attempt(&error))
+        })
+        .await;
+        assert!(!connected);
+        assert_eq!(calls, 1);
     }
 
     #[tokio::test(start_paused = true)]

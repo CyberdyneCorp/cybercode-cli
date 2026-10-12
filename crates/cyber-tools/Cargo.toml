@@ -41,6 +41,7 @@ tree-sitter-javascript = "0.25"
 tree-sitter-powershell = "0.26.4"
 
 [dev-dependencies]
+axum = "0.8"
 cyber-snapshot = { path = "../cyber-snapshot" }
 tempfile.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "sync", "fs", "macros", "net", "test-util"] }

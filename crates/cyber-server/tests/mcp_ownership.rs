@@ -295,3 +295,68 @@ fn observers_see_committed_records_and_skip_failed_terminal_commit() {
         ]
     );
 }
+
+#[test]
+fn needs_auth_settles_acknowledged_and_the_validator_rejects_contradictions() {
+    use cyber_server::runtime::{McpConnectionStatus, McpStatusUpdate};
+    let store = store();
+    let root = tempfile::tempdir().unwrap();
+    let mut owner = admit(&store, &root);
+    owner.preparing().unwrap();
+    owner.launching(vec![]).unwrap();
+    let record = owner
+        .needs_auth(
+            true,
+            "MCP remote transport failed: authorization required".into(),
+        )
+        .unwrap();
+    assert_eq!(record.phase, McpConnectionPhase::Settled);
+    assert_eq!(record.status, McpConnectionStatus::NeedsAuth);
+    assert_eq!(record.acknowledged, Some(true));
+    assert_eq!(mcp_connections(&store, root.path()).unwrap()[0], record);
+    let update = McpStatusUpdate::from(&record);
+    assert_eq!(update.status, McpConnectionStatus::NeedsAuth);
+    assert_eq!(
+        update.error.as_deref(),
+        Some("MCP server needs authentication")
+    );
+    // Settled authentication releases the name for a later attempt.
+    drop(admit(&store, &root));
+
+    // Unacknowledged authentication failures stay unknown and failed.
+    let other = tempfile::tempdir().unwrap();
+    let mut owner = admit(&store, &other);
+    owner.preparing().unwrap();
+    let record = owner.needs_auth(false, "unverified".into()).unwrap();
+    assert_eq!(record.phase, McpConnectionPhase::Unknown);
+    assert_eq!(record.status, McpConnectionStatus::Failed);
+
+    // Forged needs_auth records with unknown or unacknowledged settlement are rejected.
+    for (phase, acknowledged) in [("unknown", false), ("settled", false), ("unknown", true)] {
+        let fresh = tempfile::tempdir().unwrap();
+        let mut owner = admit(&store, &fresh);
+        owner.preparing().unwrap();
+        let mut forged = store
+            .read_events(&owner.record().id, -1, 10)
+            .unwrap()
+            .events[1]
+            .data
+            .clone();
+        forged["record"]["phase"] = json!(phase);
+        forged["record"]["status"] = json!("needs_auth");
+        forged["record"]["acknowledged"] = json!(acknowledged);
+        forged["record"]["error"] = json!("needs authentication");
+        let error = store
+            .append(
+                &owner.record().id,
+                Expected::Seq(1),
+                vec![NewEvent::new("mcp.status.changed.1", forged)],
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("contradicts"),
+            "{phase}/{acknowledged}: {error}"
+        );
+        owner.finish(true, "test cleanup".into()).unwrap();
+    }
+}
