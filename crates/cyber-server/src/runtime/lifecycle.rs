@@ -182,10 +182,13 @@ impl Inner {
         if cancel.is_cancelled() {
             return Ok(());
         }
-        let context = verdict
-            .map_err(RuntimeError::Hook)?
-            .decision
-            .additional_context;
+        let verdict = verdict.map_err(RuntimeError::Hook)?;
+        // Without a SessionStart definition nothing ran, so there is nothing to fence
+        // and no durable write; the first Turn's start fences any later pass.
+        if !verdict.configured {
+            return Ok(());
+        }
+        let context = verdict.decision.additional_context;
         // The marker and its context commit together, so a restart neither reruns
         // the hook nor admits the context twice.
         let mut events: Vec<_> = context

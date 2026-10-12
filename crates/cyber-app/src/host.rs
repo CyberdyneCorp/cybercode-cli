@@ -141,6 +141,14 @@ impl ToolHost for AppHost {
         self.builtin.execute(call, cancel)
     }
 
+    fn lifecycle_hooks(
+        &self,
+        event: cyber_server::runtime::LifecycleHook,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::LifecycleVerdict, String>> {
+        self.builtin.lifecycle_hooks(event, cancel)
+    }
+
     fn reconcile(&self, directory: &str, call: &CallState) -> BoxFuture<'_, Reconciliation> {
         self.builtin.reconcile(directory, call)
     }

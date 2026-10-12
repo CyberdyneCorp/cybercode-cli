@@ -696,3 +696,32 @@ async fn application_host_budgets_reminders_and_preserves_complete_overflow() {
     );
     f.app.runtime.shutdown().await;
 }
+
+/// Method names declared in the body that follows `header` (up to its closing `}`).
+fn methods(source: &str, header: &str) -> std::collections::BTreeSet<String> {
+    let start = source.find(header).expect(header);
+    let body = &source[start..];
+    let end = body.find("\n}\n").expect("closing brace");
+    body[..end]
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("fn "))
+        .map(|rest| rest.split(['(', '<']).next().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// A trait method with a default body that AppHost does not forward silently
+/// disables the built-in host's behavior in the real app (lifecycle hooks did).
+#[test]
+fn app_host_forwards_every_tool_host_method() {
+    let trait_methods = methods(
+        include_str!("../../../cyber-server/src/runtime/host.rs"),
+        "pub trait ToolHost",
+    );
+    let forwarded = methods(include_str!("../host.rs"), "impl ToolHost for AppHost");
+    assert!(
+        trait_methods.contains("lifecycle_hooks"),
+        "{trait_methods:?}"
+    );
+    let missing: Vec<_> = trait_methods.difference(&forwarded).collect();
+    assert!(missing.is_empty(), "AppHost does not forward {missing:?}");
+}

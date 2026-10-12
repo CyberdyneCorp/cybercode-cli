@@ -3,7 +3,8 @@
 use std::sync::Weak;
 
 use cyber_core::hooks::{
-    HookAction, HookDecision, HookDefinition, HookEvent, HookIdentity, HookLocation, HookOutcome,
+    HookAction, HookCatalog, HookDecision, HookDefinition, HookEvent, HookIdentity, HookLocation,
+    HookOutcome,
 };
 use cyber_server::runtime::{LifecycleHook, LifecycleVerdict};
 use serde_json::{Map, Value, json};
@@ -116,6 +117,9 @@ impl BuiltinHost {
         let Some((resolved, catalog)) = self.hook_catalog(&event).map_err(failure)? else {
             return Ok(LifecycleVerdict::default());
         };
+        if !configured(&catalog, &event) {
+            return Ok(LifecycleVerdict::default());
+        }
         let max_stop_continuations = catalog.settings.max_stop_continuations;
         let decision =
             Box::pin(self.dispatch_catalog(event, &hook.subject, &resolved, catalog, cancel))
@@ -124,6 +128,7 @@ impl BuiltinHost {
         Ok(LifecycleVerdict {
             decision,
             max_stop_continuations,
+            configured: true,
         })
     }
 
@@ -212,6 +217,14 @@ impl SubagentStop {
             ))),
         }
     }
+}
+
+/// Any definition exists for this event, matched or not.
+pub(crate) fn configured(catalog: &HookCatalog, event: &HookEvent) -> bool {
+    catalog
+        .definitions
+        .iter()
+        .any(|definition| definition.event == event.event())
 }
 
 fn failure(error: ToolError) -> String {

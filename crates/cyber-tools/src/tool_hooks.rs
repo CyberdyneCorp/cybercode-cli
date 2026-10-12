@@ -206,20 +206,17 @@ impl BuiltinHost {
         catalog: HookCatalog,
         cancel: CancellationToken,
     ) -> Result<HookDecision, ToolError> {
+        // Nothing to dispatch: skip the runner, credentials and receipt path entirely.
+        if !crate::lifecycle_hooks::configured(&catalog, &event) {
+            return Ok(HookDecision::default());
+        }
         let config = self.hook_config.get().ok_or_else(|| {
             ToolError::Failed("Hook configuration resolver is unavailable".into())
         })?;
         let Some(runtime) = self.runtime() else {
-            if catalog
-                .definitions
-                .iter()
-                .any(|definition| definition.event == event.event())
-            {
-                return Err(ToolError::Failed(
-                    "Hook execution requires runtime ownership".into(),
-                ));
-            }
-            return Ok(HookDecision::default());
+            return Err(ToolError::Failed(
+                "Hook execution requires runtime ownership".into(),
+            ));
         };
         let credentials = self
             .opts

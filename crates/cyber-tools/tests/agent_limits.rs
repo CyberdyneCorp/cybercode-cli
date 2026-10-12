@@ -243,7 +243,9 @@ async fn general_subagents_default_to_a_summary_on_the_fiftieth_turn() {
         .unwrap()
         .id;
     flow.prompt(&id, "inspect").await;
-    flow.settle(&id).await;
+    // Fifty CPU- and commit-bound debug Turns; slow shared runners need the headroom.
+    flow.settle_within(&id, std::time::Duration::from_secs(60))
+        .await;
     let requests = flow.main.requests();
     assert_eq!(requests.len(), 50);
     assert!(!requests[48].tools_disabled);

@@ -276,6 +276,9 @@ pub struct LifecycleHook {
 pub struct LifecycleVerdict {
     pub decision: cyber_core::hooks::HookDecision,
     pub max_stop_continuations: usize,
+    /// A definition exists for the event. False means nothing was dispatched, so
+    /// the runtime records nothing durable for it.
+    pub configured: bool,
 }
 
 pub trait ToolHost: Send + Sync {
