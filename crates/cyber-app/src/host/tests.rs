@@ -700,10 +700,10 @@ async fn application_host_budgets_reminders_and_preserves_complete_overflow() {
 /// Method names declared in the body that follows `header` (up to its closing `}`).
 fn methods(source: &str, header: &str) -> std::collections::BTreeSet<String> {
     let start = source.find(header).expect(header);
-    let body = &source[start..];
-    let end = body.find("\n}\n").expect("closing brace");
-    body[..end]
+    // `lines()` strips `\r`, so this also works on CRLF (Windows) checkouts.
+    source[start..]
         .lines()
+        .take_while(|line| *line != "}")
         .filter_map(|line| line.trim_start().strip_prefix("fn "))
         .map(|rest| rest.split(['(', '<']).next().unwrap_or_default().to_owned())
         .collect()
@@ -724,4 +724,11 @@ fn app_host_forwards_every_tool_host_method() {
     );
     let missing: Vec<_> = trait_methods.difference(&forwarded).collect();
     assert!(missing.is_empty(), "AppHost does not forward {missing:?}");
+}
+
+#[test]
+fn method_scan_handles_crlf_sources() {
+    let source = "trait T {\r\n    fn a(&self);\r\n    fn b<X>(&self);\r\n}\r\nfn after() {}\r\n";
+    let names: Vec<_> = methods(source, "trait T").into_iter().collect();
+    assert_eq!(names, ["a", "b"]);
 }
