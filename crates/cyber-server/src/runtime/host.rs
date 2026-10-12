@@ -256,6 +256,28 @@ pub enum Reconciliation {
     Unknown,
 }
 
+/// A runtime-owned lifecycle event for host hook dispatch (`hooks` → Stop hooks).
+/// The runtime captures the Session identity; the host builds the envelope.
+#[derive(Debug, Clone)]
+pub struct LifecycleHook {
+    pub session_id: String,
+    pub directory: String,
+    pub agent: String,
+    pub mode: String,
+    /// `Stop` or `StopFailure`.
+    pub kind: String,
+    /// The matcher subject.
+    pub subject: String,
+    pub fields: serde_json::Map<String, Value>,
+}
+
+/// The merged decision of a lifecycle event and the catalog's continuation cap.
+#[derive(Debug, Clone, Default)]
+pub struct LifecycleVerdict {
+    pub decision: cyber_core::hooks::HookDecision,
+    pub max_stop_continuations: usize,
+}
+
 pub trait ToolHost: Send + Sync {
     /// Start shared Location services without waiting for their readiness.
     fn open_location(&self, _info: &SessionInfo) {}
@@ -442,6 +464,16 @@ pub trait ToolHost: Send + Sync {
         turn: &'a TurnContext,
     ) -> BoxFuture<'a, std::collections::BTreeMap<String, super::context::Observed>> {
         Box::pin(async move { self.context_observations(turn) })
+    }
+
+    /// Dispatch a runtime lifecycle hook. Hosts without hooks observe nothing and
+    /// return no decision; an error means a fail_closed handler was unavailable.
+    fn lifecycle_hooks(
+        &self,
+        _event: LifecycleHook,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<LifecycleVerdict, String>> {
+        Box::pin(async { Ok(LifecycleVerdict::default()) })
     }
 
     /// Establish, without side effects, whether a dispatched call took effect.

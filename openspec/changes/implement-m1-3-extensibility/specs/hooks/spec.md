@@ -322,6 +322,31 @@
 - **AND** the original event SHALL remain unchanged
 - **AND** tool-schema validation and permission evaluation SHALL still be required before execution
 
+#### Scenario: SubagentStart precedes every child effect
+- **WHEN** a model `agent` call, forked skill or user/durable delegation (including `cyber review`, TUI `/review` and `@agent`) has passed delegation permission checks
+- **THEN** `SubagentStart` SHALL run with the parent Session envelope, the agent profile name as matcher subject and `agent_type`, `subagent_name`, `description`, `fork`, `background`, `isolation`, `resume`, `child_session_id` (pre-assigned or resumed), `user_requested` and `skill`
+- **AND** it SHALL run before child execution claims, concurrency permits, durable delegation launch, child Session or worktree creation
+- **AND** a `deny` SHALL refuse the launch with `blocked by hook <id>: <reason>` even in `bypass` Mode, and a refused durable delegation SHALL settle failed with that reason
+- **AND** an unavailable `fail_closed` handler SHALL refuse the launch, while `allow` and `ask` SHALL neither grant nor prompt for delegation
+
+#### Scenario: SubagentStop observes child handback
+- **WHEN** a foreground child settles, or a background child settles before its `job.ended.1`
+- **THEN** `SubagentStop` SHALL run once with the parent Session envelope, the agent profile name as matcher subject and `child_session_id`, `agent_type`, `subagent_name`, `status` (`completed` or `error`) and `error`, without the child result text
+- **AND** its decisions SHALL be ignored and an interrupted child SHALL NOT emit it
+- **AND** only an unavailable `fail_closed` handler SHALL fail the handback; other handler errors SHALL produce a transient notice
+
+#### Scenario: StopFailure observes a failed Turn or Drain
+- **WHEN** a provider error ends a Turn, or a runtime error ends a Drain, in a Session that was not interrupted
+- **THEN** `StopFailure` SHALL run once with the Session envelope, the error kind as matcher subject and `error_kind` and `error` equal to the published error
+- **AND** `Stop` SHALL NOT run for that Drain
+- **AND** its decisions, including `block`, SHALL be ignored, its handler failures SHALL NOT change the published error and it SHALL NOT trigger another lifecycle event
+
+#### Scenario: JobEnded observes a terminal background Job
+- **WHEN** a background Job's `job.ended.1` or `job.cancelled.1` is committed, including a Job that recovery marks interrupted
+- **THEN** `JobEnded` SHALL run once with the parent Session envelope, the Job kind as matcher subject, the Job JSON as `job` and `exit_code`
+- **AND** it SHALL run after the Job's settlement and handback notice, its decisions SHALL be ignored, and handler failures (including an unavailable `fail_closed` handler) SHALL NOT change the Job status, the handback or settlement waiters
+- **AND** a Job whose parent Session is being deleted, or that ends because the runtime is shutting down, SHALL NOT emit it
+
 ### Requirement: Command handlers
 (P1) A `command` handler SHALL run its `command` string through the configured shell with the event JSON on stdin, working directory set to the Location directory, and environment variables `CYBER_PROJECT_DIR`, `CYBER_SESSION_ID`, `CYBER_HOOK_EVENT` and `CYBER_AGENT` added. Exit code 0 SHALL mean success, with stdout parsed as a JSON decision when it is a JSON object. Exit code 2 SHALL mean block, and stderr SHALL be fed back as the reason. Any other exit code SHALL be a non-blocking error that is logged and shown to the user.
 
@@ -495,3 +520,63 @@
 - **AND** disposal without settlement SHALL retain unknown receipt/activity evidence
 - **AND** acknowledgement SHALL describe local transport disposal, not prove rollback of remote POST processing
 - **AND** raw IO SHALL remain absent by default, explicitly opted-in event/response IO SHALL remain bounded and configured header credentials SHALL never be recorded as IO
+
+### Requirement: Stop hooks and loop prevention
+(P1) `Stop` hooks SHALL run when a Drain is about to go idle and MAY return `{"decision":"block","reason":...}` to admit the reason as a new user-visible instruction and continue. The event SHALL carry `stop_hook_active: true` when the current continuation was caused by a Stop hook. The system SHALL allow at most `hooks.max_stop_continuations` (default 5) consecutive Stop-hook continuations per Drain.
+
+#### Scenario: Tests must pass before stopping
+- **WHEN** a `Stop` hook runs the test suite, which fails, and returns `block` with the failure summary
+- **THEN** the session continues with that summary as input
+
+#### Scenario: Continuation cap
+- **WHEN** Stop hooks have blocked 5 consecutive times
+- **THEN** the session stops and a warning `stop hook continuation limit reached` is shown
+
+#### Scenario: Stop runs only for a Drain that answered and would idle
+- **WHEN** a Drain, including a child Session's Drain, finishes a model answer with no eligible input left
+- **THEN** `Stop` SHALL run with the Session envelope, the agent name as matcher subject and `stop_hook_active`
+- **AND** an interrupted or cancelled Drain, a failed Turn, the final step-limit Turn and a child governed by an output schema (which ends through `return_result`) SHALL NOT run `Stop`
+- **AND** `SubagentStop` SHALL remain the parent-side handback event
+
+#### Scenario: Blocked Stop admits tagged queued input
+- **WHEN** the merged `Stop` decision is `block` and the Drain has used fewer than `hooks.max_stop_continuations` continuations
+- **THEN** the reason, prefixed with the blocking hook's ID, SHALL be durably admitted as queued input with source `hook` and the same Drain SHALL continue with it
+- **AND** a new Drain, any public user admission (whatever source it claims) or any internal admission other than a Stop continuation SHALL reset the consecutive count, so its next `Stop` carries `stop_hook_active: false`
+- **AND** promoting a Stop continuation SHALL NOT reset the Session's step count, so continuations never extend `max_steps`
+
+#### Scenario: Unavailable fail_closed Stop handler
+- **WHEN** a `fail_closed` Stop handler times out, cannot launch or returns invalid output
+- **THEN** the Drain SHALL end with a `hook` error rather than idle silently or treat the failure as a `block`
+- **AND** without `fail_closed` the failure SHALL produce a transient notice and the Drain SHALL idle, even when the runner forces the failure closed (for example a failed launch re-authorization)
+
+### Requirement: Hook context injection on lifecycle events
+(P1) `SessionStart` and `UserPromptSubmit` hooks MAY return `additional_context`. The system SHALL admit it as a Mid-Conversation System Message tagged with the hook id. For `UserPromptSubmit`, a `deny` decision SHALL reject the prompt before admission and show the reason to the user.
+
+#### Scenario: Inject ticket context
+- **WHEN** a `UserPromptSubmit` hook returns `additional_context` with the linked Jira ticket text
+- **THEN** the model sees that context before the user's prompt in the same Turn
+
+#### Scenario: Block secrets in prompt
+- **WHEN** a `UserPromptSubmit` hook denies a prompt containing an API key
+- **THEN** the prompt is not admitted and the user sees the reason
+
+#### Scenario: UserPromptSubmit guards public user input only
+- **WHEN** input arrives through public user admission (HTTP prompt or command, TUI, exec), whatever source the client claims, an in-process admission with source `user`, or a public user delegation (`/delegations/{op}` and `/subtask`, behind TUI `@agent` and exec delegation)
+- **THEN** `UserPromptSubmit` SHALL run before any durable effect of the admission, with the Session envelope (the parent Session for a delegation), an empty matcher subject and the prompt text (including text attachments) as `prompt` and its `source` (`user` for a delegation)
+- **AND** a `deny` SHALL reject it with `blocked by hook <id>: <reason>` and commit no inbox row, history entry, staged revert, Delegation record, Job or child Session, and an unavailable `fail_closed` handler SHALL also reject it
+- **AND** child prompts, handback notices, Stop continuations, forwarded forked-skill rows (already checked at admission) and other internal admissions SHALL NOT run it, and an exact retry of admitted input or of a recorded delegation SHALL NOT run it again
+- **AND** editing the parts of an unpromoted row SHALL run it again on the edited text, and a `deny` SHALL leave the row unchanged
+
+#### Scenario: Context is admitted with its prompt
+- **WHEN** merged `UserPromptSubmit` decisions carry `additional_context`
+- **THEN** each handler's context SHALL be tagged `[hook <id>]`, kept with the admitted row and committed as a system message with reason `hook_context` in the same commit that promotes the row, immediately before it
+- **AND** a removed or refused row SHALL never admit its context, and edited parts SHALL replace it
+- **AND** a forked skill row's context SHALL be committed in the parent in the same commit that forwards the row, so the forked child inherits it while the skill body stays out of the parent
+- **AND** a delegation's context SHALL be admitted with the child's prompt and committed immediately before it when the child promotes it, never in the parent
+
+#### Scenario: SessionStart runs once per root Session
+- **WHEN** a root Session reaches the Safe Boundary of its first Turn
+- **THEN** `SessionStart` SHALL run once, before input promotion or forked-skill forwarding (and therefore before that child's `SubagentStart`), with `source` `startup`, or `resume` when the Session begins with history it did not produce (a fork), as payload field and matcher subject
+- **AND** a durable marker SHALL be committed together with its context, so it SHALL NOT run or admit its context again on later Turns or after the runtime is recreated, including a restart before the first Turn opened
+- **AND** its context SHALL be committed as a tagged system message before the first prompt
+- **AND** its decisions SHALL be ignored, an unavailable `fail_closed` handler SHALL end the Drain with a `hook` error before any Turn, and child Sessions SHALL report their launch through `SubagentStart` instead

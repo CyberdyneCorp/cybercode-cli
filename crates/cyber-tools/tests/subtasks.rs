@@ -165,6 +165,7 @@ async fn typed_user_delegation_preserves_images_and_caps_requested_steps() {
                 agent: Some("general".into()),
                 attachments: attachments.clone(),
                 max_steps: Some(10),
+                hook_context: None,
             },
         )
         .await
@@ -210,6 +211,7 @@ async fn one_step_user_ceiling_removes_tools_and_zero_creates_no_child() {
         agent: Some("general".into()),
         attachments: vec![],
         max_steps: Some(steps),
+        hook_context: None,
     };
     assert!(
         flow.runtime
@@ -923,6 +925,7 @@ async fn caller_cancellation_removes_only_its_queued_admission_and_releases_capa
         agent: Some("general".into()),
         attachments: vec![],
         max_steps: None,
+        hook_context: None,
     };
     let owner = CancellationToken::new();
     let runtime = flow.runtime.clone();
@@ -989,7 +992,8 @@ async fn pre_cancelled_user_admission_creates_no_session_or_model_request() {
                     prompt: "never start".into(),
                     agent: Some("general".into()),
                     attachments: vec![],
-                    max_steps: None
+                    max_steps: None,
+                    hook_context: None,
                 },
                 owner
             )

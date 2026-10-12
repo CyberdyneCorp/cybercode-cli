@@ -28,6 +28,7 @@ mod fork;
 mod forked_skills;
 mod hook_tests;
 mod hooks;
+mod lifecycle;
 pub use hook_tests::{
     SyntheticHookExecution, start_synthetic_hook_execution, try_start_synthetic_hook_execution,
 };
@@ -92,10 +93,10 @@ pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
-    AgentInference, CatalogResolver, ChildContinuation, FileDiff, Invocation, LocationGuard,
-    LocationLease, ModelResolver, NoSnapshots, NoTools, Reconciliation, ResolvedModel,
-    RestoreError, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope,
-    TurnContext,
+    AgentInference, CatalogResolver, ChildContinuation, FileDiff, Invocation, LifecycleHook,
+    LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools,
+    Reconciliation, ResolvedModel, RestoreError, SkillSuggestion, Snapshot, Snapshots, ToolDef,
+    ToolHost, ToolOutcome, ToolScope, TurnContext,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
@@ -142,6 +143,8 @@ pub enum RuntimeError {
     Corrupt(String),
     #[error("RewindConflictError: changed since the snapshot and cannot be merged: {}", .0.join(", "))]
     RewindConflict(Vec<String>),
+    #[error("HookError: {0}")]
+    Hook(String),
 }
 
 pub struct RuntimeOptions {
@@ -276,6 +279,13 @@ impl CommandPlan {
     }
 }
 
+/// Whether an admission still owes UserPromptSubmit, or carries its checked context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PromptCheck {
+    Run,
+    Checked(Option<String>),
+}
+
 #[derive(Debug, Clone)]
 pub struct Admission {
     /// Captured by the trusted command service; public prompt bodies cannot supply this.
@@ -366,6 +376,8 @@ pub(crate) struct Handle {
     pub recent_calls: StdMutex<Vec<String>>,
     /// Serialized auto reviews and consecutive blocks, reset for each new Drain.
     pub auto_blocks: Mutex<u32>,
+    /// Consecutive Stop-hook continuations, reset for each new Drain and user admission.
+    pub stop_continuations: std::sync::atomic::AtomicUsize,
 }
 
 struct DrainEntry {
@@ -746,7 +758,64 @@ impl Runtime {
         session_id: &str,
         admission: Admission,
     ) -> Result<Receipt, RuntimeError> {
-        self.admit_attempt(session_id, admission, None).await
+        let check = if admission.source == "user" {
+            PromptCheck::Run
+        } else {
+            PromptCheck::Checked(None)
+        };
+        self.admit_attempt(session_id, admission, None, check).await
+    }
+
+    /// Admit a delegated child's prompt with the UserPromptSubmit context the
+    /// parent-side delegation already obtained; the hook does not run again.
+    pub async fn admit_with_hook_context(
+        &self,
+        session_id: &str,
+        admission: Admission,
+        hook_context: Option<String>,
+    ) -> Result<Receipt, RuntimeError> {
+        self.admit_attempt(
+            session_id,
+            admission,
+            None,
+            PromptCheck::Checked(hook_context),
+        )
+        .await
+    }
+
+    /// Public user input: UserPromptSubmit runs whatever source the client claims.
+    async fn admit_prompt(
+        &self,
+        session_id: &str,
+        admission: Admission,
+    ) -> Result<Receipt, RuntimeError> {
+        self.admit_attempt(session_id, admission, None, PromptCheck::Run)
+            .await
+    }
+
+    /// UserPromptSubmit for input not yet admitted; an exact retry skips it. It runs
+    /// before the lifecycle guard: every hook runner re-enters that guard to admit its
+    /// receipt, and a shutdown writer queued in between would deadlock both. The
+    /// caller rechecks admission and the exact retry once it holds the guard.
+    async fn prompt_hooks(
+        &self,
+        session_id: &str,
+        admission: &Admission,
+        message_id: &str,
+        digest: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        self.inner.ensure_admission_open(session_id)?;
+        let handle = self.inner.handle(session_id).await?;
+        {
+            let state = handle.state.lock().await;
+            state.ensure_worktree_ready()?;
+            if existing_receipt(&state, message_id, digest)?.is_some() {
+                return Ok(None);
+            }
+        }
+        self.inner
+            .user_prompt_hooks(&handle, &admission.parts, &admission.source)
+            .await
     }
 
     async fn admit_attempt(
@@ -754,7 +823,26 @@ impl Runtime {
         session_id: &str,
         admission: Admission,
         attempt: Option<names::Resumed>,
+        check: PromptCheck,
     ) -> Result<Receipt, RuntimeError> {
+        let message_id = admission
+            .message_id
+            .clone()
+            .unwrap_or_else(|| cyber_core::ids::new_id("msg"));
+        let digest = digest(
+            &admission.parts,
+            admission.delivery,
+            admission.skill_command.as_ref(),
+        );
+        // A denied prompt leaves no durable trace, including a staged revert.
+        let prompt = check == PromptCheck::Run;
+        let hook_context = match check {
+            PromptCheck::Run => {
+                self.prompt_hooks(session_id, &admission, &message_id, &digest)
+                    .await?
+            }
+            PromptCheck::Checked(context) => context,
+        };
         let _admission = self.inner.open().await?;
         self.inner.ensure_admission_open(session_id)?;
         let admission_bindings = self.callback_admission_bindings(session_id)?;
@@ -767,15 +855,8 @@ impl Runtime {
         let handle = self.inner.handle(session_id).await?;
         handle.state.lock().await.ensure_worktree_ready()?;
         self.inner.commit_staged_revert(&handle).await?;
-        let message_id = admission
-            .message_id
-            .clone()
-            .unwrap_or_else(|| cyber_core::ids::new_id("msg"));
-        let digest = digest(
-            &admission.parts,
-            admission.delivery,
-            admission.skill_command.as_ref(),
-        );
+        // Public input resets the Stop count whatever source the client claims.
+        let genuine = prompt || admission.source != "hook";
         let receipt = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
@@ -797,6 +878,7 @@ impl Runtime {
                 delivery: admission.delivery,
                 source: admission.source,
                 digest,
+                hook_context,
             };
             let mut events = Vec::new();
             if let Some(attempt) = attempt {
@@ -810,6 +892,11 @@ impl Runtime {
                 stored.last().expect("admission event").seq,
             )
         };
+        if genuine {
+            handle
+                .stop_continuations
+                .store(0, std::sync::atomic::Ordering::SeqCst);
+        }
         if admission.resume && admission.delivery != Delivery::Hold {
             self.inner.start_drain(session_id, false);
         }
@@ -824,8 +911,41 @@ impl Runtime {
         parts: Option<Vec<Content>>,
         delivery: Option<Delivery>,
     ) -> Result<(), RuntimeError> {
-        self.update_input(session_id, message_id, InboxAction::Edited, parts, delivery)
-            .await
+        // Edited parts are user input: UserPromptSubmit re-checks them before commit.
+        let hook_context = match &parts {
+            Some(parts) => {
+                self.edited_prompt_hooks(session_id, message_id, parts)
+                    .await?
+            }
+            None => None,
+        };
+        self.update_input(
+            session_id,
+            message_id,
+            InboxAction::Edited,
+            parts,
+            delivery,
+            hook_context,
+        )
+        .await
+    }
+
+    async fn edited_prompt_hooks(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        parts: &[Content],
+    ) -> Result<Option<String>, RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        let source = {
+            let state = handle.state.lock().await;
+            let row = state
+                .input(message_id)
+                .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message_id}")))?;
+            check_inbox_action(row, InboxAction::Edited)?;
+            row.source.clone()
+        };
+        self.inner.user_prompt_hooks(&handle, parts, &source).await
     }
 
     /// Withdraw an unpromoted `queue` or `hold` row; it never reaches the model.
@@ -834,8 +954,15 @@ impl Runtime {
         session_id: &str,
         message_id: &str,
     ) -> Result<(), RuntimeError> {
-        self.update_input(session_id, message_id, InboxAction::Removed, None, None)
-            .await
+        self.update_input(
+            session_id,
+            message_id,
+            InboxAction::Removed,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     /// Release a held row as `steer` or `queue`, waking the Session.
@@ -864,6 +991,7 @@ impl Runtime {
             InboxAction::Released,
             None,
             Some(delivery),
+            None,
         )
         .await?;
         self.inner.start_drain(session_id, false);
@@ -872,8 +1000,15 @@ impl Runtime {
 
     /// Refuse a held row; it is kept as `refused` and never promoted.
     pub async fn refuse(&self, session_id: &str, message_id: &str) -> Result<(), RuntimeError> {
-        self.update_input(session_id, message_id, InboxAction::Refused, None, None)
-            .await
+        self.update_input(
+            session_id,
+            message_id,
+            InboxAction::Refused,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     async fn update_input(
@@ -883,6 +1018,7 @@ impl Runtime {
         action: InboxAction,
         parts: Option<Vec<Content>>,
         delivery: Option<Delivery>,
+        hook_context: Option<String>,
     ) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
@@ -901,6 +1037,7 @@ impl Runtime {
             action,
             parts,
             delivery,
+            hook_context,
         };
         self.inner
             .commit_locked(&mut state, vec![event(INBOX_UPDATED, &payload)])?;
@@ -1460,6 +1597,7 @@ impl Inner {
             location_uncertain: std::sync::atomic::AtomicBool::new(false),
             recent_calls: StdMutex::default(),
             auto_blocks: Mutex::new(0),
+            stop_continuations: std::sync::atomic::AtomicUsize::new(0),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

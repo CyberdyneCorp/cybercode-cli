@@ -430,6 +430,7 @@ impl SubtaskBody {
             agent: self.agent,
             attachments: self.attachments,
             max_steps: self.max_steps,
+            hook_context: None,
         }
     }
 }

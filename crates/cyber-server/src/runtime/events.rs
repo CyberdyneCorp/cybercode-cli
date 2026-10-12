@@ -23,6 +23,8 @@ pub const PROMOTED: &str = "session.prompt.promoted.1";
 pub const EPOCH_STARTED: &str = "session.context.epoch_started.1";
 pub const CONTEXT_UPDATED: &str = "session.context.updated.1";
 pub const SYSTEM_ADDED: &str = "session.system.added.1";
+/// Durable once-marker for the root Session's SessionStart hook.
+pub const SESSION_STARTED: &str = "session.hooks.session_started.1";
 pub const STEP_STARTED: &str = "session.step.started.1";
 pub const TEXT_ENDED: &str = "session.text.ended.1";
 pub const REASONING_ENDED: &str = "session.reasoning.ended.1";
@@ -71,6 +73,7 @@ const ALL: &[&str] = &[
     CONTEXT_UPDATED,
     super::deferred_tools::LOADED,
     SYSTEM_ADDED,
+    SESSION_STARTED,
     STEP_STARTED,
     TEXT_ENDED,
     REASONING_ENDED,
@@ -140,6 +143,9 @@ pub struct Admitted {
     pub delivery: Delivery,
     pub source: String,
     pub digest: String,
+    /// UserPromptSubmit context, committed as a system message when the row is promoted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +163,9 @@ pub struct InboxUpdated {
     pub action: InboxAction,
     pub parts: Option<Vec<Content>>,
     pub delivery: Option<Delivery>,
+    /// UserPromptSubmit context for edited parts; replaces any earlier context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +188,12 @@ pub struct ContextUpdated {
     pub message_id: String,
     pub text: String,
     pub snapshot: BTreeMap<String, String>,
+}
+
+/// SessionStart ran; committed with any context it admitted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStarted {
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

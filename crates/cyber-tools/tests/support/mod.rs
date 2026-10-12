@@ -169,6 +169,43 @@ impl Fixture {
             .unwrap();
     }
 
+    /// Attach a hook resolver whose global (user) configuration holds `hooks`.
+    pub fn global_hooks(&self, hooks: Value) {
+        use cyber_core::config::{self, LoadRequest};
+        use cyber_core::paths::Paths;
+        use cyber_core::trust::TrustStore;
+        let env = HashMap::from([(
+            "CYBER_HOME".into(),
+            self.dir.path().join("hook-config").display().to_string(),
+        )]);
+        let paths = Paths::resolve(&env, self.dir.path());
+        paths.ensure().unwrap();
+        std::fs::write(
+            paths.config.join("cyber.jsonc"),
+            serde_json::json!({"hooks":hooks}).to_string(),
+        )
+        .unwrap();
+        let home = self.dir.path().to_path_buf();
+        let trust = TrustStore::new(paths.trust_file());
+        self.host
+            .attach_hook_config(
+                Arc::new(move |location| {
+                    config::load(&LoadRequest {
+                        location,
+                        paths: &paths,
+                        env: &env,
+                        home: &home,
+                        profile: None,
+                        overrides: &[],
+                        flags: serde_json::json!({}),
+                    })
+                    .map_err(|error| error.to_string())
+                }),
+                trust,
+            )
+            .unwrap();
+    }
+
     pub fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.repo.join(rel)).unwrap()
     }

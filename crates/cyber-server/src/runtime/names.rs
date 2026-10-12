@@ -228,6 +228,7 @@ impl Runtime {
                 name: Some(name),
                 output_schema: schema.map(|schema| schema.schema().clone()),
             }),
+            super::PromptCheck::Checked(None),
         )
         .await
     }

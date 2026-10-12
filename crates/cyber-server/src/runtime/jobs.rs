@@ -401,6 +401,15 @@ impl Runtime {
                     .remove(&running.id);
             }
             control.done.cancel();
+            // Observational JobEnded runs after settlement, so waiters never block on it.
+            // A deleted parent (suppressed notice) observes nothing.
+            if control.notify.load(std::sync::atomic::Ordering::SeqCst)
+                && let Some(runtime) = weak.upgrade()
+                && let Ok(Some(job)) = runtime.find_job(&running.id)
+                && job.status != JobStatus::Running
+            {
+                runtime.inner.job_ended(&job).await;
+            }
         });
         let mut owners = self
             .inner
@@ -572,7 +581,8 @@ impl Runtime {
             {
                 continue;
             }
-            if job.status == JobStatus::Running {
+            let ended = (job.status == JobStatus::Running).then(|| job.id.clone());
+            if ended.is_some() {
                 job.status = JobStatus::Interrupted;
                 job.ended_ms = Some(chrono::Utc::now().timestamp_millis());
                 job.error = Some("Server restarted; background task was not redispatched".into());
@@ -581,6 +591,9 @@ impl Runtime {
             }
             if !job.notified {
                 self.notify_job(job).await?;
+            }
+            if let Some(Some(job)) = ended.map(|id| self.find_job(&id)).transpose()? {
+                self.inner.job_ended(&job).await;
             }
         }
         Ok(())

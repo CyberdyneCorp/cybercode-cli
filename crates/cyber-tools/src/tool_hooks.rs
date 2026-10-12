@@ -1,4 +1,4 @@
-//! Command hooks at the built-in tool boundary. Other lifecycle owners follow separately.
+//! Command hooks at the built-in tool boundary; lifecycle_hooks reuses this dispatch.
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -171,18 +171,44 @@ impl BuiltinHost {
             .map(|_| ())
     }
 
-    async fn dispatch_tool_hooks(
+    pub(crate) async fn dispatch_tool_hooks(
         &self,
-        mut event: HookEvent,
+        event: HookEvent,
         subject: &str,
         cancel: CancellationToken,
     ) -> Result<HookDecision, ToolError> {
-        let Some(config) = self.hook_config.get() else {
+        let Some((resolved, catalog)) = self.hook_catalog(&event)? else {
             return Ok(HookDecision::default());
+        };
+        self.dispatch_catalog(event, subject, &resolved, catalog, cancel)
+            .await
+    }
+
+    /// Reload configuration and definitions for the event's Location.
+    pub(crate) fn hook_catalog(
+        &self,
+        event: &HookEvent,
+    ) -> Result<Option<(Resolved, HookCatalog)>, ToolError> {
+        let Some(config) = self.hook_config.get() else {
+            return Ok(None);
         };
         let resolved =
             (config.resolve)(&event.identity().location.directory).map_err(ToolError::Failed)?;
         let catalog = HookCatalog::from_config(&resolved).map_err(ToolError::Failed)?;
+        Ok(Some((resolved, catalog)))
+    }
+
+    pub(crate) async fn dispatch_catalog(
+        &self,
+        mut event: HookEvent,
+        subject: &str,
+        resolved: &Resolved,
+        catalog: HookCatalog,
+        cancel: CancellationToken,
+    ) -> Result<HookDecision, ToolError> {
+        let config = self.hook_config.get().ok_or_else(|| {
+            ToolError::Failed("Hook configuration resolver is unavailable".into())
+        })?;
         let Some(runtime) = self.runtime() else {
             if catalog
                 .definitions
@@ -202,7 +228,7 @@ impl BuiltinHost {
             .map(|models| models.credential_env_names())
             .unwrap_or_default();
         let runner = HookCommandRunner {
-            resolved: &resolved,
+            resolved,
             trust: &config.trust,
             invocation_trust: None,
             home: &self.opts.home,
@@ -316,6 +342,7 @@ impl BuiltinHost {
         let mut decision = HookDecision::default();
         for (_, definition, report) in reports {
             if let Some(report) = report? {
+                let report = crate::lifecycle_hooks::mergeable_report(event, definition, report);
                 merge_decision(definition, report, &mut decision);
             }
         }
@@ -429,9 +456,20 @@ impl BuiltinHost {
         if let Some(diagnostic) = &report.diagnostic {
             self.hook_notice(event, diagnostic, &definition.digest);
         }
-        if report.decision.additional_context.is_some()
-            || report.decision.continuation == Some(false)
-        {
+        if crate::lifecycle_hooks::observed_unavailable(event, definition, report) {
+            return Err(ToolError::Failed(format!(
+                "hook {} unavailable",
+                definition
+                    .handler
+                    .id
+                    .as_deref()
+                    .unwrap_or(&definition.digest)
+            )));
+        }
+        // UserPromptSubmit/SessionStart context is admitted; other events defer it.
+        let deferred_context = report.decision.additional_context.is_some()
+            && !crate::lifecycle_hooks::admits_context(event);
+        if deferred_context || report.decision.continuation == Some(false) {
             self.hook_notice(
                 event,
                 "hook context/continuation admission remains unavailable",
@@ -499,18 +537,32 @@ fn event(kind: &str, inv: &Invocation, extra: Value) -> Result<HookEvent, ToolEr
     if let Some(extra) = extra.as_object() {
         fields.extend(extra.clone());
     }
+    lifecycle_event(kind, hook_identity(inv), fields)
+}
+
+/// Captured envelope identity of the Session that owns an invocation.
+pub(crate) fn hook_identity(inv: &Invocation) -> HookIdentity {
+    HookIdentity {
+        session_id: inv.session_id.clone(),
+        location: HookLocation {
+            directory: inv.directory.clone().into(),
+            workspace: None,
+        },
+        project_id: "global".into(),
+        agent: inv.agent.clone(),
+        mode: inv.mode.clone(),
+    }
+}
+
+/// Build any hook event from a captured identity and event-specific fields.
+pub(crate) fn lifecycle_event(
+    kind: &str,
+    identity: HookIdentity,
+    fields: serde_json::Map<String, Value>,
+) -> Result<HookEvent, ToolError> {
     HookEvent::new(
         kind,
-        HookIdentity {
-            session_id: inv.session_id.clone(),
-            location: HookLocation {
-                directory: inv.directory.clone().into(),
-                workspace: None,
-            },
-            project_id: "global".into(),
-            agent: inv.agent.clone(),
-            mode: inv.mode.clone(),
-        },
+        identity,
         i64::try_from(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

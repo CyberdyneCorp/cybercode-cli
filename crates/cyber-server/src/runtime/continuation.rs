@@ -36,18 +36,25 @@ impl Runtime {
         }
         if state.info.parent_id.is_none() {
             drop(lifecycle);
-            return self.admit(id, admission).await;
+            return self.admit_prompt(id, admission).await;
         }
         if self.child_is_settling(id) {
             return Err(RuntimeError::Busy(id.into()));
         }
         if self.is_running(id) || !admission.resume || admission.delivery == Delivery::Hold {
             drop(lifecycle);
-            return self.admit(id, admission).await;
+            return self.admit_prompt(id, admission).await;
         }
+        // Hook runners re-enter the lifecycle guard; holding it here would deadlock
+        // behind a queued shutdown writer. Admission is rechecked once retaken.
         drop(lifecycle);
+        let hook_context = self
+            .inner
+            .user_prompt_hooks(&handle, &admission.parts, &admission.source)
+            .await?;
         let prepared = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
+        self.inner.ensure_admission_open(id)?;
         {
             let current = handle.state.lock().await;
             prepared.check(&current)?;
@@ -92,6 +99,7 @@ impl Runtime {
                         delivery: admission.delivery,
                         source: admission.source,
                         digest,
+                        hook_context,
                     },
                 ),
             ],
@@ -155,6 +163,7 @@ impl Runtime {
                     action: super::events::InboxAction::Released,
                     parts: None,
                     delivery: Some(delivery),
+                    hook_context: None,
                 },
             ));
         } else if !eligible_child_input(&state, requested_only) {

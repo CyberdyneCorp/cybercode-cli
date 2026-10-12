@@ -17,6 +17,7 @@ P1 requires lifecycle hooks, plugin hosting, MCP and skill/command extensibility
 - `plugins-marketplace`: deliver P1 plugin hosting and package contracts.
 - `mcp`: deliver P1 authorization and deferred discovery contracts.
 - `skills-commands`: deliver the full canonical P1 skill and command contracts.
+- `vcs-integration`: state that the reviewer Job of `/review` and `cyber review` is subject to the invoking Location's subagent and tool hooks.
 
 ## Impact
 

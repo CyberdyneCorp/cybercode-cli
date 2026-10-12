@@ -268,8 +268,14 @@ pub struct SessionState {
     pub(crate) loaded_tools: BTreeSet<String>,
     #[serde(skip)]
     pub(crate) first_turn_started: bool,
+    /// SessionStart's durable marker was replayed; it never runs again.
+    #[serde(skip)]
+    pub(crate) session_started: bool,
     #[serde(skip)]
     pub(crate) child_requested_inputs: BTreeSet<String>,
+    /// UserPromptSubmit context of unpromoted rows, admitted just before each row.
+    #[serde(skip)]
+    pub(crate) hook_contexts: BTreeMap<String, String>,
     #[serde(skip)]
     pub(super) child_pause_seq: i64,
     #[serde(skip)]
@@ -314,6 +320,8 @@ pub struct SessionState {
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
+/// Digest prefix of a Stop-hook continuation row; public digests are `sha256:`.
+pub(crate) const STOP_CONTINUATION_DIGEST: &str = "hook:Stop:";
 
 impl SessionState {
     pub(super) fn ensure_worktree_ready(&self) -> Result<(), super::RuntimeError> {
@@ -450,7 +458,9 @@ impl SessionState {
         Self {
             loaded_tools: BTreeSet::new(),
             first_turn_started: false,
+            session_started: false,
             child_requested_inputs: BTreeSet::new(),
+            hook_contexts: BTreeMap::new(),
             child_pause_seq: -1,
             child_continuation_error: None,
             child_continuation_unknown: false,
@@ -559,6 +569,7 @@ impl SessionState {
                 self.turn_agent = None;
                 let promoted: Promoted = decode(e)?;
                 self.child_requested_inputs.remove(&promoted.message_id);
+                self.hook_contexts.remove(&promoted.message_id);
                 if let Some(row) = self
                     .inbox
                     .iter_mut()
@@ -596,6 +607,7 @@ impl SessionState {
             "session.context.epoch_started" => self.on_epoch(decode(e)?),
             "session.context.updated" => self.on_context_updated(decode(e)?),
             "session.system.added" => self.on_system(decode(e)?),
+            "session.hooks.session_started" => self.session_started = true,
             "session.step.started" => self.on_step_started(decode(e)?),
             "session.text.ended" | "session.reasoning.ended" => self.on_content(kind, decode(e)?),
             "session.tool.called" => self.on_called(decode(e)?),
@@ -796,6 +808,9 @@ impl SessionState {
         } else {
             InputStatus::Pending
         };
+        if let Some(context) = a.hook_context {
+            self.hook_contexts.insert(a.message_id.clone(), context);
+        }
         self.inbox.push(InboxRow {
             forwarded_skill: false,
             skill_command: a.skill_command,
@@ -817,10 +832,12 @@ impl SessionState {
         match u.action {
             InboxAction::Removed => {
                 self.child_requested_inputs.remove(&u.message_id);
+                self.hook_contexts.remove(&u.message_id);
                 self.inbox.remove(index);
             }
             InboxAction::Refused => {
                 self.child_requested_inputs.remove(&u.message_id);
+                self.hook_contexts.remove(&u.message_id);
                 self.inbox[index].status = InputStatus::Refused;
             }
             InboxAction::Edited | InboxAction::Released => {
@@ -829,6 +846,11 @@ impl SessionState {
                 }
                 let row = &mut self.inbox[index];
                 if let Some(parts) = u.parts {
+                    // Edited parts were re-checked; their context replaces the original.
+                    match u.hook_context {
+                        Some(context) => self.hook_contexts.insert(u.message_id.clone(), context),
+                        None => self.hook_contexts.remove(&u.message_id),
+                    };
                     row.parts = parts;
                 }
                 if let Some(delivery) = u.delivery {
@@ -845,6 +867,7 @@ impl SessionState {
 
     fn on_promoted(&mut self, p: Promoted, seq: i64) {
         self.child_requested_inputs.remove(&p.message_id);
+        self.hook_contexts.remove(&p.message_id);
         let Some(row) = self.inbox.iter_mut().find(|r| r.message_id == p.message_id) else {
             return;
         };
@@ -867,9 +890,12 @@ impl SessionState {
             self.task.instructions.push(sourced);
             self.task.version += 1;
         }
+        // A Stop continuation keeps the step count so max_steps stays a ceiling.
+        if !row.digest.starts_with(STOP_CONTINUATION_DIGEST) {
+            self.steps_since_input = 0;
+        }
         self.entries.push(entry);
         self.result.rejected = false;
-        self.steps_since_input = 0;
     }
 
     fn on_epoch(&mut self, e: EpochStarted) {

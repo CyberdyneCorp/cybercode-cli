@@ -64,6 +64,23 @@ fn return_result(out: &mut TcpStream, id: usize, result: &Value) {
     stream(out, &[call, usage()]);
 }
 
+/// The scripted reviewer's first tool call: a `read` of `path`.
+fn read_call(out: &mut TcpStream, path: &str) {
+    let call = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_read","type":"function",
+        "function":{"name":"read","arguments":json!({"path":path}).to_string()}}]},"finish_reason":"tool_calls"}]});
+    stream(out, &[call, usage()]);
+}
+
+/// The tool message answering the scripted reviewer's `read`, if any.
+#[cfg(unix)]
+fn read_result(body: &Value) -> Option<String> {
+    body["messages"]
+        .as_array()?
+        .iter()
+        .find(|m| m["role"] == "tool" && m["tool_call_id"] == "call_read")
+        .map(|m| m["content"].to_string())
+}
+
 fn is_reviewer(body: &Value) -> bool {
     body["tools"]
         .as_array()
@@ -75,10 +92,13 @@ fn is_reviewer(body: &Value) -> bool {
 /// The reviewer answers with `result` (after `delay`, or once released); a
 /// reviewer request that follows a tool result gets a text-only answer, and
 /// the parent answers its handback (or an overriding command) with text.
+/// With `read_first`, the reviewer first reads that path and answers with
+/// `result` once the read's tool result (successful or not) comes back.
 #[derive(Clone)]
 struct Script {
     result: Value,
     delay: Duration,
+    read_first: Option<&'static str>,
 }
 
 struct Provider {
@@ -106,6 +126,18 @@ fn answer(out: &mut TcpStream, body: &Value, script: &Script, release: &AtomicBo
             "review handed back"
         };
         return reply(out, text);
+    }
+    if let Some(path) = script.read_first {
+        let requested = body["messages"].to_string().contains("call_read");
+        if !requested {
+            return read_call(out, path);
+        }
+        if messages
+            .last()
+            .is_some_and(|m| m["tool_call_id"] == "call_read")
+        {
+            return return_result(out, messages.len(), &script.result);
+        }
     }
     if after_tool {
         return reply(out, "reviewer text-only answer");
@@ -251,13 +283,26 @@ impl Env {
 
     /// Replaces the user configuration's permissions.
     fn permissions(&self, provider: &Provider, permissions: Value) {
+        self.configure(provider, permissions, None);
+    }
+
+    /// Allows every tool and installs global (user-scope) `hooks`.
+    #[cfg(unix)]
+    fn hooks(&self, provider: &Provider, hooks: Value) {
+        self.configure(provider, json!("allow"), Some(hooks));
+    }
+
+    fn configure(&self, provider: &Provider, permissions: Value, hooks: Option<Value>) {
+        let mut config = json!({
+            "permissions":permissions,
+            "providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}
+        });
+        if let Some(hooks) = hooks {
+            config["hooks"] = hooks;
+        }
         std::fs::write(
             self.root.join("cyber/config/cyber.jsonc"),
-            json!({
-                "permissions":permissions,
-                "providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}
-            })
-            .to_string(),
+            config.to_string(),
         )
         .unwrap();
     }
@@ -320,6 +365,27 @@ impl Env {
             .collect()
     }
 
+    /// `cyber hooks history --session <session>` over the run's embedded database.
+    #[cfg(unix)]
+    fn hook_history(&self, session: &str) -> Value {
+        let [database] = self.databases().try_into().unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_cyber"))
+            .args(["hooks", "history", "--session", session, "--format", "json"])
+            .env_clear()
+            .env("HOME", self.root.join("home"))
+            .env("CYBER_HOME", self.root.join("cyber"))
+            .env("CYBER_DB", database)
+            .current_dir(&self.repo)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+
     /// Statuses of every background Job in the run's embedded database.
     fn job_statuses(&self) -> Vec<String> {
         let mut statuses = Vec::new();
@@ -367,6 +433,7 @@ fn script(result: Value) -> Script {
     Script {
         result,
         delay: Duration::ZERO,
+        read_first: None,
     }
 }
 
@@ -409,6 +476,7 @@ fn review_waits_for_the_reviewer_job_and_reports_sorted_findings() {
     let provider = Provider::start(Script {
         result: unsorted(),
         delay: Duration::from_millis(1500),
+        read_first: None,
     });
     let env = Env::new(&provider);
     env.write("a.rs", "fn a() { changed() }\n");
@@ -603,6 +671,7 @@ fn review_timeout_cancels_only_the_owned_reviewer_job() {
     let provider = Provider::start(Script {
         result: unsorted(),
         delay: Duration::from_secs(120),
+        read_first: None,
     });
     let env = Env::new(&provider);
     env.write("a.rs", "changed\n");
@@ -723,4 +792,119 @@ fn a_reviewer_refused_at_delegation_admission_fails_the_review() {
     );
     assert!(provider.reviewer_prompt().is_none(), "{detail}");
     assert!(env.job_statuses().is_empty(), "{detail}");
+}
+
+/// A global command hook that discards its event and prints `output`.
+#[cfg(unix)]
+fn hook(output: &str) -> Value {
+    json!({"type":"command","command":format!("cat >/dev/null; printf '%s' '{output}'"),"id":"guard"})
+}
+
+#[cfg(unix)]
+fn read_first(result: Value) -> Script {
+    Script {
+        read_first: Some("a.rs"),
+        ..script(result)
+    }
+}
+
+/// The reviewer launch is a subagent launch: a global SubagentStart deny
+/// refuses it before any reviewer Job or provider request, failing the review.
+#[cfg(unix)]
+#[test]
+fn a_subagent_start_hook_deny_refuses_the_reviewer_launch() {
+    let provider = Provider::start(script(unsorted()));
+    let env = Env::new(&provider);
+    env.hooks(
+        &provider,
+        json!({"SubagentStart":[{"matcher":"reviewer","hooks":[hook(r#"{"decision":"deny","reason":"reviews frozen"}"#)]}]}),
+    );
+    env.write("a.rs", "fn a() { changed() }\n");
+    let output = env.review(&["--format", "json"]);
+    let detail = describe(&output, &provider);
+    assert_eq!(output.status.code(), Some(1), "{detail}");
+    let result = result(&output, &detail);
+    assert_eq!(result["reviewed"], false, "{detail}");
+    assert_eq!(result["findings"], Value::Null, "{detail}");
+    assert!(
+        result["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("blocked by hook guard: reviews frozen")),
+        "{detail}"
+    );
+    assert!(env.job_statuses().is_empty(), "{detail}");
+    assert!(
+        !provider.requests().iter().any(is_reviewer),
+        "the reviewer reached the provider\n{detail}"
+    );
+}
+
+/// The reviewer's own tool calls run through the invoking Location's
+/// PreToolUse hooks: a denied read reaches the reviewer as a tool error, the
+/// review still completes, and the blocked receipt is on the reviewer Session.
+#[cfg(unix)]
+#[test]
+fn a_pre_tool_use_hook_deny_blocks_the_reviewers_read() {
+    let provider = Provider::start(read_first(unsorted()));
+    let env = Env::new(&provider);
+    env.hooks(
+        &provider,
+        json!({"PreToolUse":[{"matcher":"read","hooks":[hook(r#"{"decision":"deny","reason":"no reads"}"#)]}]}),
+    );
+    env.write("a.rs", "fn a() { PRIVATE_BODY() }\n");
+    let output = env.review(&["--format", "json"]);
+    let detail = describe(&output, &provider);
+    assert!(output.status.success(), "{detail}");
+    let result = result(&output, &detail);
+    assert_completed_review(&result, "uncommitted", &detail);
+    assert_eq!(result["counts"]["critical"], 1, "{detail}");
+    let tool = provider
+        .requests()
+        .iter()
+        .filter(|body| is_reviewer(body))
+        .find_map(read_result)
+        .unwrap_or_else(|| panic!("no reviewer follow-up after the read\n{detail}"));
+    assert!(tool.contains("blocked by hook guard: no reads"), "{tool}");
+    assert!(!tool.contains("PRIVATE_BODY"), "{tool}");
+    let child = result["session_id"].as_str().unwrap();
+    let history = env.hook_history(child);
+    let receipts = history["data"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1, "{history}");
+    assert_eq!(receipts[0]["event"], "PreToolUse", "{history}");
+    assert_eq!(receipts[0]["tool_name"], "read", "{history}");
+    assert_eq!(receipts[0]["outcome"], "blocked", "{history}");
+}
+
+/// Host-side target resolution is not a tool call: a PreToolUse hook matching
+/// every tool sees the reviewer's read first and nothing on the parent.
+#[cfg(unix)]
+#[test]
+fn review_target_resolution_runs_no_pre_tool_use_hook() {
+    let provider = Provider::start(read_first(json!({"findings":[],"limitations":[]})));
+    let env = Env::new(&provider);
+    let log = env.root.join("pre-tool-use.jsonl");
+    env.hooks(
+        &provider,
+        json!({"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":format!("{{ cat; echo; }} >> '{}'",log.display()),"id":"recorder"}]}]}),
+    );
+    env.write("a.rs", "fn a() { changed() }\n");
+    let output = env.review(&["--format", "json"]);
+    let detail = describe(&output, &provider);
+    assert!(output.status.success(), "{detail}");
+    let result = result(&output, &detail);
+    let child = result["session_id"].as_str().unwrap();
+    let parent = result["parent_session_id"].as_str().unwrap();
+    let calls: Vec<Value> = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let first = calls.first().unwrap_or_else(|| panic!("{detail}"));
+    assert_eq!(first["tool_name"], "read", "{calls:?}");
+    assert_eq!(first["session_id"], child, "{calls:?}");
+    assert!(
+        calls.iter().all(|call| call["session_id"] != parent),
+        "{calls:?}"
+    );
 }

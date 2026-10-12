@@ -161,6 +161,18 @@ impl Flow {
 
     pub async fn restart_default_runtime(&mut self) {
         self.runtime.shutdown().await;
+        self.replace_default_runtime();
+    }
+
+    /// Simulate a process crash: a fresh runtime takes over without the old one
+    /// settling anything. Keep the returned runtime alive so its tasks stay idle.
+    pub fn crash_default_runtime(&mut self) -> Runtime {
+        let old = self.runtime.clone();
+        self.replace_default_runtime();
+        old
+    }
+
+    fn replace_default_runtime(&mut self) {
         self.f.renew_host(None);
         self.runtime = Runtime::new(RuntimeOptions {
             store: Arc::clone(&self.f.store),

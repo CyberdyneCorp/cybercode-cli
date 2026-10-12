@@ -515,6 +515,7 @@ impl Inner {
                         }],
                         delivery: Delivery::Queue,
                         source: "auto_override".into(),
+                        hook_context: None,
                     },
                 ),
                 event(

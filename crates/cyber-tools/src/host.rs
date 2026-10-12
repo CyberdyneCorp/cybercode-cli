@@ -623,6 +623,14 @@ impl ToolHost for BuiltinHost {
         Box::pin(async move { self.wait_required_mcp(Path::new(&directory), cancel).await })
     }
 
+    fn lifecycle_hooks(
+        &self,
+        event: cyber_server::runtime::LifecycleHook,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::LifecycleVerdict, String>> {
+        Box::pin(self.runtime_lifecycle_hooks(event, cancel))
+    }
+
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let lsp = async {
@@ -908,6 +916,7 @@ impl ToolHost for BuiltinHost {
                 agent,
                 attachments: Vec::new(),
                 max_steps: None,
+                hook_context: None,
             },
             cancel,
         )
@@ -931,6 +940,7 @@ impl ToolHost for BuiltinHost {
                 agent,
                 attachments,
                 max_steps,
+                hook_context,
             } = request;
             if max_steps == Some(0) {
                 return Err("Subtask max_steps must be positive".into());
@@ -994,7 +1004,7 @@ impl ToolHost for BuiltinHost {
                 inv: &inv,
                 cancel,
             };
-            let output = tools::agent::run_with_skill(&ctx, true, skill_command)
+            let output = tools::agent::run_with_skill(&ctx, true, skill_command, hook_context)
                 .await
                 .map_err(|e| match e {
                     ToolError::Failed(message) => message,

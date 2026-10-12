@@ -103,7 +103,7 @@ impl Runtime {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        self.start_delegation(
+        self.begin_delegation(
             session,
             &id,
             UserSubtask {
@@ -116,7 +116,12 @@ impl Runtime {
                 prompt,
                 attachments: Vec::new(),
                 max_steps: None,
+                hook_context: None,
             },
+            // The forwarded row already passed UserPromptSubmit at admission.
+            super::delegations::Origin::ForwardedSkill,
+            None,
+            None,
         )
         .await?;
         Ok(true)
@@ -154,20 +159,21 @@ impl Inner {
         if forks.is_empty() {
             return Ok(false);
         }
-        self.commit_locked(
-            state,
-            forks
-                .iter()
-                .map(|row| {
-                    event(
-                        SKILL_FORWARDED,
-                        &Promoted {
-                            message_id: row.message_id.clone(),
-                        },
-                    )
-                })
-                .collect(),
-        )?;
+        let mut events = Vec::new();
+        for row in &forks {
+            // UserPromptSubmit context lands in the parent with the forwarding, so
+            // the forked child inherits it while the private skill body stays out.
+            if let Some(text) = state.hook_contexts.get(&row.message_id) {
+                events.push(super::drain::hook_context(text.clone()));
+            }
+            events.push(event(
+                SKILL_FORWARDED,
+                &Promoted {
+                    message_id: row.message_id.clone(),
+                },
+            ));
+        }
+        self.commit_locked(state, events)?;
         Ok(true)
     }
 

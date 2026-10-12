@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use super::{Tool, ToolError, def, failed, text};
 use crate::host::Ctx;
+use crate::lifecycle_hooks::SubagentStop;
 use crate::permissions::{Decision, Request};
 use crate::subagents::ChildGuard;
 
@@ -37,6 +38,9 @@ impl Tool for Agent {
 
 struct Spawn {
     skill_command: Option<cyber_server::runtime::SkillCommand>,
+    /// UserPromptSubmit context of a user delegation, admitted with a new child's
+    /// prompt. User delegations never resume a child.
+    hook_context: Option<String>,
     authority: Option<cyber_server::runtime::AdmissionAuthority>,
     attachments: Vec<cyber_llm::Content>,
     max_steps: Option<u32>,
@@ -53,6 +57,8 @@ struct Spawn {
     result_bytes: usize,
     max_depth: u64,
     max_concurrent: usize,
+    /// Pre-assigned (or resumed) child Session ID, known to SubagentStart.
+    child_id: String,
 }
 
 fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, ToolError> {
@@ -135,6 +141,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
     }
     Ok(Spawn {
         skill_command: None,
+        hook_context: None,
         authority: None,
         attachments: Vec::new(),
         max_steps: None,
@@ -151,6 +158,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         result_bytes: setting(&config, "result_max_bytes", 16384)? as usize,
         max_depth: setting(&config, "max_depth", 2)?,
         max_concurrent: setting(&config, "max_concurrent", 8)? as usize,
+        child_id: resume.map_or_else(|| cyber_core::ids::new_id("ses"), |info| info.id.clone()),
     })
 }
 
@@ -218,7 +226,7 @@ async fn effective_parent(runtime: &Runtime, session: &str) -> Result<SessionInf
 }
 
 pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, ToolError> {
-    run_with_skill(ctx, user_requested, None).await
+    run_with_skill(ctx, user_requested, None, None).await
 }
 
 pub(crate) async fn fork_skill(
@@ -262,6 +270,7 @@ pub(crate) async fn fork_skill(
             output_schema: None,
             request: None,
         }),
+        None,
     )
     .await
 }
@@ -270,6 +279,7 @@ pub(crate) async fn run_with_skill(
     ctx: &Ctx<'_>,
     user_requested: bool,
     skill_command: Option<cyber_server::runtime::SkillCommand>,
+    hook_context: Option<String>,
 ) -> Result<String, ToolError> {
     let runtime = ctx
         .host
@@ -289,6 +299,7 @@ pub(crate) async fn run_with_skill(
     };
     let mut spawn = configured(ctx, resume.as_ref())?;
     spawn.skill_command = skill_command;
+    spawn.hook_context = hook_context;
     spawn.authority = Some(authority);
     spawn.user_requested = user_requested;
     user_options(&mut spawn, &ctx.inv.input)?;
@@ -328,19 +339,7 @@ pub(crate) async fn run_with_skill(
             spawn.max_depth
         )));
     }
-    let request = delegation_request(ctx, &spawn);
-    if user_requested {
-        if let Decision::Deny(reason) = ctx.policy.user_delegation(&request) {
-            return Err(failed(format!("Permission denied: {reason}")));
-        }
-    } else {
-        ctx.authorize(
-            request,
-            vec![spawn.profile.name.clone()],
-            json!({"agent":spawn.profile.name, "description":spawn.description}),
-        )
-        .await?;
-    }
+    Box::pin(authorize_spawn(ctx, &spawn)).await?;
     let execution = if let Some(child) = &spawn.resume {
         let owner = runtime
             .claim_child_execution(&parent.id, &child.id)
@@ -382,6 +381,64 @@ pub(crate) async fn run_with_skill(
             execute_child(ctx, runtime, parent, spawn, permit, execution),
         )
         .await
+}
+
+/// Authorize the delegation, then let SubagentStart refuse it before any child effect.
+async fn authorize_spawn(ctx: &Ctx<'_>, spawn: &Spawn) -> Result<(), ToolError> {
+    let request = delegation_request(ctx, spawn);
+    if spawn.user_requested {
+        if let Decision::Deny(reason) = ctx.policy.user_delegation(&request) {
+            return Err(failed(format!("Permission denied: {reason}")));
+        }
+    } else {
+        ctx.authorize(
+            request,
+            vec![spawn.profile.name.clone()],
+            json!({"agent":spawn.profile.name, "description":spawn.description}),
+        )
+        .await?;
+    }
+    subagent_start(ctx, spawn).await
+}
+
+/// Dispatch SubagentStart after authorization and before any child effect.
+async fn subagent_start(ctx: &Ctx<'_>, spawn: &Spawn) -> Result<(), ToolError> {
+    let name = spawn.name.clone().or_else(|| {
+        spawn
+            .resume
+            .as_ref()
+            .and_then(|info| info.subagent_name.clone())
+    });
+    let fields = json!({
+        "agent_type": spawn.profile.name,
+        "subagent_name": name,
+        "description": spawn.description,
+        "fork": spawn.fork,
+        "background": spawn.background,
+        "isolation": if spawn.isolation { "worktree" } else { "none" },
+        "resume": spawn.resume.is_some(),
+        "child_session_id": spawn.child_id,
+        "user_requested": spawn.user_requested,
+        "skill": spawn.skill_command.as_ref().map(|skill| skill.activation.name.clone()),
+    });
+    ctx.host
+        .subagent_start_hooks(
+            crate::tool_hooks::hook_identity(ctx.inv),
+            &spawn.profile.name,
+            fields.as_object().cloned().unwrap_or_default(),
+            ctx.cancel.clone(),
+        )
+        .await
+}
+
+fn subagent_stop(ctx: &Ctx<'_>, spawn: &Spawn) -> SubagentStop {
+    SubagentStop {
+        host: ctx.host.weak.clone(),
+        identity: crate::tool_hooks::hook_identity(ctx.inv),
+        agent_type: spawn.profile.name.clone(),
+        child_session_id: spawn.child_id.clone(),
+        subagent_name: spawn.name.clone(),
+    }
 }
 
 async fn prepare_child_admission(
@@ -480,11 +537,7 @@ async fn execute_child(
 ) -> Result<String, ToolError> {
     let mut spawn = spawn;
     let reservation = reserve_child(ctx, &runtime, &parent, &mut spawn).await?;
-    let id = spawn
-        .resume
-        .as_ref()
-        .map(|info| info.id.clone())
-        .unwrap_or_else(|| cyber_core::ids::new_id("ses"));
+    let id = spawn.child_id.clone();
     let execution = match execution {
         Some(execution) => execution,
         None => runtime
@@ -504,33 +557,36 @@ async fn execute_child(
             return Err(error);
         }
     };
-    let weak = runtime.downgrade();
-    let bytes = spawn.result_bytes;
-    let dir = ctx.host.opts.tool_output_dir.clone();
-    let structured = spawn.output_schema.is_some();
+    let run = ChildRun {
+        stop: subagent_stop(ctx, &spawn),
+        worktree,
+        weak: runtime.downgrade(),
+        id: id.clone(),
+        prompt,
+        structured: spawn.output_schema.is_some(),
+        bytes: spawn.result_bytes,
+        dir: ctx.host.opts.tool_output_dir.clone(),
+    };
     if spawn.background {
-        let run = ChildRun {
-            worktree,
-            weak,
-            id,
-            prompt,
-            structured,
-            bytes,
-            dir,
-        };
         return handoff_background(&runtime, &parent, spawn, reservation, guard, run).await;
     }
     drop(reservation);
-    let result = tokio::select! {
-        biased;
-        _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
-        result = finish_child(&weak, &id, &prompt, structured, bytes, dir) => result,
-    };
-    let result = attach_worktree_result(result, worktree.as_ref(), ctx.cancel.clone()).await;
+    let result = Box::pin(finish_foreground(ctx, run)).await;
     guard
         .settle_foreground(&runtime, &id, result.is_err())
         .await;
     result
+}
+
+/// Await the child's answer, report its worktree, then fire SubagentStop at handback.
+async fn finish_foreground(ctx: &Ctx<'_>, run: ChildRun) -> Result<String, ToolError> {
+    let result = tokio::select! {
+        biased;
+        _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
+        result = finish_child(&run.weak, &run.id, &run.prompt, run.structured, run.bytes, run.dir) => result,
+    };
+    let result = attach_worktree_result(result, run.worktree.as_ref(), ctx.cancel.clone()).await;
+    run.stop.handback(result, ctx.cancel.clone()).await
 }
 
 async fn attach_worktree_result(
@@ -552,6 +608,7 @@ async fn attach_worktree_result(
 }
 
 struct ChildRun {
+    stop: SubagentStop,
     worktree: Option<crate::worktrees::ChildWorktree>,
     weak: WeakRuntime,
     id: String,
@@ -684,6 +741,11 @@ async fn handoff_background(
             tokio_util::sync::CancellationToken::new(),
         )
         .await;
+        let result = Box::pin(
+            run.stop
+                .handback(result, tokio_util::sync::CancellationToken::new()),
+        )
+        .await;
         guard.settle(result.is_err()).await;
         result
             .and_then(|text| serde_json::from_str(&text).map_err(|e| failed(e.to_string())))
@@ -807,7 +869,7 @@ async fn create_child(
     admission.source = "session".into();
     admission.parts.extend(spawn.attachments.clone());
     let receipt = runtime
-        .admit(id, admission)
+        .admit_with_hook_context(id, admission, spawn.hook_context.clone())
         .await
         .map_err(|e| failed(e.to_string()))?;
     Ok((receipt.message_id, worktree))

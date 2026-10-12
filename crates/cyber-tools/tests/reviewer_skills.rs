@@ -349,6 +349,12 @@ fn user_fork_flow(agent: Option<&str>, model: Option<&'static str>) -> Flow {
 
 /// Admits `/audit` as a user command and waits for its forked child Job.
 async fn run_user_fork(flow: &Flow, parent: &str) -> cyber_server::runtime::Job {
+    admit_user_fork(flow, parent).await;
+    completed(flow, parent).await
+}
+
+/// Admits and releases `/audit` as the user command `msg_fork_history`.
+async fn admit_user_fork(flow: &Flow, parent: &str) {
     let source = flow.runtime.state(parent).await.unwrap();
     let turn = cyber_server::runtime::TurnContext {
         session_id: parent.into(),
@@ -372,7 +378,6 @@ async fn run_user_fork(flow: &Flow, parent: &str) -> cyber_server::runtime::Job 
         .release(parent, "msg_fork_history", Delivery::Queue)
         .await
         .unwrap();
-    completed(flow, parent).await
 }
 
 /// The forked child's provider request, found by its private skill body.
@@ -398,4 +403,136 @@ async fn user_forked_skill_with_named_agent_inherits_parent_history() {
 #[tokio::test]
 async fn user_forked_skill_with_named_agent_and_no_model_inherits_parent_model() {
     assert_user_fork_inherits_parent_history(Some("reviewer"), "reviewer", None).await;
+}
+
+/// A global command hook that answers every event with `output`.
+#[cfg(unix)]
+fn hook(output: &str) -> serde_json::Value {
+    json!({"type":"command","command":format!("cat >/dev/null; printf '%s' '{output}'"),"id":"guard"})
+}
+
+/// The reviewer fork of `/audit` (declared `agent: reviewer`, `model: test/review`).
+#[cfg(unix)]
+fn reviewer_fork_flow(reviewer: Vec<Vec<cyber_llm::adapters::ScriptStep>>) -> Flow {
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        vec![text("handback handled"), text("parent idle")],
+        false,
+        Arc::new(NoSnapshots),
+        vec![("test/review", reviewer)],
+    );
+    flow.f.set_config(json!({"permissions":"allow"}));
+    flow.f.write(
+        ".cyber/skills/audit/SKILL.md",
+        "---\nname: audit\ndescription: Audit\ncontext: fork\nagent: reviewer\nmodel: test/review\n---\nPRIVATE FORK BODY\n",
+    );
+    flow
+}
+
+#[cfg(unix)]
+fn receipts(
+    flow: &Flow,
+    session: &str,
+    event: &str,
+) -> Vec<cyber_server::runtime::HookExecutionRecord> {
+    flow.runtime
+        .hook_executions(session, 50)
+        .unwrap()
+        .into_iter()
+        .filter(|receipt| receipt.event == event)
+        .collect()
+}
+
+/// The reviewer's own tool calls run through the invoking Location's
+/// PreToolUse hooks; bypass Mode does not skip a hook deny.
+#[cfg(unix)]
+#[tokio::test]
+async fn pre_tool_use_deny_blocks_a_user_forked_reviewers_read_even_in_bypass() {
+    let flow = reviewer_fork_flow(vec![
+        call("read", "read", json!({"path":"notes.txt"})),
+        text("findings without evidence"),
+    ]);
+    flow.f.write("notes.txt", "PRIVATE NOTE CONTENT");
+    flow.f.global_hooks(json!({"PreToolUse":[{"matcher":"read","hooks":[hook(r#"{"decision":"deny","reason":"no reads"}"#)]}]}));
+    let parent = flow.session("bypass").await;
+    let job = run_user_fork(&flow, &parent).await;
+    assert_eq!(job.status, JobStatus::Completed);
+    let child = flow.runtime.state(&job.child_id).await.unwrap();
+    assert_eq!(child.info.agent, "reviewer");
+    assert_eq!(
+        child.calls["read"].status,
+        cyber_server::runtime::CallStatus::Error
+    );
+    let requests = flow.requests("test/review");
+    assert_eq!(requests.len(), 2);
+    let followup = format!("{:?}", requests[1].messages);
+    assert!(
+        followup.contains("blocked by hook guard: no reads"),
+        "{followup}"
+    );
+    assert!(!followup.contains("PRIVATE NOTE CONTENT"), "{followup}");
+    let blocked = receipts(&flow, &job.child_id, "PreToolUse");
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(
+        blocked[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Blocked)
+    );
+    flow.settle(&parent).await;
+    flow.runtime.shutdown().await;
+}
+
+/// SubagentStart sees the reviewer launch of a user fork and refuses it before
+/// any child Session or Job exists.
+#[cfg(unix)]
+#[tokio::test]
+async fn subagent_start_deny_refuses_a_user_forked_reviewer_before_launch() {
+    let flow = reviewer_fork_flow(vec![text("never reviewed")]);
+    flow.f.global_hooks(json!({"SubagentStart":[{"matcher":"reviewer","hooks":[hook(r#"{"decision":"deny","reason":"reviews frozen"}"#)]}]}));
+    let parent = flow.session("bypass").await;
+    admit_user_fork(&flow, &parent).await;
+    let id =
+        cyber_server::runtime::Runtime::skill_command_delegation_id(&parent, "msg_fork_history");
+    let delegation = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Some(data) = flow.runtime.delegation(&parent, &id).unwrap()
+                && data.status == cyber_server::runtime::DelegationStatus::Failed
+            {
+                break data;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(delegation.job_id.is_none());
+    assert!(
+        delegation
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("blocked by hook guard: reviews frozen")),
+        "{:?}",
+        delegation.error
+    );
+    flow.settle(&parent).await;
+    let children: i64 = flow
+        .f
+        .store
+        .read(|conn| {
+            Ok(conn.query_row(
+                "SELECT count(*) FROM session WHERE parent_id IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(children, 0);
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert!(flow.requests("test/review").is_empty());
+    let started = receipts(&flow, &parent, "SubagentStart");
+    assert_eq!(started.len(), 1);
+    assert_eq!(
+        started[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Blocked)
+    );
+    flow.runtime.shutdown().await;
 }

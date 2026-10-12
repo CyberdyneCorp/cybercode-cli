@@ -11,6 +11,7 @@ pub mod hook_mcp;
 pub mod hook_prompt;
 mod hook_reports;
 mod host;
+mod lifecycle_hooks;
 pub mod lsp;
 pub mod mcp;
 mod memory_context;

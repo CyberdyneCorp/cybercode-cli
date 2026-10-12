@@ -108,6 +108,7 @@ fn request() -> UserSubtask {
         agent: None,
         attachments: vec![],
         max_steps: None,
+        hook_context: None,
     }
 }
 async fn source(runtime: &Runtime, h: &Harness) -> String {

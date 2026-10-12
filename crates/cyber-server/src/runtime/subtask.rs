@@ -13,6 +13,8 @@ pub struct UserSubtask {
     pub agent: Option<String>,
     pub attachments: Vec<cyber_llm::Content>,
     pub max_steps: Option<u32>,
+    /// Internal UserPromptSubmit context for the child prompt; public request bodies cannot set this.
+    pub hook_context: Option<String>,
 }
 
 impl Runtime {
@@ -35,6 +37,7 @@ impl Runtime {
                 agent,
                 attachments: Vec::new(),
                 max_steps: None,
+                hook_context: None,
             },
         )
         .await

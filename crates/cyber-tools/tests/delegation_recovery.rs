@@ -14,6 +14,7 @@ fn request() -> UserSubtask {
         agent: Some("general".into()),
         attachments: vec![],
         max_steps: Some(2),
+        hook_context: None,
     }
 }
 

@@ -11,6 +11,7 @@ fn request(prompt: &str) -> UserSubtask {
         agent: Some("general".into()),
         attachments: vec![],
         max_steps: Some(2),
+        hook_context: None,
     }
 }
 async fn settled(flow: &Flow, parent: &str, id: &str) -> Delegation {

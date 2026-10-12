@@ -32,9 +32,16 @@ const MAX_PARALLEL: usize = 8;
 pub(crate) enum TurnEnd {
     Tools,
     Done,
+    /// The final step-limit Turn: the Drain ends without Stop hooks.
+    Limited,
     Overflow,
     Stopped,
     SelectionChanged,
+    /// A provider error already published as `LiveEvent::Error`.
+    Failed {
+        kind: String,
+        message: String,
+    },
 }
 
 struct PreparedModel {
@@ -46,6 +53,9 @@ struct PreparedModel {
 pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: CancellationToken) {
     if let Ok(handle) = inner.handle(&id).await {
         *handle.auto_blocks.lock().await = 0;
+        handle
+            .stop_continuations
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
     let mut forced = forced;
     loop {
@@ -63,11 +73,7 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
         };
         let succeeded = failure.is_none();
         if let Some((kind, message)) = failure {
-            inner.bus.publish(LiveEvent::Error {
-                session_id: id.clone(),
-                kind,
-                message,
-            });
+            publish_failure(&inner, &id, kind, message, &cancel).await;
         }
         inner.settle_user_child(&id, &cancel, succeeded).await;
         if !inner.finish_pass(&id, &cancel) {
@@ -87,6 +93,24 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
     }
 }
 
+/// Publish a failed Drain, then run observational StopFailure hooks.
+async fn publish_failure(
+    inner: &Arc<Inner>,
+    id: &str,
+    kind: String,
+    message: String,
+    cancel: &CancellationToken,
+) {
+    inner.bus.publish(LiveEvent::Error {
+        session_id: id.into(),
+        kind: kind.clone(),
+        message: message.clone(),
+    });
+    if let Ok(handle) = inner.handle(id).await {
+        inner.stop_failure(&handle, &kind, &message, cancel).await;
+    }
+}
+
 fn error_kind(e: &RuntimeError) -> &'static str {
     match e {
         RuntimeError::BudgetExceeded { .. } => "budget_exceeded",
@@ -95,6 +119,7 @@ fn error_kind(e: &RuntimeError) -> &'static str {
         RuntimeError::Model(_) => "model",
         RuntimeError::Compaction(_) => "compaction_failed",
         RuntimeError::Store(_) => "storage",
+        RuntimeError::Hook(_) => "hook",
         _ => "runtime",
     }
 }
@@ -127,8 +152,18 @@ async fn pass_owned(
     let mut continue_tools = false;
     let mut first = forced;
     let mut overflow_retried = false;
+    let mut answered = false;
     loop {
         if !eligible(handle, continue_tools, first, cancel).await {
+            // Stop runs only after a model answer, never for an interrupted or empty pass.
+            if answered && inner.stop_hooks(handle, cancel).await? {
+                answered = false;
+                continue;
+            }
+            return Ok(());
+        }
+        // SessionStart and the required-MCP wait precede any promotion, forwarding included.
+        if !prepare_location(inner, handle, cancel).await? {
             return Ok(());
         }
         if inner
@@ -136,9 +171,8 @@ async fn pass_owned(
             .await?
         {
             first = false;
-            if !eligible(handle, continue_tools, first, cancel).await {
-                return Ok(());
-            }
+            // Re-check from the top so an answered pass still runs Stop before idling.
+            continue;
         }
         let Some(resolved) = prepare_pass(inner, handle, continue_tools, first, cancel).await?
         else {
@@ -148,7 +182,15 @@ async fn pass_owned(
         match inner.run_turn(handle, &resolved, cancel).await? {
             TurnEnd::SelectionChanged => first = true,
             TurnEnd::Tools => continue_tools = true,
-            TurnEnd::Done => continue_tools = false,
+            TurnEnd::Done => {
+                continue_tools = false;
+                answered = true;
+            }
+            // A Stop continuation must not buy turns past the step ceiling.
+            TurnEnd::Limited => {
+                continue_tools = false;
+                answered = false;
+            }
             TurnEnd::Overflow if inner.options.compaction.auto && !overflow_retried => {
                 overflow_retried = true;
                 tokio::select! {
@@ -164,6 +206,10 @@ async fn pass_owned(
                 ));
             }
             TurnEnd::Stopped => return Ok(()),
+            TurnEnd::Failed { kind, message } => {
+                inner.stop_failure(handle, &kind, &message, cancel).await;
+                return Ok(());
+            }
         }
     }
 }
@@ -176,9 +222,6 @@ async fn prepare_pass(
     first: bool,
     cancel: &CancellationToken,
 ) -> Result<Option<PreparedModel>, RuntimeError> {
-    if !prepare_location(inner, handle, cancel).await? {
-        return Ok(None);
-    }
     let (resolved, promoted) = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Ok(None),
@@ -218,6 +261,7 @@ async fn prepare_location(
             _ = cancel.cancelled() => return Ok(false),
             result = inner.tools.wait_for_required_mcp(&info, cancel.child_token()) => result?,
         }
+        inner.session_start(handle, cancel).await?;
     }
     Ok(true)
 }
@@ -341,10 +385,14 @@ async fn promote(
     if ids.is_empty() {
         return Ok(false);
     }
-    let events = ids
-        .into_iter()
-        .map(|message_id| event(PROMOTED, &Promoted { message_id }))
-        .collect();
+    let mut events = Vec::new();
+    for message_id in ids {
+        // UserPromptSubmit context lands immediately before its prompt in the same commit.
+        if let Some(text) = state.hook_contexts.get(&message_id) {
+            events.push(hook_context(text.clone()));
+        }
+        events.push(event(PROMOTED, &Promoted { message_id }));
+    }
     inner.commit_locked(&mut state, events)?;
     let wants_title = state.info.default_title && state.info.parent_id.is_none();
     drop(state);
@@ -356,6 +404,18 @@ async fn promote(
         inner.spawn_title(Arc::clone(handle));
     }
     Ok(true)
+}
+
+/// A Mid-Conversation System Message carrying hook-provided context.
+pub(crate) fn hook_context(text: String) -> cyber_store::NewEvent {
+    event(
+        SYSTEM_ADDED,
+        &SystemAdded {
+            message_id: cyber_core::ids::new_id("msg"),
+            text,
+            reason: "hook_context".into(),
+        },
+    )
 }
 
 struct Accum {
@@ -562,7 +622,11 @@ impl Inner {
         };
         self.end_step(handle, &message_id, &acc, resolved).await?;
         if acc.calls.is_empty() {
-            return Ok(TurnEnd::Done);
+            return Ok(if limited {
+                TurnEnd::Limited
+            } else {
+                TurnEnd::Done
+            });
         }
         let cancelled = self
             .execute_tools(
@@ -581,7 +645,7 @@ impl Inner {
         Ok(match (cancelled, limited) {
             (true, _) => TurnEnd::Stopped,
             // The step-limit Turn is final: its tool calls were refused and the Drain ends.
-            (false, true) => TurnEnd::Done,
+            (false, true) => TurnEnd::Limited,
             (false, false) => TurnEnd::Tools,
         })
     }
@@ -701,10 +765,12 @@ impl Inner {
                         kind: kind_name(e.kind).into(),
                         message: e.message.clone(),
                     });
-                    let end = self
-                        .stop_step(handle, message_id, acc, kind_name(e.kind), &e.message)
+                    self.stop_step(handle, message_id, acc, kind_name(e.kind), &e.message)
                         .await?;
-                    return Ok(Err(end));
+                    return Ok(Err(TurnEnd::Failed {
+                        kind: kind_name(e.kind).into(),
+                        message: e.message,
+                    }));
                 }
                 Some(Some(Ok(event))) => {
                     if matches!(&event, LlmEvent::ToolCallDone(call) if acc.calls.iter().any(|previous| previous.id == call.id))
@@ -851,12 +917,13 @@ impl Inner {
         if e.kind == ErrorKind::ContextOverflow {
             return Ok(TurnEnd::Overflow);
         }
+        let (kind, message) = (kind_name(e.kind).to_string(), e.to_string());
         self.bus.publish(LiveEvent::Error {
             session_id,
-            kind: kind_name(e.kind).into(),
-            message: e.to_string(),
+            kind: kind.clone(),
+            message: message.clone(),
         });
-        Ok(TurnEnd::Stopped)
+        Ok(TurnEnd::Failed { kind, message })
     }
 
     /// Keep partial output, fail the step, and settle calls that never ran as interrupted.

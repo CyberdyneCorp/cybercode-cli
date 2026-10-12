@@ -63,6 +63,27 @@ fn valid(id: &str) -> Result<(), RuntimeError> {
     }
     Ok(())
 }
+/// Who asked for a delegation decides its host requirement and UserPromptSubmit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Origin {
+    /// Public `/delegations/{op}` (TUI `@agent`, `cyber exec`).
+    User,
+    /// Public `/subtask`, owned by its caller until the Job is returned.
+    OwnedUser,
+    /// A forked skill row whose admission already ran UserPromptSubmit.
+    ForwardedSkill,
+}
+
+impl Origin {
+    fn requires_durable_host(self) -> bool {
+        self != Self::OwnedUser
+    }
+
+    fn runs_prompt_hooks(self) -> bool {
+        self != Self::ForwardedSkill
+    }
+}
+
 fn active(status: DelegationStatus) -> bool {
     matches!(
         status,
@@ -136,7 +157,7 @@ impl Runtime {
         id: &str,
         request: UserSubtask,
     ) -> Result<Delegation, RuntimeError> {
-        self.begin_delegation(parent, id, request, true, None, None)
+        self.begin_delegation(parent, id, request, Origin::User, None, None)
             .await
             .map(|(data, _)| data)
     }
@@ -149,18 +170,25 @@ impl Runtime {
         owner: CancellationToken,
         reply: super::subtask::ReplyChannel,
     ) -> Result<Arc<Control>, RuntimeError> {
-        self.begin_delegation(parent, id, request, false, Some(owner), Some(reply))
-            .await?
-            .1
-            .ok_or_else(|| RuntimeError::Corrupt("Missing new subtask owner".into()))
+        self.begin_delegation(
+            parent,
+            id,
+            request,
+            Origin::OwnedUser,
+            Some(owner),
+            Some(reply),
+        )
+        .await?
+        .1
+        .ok_or_else(|| RuntimeError::Corrupt("Missing new subtask owner".into()))
     }
 
-    async fn begin_delegation(
+    pub(super) async fn begin_delegation(
         &self,
         parent: &str,
         id: &str,
         mut request: UserSubtask,
-        require_durable_host: bool,
+        origin: Origin,
         owner: Option<CancellationToken>,
         reply: Option<super::subtask::ReplyChannel>,
     ) -> Result<(Delegation, Option<Arc<Control>>), RuntimeError> {
@@ -168,6 +196,7 @@ impl Runtime {
         if request.prompt.trim().is_empty()
             || request.max_steps == Some(0)
             || request.admission_id.is_some()
+            || request.hook_context.is_some()
         {
             return Err(RuntimeError::Invalid(
                 "Invalid delegation prompt, ceiling or internal identity".into(),
@@ -178,10 +207,10 @@ impl Runtime {
             Some(owner) => authority.with_cancellation(owner.clone()),
             None => authority,
         };
-        let _open = self.inner.open().await?;
+        let open = self.inner.open().await?;
         let state = self.state(parent).await?;
         let durable_host = self.inner.tools.durable_user_delegation();
-        if require_durable_host && !durable_host {
+        if origin.requires_durable_host() && !durable_host {
             return Err(RuntimeError::Invalid(
                 "Host does not support durable user delegation".into(),
             ));
@@ -195,6 +224,18 @@ impl Runtime {
             "{:x}",
             Sha256::digest(serde_json::to_vec(&body).expect("serializable request"))
         );
+        if let Some(existing) = self.existing_delegation(parent, id, &hash)? {
+            return Ok((existing, None));
+        }
+        // A deny leaves no Delegation record, Job or child; an exact retry skips it.
+        // Hook runners re-enter the lifecycle guard, so it is released across dispatch
+        // (a queued shutdown writer would otherwise deadlock) and rechecked after.
+        drop(open);
+        if origin.runs_prompt_hooks() {
+            request.hook_context = self.delegation_prompt_hooks(parent, &request).await?;
+        }
+        let _open = self.inner.open().await?;
+        self.inner.ensure_admission_open(parent)?;
         if let Some(existing) = self.existing_delegation(parent, id, &hash)? {
             return Ok((existing, None));
         }
@@ -311,6 +352,20 @@ impl Runtime {
         owners.push(worker);
         Ok((record.data, Some(published)))
     }
+    /// UserPromptSubmit for the user-written delegation prompt and attachments.
+    async fn delegation_prompt_hooks(
+        &self,
+        parent: &str,
+        request: &UserSubtask,
+    ) -> Result<Option<String>, RuntimeError> {
+        let handle = self.inner.handle(parent).await?;
+        let mut parts = vec![cyber_llm::Content::Text {
+            text: request.prompt.clone(),
+        }];
+        parts.extend(request.attachments.iter().cloned());
+        self.inner.user_prompt_hooks(&handle, &parts, "user").await
+    }
+
     fn existing_delegation(
         &self,
         parent: &str,
