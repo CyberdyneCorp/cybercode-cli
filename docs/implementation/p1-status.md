@@ -855,7 +855,7 @@ Current work adds local LSP/formatter discovery and CLI status, while complete o
 
 Earlier M1.2 work connects agent model/variant defaults, starting Mode, step limits, request options, Turn identity, child permission inheritance and parent-client approval routing, and adds fresh foreground/background child execution with owned cancellation, in-process FIFO admission, schema-governed typed results, durable task handback/controls and local resume by child name/ID with exclusive result ownership and forked child context, including explicit user /subtask command/API/SDK admission. Fresh isolated foreground/background children now use managed native creation/setup, durable checkout bindings and branch/file/diff result metadata. Clean checkout removal uses activity fencing; retained-child resume verifies the same identity after restart. Acknowledged clean-removed children recreate with a fresh durable binding and setup-readiness gate before inference. No P1 milestone is fully accepted. The mandatory native Windows repository step, helper protocol, long-root inspection and actual isolated-child execution now pass at 3d2ea39; the complete Windows job and full CI matrix pass for that revision; complete Windows confinement, public worktree lifecycle, child orchestration and the later P1 milestones remain required by the goal.
 
-The [acceptance audit](p1-acceptance-audit.md) enumerates all 225 canonical P1 contracts and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
+The [acceptance audit](p1-acceptance-audit.md) enumerates all 212 P1 contracts in scope (editor integration moved to P3 with `defer-editor-integration`) and the remaining delivery areas. No milestone is accepted. Production auto-mode tool classification is implemented locally; native acceptance of ancestor review and complete permission/native enforcement remain priorities.
 
 
 
@@ -1321,7 +1321,7 @@ This is a soft observation window over the selected Session subtree, including o
 - [ ] M1.2: Subagents, schema validation, worktree isolation, background results and concurrency limits.
 - [ ] M1.3: Hooks, out-of-process plugin host, MCP authentication/search/resources/prompts and complete skills support.
 - [ ] M1.4: Memory, code intelligence, formatters and isolated browser verification.
-- [ ] M1.5: Setup import, ACP and VS Code integration.
+- [ ] M1.5: Setup import. ACP and VS Code integration moved to P3 (`defer-editor-integration`).
 - [ ] Remaining P1 contracts: local web client, providers/credentials, API and SDK surfaces, observability/budgets, configuration, exec and TUI functionality.
 - [ ] Exit evidence: native Windows escape tests, reference import compatibility, versioned coding benchmarks and internal quality gate.
 

@@ -47,7 +47,7 @@ Windows CI run 38117417472 (on `7e7a33a`) exposed regressions from the `cyber re
 
 ## Scope and working constraints
 
-All 225 P1 requirements across M1.1–M1.5 remain in scope; no P1 milestone is accepted. Refer to the tasks for [M1.1](../../openspec/changes/implement-m1-1-sandbox-modes/tasks.md), [M1.2](../../openspec/changes/implement-m1-2-subagents-worktrees/tasks.md), [M1.3](../../openspec/changes/implement-m1-3-extensibility/tasks.md), [M1.4](../../openspec/changes/implement-m1-4-memory-intelligence/tasks.md) and [M1.5](../../openspec/changes/implement-m1-5-migration-editor/tasks.md).
+All 212 P1 requirements across M1.1–M1.5 remain in scope (the 13 editor-integration requirements moved to P3 with `defer-editor-integration`); no P1 milestone is accepted. Refer to the tasks for [M1.1](../../openspec/changes/implement-m1-1-sandbox-modes/tasks.md), [M1.2](../../openspec/changes/implement-m1-2-subagents-worktrees/tasks.md), [M1.3](../../openspec/changes/implement-m1-3-extensibility/tasks.md), [M1.4](../../openspec/changes/implement-m1-4-memory-intelligence/tasks.md) and [M1.5](../../openspec/changes/implement-m1-5-migration-editor/tasks.md).
 
 P0's full local-model baseline, including the 50-turn coding task, remains independently open. Preserve models, services, evaluations, databases, backups and project artifacts.
 

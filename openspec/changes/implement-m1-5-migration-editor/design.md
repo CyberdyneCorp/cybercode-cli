@@ -10,7 +10,7 @@ Map known native tool actions explicitly. The subsequent scoped-rule implementat
 
 Test actual engine decisions using the converted JSON array. Pure conversion does not confer trust, approve tools or permit source execution. Later import review must show every proposed change and remain idempotent and safe against intervening edits. Literal credential conversion and source/provenance reports remain mandatory before accepting full import.
 
-ACP, editor buffer authority, per-Session editor MCP and VS Code are separate required delivery tasks, sharing the server runtime rather than duplicating execution.
+ACP, editor buffer authority, per-Session editor MCP and VS Code are separate required delivery tasks, sharing the server runtime rather than duplicating execution. They moved to P3 with `defer-editor-integration` and are not part of this change's P1 scope.
 
 ## Validation
 
