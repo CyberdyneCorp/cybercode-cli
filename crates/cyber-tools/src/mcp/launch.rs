@@ -11,9 +11,11 @@ use cyber_sandbox::proxy::{Decide, Proxy};
 use cyber_sandbox::{Launch, NetworkMode, Policy, SandboxConfig};
 use serde_json::Value;
 
-use super::headers_command::HeadersCommand;
+use super::headers_command::{CommandFailure, HeadersCommand};
+use super::oauth::{McpCredentialStore, TokenSource};
+use super::remote_auth::{HeaderRefresh, RemoteAuth};
 use super::{
-    ConnectionError, DiscoveredTool, HeaderSet, HttpConnection, IdleUpdate, McpError,
+    ConnectionError, DiscoveredTool, HttpConnection, HttpFailure, IdleUpdate, McpError,
     RemoteTransport, ServerSelection, StderrCapture, StdioConnection, authorize_server,
 };
 use crate::HookCommandProcess;
@@ -26,6 +28,8 @@ pub struct LocalLauncher<'a> {
     pub temp_dir: &'a Path,
     pub helper: Option<&'a Path>,
     pub credential_env_names: &'a [String],
+    /// Stored MCP OAuth credentials; `None` sends no bearer token.
+    pub credentials: Option<Arc<dyn McpCredentialStore>>,
 }
 
 /// Why a launch failed, so owners can choose the durable status and retry policy.
@@ -36,6 +40,17 @@ pub enum LaunchFailure {
     /// The remote server refused authorization (HTTP 401/403). Nothing else was sent,
     /// no transport fallback ran, and reconnecting cannot succeed without credentials.
     NeedsAuth,
+    /// Like [`Self::NeedsAuth`], but `cyber mcp auth` recorded that the authorization
+    /// server offers no client registration and no `client_id` is configured, so
+    /// authorizing first needs `oauth.client_id`.
+    NeedsClientRegistration,
+}
+
+impl LaunchFailure {
+    /// Waiting for the user: retrying cannot succeed.
+    pub fn needs_user(self) -> bool {
+        matches!(self, Self::NeedsAuth | Self::NeedsClientRegistration)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -82,24 +97,8 @@ pub struct LocalServer {
     catalog: Vec<super::DiscoveredTool>,
     metadata: Value,
     aliases: super::discovery::ToolAliases,
-    refresh: Option<HeaderRefresh>,
-    /// A header command whose termination was not acknowledged; shutdown cannot settle.
-    command_unsettled: bool,
-}
-
-/// Periodic `headers_command` re-runs for a connected remote server.
-struct HeaderRefresh {
-    command: HeadersCommand,
-    headers: HeaderSet,
-    every: Duration,
-    timeout: Duration,
-    last: tokio::time::Instant,
-}
-
-impl HeaderRefresh {
-    fn due(&self) -> bool {
-        self.last.elapsed() >= self.every
-    }
+    /// A remote server's credential layers; `None` for a local server.
+    auth: Option<RemoteAuth>,
 }
 
 /// A stdio process or a remote Streamable HTTP session. The HTTP arm owns no process, so
@@ -131,7 +130,7 @@ impl Transport {
         }
     }
 
-    fn auth_refusal(&self) -> Option<super::HttpFailure> {
+    fn auth_refusal(&self) -> Option<HttpFailure> {
         match self {
             Self::Stdio(_) => None,
             Self::Http(connection) => connection.auth_refusal(),
@@ -208,6 +207,14 @@ struct ServerAuthority {
     name: String,
 }
 
+impl ServerAuthority {
+    fn check(&self) -> Result<(), McpError> {
+        authorize_server(&self.resolved, &self.trust, &self.location, &self.name)
+            .map(|_| ())
+            .map_err(|_| McpError::Protocol("MCP server authorization is no longer valid"))
+    }
+}
+
 impl LocalServer {
     pub fn tools(&self) -> &[super::DiscoveredTool] {
         &self.catalog
@@ -267,79 +274,69 @@ impl LocalServer {
     }
 
     fn authorize(&self) -> Result<(), McpError> {
-        authorize_server(
-            &self.authority.resolved,
-            &self.authority.trust,
-            &self.authority.location,
-            &self.authority.name,
-        )
-        .map(|_| ())
-        .map_err(|_| McpError::Protocol("MCP server authorization is no longer valid"))
+        self.authority.check()
     }
 
     pub fn scratch_path(&self) -> &Path {
         &self.resources.scratch.path
     }
 
-    /// The pool monitor's idle tick. A due `headers_command` re-runs first, so the idle
-    /// ping never carries headers past their refresh window; a failed refresh is loss and
-    /// reconnecting re-runs the command.
+    /// The pool monitor's idle tick. A due `headers_command` re-runs and a due OAuth token
+    /// renews first, so the idle ping never carries an expired credential; a failed refresh
+    /// is loss, and a refused token settles `needs_auth`.
     pub async fn poll_idle(&mut self, timeout: Duration) -> Result<super::IdleUpdate, McpError> {
         self.refresh_headers().await?;
         self.connection.poll_idle(timeout).await
     }
 
-    /// Re-run a due `headers_command` and swap the bridge's headers in place. Every request
-    /// path calls this first, so a busy server whose monitor tick is skipped still refreshes.
-    /// A failed run leaves the refresh due, so no later request reuses the stale headers.
+    /// Re-run a due `headers_command`, renew a due OAuth token and swap the bridge's headers
+    /// in place. Every request path calls this first, so a busy server whose monitor tick
+    /// is skipped still refreshes.
     async fn refresh_headers(&mut self) -> Result<(), McpError> {
-        if !self.refresh.as_ref().is_some_and(HeaderRefresh::due) {
-            return Ok(());
-        }
-        self.authorize()?;
-        let Some(refresh) = self.refresh.as_mut() else {
+        let Some(auth) = self.auth.as_mut() else {
             return Ok(());
         };
-        let started = tokio::time::Instant::now();
-        match refresh
-            .command
-            .headers(started + refresh.timeout, None)
-            .await
-        {
-            Ok(headers) => {
-                refresh.headers.replace(headers);
-                refresh.last = started;
-                Ok(())
-            }
-            Err(failure) => {
-                self.command_unsettled |= !failure.acknowledged;
-                cyber_core::log::error(
-                    "mcp",
-                    &failure.diagnostic,
-                    serde_json::json!({"server":self.authority.name,"acknowledged":failure.acknowledged}),
-                );
-                Err(McpError::Protocol("MCP headers_command refresh failed"))
-            }
-        }
+        let authority = &self.authority;
+        // Boxed so the token refresh state is not inlined into every request future.
+        Box::pin(auth.refresh(&authority.name, || authority.check())).await
     }
 
     pub async fn disconnected(&mut self) -> Result<bool, McpError> {
         self.connection.disconnected().await
     }
 
+    /// Whether the connection must end before another request: its transport state is
+    /// unknown, or an in-session OAuth refresh failed and the server settles `needs_auth`.
     pub fn unresolved(&self) -> bool {
-        self.connection.unresolved()
+        self.connection.unresolved() || self.auth.as_ref().is_some_and(RemoteAuth::failed)
     }
 
-    /// The remote authorization refusal (HTTP 401/403) that ended an established
-    /// connection, which settles `needs_auth` instead of a retryable failure. With a
-    /// `headers_command` the refusal may only mean its credential expired, so it is loss:
-    /// the reconnect re-runs the command and settles `needs_auth` if that is refused too.
-    pub fn auth_refusal(&self) -> Option<super::HttpFailure> {
-        if self.refresh.is_some() {
-            return None;
+    /// Why an established connection settles `needs_auth` instead of a retryable failure:
+    /// a remote refusal (HTTP 401/403) or a failed OAuth token refresh. With a
+    /// `headers_command` or an OAuth refresh token a refusal may only mean the credential
+    /// expired, so it is loss: the reconnect renews it once and settles `needs_auth` only
+    /// if that connect is refused too.
+    ///
+    /// A 403 `insufficient_scope` always settles `needs_auth` and records the required
+    /// scopes for the next `cyber mcp auth`; nothing refreshes or re-authorizes.
+    pub fn auth_refusal(&self) -> Option<String> {
+        let failure = self.connection.auth_refusal();
+        let Some(auth) = &self.auth else {
+            return failure.map(|failure| failure.to_string());
+        };
+        if let Some(step_up) = failure
+            .as_ref()
+            .and_then(|failure| auth.step_up(&self.authority.name, failure))
+        {
+            return Some(step_up);
         }
-        self.connection.auth_refusal()
+        auth.refusal(failure.map(|failure| failure.to_string()))
+    }
+
+    /// Whether this remote connection sends an OAuth credential that `cyber mcp logout`
+    /// has since removed, so an explicit reconnect may replace it.
+    pub fn logged_out(&self) -> bool {
+        self.auth.as_ref().is_some_and(RemoteAuth::logged_out)
     }
 
     pub async fn call_tool(
@@ -394,7 +391,11 @@ impl LocalServer {
     async fn shutdown_mode(&mut self, graceful: bool) -> (bool, StderrCapture) {
         let (native, stderr) = self.connection.shutdown(graceful).await;
         let proxy = self.resources.stop_proxy().await;
-        let acknowledged = native && proxy && !self.command_unsettled;
+        let unsettled = self
+            .auth
+            .as_ref()
+            .is_some_and(|auth| auth.command_unsettled);
+        let acknowledged = native && proxy && !unsettled;
         self.shutdown_acknowledged = acknowledged;
         (acknowledged, stderr)
     }
@@ -481,7 +482,11 @@ impl LocalLauncher<'_> {
         };
         let connected = match &server.definition {
             McpServer::Local { .. } => self.connect_local(&server, &launch, before_spawn).await?,
-            McpServer::Remote { .. } => self.connect_remote(&server, &launch, before_spawn).await?,
+            // Boxed: the OAuth and transport-fallback states would otherwise inflate every
+            // caller's future (and its stack) even for local servers.
+            McpServer::Remote { .. } => {
+                Box::pin(self.connect_remote(&server, &launch, before_spawn)).await?
+            }
         };
         Ok(self.server(name, server.definition.tools(), connected))
     }
@@ -491,7 +496,7 @@ impl LocalLauncher<'_> {
             connection,
             mut catalog,
             resources,
-            refresh,
+            auth,
         } = connected;
         let mut aliases = super::discovery::ToolAliases::default();
         aliases.retain(name, &mut catalog);
@@ -501,8 +506,7 @@ impl LocalLauncher<'_> {
             catalog,
             connection,
             resources,
-            refresh,
-            command_unsettled: false,
+            auth,
             tools: tools.clone(),
             shutdown_acknowledged: false,
             authority: ServerAuthority {
@@ -634,7 +638,7 @@ impl LocalLauncher<'_> {
                 connection: Transport::Stdio(connection),
                 catalog,
                 resources,
-                refresh: None,
+                auth: None,
             }),
             Err(error) => Err(resources.fail_connection(error).await),
         }
@@ -696,80 +700,203 @@ impl LocalLauncher<'_> {
                 "MCP headers_command cannot run for a sandboxed remote server",
             ));
         }
-        let command = server.definition.headers_command().map(|command| {
-            HeadersCommand::new(command, headers.clone(), self.location, self.helper)
-        });
+        let command = self.header_refresh(server);
         let sampling = self.sampling()?;
         let (mut resources, client) = self.prepare_remote(&url, restricted).await?;
         resources.scratch.cleanup = false;
         if let Err(error) = self.admit_effect(launch, before_spawn) {
             return Err(resources.fail(error.diagnostic).await);
         }
-        let headers = match self
-            .initial_headers(command.as_ref(), headers, launch)
-            .await
-        {
-            Ok(headers) => HeaderSet::new(headers),
-            Err(failure) => {
-                let mut error = resources.fail(failure.diagnostic).await;
-                error.acknowledged &= failure.acknowledged;
-                return Err(error);
-            }
+        let refresh_timeout = Duration::from_secs(server.definition.timeout().into());
+        let mut auth = RemoteAuth::new(headers, command, client.clone(), refresh_timeout);
+        if let Err(failure) = self.prepare_auth(server, &url, &mut auth, launch).await {
+            return Err(resources.refuse(failure).await);
+        }
+        let target = RemoteTarget {
+            client,
+            url,
+            tools,
+            sampling,
         };
-        let refresh = command.map(|command| HeaderRefresh {
-            command,
-            headers: headers.clone(),
-            every: Duration::from_secs(server.definition.headers_refresh_seconds().into()),
-            timeout: Duration::from_secs(server.definition.timeout().into()),
+        match self.open_http(&mut auth, &target, launch).await {
+            Ok((connection, catalog)) => Ok(Connected {
+                connection: Transport::Http(connection),
+                catalog,
+                resources,
+                auth: Some(auth),
+            }),
+            Err(Opened::Connection(error)) => {
+                if let McpError::Http(failure) = &error.error {
+                    auth.step_up(launch.name, failure);
+                }
+                let mut error = resources.fail_connection(error).await;
+                if error.kind == LaunchFailure::NeedsAuth && auth.unregistered {
+                    error.kind = LaunchFailure::NeedsClientRegistration;
+                }
+                Err(error)
+            }
+            Err(Opened::Refused(failure)) => Err(resources.refuse(failure).await),
+        }
+    }
+
+    fn header_refresh(&self, server: &ServerSelection) -> Option<HeaderRefresh> {
+        let definition = &server.definition;
+        definition.headers_command().map(|command| HeaderRefresh {
+            // Static headers are their own layer beneath the bearer and the output.
+            command: HeadersCommand::new(
+                command,
+                reqwest::header::HeaderMap::new(),
+                self.location,
+                self.helper,
+            ),
+            output: reqwest::header::HeaderMap::new(),
+            every: Duration::from_secs(definition.headers_refresh_seconds().into()),
+            timeout: Duration::from_secs(definition.timeout().into()),
             last: tokio::time::Instant::now(),
-        });
-        match HttpConnection::connect_with_options(
+        })
+    }
+
+    /// The credential layers, after durable admission and approval: stored tokens for the
+    /// exact URL (none with `oauth: false`), renewed first when expiring within five
+    /// minutes, then the `headers_command` output. Approval is rechecked before the token
+    /// request and after the command, before first contact with the server.
+    async fn prepare_auth(
+        &self,
+        server: &ServerSelection,
+        url: &reqwest::Url,
+        auth: &mut RemoteAuth,
+        launch: &Startup<'_>,
+    ) -> Result<(), AuthFailure> {
+        auth.tokens = self.stored_tokens(server, url, launch.name)?;
+        auth.unregistered = auth.tokens.is_none() && self.unregistered(server, url, launch.name)?;
+        if auth
+            .tokens
+            .as_ref()
+            .is_some_and(|tokens| tokens.due() && tokens.refreshable())
+        {
+            self.renew(auth, launch).await?;
+        }
+        if let Some(command) = auth.command.as_mut() {
+            command
+                .run(launch.deadline, launch.cancel)
+                .await
+                .map_err(AuthFailure::command)?;
+            self.reauthorize(
+                launch,
+                "MCP server authorization changed during headers_command",
+            )?;
+        }
+        auth.publish();
+        Ok(())
+    }
+
+    fn stored_tokens(
+        &self,
+        server: &ServerSelection,
+        url: &reqwest::Url,
+        name: &str,
+    ) -> Result<Option<TokenSource>, AuthFailure> {
+        let Some(store) = self.credentials.clone() else {
+            return Ok(None);
+        };
+        if server.definition.oauth().is_none() {
+            return Ok(None);
+        }
+        TokenSource::load(store, name, url).map_err(|error| {
+            AuthFailure::failed(format!("MCP OAuth credential is unusable: {error}"))
+        })
+    }
+
+    /// Whether `cyber mcp auth` recorded that no client can be registered for `server` at
+    /// exactly `url` and no `client_id` is configured. The runtime never runs discovery.
+    fn unregistered(
+        &self,
+        server: &ServerSelection,
+        url: &reqwest::Url,
+        name: &str,
+    ) -> Result<bool, AuthFailure> {
+        let (Some(store), Some(settings)) = (&self.credentials, server.definition.oauth()) else {
+            return Ok(false);
+        };
+        if settings.client_id.is_some() {
+            return Ok(false);
+        }
+        store
+            .marker(name, url.as_str())
+            .map(|marker| marker.needs_client_registration)
+            .map_err(|error| {
+                AuthFailure::failed(format!("MCP OAuth credential store is unusable: {error}"))
+            })
+    }
+
+    /// Renew the access token inside the startup deadline after rechecking approval. Any
+    /// failure settles `needs_auth`; the refresh is never retried.
+    async fn renew(&self, auth: &mut RemoteAuth, launch: &Startup<'_>) -> Result<(), AuthFailure> {
+        self.reauthorize(
+            launch,
+            "MCP server authorization changed before token refresh",
+        )?;
+        let renewed = tokio::time::timeout_at(launch.deadline, auth.refresh_tokens()).await;
+        match renewed {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(AuthFailure::needs_auth(format!(
+                "MCP OAuth token refresh failed: {error}"
+            ))),
+            Err(_) => Err(AuthFailure::needs_auth(
+                "MCP OAuth token refresh timed out".into(),
+            )),
+        }
+    }
+
+    fn reauthorize(&self, launch: &Startup<'_>, diagnostic: &str) -> Result<(), AuthFailure> {
+        authorize_server(self.resolved, self.trust, self.location, launch.name)
+            .map(|_| ())
+            .map_err(|_| AuthFailure::failed(diagnostic.into()))
+    }
+
+    /// Connect with the composed headers. A 401 for a stored token that has a refresh
+    /// token and was not renewed during this connect is retried exactly once after a
+    /// refresh, inside the same deadline; a second refusal is final.
+    async fn open_http(
+        &self,
+        auth: &mut RemoteAuth,
+        target: &RemoteTarget<'_>,
+        launch: &Startup<'_>,
+    ) -> Result<(HttpConnection, Vec<DiscoveredTool>), Opened> {
+        match self.attempt_http(auth, target, launch).await {
+            Err(error) if retry_after_refresh(&error, auth) => {
+                self.renew(auth, launch).await.map_err(Opened::Refused)?;
+                self.attempt_http(auth, target, launch)
+                    .await
+                    .map_err(Opened::Connection)
+            }
+            result => result.map_err(Opened::Connection),
+        }
+    }
+
+    async fn attempt_http(
+        &self,
+        auth: &RemoteAuth,
+        target: &RemoteTarget<'_>,
+        launch: &Startup<'_>,
+    ) -> Result<(HttpConnection, Vec<DiscoveredTool>), ConnectionError> {
+        HttpConnection::connect_with_options(
             super::HttpTarget {
-                client,
-                url,
-                headers,
+                client: target.client.clone(),
+                url: target.url.clone(),
+                headers: auth.headers.clone(),
             },
             launch.name,
-            tools,
+            target.tools,
             launch.remaining(),
             super::StartupOptions {
                 roots: None,
-                sampling,
+                sampling: target.sampling,
                 cancellation: launch.cancel.cloned(),
             },
             launch.first,
         )
         .await
-        {
-            Ok((connection, catalog)) => Ok(Connected {
-                connection: Transport::Http(connection),
-                catalog,
-                resources,
-                refresh,
-            }),
-            Err(error) => Err(resources.fail_connection(error).await),
-        }
-    }
-
-    /// Static headers, or the `headers_command` output merged over them. The command runs
-    /// after durable admission and approval, and approval is rechecked before first contact.
-    async fn initial_headers(
-        &self,
-        command: Option<&HeadersCommand>,
-        headers: reqwest::header::HeaderMap,
-        launch: &Startup<'_>,
-    ) -> Result<reqwest::header::HeaderMap, super::headers_command::CommandFailure> {
-        let Some(command) = command else {
-            return Ok(headers);
-        };
-        let headers = command.headers(launch.deadline, launch.cancel).await?;
-        authorize_server(self.resolved, self.trust, self.location, launch.name).map_err(|_| {
-            super::headers_command::CommandFailure {
-                diagnostic: "MCP server authorization changed during headers_command".into(),
-                acknowledged: true,
-            }
-        })?;
-        Ok(headers)
     }
 
     /// A sandbox-selected server uses the configured network mode; otherwise the
@@ -920,12 +1047,68 @@ fn reserved_env(key: &str) -> bool {
     )
 }
 
-/// A connected transport with its native resources and optional header refresh.
+/// A connected transport with its native resources and remote credential layers.
 struct Connected {
     connection: Transport,
     catalog: Vec<DiscoveredTool>,
     resources: Resources,
-    refresh: Option<HeaderRefresh>,
+    auth: Option<RemoteAuth>,
+}
+
+/// The policy client and endpoint one remote connect uses for every attempt.
+struct RemoteTarget<'a> {
+    client: reqwest::Client,
+    url: reqwest::Url,
+    tools: &'a McpToolFilter,
+    sampling: bool,
+}
+
+/// Why a remote connect ended without a connection.
+enum Opened {
+    Connection(ConnectionError),
+    Refused(AuthFailure),
+}
+
+/// A credential failure before or between connect attempts.
+struct AuthFailure {
+    diagnostic: String,
+    kind: LaunchFailure,
+    acknowledged: bool,
+}
+
+impl AuthFailure {
+    fn failed(diagnostic: String) -> Self {
+        Self {
+            diagnostic,
+            kind: LaunchFailure::Failed,
+            acknowledged: true,
+        }
+    }
+
+    fn needs_auth(diagnostic: String) -> Self {
+        Self {
+            kind: LaunchFailure::NeedsAuth,
+            ..Self::failed(diagnostic)
+        }
+    }
+
+    fn command(failure: CommandFailure) -> Self {
+        Self {
+            acknowledged: failure.acknowledged,
+            ..Self::failed(failure.diagnostic)
+        }
+    }
+}
+
+/// An acknowledged 401 that a refresh token may cure, before any renewal this connect.
+fn retry_after_refresh(error: &ConnectionError, auth: &RemoteAuth) -> bool {
+    error.acknowledged
+        && auth.refreshable()
+        && !auth.renewed
+        && matches!(
+            error.error,
+            McpError::Http(HttpFailure::Unauthorized { status: 401, .. })
+        )
 }
 
 /// Per-connect inputs shared by the local and remote branches.
@@ -961,6 +1144,12 @@ impl Resources {
             stderr: StderrCapture::default(),
             scratch: Some(self.scratch.path.clone()),
         }
+    }
+    async fn refuse(&mut self, failure: AuthFailure) -> LocalLaunchError {
+        let mut error = self.fail(failure.diagnostic).await;
+        error.kind = failure.kind;
+        error.acknowledged &= failure.acknowledged;
+        error
     }
     async fn fail_connection(&mut self, error: ConnectionError) -> LocalLaunchError {
         let proxy = self.stop_proxy().await;

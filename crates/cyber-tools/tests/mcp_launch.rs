@@ -98,6 +98,7 @@ impl Fixture {
             temp_dir: &self.temp,
             helper,
             credential_env_names: &[],
+            credentials: None,
         }
     }
 }

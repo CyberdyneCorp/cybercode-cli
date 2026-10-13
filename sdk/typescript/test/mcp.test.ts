@@ -64,3 +64,24 @@ test("configured MCP snapshots retain unresolved observations without claiming a
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent("/repo"));
   assert.equal(calls[0]?.headers.get("idempotency-key"), null);
 });
+
+test("MCP reconnect posts to the named server without a body and returns its status", async () => {
+  const directory = "/repo";
+  const location = { directory, project: { id: "global", directory } };
+  const status = { name: "remote", configured: true, status: "connecting", tools: [], error: null, connection: null };
+  const { client, calls } = mockClient(() => json(200, { location, data: status }), { directory });
+  const result = await client.mcp.reconnect("remote");
+  assert.equal(result.data.name, "remote");
+  assert.equal(result.data.status, "connecting");
+  assert.deepEqual(result.location, location);
+  assert.equal(calls[0]?.method, "POST");
+  assert.equal(calls[0]?.url.pathname, "/api/v1/mcp/remote/reconnect");
+  assert.equal(calls[0]?.body, undefined);
+  assert.equal(calls[0]?.headers.get("x-cyber-directory"), encodeURIComponent(directory));
+});
+
+test("MCP reconnect of a server that is not waiting for authentication is a conflict", async () => {
+  const { client, calls } = mockClient(() => json(409, { _tag: "ConflictError", message: "MCP server is not waiting for authentication" }));
+  await assert.rejects(client.mcp.reconnect("remote"), isConflictError);
+  assert.equal(calls.length, 1);
+});

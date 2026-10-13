@@ -36,7 +36,10 @@ pub use load::{
     LoadRequest, RawHookSection, ensure_global_config, load, project_root, trust_report,
     withheld_hook_sections,
 };
-pub use mcp::{McpServer, McpSettings, McpToolFilter, transport_owned_header};
+pub use mcp::{
+    McpOAuth, McpOAuthSetting, McpServer, McpSettings, McpToolFilter, OAUTH_REDIRECT_PORT_MIN,
+    transport_owned_header,
+};
 pub use validate::redact_secrets;
 
 /// Published JSON Schema URL written into new config documents.

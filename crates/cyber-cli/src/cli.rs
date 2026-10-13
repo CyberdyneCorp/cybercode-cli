@@ -128,7 +128,7 @@ pub enum Command {
     },
     /// Review and edit durable project/global memory.
     Memory(MemoryArgs),
-    /// Review MCP server definitions and individual server approvals.
+    /// Review MCP server definitions, individual server approvals and OAuth credentials.
     Mcp {
         #[command(subcommand)]
         cmd: McpCmd,

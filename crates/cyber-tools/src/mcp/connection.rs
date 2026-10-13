@@ -31,7 +31,7 @@ impl ConnectionError {
     pub fn needs_auth(&self) -> bool {
         matches!(
             self.error,
-            McpError::Http(super::HttpFailure::Unauthorized(_))
+            McpError::Http(super::HttpFailure::Unauthorized { .. })
         )
     }
 }

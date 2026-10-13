@@ -95,6 +95,11 @@ impl Paths {
     pub fn trust_file(&self) -> PathBuf {
         self.state.join("trust.json")
     }
+
+    /// Owner-only MCP OAuth credentials, keyed by server name, URL and issuer.
+    pub fn mcp_auth_file(&self) -> PathBuf {
+        self.data.join("mcp-auth.json")
+    }
 }
 
 /// Where the database lives.

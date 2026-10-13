@@ -2,7 +2,7 @@
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::State,
+    extract::{Path, State},
     http::request::Parts,
     routing::{get, post},
 };
@@ -24,6 +24,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/mcp", get(status))
         .route("/mcp/close", post(close))
+        .route("/mcp/{name}/reconnect", post(reconnect))
 }
 
 async fn status(
@@ -51,5 +52,36 @@ async fn close(
     Ok(Json(Located {
         location: LocationInfo::of(&directory),
         data: McpClosed { closed: true },
+    }))
+}
+
+/// Reconnect a server settled `needs_auth` or `needs_client_registration` (for example after
+/// `cyber mcp auth`), or one running on a credential `cyber mcp logout` removed, with a fresh
+/// durable owner. The response is the status right after re-admission; later transitions
+/// follow on the event stream.
+async fn reconnect(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    parts: Parts,
+    body: Bytes,
+) -> Result<Json<Located<crate::runtime::McpServerStatus>>, ApiError> {
+    if !body.is_empty() {
+        return Err(ApiError::invalid("MCP reconnect takes no request body"));
+    }
+    let valid = (1..=48).contains(&name.len())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+    if !valid {
+        return Err(ApiError::invalid("invalid MCP server name"));
+    }
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state
+        .services
+        .reconnect_mcp(directory.clone(), name)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
     }))
 }

@@ -218,6 +218,9 @@ impl HookMcpRunner<'_, '_> {
             temp_dir: self.settings.temp_dir,
             helper: self.settings.helper,
             credential_env_names: self.settings.credential_env_names,
+            // Hook-owned connections send the stored OAuth bearer for the server's exact URL
+            // like every other connect; they never run discovery or an authorization flow.
+            credentials: host.mcp_credentials(),
         };
         let connected = launcher
             .connect_for_hook(

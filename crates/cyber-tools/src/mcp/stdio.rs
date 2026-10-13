@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
-const VERSION: &str = "2025-11-25";
+pub(crate) const VERSION: &str = "2025-11-25";
 const VERSIONS: &[&str] = &[VERSION, "2025-06-18", "2025-03-26", "2024-11-05"];
 
 #[derive(Debug, thiserror::Error)]

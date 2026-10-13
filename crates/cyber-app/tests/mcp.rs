@@ -1,6 +1,8 @@
 //! Public MCP close uses the application's actual shared native owner.
 #[path = "../../cyber-tools/tests/support/mcp_http.rs"]
 mod mcp_http;
+#[path = "../../cyber-tools/tests/support/oauth_as.rs"]
+mod oauth_as;
 
 use cyber_app::{App, AppOptions};
 use cyber_core::paths::{DatabaseLocation, Paths};
@@ -760,7 +762,7 @@ async fn remote_unauthorized_server_reports_needs_auth() {
     assert_eq!(remote["status"], "needs_auth", "{remote}");
     assert_eq!(
         remote["error"],
-        "MCP server remote needs authentication; run `cyber mcp auth remote` or /mcp"
+        "MCP server remote needs authentication; run `cyber mcp auth remote`"
     );
     assert_eq!(remote["tools"], json!([]));
     assert_eq!(http.requests().len(), 1);
@@ -1462,4 +1464,1105 @@ async fn remote_tools_use_filters_permissions_hooks_and_output_caps_through_app_
     assert_eq!(calls, vec!["echo".to_string()]);
     app.host.close_mcp_location(&directory).await.unwrap();
     app.runtime.shutdown().await;
+}
+
+/// Stored OAuth tokens on the production remote transport. The owner-only credential file
+/// refuses on Windows (no ACL backend yet), where the app attaches no credential store.
+#[cfg(not(windows))]
+mod oauth {
+    use super::*;
+
+    const SEED_ACCESS: &str = "PRIVATE-ACCESS-SEED";
+    const SEED_REFRESH: &str = "PRIVATE-REFRESH-SEED";
+
+    fn unix_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    fn credential_store(app: &App) -> cyber_tools::mcp::oauth::FileCredentialStore {
+        cyber_tools::mcp::oauth::FileCredentialStore::new(app.paths.mcp_auth_file())
+    }
+
+    /// Store a credential for `remote` at `url` exactly as `cyber mcp auth` would.
+    fn store_credential(
+        app: &App,
+        url: &str,
+        fake: &oauth_as::FakeAs,
+        refresh: &str,
+        expires_in: u64,
+    ) {
+        use cyber_tools::mcp::oauth::{
+            CredentialKey, McpCredentialStore, OAuthClient, StoredCredential, TokenSet,
+        };
+        let key = CredentialKey {
+            server: "remote".into(),
+            url: url.into(),
+            issuer: format!("{}/", fake.origin),
+        };
+        let credential = StoredCredential {
+            tokens: TokenSet {
+                access_token: SEED_ACCESS.into(),
+                refresh_token: Some(refresh.into()),
+                expires_at: Some(unix_now() + expires_in),
+                issued_at: None,
+                scopes: vec!["mcp.read".into()],
+            },
+            client: OAuthClient {
+                client_id: oauth_as::REGISTERED_CLIENT.into(),
+                client_secret: None,
+            },
+            token_endpoint: format!("{}/token", fake.origin),
+        };
+        credential_store(app).put(&key, &credential).unwrap();
+    }
+
+    fn stored_tokens(app: &App, url: &str) -> cyber_tools::mcp::oauth::TokenSet {
+        use cyber_tools::mcp::oauth::McpCredentialStore;
+        credential_store(app)
+            .find("remote", url)
+            .unwrap()
+            .expect("credential is stored")
+            .1
+            .tokens
+    }
+
+    /// `POST /api/v1/mcp/{name}/reconnect` over the app's real HTTP server.
+    async fn reconnect_over_http(app: &App, name: &str) -> (u16, serde_json::Value) {
+        let (close_url, stop, server) = listener(app).await;
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(close_url.replace("/mcp/close", &format!("/mcp/{name}/reconnect")))
+            .basic_auth("cyber", Some("mcp-test-password"))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap();
+        stop.send(()).unwrap();
+        server.await.unwrap();
+        (status, serde_json::from_str(&body).unwrap_or(json!(body)))
+    }
+
+    async fn wait_public_status(app: &App, expected: &str) -> serde_json::Value {
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                let body: serde_json::Value =
+                    serde_json::from_str(&mcp_status_body(app).await).unwrap();
+                if body["data"][0]["status"] == expected {
+                    return body;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("MCP status never became {expected}"))
+    }
+
+    /// No token, seeded or issued, in events, public status, durable records or any file
+    /// other than the credential store.
+    async fn assert_no_token_leak(
+        app: &App,
+        directory: &Path,
+        events: &mut tokio::sync::broadcast::Receiver<cyber_server::runtime::LiveEvent>,
+    ) {
+        assert_no_leak(app, directory, events, &[]).await;
+    }
+
+    /// Like [`assert_no_token_leak`], also refusing each of `extra` (a PKCE verifier, a
+    /// client secret). The user's own configuration file may hold a literal secret.
+    async fn assert_no_leak(
+        app: &App,
+        directory: &Path,
+        events: &mut tokio::sync::broadcast::Receiver<cyber_server::runtime::LiveEvent>,
+        extra: &[String],
+    ) {
+        let secret = |text: &str| {
+            text.contains("PRIVATE-")
+                || text.contains("TOKEN-SECRET")
+                || extra.iter().any(|value| text.contains(value.as_str()))
+        };
+        while let Ok(event) = events.try_recv() {
+            let text = serde_json::to_string(&event).unwrap();
+            assert!(!secret(&text), "{text}");
+        }
+        let status = mcp_status_body(app).await;
+        assert!(!secret(&status), "{status}");
+        let records =
+            serde_json::to_string(&mcp_connections(&app.store, directory).unwrap()).unwrap();
+        assert!(!secret(&records), "{records}");
+        fn scan(root: &Path, secret: &dyn Fn(&str) -> bool) {
+            for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    scan(&path, secret);
+                } else if path
+                    .file_name()
+                    .is_some_and(|name| name != "mcp-auth.json" && name != "cyber.json")
+                {
+                    let bytes = std::fs::read(&path).unwrap_or_default();
+                    assert!(
+                        !secret(&String::from_utf8_lossy(&bytes)),
+                        "{}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        scan(directory, &secret);
+    }
+
+    /// The app with `config`, before any session opens.
+    async fn oauth_app(config: serde_json::Value) -> (tempfile::TempDir, std::path::PathBuf, App) {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        let app = application(&directory).await;
+        let mut config = config;
+        config["providers"] = provider();
+        std::fs::write(app.paths.config.join("cyber.json"), config.to_string()).unwrap();
+        (root, directory, app)
+    }
+
+    async fn open_turn(app: &App, directory: &Path) -> cyber_server::runtime::TurnContext {
+        let session = app
+            .runtime
+            .create_session(cyber_server::runtime::CreateSession {
+                directory: directory.display().to_string(),
+                model: "test/main".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        remote_turn(directory, &session.id)
+    }
+
+    #[tokio::test]
+    async fn stored_oauth_token_reconnects_a_needs_auth_server_over_http() {
+        use cyber_server::runtime::{LiveEvent, McpConnectionStatus, ToolOutcome};
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        let mut events = app.runtime.subscribe();
+        let turn = open_turn(&app, &directory).await;
+        let refused = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(refused.status, McpConnectionStatus::NeedsAuth);
+        assert_eq!(http.posts("initialize")[0].header("authorization"), None);
+        // A running server is not reconnected; an unknown one is not found.
+        assert_eq!(reconnect_over_http(&app, "absent").await.0, 404);
+
+        // What `cyber mcp auth remote` stores, then the reconnect it requests.
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 3600);
+        let (status, body) = reconnect_over_http(&app, "remote").await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["data"]["name"], "remote", "{body}");
+        assert_eq!(body["data"]["status"], "connecting", "{body}");
+        let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        let public = wait_public_status(&app, "connected").await;
+        assert_eq!(public["data"][0]["tools"], json!(["mcp__remote__echo"]));
+        assert_eq!(
+            invoke_remote(&app, &turn, &definition, "with bearer").await,
+            ToolOutcome::Ok("with bearer".into())
+        );
+        let calls = http.posts("tools/call");
+        assert_eq!(
+            calls[0].header("authorization"),
+            Some(format!("Bearer {SEED_ACCESS}").as_str())
+        );
+        // A token that is not about to expire is used without contacting the issuer.
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        // A connected server is not reconnected.
+        assert_eq!(reconnect_over_http(&app, "remote").await.0, 409);
+
+        let records = mcp_connections(&app.store, &directory).unwrap();
+        assert_eq!(records.len(), 2, "{records:?}");
+        let mut statuses = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            let text = serde_json::to_string(&event).unwrap();
+            assert!(!text.contains("PRIVATE-"), "{text}");
+            if let LiveEvent::McpStatusChanged { update, .. } = event {
+                statuses.push(update.status);
+            }
+        }
+        let after = statuses
+            .iter()
+            .rposition(|status| *status == McpConnectionStatus::NeedsAuth)
+            .expect("needs_auth was published");
+        assert_eq!(
+            statuses.get(after + 1),
+            Some(&McpConnectionStatus::Connecting),
+            "{statuses:?}"
+        );
+        assert_eq!(
+            statuses.last(),
+            Some(&McpConnectionStatus::Connected),
+            "{statuses:?}"
+        );
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn expiring_oauth_token_is_refreshed_and_rotated_before_connect() {
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        fake.expect_resource(&http.url);
+        let issued = format!("{}1", oauth_as::ACCESS_PREFIX);
+        http.require_authorization(Some(&format!("Bearer {issued}")));
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        let mut events = app.runtime.subscribe();
+        // Inside the five-minute refresh window.
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 120);
+        open_session(&app, &directory).await;
+        wait_running(&app, &directory).await;
+
+        let posts = fake.token_posts();
+        assert_eq!(posts.len(), 1, "{:?}", fake.paths());
+        assert_eq!(posts[0].form["grant_type"], "refresh_token");
+        assert_eq!(posts[0].form["refresh_token"], SEED_REFRESH);
+        assert_eq!(posts[0].form["resource"], http.url);
+        assert_eq!(posts[0].form["client_id"], oauth_as::REGISTERED_CLIENT);
+        // The rotated refresh token is what the store keeps.
+        let stored = stored_tokens(&app, &http.url);
+        assert_eq!(stored.access_token, issued);
+        assert_eq!(
+            stored.refresh_token.as_deref(),
+            Some(format!("{}1", oauth_as::REFRESH_PREFIX).as_str())
+        );
+        assert!(stored.expires_at.unwrap() > unix_now() + 3000);
+        // The issuer rejects the presented (old) refresh token after rotation.
+        let old = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(format!("{}/token", fake.origin))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(format!(
+                "grant_type=refresh_token&refresh_token={SEED_REFRESH}&client_id={}&resource={}",
+                oauth_as::REGISTERED_CLIENT,
+                http.url.replace(':', "%3A").replace('/', "%2F")
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(old.status().as_u16(), 400);
+        assert_eq!(
+            old.json::<serde_json::Value>().await.unwrap()["error"],
+            "invalid_grant"
+        );
+        let initializes = http.posts("initialize");
+        assert_eq!(initializes.len(), 1);
+        assert_eq!(
+            initializes[0].header("authorization"),
+            Some(format!("Bearer {issued}").as_str())
+        );
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// Rewrite the stored credential's expiry into the refresh window, as time passing
+    /// would, without waiting.
+    fn make_due(app: &App, url: &str) {
+        use cyber_tools::mcp::oauth::McpCredentialStore;
+        let store = credential_store(app);
+        let (key, mut credential) = store.find("remote", url).unwrap().expect("stored");
+        credential.tokens.expires_at = Some(unix_now() + 60);
+        credential.tokens.issued_at = None;
+        store.put(&key, &credential).unwrap();
+    }
+
+    async fn wait_token_posts(fake: &oauth_as::FakeAs, count: usize) {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while fake.token_posts().len() < count {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("token request never arrived");
+    }
+
+    /// A connected app whose stored, not yet expiring token the fixture accepts.
+    async fn bearer_app() -> (
+        mcp_http::McpHttp,
+        oauth_as::FakeAs,
+        tempfile::TempDir,
+        std::path::PathBuf,
+        App,
+        cyber_server::runtime::TurnContext,
+    ) {
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        fake.expect_resource(&http.url);
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 3600);
+        let turn = open_turn(&app, &directory).await;
+        (http, fake, root, directory, app, turn)
+    }
+
+    #[tokio::test]
+    async fn established_401_refreshes_once_and_reconnects() {
+        use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        let first = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        assert!(fake.token_posts().is_empty());
+        // The server revokes the access token mid-session.
+        let issued = format!("{}1", oauth_as::ACCESS_PREFIX);
+        http.require_authorization(Some(&format!("Bearer {issued}")));
+        assert!(matches!(
+            invoke_remote(&app, &turn, &first, "revoked").await,
+            ToolOutcome::Failed(_)
+        ));
+        let second = wait_definition(&app, &turn, "mcp__remote__echo", Some(&first)).await;
+        assert_eq!(
+            invoke_remote(&app, &turn, &second, "refreshed").await,
+            ToolOutcome::Ok("refreshed".into())
+        );
+        assert_eq!(fake.token_posts().len(), 1, "{:?}", fake.paths());
+        assert_eq!(fake.token_posts()[0].form["grant_type"], "refresh_token");
+        assert_eq!(
+            http.posts("tools/call")
+                .last()
+                .unwrap()
+                .header("authorization"),
+            Some(format!("Bearer {issued}").as_str())
+        );
+        let records = mcp_connections(&app.store, &directory).unwrap();
+        assert_eq!(records.len(), 2, "{records:?}");
+        assert!(
+            records
+                .iter()
+                .all(|record| record.status != McpConnectionStatus::NeedsAuth),
+            "{records:?}"
+        );
+        assert_eq!(stored_tokens(&app, &http.url).access_token, issued);
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn second_401_after_refresh_settles_needs_auth_with_one_refresh() {
+        use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        let first = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        http.require_authorization(Some("Bearer PRIVATE-NEVER-ISSUED"));
+        assert!(matches!(
+            invoke_remote(&app, &turn, &first, "revoked").await,
+            ToolOutcome::Failed(_)
+        ));
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+                && record.status == McpConnectionStatus::NeedsAuth
+        })
+        .await;
+        assert_eq!(record.acknowledged, Some(true));
+        // Backoff would retry within two seconds; a refused refreshed token must not.
+        tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+        assert_eq!(fake.token_posts().len(), 1, "{:?}", fake.paths());
+        // The original connect, then one reconnect: refused, refreshed and refused again.
+        let initializes = http.posts("initialize");
+        assert_eq!(initializes.len(), 3, "{initializes:?}");
+        assert!(initializes[1..].iter().all(|seen| seen.status == 401));
+        assert_eq!(mcp_connections(&app.store, &directory).unwrap().len(), 2);
+        wait_public_status(&app, "needs_auth").await;
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn rejected_refresh_settles_needs_auth_without_contacting_the_server() {
+        use cyber_server::runtime::McpConnectionStatus;
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        http.require_authorization(Some("Bearer PRIVATE-NEVER-ISSUED"));
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        let mut events = app.runtime.subscribe();
+        // The issuer no longer knows this refresh token: invalid_grant.
+        store_credential(&app, &http.url, &fake, "PRIVATE-REFRESH-REVOKED", 60);
+        open_session(&app, &directory).await;
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.status, McpConnectionStatus::NeedsAuth);
+        assert_eq!(record.acknowledged, Some(true));
+        assert_eq!(fake.token_posts().len(), 1);
+        assert!(http.requests().is_empty(), "{:?}", http.requests());
+        wait_public_status(&app, "needs_auth").await;
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn disabled_oauth_never_sends_or_refreshes_stored_tokens() {
+        use cyber_server::runtime::McpConnectionStatus;
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url,"oauth":false}}}))
+                .await;
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 60);
+        open_session(&app, &directory).await;
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.status, McpConnectionStatus::NeedsAuth);
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        assert_eq!(http.posts("initialize")[0].header("authorization"), None);
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn tokens_for_a_previous_url_are_never_sent() {
+        use cyber_server::runtime::McpConnectionStatus;
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        // The same server name was authorized at its old URL.
+        let old = http.url.replace("/mcp", "/old-mcp");
+        store_credential(&app, &old, &fake, SEED_REFRESH, 60);
+        open_session(&app, &directory).await;
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.status, McpConnectionStatus::NeedsAuth);
+        assert!(
+            http.requests()
+                .iter()
+                .all(|seen| seen.header("authorization").is_none())
+        );
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// A credential removed by `cyber mcp logout` is never sent again by a running
+    /// connection, even when no reconnect reaches it (another directory, a busy server).
+    #[tokio::test]
+    async fn removed_credential_ends_the_connection_without_a_reconnect() {
+        use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
+        use cyber_tools::mcp::oauth::McpCredentialStore;
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        assert_eq!(
+            invoke_remote(&app, &turn, &definition, "before").await,
+            ToolOutcome::Ok("before".into())
+        );
+        // What `cyber mcp logout` does, without its reconnect request.
+        assert_eq!(credential_store(&app).remove_server("remote").unwrap(), 1);
+        assert!(matches!(
+            invoke_remote(&app, &turn, &definition, "after").await,
+            ToolOutcome::Failed(_)
+        ));
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+                && record.status == McpConnectionStatus::NeedsAuth
+        })
+        .await;
+        assert_eq!(record.acknowledged, Some(true));
+        let calls = http.posts("tools/call");
+        assert_eq!(
+            calls.len(),
+            1,
+            "the removed token was sent again: {calls:?}"
+        );
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        wait_public_status(&app, "needs_auth").await;
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// A plain-HTTP server on a non-loopback host gets no OAuth: `cyber mcp auth` refuses
+    /// before any request, and a stored credential is never sent to it in cleartext.
+    #[tokio::test]
+    async fn cleartext_remote_server_never_gets_or_sends_a_token() {
+        use cyber_server::runtime::McpConnectionStatus;
+        use cyber_tools::mcp::oauth::OAuthError;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        let url = "http://mcp.corp.example.test/mcp";
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":url}}})).await;
+        let mut events = app.runtime.subscribe();
+        let (outcome, presented) = authenticate(&app, &directory).await;
+        assert!(
+            matches!(outcome, Err(OAuthError::InsecureEndpoint)),
+            "{outcome:?}"
+        );
+        assert!(presented.is_none());
+        // A credential stored earlier for that URL fails the connect closed before any
+        // request to the server or the authorization server.
+        store_credential(&app, url, &fake, SEED_REFRESH, 60);
+        open_session(&app, &directory).await;
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.status, McpConnectionStatus::Failed);
+        assert_eq!(record.acknowledged, Some(true));
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// A secret in the server URL query is never printed in the authorize URL nor sent to
+    /// the authorization server: the RFC 8707 resource is the URL without its query.
+    #[tokio::test]
+    async fn url_query_secret_never_reaches_the_authorize_url_or_token_requests() {
+        use cyber_server::runtime::ToolOutcome;
+        const QUERY_SECRET: &str = "PRIVATE-QUERY-KEY";
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.serve("/prm", fake.protected_resource(&http.url));
+        fake.serve_metadata();
+        fake.expect_resource(&http.url);
+        http.require_authorization(Some("Bearer PRIVATE-NOT-YET-ISSUED"));
+        http.set_challenge(Some(&format!(
+            r#"Bearer resource_metadata="{}/prm""#,
+            fake.origin
+        )));
+        let url = format!("{}?key={QUERY_SECRET}", http.url);
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":url}}})).await;
+        let (outcome, presented) = authenticate(&app, &directory).await;
+        outcome.unwrap();
+        let presented = presented.expect("authorize URL presented");
+        assert!(!presented.contains(QUERY_SECRET), "{presented}");
+        assert!(!presented.contains("key%3D"), "{presented}");
+        for seen in fake.seen() {
+            let text = format!(
+                "{} {:?} {:?} {}",
+                seen.path, seen.query, seen.form, seen.json
+            );
+            assert!(!text.contains(QUERY_SECRET), "{text}");
+        }
+        let token = fake.token_posts();
+        assert_eq!(token.len(), 1);
+        assert_eq!(token[0].form["resource"], http.url);
+        // The credential is bound to the full URL, and the app connects with it.
+        let issued = stored_tokens(&app, &url).access_token;
+        assert!(issued.starts_with(oauth_as::ACCESS_PREFIX), "{issued}");
+        http.require_authorization(Some(&format!("Bearer {issued}")));
+        let turn = open_turn(&app, &directory).await;
+        let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        assert_eq!(
+            invoke_remote(&app, &turn, &definition, "query").await,
+            ToolOutcome::Ok("query".into())
+        );
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// An MCP-tool hook connection sends the stored bearer for the server's exact URL,
+    /// through the app host's own hook runner, without discovery or a flow.
+    #[tokio::test]
+    async fn mcp_tool_hook_sends_the_stored_bearer() {
+        use cyber_server::runtime::ToolOutcome;
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        http.set_tools(&["echo", "hooked"]);
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        let bearer = format!("Bearer {SEED_ACCESS}");
+        http.require_authorization(Some(&bearer));
+        let deny = r#"{"decision":"deny","reason":"oauth hook denial"}"#;
+        let (_root, directory, app) = oauth_app(json!({
+            "hooks":{"PreToolUse":[{"matcher":"mcp__remote__hooked","hooks":[
+                {"type":"mcp_tool","server":"remote","tool":"echo","arguments":{"text":deny},"fail_closed":false}
+            ]}]},
+            "mcp":{"remote":{"type":"remote","url":http.url}}
+        }))
+        .await;
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 3600);
+        let mut events = app.runtime.subscribe();
+        let turn = open_turn(&app, &directory).await;
+        let hooked = wait_definition(&app, &turn, "mcp__remote__hooked", None).await;
+        match invoke_remote(&app, &turn, &hooked, "hooked").await {
+            ToolOutcome::Failed(error) => assert!(error.contains("oauth hook denial"), "{error}"),
+            other => panic!("hook did not run with the stored bearer: {other:?}"),
+        }
+        let calls = http.posts("tools/call");
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert_eq!(calls[0].body["params"]["name"], "echo");
+        assert_eq!(calls[0].header("authorization"), Some(bearer.as_str()));
+        assert!(
+            http.requests().iter().all(|seen| seen.status != 401),
+            "{:?}",
+            http.requests()
+        );
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn untrusted_project_server_gets_no_mcp_metadata_or_token_requests() {
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        fake.serve("/prm", fake.protected_resource(&http.url));
+        fake.serve_metadata();
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        http.set_challenge(Some(&format!(
+            r#"Bearer resource_metadata="{}/prm""#,
+            fake.origin
+        )));
+        let (_root, directory, app) = oauth_app(json!({})).await;
+        std::fs::write(
+            directory.join("cyber.jsonc"),
+            json!({"mcp":{"remote":{"type":"remote","url":http.url}}}).to_string(),
+        )
+        .unwrap();
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 60);
+        let loader = cyber_app::hook_config_loader(app.paths.clone(), directory.join("home"));
+        let trust = cyber_core::trust::TrustStore::new(app.paths.trust_file());
+        let idle = || tokio::time::sleep(std::time::Duration::from_millis(500));
+        // Untrusted checkout, then a trusted checkout without the server's digest approval.
+        open_session(&app, &directory).await;
+        idle().await;
+        let resolved = loader(&directory).unwrap();
+        trust
+            .approve(
+                &resolved.trust.checkout_root,
+                resolved.trust.digest.as_deref().unwrap(),
+            )
+            .unwrap();
+        open_session(&app, &directory).await;
+        idle().await;
+        assert!(http.requests().is_empty(), "{:?}", http.requests());
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        assert_eq!(reconnect_over_http(&app, "remote").await.0, 403);
+        assert!(http.requests().is_empty());
+        assert!(fake.seen().is_empty());
+        assert!(mcp_connections(&app.store, &directory).unwrap().is_empty());
+        app.runtime.shutdown().await;
+    }
+
+    /// `cyber mcp auth remote`, in process: the same `oauth::authenticate` the binary runs,
+    /// against the app's configuration, trust store and credential file. The browser is
+    /// played by fetching the presented authorize URL and calling the loopback callback.
+    /// Returns the outcome and the authorize URL, when one was presented.
+    async fn authenticate(
+        app: &App,
+        directory: &Path,
+    ) -> (
+        Result<cyber_tools::mcp::oauth::AuthOutcome, cyber_tools::mcp::oauth::OAuthError>,
+        Option<String>,
+    ) {
+        let loader = cyber_app::hook_config_loader(app.paths.clone(), directory.join("home"));
+        let resolved = loader(directory).unwrap();
+        let trust = cyber_core::trust::TrustStore::new(app.paths.trust_file());
+        let home = directory.join("home");
+        let request = cyber_tools::mcp::oauth::AuthRequest {
+            resolved: &resolved,
+            trust: &trust,
+            location: directory,
+            home: &home,
+            name: "remote",
+            port: None,
+            timeout: std::time::Duration::from_secs(20),
+        };
+        let presented = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let seen = presented.clone();
+        let present = move |url: &str| {
+            *seen.lock().unwrap() = Some(url.to_owned());
+            let url = url.to_owned();
+            tokio::spawn(async move {
+                let (_, location, _) = oauth_as::get(&url).await;
+                if let Some(callback) = location {
+                    oauth_as::get(&callback).await;
+                }
+            });
+        };
+        let outcome =
+            cyber_tools::mcp::oauth::authenticate(&request, &credential_store(app), &present).await;
+        let url = presented.lock().unwrap().clone();
+        (outcome, url)
+    }
+
+    fn query_scopes(url: &str) -> Vec<String> {
+        let url = reqwest::Url::parse(url).unwrap();
+        let scope = url
+            .query_pairs()
+            .find(|(name, _)| name == "scope")
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default();
+        scope.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[tokio::test]
+    async fn insufficient_scope_settles_needs_auth_and_steps_up_on_the_next_auth() {
+        use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
+        use cyber_tools::mcp::oauth::McpCredentialStore;
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        // The resource needs more scope for this call than the token carries.
+        http.set_challenge(Some(
+            r#"Bearer error="insufficient_scope", scope="a b", error_description="PRIVATE-DETAIL""#,
+        ));
+        http.refuse_rpc(Some(("tools/call", 403)));
+        assert!(matches!(
+            invoke_remote(&app, &turn, &definition, "needs more scope").await,
+            ToolOutcome::Failed(_)
+        ));
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+                && record.status == McpConnectionStatus::NeedsAuth
+        })
+        .await;
+        assert_eq!(record.acknowledged, Some(true));
+        let public = wait_public_status(&app, "needs_auth").await;
+        assert_eq!(
+            public["data"][0]["error"],
+            "MCP server remote needs authentication; run `cyber mcp auth remote`",
+            "{public}"
+        );
+        // Backoff would retry within two seconds; a missing scope is never retried, and
+        // nothing refreshes or re-authorizes without the user.
+        tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        assert_eq!(http.posts("initialize").len(), 1);
+        assert_eq!(mcp_connections(&app.store, &directory).unwrap().len(), 1);
+        // The union of the granted and the challenged scopes is recorded for the next auth.
+        let marker = credential_store(&app).marker("remote", &http.url).unwrap();
+        assert_eq!(marker.required_scopes, ["a", "b", "mcp.read"]);
+        assert!(!marker.needs_client_registration);
+        assert_no_token_leak(&app, &directory, &mut events).await;
+
+        // The next `cyber mcp auth` asks for the union.
+        fake.serve("/prm", fake.protected_resource(&http.url));
+        fake.serve_metadata();
+        http.set_challenge(Some(&format!(
+            r#"Bearer resource_metadata="{}/prm""#,
+            fake.origin
+        )));
+        let (outcome, url) = authenticate(&app, &directory).await;
+        outcome.unwrap();
+        let mut scopes = query_scopes(&url.expect("authorize URL presented"));
+        scopes.sort();
+        assert_eq!(scopes, ["a", "b", "mcp.read"]);
+        let verifier = fake.token_posts().last().unwrap().form["code_verifier"].clone();
+        // A successful authorization clears the step-up marker.
+        let marker = credential_store(&app).marker("remote", &http.url).unwrap();
+        assert!(marker.required_scopes.is_empty());
+        assert_no_leak(&app, &directory, &mut events, &[verifier]).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn needs_client_registration_is_committed_then_a_client_id_connects() {
+        use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
+        use cyber_tools::mcp::oauth::{McpCredentialStore, OAuthError};
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.serve("/prm", fake.protected_resource(&http.url));
+        fake.serve_metadata_without_registration();
+        fake.expect_resource(&http.url);
+        http.require_authorization(Some("Bearer PRIVATE-NOT-YET-ISSUED"));
+        http.set_challenge(Some(&format!(
+            r#"Bearer resource_metadata="{}/prm""#,
+            fake.origin
+        )));
+        let remote = json!({"type":"remote","url":http.url});
+        let (_root, directory, app) = oauth_app(json!({"mcp":{"remote":remote}})).await;
+        let mut events = app.runtime.subscribe();
+
+        // `cyber mcp auth` finds no registration endpoint and no configured client.
+        let (outcome, url) = authenticate(&app, &directory).await;
+        assert!(
+            matches!(outcome, Err(OAuthError::NeedsClientRegistration)),
+            "{outcome:?}"
+        );
+        assert_eq!(url, None);
+        assert!(fake.requests_to("/authorize").is_empty());
+        assert!(fake.requests_to("/register").is_empty());
+        let marker = credential_store(&app).marker("remote", &http.url).unwrap();
+        assert!(marker.needs_client_registration);
+
+        // The real pool commits needs_client_registration from the recorded marker.
+        let turn = open_turn(&app, &directory).await;
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.status, McpConnectionStatus::NeedsClientRegistration);
+        assert_eq!(record.acknowledged, Some(true));
+        let public = wait_public_status(&app, "needs_client_registration").await;
+        let error = public["data"][0]["error"].as_str().unwrap();
+        assert!(error.contains("oauth.client_id"), "{public}");
+        assert!(error.contains("cyber mcp auth remote"), "{public}");
+        assert_eq!(
+            public["data"][0]["connection"]["error"],
+            "MCP server needs OAuth client registration"
+        );
+        // Retrying cannot help, and the runtime never runs discovery itself.
+        tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+        assert_eq!(http.posts("initialize").len(), 2, "{:?}", http.requests());
+        assert_eq!(fake.requests_to("/prm").len(), 1);
+        assert_eq!(mcp_connections(&app.store, &directory).unwrap().len(), 1);
+
+        // Configure a client, authorize, and reconnect.
+        let mut config = json!({"mcp":{"remote":remote}});
+        config["mcp"]["remote"]["oauth"] =
+            json!({"client_id":"configured-client","client_secret":"PRIVATE-CLIENT-SECRET"});
+        config["providers"] = provider();
+        std::fs::write(app.paths.config.join("cyber.json"), config.to_string()).unwrap();
+        let (outcome, url) = authenticate(&app, &directory).await;
+        outcome.unwrap();
+        assert!(url.unwrap().contains("client_id=configured-client"));
+        assert!(fake.requests_to("/register").is_empty());
+        let marker = credential_store(&app).marker("remote", &http.url).unwrap();
+        assert!(!marker.needs_client_registration);
+        let token = stored_tokens(&app, &http.url).access_token;
+        http.require_authorization(Some(&format!("Bearer {token}")));
+        let (status, body) = reconnect_over_http(&app, "remote").await;
+        assert_eq!(status, 200, "{body}");
+        wait_public_status(&app, "connected").await;
+        let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        assert_eq!(
+            invoke_remote(&app, &turn, &definition, "registered").await,
+            ToolOutcome::Ok("registered".into())
+        );
+        let verifier = fake.token_posts().last().unwrap().form["code_verifier"].clone();
+        assert_no_leak(
+            &app,
+            &directory,
+            &mut events,
+            &[verifier, "PRIVATE-CLIENT-SECRET".into()],
+        )
+        .await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn removed_credential_lets_a_connected_server_reconnect_to_needs_auth() {
+        use cyber_server::runtime::McpConnectionStatus;
+        use cyber_tools::mcp::oauth::McpCredentialStore;
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        // A connected server holding a credential that is still stored is not reconnected.
+        assert_eq!(reconnect_over_http(&app, "remote").await.0, 409);
+        // What `cyber mcp logout remote` removes, then the reconnect it requests.
+        assert_eq!(credential_store(&app).remove_server("remote").unwrap(), 1);
+        let (status, body) = reconnect_over_http(&app, "remote").await;
+        assert_eq!(status, 200, "{body}");
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+                && record.status == McpConnectionStatus::NeedsAuth
+        })
+        .await;
+        assert_eq!(record.acknowledged, Some(true));
+        wait_public_status(&app, "needs_auth").await;
+        let initializes = http.posts("initialize");
+        assert_eq!(initializes.len(), 2);
+        assert_eq!(initializes[1].header("authorization"), None);
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn due_token_is_renewed_in_place_while_idle_and_not_again_for_a_short_lifetime() {
+        use cyber_server::runtime::ToolOutcome;
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        // A 300 s lifetime, every token of which a fixed five-minute window treats as due.
+        fake.set_expires_in(300);
+        let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        assert!(fake.token_posts().is_empty());
+        let issued = format!("{}1", oauth_as::ACCESS_PREFIX);
+        http.also_accept_authorization(Some(&format!("Bearer {issued}")));
+        make_due(&app, &http.url);
+        // No call: the pool monitor's idle tick renews the token on the live session.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while stored_tokens(&app, &http.url).access_token != issued {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the idle tick never renewed the token");
+        http.require_authorization(Some(&format!("Bearer {issued}")));
+        http.also_accept_authorization(None);
+        // Several monitor ticks later the fresh token is still not due.
+        tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+        assert_eq!(fake.token_posts().len(), 1, "{:?}", fake.paths());
+        assert_eq!(
+            invoke_remote(&app, &turn, &definition, "renewed").await,
+            ToolOutcome::Ok("renewed".into())
+        );
+        assert_eq!(
+            http.posts("tools/call")
+                .last()
+                .unwrap()
+                .header("authorization"),
+            Some(format!("Bearer {issued}").as_str())
+        );
+        // The same session throughout: one initialize, one connection record.
+        assert_eq!(http.posts("initialize").len(), 1);
+        assert_eq!(mcp_connections(&app.store, &directory).unwrap().len(), 1);
+        assert_eq!(fake.token_posts().len(), 1);
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_rejected_in_session_refresh_is_sent_once_and_settles_needs_auth() {
+        use cyber_server::runtime::McpConnectionStatus;
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        fake.revoke_refresh(SEED_REFRESH);
+        make_due(&app, &http.url);
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+                && record.status == McpConnectionStatus::NeedsAuth
+        })
+        .await;
+        assert_eq!(record.acknowledged, Some(true));
+        // Ticks and backoff would follow within seconds; the rejected token is not resent.
+        tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+        assert_eq!(fake.token_posts().len(), 1, "{:?}", fake.paths());
+        assert_eq!(http.posts("initialize").len(), 1);
+        wait_public_status(&app, "needs_auth").await;
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_token_endpoint_that_never_answers_does_not_block_location_close() {
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url,"timeout":2}}})).await;
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 3600);
+        let turn = open_turn(&app, &directory).await;
+        wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        // The token endpoint accepts the request and never answers.
+        fake.hold_tokens();
+        make_due(&app, &http.url);
+        wait_token_posts(&fake, 1).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            app.host.close_mcp_location(&directory),
+        )
+        .await
+        .expect("Location close waited on the token request")
+        .unwrap();
+        assert_eq!(fake.token_posts().len(), 1);
+        fake.release_tokens();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn logout_during_an_in_session_refresh_is_not_undone() {
+        use cyber_server::runtime::McpConnectionStatus;
+        use cyber_tools::mcp::oauth::McpCredentialStore;
+        let (http, fake, _root, directory, app, turn) = bearer_app().await;
+        let mut events = app.runtime.subscribe();
+        wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        fake.hold_tokens();
+        make_due(&app, &http.url);
+        wait_token_posts(&fake, 1).await;
+        // `cyber mcp logout remote` while the refresh is in flight.
+        assert_eq!(credential_store(&app).remove_server("remote").unwrap(), 1);
+        fake.release_tokens();
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+                && record.status == McpConnectionStatus::NeedsAuth
+        })
+        .await;
+        assert_eq!(record.acknowledged, Some(true));
+        assert!(
+            credential_store(&app)
+                .find("remote", &http.url)
+                .unwrap()
+                .is_none()
+        );
+        let text = std::fs::read_to_string(app.paths.mcp_auth_file()).unwrap();
+        assert!(!text.contains("TOKEN-SECRET"), "{text}");
+        assert_eq!(fake.token_posts().len(), 1);
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn two_locations_sharing_a_due_credential_refresh_it_once() {
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        fake.expect_resource(&http.url);
+        let issued = format!("{}1", oauth_as::ACCESS_PREFIX);
+        http.require_authorization(Some(&format!("Bearer {issued}")));
+        let (root, first, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        let second = root.path().join("second");
+        std::fs::create_dir(&second).unwrap();
+        let second = second.canonicalize().unwrap();
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 60);
+        // Hold the first refresh so both Locations' connects overlap.
+        fake.hold_tokens();
+        open_session(&app, &first).await;
+        open_session(&app, &second).await;
+        wait_token_posts(&fake, 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert_eq!(fake.token_posts().len(), 1, "the second refresh waits");
+        fake.release_tokens();
+        wait_running(&app, &first).await;
+        wait_running(&app, &second).await;
+        // The second adopted the rotated credential instead of replaying its refresh token.
+        assert_eq!(fake.token_posts().len(), 1, "{:?}", fake.paths());
+        assert_eq!(stored_tokens(&app, &http.url).access_token, issued);
+        let initializes = http.posts("initialize");
+        assert_eq!(initializes.len(), 2, "{initializes:?}");
+        let bearer = format!("Bearer {issued}");
+        assert!(
+            initializes
+                .iter()
+                .all(|seen| seen.header("authorization") == Some(bearer.as_str()))
+        );
+        app.host.close_mcp_location(&first).await.unwrap();
+        app.host.close_mcp_location(&second).await.unwrap();
+        app.runtime.shutdown().await;
+    }
 }

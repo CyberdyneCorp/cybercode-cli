@@ -702,6 +702,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .located()
         .ok::<Located<super::mcp::McpClosed>>(g),
+        op(
+            "post",
+            "/mcp/{name}/reconnect",
+            "v1.mcp.reconnect",
+            "Reconnect a server waiting for authentication with a fresh owner; returns its status",
+        )
+        .located()
+        .ok::<Located<crate::runtime::McpServerStatus>>(g),
         op("get", "/agents", "v1.agent.list", "Selectable agents")
             .located()
             .ok::<Located<Vec<AgentInfo>>>(g),

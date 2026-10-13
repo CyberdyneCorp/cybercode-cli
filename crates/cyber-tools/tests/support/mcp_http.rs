@@ -83,10 +83,16 @@ struct Control {
     sessions: u32,
     /// Answer every POST and GET without exactly this `Authorization` value with 401.
     authorization: Option<String>,
+    /// A second `Authorization` value accepted beside `authorization`.
+    also_authorization: Option<String>,
     /// A polled `tools/call` result awaiting its resuming GET.
     pending: Option<String>,
     /// Answer every later `initialize` POST with this status and no body.
     initialize: Option<u16>,
+    /// `WWW-Authenticate` value sent with every 401 or 403 refusal.
+    challenge: Option<String>,
+    /// Answer POSTs of this JSON-RPC method with this status and no body.
+    refuse_rpc: Option<(String, u16)>,
 }
 
 type Stream = futures::channel::mpsc::UnboundedSender<String>;
@@ -167,6 +173,23 @@ impl McpHttp {
     /// Require exactly this `Authorization` header on later POSTs and GETs (`None` stops).
     pub fn require_authorization(&self, value: Option<&str>) {
         self.state.control.lock().unwrap().authorization = value.map(str::to_owned);
+    }
+
+    /// Also accept this `Authorization` value, as during a token rotation (`None` stops).
+    pub fn also_accept_authorization(&self, value: Option<&str>) {
+        self.state.control.lock().unwrap().also_authorization = value.map(str::to_owned);
+    }
+
+    /// Send this `WWW-Authenticate` value with every later 401/403 (`None` stops).
+    pub fn set_challenge(&self, value: Option<&str>) {
+        self.state.control.lock().unwrap().challenge = value.map(str::to_owned);
+    }
+
+    /// Answer later POSTs of the JSON-RPC method `rpc` with `code` (and the configured
+    /// challenge on 401/403); `None` stops. Other requests still reach the session.
+    pub fn refuse_rpc(&self, refusal: Option<(&str, u16)>) {
+        self.state.control.lock().unwrap().refuse_rpc =
+            refusal.map(|(rpc, code)| (rpc.to_owned(), code));
     }
 
     /// Answer later `initialize` POSTs with `code` (or stop with `None`); other requests
@@ -279,8 +302,8 @@ async fn handle(
         tokio::time::sleep(Duration::from_secs(600)).await;
         return status(504);
     }
-    let response = if let Some(code) = refused(&state, &method, &headers) {
-        status(code)
+    let response = if let Some(code) = refused(&state, &method, &headers, &body) {
+        challenged(&state, code)
     } else if method == Method::GET
         && let Some(resumed) = resumed(&state, &headers)
     {
@@ -307,8 +330,20 @@ async fn handle(
     response
 }
 
+/// A refusal, carrying the configured `WWW-Authenticate` challenge on 401/403.
+fn challenged(state: &Shared, code: u16) -> Response {
+    let mut response = status(code);
+    let challenge = state.control.lock().unwrap().challenge.clone();
+    if let Some(challenge) = challenge.filter(|_| matches!(code, 401 | 403)) {
+        response
+            .headers_mut()
+            .insert("www-authenticate", challenge.parse().unwrap());
+    }
+    response
+}
+
 /// A runtime failure status, or 404 for a request carrying a session that is not live.
-fn refused(state: &Shared, method: &Method, headers: &HeaderMap) -> Option<u16> {
+fn refused(state: &Shared, method: &Method, headers: &HeaderMap, body: &Value) -> Option<u16> {
     if method == Method::DELETE {
         return None;
     }
@@ -316,11 +351,18 @@ fn refused(state: &Shared, method: &Method, headers: &HeaderMap) -> Option<u16> 
     if control.fail.is_some() {
         return control.fail;
     }
+    if let Some((rpc, code)) = &control.refuse_rpc
+        && method == Method::POST
+        && body["method"] == rpc.as_str()
+    {
+        return Some(*code);
+    }
     if let Some(required) = &control.authorization {
         let sent = headers
             .get("authorization")
             .and_then(|value| value.to_str().ok());
-        if sent != Some(required.as_str()) {
+        let also = control.also_authorization.as_deref();
+        if sent != Some(required.as_str()) && (sent.is_none() || sent != also) {
             return Some(401);
         }
     }
@@ -473,7 +515,7 @@ async fn legacy_message(
 ) -> Response {
     let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let sender = state.stream.lock().unwrap().clone();
-    let refusal = refused(&state, &method, &headers).or(state.behavior.message_status);
+    let refusal = refused(&state, &method, &headers, &body).or(state.behavior.message_status);
     let response = match (sender, reply(&state, &body)) {
         _ if refusal.is_some() => status(refusal.unwrap_or_default()),
         (None, _) => status(404),

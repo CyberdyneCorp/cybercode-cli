@@ -4404,6 +4404,22 @@
           "closed"
         ]
       },
+      "Located_McpServerStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/McpServerStatus"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
       "Located_Array_of_AgentInfo": {
         "type": "object",
         "properties": {
@@ -8861,6 +8877,71 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_McpClosed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/{name}/reconnect": {
+      "post": {
+        "operationId": "v1.mcp.reconnect",
+        "summary": "Reconnect a server waiting for authentication with a fresh owner; returns its status",
+        "tags": [
+          "mcp"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_McpServerStatus"
                 }
               }
             }

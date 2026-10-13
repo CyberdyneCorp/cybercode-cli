@@ -254,14 +254,24 @@ fn validate_mcp_digest(digest: &str) -> io::Result<()> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid MCP SHA-256 digest"))
 }
 
-/// Write via a temporary file and rename, with mode 0600 on Unix.
+/// Write via a temporary file and rename, with mode 0600 on Unix. The temporary file is
+/// created owner-only, so its contents are never readable by others, even briefly.
 pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
-    std::fs::write(&tmp, bytes)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&tmp)?;
+    // A leftover temporary file keeps its old mode through `open`; narrow it first.
     set_private(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&tmp, path)
 }
 

@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use cyber_core::config::{McpServer, McpSettings};
@@ -14,15 +14,17 @@ use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::oauth::McpCredentialStore;
 use super::{
-    DiscoveredTool, LaunchFailure, LocalLaunchError, LocalLauncher, OwnedLocalServer,
-    RemoteTransport, authorize_server,
+    DiscoveredTool, LocalLaunchError, LocalLauncher, OwnedLocalServer, RemoteTransport,
+    authorize_server,
 };
 use crate::host::BuiltinHost;
 use crate::tools::ToolError;
 
+/// Shared connections, plus the stored OAuth credentials remote connections send.
 #[derive(Default)]
-pub(crate) struct Pool(Mutex<State>);
+pub(crate) struct Pool(Mutex<State>, OnceLock<Arc<dyn McpCredentialStore>>);
 #[derive(Default)]
 struct State {
     closed: bool,
@@ -56,6 +58,25 @@ struct Entry {
     lost: AtomicBool,
     /// The remote transport that last connected; reconnects try it first.
     transport: Mutex<RemoteTransport>,
+    /// The Session that admitted this entry; an explicit reconnect re-admits through it.
+    info: Option<SessionInfo>,
+}
+
+/// Why an explicit reconnect was refused. Messages carry no credentials.
+#[derive(Debug, thiserror::Error)]
+pub enum McpReconnectError {
+    /// The server is absent from the loaded configuration.
+    #[error("{0}")]
+    NotFound(String),
+    /// Trust or the individual digest approval does not authorize the server.
+    #[error("{0}")]
+    Forbidden(String),
+    /// The server is neither settled waiting for the user (`needs_auth`,
+    /// `needs_client_registration`) nor running on a credential that was logged out.
+    #[error("{0}")]
+    Conflict(String),
+    #[error("{0}")]
+    Unavailable(String),
 }
 
 struct Published {
@@ -112,6 +133,37 @@ impl Entry {
         Ok(())
     }
 
+    /// The status the latest observed record settled with, if it is settled.
+    fn settled(&self) -> Option<McpConnectionStatus> {
+        self.observed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .filter(|record| record.phase == McpConnectionPhase::Settled)
+            .map(|record| record.status)
+    }
+
+    /// Settled `needs_auth` or `needs_client_registration`, with startup finished and no
+    /// live monitor or native owner.
+    fn waiting_for_auth(&self) -> bool {
+        let settled = self.settled().is_some_and(waits_for_user);
+        let idle = |task: &tokio::sync::Mutex<Option<JoinHandle<()>>>| {
+            task.try_lock()
+                .is_ok_and(|task| task.as_ref().is_none_or(JoinHandle::is_finished))
+        };
+        settled
+            && self.startup_finished.load(Ordering::Acquire)
+            && idle(&self.monitor)
+            && self.server.try_lock().is_ok_and(|server| server.is_none())
+    }
+
+    /// Running on an OAuth credential that `cyber mcp logout` removed.
+    fn logged_out(&self) -> bool {
+        self.server
+            .try_lock()
+            .is_ok_and(|server| server.as_ref().is_some_and(OwnedLocalServer::logged_out))
+    }
+
     fn clear_published(&self) {
         *self
             .published
@@ -130,6 +182,14 @@ impl Drop for Entry {
     }
 }
 
+/// Settled statuses that only the user can resolve; retrying cannot succeed.
+fn waits_for_user(status: McpConnectionStatus) -> bool {
+    matches!(
+        status,
+        McpConnectionStatus::NeedsAuth | McpConnectionStatus::NeedsClientRegistration
+    )
+}
+
 async fn join_retained(task: &tokio::sync::Mutex<Option<JoinHandle<()>>>) {
     let mut task = task.lock().await;
     if let Some(handle) = task.as_mut() {
@@ -137,6 +197,55 @@ async fn join_retained(task: &tokio::sync::Mutex<Option<JoinHandle<()>>>) {
         let _ = handle.await;
         task.take();
     }
+}
+
+/// A new entry whose retained startup task connects, publishes and starts the monitor.
+fn spawn_entry(
+    host: &Arc<BuiltinHost>,
+    executor: &tokio::runtime::Handle,
+    name: String,
+    digest: String,
+    info: &SessionInfo,
+) -> Arc<Entry> {
+    let entry = Arc::new(Entry {
+        name: name.clone(),
+        digest,
+        cancel: CancellationToken::new(),
+        published: Mutex::default(),
+        server: tokio::sync::Mutex::new(None),
+        task: tokio::sync::Mutex::default(),
+        observed: Mutex::default(),
+        monitor: tokio::sync::Mutex::default(),
+        startup_finished: AtomicBool::new(false),
+        lost: AtomicBool::new(false),
+        transport: Mutex::default(),
+        info: Some(info.clone()),
+    });
+    let owned = entry.clone();
+    let host = host.clone();
+    let info = info.clone();
+    let task = executor.spawn(async move {
+        let result = tokio::select! {
+            result = connect_entry(&host, &owned, &info) => Some(result),
+            _ = owned.cancel.cancelled() => None,
+        };
+        match result {
+            Some(Ok(server)) => {
+                publish_server(&owned, server).await;
+                start_monitor(&host, &owned, info);
+            }
+            Some(Err(error)) => cyber_core::log::error(
+                "mcp",
+                &error.diagnostic,
+                json!({"server":name,"acknowledged":error.acknowledged}),
+            ),
+            None => {}
+        }
+        owned.startup_finished.store(true, Ordering::Release);
+    });
+    // The entry is not published until its startup handle is installed.
+    *entry.task.try_lock().expect("unpublished MCP entry") = Some(task);
+    entry
 }
 
 fn start_monitor(host: &Arc<BuiltinHost>, entry: &Arc<Entry>, info: SessionInfo) {
@@ -232,7 +341,7 @@ async fn reconnect_once(
 
 /// Authentication cannot succeed by retrying, and unsettled failures must not re-admit.
 fn failed_attempt(error: &LocalLaunchError) -> Attempt {
-    if error.kind() == LaunchFailure::NeedsAuth || !error.retry_safe() {
+    if error.kind().needs_user() || !error.retry_safe() {
         Attempt::Stop
     } else {
         Attempt::Retry
@@ -288,6 +397,7 @@ async fn connect_entry(
         temp_dir: &host.opts.temp_dir,
         helper: host.opts.sandbox_helper.as_deref(),
         credential_env_names: &credentials,
+        credentials: host.mcp_credentials(),
     };
     let publish = host.runtime().map(|runtime| runtime.mcp_status_observer());
     let weak = Arc::downgrade(entry);
@@ -354,8 +464,8 @@ async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> Healt
                 return Health::Stop;
             }
             server.take();
-            // An authorization refusal settled `needs_auth`; retrying cannot succeed.
-            if record.status == McpConnectionStatus::NeedsAuth {
+            // An authorization refusal settled waiting for the user; retrying cannot succeed.
+            if waits_for_user(record.status) {
                 Health::Stop
             } else {
                 Health::Retry
@@ -542,45 +652,131 @@ impl BuiltinHost {
             else {
                 continue;
             };
-            let entry = Arc::new(Entry {
-                name: name.clone(),
-                digest: selection.digest,
-                cancel: CancellationToken::new(),
-                published: Mutex::default(),
-                server: tokio::sync::Mutex::new(None),
-                task: tokio::sync::Mutex::default(),
-                observed: Mutex::default(),
-                monitor: tokio::sync::Mutex::default(),
-                startup_finished: AtomicBool::new(false),
-                lost: AtomicBool::new(false),
-                transport: Mutex::default(),
-            });
-            let owned = entry.clone();
-            let host = host.clone();
-            let info = info.clone();
-            let task = executor.spawn(async move {
-                let result = tokio::select! {
-                    result = connect_entry(&host, &owned, &info) => Some(result),
-                    _ = owned.cancel.cancelled() => None,
-                };
-                match result {
-                    Some(Ok(server)) => {
-                        publish_server(&owned, server).await;
-                        start_monitor(&host, &owned, info);
-                    }
-                    Some(Err(error)) => cyber_core::log::error(
-                        "mcp",
-                        &error.diagnostic,
-                        json!({"server":name,"acknowledged":error.acknowledged}),
-                    ),
-                    None => {}
-                }
-                owned.startup_finished.store(true, Ordering::Release);
-            });
-            // The entry is not published until its startup handle is installed.
-            *entry.task.try_lock().expect("unpublished MCP entry") = Some(task);
+            let entry = spawn_entry(&host, &executor, name, selection.digest, info);
             pool.entries.insert(key, entry);
         }
+    }
+
+    /// Bind the stored MCP OAuth credentials that remote connections send as a bearer.
+    pub fn attach_mcp_credentials(&self, store: Arc<dyn McpCredentialStore>) -> Result<(), String> {
+        self.mcp
+            .1
+            .set(store)
+            .map_err(|_| "MCP credentials are already attached".into())
+    }
+
+    /// The attached MCP OAuth credential store, shared by pool and hook connections.
+    pub(crate) fn mcp_credentials(&self) -> Option<Arc<dyn McpCredentialStore>> {
+        self.mcp.1.get().cloned()
+    }
+
+    /// Reconnect a server whose connection settled `needs_auth` or
+    /// `needs_client_registration` and whose monitor stopped, typically after `cyber mcp
+    /// auth` stored a token, or a running server whose OAuth credential `cyber mcp logout`
+    /// removed (which then settles `needs_auth`). Configuration, trust and the digest
+    /// approval are checked first; the entry is then stopped and removed and the server is
+    /// re-admitted through its Session with a fresh durable owner. The returned status is
+    /// observed right after admission (`connecting`); later transitions publish events.
+    pub async fn reconnect_mcp(
+        &self,
+        directory: &Path,
+        name: &str,
+    ) -> Result<McpServerStatus, McpReconnectError> {
+        let directory = directory
+            .canonicalize()
+            .map_err(|_| McpReconnectError::NotFound("MCP Location is unavailable".into()))?;
+        let digest = self.reconnect_selection(&directory, name)?;
+        let key = (directory.clone(), name.to_string());
+        let entry = self.reconnectable(&key, &digest)?;
+        let info = entry.info.clone().ok_or_else(|| {
+            McpReconnectError::Conflict("MCP server has no Session to reconnect through".into())
+        })?;
+        entry.stop().await.map_err(McpReconnectError::Conflict)?;
+        let host = self
+            .weak
+            .upgrade()
+            .ok_or_else(|| McpReconnectError::Unavailable("MCP host disposed".into()))?;
+        let executor = tokio::runtime::Handle::try_current()
+            .map_err(|_| McpReconnectError::Unavailable("MCP runtime unavailable".into()))?;
+        {
+            let mut pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let current = pool.entries.get(&key);
+            if pool.closed
+                || pool.closing.contains(&directory)
+                || !current.is_some_and(|current| Arc::ptr_eq(current, &entry))
+            {
+                return Err(McpReconnectError::Conflict(
+                    "MCP Location changed during reconnect".into(),
+                ));
+            }
+            let replacement = spawn_entry(&host, &executor, name.into(), digest, &info);
+            pool.entries.insert(key, replacement);
+        }
+        self.mcp_status(&directory)
+            .map_err(McpReconnectError::Unavailable)?
+            .into_iter()
+            .find(|status| status.name == name)
+            .ok_or_else(|| McpReconnectError::NotFound("MCP server is not configured".into()))
+    }
+
+    /// The currently authorized digest of a configured, enabled server.
+    fn reconnect_selection(
+        &self,
+        directory: &Path,
+        name: &str,
+    ) -> Result<String, McpReconnectError> {
+        let unavailable = |error: String| McpReconnectError::Unavailable(error);
+        let config = self
+            .hook_config
+            .get()
+            .ok_or_else(|| unavailable("MCP resolver unavailable".into()))?;
+        let resolved = (config.resolve)(directory).map_err(unavailable)?;
+        let settings = McpSettings::from_config(&resolved.value).map_err(unavailable)?;
+        let definition = settings
+            .servers
+            .get(name)
+            .ok_or_else(|| McpReconnectError::NotFound("MCP server is not configured".into()))?;
+        if !definition.enabled() {
+            return Err(McpReconnectError::Conflict("MCP server is disabled".into()));
+        }
+        authorize_server(&resolved, &config.trust, directory, name)
+            .map(|selection| selection.digest)
+            .map_err(McpReconnectError::Forbidden)
+    }
+
+    /// The retained entry, when it settled waiting for the user (neither its startup, its
+    /// monitor nor a native owner still running) or runs on a logged-out credential. The
+    /// definition must be unchanged, except that `needs_client_registration` is resolved
+    /// by configuring `oauth.client_id`, which changes it; `digest` is the currently
+    /// authorized one either way.
+    fn reconnectable(
+        &self,
+        key: &(PathBuf, String),
+        digest: &str,
+    ) -> Result<Arc<Entry>, McpReconnectError> {
+        let conflict = |message: &str| McpReconnectError::Conflict(message.into());
+        let entry = {
+            let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if pool.closed || pool.closing.contains(&key.0) {
+                return Err(conflict("MCP Location is closing or requires recovery"));
+            }
+            pool.entries
+                .get(key)
+                .cloned()
+                .ok_or_else(|| conflict("MCP server has not started for this Location"))?
+        };
+        let waiting = entry.waiting_for_auth();
+        let registering =
+            waiting && entry.settled() == Some(McpConnectionStatus::NeedsClientRegistration);
+        if entry.digest != digest && !registering {
+            return Err(conflict(
+                "MCP definition changed; close and reopen the Location",
+            ));
+        }
+        if entry.cancel.is_cancelled() || !(waiting || entry.logged_out()) {
+            return Err(conflict("MCP server is not waiting for authentication"));
+        }
+        Ok(entry)
     }
 
     pub(crate) fn mcp_definitions(&self, turn: &TurnContext) -> Vec<ToolDef> {
@@ -1000,16 +1196,8 @@ fn status_problem(
     {
         return failed("MCP connection lost; native settlement requires retry or recovery");
     }
-    if connection.as_ref().is_some_and(|record| {
-        record.phase == McpConnectionPhase::Settled
-            && record.status == McpConnectionStatus::NeedsAuth
-    }) {
-        let name = &entry.name;
-        return Some((
-            McpConnectionStatus::NeedsAuth,
-            format!("MCP server {name} needs authentication; run `cyber mcp auth {name}` or /mcp")
-                .into(),
-        ));
+    if let Some(waiting) = connection.as_ref().and_then(user_action) {
+        return Some(waiting);
     }
     if connection
         .as_ref()
@@ -1021,6 +1209,26 @@ fn status_problem(
         return failed("MCP startup failed; inspect local logs");
     }
     None
+}
+
+/// The public status and next step of a connection settled waiting for the user.
+fn user_action(
+    record: &McpStatusUpdate,
+) -> Option<(McpConnectionStatus, std::borrow::Cow<'static, str>)> {
+    if record.phase != McpConnectionPhase::Settled || !waits_for_user(record.status) {
+        return None;
+    }
+    let name = &record.name;
+    let message = if record.status == McpConnectionStatus::NeedsClientRegistration {
+        format!(
+            "MCP server {name} needs OAuth client registration; its authorization server offers \
+             no dynamic registration, so register a client there, set oauth.client_id, then run \
+             `cyber mcp auth {name}`"
+        )
+    } else {
+        format!("MCP server {name} needs authentication; run `cyber mcp auth {name}`")
+    };
+    Some((record.status, message.into()))
 }
 
 fn output(result: Value) -> Result<ToolOutcome, ToolError> {
@@ -1116,6 +1324,7 @@ mod tests {
             startup_finished: AtomicBool::new(false),
             lost: AtomicBool::new(false),
             transport: Mutex::default(),
+            info: None,
             task: tokio::sync::Mutex::new(Some(tokio::spawn(async move {
                 let _ = blocked.await;
             }))),
@@ -1172,15 +1381,20 @@ mod tests {
         let mut error = LocalLaunchError::before_launch("authorization required (HTTP 401)");
         error.settled = true;
         assert!(matches!(failed_attempt(&error), Attempt::Retry));
-        error.kind = super::super::LaunchFailure::NeedsAuth;
-        let mut calls = 0;
-        let connected = retry_with_backoff(&CancellationToken::new(), || {
-            calls += 1;
-            std::future::ready(failed_attempt(&error))
-        })
-        .await;
-        assert!(!connected);
-        assert_eq!(calls, 1);
+        for kind in [
+            super::super::LaunchFailure::NeedsAuth,
+            super::super::LaunchFailure::NeedsClientRegistration,
+        ] {
+            error.kind = kind;
+            let mut calls = 0;
+            let connected = retry_with_backoff(&CancellationToken::new(), || {
+                calls += 1;
+                std::future::ready(failed_attempt(&error))
+            })
+            .await;
+            assert!(!connected);
+            assert_eq!(calls, 1);
+        }
     }
 
     #[tokio::test(start_paused = true)]

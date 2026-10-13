@@ -40,7 +40,8 @@ pub enum McpServer {
         headers_command: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         headers_refresh_seconds: Option<u32>,
-        oauth: Option<Value>,
+        /// `false` disables OAuth; `true`, an object or an omitted field enables it.
+        oauth: Option<McpOAuthSetting>,
         #[serde(default = "enabled")]
         enabled: bool,
         #[serde(
@@ -57,6 +58,81 @@ pub enum McpServer {
         output_token_limit: Option<usize>,
     },
 }
+/// A remote server's `oauth` field. `true` and an omitted field both mean enabled with
+/// defaults; the flag keeps its own serialized form so existing approval digests hold.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum McpOAuthSetting {
+    Flag(bool),
+    Settings(McpOAuth),
+}
+
+/// Lowest `oauth.redirect_port`: privileged ports are refused.
+pub const OAUTH_REDIRECT_PORT_MIN: u16 = 1024;
+
+/// OAuth client settings. `client_secret` supports `{env:NAME}` and never prints in
+/// review or diagnostics.
+#[derive(Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpOAuth {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    /// Fixed loopback callback port; an ephemeral port is used when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_port: Option<u16>,
+}
+
+impl std::fmt::Debug for McpOAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpOAuth")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &self.client_secret.as_ref().map(|_| "***"))
+            .field("scopes", &self.scopes)
+            .field("redirect_port", &self.redirect_port)
+            .finish()
+    }
+}
+
+impl McpOAuth {
+    fn validate(&self) -> Result<(), String> {
+        let printable = |value: &str| !value.is_empty() && !value.chars().any(char::is_control);
+        if self.client_id.as_deref().is_some_and(|id| !printable(id)) {
+            return Err("oauth.client_id must be nonempty".into());
+        }
+        if self.client_secret.is_some() && self.client_id.is_none() {
+            return Err("oauth.client_secret requires oauth.client_id".into());
+        }
+        if self
+            .client_secret
+            .as_deref()
+            .is_some_and(|secret| !printable(secret))
+        {
+            return Err("invalid oauth.client_secret".into());
+        }
+        if let Some(scopes) = &self.scopes
+            && (scopes.is_empty()
+                || scopes.iter().any(|scope| {
+                    !printable(scope) || scope.contains(char::is_whitespace) || scope.contains('"')
+                }))
+        {
+            return Err("oauth.scopes must be nonempty scope tokens".into());
+        }
+        if self
+            .redirect_port
+            .is_some_and(|port| port < OAUTH_REDIRECT_PORT_MIN)
+        {
+            return Err(format!(
+                "oauth.redirect_port must be between {OAUTH_REDIRECT_PORT_MIN} and 65535"
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Default and upper bound for `headers_refresh_seconds`.
 pub const HEADERS_REFRESH_DEFAULT: u32 = 3600;
 pub const HEADERS_REFRESH_MAX: u32 = 86_400;
@@ -152,6 +228,17 @@ impl McpServer {
             Self::Local { .. } => None,
         }
     }
+    /// Effective OAuth settings for a remote server; `None` when local or `oauth: false`.
+    pub fn oauth(&self) -> Option<McpOAuth> {
+        match self {
+            Self::Remote { oauth, .. } => match oauth {
+                None | Some(McpOAuthSetting::Flag(true)) => Some(McpOAuth::default()),
+                Some(McpOAuthSetting::Flag(false)) => None,
+                Some(McpOAuthSetting::Settings(settings)) => Some(settings.clone()),
+            },
+            Self::Local { .. } => None,
+        }
+    }
     /// Seconds between header command runs on a live connection.
     pub fn headers_refresh_seconds(&self) -> u32 {
         match self {
@@ -234,11 +321,8 @@ impl McpServer {
                 if headers.keys().any(|key| transport_owned_header(key)) {
                     return Err("headers cannot set transport-owned names".into());
                 }
-                if oauth
-                    .as_ref()
-                    .is_some_and(|oauth| !oauth.is_boolean() && !oauth.is_object())
-                {
-                    return Err("oauth must be boolean or object".into());
+                if let Some(McpOAuthSetting::Settings(oauth)) = oauth {
+                    oauth.validate()?;
                 }
             }
         }

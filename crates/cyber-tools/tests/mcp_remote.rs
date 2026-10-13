@@ -2,6 +2,8 @@
 //! credential redaction against a real in-process HTTP server on 127.0.0.1.
 #[path = "support/mcp_http.rs"]
 mod mcp_http;
+#[path = "support/oauth_as.rs"]
+mod oauth_as;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -11,6 +13,10 @@ use cyber_core::config::{self, LoadRequest, Resolved};
 use cyber_core::paths::Paths;
 use cyber_core::trust::TrustStore;
 use cyber_server::runtime::{McpConnectionPhase, McpConnectionStatus, mcp_connections};
+use cyber_tools::mcp::oauth::{
+    CredentialKey, McpCredentialStore, MemoryCredentialStore, OAuthClient, StoredCredential,
+    TokenSet,
+};
 use cyber_tools::mcp::{
     HttpFailure, IdleUpdate, LaunchFailure, LocalLauncher, LocalServer, McpError, McpLocationPin,
     RemoteTransport,
@@ -93,7 +99,20 @@ impl Fixture {
             temp_dir: &self.temp,
             helper: self.helper.as_deref(),
             credential_env_names: &[],
+            credentials: None,
         }
+    }
+
+    /// Connect with stored OAuth credentials available.
+    async fn connect_with(
+        &self,
+        credentials: std::sync::Arc<dyn McpCredentialStore>,
+    ) -> Result<LocalServer, cyber_tools::mcp::LocalLaunchError> {
+        let loaded = self.load();
+        let trust = TrustStore::new(self.paths.trust_file());
+        let mut launcher = self.launcher(&loaded, &trust);
+        launcher.credentials = Some(credentials);
+        launcher.connect("remote", || Ok(())).await
     }
 
     async fn connect(&self) -> Result<LocalServer, cyber_tools::mcp::LocalLaunchError> {
@@ -1261,4 +1280,201 @@ async fn due_headers_refresh_runs_before_a_call_without_a_monitor_tick() {
     assert_eq!(http.posts("tools/call").len(), 1);
     assert!(server.poll_idle(Duration::from_millis(50)).await.is_err());
     assert!(server.shutdown().await.0);
+}
+
+/// A stored, not yet expiring OAuth credential for `remote` at `url`.
+fn oauth_store(url: &str) -> std::sync::Arc<dyn McpCredentialStore> {
+    stored_credential(url, "http://127.0.0.1:9", 3600)
+}
+
+/// `remote` at `url` with a token from `issuer` expiring in `expires_in` seconds.
+fn stored_credential(
+    url: &str,
+    issuer: &str,
+    expires_in: u64,
+) -> std::sync::Arc<MemoryCredentialStore> {
+    let store = MemoryCredentialStore::default();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + expires_in;
+    store
+        .put(
+            &CredentialKey {
+                server: "remote".into(),
+                url: url.into(),
+                issuer: format!("{issuer}/"),
+            },
+            &StoredCredential {
+                tokens: TokenSet {
+                    access_token: "PRIVATE-OAUTH".into(),
+                    refresh_token: Some("PRIVATE-REFRESH".into()),
+                    expires_at: Some(expires),
+                    issued_at: None,
+                    scopes: Vec::new(),
+                },
+                client: OAuthClient {
+                    client_id: "client".into(),
+                    client_secret: None,
+                },
+                token_endpoint: format!("{issuer}/token"),
+            },
+        )
+        .unwrap();
+    std::sync::Arc::new(store)
+}
+
+/// Every POST the fixture saw carries `authorization` and the static `x-api-key`.
+fn assert_posts_carry(http: &McpHttp, authorization: &str) {
+    let posts: Vec<_> = http
+        .requests()
+        .into_iter()
+        .filter(|seen| seen.method == "POST")
+        .collect();
+    assert!(posts.len() >= 3, "{posts:?}");
+    for seen in posts {
+        assert_eq!(
+            seen.header("authorization"),
+            Some(authorization),
+            "{seen:?}"
+        );
+        assert_eq!(seen.header("x-api-key"), Some("PRIVATE-HEADER"), "{seen:?}");
+    }
+}
+
+#[tokio::test]
+async fn oauth_bearer_layers_over_static_headers_and_under_headers_command_output() {
+    // Static `authorization` < stored OAuth bearer.
+    let http = McpHttp::start(Behavior::default()).await;
+    let fixture = Fixture::new(json!({"mcp":{"remote":{"type":"remote","url":http.url,
+        "headers":{"x-api-key":"PRIVATE-HEADER","authorization":"Bearer PRIVATE-STATIC"}}}}));
+    let mut server = fixture.connect_with(oauth_store(&http.url)).await.unwrap();
+    server
+        .call_tool("echo", json!({"text":"hi"}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert!(server.shutdown().await.0);
+    assert_posts_carry(&http, "Bearer PRIVATE-OAUTH");
+
+    // Stored OAuth bearer < `headers_command` output, the same on every platform.
+    let http = McpHttp::start(Behavior::default()).await;
+    let tokens = Tokens::new(r#"{"Authorization":"Bearer PRIVATE-CMD"}"#);
+    let fixture = Fixture::commanded(&http.url, &tokens.command(None), None);
+    let mut server = fixture.connect_with(oauth_store(&http.url)).await.unwrap();
+    server
+        .call_tool("echo", json!({"text":"hi"}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert!(server.shutdown().await.0);
+    assert_posts_carry(&http, "Bearer PRIVATE-CMD");
+
+    // A command that supplies no `Authorization` keeps the bearer.
+    let http = McpHttp::start(Behavior::default()).await;
+    let tokens = Tokens::new(r#"{"X-Extra":"extra"}"#);
+    let fixture = Fixture::commanded(&http.url, &tokens.command(None), None);
+    let mut server = fixture.connect_with(oauth_store(&http.url)).await.unwrap();
+    server
+        .call_tool("echo", json!({"text":"hi"}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert!(server.shutdown().await.0);
+    assert_posts_carry(&http, "Bearer PRIVATE-OAUTH");
+    assert_eq!(http.posts("tools/call")[0].header("x-extra"), Some("extra"));
+
+    // `oauth: false` never sends the stored bearer.
+    let http = McpHttp::start(Behavior::default()).await;
+    let fixture = Fixture::new(
+        json!({"mcp":{"remote":{"type":"remote","url":http.url,"oauth":false,
+        "headers":{"x-api-key":"PRIVATE-HEADER","authorization":"Bearer PRIVATE-STATIC"}}}}),
+    );
+    let mut server = fixture.connect_with(oauth_store(&http.url)).await.unwrap();
+    server
+        .call_tool("echo", json!({"text":"hi"}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert!(server.shutdown().await.0);
+    assert_posts_carry(&http, "Bearer PRIVATE-STATIC");
+}
+
+#[tokio::test]
+async fn expiring_bearer_is_refreshed_in_place_before_a_call() {
+    let http = McpHttp::start(Behavior::default()).await;
+    let fake = oauth_as::FakeAs::start().await;
+    fake.issue_refresh("PRIVATE-REFRESH");
+    fake.expect_resource(&http.url);
+    // An hour outside the refresh window at connect.
+    let store = stored_credential(&http.url, &fake.origin, 3600);
+    let fixture = Fixture::new(json!({"mcp":{"remote":{"type":"remote","url":http.url}}}));
+    let mut server = fixture.connect_with(store.clone()).await.unwrap();
+    assert!(fake.token_posts().is_empty());
+    // The stored token becomes due while connected, with no real waiting.
+    make_due(&store, &http.url);
+    let issued = format!("{}1", oauth_as::ACCESS_PREFIX);
+    http.require_authorization(Some(&format!("Bearer {issued}")));
+    server
+        .call_tool("echo", json!({"text":"renewed"}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let posts = fake.token_posts();
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0].form["refresh_token"], "PRIVATE-REFRESH");
+    // Same session: the headers were swapped in place, without reconnecting.
+    assert_eq!(http.posts("initialize").len(), 1);
+    assert_eq!(
+        http.posts("tools/call")[0].header("authorization"),
+        Some(format!("Bearer {issued}").as_str())
+    );
+    let (_, stored) = store.find("remote", &http.url).unwrap().unwrap();
+    assert_eq!(stored.tokens.access_token, issued);
+    assert_eq!(
+        stored.tokens.refresh_token,
+        Some(format!("{}1", oauth_as::REFRESH_PREFIX))
+    );
+    // The renewed token is not due again: the next call sends no refresh.
+    server
+        .call_tool("echo", json!({"text":"again"}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(fake.token_posts().len(), 1);
+    assert!(server.shutdown().await.0);
+}
+
+#[tokio::test]
+async fn a_rejected_in_session_refresh_ends_the_connection_and_is_never_resent() {
+    let http = McpHttp::start(Behavior::default()).await;
+    let fake = oauth_as::FakeAs::start().await;
+    // The issuer no longer knows the stored refresh token.
+    let store = stored_credential(&http.url, &fake.origin, 3600);
+    let fixture = Fixture::new(json!({"mcp":{"remote":{"type":"remote","url":http.url}}}));
+    let mut server = fixture.connect_with(store.clone()).await.unwrap();
+    make_due(&store, &http.url);
+    for text in ["first", "second"] {
+        assert!(
+            server
+                .call_tool("echo", json!({"text":text}), Duration::from_secs(5))
+                .await
+                .is_err()
+        );
+        // The pool ends a connection whose refresh failed instead of serving it again.
+        assert!(server.unresolved());
+    }
+    assert_eq!(fake.token_posts().len(), 1, "{:?}", fake.paths());
+    assert!(http.posts("tools/call").is_empty());
+    assert!(server.auth_refusal().is_some());
+    assert!(server.shutdown().await.0);
+}
+
+/// Rewrite the stored credential's expiry into the refresh window, as time passing would.
+fn make_due(store: &MemoryCredentialStore, url: &str) {
+    let (key, mut credential) = store.find("remote", url).unwrap().unwrap();
+    credential.tokens.expires_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 60,
+    );
+    credential.tokens.issued_at = None;
+    store.put(&key, &credential).unwrap();
 }

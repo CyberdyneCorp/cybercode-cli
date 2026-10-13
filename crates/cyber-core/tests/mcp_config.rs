@@ -459,3 +459,107 @@ fn untrusted_project_headers_command_is_withheld_before_parsing() {
     );
     assert_eq!(settings.servers["audit"].headers_refresh_seconds(), 120);
 }
+
+fn parse_oauth(oauth: Value) -> Result<McpSettings, String> {
+    McpSettings::from_config(&json!({"mcp":{"audit":{
+        "type":"remote","url":"https://example.test/mcp","oauth":oauth
+    }}}))
+}
+
+#[test]
+fn oauth_is_false_true_or_a_typed_object() {
+    use cyber_core::config::McpOAuth;
+    let parse = parse_oauth;
+    let disabled = parse(json!(false)).unwrap();
+    assert_eq!(disabled.servers["audit"].oauth(), None);
+    let enabled = parse(json!(true)).unwrap();
+    assert_eq!(enabled.servers["audit"].oauth(), Some(McpOAuth::default()));
+    let omitted = McpSettings::from_config(
+        &json!({"mcp":{"audit":{"type":"remote","url":"https://example.test/mcp"}}}),
+    )
+    .unwrap();
+    assert_eq!(omitted.servers["audit"].oauth(), Some(McpOAuth::default()));
+    let object = parse(json!({"client_id":"cyber","client_secret":"private secret","scopes":["mcp.read","mcp.write"],"redirect_port":8765})).unwrap();
+    let settings = object.servers["audit"].oauth().unwrap();
+    assert_eq!(settings.client_id.as_deref(), Some("cyber"));
+    assert_eq!(settings.client_secret.as_deref(), Some("private secret"));
+    assert_eq!(
+        settings.scopes,
+        Some(vec!["mcp.read".into(), "mcp.write".into()])
+    );
+    assert_eq!(settings.redirect_port, Some(8765));
+    assert!(!format!("{settings:?}").contains("private secret"));
+    // A local server has no OAuth.
+    let local =
+        McpSettings::from_config(&json!({"mcp":{"audit":{"type":"local","command":"x"}}})).unwrap();
+    assert_eq!(local.servers["audit"].oauth(), None);
+}
+
+#[test]
+fn invalid_oauth_objects_fail_without_echoing_values() {
+    let parse = parse_oauth;
+    for invalid in [
+        json!({"client_id":"cyber","unknown":"private secret"}),
+        json!({"redirect_port":0}),
+        json!({"redirect_port":80}),
+        json!({"redirect_port":70000}),
+        json!({"client_id":""}),
+        json!({"client_secret":"private secret"}),
+        json!({"scopes":["two words"]}),
+        json!({"scopes":[]}),
+        json!("private secret"),
+        json!(1),
+    ] {
+        let error = parse(invalid.clone()).unwrap_err();
+        assert!(error.starts_with("mcp.audit"), "{invalid}: {error}");
+        assert!(!error.contains("private secret"), "{invalid}: {error}");
+    }
+}
+
+#[test]
+fn oauth_serialization_and_digests_are_unchanged_and_bind_each_field() {
+    use cyber_core::config::McpOAuthSetting;
+    let parse = parse_oauth;
+    let disabled = parse(json!(false)).unwrap();
+    let enabled = parse(json!(true)).unwrap();
+    let omitted = McpSettings::from_config(
+        &json!({"mcp":{"audit":{"type":"remote","url":"https://example.test/mcp"}}}),
+    )
+    .unwrap();
+    let object = parse(json!({"client_id":"cyber","client_secret":"private secret","scopes":["mcp.read","mcp.write"],"redirect_port":8765})).unwrap();
+    // The serialized form (and so every existing digest) is unchanged: `true`, `false` and
+    // an omitted field stay distinct, and each object field is bound.
+    let digest = |settings: &McpSettings| settings.servers["audit"].digest("audit").unwrap();
+    let digests = [
+        digest(&disabled),
+        digest(&enabled),
+        digest(&omitted),
+        digest(&object),
+        digest(&parse(json!({"client_id":"other"})).unwrap()),
+        digest(&parse(json!({"client_id":"cyber"})).unwrap()),
+    ];
+    for (index, value) in digests.iter().enumerate() {
+        assert_eq!(
+            digests.iter().filter(|other| *other == value).count(),
+            1,
+            "{index}"
+        );
+    }
+    let typed = McpServer::Remote {
+        url: "https://example.test/mcp".into(),
+        headers: Default::default(),
+        headers_command: None,
+        headers_refresh_seconds: None,
+        oauth: Some(McpOAuthSetting::Flag(false)),
+        enabled: true,
+        timeout: None,
+        tools: Default::default(),
+        required: false,
+        output_token_limit: None,
+    };
+    assert_eq!(typed.digest("audit").unwrap(), digest(&disabled));
+    assert_eq!(
+        serde_json::to_value(&object.servers["audit"]).unwrap()["oauth"],
+        json!({"client_id":"cyber","client_secret":"private secret","scopes":["mcp.read","mcp.write"],"redirect_port":8765})
+    );
+}

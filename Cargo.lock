@@ -923,6 +923,7 @@ dependencies = [
  "cyber-snapshot",
  "cyber-store",
  "futures",
+ "getrandom 0.3.4",
  "globset",
  "htmd",
  "html2text",
@@ -948,6 +949,7 @@ dependencies = [
  "tree-sitter-powershell",
  "tree-sitter-python",
  "ulid",
+ "url",
  "windows-sys 0.61.2",
 ]
 

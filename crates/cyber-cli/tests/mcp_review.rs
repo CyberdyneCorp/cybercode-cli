@@ -72,7 +72,7 @@ fn global_definitions_redact_environment_headers_command_oauth_and_url_query_wit
     let marker = env.root.join("must-not-run");
     std::fs::write(env.root.join("cyber/config/cyber.jsonc"),json!({"mcp":{
         "local":{"type":"local","command":"unused-server","args":[marker],"env":{"PUBLIC":"private-env-secret"}},
-        "remote":{"type":"remote","url":"https://example.test/mcp?access=private-url-secret","headers":{"custom":"private-header-secret"},"headers_command":"print-token private-command-secret","oauth":{"client_secret":"private-oauth-secret"},"enabled":false}
+        "remote":{"type":"remote","url":"https://example.test/mcp?access=private-url-secret","headers":{"custom":"private-header-secret"},"headers_command":"print-token private-command-secret","oauth":{"client_id":"public-client","client_secret":"private-oauth-secret"},"enabled":false}
     }}).to_string()).unwrap();
     let output = env.run(&["mcp", "definitions"]);
     let value = body(&output);
@@ -92,6 +92,10 @@ fn global_definitions_redact_environment_headers_command_oauth_and_url_query_wit
     assert_eq!(remote["url"], "https://example.test/mcp?***");
     assert_eq!(remote["headers_command"], "***");
     assert_eq!(remote["headers_refresh_seconds"], 3600);
+    assert_eq!(
+        remote["oauth"],
+        json!({"client_id":"public-client","client_secret":"***"})
+    );
     assert_eq!(value["servers"][0]["authorized"], true);
     assert_eq!(value["servers"][1]["authorized"], false);
     assert_eq!(

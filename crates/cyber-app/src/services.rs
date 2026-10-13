@@ -245,6 +245,36 @@ impl Services for AppServices {
         })
     }
 
+    fn reconnect_mcp(
+        &self,
+        location: PathBuf,
+        name: String,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::McpServerStatus, cyber_server::http::ApiError>>
+    {
+        use cyber_server::http::ApiError;
+        use cyber_tools::mcp::McpReconnectError;
+        Box::pin(async move {
+            self.host
+                .reconnect_mcp(&location, &name)
+                .await
+                .map_err(|error| match error {
+                    McpReconnectError::NotFound(message) => {
+                        ApiError::not_found("McpServerNotFoundError", message)
+                    }
+                    McpReconnectError::Forbidden(message) => ApiError::forbidden(message),
+                    McpReconnectError::Conflict(message) => ApiError::conflict(message),
+                    McpReconnectError::Unavailable(message) => {
+                        cyber_core::log::error(
+                            "mcp",
+                            &message,
+                            serde_json::json!({"directory":location,"server":name}),
+                        );
+                        ApiError::invalid("MCP reconnect configuration is unavailable")
+                    }
+                })
+        })
+    }
+
     fn review_hooks(
         &self,
         location: &Path,

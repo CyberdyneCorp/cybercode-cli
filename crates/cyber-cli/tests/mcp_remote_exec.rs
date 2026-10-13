@@ -1,8 +1,11 @@
 //! `cyber exec --embedded` calls a remote Streamable HTTP MCP tool through the real app
 //! host: a fake OpenAI-compatible provider asks for `mcp__remote__echo` and receives the
-//! fixture's result.
+//! fixture's result. A Bearer-requiring fixture is reached with a stored OAuth token that is
+//! refreshed first because it expires within five minutes.
 #[path = "../../cyber-tools/tests/support/mcp_http.rs"]
 mod mcp_http;
+#[path = "../../cyber-tools/tests/support/oauth_as.rs"]
+mod oauth_as;
 
 use serde_json::{Value, json};
 use std::{
@@ -220,6 +223,94 @@ fn exec_calls_a_remote_streamable_http_tool_through_the_app_host() {
     assert_eq!(result["result"], "remote call finished", "{detail}");
     // Embedded exec drops the App without a runtime shutdown, so session DELETE is
     // covered through the app host's Location close instead (cyber-app tests/mcp.rs).
+    drop(http);
+    drop(runtime);
+}
+
+/// The owner-only credential file refuses on Windows, so stored tokens are unix-only.
+#[cfg(not(windows))]
+#[test]
+fn exec_refreshes_an_expiring_oauth_token_before_calling_a_remote_tool() {
+    use cyber_tools::mcp::oauth::{
+        CredentialKey, FileCredentialStore, McpCredentialStore, OAuthClient, StoredCredential,
+        TokenSet,
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let http = runtime.block_on(mcp_http::McpHttp::start(mcp_http::Behavior::default()));
+    let fake = runtime.block_on(oauth_as::FakeAs::start());
+    fake.issue_refresh("PRIVATE-REFRESH-SEED");
+    fake.expect_resource(&http.url);
+    let issued = format!("{}1", oauth_as::ACCESS_PREFIX);
+    http.require_authorization(Some(&format!("Bearer {issued}")));
+    let provider = Provider::start();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    for path in ["home", "repo", "cyber/config", "cyber/data"] {
+        std::fs::create_dir_all(root.join(path)).unwrap();
+    }
+    std::fs::write(
+        root.join("cyber/config/cyber.jsonc"),
+        json!({
+            "permissions":"allow",
+            "providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}},
+            "mcp":{"remote":{"type":"remote","url":http.url,"required":true}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(root.join("models.json"), "{}").unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let store = FileCredentialStore::new(root.join("cyber/data/mcp-auth.json"));
+    store
+        .put(
+            &CredentialKey {
+                server: "remote".into(),
+                url: http.url.clone(),
+                issuer: format!("{}/", fake.origin),
+            },
+            &StoredCredential {
+                tokens: TokenSet {
+                    access_token: "PRIVATE-ACCESS-SEED".into(),
+                    refresh_token: Some("PRIVATE-REFRESH-SEED".into()),
+                    expires_at: Some(now + 120),
+                    issued_at: None,
+                    scopes: Vec::new(),
+                },
+                client: OAuthClient {
+                    client_id: oauth_as::REGISTERED_CLIENT.into(),
+                    client_secret: None,
+                },
+                token_endpoint: format!("{}/token", fake.origin),
+            },
+        )
+        .unwrap();
+
+    let (status, stdout, stderr) = exec(&root);
+    let detail = format!(
+        "status={status:?}\nstdout={stdout}\nstderr={stderr}\nfixture={:#?}\nissuer={:?}",
+        http.requests(),
+        fake.paths()
+    );
+    assert_eq!(status, Some(0), "{detail}");
+    let posts = fake.token_posts();
+    assert_eq!(posts.len(), 1, "{detail}");
+    assert_eq!(posts[0].form["refresh_token"], "PRIVATE-REFRESH-SEED");
+    let calls = http.posts("tools/call");
+    assert_eq!(calls.len(), 1, "{detail}");
+    assert_eq!(
+        calls[0].header("authorization"),
+        Some(format!("Bearer {issued}").as_str()),
+        "{detail}"
+    );
+    let (_, stored) = store.find("remote", &http.url).unwrap().unwrap();
+    assert_eq!(stored.tokens.access_token, issued);
+    for text in [&stdout, &stderr] {
+        assert!(!text.contains("PRIVATE-"), "{text}");
+        assert!(!text.contains("TOKEN-SECRET"), "{text}");
+    }
     drop(http);
     drop(runtime);
 }

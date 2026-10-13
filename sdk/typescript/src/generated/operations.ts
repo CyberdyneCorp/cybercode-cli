@@ -174,6 +174,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_McpClosed;
   };
+  "v1.mcp.reconnect": {
+    path: { name: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_McpServerStatus;
+  };
   "v1.mcp.status": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -812,6 +818,18 @@ export const operations = {
     method: "POST",
     path: "/api/v1/mcp/close",
     pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.mcp.reconnect": {
+    tag: "mcp",
+    name: "reconnect",
+    method: "POST",
+    path: "/api/v1/mcp/{name}/reconnect",
+    pathParams: ["name"],
     query: [],
     body: "none",
     located: true,
@@ -1645,6 +1663,9 @@ export function createGroups(caller: Caller) {
       /** Close this Location's MCP connections; unresolved ownership returns conflict (`POST /api/v1/mcp/close`) */
       close: (options?: RequestOptions): Promise<Operations["v1.mcp.close"]["response"]> =>
         caller.call("v1.mcp.close", {}, options),
+      /** Reconnect a server waiting for authentication with a fresh owner; returns its status (`POST /api/v1/mcp/{name}/reconnect`) */
+      reconnect: (name: string, options?: RequestOptions): Promise<Operations["v1.mcp.reconnect"]["response"]> =>
+        caller.call("v1.mcp.reconnect", { path: { name } }, options),
       /** Inspect configured MCP state and retained ownership observations without startup (`GET /api/v1/mcp`) */
       status: (options?: RequestOptions): Promise<Operations["v1.mcp.status"]["response"]> =>
         caller.call("v1.mcp.status", {}, options),

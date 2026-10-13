@@ -602,6 +602,12 @@ export type Located_McpClosed = {
 };
 
 /** A Location-scoped response. */
+export type Located_McpServerStatus = {
+  location: LocationInfo;
+  data: McpServerStatus;
+};
+
+/** A Location-scoped response. */
 export type Located_MemoryCatalog = {
   location: LocationInfo;
   data: MemoryCatalog;

@@ -86,6 +86,11 @@ impl From<&McpConnectionRecord> for McpStatusUpdate {
                     {
                         "MCP server needs authentication"
                     }
+                    McpConnectionPhase::Settled
+                        if record.status == McpConnectionStatus::NeedsClientRegistration =>
+                    {
+                        "MCP server needs OAuth client registration"
+                    }
                     McpConnectionPhase::Settled => "MCP connection stopped",
                     McpConnectionPhase::Unknown => "MCP native settlement is unverified",
                     _ => "MCP connection failed; inspect local logs",
@@ -223,12 +228,36 @@ impl McpConnectionOwner {
         acknowledged: bool,
         error: String,
     ) -> Result<McpConnectionRecord, StoreError> {
+        self.settle_auth(McpConnectionStatus::NeedsAuth, acknowledged, error)
+    }
+
+    /// The server refused authorization and no OAuth client can be registered with its
+    /// authorization server (no registration endpoint, no configured `client_id`). Like
+    /// [`Self::needs_auth`], only acknowledged settlement records this status.
+    pub fn needs_client_registration(
+        &mut self,
+        acknowledged: bool,
+        error: String,
+    ) -> Result<McpConnectionRecord, StoreError> {
+        self.settle_auth(
+            McpConnectionStatus::NeedsClientRegistration,
+            acknowledged,
+            error,
+        )
+    }
+
+    fn settle_auth(
+        &mut self,
+        status: McpConnectionStatus,
+        acknowledged: bool,
+        error: String,
+    ) -> Result<McpConnectionRecord, StoreError> {
         if !acknowledged {
             return self.finish(false, error);
         }
         let mut record = self.record.clone();
         record.phase = McpConnectionPhase::Settled;
-        record.status = McpConnectionStatus::NeedsAuth;
+        record.status = status;
         record.acknowledged = Some(true);
         record.error = Some(error);
         self.commit(record)?;
@@ -429,7 +458,9 @@ fn validate(record: &McpConnectionRecord, event: &StoredEvent) -> Result<(), Str
         McpConnectionPhase::Settled => {
             matches!(
                 record.status,
-                McpConnectionStatus::Failed | McpConnectionStatus::NeedsAuth
+                McpConnectionStatus::Failed
+                    | McpConnectionStatus::NeedsAuth
+                    | McpConnectionStatus::NeedsClientRegistration
             ) && record.acknowledged == Some(true)
                 && record.error.is_some()
         }

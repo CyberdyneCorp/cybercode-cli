@@ -1,8 +1,9 @@
-//! MCP definition review and exact per-server approval without server startup.
+//! MCP definition review, exact per-server approval and remote OAuth credentials, without
+//! server startup.
 use clap::Subcommand;
 use cyber_core::config::{McpSettings, Resolved};
 use cyber_core::trust::TrustStore;
-use cyber_tools::mcp::{authorize_server, inspect_server};
+use cyber_tools::mcp::{authorize_server, inspect_server, oauth};
 use serde_json::{Value, json};
 
 use crate::cli::GlobalArgs;
@@ -27,7 +28,21 @@ pub enum McpCmd {
         #[arg(long)]
         digest: String,
     },
+    /// Authorize a remote server with OAuth: prints the authorization URL to open in a
+    /// browser, waits for the loopback callback and stores the token privately.
+    Auth {
+        name: String,
+        /// Loopback callback port (overrides `oauth.redirect_port`; default ephemeral).
+        #[arg(long, value_parser = clap::value_parser!(u16).range(i64::from(cyber_core::config::OAUTH_REDIRECT_PORT_MIN)..))]
+        port: Option<u16>,
+    },
+    /// Remove every stored OAuth credential of a server (at any URL, from any issuer) and
+    /// ask a running server to reconnect without it. Tokens are not revoked remotely.
+    Logout { name: String },
 }
+
+/// How long `cyber mcp auth` waits for the browser to reach the loopback callback.
+const AUTH_CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     let store = TrustStore::new(ctx.paths.trust_file());
@@ -35,6 +50,11 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
         let root = std::fs::canonicalize(cyber_core::config::project_root(&ctx.location))?;
         let revoked = store.revoke_mcp(&root, &digest)?;
         return report(global, &json!({"digest":digest,"revoked":revoked}));
+    }
+    // Removing local credentials needs no configuration, so it also works for a server
+    // that is no longer (or not yet) configured.
+    if let McpCmd::Logout { name } = cmd {
+        return logout(ctx, global, &name);
     }
     let resolved = ctx.config()?;
     match cmd {
@@ -74,8 +94,143 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
                 &json!({"name":name,"digest":digest,"approved":true}),
             )
         }
-        McpCmd::Untrust { .. } => unreachable!("handled before configuration loading"),
+        McpCmd::Auth { name, port } => auth(&resolved, &store, ctx, global, &name, port),
+        McpCmd::Untrust { .. } | McpCmd::Logout { .. } => {
+            unreachable!("handled before configuration loading")
+        }
     }
+}
+
+/// `cyber mcp auth`: never opens a browser; the URL goes to stderr for the user to open.
+fn auth(
+    resolved: &Resolved,
+    store: &TrustStore,
+    ctx: &Context,
+    global: &GlobalArgs,
+    name: &str,
+    port: Option<u16>,
+) -> Result<(), CliError> {
+    if withheld(resolved, name) {
+        return Err(CliError::usage("MCP checkout configuration is untrusted")
+            .with_hint("review and approve it with cyber trust inspect / cyber trust approve"));
+    }
+    let request = oauth::AuthRequest {
+        resolved,
+        trust: store,
+        location: &ctx.location,
+        home: &ctx.home,
+        name,
+        port,
+        timeout: AUTH_CALLBACK_TIMEOUT,
+    };
+    let credentials = oauth::FileCredentialStore::new(ctx.paths.mcp_auth_file());
+    let present = |url: &str| {
+        eprintln!("Open this URL in a browser to authorize MCP server {name}:\n{url}");
+        eprintln!("Waiting for the authorization callback...");
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let outcome = runtime
+        .block_on(oauth::authenticate(&request, &credentials, &present))
+        .map_err(auth_error)?;
+    let reconnect = runtime.block_on(reconnect_running(ctx, name));
+    report(
+        global,
+        &json!({"name":name,"authenticated":true,"issuer":outcome.issuer,"scopes":outcome.scopes,
+            "expires_at":outcome.expires_at,"registered":outcome.registered,"reconnect":reconnect}),
+    )
+}
+
+/// `cyber mcp logout`: forget the server's credentials and step-up/registration markers,
+/// then, when a credential was removed, ask a healthy registered server to reconnect it,
+/// which settles `needs_auth`.
+fn logout(ctx: &Context, global: &GlobalArgs, name: &str) -> Result<(), CliError> {
+    use oauth::McpCredentialStore as _;
+    // The name also becomes a request path segment.
+    let valid = !name.is_empty()
+        && name.len() <= 48
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c));
+    if !valid {
+        return Err(CliError::usage("invalid MCP server name"));
+    }
+    let credentials = oauth::FileCredentialStore::new(ctx.paths.mcp_auth_file());
+    let removed = credentials
+        .remove_server(name)
+        .map_err(|error| CliError::runtime(error.to_string()))?;
+    // With nothing removed no running connection changes, so nothing is reconnected.
+    let reconnect = if removed == 0 {
+        Value::Null
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(reconnect_running(ctx, name))
+    };
+    report(
+        global,
+        &json!({"name":name,"removed":removed,"reconnect":reconnect}),
+    )
+}
+
+/// How long the best-effort reconnect request may take.
+const RECONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Ask a healthy registered server to reconnect `name` with whatever is stored now: its
+/// HTTP status and the server's status right after re-admission, or `null` when no
+/// healthy server is registered. Never starts a server; no token is ever sent.
+async fn reconnect_running(ctx: &Context, name: &str) -> Value {
+    let Some(registered) =
+        cyber_app::read_registration(&ctx.paths).filter(|registered| !registered.url.is_empty())
+    else {
+        return Value::Null;
+    };
+    let Ok(password) = std::fs::read_to_string(ctx.paths.state.join("password")) else {
+        return Value::Null;
+    };
+    if password.trim().is_empty() || !cyber_app::health(&registered.url, cyber_app::version()).await
+    {
+        return Value::Null;
+    }
+    let client = cyber_client::Client::http(&registered.url, Some(password.trim().into()))
+        .at(&ctx.location.display().to_string());
+    let path = format!("/mcp/{name}/reconnect");
+    let request = client.raw("POST", &path, None, &[]);
+    match tokio::time::timeout(RECONNECT_TIMEOUT, request).await {
+        Ok(Ok((status, value))) => {
+            json!({"http_status":status,"status":value["data"]["status"],"error":value["message"]})
+        }
+        _ => json!({"http_status":null,"status":null,"error":"reconnect request failed"}),
+    }
+}
+
+fn auth_error(error: oauth::OAuthError) -> CliError {
+    match error {
+        oauth::OAuthError::Unauthorized(_)
+        | oauth::OAuthError::NotRemote
+        | oauth::OAuthError::Disabled => CliError::usage(error.to_string()),
+        oauth::OAuthError::NeedsClientRegistration => CliError::usage(error.to_string())
+            .with_hint("register a client with the authorization server and set oauth.client_id"),
+        error => CliError::runtime(error.to_string()),
+    }
+}
+
+/// Whether a project definition of `name` (or the whole `mcp` section) is withheld from
+/// an untrusted checkout. Entries are `<file>#<pointer>`.
+fn withheld(resolved: &Resolved, name: &str) -> bool {
+    let server = format!("/mcp/{name}");
+    let covers = |pointer: &str| {
+        pointer == "/mcp" || pointer == server || pointer.starts_with(&format!("{server}/"))
+    };
+    !resolved.trust.trusted
+        && resolved
+            .trust
+            .definitions
+            .iter()
+            .filter_map(|entry| entry.rsplit_once('#'))
+            .any(|(_, pointer)| covers(pointer))
 }
 
 fn definitions(
@@ -164,9 +319,8 @@ fn redacted(definition: &Value, review: bool) -> Value {
             json!("***")
         };
     }
-    if value["oauth"].is_object() {
-        value["oauth"] = json!("***");
-    }
+    // Client id, scopes and port are reviewable; `client_secret` is already redacted by
+    // the generic secret-key rule and only its `{env:}` template may be shown in review.
     if let Some(url) = value["url"]
         .as_str()
         .and_then(|url| url.split_once('?').map(|(url, _)| format!("{url}?***")))
@@ -185,7 +339,7 @@ fn show_templates(definition: &mut Value, resolved: &Resolved, pointer: &str) {
         let Some(leaf) = key.strip_prefix(&prefix) else {
             continue;
         };
-        // Leaves redacted to a non-object (e.g. `oauth`) have no path and stay redacted.
+        // Leaves redacted to a non-object have no path and stay redacted.
         if let Some(field) = definition
             .pointer_mut(&format!("/{leaf}"))
             .filter(|field| field.is_string())

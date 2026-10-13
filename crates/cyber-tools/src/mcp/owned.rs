@@ -100,6 +100,10 @@ impl OwnedLocalServer {
     pub fn unresolved(&self) -> bool {
         self.server.unresolved()
     }
+    /// Whether the OAuth credential this connection sends was removed (`cyber mcp logout`).
+    pub fn logged_out(&self) -> bool {
+        !self.closing && self.server.logged_out()
+    }
     pub fn scratch_path(&self) -> &Path {
         self.server.scratch_path()
     }
@@ -192,12 +196,12 @@ impl OwnedLocalServer {
         }
         let owner = &mut self.owner;
         let pin = &mut self.pin;
-        // A server that refused authorization mid-session cannot recover by reconnecting.
+        // A refused credential that cannot be renewed cannot recover by reconnecting.
         let refusal = self.server.auth_refusal();
         let settled = self.server.settle_after_shutdown(|| {
             if owner.record().phase != McpConnectionPhase::Settled {
                 match refusal {
-                    Some(refusal) => owner.needs_auth(true, refusal.to_string()),
+                    Some(refusal) => owner.needs_auth(true, refusal),
                     None => owner.finish(true, "MCP server stopped".into()),
                 }
                 .map_err(|error| error.to_string())?;
@@ -339,10 +343,13 @@ impl LocalLauncher<'_> {
             }
             Err(mut error) => {
                 // Acknowledged preparation/spawn failure still needs durable settlement.
-                let terminal = if error.kind == LaunchFailure::NeedsAuth {
-                    owner.needs_auth(error.acknowledged, error.diagnostic.clone())
-                } else {
-                    owner.finish(error.acknowledged, error.diagnostic.clone())
+                let diagnostic = error.diagnostic.clone();
+                let terminal = match error.kind {
+                    LaunchFailure::NeedsAuth => owner.needs_auth(error.acknowledged, diagnostic),
+                    LaunchFailure::NeedsClientRegistration => {
+                        owner.needs_client_registration(error.acknowledged, diagnostic)
+                    }
+                    LaunchFailure::Failed => owner.finish(error.acknowledged, diagnostic),
                 };
                 terminal.map_err(|failure| LocalLaunchError {
                     kind: LaunchFailure::Failed,

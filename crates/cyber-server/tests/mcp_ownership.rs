@@ -360,3 +360,75 @@ fn needs_auth_settles_acknowledged_and_the_validator_rejects_contradictions() {
         owner.finish(true, "test cleanup".into()).unwrap();
     }
 }
+
+#[test]
+fn needs_client_registration_is_only_an_acknowledged_settlement() {
+    use cyber_server::runtime::{McpConnectionStatus, McpStatusUpdate};
+    let store = store();
+    let root = tempfile::tempdir().unwrap();
+    let mut owner = admit(&store, &root);
+    owner.preparing().unwrap();
+    owner.launching(vec![]).unwrap();
+    let record = owner
+        .needs_client_registration(true, "authorization server offers no registration".into())
+        .unwrap();
+    assert_eq!(record.phase, McpConnectionPhase::Settled);
+    assert_eq!(record.status, McpConnectionStatus::NeedsClientRegistration);
+    assert_eq!(record.acknowledged, Some(true));
+    assert_eq!(mcp_connections(&store, root.path()).unwrap()[0], record);
+    let update = McpStatusUpdate::from(&record);
+    assert_eq!(update.status, McpConnectionStatus::NeedsClientRegistration);
+    assert_eq!(
+        update.error.as_deref(),
+        Some("MCP server needs OAuth client registration")
+    );
+    // Settlement releases the name for a later attempt.
+    drop(admit(&store, &root));
+
+    // Unacknowledged settlement stays unknown and failed.
+    let other = tempfile::tempdir().unwrap();
+    let mut owner = admit(&store, &other);
+    owner.preparing().unwrap();
+    let record = owner
+        .needs_client_registration(false, "unverified".into())
+        .unwrap();
+    assert_eq!(record.phase, McpConnectionPhase::Unknown);
+    assert_eq!(record.status, McpConnectionStatus::Failed);
+
+    // Every other phase, and unacknowledged settlement, is a contradiction.
+    for (phase, acknowledged) in [
+        ("preparing", None),
+        ("launching", None),
+        ("running", None),
+        ("unknown", Some(false)),
+        ("unknown", Some(true)),
+        ("settled", Some(false)),
+        ("settled", None),
+    ] {
+        let fresh = tempfile::tempdir().unwrap();
+        let mut owner = admit(&store, &fresh);
+        owner.preparing().unwrap();
+        let mut forged = store
+            .read_events(&owner.record().id, -1, 10)
+            .unwrap()
+            .events[1]
+            .data
+            .clone();
+        forged["record"]["phase"] = json!(phase);
+        forged["record"]["status"] = json!("needs_client_registration");
+        forged["record"]["acknowledged"] = json!(acknowledged);
+        forged["record"]["error"] = json!("needs client registration");
+        let error = store
+            .append(
+                &owner.record().id,
+                Expected::Seq(1),
+                vec![NewEvent::new("mcp.status.changed.1", forged)],
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("contradicts"),
+            "{phase}/{acknowledged:?}: {error}"
+        );
+        owner.finish(true, "test cleanup".into()).unwrap();
+    }
+}

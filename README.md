@@ -32,6 +32,15 @@ export OPENAI_API_KEY="your-key"
 
 Use `--model provider/model` to select a model. See the [local core guide](docs/local-core-guide.md) for configuration and [evaluation guide](eval/README.md) for local-model setup.
 
+Remote MCP servers that require OAuth are signed in explicitly. `cyber` never opens a browser or starts a sign-in on its own; a refused server reports `needs_auth`:
+
+```bash
+./target/debug/cyber mcp auth github   # prints the authorization URL, waits for the 127.0.0.1 callback
+./target/debug/cyber mcp logout github # forgets the stored tokens
+```
+
+See [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth) for the `oauth` settings and token storage.
+
 ## What it does
 
 | Area | Current behavior |
@@ -42,9 +51,9 @@ Use `--model provider/model` to select a model. See the [local core guide](docs/
 | Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks; `cyber review [target]` and TUI `/review` resolve uncommitted changes, ranges, commits or `pr <number>` and report validated findings most severe first |
 | Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
-| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks/local MCP, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
+| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks, local and remote MCP with OAuth sign-in, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
 
-**P0 is implemented, with release gates still open:** the full local-model baseline, including the long coding task, remains incomplete. **P1 is in progress; no P1 milestone is fully accepted.** Windows confinement, MCP OAuth, plugins, complete client controls, browser verification and migration/editor integration still need work or acceptance. Later phases cover workflows, goals, remote control and cloud runners.
+**P0 is implemented, with release gates still open:** the full local-model baseline, including the long coding task, remains incomplete. **P1 is in progress; no P1 milestone is fully accepted.** Windows confinement, MCP OAuth keyring and Windows token storage, plugins, complete client controls, browser verification and migration/editor integration still need work or acceptance. Later phases cover workflows, goals, remote control and cloud runners.
 
 See the [complete feature reference](docs/features.md), [P0 evidence](docs/measurements/p0-exit-evidence.md), [P1 status](docs/implementation/p1-status.md) and [roadmap](ROADMAP.md).
 
@@ -93,7 +102,7 @@ Scope: **Cyber Code, Claude Code, Codex and OpenCode coding tools**, checked **2
 | Tool permissions | Yes; full auto mode partial | Yes [docs][C2] | Yes [docs][X3] | Yes [docs][O3] |
 | OS sandbox | macOS/Linux; Windows incomplete | macOS/Linux/WSL2; native Windows unsandboxed [docs][C2] | Documented sandbox controls [docs][X3] | Permission rules documented [docs][O3]; OS isolation not established here |
 | Subagents | Partial P1 | Yes [docs][C3] | Yes [docs][X1] | Yes [docs][O4] |
-| MCP integration | Local and remote (HTTP/SSE) partial; OAuth pending | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
+| MCP integration | Local and remote (HTTP/SSE) partial; OAuth via `cyber mcp auth`, keyring pending | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
 | File undo / recovery | Snapshots preserving user edits | Edit checkpoints and rewind [docs][C5] | Git checkpoints recommended [docs][X1] | Undo/redo [docs][O1] |
 | Programmatic server | HTTP/events, stdio API, TS SDK | Agent SDK [docs][C1] | App Server [docs][X4] | HTTP/OpenAPI and SDK [docs][O6] |
 | LSP integration | Navigation/feedback partial P1 | Language-server plugins [docs][C6] | Not established by cited docs | Built-in LSP support [docs][O7] |

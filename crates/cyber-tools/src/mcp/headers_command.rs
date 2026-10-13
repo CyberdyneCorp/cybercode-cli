@@ -1,6 +1,7 @@
 //! `headers_command` for remote MCP servers: run the authorized command outside the
 //! sandbox under owned process-tree (Windows Job) ownership, require its stdout to be a
-//! JSON object of string headers and merge that over the static headers.
+//! JSON object of string headers. The caller layers that output over the static headers and
+//! the stored OAuth bearer.
 //!
 //! Diagnostics are fixed messages plus the exit status. Command output, header names and
 //! header values never reach errors, logs, events or status.

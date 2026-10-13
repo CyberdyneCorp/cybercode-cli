@@ -288,6 +288,24 @@ pub trait Services: Send + Sync {
             Err(error)
         })
     }
+    /// Reconnect one server waiting for the user (`needs_auth`, `needs_client_registration`)
+    /// or running on a logged-out credential, returning its status observed right after
+    /// re-admission.
+    fn reconnect_mcp(
+        &self,
+        _location: PathBuf,
+        _name: String,
+    ) -> BoxFuture<'_, Result<crate::runtime::McpServerStatus, ApiError>> {
+        Box::pin(async {
+            let mut error = ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "MCP reconnect is unavailable in this host",
+            );
+            error.body.service = Some("mcp".into());
+            Err(error)
+        })
+    }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;

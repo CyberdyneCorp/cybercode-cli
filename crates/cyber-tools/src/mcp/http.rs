@@ -61,8 +61,13 @@ type Writer = Arc<tokio::sync::Mutex<WriteHalf<DuplexStream>>>;
 /// Why the remote transport closed. Diagnostics never contain URLs or header values.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HttpFailure {
-    #[error("authorization required (HTTP {0})")]
-    Unauthorized(u16),
+    /// HTTP 401/403 with the server's parsed `Bearer` challenge. The challenge drives
+    /// OAuth discovery and never appears in diagnostics.
+    #[error("authorization required (HTTP {status})")]
+    Unauthorized {
+        status: u16,
+        challenge: Option<Box<super::oauth::AuthChallenge>>,
+    },
     #[error("HTTP status {0}")]
     Status(u16),
     #[error("unsupported response content type")]
@@ -81,6 +86,31 @@ pub enum HttpFailure {
 }
 
 impl HttpFailure {
+    /// The scopes a 403 `insufficient_scope` challenge asks for (RFC 6750 §3.1), when this
+    /// is one. Only RFC 6749 scope tokens are kept, at most [`SCOPE_LIMIT`]. A refreshed
+    /// token carries the same scopes, so this is never cured by a refresh.
+    pub fn insufficient_scope(&self) -> Option<Vec<String>> {
+        let Self::Unauthorized {
+            status: 403,
+            challenge: Some(challenge),
+        } = self
+        else {
+            return None;
+        };
+        if challenge.error.as_deref() != Some("insufficient_scope") {
+            return None;
+        }
+        let scope = challenge.scope.as_deref().unwrap_or_default();
+        Some(
+            scope
+                .split(' ')
+                .filter(|token| scope_token(token))
+                .take(SCOPE_LIMIT)
+                .map(str::to_owned)
+                .collect(),
+        )
+    }
+
     /// Failures that show the server does not speak the attempted transport. Authorization,
     /// size, body and endpoint-policy failures never select another transport.
     fn falls_back(&self) -> bool {
@@ -89,6 +119,18 @@ impl HttpFailure {
             Self::Status(400 | 404 | 405) | Self::ContentType | Self::Request(_)
         )
     }
+}
+
+/// At most this many scopes are taken from one `insufficient_scope` challenge.
+const SCOPE_LIMIT: usize = 64;
+
+/// An RFC 6749 §3.3 scope token: `%x21 / %x23-5B / %x5D-7E`, bounded.
+fn scope_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 256
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'"' && byte != b'\\')
 }
 
 /// The remote transport a connection uses; reconnects try the last connected one first.
@@ -431,7 +473,7 @@ impl HttpConnection {
     pub fn auth_refusal(&self) -> Option<HttpFailure> {
         self.shared
             .failure()
-            .filter(|failure| matches!(failure, HttpFailure::Unauthorized(_)))
+            .filter(|failure| matches!(failure, HttpFailure::Unauthorized { .. }))
     }
 
     pub fn metadata(&self) -> Option<&Value> {
@@ -723,7 +765,7 @@ async fn open_stream(
         .await
         .map_err(request_failure)?;
     let status = response.status().as_u16();
-    match checked(status, session) {
+    match checked(&response, session) {
         Ok(()) => {}
         Err(HttpFailure::Status(400..=499)) => {
             if status != 405 {
@@ -779,10 +821,10 @@ async fn resume(
 
 /// 401/403 are authorization outcomes and 404 for a request carrying the session means
 /// the server ended it; any other non-success status is a plain failure.
-fn checked(status: u16, session: bool) -> Result<(), HttpFailure> {
-    match status {
+fn checked(response: &reqwest::Response, session: bool) -> Result<(), HttpFailure> {
+    match response.status().as_u16() {
         404 if session => Err(HttpFailure::SessionExpired),
-        _ => accepted(status),
+        _ => accepted(response),
     }
 }
 
@@ -805,7 +847,7 @@ async fn exchange(
         .await
         .map_err(request_failure)?;
     let status = response.status().as_u16();
-    checked(status, session)?;
+    checked(&response, session)?;
     match (status, frame.request) {
         (202, false) => return Ok(()),
         (202, true) => return Err(HttpFailure::Status(status)),
@@ -991,7 +1033,7 @@ async fn legacy_session(
         .send()
         .await
         .map_err(request_failure)?;
-    accepted(response.status().as_u16())?;
+    accepted(&response)?;
     if !matches!(media(&response), Media::Events) {
         return Err(HttpFailure::ContentType);
     }
@@ -1022,12 +1064,16 @@ async fn legacy_session(
     }
 }
 
-/// 401/403 are authorization outcomes; any other non-success status is a plain failure.
-fn accepted(status: u16) -> Result<(), HttpFailure> {
-    match status {
-        401 | 403 => Err(HttpFailure::Unauthorized(status)),
+/// 401/403 are authorization outcomes carrying any `Bearer` challenge; any other
+/// non-success status is a plain failure.
+fn accepted(response: &reqwest::Response) -> Result<(), HttpFailure> {
+    match response.status().as_u16() {
+        status @ (401 | 403) => Err(HttpFailure::Unauthorized {
+            status,
+            challenge: super::oauth::AuthChallenge::from_headers(response.headers()).map(Box::new),
+        }),
         200..=299 => Ok(()),
-        _ => Err(HttpFailure::Status(status)),
+        status => Err(HttpFailure::Status(status)),
     }
 }
 
@@ -1070,7 +1116,7 @@ async fn legacy_post(
         .await
         .map_err(request_failure)?;
     // The acknowledgement body (e.g. "Accepted") carries no JSON-RPC and is discarded.
-    accepted(response.status().as_u16())
+    accepted(&response)
 }
 
 /// Bounded events decoded from one `text/event-stream` response body.
@@ -1278,6 +1324,53 @@ mod tests {
         parser.save(&mut cursor);
         assert_eq!(cursor.last_id, None);
         assert_eq!(cursor.delay(), RETRY_MAX);
+    }
+
+    #[test]
+    fn unauthorized_display_carries_no_header_values() {
+        let failure = HttpFailure::Unauthorized {
+            status: 401,
+            challenge: super::super::oauth::AuthChallenge::parse(
+                r#"Bearer realm="private-realm", resource_metadata="https://private.test/prm", scope="private-scope", error="insufficient_scope""#,
+            )
+            .map(Box::new),
+        };
+        assert!(
+            matches!(&failure, HttpFailure::Unauthorized { challenge: Some(c), .. } if c.scope.as_deref() == Some("private-scope"))
+        );
+        let shown = failure.to_string();
+        assert_eq!(shown, "authorization required (HTTP 401)");
+        // A 401 is never a scope step-up, whatever its error code.
+        assert_eq!(failure.insufficient_scope(), None);
+        assert!(!format!("{:?}", McpError::Http(failure)).contains("private"));
+    }
+
+    #[test]
+    fn insufficient_scope_is_a_403_with_that_error_and_keeps_valid_scope_tokens() {
+        let refusal = |status, header: &str| HttpFailure::Unauthorized {
+            status,
+            challenge: super::super::oauth::AuthChallenge::parse(header).map(Box::new),
+        };
+        let failure = refusal(
+            403,
+            r#"Bearer error="insufficient_scope", scope="files:read  files:write bad\"quote", error_description="private-detail""#,
+        );
+        assert_eq!(
+            failure.insufficient_scope(),
+            Some(vec!["files:read".into(), "files:write".into()])
+        );
+        assert_eq!(failure.to_string(), "authorization required (HTTP 403)");
+        assert!(!format!("{failure:?}").contains("private"));
+        // Without a scope it is still a step-up, with nothing to add.
+        let bare = refusal(403, r#"Bearer error="insufficient_scope""#);
+        assert_eq!(bare.insufficient_scope(), Some(Vec::new()));
+        for other in [
+            refusal(403, r#"Bearer error="invalid_token", scope="a""#),
+            refusal(403, "Basic realm=x"),
+            HttpFailure::Status(403),
+        ] {
+            assert_eq!(other.insufficient_scope(), None, "{other:?}");
+        }
     }
 
     #[test]

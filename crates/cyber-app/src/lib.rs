@@ -139,6 +139,12 @@ impl App {
             hook_config_loader(opts.paths.clone(), opts.home.clone()),
             cyber_core::trust::TrustStore::new(opts.paths.trust_file()),
         )?;
+        // Remote MCP servers send stored OAuth tokens. The owner-only credential file has
+        // no Windows ACL backend yet, so Windows connects without stored tokens.
+        #[cfg(not(windows))]
+        host.attach_mcp_credentials(Arc::new(cyber_tools::mcp::oauth::FileCredentialStore::new(
+            opts.paths.mcp_auth_file(),
+        )))?;
         let lsp_options = cyber_tools::lsp::LaunchOptions {
             checkout_claim: Some(host.lsp_checkout_claim()),
             paths: opts.paths.clone(),

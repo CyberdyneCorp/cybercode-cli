@@ -113,7 +113,7 @@
 #### Scenario: Remote liveness signals
 - **WHEN** a connected remote server's GET event stream reopen or legacy event stream ends or fails, a request fails at the transport, or a request carrying `Mcp-Session-Id` is answered 404
 - **THEN** the connection SHALL be reported lost to the idle monitor, and a 404 SHALL be the typed session-expired outcome rather than a tool error, with no DELETE for the expired session
-- **AND** a 401 or 403 on any request of an established connection, including a GET stream (re)open, SHALL settle `needs_auth` as specified by the Status model instead of reconnecting, except for a server with `headers_command`, where it SHALL be loss so the reconnect re-runs the command and settles `needs_auth` only if that connect is refused
+- **AND** a 401 or 403 on any request of an established connection, including a GET stream (re)open, SHALL settle `needs_auth` as specified by the Status model instead of reconnecting, except for a server with `headers_command` or a stored OAuth refresh token, where it SHALL be loss so the reconnect re-runs the command or renews the token once and settles `needs_auth` only if that connect is refused
 - **AND** a Streamable HTTP server without a GET stream SHALL be pinged by the idle monitor at most every 10 s, and a ping unanswered within 5 s or failing at the transport SHALL be loss, while any JSON-RPC answer, including an error, SHALL prove liveness
 - **AND** no client ping SHALL be sent while an event stream is open
 
@@ -207,7 +207,7 @@
 - **WHEN** a remote connect or reconnect fails with the typed authentication outcome (HTTP 401/403), or an established remote connection is lost to that outcome, and its bridge and proxy are acknowledged stopped
 - **THEN** the durable owner SHALL commit phase `settled`, `acknowledged: true` and status `needs_auth`, and `mcp.status.changed.1` SHALL publish that transition without header values
 - **AND** an unacknowledged stop SHALL instead commit phase `unknown` with status `failed`, and the ownership validator SHALL reject `needs_auth` in any phase other than acknowledged `settled`
-- **AND** GET `/api/v1/mcp` SHALL report `needs_auth` with the error ``MCP server <name> needs authentication; run `cyber mcp auth <name>` or /mcp``
+- **AND** GET `/api/v1/mcp` SHALL report `needs_auth` with the error ``MCP server <name> needs authentication; run `cyber mcp auth <name>```
 - **AND** reconnection SHALL stop without further attempts, and a `required: true` server SHALL fail the first Turn with `McpRequiredError`
 
 #### Scenario: Independent durable local connection owner
@@ -511,3 +511,113 @@
 - **WHEN** an attended form waits for the user
 - **THEN** that actual interaction time SHALL pause tool-call inactivity
 - **AND** invalid, unowned and unattended callbacks SHALL NOT extend the timer
+
+### Requirement: OAuth
+(P1) For remote servers, unless `oauth: false`, the system SHALL support OAuth 2.1 authorization code with PKCE S256 for servers that answer 401. The flow SHALL be a user action: a runtime connect, reconnect or call (including `cyber exec`, the app host and hook connections) SHALL NOT run discovery, registration or an authorization request and SHALL NOT open a browser; a refusal settles `needs_auth` or `needs_client_registration` and the user runs `cyber mcp auth <name>`. That command SHALL discover metadata via RFC 9728/8414 and use dynamic client registration (RFC 7591) when no `oauth.client_id` is configured. The loopback redirect SHALL be `http://127.0.0.1:<port>/mcp/oauth/callback`, with an ephemeral port unless `--port` or `oauth.redirect_port` names one. Tokens SHALL be stored in the owner-only file `<data>/mcp-auth.json` (mode 0600), bound to the server URL; an OS keyring backend, preferred over the file when one is available, is deferred and not part of this increment. Tokens SHALL be and refreshed when they expire within 5 minutes (or within half their lifetime when that is shorter).
+
+The remote `oauth` field SHALL be `false` (disabled), `true` or omitted (enabled with defaults), or an object `{ client_id?, client_secret?, scopes?: [scope], redirect_port? }` with unknown fields refused, `client_secret` (which supports `{env:NAME}`) only together with `client_id`, nonempty whitespace-free scope tokens and `redirect_port` between 1024 and 65535. Every form SHALL be bound into the server's approval digest unchanged. Review SHALL show `client_id`, `scopes` and `redirect_port`, redact `client_secret` and, for a project-defined server, show only its unsubstituted `{env:}` template.
+
+A 401/403 SHALL carry the server's parsed `Bearer` `WWW-Authenticate` challenge (`resource_metadata`, `scope`, `error`) internally on the Streamable HTTP, event-stream and legacy SSE paths; diagnostics SHALL NOT contain header values.
+
+Protected-resource metadata SHALL be fetched from the challenge's `resource_metadata`, then `/.well-known/oauth-protected-resource<path>`, then `/.well-known/oauth-protected-resource`, and its `resource` SHALL equal the canonical server URL without its query. The server URL itself SHALL be HTTPS, or plain HTTP only to a loopback host: `cyber mcp auth` SHALL refuse any other server before any request, and a connect SHALL fail closed rather than send a stored bearer to it. Authorization-server metadata SHALL be fetched from the RFC 8414 location, then OpenID Connect discovery, and its `issuer` SHALL equal the named issuer. The metadata URLs, issuer and authorization, token and registration endpoints SHALL be HTTPS, or plain HTTP only to a loopback host, without credentials or fragments. A local host (loopback, unspecified or a `localhost` name) SHALL be accepted only when the URL that named it is local too: the `resource_metadata` URL and issuer only for a local MCP server URL, and the endpoints only for a local issuer, so remote content never directs a request to a service on the user's machine. Every OAuth request SHALL be abandoned after 30 seconds. And `code_challenge_methods_supported` SHALL include `S256`; any violation SHALL fail closed. Without a configured `client_id` and without a `registration_endpoint` the outcome SHALL be the typed `needs_client_registration` condition.
+
+The authorization and token requests SHALL carry the RFC 8707 `resource`: the server URL without its query, since a query may carry a credential that SHALL NOT be sent to the authorization server or printed in the authorization URL; the credential stays keyed by the full URL. The PKCE verifier and `state` SHALL come from the OS random source. The loopback listener SHALL bind 127.0.0.1 only, answer other paths with 404, compare `state` in constant time, fail the flow on a `state` mismatch, an `error=` response or a missing code, time out, and be closed when the wait returns, so a second callback cannot connect.
+
+`cyber mcp auth <name> [--port N]` SHALL check server authorization (trust and, for project-defined servers, the individual digest approval) before any request, including the unauthenticated probe and metadata requests, and recheck it before the token request. All requests SHALL use the scoped network-policy client and its owned proxy, joined before the command returns. The command SHALL print the authorization URL to stderr and SHALL NOT open a browser. Tokens SHALL be stored keyed by server name, canonical URL and issuer in the owner-only credential file, written atomically under a lock, and never in configuration, logs, events, status or command output. A credential file accessible to other users SHALL be refused. Until an owner-only ACL backend exists, the file backend SHALL refuse on Windows.
+
+Unless `oauth: false`, every connect SHALL look up the credential stored for the server name at exactly its canonical URL, after durable admission and the approval recheck and before any request to the server; a credential stored for another URL SHALL never be sent, and there SHALL be no fallback by name alone. A stored issuer or token endpoint that fails the same HTTPS and local-referrer rules or a token that is not visible ASCII SHALL fail the connect closed. Request headers SHALL be layered in the same order on every platform: static `headers`, then `Authorization: Bearer <access token>`, then `headers_command` output, each later layer replacing the same header name. An access token is due when it expires within 5 minutes, or within half its issued lifetime when that is shorter, and never within 10 seconds of being issued. A due token SHALL be refreshed with the stored client and the RFC 8707 `resource` through the server's network-policy client after rechecking approval, and the response, including a rotated refresh token, SHALL be persisted before the new access token is used. Refreshes of one credential (server name and URL) SHALL be serialized across connections and processes by an exclusive per-credential refresh lock held across the token request, so a refresh of another credential never waits for it; under it the stored credential is re-read, and a credential another holder already rotated and that is not due is adopted without a request. The response SHALL be persisted only while the stored credential is still the one refreshed: a credential removed by `cyber mcp logout` SHALL fail the refresh closed (nothing is sent when it is already gone, nothing is written back when it went during the request), and one replaced by `cyber mcp auth` wins. Before every tool call, catalog refresh and idle ping of a connected server, the stored credential SHALL be re-read and a changed one adopted with its issuer and token endpoint re-validated, and a removed one SHALL end the connection and settle `needs_auth` without being sent again, whether or not a reconnect reaches it, (never sending one issuer's refresh token or client secret to another issuer's endpoint), and a due token SHALL be refreshed in place the same way, bounded by the server's `timeout`, replacing the bridge's headers on the same session. A failed or timed-out refresh SHALL end the connection and settle `needs_auth` and is never retried: no later request on that connection contacts the authorization server. A 401 to a stored token that has a refresh token SHALL be retried exactly once inside the same connect after a refresh; a refusal after that refresh SHALL settle `needs_auth`. A 401 or 403 that ends an established connection holding a refresh token SHALL be loss, so the one reconnect renews the token; a request refused in-session is not replayed. No in-session refusal SHALL run discovery or an authorization flow. Until an owner-only Windows backend exists, Windows connects without stored tokens.
+
+`POST /api/v1/mcp/{name}/reconnect` (no body, Location-scoped) SHALL re-admit a server whose retained connection settled `needs_auth` or `needs_client_registration` and whose startup, monitor and native owner have stopped, or a running server whose stored OAuth credential has been removed, through its admitting Session with a fresh durable owner, and SHALL return the server's status observed right after re-admission (`connecting`), with the following transitions published as `mcp.status.changed.1`. An unconfigured server SHALL be 404, a server not authorized by trust or its digest approval 403 without any request, and any other server, a changed definition (except for a `needs_client_registration` server, whose remedy changes `oauth`, re-admitted under its currently authorized digest), or a closing Location 409. After storing tokens, `cyber mcp auth` SHALL request this reconnect from a healthy registered server, if one exists, report the outcome without tokens, and never start a server.
+
+When `cyber mcp auth` finds neither a configured `client_id` nor a `registration_endpoint`, it SHALL fail with a `needs_client_registration` diagnostic naming `oauth.client_id`, make no registration or authorization request, and record that condition for the server name and exact URL in the credential store. The runtime SHALL NOT run discovery: a connect with no stored credential and no configured `client_id` whose recorded condition is present SHALL settle a refusal as acknowledged `needs_client_registration` (valid only as acknowledged `settled`, like `needs_auth`), stop retrying, and report ``MCP server <name> needs OAuth client registration; ...`` naming `oauth.client_id` and `cyber mcp auth <name>`. A successful `cyber mcp auth` SHALL clear the recorded conditions for that URL.
+
+A 403 whose `Bearer` challenge has `error="insufficient_scope"`, at connect or on an established connection, SHALL settle `needs_auth` whatever credential layers exist, without any refresh, reconnect, discovery or authorization request, and SHALL record the union of the token's granted scopes and the challenge's `scope` tokens for that URL. The next `cyber mcp auth` SHALL request its scope together with every recorded scope. Nothing re-authorizes non-interactively.
+
+`cyber mcp logout <name>` SHALL remove every stored credential and recorded condition for the server name, at every URL and from every issuer, without loading configuration (tokens are not revoked at the authorization server), report how many credentials it removed, and, when it removed any, request the reconnect from a healthy registered server, so a server running on a removed credential reconnects without it and settles `needs_auth`; a running connection the reconnect does not reach (another Location, a busy server) ends at its next request or idle ping and settles `needs_auth`. Server names that are not `[A-Za-z0-9_-]{1,48}` SHALL be refused.
+
+#### Scenario: Discovery order
+- **WHEN** `cyber mcp auth` probes a server whose 401 challenge names `resource_metadata`
+- **THEN** protected-resource metadata is fetched from that URL first, then `/.well-known/oauth-protected-resource<path>`, then `/.well-known/oauth-protected-resource`, and the first document found decides
+- **AND** authorization-server metadata for its first `authorization_servers` issuer is fetched from `/.well-known/oauth-authorization-server<issuer path>`, then `/.well-known/openid-configuration<issuer path>`, then `<issuer>/.well-known/openid-configuration`
+- **AND** any non-success answer moves to the next location, and when none answers discovery fails with no authorization request
+
+#### Scenario: Exact identities and HTTPS or loopback endpoints
+- **WHEN** discovery reads protected-resource and authorization-server metadata
+- **THEN** the `resource` SHALL equal the canonical server URL without its query and the `issuer` SHALL equal the issuer the resource named, exactly, not by origin or prefix
+- **AND** the `resource_metadata` URL, issuer and authorization, token and registration endpoints SHALL be HTTPS, or plain HTTP only to a loopback IP address or `localhost`, without user information or a fragment, and the issuer without a query
+- **AND** a remote MCP server SHALL NOT name a local `resource_metadata` URL or issuer, and a remote issuer SHALL NOT name a local endpoint, over HTTP or HTTPS
+- **AND** requests follow no redirects, so a redirect to another origin is a missing document rather than a followed one
+
+#### Scenario: No browser is opened
+- **WHEN** a remote server refuses a connect from `cyber exec`, the app host or a reconnect
+- **THEN** the server settles `needs_auth` naming `cyber mcp auth <name>`, and no metadata, registration or authorization request is made and no browser is started
+- **AND** `cyber mcp auth <name>` prints the authorization URL to stderr and waits up to 5 minutes for the loopback callback without starting a browser
+
+#### Scenario: Owner-only file fallback
+- **WHEN** no OS keyring backend is available (none is implemented yet, so this is every platform)
+- **THEN** credentials are written atomically under a lock to `<data>/mcp-auth.json` created with mode 0600, keyed by server name, canonical URL and issuer, together with recorded `needs_client_registration` and required-scope conditions
+- **AND** a credential file whose mode grants any group or other access is refused rather than read, and on Windows, until an owner-only ACL backend exists, the file backend refuses and connects send no stored token
+
+#### Scenario: Needs auth
+- **WHEN** a remote server returns 401 on connect
+- **THEN** status becomes `needs_auth` and the user is told to run `cyber mcp auth <name>`
+
+#### Scenario: Scope step-up on 403
+- **WHEN** a connected server answers a tool call with 403 and `WWW-Authenticate: Bearer error="insufficient_scope", scope="a b"`
+- **THEN** the connection settles `needs_auth` with no refresh, reconnect or authorization request, and no token appears in status
+- **AND** the next `cyber mcp auth` authorization URL requests `a`, `b` and the previously granted scopes
+
+#### Scenario: Needs client registration
+- **WHEN** the authorization server offers no `registration_endpoint` and no `oauth.client_id` is configured
+- **THEN** `cyber mcp auth` fails with a `needs_client_registration` diagnostic and makes no authorization request, and the server's next connect settles `needs_client_registration`
+- **AND** after `oauth.client_id` is configured and `cyber mcp auth` succeeds, the reconnect connects the server
+
+#### Scenario: Logout
+- **WHEN** `cyber mcp logout <name>` runs while a registered server is connected with that server's stored credential
+- **THEN** every credential stored for the name is removed, the server reconnects without an `Authorization` header and settles `needs_auth`, and no token appears in the command output
+
+#### Scenario: Reconnect after authorization
+- **WHEN** a remote server settled `needs_auth`, a token is then stored for its URL, and `POST /api/v1/mcp/<name>/reconnect` is called
+- **THEN** the response reports `connecting`, the server becomes `connected` with a fresh durable owner, and its tool calls carry `Authorization: Bearer <token>`
+- **AND** no token appears in events, status, durable records, logs or command output
+
+#### Scenario: Refresh before expiry
+- **WHEN** a stored access token is due (within 5 minutes of expiry, or half its lifetime when shorter) at connect, or while connected before a call, catalog refresh or idle ping
+- **THEN** it is refreshed with the RFC 8707 `resource` after an approval recheck, the rotated refresh token is persisted before the new access token is sent, and a connected session keeps its `Mcp-Session-Id`
+- **AND** a rejected, failed or timed-out refresh settles `needs_auth` without contacting the server or the authorization server again, and Location close is never blocked by a token request
+- **AND** a token issued with a 300 s lifetime is refreshed once, not on every monitor tick
+
+#### Scenario: Shared credentials refresh once
+- **WHEN** two connections (two Locations, or the app host and `cyber exec`) hold the same stored credential and it becomes due
+- **THEN** exactly one refresh request presents the refresh token, and the other connection adopts the rotated credential without a request
+
+#### Scenario: Logout or re-authorization during a refresh
+- **WHEN** `cyber mcp logout` removes the credential before or while a connection refreshes it
+- **THEN** nothing is written back to the store and the connection settles `needs_auth`
+- **AND** when `cyber mcp auth` stored a credential from another issuer meanwhile, the connection adopts it with its own token endpoint and stores it under its own issuer
+
+#### Scenario: Retry once after refresh on 401
+- **WHEN** an established connection whose stored credential has a refresh token is refused with 401
+- **THEN** the connection is lost, the reconnect's refused initialize is followed by exactly one refresh and one more initialize, and the server connects with the renewed token
+- **AND** a refusal after that refresh settles `needs_auth` with no further reconnect or refresh
+
+#### Scenario: Disabled OAuth
+- **WHEN** a remote server sets `oauth: false`
+- **THEN** stored tokens are neither sent nor refreshed and the authorization server receives no request
+
+#### Scenario: URL change invalidates tokens
+- **WHEN** the configured `url` for a server changes
+- **THEN** stored tokens for the old URL are not sent
+
+#### Scenario: Authorization through the CLI
+- **WHEN** `cyber mcp auth remote` runs against a server that answers 401 with `resource_metadata` and an authorization server that supports registration and S256
+- **THEN** the authorization URL is printed to stderr, and after the browser reaches the loopback callback the code is exchanged with the PKCE verifier and `resource`
+- **AND** the token is stored in `<data>/mcp-auth.json` with mode 0600 under the exact server URL, and no token appears in stdout, stderr or configuration
+
+#### Scenario: Untrusted project server
+- **WHEN** `cyber mcp auth` names a project-defined server whose checkout or digest is not approved
+- **THEN** it fails without any request to the MCP server or an authorization server
+
+#### Scenario: Metadata mismatch fails closed
+- **WHEN** the protected resource names another resource, the metadata names another issuer, an endpoint is plain HTTP to a non-loopback host, or S256 is not offered
+- **THEN** discovery fails and no authorization request is made
