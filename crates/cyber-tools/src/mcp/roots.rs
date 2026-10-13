@@ -2,6 +2,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use cyber_sandbox::{Policy, SandboxConfig};
 use serde_json::{Value, json};
 
 use super::McpError;
@@ -59,6 +60,47 @@ impl McpRoots {
     pub(super) fn result(&self) -> &Value {
         &self.result
     }
+
+    /// SHA-256 of the connection environment a local process is launched with: the root
+    /// URI set, the configured and `effective` sandbox policy, network isolation, the
+    /// configured writable roots, and the credential grant: `readable_paths` (which decides
+    /// the unreadable credential paths) and `env.allow` (which credential variables reach
+    /// the process). Sets are sorted and deduplicated, so only a change of grant changes it.
+    pub(super) fn fingerprint(&self, sandbox: &SandboxConfig, effective: Policy) -> String {
+        use sha2::{Digest, Sha256};
+        let roots: BTreeSet<_> = self.result["roots"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|root| root["uri"].as_str())
+            .collect();
+        let writable: BTreeSet<_> = sandbox
+            .extra_writable
+            .iter()
+            .map(|path| path.to_string_lossy())
+            .collect();
+        let readable: BTreeSet<_> = sandbox
+            .readable_paths
+            .iter()
+            .map(|path| path.to_string_lossy())
+            .collect();
+        let env_allow: BTreeSet<_> = sandbox.env_allow.iter().collect();
+        let domains: BTreeSet<_> = sandbox.allowed_domains.iter().collect();
+        let environment = json!({
+            "roots": roots,
+            "policy": format!("{:?}", sandbox.policy),
+            "effective": format!("{effective:?}"),
+            "network": format!("{:?}", sandbox.network),
+            "domains": domains,
+            "writable": writable,
+            "readable": readable,
+            "env_allow": env_allow,
+        });
+        format!(
+            "{:x}",
+            Sha256::digest(cyber_core::config::canonical_json(&environment))
+        )
+    }
 }
 
 fn canonical(path: &Path) -> Result<PathBuf, McpError> {
@@ -92,6 +134,58 @@ mod tests {
         assert!(uri.as_str().contains("%23") && uri.as_str().contains("%20"));
         assert_eq!(entries[0]["name"], "project # Δ");
         assert_eq!(entries[1]["name"], "extra");
+    }
+    #[test]
+    fn fingerprint_stable_under_dedup_and_order() {
+        use cyber_sandbox::{NetworkMode, Policy, SandboxConfig};
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a", "b"] {
+            std::fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        let config = |writable: &[&str]| {
+            SandboxConfig::resolve(
+                &json!({"sandbox":{"writable_roots":writable}}),
+                &std::collections::BTreeMap::new(),
+                None,
+                dir.path(),
+            )
+        };
+        let print = |config: &SandboxConfig, effective: Policy| {
+            McpRoots::new(dir.path(), &config.extra_writable)
+                .unwrap()
+                .fingerprint(config, effective)
+        };
+        let base = config(&["a", "b"]);
+        let reference = print(&base, Policy::WorkspaceWrite);
+        assert_eq!(reference.len(), 64);
+        assert_eq!(
+            reference,
+            print(&config(&["b", "a", "a"]), Policy::WorkspaceWrite)
+        );
+        assert_ne!(reference, print(&config(&["a"]), Policy::WorkspaceWrite));
+        assert_ne!(reference, print(&base, Policy::FullAccess));
+        let mut changed = base.clone();
+        changed.policy = Policy::ReadOnly;
+        assert_ne!(reference, print(&changed, Policy::WorkspaceWrite));
+        let mut changed = base.clone();
+        changed.network = NetworkMode::On;
+        assert_ne!(reference, print(&changed, Policy::WorkspaceWrite));
+        let mut changed = base.clone();
+        changed.allowed_domains.push("example.test".into());
+        assert_ne!(reference, print(&changed, Policy::WorkspaceWrite));
+        // The credential grant: readable credential paths and allowed environment.
+        let mut changed = base.clone();
+        changed.readable_paths.push(dir.path().join(".aws"));
+        let readable = print(&changed, Policy::WorkspaceWrite);
+        assert_ne!(reference, readable);
+        changed.readable_paths.insert(0, dir.path().join(".aws"));
+        assert_eq!(readable, print(&changed, Policy::WorkspaceWrite));
+        let mut changed = base;
+        changed.env_allow.push("AWS_SECRET_ACCESS_KEY".into());
+        let allowed = print(&changed, Policy::WorkspaceWrite);
+        assert_ne!(reference, allowed);
+        changed.env_allow.insert(0, "AWS_SECRET_ACCESS_KEY".into());
+        assert_eq!(allowed, print(&changed, Policy::WorkspaceWrite));
     }
     #[test]
     fn missing_roots_and_nondirectory_locations_are_refused() {

@@ -1,4 +1,6 @@
 //! Actual byte framing and RPC ownership without claiming subprocess/HTTP settlement.
+mod support;
+
 use cyber_core::hooks::{HookAction, HookEvent, HookLocation};
 use cyber_tools::mcp::{McpError, StdioClient, decision, render_arguments};
 use serde_json::{Value, json};
@@ -701,4 +703,255 @@ async fn sampling_capability_is_basic_opt_in_and_unowned_callbacks_preserve_requ
         server.await.unwrap();
         assert!(client.with_sampling(!enabled).is_err());
     }
+}
+
+/// An attended form context over a real runtime question flow, with one open Session.
+async fn attended() -> (support::flow::Flow, String, cyber_server::runtime::Asker) {
+    let flow = support::flow::Flow::new(Vec::new(), true);
+    let session = flow.session("default").await;
+    let asker = flow.runtime.operation_asker(&session).await.unwrap();
+    (flow, session, asker)
+}
+
+/// Initialize as a server that sees the form (and optional roots) capabilities.
+async fn initialize_form_peer(peer: &mut Peer, capabilities: Value) {
+    let initialize = read(peer).await;
+    assert_eq!(initialize["params"]["capabilities"], capabilities);
+    send(peer, json!({"jsonrpc":"2.0","id":initialize["id"],"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}})).await;
+    assert_eq!(read(peer).await["method"], "notifications/initialized");
+}
+
+fn form_request(id: &str) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"method":"elicitation/create","params":{"message":"Choose environment",
+        "requestedSchema":{"type":"object","properties":{"environment":{"type":"string","enum":["staging","prod"]}},"required":["environment"]}}})
+}
+
+/// Durable `question.replied.1` payloads.
+fn question_replies(flow: &support::flow::Flow) -> Vec<Value> {
+    flow.f
+        .store
+        .read(|db| {
+            let mut statement = db
+                .prepare("SELECT data FROM event WHERE type='question.replied.1' ORDER BY rowid")?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .unwrap()
+        .into_iter()
+        .map(|data| serde_json::from_str(&data).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn server_cancelled_dismisses_pending_elicitation_without_response() {
+    let (flow, session, asker) = attended().await;
+    let authorize = || true;
+    let context = cyber_tools::mcp::ElicitationContext::new(&asker, &authorize);
+    let (client, mut peer) = pair();
+    let mut client = client.with_form_elicitation("db").unwrap();
+    let (initialized, ()) = tokio::join!(
+        client.initialize(TIMEOUT),
+        initialize_form_peer(&mut peer, json!({"elicitation":{"form":{}}}))
+    );
+    initialized.unwrap();
+    let driver = async {
+        let call = read(&mut peer).await;
+        send(&mut peer, form_request("form-1")).await;
+        let question = flow.pending(&session).await;
+        send(&mut peer, json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"form-1","reason":"no longer needed"}})).await;
+        // The next client message answers this ping: nothing was sent for the form.
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":"after","method":"ping"}),
+        )
+        .await;
+        assert_eq!(
+            read(&mut peer).await,
+            json!({"jsonrpc":"2.0","id":"after","result":{}})
+        );
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":call["id"],"result":{"content":[]}}),
+        )
+        .await;
+        question.id
+    };
+    let (result, question) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            client.call_tool_with_elicitation(
+                "audit",
+                json!({}),
+                Duration::from_secs(5),
+                Some(&context)
+            ),
+            driver
+        )
+    })
+    .await
+    .expect("the client did not read the connection while the form waited");
+    result.unwrap();
+    assert!(!client.unresolved());
+    assert!(flow.runtime.pending_requests(Some(&session)).is_empty());
+    let replies = question_replies(&flow);
+    assert_eq!(replies.len(), 1, "{replies:?}");
+    assert_eq!(replies[0]["request_id"], question);
+    assert_eq!(replies[0]["reply"]["reply"], "dismissed");
+    drop(client);
+    let mut rest = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut peer.0, &mut rest)
+        .await
+        .unwrap();
+    assert!(rest.is_empty(), "{rest}");
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn roots_and_ping_answered_while_elicitation_waits() {
+    let (flow, session, asker) = attended().await;
+    let authorize = || true;
+    let context = cyber_tools::mcp::ElicitationContext::new(&asker, &authorize);
+    let directory = tempfile::tempdir().unwrap();
+    let (client, mut peer) = pair();
+    let mut client = client
+        .with_roots(cyber_tools::mcp::McpRoots::new(directory.path(), &[]).unwrap())
+        .unwrap()
+        .with_form_elicitation("db")
+        .unwrap();
+    let (initialized, ()) = tokio::join!(
+        client.initialize(TIMEOUT),
+        initialize_form_peer(
+            &mut peer,
+            json!({"roots":{"listChanged":false},"elicitation":{"form":{}}}),
+        )
+    );
+    initialized.unwrap();
+    let driver = async {
+        let call = read(&mut peer).await;
+        send(&mut peer, form_request("form-1")).await;
+        let question = flow.pending(&session).await;
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":"roots","method":"roots/list"}),
+        )
+        .await;
+        let roots = read(&mut peer).await;
+        assert_eq!(roots["id"], "roots");
+        assert_eq!(roots["result"]["roots"].as_array().unwrap().len(), 1);
+        send(&mut peer, json!({"jsonrpc":"2.0","id":7,"method":"ping"})).await;
+        assert_eq!(
+            read(&mut peer).await,
+            json!({"jsonrpc":"2.0","id":7,"result":{}})
+        );
+        // A nested form has no owner of its own; sampling is not advertised.
+        send(&mut peer, form_request("nested")).await;
+        assert_eq!(
+            read(&mut peer).await,
+            json!({"jsonrpc":"2.0","id":"nested","result":{"action":"decline"}})
+        );
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":"sample","method":"sampling/createMessage","params":{}}),
+        )
+        .await;
+        assert_eq!(read(&mut peer).await["error"]["code"], -32601);
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed"}),
+        )
+        .await;
+        // A cancellation for another request leaves the form waiting.
+        send(&mut peer, json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"other"}})).await;
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":"after","method":"ping"}),
+        )
+        .await;
+        assert_eq!(read(&mut peer).await["id"], "after");
+        assert_eq!(flow.runtime.pending_requests(Some(&session)).len(), 1);
+        flow.runtime
+            .answer_question(
+                &question.id,
+                cyber_server::runtime::QuestionReply::Answers {
+                    answers: vec![vec!["2. prod".into()], vec!["Accept".into()]],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            read(&mut peer).await,
+            json!({"jsonrpc":"2.0","id":"form-1","result":{"action":"accept","content":{"environment":"prod"}}})
+        );
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":call["id"],"result":{"content":[]}}),
+        )
+        .await;
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            client.call_tool_with_elicitation(
+                "audit",
+                json!({}),
+                Duration::from_secs(5),
+                Some(&context)
+            ),
+            driver
+        )
+    })
+    .await
+    .expect("the client did not read the connection while the form waited");
+    result.unwrap();
+    assert!(!client.unresolved());
+    assert!(client.poll_idle(TIMEOUT).await.unwrap().tools_changed);
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn pending_call_response_during_form_wait_dismisses_question_without_reply() {
+    let (flow, session, asker) = attended().await;
+    let authorize = || true;
+    let context = cyber_tools::mcp::ElicitationContext::new(&asker, &authorize);
+    let (client, mut peer) = pair();
+    let mut client = client.with_form_elicitation("db").unwrap();
+    let (initialized, ()) = tokio::join!(
+        client.initialize(TIMEOUT),
+        initialize_form_peer(&mut peer, json!({"elicitation":{"form":{}}}))
+    );
+    initialized.unwrap();
+    let driver = async {
+        let call = read(&mut peer).await;
+        send(&mut peer, form_request("form-1")).await;
+        flow.pending(&session).await;
+        send(
+            &mut peer,
+            json!({"jsonrpc":"2.0","id":call["id"],"result":{"content":[{"type":"text","text":"done"}]}}),
+        )
+        .await;
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            client.call_tool_with_elicitation(
+                "audit",
+                json!({}),
+                Duration::from_secs(5),
+                Some(&context)
+            ),
+            driver
+        )
+    })
+    .await
+    .expect("the client did not read the connection while the form waited");
+    assert_eq!(result.unwrap()["content"][0]["text"], "done");
+    assert!(!client.unresolved());
+    assert!(flow.runtime.pending_requests(Some(&session)).is_empty());
+    assert_eq!(question_replies(&flow)[0]["reply"]["reply"], "dismissed");
+    drop(client);
+    let mut rest = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut peer.0, &mut rest)
+        .await
+        .unwrap();
+    assert!(rest.is_empty(), "{rest}");
+    flow.runtime.shutdown().await;
 }

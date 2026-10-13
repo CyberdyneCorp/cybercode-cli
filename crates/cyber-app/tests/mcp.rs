@@ -905,7 +905,21 @@ async fn invoke_remote(
     definition: &cyber_server::runtime::ToolDef,
     text: &str,
 ) -> cyber_server::runtime::ToolOutcome {
-    let invocation = cyber_server::runtime::Invocation {
+    app.host
+        .execute(
+            invocation(turn, definition, text),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+}
+
+/// A call of `definition` with input `{"text": text}`, keyed by `text`.
+fn invocation(
+    turn: &cyber_server::runtime::TurnContext,
+    definition: &cyber_server::runtime::ToolDef,
+    text: &str,
+) -> cyber_server::runtime::Invocation {
+    cyber_server::runtime::Invocation {
         registration: definition.registration.clone(),
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),
@@ -919,15 +933,26 @@ async fn invoke_remote(
         operation_key: format!("op_{text}"),
         asker: cyber_server::runtime::Asker::detached(),
         rules: serde_json::Value::Null,
-    };
-    app.host
-        .execute(invocation, tokio_util::sync::CancellationToken::new())
-        .await
+    }
 }
 
 /// A streaming remote server configured through the app, with one open session.
 async fn streaming_app(
     behavior: mcp_http::Behavior,
+) -> (
+    mcp_http::McpHttp,
+    tempfile::TempDir,
+    std::path::PathBuf,
+    App,
+    String,
+) {
+    streaming_app_with(behavior, json!({})).await
+}
+
+/// [`streaming_app`] with `settings` merged into the `remote` server's definition.
+async fn streaming_app_with(
+    behavior: mcp_http::Behavior,
+    settings: serde_json::Value,
 ) -> (
     mcp_http::McpHttp,
     tempfile::TempDir,
@@ -943,13 +968,15 @@ async fn streaming_app(
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().canonicalize().unwrap();
     let app = application(&directory).await;
+    let mut server =
+        json!({"type":"remote","url":http.url,"headers":{"authorization":"Bearer PRIVATE-HEADER"}});
+    if let (Some(server), serde_json::Value::Object(settings)) = (server.as_object_mut(), settings)
+    {
+        server.extend(settings);
+    }
     std::fs::write(
         app.paths.config.join("cyber.json"),
-        json!({
-            "providers":provider(),
-            "mcp":{"remote":{"type":"remote","url":http.url,"headers":{"authorization":"Bearer PRIVATE-HEADER"}}}
-        })
-        .to_string(),
+        json!({"providers":provider(),"mcp":{"remote":server}}).to_string(),
     )
     .unwrap();
     let session = app
@@ -1186,6 +1213,173 @@ async fn remote_list_changed_updates_app_definitions() {
         1,
         "list_changed must not reconnect"
     );
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn remote_removed_tool_settles_stale_through_app_host() {
+    use cyber_server::runtime::ToolOutcome;
+    let (http, _root, directory, app, session) = streaming_app(mcp_http::Behavior::default()).await;
+    let turn = remote_turn(&directory, &session);
+    let echo = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+    http.set_tools(&["fresh"]);
+    assert!(http.push(json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed"})));
+    let fresh = wait_definition(&app, &turn, "mcp__remote__fresh", None).await;
+    assert!(
+        app.host
+            .definitions(&turn)
+            .iter()
+            .all(|definition| definition.spec.name != "mcp__remote__echo")
+    );
+    assert_eq!(
+        invoke_remote(&app, &turn, &echo, "removed").await,
+        ToolOutcome::Failed("Stale tool call: mcp__remote__echo".into())
+    );
+    assert!(
+        http.posts("tools/call").is_empty(),
+        "a removed tool reached the server"
+    );
+    assert_eq!(
+        invoke_remote(&app, &turn, &fresh, "kept").await,
+        ToolOutcome::Ok("kept".into())
+    );
+    assert_eq!(
+        http.posts("initialize").len(),
+        1,
+        "removal must not reconnect"
+    );
+    assert_eq!(mcp_connections(&app.store, &directory).unwrap().len(), 1);
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn remote_list_changed_on_call_stream_applies_after_call() {
+    use cyber_server::runtime::ToolOutcome;
+    let (http, _root, directory, app, session) = streaming_app(mcp_http::Behavior {
+        sse: true,
+        call_list_changed: true,
+        delay: std::time::Duration::from_millis(100),
+        ..mcp_http::Behavior::default()
+    })
+    .await;
+    let turn = remote_turn(&directory, &session);
+    let echo = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+    http.set_tools(&["echo", "fresh"]);
+    // The notice arrives on the call's own POST event stream, before its result.
+    assert_eq!(
+        invoke_remote(&app, &turn, &echo, "announcing").await,
+        ToolOutcome::Ok("announcing".into())
+    );
+    let fresh = wait_definition(&app, &turn, "mcp__remote__fresh", None).await;
+    let requests = http.requests();
+    let position = |rpc: &str| {
+        requests
+            .iter()
+            .enumerate()
+            .filter(|(_, seen)| seen.method == "POST" && seen.rpc() == Some(rpc))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()
+    };
+    let (lists, calls) = (position("tools/list"), position("tools/call"));
+    assert_eq!(lists.len(), 2, "{requests:?}");
+    assert!(lists[1] > calls[0], "the refresh ran during the call");
+    assert_eq!(
+        invoke_remote(&app, &turn, &fresh, "fresh").await,
+        ToolOutcome::Ok("fresh".into())
+    );
+    // The connection was kept: one initialize and one running owner.
+    assert_eq!(http.posts("initialize").len(), 1);
+    let records = mcp_connections(&app.store, &directory).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].phase, McpConnectionPhase::Running);
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+/// Read an event stream into `text` until one of its `data:` frames satisfies `done`.
+async fn read_frames<B: AsRef<[u8]>>(
+    stream: &mut (impl futures::Stream<Item = reqwest::Result<B>> + Unpin),
+    text: &mut String,
+    done: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    use futures::StreamExt;
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let chunk = stream.next().await.unwrap().unwrap();
+            text.push_str(std::str::from_utf8(chunk.as_ref()).unwrap());
+            let found = text
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|frame| done(frame))
+                .last();
+            if let Some(frame) = found {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("the expected event never reached the stream")
+}
+
+#[tokio::test]
+async fn tools_changed_event_reaches_http_event_stream() {
+    let (http, _root, directory, app, session) = streaming_app(prompts_behavior()).await;
+    let turn = remote_turn(&directory, &session);
+    wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+    let (close_url, stop, server) = listener(&app).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client
+        .get(close_url.replace("/mcp/close", "/event"))
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .query(&[("location[directory]", directory.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let mut stream = response.bytes_stream();
+    let mut text = String::new();
+    let running = mcp_connections(&app.store, &directory).unwrap();
+    let id = running[0].id.clone();
+    let is_changed = |frame: &serde_json::Value, key: &str, value: serde_json::Value| {
+        frame["type"] == "mcp.tools.changed.1" && frame["data"][key] == value
+    };
+    http.set_tools(&["echo", "fresh"]);
+    assert!(http.push(json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed"})));
+    let tools = read_frames(&mut stream, &mut text, |frame| {
+        is_changed(
+            frame,
+            "tools",
+            json!(["mcp__remote__echo", "mcp__remote__fresh"]),
+        )
+    })
+    .await;
+    http.set_prompts(vec![mcp_http::prompt("summarize", &[])]);
+    assert!(http.push(json!({"jsonrpc":"2.0","method":"notifications/prompts/list_changed"})));
+    let prompts = read_frames(&mut stream, &mut text, |frame| {
+        is_changed(frame, "prompts", json!(["remote:summarize"]))
+    })
+    .await;
+    for frame in [&tools, &prompts] {
+        assert_eq!(frame["location"], directory.to_str().unwrap(), "{frame}");
+        assert_eq!(frame["data"]["connection_id"], id.as_str(), "{frame}");
+        assert_eq!(frame["data"]["name"], "remote", "{frame}");
+        assert_eq!(frame["data"]["directory"], directory.to_str().unwrap());
+        assert!(frame["durable"].is_null(), "{frame}");
+    }
+    assert_eq!(tools["data"]["prompts"], json!(["remote:review_pr"]));
+    assert_eq!(
+        prompts["data"]["tools"],
+        json!(["mcp__remote__echo", "mcp__remote__fresh"])
+    );
+    // No header value reaches the stream.
+    assert!(!text.contains("PRIVATE"), "{text}");
+    assert!(!text.to_ascii_lowercase().contains("bearer"), "{text}");
+    drop(stream);
+    stop.send(()).unwrap();
+    server.await.unwrap();
     app.host.close_mcp_location(&directory).await.unwrap();
     app.runtime.shutdown().await;
 }
@@ -3162,6 +3356,129 @@ mod oauth {
         app.runtime.shutdown().await;
     }
 
+    /// An interrupted call on a connection whose credential `cyber mcp logout` removed sends
+    /// no `notifications/cancelled` (it would carry the revoked bearer); the connection
+    /// still ends and its durable owner settles.
+    #[tokio::test]
+    async fn removed_credential_gets_no_cancel_notice() {
+        use cyber_server::runtime::ToolOutcome;
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior {
+            sse: true,
+            delay: std::time::Duration::from_secs(60),
+            ..mcp_http::Behavior::default()
+        })
+        .await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        fake.expect_resource(&http.url);
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (_root, directory, app) =
+            oauth_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 3600);
+        let turn = open_turn(&app, &directory).await;
+        let echo = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let outcome = interrupted_remote_call(&http, &app, &turn, &echo, cancel.clone(), async {
+            // What `cyber mcp logout` does, without its reconnect request.
+            assert_eq!(credential_store(&app).remove_server("remote").unwrap(), 1);
+            cancel.cancel();
+        })
+        .await;
+        assert_eq!(outcome, ToolOutcome::Aborted);
+        assert!(
+            http.posts("notifications/cancelled").is_empty(),
+            "{:#?}",
+            http.requests()
+        );
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.acknowledged, Some(true), "{record:?}");
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// `cyber mcp logout` while a remote form waits for the user withdraws authorization:
+    /// the accepted answers are never forwarded, the server gets `cancel`.
+    #[tokio::test]
+    async fn remote_elicitation_logout_during_the_wait_cancels_without_content() {
+        use cyber_tools::mcp::oauth::{MemoryVault, VaultCredentialStore};
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior {
+            elicit: Some(elicitation_form("Choose the deployment")),
+            ..mcp_http::Behavior::default()
+        })
+        .await;
+        http.set_tools(&["ask"]);
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        fake.expect_resource(&http.url);
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let provider = scripted_provider("mcp__remote__ask").await;
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        std::fs::create_dir_all(directory.join("config")).unwrap();
+        std::fs::write(
+            directory.join("config/cyber.json"),
+            json!({
+                "permissions":"allow",
+                "providers":{"test":{"api":{"type":"openai-compatible","url":provider.url,"settings":{"auth":"none"}},"models":{"main":{}}}},
+                "mcp":{"remote":{"type":"remote","url":http.url}}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let store = VaultCredentialStore::new(
+            directory.join("data/mcp-auth-index.json"),
+            std::sync::Arc::new(MemoryVault::default()) as _,
+        );
+        let app = application_with(&directory, Some(std::sync::Arc::new(store))).await;
+        store_credential(&app, &http.url, &fake, SEED_REFRESH, 3600);
+        let turn = open_turn(&app, &directory).await;
+        wait_definition(&app, &turn, "mcp__remote__ask", None).await;
+        let session = turn.session_id.clone();
+        let (close_url, stop, server) = listener(&app).await;
+        let base = close_url.replace("/mcp/close", "");
+        submit_prompt(&session, &base, "ask the remote server").await;
+        let request = wait_question(&app, &session).await;
+        // What `cyber mcp logout` does, without its reconnect request.
+        assert_eq!(credential_store(&app).remove_server("remote").unwrap(), 1);
+        let reply = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(format!(
+                "{base}/sessions/{session}/questions/{}/reply",
+                request.id
+            ))
+            .basic_auth("cyber", Some("mcp-test-password"))
+            .json(&json!({"answers":[["2. prod"],["3"],["Accept"]]}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), reqwest::StatusCode::NO_CONTENT);
+        wait_idle(&app, &session).await;
+        for reply in http.replies("elicit-1") {
+            assert_eq!(
+                reply.body["result"],
+                json!({"action":"cancel"}),
+                "{reply:?}"
+            );
+        }
+        assert!(
+            http.requests()
+                .iter()
+                .all(|seen| !seen.body.to_string().contains("prod")),
+            "{:#?}",
+            http.requests()
+        );
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        stop.send(()).unwrap();
+        server.await.unwrap();
+        close(app, &turn).await;
+    }
+
     /// A plain-HTTP server on a non-loopback host gets no OAuth: `cyber mcp auth` refuses
     /// before any request, and a stored credential is never sent to it in cleartext.
     #[tokio::test]
@@ -3961,4 +4278,464 @@ mod oauth {
         app.host.close_mcp_location(&directory).await.unwrap();
         app.runtime.shutdown().await;
     }
+}
+
+/// An OpenAI-compatible provider on 127.0.0.1 whose model calls `tool` (with distinct
+/// arguments, so repeated calls are no doom loop) whenever the last message is not a tool result, and otherwise answers text.
+struct ScriptedProvider {
+    url: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for ScriptedProvider {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn scripted_provider(tool: &'static str) -> ScriptedProvider {
+    async fn complete(
+        axum::extract::State(tool): axum::extract::State<&'static str>,
+        axum::Json(body): axum::Json<serde_json::Value>,
+    ) -> axum::response::Response {
+        let messages = body["messages"].as_array().cloned().unwrap_or_default();
+        let (delta, finish) = if body["messages"].to_string().contains("Write a short title") {
+            (json!({"content":"Elicitation title"}), "stop")
+        } else if messages.last().is_some_and(|last| last["role"] == "tool") {
+            (json!({"content":"remote call finished"}), "stop")
+        } else {
+            let call = json!({"index":0,"id":format!("call_{}", messages.len()),"type":"function",
+                "function":{"name":tool,"arguments":json!({"text":format!("turn {}", messages.len())}).to_string()}});
+            (json!({"tool_calls":[call]}), "tool_calls")
+        };
+        let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],
+            "usage":{"prompt_tokens":100,"completion_tokens":10}});
+        axum::response::Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from(format!(
+                "data: {chunk}\n\ndata: [DONE]\n\n"
+            )))
+            .unwrap()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let router = axum::Router::new()
+        .route("/v1/chat/completions", axum::routing::post(complete))
+        .with_state(tool);
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    ScriptedProvider { url, task }
+}
+
+fn elicitation_form(message: &str) -> serde_json::Value {
+    json!({"message":message,"requestedSchema":{"type":"object","properties":{
+        "environment":{"type":"string","enum":["staging","prod"]},
+        "count":{"type":"integer","minimum":1,"maximum":5}
+    },"required":["environment","count"]}})
+}
+
+/// An app configured before `App::build` with permissive rules, the scripted provider and
+/// remote server `remote` whose only tool `ask` elicits `form`; one session is open.
+async fn elicitation_app(
+    form: serde_json::Value,
+    interactive: bool,
+    remote: serde_json::Value,
+) -> (
+    mcp_http::McpHttp,
+    ScriptedProvider,
+    tempfile::TempDir,
+    App,
+    cyber_server::runtime::TurnContext,
+) {
+    let http = mcp_http::McpHttp::start(mcp_http::Behavior {
+        elicit: Some(form),
+        ..mcp_http::Behavior::default()
+    })
+    .await;
+    http.set_tools(&["ask"]);
+    let provider = scripted_provider("mcp__remote__ask").await;
+    let mut server = json!({"type":"remote","url":http.url});
+    if let (Some(server), serde_json::Value::Object(extra)) = (server.as_object_mut(), remote) {
+        server.extend(extra);
+    }
+    let config = json!({
+        "permissions":"allow",
+        "providers":{"test":{"api":{"type":"openai-compatible","url":provider.url,"settings":{"auth":"none"}},"models":{"main":{}}}},
+        "mcp":{"remote":server}
+    });
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    std::fs::create_dir_all(directory.join("config")).unwrap();
+    std::fs::write(directory.join("config/cyber.json"), config.to_string()).unwrap();
+    let app = build_app(&directory, None, interactive).await;
+    let session = app
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: directory.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let turn = remote_turn(&directory, &session.id);
+    wait_definition(&app, &turn, "mcp__remote__ask", None).await;
+    (http, provider, root, app, turn)
+}
+
+/// POST a prompt for `session` through the app's HTTP server at `base` (`.../api/v1`).
+async fn submit_prompt(session: &str, base: &str, text: &str) {
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .post(format!("{base}/sessions/{session}/prompt"))
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .json(&json!({"parts":[{"type":"text","text":text}],"delivery":"queue"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+}
+
+async fn wait_question(app: &App, session: &str) -> cyber_server::runtime::PendingRequest {
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            if let Some(request) = app.runtime.pending_requests(Some(session)).pop() {
+                return request;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the elicitation question was never asked")
+}
+
+async fn wait_idle(app: &App, session: &str) {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        app.runtime.wait_idle(session),
+    )
+    .await
+    .expect("the session never settled");
+}
+
+/// Durable `(type, data)` rows of the question events.
+fn question_events(app: &App) -> Vec<(String, serde_json::Value)> {
+    app.store
+        .read(|db| {
+            let mut statement = db.prepare(
+                "SELECT type,data FROM event WHERE type IN ('question.asked.1','question.replied.1') ORDER BY rowid",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .unwrap()
+        .into_iter()
+        .map(|(kind, data)| (kind, serde_json::from_str(&data).unwrap()))
+        .collect()
+}
+
+#[tokio::test]
+async fn remote_elicitation_through_app_host_accept_decline_cancel() {
+    let (http, _provider, _root, app, turn) =
+        elicitation_app(elicitation_form("Choose the deployment"), true, json!({})).await;
+    let session = turn.session_id.clone();
+    let (close_url, stop, server) = listener(&app).await;
+    let base = close_url.replace("/mcp/close", "");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for (index, action) in ["Accept", "Decline", "Cancel"].into_iter().enumerate() {
+        submit_prompt(&session, &base, "ask the remote server").await;
+        let request = wait_question(&app, &session).await;
+        let cyber_server::runtime::PendingKind::Question { questions } = &request.kind else {
+            panic!("expected the elicitation form, got {request:?}");
+        };
+        assert_eq!(questions.len(), 3);
+        let reply = client
+            .post(format!(
+                "{base}/sessions/{session}/questions/{}/reply",
+                request.id
+            ))
+            .basic_auth("cyber", Some("mcp-test-password"))
+            .json(&json!({"answers":[["2. prod"],["3"],[action]]}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), reqwest::StatusCode::NO_CONTENT);
+        wait_idle(&app, &session).await;
+        let replies = http.replies(&format!("elicit-{}", index + 1));
+        assert_eq!(replies.len(), 1, "{:#?}", http.requests());
+        let result = &replies[0].body["result"];
+        assert_eq!(result["action"], action.to_lowercase(), "{result}");
+        if action == "Accept" {
+            assert_eq!(result["content"], json!({"environment":"prod","count":3}));
+        } else {
+            assert!(result.get("content").is_none(), "{result}");
+        }
+    }
+    let events = question_events(&app);
+    let asked: Vec<_> = events
+        .iter()
+        .filter(|(kind, _)| kind == "question.asked.1")
+        .collect();
+    let replied = events
+        .iter()
+        .filter(|(kind, _)| kind == "question.replied.1")
+        .count();
+    assert_eq!(asked.len(), 3, "{events:#?}");
+    assert_eq!(replied, 3, "{events:#?}");
+    for (_, data) in asked {
+        assert!(data.to_string().contains("MCP server remote"), "{data}");
+    }
+    assert!(http.awaiting_replies().is_empty());
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    close(app, &turn).await;
+}
+
+#[tokio::test]
+async fn remote_elicitation_unattended_app_declines_without_question() {
+    let (http, _provider, root, app, turn) =
+        elicitation_app(elicitation_form("PRIVATE-FORM-TEXT"), false, json!({})).await;
+    let session = turn.session_id.clone();
+    let (close_url, stop, server) = listener(&app).await;
+    let base = close_url.replace("/mcp/close", "");
+    submit_prompt(&session, &base, "ask the remote server").await;
+    wait_idle(&app, &session).await;
+    let replies = http.replies("elicit-1");
+    assert_eq!(replies.len(), 1, "{:#?}", http.requests());
+    assert_eq!(replies[0].body["result"], json!({"action":"decline"}));
+    assert!(question_events(&app).is_empty());
+    assert!(app.runtime.pending_requests(Some(&session)).is_empty());
+    fn scan(path: &Path) {
+        for entry in std::fs::read_dir(path).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan(&path);
+            } else if path.file_name().is_some_and(|name| name != "cyber.json") {
+                let text =
+                    String::from_utf8_lossy(&std::fs::read(&path).unwrap_or_default()).into_owned();
+                assert!(!text.contains("PRIVATE-FORM-TEXT"), "{}", path.display());
+            }
+        }
+    }
+    scan(root.path());
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    close(app, &turn).await;
+}
+
+/// A remote server whose calls answer after a minute, with `settings` on its definition,
+/// waited until `echo` is published.
+async fn slow_remote_app(
+    settings: serde_json::Value,
+) -> (
+    mcp_http::McpHttp,
+    tempfile::TempDir,
+    std::path::PathBuf,
+    App,
+    cyber_server::runtime::TurnContext,
+    cyber_server::runtime::ToolDef,
+) {
+    let (http, root, directory, app, session) = streaming_app_with(
+        mcp_http::Behavior {
+            sse: true,
+            delay: std::time::Duration::from_secs(60),
+            ..mcp_http::Behavior::default()
+        },
+        settings,
+    )
+    .await;
+    let turn = remote_turn(&directory, &session);
+    let echo = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+    (http, root, directory, app, turn, echo)
+}
+
+/// Execute `definition` with `cancel` and run `interrupt` once the call reached the server.
+async fn interrupted_remote_call(
+    http: &mcp_http::McpHttp,
+    app: &App,
+    turn: &cyber_server::runtime::TurnContext,
+    definition: &cyber_server::runtime::ToolDef,
+    cancel: tokio_util::sync::CancellationToken,
+    interrupt: impl std::future::Future<Output = ()>,
+) -> cyber_server::runtime::ToolOutcome {
+    let interrupt = async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while http.posts("tools/call").is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the call never reached the server");
+        interrupt.await;
+    };
+    let call = app
+        .host
+        .execute(invocation(turn, definition, "slow"), cancel);
+    let (outcome, ()) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        tokio::join!(call, interrupt)
+    })
+    .await
+    .expect("the interrupted call did not settle");
+    outcome
+}
+
+/// Exactly one `notifications/cancelled`, naming the call with a reason in its session,
+/// was POSTed before the session's DELETE.
+fn assert_cancelled_before_delete(http: &mcp_http::McpHttp) {
+    let call = http.posts("tools/call").remove(0);
+    let cancelled = http.posts("notifications/cancelled");
+    assert_eq!(cancelled.len(), 1, "{:#?}", http.requests());
+    assert_eq!(cancelled[0].body["params"]["requestId"], call.body["id"]);
+    assert_eq!(
+        cancelled[0].body["params"]["reason"],
+        "Client requested cancellation"
+    );
+    assert_eq!(
+        cancelled[0].header("mcp-session-id"),
+        Some(mcp_http::SESSION)
+    );
+    let requests = http.requests();
+    let notice = requests
+        .iter()
+        .position(|seen| seen.rpc() == Some("notifications/cancelled"))
+        .unwrap();
+    let delete = requests
+        .iter()
+        .position(|seen| {
+            seen.method == "DELETE" && seen.header("mcp-session-id") == Some(mcp_http::SESSION)
+        })
+        .unwrap_or_else(|| panic!("{requests:#?}"));
+    assert!(notice < delete, "{requests:#?}");
+}
+
+/// An interrupted remote call through `AppHost` sends `notifications/cancelled` for its
+/// request before the session ends; the pool then reconnects with fresh status events.
+#[tokio::test]
+async fn remote_call_interrupt_sends_cancelled_through_app_host() {
+    use cyber_server::runtime::{LiveEvent, McpConnectionStatus, ToolOutcome};
+    let (http, _root, directory, app, turn, old) = slow_remote_app(json!({})).await;
+    let mut updates = app.runtime.subscribe();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let outcome = interrupted_remote_call(&http, &app, &turn, &old, cancel.clone(), async {
+        cancel.cancel();
+    })
+    .await;
+    assert_eq!(outcome, ToolOutcome::Aborted);
+    assert_cancelled_before_delete(&http);
+    // The lost connection settles and the pool reconnects under a fresh identity.
+    let new = wait_definition(&app, &turn, "mcp__remote__echo", Some(&old)).await;
+    assert!(matches!(
+        invoke_remote(&app, &turn, &old, "stale").await,
+        ToolOutcome::Failed(_)
+    ));
+    let records = mcp_connections(&app.store, &directory).unwrap();
+    assert!(
+        records
+            .iter()
+            .any(|record| record.phase == McpConnectionPhase::Settled
+                && record.acknowledged == Some(true)),
+        "{records:#?}"
+    );
+    let mut statuses = Vec::new();
+    let mut connections = Vec::new();
+    while let Ok(event) = updates.try_recv() {
+        let text = serde_json::to_string(&event).unwrap();
+        assert!(!text.contains("PRIVATE"), "{text}");
+        if let LiveEvent::McpStatusChanged { update, .. } = event {
+            statuses.push(update.status);
+            if !connections.contains(&update.connection_id) {
+                connections.push(update.connection_id);
+            }
+        }
+    }
+    assert_eq!(connections.len(), 2, "{statuses:?}");
+    assert_eq!(
+        statuses.last(),
+        Some(&McpConnectionStatus::Connected),
+        "{statuses:?}"
+    );
+    drop(new);
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+/// A remote call that outlives the server's `timeout` fails and still sends its
+/// `notifications/cancelled` before the session ends.
+#[tokio::test]
+async fn remote_call_timeout_sends_cancelled_before_delete() {
+    let (http, _root, directory, app, turn, echo) = slow_remote_app(json!({"timeout":1})).await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let started = std::time::Instant::now();
+    let outcome = interrupted_remote_call(&http, &app, &turn, &echo, cancel, async {}).await;
+    assert!(
+        matches!(outcome, cyber_server::runtime::ToolOutcome::Failed(_)),
+        "{outcome:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    assert_cancelled_before_delete(&http);
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+/// Closing the Location while a remote call is pending aborts it, and the call's
+/// `notifications/cancelled` still goes out before the session's DELETE.
+#[tokio::test]
+async fn remote_location_close_sends_cancelled_before_delete() {
+    let (http, _root, directory, app, turn, echo) = slow_remote_app(json!({})).await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let outcome = interrupted_remote_call(&http, &app, &turn, &echo, cancel, async {
+        app.host.close_mcp_location(&directory).await.unwrap();
+    })
+    .await;
+    assert_eq!(outcome, cyber_server::runtime::ToolOutcome::Aborted);
+    assert_cancelled_before_delete(&http);
+    let records = mcp_connections(&app.store, &directory).unwrap();
+    assert!(
+        records
+            .iter()
+            .all(|record| record.phase == McpConnectionPhase::Settled),
+        "{records:#?}"
+    );
+    app.runtime.shutdown().await;
+}
+
+/// A remote server that withdraws its form with `notifications/cancelled` while the user
+/// has not answered dismisses exactly that question and gets no reply for it.
+#[tokio::test]
+async fn remote_server_cancels_elicitation_dismisses_question() {
+    let (http, _provider, _root, app, turn) =
+        elicitation_app(elicitation_form("Choose the deployment"), true, json!({})).await;
+    let session = turn.session_id.clone();
+    let (close_url, stop, server) = listener(&app).await;
+    let base = close_url.replace("/mcp/close", "");
+    submit_prompt(&session, &base, "ask the remote server").await;
+    let request = wait_question(&app, &session).await;
+    assert!(http.cancel_elicitation("elicit-1"));
+    wait_idle(&app, &session).await;
+    assert!(app.runtime.pending_requests(Some(&session)).is_empty());
+    assert!(
+        http.replies("elicit-1").is_empty(),
+        "{:#?}",
+        http.requests()
+    );
+    let events = question_events(&app);
+    let replied: Vec<_> = events
+        .iter()
+        .filter(|(kind, _)| kind == "question.replied.1")
+        .collect();
+    assert_eq!(replied.len(), 1, "{events:#?}");
+    assert_eq!(replied[0].1["request_id"], request.id);
+    assert_eq!(replied[0].1["reply"]["reply"], "dismissed");
+    for (_, data) in &events {
+        assert!(!data.to_string().contains("PRIVATE"), "{data}");
+    }
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    close(app, &turn).await;
 }

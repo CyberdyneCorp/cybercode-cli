@@ -197,6 +197,8 @@ struct Shared {
     version: Mutex<Option<HeaderValue>>,
     failure: Mutex<Option<HttpFailure>>,
     listening: Mutex<Listening>,
+    /// Signalled once a `notifications/cancelled` POST finished, delivered or not.
+    cancel_posted: tokio::sync::Notify,
 }
 
 fn slot<T>(slot: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -545,8 +547,18 @@ impl HttpConnection {
         result.map_err(|error| self.classify(error))
     }
 
+    /// Write the cancellation notice and wait, within `timeout`, until the bridge has POSTed
+    /// it, so a shutdown right after cannot drop it unsent. Delivery is not settlement.
     pub async fn cancel_pending(&mut self, timeout: Duration) -> Result<(), McpError> {
-        self.client()?.cancel_pending(timeout).await
+        let deadline = tokio::time::Instant::now() + timeout;
+        let shared = self.shared.clone();
+        let posted = shared.cancel_posted.notified();
+        tokio::pin!(posted);
+        posted.as_mut().enable();
+        self.client()?.cancel_pending(timeout).await?;
+        tokio::time::timeout_at(deadline, posted)
+            .await
+            .map_err(|_| McpError::Timeout)
     }
 
     /// HTTP has no process group to drain; graceful and immediate shutdown are the same.
@@ -622,6 +634,8 @@ struct Frame {
     initialize: bool,
     /// `notifications/initialized`: once accepted, the GET event stream may open.
     initialized: bool,
+    /// `notifications/cancelled`: its owner waits until the POST finished.
+    cancellation: bool,
 }
 
 impl Frame {
@@ -634,6 +648,7 @@ impl Frame {
             id,
             initialize: method == Some("initialize"),
             initialized: method == Some("notifications/initialized"),
+            cancellation: method == Some("notifications/cancelled"),
             bytes,
         })
     }
@@ -728,6 +743,8 @@ async fn bridge(
         }
     }
     posts.shutdown().await;
+    // Nothing more is posted, so a pending cancellation notice need not be awaited.
+    shared.cancel_posted.notify_waiters();
     let _ = writer.lock().await.shutdown().await;
 }
 
@@ -738,9 +755,13 @@ async fn post(
     frame: Frame,
     failed: CancellationToken,
 ) {
+    let cancellation = frame.cancellation;
     if let Err(failure) = exchange(&target, &shared, &writer, frame).await {
         shared.fail(failure);
         failed.cancel();
+    }
+    if cancellation {
+        shared.cancel_posted.notify_waiters();
     }
 }
 
@@ -1057,6 +1078,7 @@ async fn legacy_bridge(
     if let Err(failure) = result {
         shared.fail(failure);
     }
+    shared.cancel_posted.notify_waiters();
     let _ = writer.lock().await.shutdown().await;
 }
 
@@ -1095,7 +1117,12 @@ async fn legacy_session(
     };
     let send = async {
         while let Some(frame) = frames.next().await.and_then(Frame::parse) {
-            legacy_post(target, &endpoint, frame).await?;
+            let cancellation = frame.cancellation;
+            let posted = legacy_post(target, &endpoint, frame).await;
+            if cancellation {
+                shared.cancel_posted.notify_waiters();
+            }
+            posted?;
         }
         Ok(())
     };

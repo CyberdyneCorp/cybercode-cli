@@ -245,8 +245,9 @@
 - **AND** native inspection SHALL NOT overlap an active call or lose incomplete protocol frames
 
 #### Scenario: Local catalog changes while idle or calling
-- **WHEN** a local server sends notifications/tools/list_changed while idle or during a tool call
+- **WHEN** a local or remote server sends notifications/tools/list_changed while idle or during a tool call
 - **THEN** serialized runtime observation SHALL refresh the catalog after fresh configuration and server authorization checks
+- **AND** a notice received during a call, including on a remote call's own event stream, SHALL be applied after that call ends, on the same connection without reconnecting
 - **AND** discovery SHALL be withdrawn during refresh and calls approved against changed metadata SHALL be refused as stale
 - **AND** removed aliases SHALL NOT be reassigned to different remote tools
 - **AND** Location close SHALL interrupt blocked refresh and retain native ownership until explicit settlement
@@ -363,6 +364,13 @@
 - **THEN** its registration SHALL be removed from subsequent materializations
 - **AND** the retained local native owner SHALL attempt explicit process/proxy shutdown with durable acknowledgement or unresolved evidence
 
+#### Scenario: Cancellation notice before teardown
+- **WHEN** an interrupt, Location close or timeout leaves a dispatched local or remote RPC unresolved
+- **THEN** before transport teardown the client SHALL send one best-effort `notifications/cancelled` `{requestId, reason}` for that request, on a remote server's live session before its DELETE, bounded by a short timeout (1 s)
+- **AND** it SHALL send none when the definition is no longer authorized or the server's stored credential was removed
+- **AND** a failed, refused or timed-out notice SHALL be logged without header values and SHALL NOT prevent shutdown or durable owner settlement
+- **AND** sending it SHALL NOT be treated as remote settlement of the request's effects
+
 ### Requirement: Roots and sampling
 (P1) The system SHALL advertise the `roots` capability, returning the Location directory and any additional writable roots. It SHALL advertise `sampling` only when `mcp.sampling.enabled` is true, routing sampling requests to `model_roles.small` after an `mcp_sampling` permission check and attributing cost to the server.
 
@@ -385,6 +393,14 @@
 - **WHEN** the connection advertises `roots.listChanged: false`
 - **THEN** its root selection SHALL remain an immutable connection snapshot
 - **AND** a fresh connection SHALL capture current authorized configuration
+
+#### Scenario: Sandbox or writable-root change replaces local connection
+- **WHEN** a running local connection's roots or sandbox grant no longer match the configuration (`sandbox.policy`, `sandbox.writable_roots`, network isolation and allowed domains, the credential grant `sandbox.readable_paths` and `sandbox.env.allow`, or `sandbox.apply_to` selection, compared as a SHA-256 fingerprint of the canonical root set and the configured and effective sandbox captured at launch)
+- **THEN** its tools, prompts, resources and instructions SHALL no longer be offered, and calls bound to it SHALL be refused with `MCP sandbox configuration changed; reconnecting` before any RPC, also when the change lands while the call waits for the connection
+- **AND** the next Location refresh SHALL stop and settle that connection and re-admit the server through its Session, so a fresh connection with a new identity captures the current roots and sandbox
+- **AND** a local environment that can no longer be captured (for example a removed writable root) SHALL count as changed
+- **AND** status SHALL report such a connection, and the stopped one until its replacement is admitted, as `connecting` with no tools, and the required-server gate SHALL NOT count it as ready but SHALL wait for the replacement within the server's timeout
+- **AND** remote connections, which receive neither roots nor a process sandbox, SHALL be unaffected, and roots SHALL keep `listChanged: false` without sending `notifications/roots/list_changed`
 
 #### Scenario: Sampling configuration and bounded input
 - **WHEN** sampling settings or basic request messages are parsed
@@ -596,10 +612,22 @@
 - **THEN** the user sees a choice question and the selection is returned to the server
 
 #### Scenario: Call-bound form ownership and authorization
-- **WHEN** a configured local tool call receives a form elicitation request
+- **WHEN** a configured local or remote tool call receives a form elicitation request
 - **THEN** its question flow SHALL identify the requesting server and use only that call's captured Session/message ownership
 - **AND** fresh native registration/server authorization SHALL be checked before presentation and before returning accepted content
-- **AND** changed authorization SHALL cancel without forwarding answers
+- **AND** changed authorization SHALL cancel without forwarding answers; for a remote server, removal of its stored OAuth credential (`cyber mcp logout`) SHALL count as changed authorization
+
+#### Scenario: Remote form during an active call
+- **WHEN** a remote server sends `elicitation/create` with an id on the pending call's POST event stream or on the GET event stream while the call is pending
+- **THEN** it SHALL use that call's question flow and authorization exactly as a local form does
+- **AND** the reply SHALL be POSTed on the same session (expecting 202) while the call's event stream stays open, before the call's result is awaited further, even when server messages fill the transport buffer during the wait
+- **AND** question text, events and logs SHALL NOT contain request header values or credentials
+
+#### Scenario: Only form mode is advertised
+- **WHEN** a local or remote connection initializes
+- **THEN** its `elicitation` capability SHALL advertise only `form`
+- **AND** an `elicitation/create` with any other `mode` (including `url`) SHALL receive a JSON-RPC invalid-parameters error (-32602) before any question is created, attended or not, and the error, logs and events SHALL NOT echo the requested URL or message
+- **AND** the client SHALL never open a browser or fetch the URL on the server's behalf
 
 #### Scenario: Unowned or unattended callback
 - **WHEN** a valid form arrives during initialization, idle processing or a non-interactive call
@@ -616,6 +644,14 @@
 - **WHEN** an attended form waits for the user
 - **THEN** that actual interaction time SHALL pause tool-call inactivity
 - **AND** invalid, unowned and unattended callbacks SHALL NOT extend the timer
+
+#### Scenario: Connection stays read during the human wait
+- **WHEN** an attended form waits for the user on a local or remote connection
+- **THEN** the client SHALL keep reading that connection
+- **AND** a server `notifications/cancelled` whose `requestId` equals the form's request id SHALL dismiss exactly that call's question (durably `Dismissed`) and send no response for it, while a cancellation naming another id SHALL be ignored
+- **AND** server requests arriving during the wait SHALL get the unowned callback handling: `roots/list` and `ping` answered, a nested form declined, sampling refused
+- **AND** `list_changed` notifications SHALL keep their flags, and progress SHALL NOT extend the call deadline during the wait
+- **AND** a response to the pending call arriving during the wait SHALL dismiss the question without a reply and complete the call
 
 ### Requirement: OAuth
 (P1) For remote servers, unless `oauth: false`, the system SHALL support OAuth 2.1 authorization code with PKCE S256 for servers that answer 401. The flow SHALL be a user action: a runtime connect, reconnect or call (including `cyber exec`, the app host and hook connections) SHALL NOT run discovery, registration or an authorization request and SHALL NOT open a browser; a refusal settles `needs_auth` or `needs_client_registration` and the user runs `cyber mcp auth <name>`. That command SHALL discover metadata via RFC 9728/8414 and use dynamic client registration (RFC 7591) when no `oauth.client_id` is configured. The loopback redirect SHALL be `http://127.0.0.1:<port>/mcp/oauth/callback`, with an ephemeral port unless `--port` or `oauth.redirect_port` names one. Tokens SHALL be stored bound to the server URL in the platform's credential store, chosen at compile time and never by configuration, environment or project: the OS keyring on macOS (Keychain) and Windows (Credential Manager), and the owner-only file `<data>/mcp-auth.json` (mode 0600) on Linux and other platforms, which have no keyring backend without libdbus. The keyring SHALL hold only the access token, refresh token and client secret, each split into entries (service `cyber-mcp-oauth`) of at most 2560 bytes, the Credential Manager blob limit, and at most 8 entries per secret; a larger secret SHALL be refused whole, with nothing stored and nothing truncated. Everything else (issuer, token endpoint, client id, scopes, expiry, recorded conditions) and each secret's entry count and SHA-256 SHALL live in a non-secret index `<data>/mcp-auth-index.json` (mode 0600 on macOS; on Windows the data directory's default ACL, acceptable only because it holds no secret or URL) keyed by server name and a digest of name and URL; neither the index nor a keyring account name SHALL contain the server URL or a secret. On macOS a credential or recorded condition in the earlier release's `<data>/mcp-auth.json` SHALL stay readable while the index has no record for that server and URL, and SHALL move to the keyring on its next write (lazy migration; nothing is moved at startup); Windows SHALL never read that file as a fallback. A new credential's entries SHALL be written before the index and the previous ones deleted after it; a missing, partial or altered entry SHALL fail closed; without an index record the keyring SHALL NOT be queried; and keyring errors SHALL be reported with fixed diagnostics. Tokens SHALL be refreshed when they expire within 5 minutes (or within half their lifetime when that is shorter).

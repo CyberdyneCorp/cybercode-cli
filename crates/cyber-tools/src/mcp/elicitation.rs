@@ -16,6 +16,27 @@ impl<'a> ElicitationContext<'a> {
             sampling: None,
         }
     }
+    /// The same call ownership whose authorization also requires `authorize`.
+    pub(super) fn authorized_by(&'a self, authorize: &'a (dyn Fn() -> bool + Send + Sync)) -> Self {
+        Self {
+            asker: self.asker,
+            authorize,
+            sampling: self.sampling,
+        }
+    }
+    pub(super) fn authorized(&self) -> bool {
+        (self.authorize)()
+    }
+    /// Dismiss this call's open questions (durably `Dismissed`); unrelated requests stay.
+    pub(super) async fn cancel_questions(&self) {
+        if self.asker.cancel_questions().await.is_err() {
+            cyber_core::log::error(
+                "mcp",
+                "MCP elicitation question cleanup failed",
+                json!({"method":"elicitation/create"}),
+            );
+        }
+    }
     pub(super) fn with_sampling(
         mut self,
         sampling: &'a dyn super::sampling::SamplingHandler,

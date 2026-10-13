@@ -1,4 +1,4 @@
-# P1 handoff — updated 2026-10-13
+# P1 handoff — updated 2026-10-13 (MCP client elicitation, roots and list-changed: step 10)
 
 Implementation checkpoint: the `cyber review` commit on `main` (after `c5e798e`), pushed. Step 2 and step 3 below are complete. The M1.3 lifecycle-hook increment (step 4) is committed and pushed after it; it was validated locally on 2026-10-12.
 
@@ -31,6 +31,19 @@ Windows CI run 38117417472 (on `7e7a33a`) exposed regressions from the `cyber re
    - Commit the four increments.
    - Confirm the `cyber-app` `mcp` and `cyber-cli` `mcp_remote_exec` resource and prompt cases in the next Windows CI run; only the windows-gnu Clippy type-check has run so far. The local stdio cases (`support/mcp_stdio.rs`, python3 fixture) and the listing-`always` case are Unix-only; on Windows only the remote fixture cases run.
    - Then pick up the open items: prompt argument completion (`completion/complete`), image and embedded-resource content in prompt messages, and reads beyond the 1 MiB frame (the 10 MiB blob limit). The stdio fixture cases and the TUI command reload landed with the review fixes ([status](p1-status.md#mcp-resources-and-prompts-review-fixes-2026-10-13)).
+
+10. Done locally, pushed (2026-10-13): MCP client elicitation, cancellation, roots and list-changed, increments 1 to 4 of 4.
+   - Remote form elicitation on the POST and GET event streams through the app host, unattended decline in `cyber exec` and non-interactive apps, logout during the wait cancels without answers.
+   - `notifications/cancelled` before teardown for interrupted, timed-out or Location-closed calls; the client keeps reading during the human wait, so a server cancel or the call's own result dismisses the question.
+   - Local connections whose roots or sandbox grant changed are withdrawn and replaced (environment fingerprint); removed tools settle stale and `mcp.tools.changed.1` reaches `GET /event`.
+   - The MCP delta now states that only form elicitation is advertised and URL mode is refused.
+
+   Evidence: [status](p1-status.md#mcp-client-elicitation-cancellation-and-roots-increment-4-of-4-documentation-and-evidence-2026-10-13), [audit](p1-acceptance-audit.md#mcp-elicitation-roots-and-list-changed-production-path-evidence-2026-10-13). The whole workspace tests (2431 passed on the latest re-validation, no repairs needed), host and windows-gnu Clippy, fmt, the SDK check, openspec and spec lint are green ([full validation](p1-status.md#full-validation-of-mcp-client-elicitation-cancellation-roots-and-list-changed-2026-10-13)).
+
+   **Resume:**
+   - Commit the four increments (validated, not yet committed).
+   - Confirm the `cyber-app` `mcp`, `cyber-cli` `mcp_remote_exec` and `cyber-tools` `mcp_remote`/`mcp_protocol` suites on the next Windows CI run, and add a Windows equivalent of the Unix-only stdio cases.
+   - Then the open items in M1.3 `tasks.md` under the MCP handlers parent: remote sampling evidence and nested sampling cancellation, the URL-mode decision, clearing the bridge `Authorization` on logout, the stdio mid-frame cancel notice and prompt argument completion.
 
 ## Scope and working constraints
 

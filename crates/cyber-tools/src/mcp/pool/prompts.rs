@@ -120,7 +120,7 @@ impl BuiltinHost {
             _ = cancel.cancelled() => Err(ToolError::Aborted),
             _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
-        end_unresolved(&entry, owner).await;
+        end_unresolved(&entry, owner, || self.entry_authorized(&canonical, &entry)).await;
         result
     }
 

@@ -49,6 +49,8 @@ MCP servers that advertise resources or prompts add three surfaces. Server conte
 
 See [MCP resources](docs/local-core-guide.md#mcp-resources) and [MCP prompts as commands](docs/local-core-guide.md#mcp-prompts-as-commands).
 
+During a tool call, a local or remote server can ask you a question through [form elicitation](docs/local-core-guide.md#mcp-form-elicitation). You answer Accept, Decline or Cancel; `cyber exec` and other unattended runs decline, and Cyber Code never opens a link for a server. Local servers see the Location and writable roots as [MCP roots](docs/local-core-guide.md#mcp-workspace-roots), and a sandbox change restarts them with the new roots.
+
 ## What it does
 
 | Area | Current behavior |
@@ -59,7 +61,8 @@ See [MCP resources](docs/local-core-guide.md#mcp-resources) and [MCP prompts as 
 | Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks; `cyber review [target]` and TUI `/review` resolve uncommitted changes, ranges, commits or `pr <number>` and report validated findings most severe first |
 | Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
-| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks, local and remote MCP with OAuth sign-in, resources, `@server:uri` mentions and prompt commands, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
+| MCP client | Local (stdio) and remote (Streamable HTTP, legacy SSE) servers with OAuth sign-in, resource tools, `@server:uri` mentions, `/<server>:<prompt>` commands, form elicitation (declined when unattended, never opens links), workspace roots with reconnect on sandbox change, opt-in sampling (local servers), `list_changed` refresh and cancellation notices. Partial: native Windows acceptance; MCP server mode and WebSocket are not implemented |
+| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
 
 **P0 is implemented, with release gates still open:** the full local-model baseline, including the long coding task, remains incomplete. **P1 is in progress; no P1 milestone is fully accepted.** Windows confinement, native MCP OAuth keyring acceptance, plugins, complete client controls, browser verification and migration/editor integration still need work or acceptance. Later phases cover workflows, goals, remote control and cloud runners.
 
@@ -110,7 +113,7 @@ Scope: **Cyber Code, Claude Code, Codex and OpenCode coding tools**, checked **2
 | Tool permissions | Yes; full auto mode partial | Yes [docs][C2] | Yes [docs][X3] | Yes [docs][O3] |
 | OS sandbox | macOS/Linux; Windows incomplete | macOS/Linux/WSL2; native Windows unsandboxed [docs][C2] | Documented sandbox controls [docs][X3] | Permission rules documented [docs][O3]; OS isolation not established here |
 | Subagents | Partial P1 | Yes [docs][C3] | Yes [docs][X1] | Yes [docs][O4] |
-| MCP integration | Local and remote (HTTP/SSE) partial; OAuth via `cyber mcp auth`, tokens in the OS keyring (0600 file on Linux); resource tools, `@server:uri` mentions and `/<server>:<prompt>` commands | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
+| MCP integration | Client for local (stdio) and remote (Streamable HTTP, SSE) servers: OAuth via `cyber mcp auth` (OS keyring; 0600 file on Linux), resources, `@server:uri` mentions, prompt commands, form elicitation, roots, opt-in local sampling, `list_changed` refresh and cancellation. Partial: server mode, WebSocket, native Windows acceptance | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
 | File undo / recovery | Snapshots preserving user edits | Edit checkpoints and rewind [docs][C5] | Git checkpoints recommended [docs][X1] | Undo/redo [docs][O1] |
 | Programmatic server | HTTP/events, stdio API, TS SDK | Agent SDK [docs][C1] | App Server [docs][X4] | HTTP/OpenAPI and SDK [docs][O6] |
 | LSP integration | Navigation/feedback partial P1 | Language-server plugins [docs][C6] | Not established by cited docs | Built-in LSP support [docs][O7] |

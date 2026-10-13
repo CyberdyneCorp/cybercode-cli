@@ -1,5 +1,20 @@
 # P1 acceptance audit
 
+## MCP elicitation, roots and list-changed: production-path evidence (2026-10-13)
+
+The canonical `mcp` Elicitation, Roots and sampling, and List-changed refresh contracts stay unchecked: no suite below has run natively on Windows (only the `x86_64-pc-windows-gnu` Clippy type-check), the local stdio cases are Unix-only, and remote sampling has no evidence.
+
+| Contract | Production path | Evidence |
+|---|---|---|
+| Elicitation, remote forms | `App::build`/`AppHost` pool, scripted provider, answers over `POST /sessions/{id}/questions/{rid}/reply`, durable `question.asked.1`/`question.replied.1` | `cyber-app` `mcp`: `remote_elicitation_through_app_host_accept_decline_cancel`, `oauth::remote_elicitation_logout_during_the_wait_cancels_without_content` |
+| Elicitation, non-interactive decline | Non-interactive app and `cyber exec --embedded` | `cyber-app` `mcp` `remote_elicitation_unattended_app_declines_without_question`; `cyber-cli` `mcp_remote_exec` `exec_declines_remote_elicitation` |
+| Elicitation, cancellation | `AppHost` execute with an interrupted, timed-out or Location-closed call (local and remote); interactive turn with a server-withdrawn form | `cyber-app` `mcp`: `remote_call_interrupt_sends_cancelled_through_app_host`, `remote_call_timeout_sends_cancelled_before_delete`, `remote_location_close_sends_cancelled_before_delete`, Unix `local_call_interrupt_sends_cancelled_through_app_host`, `local_call_timeout_sends_cancelled`, `local_location_close_sends_cancelled`, `remote_server_cancels_elicitation_dismisses_question` |
+| Roots, production path and freshness | `App::build` with a local stdio fixture that asks `roots/list` | `cyber-app` `mcp` (Unix): `local_roots_reflect_location_and_writable_roots`, `writable_roots_change_replaces_local_connection`, `worktree_session_gets_its_own_roots` |
+| Sampling | Local only (earlier increment, runtime evidence) | No remote or app-host sampling case |
+| List-changed refresh | Real pool refresh, `GET /event` | `cyber-app` `mcp`: `remote_removed_tool_settles_stale_through_app_host`, `local_removed_tool_settles_stale_through_app_host` (Unix), `remote_list_changed_on_call_stream_applies_after_call`, `tools_changed_event_reaches_http_event_stream`, `remote_prompts_list_changed_updates_commands` |
+
+Re-run 2026-10-13 (macOS): `cyber-app` `mcp` 77 passed, `cyber-cli` `mcp_remote_exec` 5 passed, `cyber-tools` `mcp_remote` 44 passed and `mcp_protocol` 23 passed. See [status](p1-status.md#mcp-client-elicitation-cancellation-and-roots-increment-4-of-4-documentation-and-evidence-2026-10-13).
+
 ## MCP resources and prompts: production-path wiring (2026-10-12)
 
 These cases run through the production app host. Earlier increments were tested only through test hosts, which is why this row exists. The canonical `mcp` Resources, Prompts as commands and List-changed refresh contracts stay unchecked until native Windows execution is confirmed.
@@ -334,7 +349,7 @@ TUI `/hooks history` now pages committed Session receipts through the public API
 
 Authenticated Location-scoped hook catalog access now uses the live full resolver, original digests and uncached approvals with header/secret redaction and withheld-path metadata. Real App TCP and typed SDK cases prove inspected boundaries without Session/hook admission or command effects. Native catalog execution, withheld raw review and the complete TUI definition/trust controls remain required.
 
-Local stdio MCP form elicitation now uses transient call-owned questions, typed schema validation and explicit final consent, with fresh authorization before/after user interaction. Focused runtime tests cover unattended refusal, all three consent actions, definition revocation, native Location-close cleanup and human-timeout/interrupt handling. Broader local validation passes 229 Rust cases, workspace all-target Clippy and 62 SDK tests, with all 58 strict specs valid. Remote transport, URL elicitation and full native acceptance remain pending. The complete elicitation requirement remains unaccepted.
+Local stdio MCP form elicitation now uses transient call-owned questions, typed schema validation and explicit final consent, with fresh authorization before/after user interaction. Focused runtime tests cover unattended refusal, all three consent actions, definition revocation, native Location-close cleanup and human-timeout/interrupt handling. Broader local validation passes 229 Rust cases, workspace all-target Clippy and 62 SDK tests, with all 58 strict specs valid. Remote forms on the POST and GET event streams now use the same call-owned flow through the app host and `cyber exec` (unattended decline), and a `cyber mcp logout` during the wait cancels instead of forwarding answers. The connection stays read during the wait, so a server `notifications/cancelled` dismisses the question without a reply, and interrupted, closed or timed-out unresolved calls send a bounded best-effort `notifications/cancelled` before teardown. URL elicitation and full native acceptance remain pending. The complete elicitation requirement remains unaccepted.
 
 ## Canonical contract checklist
 
@@ -557,8 +572,8 @@ Canonical source: [mcp](../../openspec/specs/mcp/spec.md).
 
 - [ ] Tool search and deferred loading
 - [ ] OAuth
-- [ ] Elicitation
-- [ ] Roots and sampling
+- [ ] Elicitation (local and remote forms through the app host and `cyber exec`; native Windows open, [evidence](#mcp-elicitation-roots-and-list-changed-production-path-evidence-2026-10-13))
+- [ ] Roots and sampling (roots and sandbox-change replacement through the app host on Unix; remote sampling and native Windows open)
 - [ ] Organization MCP controls
 - [ ] Server options
 

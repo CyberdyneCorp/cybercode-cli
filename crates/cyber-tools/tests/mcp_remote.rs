@@ -4,6 +4,7 @@
 mod mcp_http;
 #[path = "support/oauth_as.rs"]
 mod oauth_as;
+mod support;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1629,4 +1630,490 @@ fn unshared(store: std::sync::Arc<MemoryCredentialStore>) -> MemoryCredentialSto
     std::sync::Arc::try_unwrap(store)
         .ok()
         .expect("a fresh store has one handle")
+}
+
+/// Remote form elicitation through the actual host pool and runtime question flow.
+mod elicitation {
+    use super::mcp_http::{Behavior, McpHttp, SESSION};
+    use super::support::flow::{Flow, call, text};
+    use cyber_core::config::{self, LoadRequest};
+    use cyber_core::paths::Paths;
+    use cyber_core::trust::TrustStore;
+    use cyber_server::runtime::{PendingKind, QuestionReply, ToolHost as _, TurnContext};
+    use serde_json::{Value, json};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    pub(super) fn form() -> Value {
+        json!({"message":"Choose the deployment","requestedSchema":{"type":"object","properties":{
+            "environment":{"type":"string","enum":["staging","prod"]},
+            "count":{"type":"integer","minimum":1,"maximum":5}
+        },"required":["environment","count"]}})
+    }
+
+    /// The user's configuration names remote server `remote` at `url` with a private
+    /// header; returns the configuration file so a test can change the definition.
+    pub(super) fn configure(flow: &Flow, url: &str) -> PathBuf {
+        let home = flow.f.dir.path().to_path_buf();
+        let env = HashMap::from([(
+            "CYBER_HOME".into(),
+            home.join("cyber").display().to_string(),
+        )]);
+        let paths = Paths::resolve(&env, &home);
+        paths.ensure().unwrap();
+        let path = paths.config.join("cyber.jsonc");
+        std::fs::write(
+            &path,
+            json!({"mcp":{"remote":{"type":"remote","url":url,"headers":{"x-api-key":"PRIVATE-HEADER"}}}})
+                .to_string(),
+        )
+        .unwrap();
+        let resolve = Arc::new(move |directory: &std::path::Path| {
+            config::load(&LoadRequest {
+                location: directory,
+                paths: &paths,
+                env: &env,
+                home: &home,
+                profile: None,
+                overrides: &[],
+                flags: json!({}),
+            })
+            .map_err(|error| error.to_string())
+        });
+        flow.f.set_config(resolve(&flow.f.repo).unwrap().value);
+        flow.f
+            .host
+            .attach_hook_config(
+                resolve,
+                TrustStore::new(flow.f.dir.path().join("trust.json")),
+            )
+            .unwrap();
+        path
+    }
+
+    pub(super) async fn ready(flow: &Flow, id: &str) {
+        let turn = TurnContext {
+            session_id: id.into(),
+            directory: flow.f.repo.display().to_string(),
+            agent: "build".into(),
+            mode: "default".into(),
+            prefers_apply_patch: false,
+            rules: Value::Null,
+        };
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !flow
+                .f
+                .host
+                .definitions(&turn)
+                .iter()
+                .any(|def| def.spec.name == "mcp__remote__echo")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the remote tool was never published");
+    }
+
+    /// A session whose first Turn calls the remote tool, which elicits per `behavior`.
+    async fn elicited(behavior: Behavior, interactive: bool) -> (McpHttp, Flow, String, PathBuf) {
+        let streams = behavior.stream;
+        let http = McpHttp::start(Behavior {
+            elicit: Some(form()),
+            ..behavior
+        })
+        .await;
+        let flow = Flow::new(
+            vec![
+                call("c1", "mcp__remote__echo", json!({"text":"ask"})),
+                text("done"),
+            ],
+            interactive,
+        );
+        let path = configure(&flow, &http.url);
+        let id = flow.session("default").await;
+        ready(&flow, &id).await;
+        if streams {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !http.stream_open() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the GET event stream never opened");
+        }
+        flow.prompt(&id, "ask the remote server").await;
+        (http, flow, id, path)
+    }
+
+    /// Answer the pending form with `prod`, `3` and `action`.
+    async fn answer(flow: &Flow, id: &str, action: &str) {
+        let pending = flow.pending(id).await;
+        let PendingKind::Question { questions } = pending.kind else {
+            panic!("expected the form");
+        };
+        assert_eq!(pending.call_id, "c1");
+        assert_eq!(questions.len(), 3);
+        for question in &questions {
+            assert!(
+                question.question.contains("MCP server remote"),
+                "{}",
+                question.question
+            );
+            assert!(!question.question.contains("PRIVATE"));
+        }
+        flow.runtime
+            .answer_question(
+                &pending.id,
+                QuestionReply::Answers {
+                    answers: vec![
+                        vec!["2. prod".into()],
+                        vec!["3".into()],
+                        vec![action.into()],
+                    ],
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    /// The single reply POST for the fixture's first elicitation.
+    fn reply(http: &McpHttp) -> super::mcp_http::Seen {
+        let replies = http.replies("elicit-1");
+        assert_eq!(replies.len(), 1, "{:#?}", http.requests());
+        assert_eq!(replies[0].status, 202);
+        assert_eq!(replies[0].header("mcp-session-id"), Some(SESSION));
+        replies[0].clone()
+    }
+
+    #[tokio::test]
+    async fn remote_elicitation_on_post_stream_round_trips() {
+        for action in ["Accept", "Decline", "Cancel"] {
+            let (http, flow, id, _) = elicited(Behavior::default(), true).await;
+            answer(&flow, &id, action).await;
+            flow.settle(&id).await;
+            let reply = reply(&http);
+            let result = &reply.body["result"];
+            assert_eq!(result["action"], action.to_lowercase(), "{reply:?}");
+            if action == "Accept" {
+                assert_eq!(result["content"], json!({"environment":"prod","count":3}));
+            } else {
+                assert!(result.get("content").is_none(), "{result}");
+            }
+            // The call result echoes the reply, so the reply arrived while the call's
+            // stream was still open and before its result.
+            let output = flow.output(&id, "c1").await;
+            assert!(
+                output.contains(&format!("\"action\":\"{}\"", action.to_lowercase())),
+                "{output}"
+            );
+            assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+            assert!(http.awaiting_replies().is_empty());
+            flow.runtime.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_elicitation_on_get_stream_during_call_uses_call_owner() {
+        let (http, flow, id, _) = elicited(
+            Behavior {
+                stream: true,
+                elicit_on_get: true,
+                ..Behavior::default()
+            },
+            true,
+        )
+        .await;
+        answer(&flow, &id, "Accept").await;
+        flow.settle(&id).await;
+        let reply = reply(&http);
+        assert_eq!(
+            reply.body["result"],
+            json!({"action":"accept","content":{"environment":"prod","count":3}})
+        );
+        assert!(flow.output(&id, "c1").await.contains("\"accept\""));
+        flow.runtime.shutdown().await;
+    }
+
+    /// While the form waits, server messages fill the 64 KiB bridge pipe the waiting client
+    /// does not read; the reply frame still travels the other direction and is POSTed.
+    #[tokio::test]
+    async fn remote_elicitation_reply_is_posted_while_the_get_stream_floods() {
+        let (http, flow, id, _) = elicited(
+            Behavior {
+                stream: true,
+                ..Behavior::default()
+            },
+            true,
+        )
+        .await;
+        flow.pending(&id).await;
+        let padding = "x".repeat(1024);
+        for index in 0..256 {
+            assert!(
+                http.push(json!({"jsonrpc":"2.0","method":"notifications/message",
+                "params":{"level":"info","data":{"index":index,"padding":padding}}}))
+            );
+        }
+        // Give the bridge time to block on the full pipe.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        answer(&flow, &id, "Accept").await;
+        flow.settle(&id).await;
+        assert_eq!(
+            reply(&http).body["result"],
+            json!({"action":"accept","content":{"environment":"prod","count":3}})
+        );
+        assert!(flow.output(&id, "c1").await.contains("\"accept\""));
+        flow.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn remote_invalid_elicitation_schema_gets_invalid_params_without_question() {
+        let http = McpHttp::start(Behavior {
+            elicit: Some(
+                json!({"message":"PRIVATE-FORM-TEXT","requestedSchema":{"type":"object",
+                "properties":{"nested":{"type":"object","properties":{}}}}}),
+            ),
+            ..Behavior::default()
+        })
+        .await;
+        let flow = Flow::new(
+            vec![
+                call("c1", "mcp__remote__echo", json!({"text":"ask"})),
+                text("done"),
+            ],
+            true,
+        );
+        configure(&flow, &http.url);
+        let id = flow.session("default").await;
+        ready(&flow, &id).await;
+        flow.prompt(&id, "ask the remote server").await;
+        flow.settle(&id).await;
+        let reply = reply(&http);
+        assert_eq!(reply.body["error"]["code"], -32602, "{:?}", reply.body);
+        assert!(!reply.body.to_string().contains("PRIVATE-FORM-TEXT"));
+        assert!(flow.output(&id, "c1").await.contains("-32602"));
+        assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+        flow.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn remote_elicitation_revoked_authorization_cancels_without_content() {
+        let (http, flow, id, path) = elicited(Behavior::default(), true).await;
+        let pending = flow.pending(&id).await;
+        // The definition's digest changes while the form waits for the user.
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        config["mcp"]["remote"]["headers"]["x-api-key"] = json!("PRIVATE-ROTATED");
+        std::fs::write(&path, config.to_string()).unwrap();
+        let PendingKind::Question { .. } = pending.kind else {
+            panic!("expected the form");
+        };
+        flow.runtime
+            .answer_question(
+                &pending.id,
+                QuestionReply::Answers {
+                    answers: vec![
+                        vec!["2. prod".into()],
+                        vec!["3".into()],
+                        vec!["Accept".into()],
+                    ],
+                },
+            )
+            .await
+            .unwrap();
+        flow.settle(&id).await;
+        assert_eq!(reply(&http).body["result"], json!({"action":"cancel"}));
+        assert!(!flow.output(&id, "c1").await.contains("prod"));
+        flow.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn remote_elicitation_unattended_declines_without_question() {
+        let (http, flow, id, _) = elicited(Behavior::default(), false).await;
+        flow.settle(&id).await;
+        assert_eq!(reply(&http).body["result"], json!({"action":"decline"}));
+        assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+        flow.runtime.shutdown().await;
+    }
+}
+
+/// Interrupted remote calls signal `notifications/cancelled` before the session ends.
+mod cancellation {
+    use super::elicitation::{configure, ready};
+    use super::mcp_http::{Behavior, McpHttp, SESSION};
+    use super::support::flow::Flow;
+    use cyber_server::runtime::{
+        Asker, Invocation, McpConnectionPhase, ToolHost as _, ToolOutcome, TurnContext,
+        mcp_connections,
+    };
+    use serde_json::{Value, json};
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    /// A remote `echo` whose call stream stays silent for a minute.
+    async fn slow_remote() -> (McpHttp, Flow, String, std::path::PathBuf) {
+        let http = McpHttp::start(Behavior {
+            sse: true,
+            delay: Duration::from_secs(60),
+            ..Behavior::default()
+        })
+        .await;
+        let flow = Flow::new(Vec::new(), true);
+        let path = configure(&flow, &http.url);
+        let id = flow.session("default").await;
+        ready(&flow, &id).await;
+        (http, flow, id, path)
+    }
+
+    /// Call `echo` through the host pool and interrupt it once its POST reached the server,
+    /// right after running `before`.
+    async fn interrupted_call(
+        http: &McpHttp,
+        flow: &Flow,
+        id: &str,
+        before: impl FnOnce(),
+    ) -> ToolOutcome {
+        let turn = TurnContext {
+            session_id: id.into(),
+            directory: flow.f.repo.display().to_string(),
+            agent: "build".into(),
+            mode: "default".into(),
+            prefers_apply_patch: false,
+            rules: Value::Null,
+        };
+        let definition = flow
+            .f
+            .host
+            .definitions(&turn)
+            .into_iter()
+            .find(|definition| definition.spec.name == "mcp__remote__echo")
+            .unwrap();
+        let invocation = Invocation {
+            registration: definition.registration,
+            session_id: id.into(),
+            directory: turn.directory.clone(),
+            agent: "build".into(),
+            mode: "default".into(),
+            message_id: "msg_slow".into(),
+            call_id: "call_slow".into(),
+            name: "mcp__remote__echo".into(),
+            input: json!({"text":"slow"}),
+            attempt: 1,
+            operation_key: "op_slow".into(),
+            asker: Asker::detached(),
+            rules: Value::Null,
+        };
+        let cancel = CancellationToken::new();
+        let interrupt = async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while http.posts("tools/call").is_empty() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the call never reached the server");
+            before();
+            cancel.cancel();
+        };
+        let (outcome, ()) =
+            tokio::join!(flow.f.host.execute(invocation, cancel.clone()), interrupt);
+        outcome
+    }
+
+    /// Index of the first request matching `matches`.
+    fn position(http: &McpHttp, matches: impl Fn(&super::mcp_http::Seen) -> bool) -> usize {
+        http.requests()
+            .iter()
+            .position(matches)
+            .unwrap_or_else(|| panic!("{:#?}", http.requests()))
+    }
+
+    #[tokio::test]
+    async fn interrupted_remote_call_posts_notifications_cancelled_before_delete() {
+        let (http, flow, id, _) = slow_remote().await;
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(20),
+            interrupted_call(&http, &flow, &id, || {}),
+        )
+        .await
+        .expect("the interrupted call did not settle");
+        assert_eq!(outcome, ToolOutcome::Aborted);
+        let call = http.posts("tools/call").remove(0);
+        let cancelled = http.posts("notifications/cancelled");
+        assert_eq!(cancelled.len(), 1, "{:#?}", http.requests());
+        assert_eq!(cancelled[0].body["params"]["requestId"], call.body["id"]);
+        assert!(cancelled[0].body.get("id").is_none());
+        assert_eq!(cancelled[0].status, 202);
+        assert_eq!(cancelled[0].header("mcp-session-id"), Some(SESSION));
+        assert_eq!(cancelled[0].header("x-api-key"), Some("PRIVATE-HEADER"));
+        let notice = position(&http, |seen| seen.rpc() == Some("notifications/cancelled"));
+        let delete = position(&http, |seen| {
+            seen.method == "DELETE" && seen.header("mcp-session-id") == Some(SESSION)
+        });
+        assert!(notice < delete, "{:#?}", http.requests());
+        flow.runtime.shutdown().await;
+    }
+
+    /// A definition whose digest changed while the call ran gets no notice; the
+    /// connection still ends and settles.
+    #[tokio::test]
+    async fn revoked_definition_gets_no_cancel_notice() {
+        let (http, flow, id, path) = slow_remote().await;
+        // The definition's digest changes while the call runs.
+        let rotate = || {
+            let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            config["mcp"]["remote"]["headers"]["x-api-key"] = json!("PRIVATE-ROTATED");
+            std::fs::write(&path, config.to_string()).unwrap();
+        };
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(20),
+            interrupted_call(&http, &flow, &id, rotate),
+        )
+        .await
+        .expect("the interrupted call did not settle");
+        assert_eq!(outcome, ToolOutcome::Aborted);
+        assert!(
+            http.posts("notifications/cancelled").is_empty(),
+            "{:#?}",
+            http.requests()
+        );
+        assert!(
+            http.deletes()
+                .iter()
+                .any(|seen| seen.header("mcp-session-id") == Some(SESSION))
+        );
+        flow.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn cancel_notification_failure_still_settles_owner() {
+        let (http, flow, id, _) = slow_remote().await;
+        http.refuse_rpc(Some(("notifications/cancelled", 500)));
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(20),
+            interrupted_call(&http, &flow, &id, || {}),
+        )
+        .await
+        .expect("the interrupted call did not settle");
+        assert_eq!(outcome, ToolOutcome::Aborted);
+        let cancelled = http.posts("notifications/cancelled");
+        assert_eq!(cancelled.len(), 1, "{:#?}", http.requests());
+        assert_eq!(cancelled[0].status, 500);
+        assert!(
+            http.deletes()
+                .iter()
+                .any(|seen| seen.header("mcp-session-id") == Some(SESSION)),
+            "{:#?}",
+            http.requests()
+        );
+        let records = mcp_connections(&flow.f.store, &flow.f.repo).unwrap();
+        let first = records
+            .iter()
+            .find(|record| record.phase == McpConnectionPhase::Settled)
+            .unwrap_or_else(|| panic!("{records:#?}"));
+        assert_eq!(first.acknowledged, Some(true));
+        flow.runtime.shutdown().await;
+    }
 }

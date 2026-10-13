@@ -74,6 +74,16 @@ pub struct Behavior {
     /// Advertise the `prompts` capability (with `listChanged`) and serve the fixture
     /// prompts: `review_pr` with a required `number` argument, plus one invalid name.
     pub prompts: bool,
+    /// Answer `tools/call` with an event stream that sends `elicitation/create` with these
+    /// params, waits (at most 30 s) for the client's reply POST, then sends the tool result
+    /// whose text is the reply's `result` (or `error`) as JSON.
+    pub elicit: Option<Value>,
+    /// Send that elicitation on the GET event stream (needs `stream`) instead of the call's
+    /// POST stream.
+    pub elicit_on_get: bool,
+    /// With `sse`, the `tools/call` event stream also sends
+    /// `notifications/tools/list_changed` before the result.
+    pub call_list_changed: bool,
 }
 
 /// A text resource whose body tries to break out of its untrusted-data frame.
@@ -127,6 +137,8 @@ struct Control {
     refuse_rpc: Option<(String, u16)>,
     /// Prompt definitions `prompts/list` returns (default: `review_pr` and an invalid one).
     prompts: Option<Vec<Value>>,
+    /// Elicitations sent so far; numbers their ids.
+    elicitations: u32,
 }
 
 type Stream = futures::channel::mpsc::UnboundedSender<String>;
@@ -137,6 +149,8 @@ struct Shared {
     seen: Arc<Mutex<Vec<Seen>>>,
     stream: Arc<Mutex<Option<Stream>>>,
     control: Arc<Mutex<Control>>,
+    /// Elicitations awaiting the client's reply, by JSON-RPC id.
+    waiters: Arc<Mutex<BTreeMap<String, tokio::sync::oneshot::Sender<Value>>>>,
 }
 
 pub struct McpHttp {
@@ -157,6 +171,7 @@ impl McpHttp {
             seen: seen.clone(),
             stream: Arc::default(),
             control: Arc::default(),
+            waiters: Arc::default(),
         };
         let router = axum::Router::new()
             .route("/mcp", axum::routing::any(handle))
@@ -240,6 +255,19 @@ impl McpHttp {
     /// Forget the live session: requests carrying it now get 404.
     pub fn expire_session(&self) {
         self.state.control.lock().unwrap().session = None;
+    }
+
+    /// Withdraw the waiting elicitation `id` as the server: its call stream sends
+    /// `notifications/cancelled` for it, then the call result `elicitation cancelled`, and no
+    /// reply is awaited. False when no such elicitation is waiting.
+    pub fn cancel_elicitation(&self, id: &str) -> bool {
+        let waiter = self.state.waiters.lock().unwrap().remove(id);
+        waiter.is_some_and(|waiter| waiter.send(json!({WITHDRAWN: id})).is_ok())
+    }
+
+    /// Ids of the elicitations sent so far whose reply has not arrived.
+    pub fn awaiting_replies(&self) -> Vec<String> {
+        self.state.waiters.lock().unwrap().keys().cloned().collect()
     }
 
     /// Every client message POSTed to `/mcp` whose JSON-RPC `id` is `id`.
@@ -358,15 +386,34 @@ async fn handle(
     } else {
         respond(&state, &method, &body)
     };
+    let answered = client_reply_id(&method, &body);
     record(
         &state,
         &method,
         "/mcp",
         &headers,
-        body,
+        body.clone(),
         response.status().as_u16(),
     );
+    // Release a waiting elicitation only after its reply is recorded.
+    if let Some(id) = answered {
+        let waiter = state.waiters.lock().unwrap().remove(&id);
+        if let Some(waiter) = waiter {
+            let _ = waiter.send(body);
+        }
+    }
     response
+}
+
+/// The id of a client response (a message with an id, a result or error and no method).
+fn client_reply_id(method: &Method, body: &Value) -> Option<String> {
+    if method != Method::POST || body.get("method").is_some() {
+        return None;
+    }
+    if body.get("result").is_none() && body.get("error").is_none() {
+        return None;
+    }
+    body["id"].as_str().map(str::to_owned)
 }
 
 /// A refusal, carrying the configured `WWW-Authenticate` challenge on 401/403.
@@ -454,7 +501,10 @@ fn respond(state: &Shared, method: &Method, body: &Value) -> Response {
             json!({"jsonrpc":"2.0","id":id,"result":{"tools":[],"pad":"x".repeat(1024 * 1024 + 16)}}),
             None,
         ),
-        Some("tools/call") if behavior.sse => sse_call(id, body, behavior.delay),
+        Some("tools/call") if behavior.elicit.is_some() => elicit_call(state, id),
+        Some("tools/call") if behavior.sse => {
+            sse_call(id, body, behavior.delay, behavior.call_list_changed)
+        }
         Some("tools/call") if behavior.poll => {
             state.control.lock().unwrap().pending = Some(call_result(id, body).to_string());
             events("id: call-1\nretry: 100\ndata:\n\n".into())
@@ -693,13 +743,76 @@ fn json_response(value: Value, session: Option<&str>) -> Response {
         .unwrap()
 }
 
-fn sse_call(id: &Value, body: &Value, delay: Duration) -> Response {
+/// The marker `cancel_elicitation` hands a waiting elicitation in place of a client reply.
+const WITHDRAWN: &str = "fixture-withdrawn";
+
+/// A `tools/call` event stream that elicits, waits for the reply and echoes it as the result.
+fn elicit_call(state: &Shared, id: &Value) -> Response {
+    let elicitation = {
+        let mut control = state.control.lock().unwrap();
+        control.elicitations += 1;
+        format!("elicit-{}", control.elicitations)
+    };
+    let (sender, receiver) = tokio::sync::oneshot::channel::<Value>();
+    state
+        .waiters
+        .lock()
+        .unwrap()
+        .insert(elicitation.clone(), sender);
+    let request = json!({"jsonrpc":"2.0","id":elicitation,"method":"elicitation/create",
+        "params":state.behavior.elicit.clone().unwrap_or_default()});
+    let first = if state.behavior.elicit_on_get {
+        // Without an open GET stream nothing is sent and the call waits out its reply.
+        if let Some(sender) = state.stream.lock().unwrap().as_ref() {
+            let _ = sender.unbounded_send(request.to_string());
+        }
+        ": elicited on the GET stream\n\n".to_string()
+    } else {
+        format!("event: message\ndata: {request}\n\n")
+    };
+    let id = id.clone();
+    let result = async move {
+        let reply = tokio::time::timeout(Duration::from_secs(30), receiver)
+            .await
+            .ok()
+            .and_then(Result::ok);
+        if let Some(withdrawn) = reply.as_ref().and_then(|reply| reply.get(WITHDRAWN)) {
+            let notice = json!({"jsonrpc":"2.0","method":"notifications/cancelled",
+                "params":{"requestId":withdrawn,"reason":"The server no longer needs the answer"}});
+            let result = json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":"elicitation cancelled"}]}});
+            return format!("event: message\ndata: {notice}\n\nid: 2\ndata: {result}\n\n");
+        }
+        let text = reply.map_or_else(
+            || "no elicitation reply".to_string(),
+            |reply| reply.get("result").unwrap_or(&reply["error"]).to_string(),
+        );
+        let result =
+            json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":text}]}});
+        format!("id: 2\ndata: {result}\n\n")
+    };
+    let stream = futures::StreamExt::chain(
+        futures::stream::once(async move { first }),
+        futures::stream::once(result),
+    );
+    let stream = futures::StreamExt::map(stream, |event| {
+        Ok::<_, std::convert::Infallible>(Bytes::from(event))
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/event-stream")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+fn sse_call(id: &Value, body: &Value, delay: Duration, list_changed: bool) -> Response {
     let token = body["params"]["_meta"]["progressToken"].clone();
     let progress = json!({"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":token,"progress":1}});
-    let events = vec![
-        format!(": keepalive\nevent: message\ndata: {progress}\n\n"),
-        format!("id: 2\ndata: {}\r\n\r\n", call_result(id, body)),
-    ];
+    let mut events = vec![format!(": keepalive\nevent: message\ndata: {progress}\n\n")];
+    if list_changed {
+        let notice = json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed"});
+        events.push(format!("event: message\ndata: {notice}\n\n"));
+    }
+    events.push(format!("id: 2\ndata: {}\r\n\r\n", call_result(id, body)));
     let stream = futures::stream::unfold(events.into_iter(), move |mut events| async move {
         let event = events.next()?;
         tokio::time::sleep(delay).await;

@@ -59,6 +59,9 @@ struct Entry {
     monitor: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     startup_finished: AtomicBool,
     lost: AtomicBool,
+    /// Cancelled only to restart under a changed roots or sandbox grant; status reports
+    /// `connecting` until the replacement is admitted or the restart is abandoned.
+    replacing: AtomicBool,
     /// The remote transport that last connected; reconnects try it first.
     transport: Mutex<RemoteTransport>,
     /// The Session that admitted this entry; an explicit reconnect re-admits through it.
@@ -89,11 +92,15 @@ struct Published {
     instructions: Option<String>,
     /// The server advertised the `resources` capability at initialization.
     resources: bool,
+    /// The local connection environment (roots and sandbox grant) the process was
+    /// launched with; `None` for a remote connection.
+    environment: Option<String>,
 }
 impl Published {
     fn from_server(server: &OwnedLocalServer) -> Self {
         Self {
             id: server.record().id.clone(),
+            environment: server.environment().map(str::to_owned),
             tools: server.tools().to_vec(),
             prompts: server.prompts().to_vec(),
             resources: server.metadata()["capabilities"]["resources"].is_object(),
@@ -256,6 +263,7 @@ fn spawn_entry(
         monitor: tokio::sync::Mutex::default(),
         startup_finished: AtomicBool::new(false),
         lost: AtomicBool::new(false),
+        replacing: AtomicBool::new(false),
         transport: Mutex::default(),
         info: Some(info.clone()),
     });
@@ -648,7 +656,19 @@ impl BuiltinHost {
                     &connection,
                     pool.closed || pool.closing.contains(&directory),
                     || authorize_server(&resolved, &config.trust, &directory, &name).is_ok(),
-                );
+                )
+                .or_else(|| {
+                    // A published connection under a stale roots or sandbox grant serves
+                    // nothing until the next refresh restarts it.
+                    entry
+                        .filter(|entry| self.environment_changed(&resolved, &directory, entry))
+                        .map(|_| {
+                            (
+                                McpConnectionStatus::Connecting,
+                                "MCP roots or sandbox grant changed; restart pending".into(),
+                            )
+                        })
+                });
                 let (status, error) = match problem {
                     Some((status, error)) => (status, Some(error.into_owned())),
                     None => (
@@ -725,7 +745,12 @@ impl BuiltinHost {
                 continue;
             }
             let key = (directory.clone(), name.clone());
-            if pool.entries.contains_key(&key) {
+            if let Some(entry) = pool.entries.get(&key) {
+                if self.environment_changed(&resolved, &directory, entry) {
+                    entry.replacing.store(true, Ordering::Release);
+                    entry.cancel.cancel();
+                    executor.spawn(replace_entry(host.clone(), key, entry.clone()));
+                }
                 continue;
             }
             let Ok(selection) = authorize_server(&resolved, &config.trust, &directory, &name)
@@ -889,7 +914,9 @@ impl BuiltinHost {
                 .published
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if let Some(Published { id, tools, .. }) = &*published {
+            if let Some(Published { id, tools, .. }) = published.as_ref().filter(|published| {
+                self.environment_current(&resolved, &directory, &selection, published)
+            }) {
                 definitions.extend(
                     tools
                         .iter()
@@ -913,26 +940,20 @@ impl BuiltinHost {
         definitions
     }
 
+    /// Whether connection `id` of `name` is the live publication: authorized with its
+    /// digest and still running under the roots and sandbox grant the configuration selects.
     pub(super) fn mcp_is_published(&self, directory: &Path, name: &str, id: &str) -> bool {
         let Ok(directory) = directory.canonicalize() else {
             return false;
         };
-        let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if pool.closed || pool.closing.contains(&directory) {
+        let Some(config) = self.hook_config.get() else {
             return false;
-        }
-        pool.entries
-            .get(&(directory, name.into()))
-            .is_some_and(|entry| {
-                !entry.cancel.is_cancelled()
-                    && !entry.lost.load(Ordering::Acquire)
-                    && entry
-                        .published
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .as_ref()
-                        .is_some_and(|published| published.id == id)
-            })
+        };
+        let Ok(resolved) = (config.resolve)(&directory) else {
+            return false;
+        };
+        self.live_entry(&directory, &resolved, name)
+            .is_some_and(|entry| entry.offers(|published| published.id == id))
     }
 
     /// Observe instructions only for effective, freshly authorized MCP registrations.
@@ -973,6 +994,9 @@ impl BuiltinHost {
             let Some(published) = &*published else {
                 continue;
             };
+            if !self.environment_current(&resolved, &directory, &selection, published) {
+                continue;
+            }
             if let Some(block) = published.instruction_block(&entry.name, visible) {
                 blocks.push(block);
             }
@@ -1155,7 +1179,10 @@ impl BuiltinHost {
             _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
         let sampling_settlement = sampler.finish().await;
-        end_unresolved(entry, owner).await;
+        end_unresolved(entry, owner, || {
+            self.entry_authorized(Path::new(&inv.directory), entry)
+        })
+        .await;
         inv.asker
             .cancel_questions()
             .await
@@ -1244,8 +1271,21 @@ impl BuiltinHost {
             _ = cancel.cancelled() => Err(ToolError::Aborted),
             _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
-        end_unresolved(&entry, owner).await;
+        end_unresolved(&entry, owner, || self.entry_authorized(directory, &entry)).await;
         result
+    }
+
+    /// Whether `entry`'s definition is still authorized with the digest it started with,
+    /// read fresh. Unlike [`Self::live_entry`] a closing Location does not matter here.
+    fn entry_authorized(&self, directory: &Path, entry: &Entry) -> bool {
+        let (Some(config), Ok(directory)) = (self.hook_config.get(), directory.canonicalize())
+        else {
+            return false;
+        };
+        (config.resolve)(&directory).is_ok_and(|resolved| {
+            authorize_server(&resolved, &config.trust, &directory, &entry.name)
+                .is_ok_and(|selection| selection.digest == entry.digest)
+        })
     }
 
     fn mcp_call_timeout(&self, directory: &Path, server: &str) -> Result<Duration, ToolError> {
@@ -1293,13 +1333,55 @@ impl BuiltinHost {
                 .get(&(directory.to_path_buf(), server.to_string()))
                 .cloned()?
         };
-        let authorized = authorize_server(resolved, &config.trust, directory, server)
-            .is_ok_and(|selection| selection.digest == entry.digest);
-        let live = authorized
-            && entry.offers(|_| true)
-            && !entry.cancel.is_cancelled()
-            && !entry.lost.load(Ordering::Acquire);
+        let authorized =
+            authorize_server(resolved, &config.trust, directory, server).is_ok_and(|selection| {
+                selection.digest == entry.digest
+                    && entry.offers(|published| {
+                        self.environment_current(resolved, directory, &selection, published)
+                    })
+            });
+        let live =
+            authorized && !entry.cancel.is_cancelled() && !entry.lost.load(Ordering::Acquire);
         live.then_some(entry)
+    }
+
+    /// Whether `published` still runs under the roots and sandbox grant that the current
+    /// configuration selects for `selection`. A remote connection, which receives neither,
+    /// always does; a local environment that cannot be captured now has changed.
+    fn environment_current(
+        &self,
+        resolved: &cyber_core::config::Resolved,
+        directory: &Path,
+        selection: &super::ServerSelection,
+        published: &Published,
+    ) -> bool {
+        let Some(captured) = published.environment.as_deref() else {
+            return true;
+        };
+        super::launch::environment_fingerprint(resolved, &self.opts.home, directory, selection)
+            .is_ok_and(|current| current.as_deref() == Some(captured))
+    }
+
+    /// Whether `entry` is published, still authorized with its digest, and running under a
+    /// roots and sandbox grant the configuration no longer selects.
+    fn environment_changed(
+        &self,
+        resolved: &cyber_core::config::Resolved,
+        directory: &Path,
+        entry: &Entry,
+    ) -> bool {
+        let Some(config) = self.hook_config.get() else {
+            return false;
+        };
+        if entry.cancel.is_cancelled() {
+            return false;
+        }
+        authorize_server(resolved, &config.trust, directory, &entry.name).is_ok_and(|selection| {
+            selection.digest == entry.digest
+                && entry.offers(|published| {
+                    !self.environment_current(resolved, directory, &selection, published)
+                })
+        })
     }
 
     pub(super) fn authorize_mcp_sampling(&self, inv: &Invocation) -> Result<(), ToolError> {
@@ -1325,13 +1407,17 @@ impl BuiltinHost {
                 .published
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            let Some(Published { id, tools, .. }) = &*published else {
+            let Some(current) = &*published else {
                 continue;
             };
-            let Some(tool) = tools.iter().find(|tool| tool.exposed_name == inv.name) else {
+            let Some(tool) = current
+                .tools
+                .iter()
+                .find(|tool| tool.exposed_name == inv.name)
+            else {
                 continue;
             };
-            if inv.registration.as_deref() != Some(tool_binding(id, tool).as_str()) {
+            if inv.registration.as_deref() != Some(tool_binding(&current.id, tool).as_str()) {
                 return Err(stale());
             }
             let selection = authorize_server(&resolved, &config.trust, &directory, &entry.name)
@@ -1339,10 +1425,63 @@ impl BuiltinHost {
             if selection.digest != entry.digest {
                 return Err(stale());
             }
+            if !self.environment_current(&resolved, &directory, &selection, current) {
+                return Err(ToolError::Failed(SANDBOX_CHANGED.into()));
+            }
             return Ok((entry.clone(), tool.clone()));
         }
         Err(stale())
     }
+}
+
+/// Why a local registration is refused after its roots or sandbox grant changed.
+const SANDBOX_CHANGED: &str = "MCP sandbox configuration changed; reconnecting";
+
+/// Replace a local connection whose roots or sandbox grant changed (its entry is already
+/// cancelled, so nothing new reaches it): stop and settle it, then re-admit the server
+/// through the Session that admitted it, so a fresh connection captures the current
+/// configuration. A Location closed or changed meanwhile keeps the stopped entry.
+async fn replace_entry(host: Arc<BuiltinHost>, key: (PathBuf, String), entry: Arc<Entry>) {
+    if !restart_entry(&host, key, &entry).await {
+        // The old entry stays, cancelled, and now reports why it is not running.
+        entry.replacing.store(false, Ordering::Release);
+    }
+}
+
+/// Stop `entry` and admit its replacement; false when the restart was abandoned.
+async fn restart_entry(
+    host: &Arc<BuiltinHost>,
+    key: (PathBuf, String),
+    entry: &Arc<Entry>,
+) -> bool {
+    if let Err(error) = entry.stop().await {
+        cyber_core::log::error("mcp", &error, json!({"server":entry.name}));
+        return false;
+    }
+    let Some(info) = entry.info.clone() else {
+        return false;
+    };
+    let digest = match host.reconnect_selection(&key.0, &key.1) {
+        Ok(digest) => digest,
+        Err(error) => {
+            cyber_core::log::info("mcp", &error.to_string(), json!({"server":entry.name}));
+            return false;
+        }
+    };
+    let Ok(executor) = tokio::runtime::Handle::try_current() else {
+        return false;
+    };
+    let mut pool = host.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+    let current = pool.entries.get(&key);
+    if pool.closed
+        || pool.closing.contains(&key.0)
+        || !current.is_some_and(|current| Arc::ptr_eq(current, entry))
+    {
+        return false;
+    }
+    let replacement = spawn_entry(host, &executor, key.1.clone(), digest, &info);
+    pool.entries.insert(key, replacement);
+    true
 }
 
 /// Run a shared-connection RPC in its own task. A caller dropped mid-request (a
@@ -1358,13 +1497,25 @@ async fn detached<T: Send + 'static>(
     })
 }
 
-/// End a connection whose request is unresolved: unpublish it as lost and shut it down.
-async fn end_unresolved(entry: &Entry, owner: &mut OwnedLocalServer) {
+/// How long an interrupted request's `notifications/cancelled` may delay its shutdown.
+const CANCEL_NOTICE: Duration = Duration::from_secs(1);
+
+/// End a connection whose request is unresolved: unpublish it as lost, tell the server the
+/// request is cancelled (best effort, bounded, never settlement, and only while
+/// `authorized` still holds) and shut it down.
+async fn end_unresolved(
+    entry: &Entry,
+    owner: &mut OwnedLocalServer,
+    authorized: impl FnOnce() -> bool,
+) {
     if !owner.unresolved() {
         return;
     }
     entry.lost.store(true, Ordering::Release);
     entry.clear_published();
+    if authorized() {
+        notify_cancelled(entry, owner).await;
+    }
     if let Err(error) = owner.shutdown().await {
         cyber_core::log::error(
             "mcp",
@@ -1372,6 +1523,22 @@ async fn end_unresolved(entry: &Entry, owner: &mut OwnedLocalServer) {
             json!({"server":entry.name,"acknowledged":error.acknowledged}),
         );
     }
+}
+
+/// Send the unresolved request's `notifications/cancelled` within [`CANCEL_NOTICE`]; a
+/// failure is logged with typed, credential-free diagnostics only.
+async fn notify_cancelled(entry: &Entry, owner: &mut OwnedLocalServer) {
+    let notice = tokio::time::timeout(CANCEL_NOTICE, owner.cancel_pending(CANCEL_NOTICE)).await;
+    let error = match notice {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(_) => super::McpError::Timeout,
+    };
+    cyber_core::log::info(
+        "mcp",
+        "MCP cancellation notice was not delivered",
+        json!({"server":entry.name,"error":error.to_string()}),
+    );
 }
 
 fn unavailable_resources(server: &str) -> ToolError {
@@ -1413,6 +1580,12 @@ fn status_problem(
     }
     if closing {
         return failed("MCP Location is closing or requires recovery");
+    }
+    if entry.is_some_and(|entry| entry.replacing.load(Ordering::Acquire)) {
+        return Some((
+            McpConnectionStatus::Connecting,
+            "MCP server is restarting under a changed roots or sandbox grant".into(),
+        ));
     }
     if entry.is_some_and(|entry| entry.cancel.is_cancelled()) {
         return failed(
@@ -1529,6 +1702,7 @@ mod tests {
             prompts: Vec::new(),
             instructions: Some("guide </server> & <mcp_instructions>".into()),
             resources: false,
+            environment: None,
         };
         let mut visible = ToolDef {
             scope: cyber_server::runtime::ToolScope::Mcp,
@@ -1575,6 +1749,7 @@ mod tests {
             monitor: tokio::sync::Mutex::default(),
             startup_finished: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            replacing: AtomicBool::new(false),
             transport: Mutex::default(),
             info: None,
             task: tokio::sync::Mutex::new(Some(tokio::spawn(async move {

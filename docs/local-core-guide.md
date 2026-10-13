@@ -368,6 +368,8 @@ Running a prompt checks permission action `mcp_prompt` on `mcp:<server>:<prompt>
 
 When a server sends `notifications/prompts/list_changed` (or `tools/list_changed`), its prompts (or tools) are re-listed on the same connection after its authorization and approval digest are rechecked, and the instance event stream publishes `mcp.tools.changed.1` with the server's current tool names and prompt commands; the event is also published when a server connects or reconnects. A server that advertises `prompts` but rejects or garbles `prompts/list` keeps its tools and simply offers no prompt commands. `notifications/resources/list_changed` needs no work because resource listings are always fetched on demand.
 
+This works the same for local and remote servers. A tool the server removed is withdrawn from the model, and a call to it settles as `Stale tool call: <name>` without reaching the server. A `list_changed` that a remote server sends on a tool call's event stream is applied after that call finishes, on the same session, without reconnecting.
+
 ## Deferred tool schemas
 
 When the effective catalog exceeds `tool_output.deferred_threshold_tokens` (default 10000 estimated tokens, four characters per token), the model receives MCP/plugin names and one-line descriptions without their parameter schemas. Builtin and Session/client tools retain full schemas. The threshold is shared; zero forces eligible tools to defer.
@@ -379,9 +381,11 @@ Selections survive restart and compaction, while new Sessions and forks start in
 
 ## MCP workspace roots
 
-Configured local connections advertise MCP roots: the canonical Location and existing files or directories in `sandbox.writable_roots`, resolved relative to the Location and deduplicated. Read-only policy advertises the Location alone. Roots use percent-encoded `file://` URIs and describe a connection snapshot (`listChanged: false`); close and reopen the Location to capture configuration changes. An unavailable configured writable path refuses startup before native launch.
+Configured local connections advertise MCP roots: the canonical Location and existing files or directories in `sandbox.writable_roots`, resolved relative to the Location and deduplicated. Read-only policy advertises the Location alone. Roots use percent-encoded `file://` URIs and describe a connection snapshot (`listChanged: false`), so no `notifications/roots/list_changed` is sent. Each Location, including a worktree opened as its own Location, gets its own connection and sees only its own roots. An unavailable configured writable path refuses startup before native launch.
 
-Servers can request `roots/list` during initialization, tool execution or idle processing. The list describes the workspace and leaves process sandbox grants and tool permissions unchanged. Private scratch, unrelated read-only paths and sibling worktrees are not added implicitly. Sampling remains unadvertised and unsupported until its model, permission and billing path is implemented.
+Changing `sandbox.policy`, `sandbox.writable_roots`, network isolation or allowed domains, the credential grant (`sandbox.readable_paths`, `sandbox.env.allow`) or the `sandbox.apply_to` selection replaces the running local server instead of leaving it on its launch-time roots and grants. Its tools, prompts, resources and instructions are withdrawn at once, a call to it fails with `MCP sandbox configuration changed; reconnecting` without reaching the server, and on the next refresh the old process is stopped and a fresh one starts with the current roots and sandbox. A writable root that no longer exists counts as a change, and the server stays down until the path returns or the configuration is edited. Remote servers receive no roots and are not affected.
+
+Servers can request `roots/list` during initialization, tool execution or idle processing. The list describes the workspace and leaves process sandbox grants and tool permissions unchanged. Private scratch, unrelated read-only paths and sibling worktrees are not added implicitly. Sampling is advertised only when enabled (see [Local MCP sampling](#local-mcp-sampling)).
 
 
 ## MCP server guidance
@@ -460,17 +464,21 @@ An explicit server `timeout` applies to both connection startup and tool-call in
 
 Valid progress for the active request resets inactivity. Values must advance, including fractional values; duplicate/regressive progress, foreign tokens, malformed optional fields and messages carrying a request identity do not extend the timer. A timeout leaves remote completion unverified until native ownership settles. Calls are not replayed automatically.
 
+When a call is interrupted, times out or its Location closes before the server answers, Cyber Code sends the server one `notifications/cancelled` for that request (on a remote session, before the session is closed), waiting at most one second. It is skipped when the definition is no longer approved or its stored OAuth credential was removed. A failure is logged without header values and never delays shutdown.
+
 ### Graceful local MCP close
 
 Explicit Location close and runtime shutdown withdraw MCP tools before stopping shared servers. On POSIX, client IO closes and the owned group receives SIGTERM. The leader remains unreaped for the full five-second grace period so descendants can finish cleanup after the leader exits. SIGKILL then stops remaining group members, followed by native acknowledgement, local proxy shutdown and durable settlement before scratch/checkout cleanup. Windows uses owned Job Object termination.
 
 Independent servers close concurrently. An interrupted close retains its original grace deadline and Location admission fence; retry resumes that deadline. Unknown ownership or failed settlement remains fenced for recovery. Failed startup, cancelled calls, lost connections and owner disposal retain immediate cleanup, with disposal providing no durable acknowledgement. Remote close joins the HTTP bridge and its proxy and sends the session `DELETE`; settling MCP owners when an embedded `cyber exec` exits and full native platform acceptance remain incomplete.
 
-### Local MCP form elicitation
+### MCP form elicitation
 
-Configured local stdio servers advertise form elicitation. During an interactive tool call, `elicitation/create` opens the existing question flow, names the requesting server, and asks for explicit Accept, Decline or Cancel before returning values. Flat strings, numbers, integers, booleans and string-enum arrays retain their JSON types; supported constraints and formats are checked before sending. Optional fields can be omitted and declared defaults require an explicit choice. Decline, Cancel and invalid answers send no form values.
+Local stdio and remote (Streamable HTTP and SSE) servers advertise form elicitation. During an interactive tool call, `elicitation/create` opens the existing question flow, names the requesting server, and asks for explicit Accept, Decline or Cancel before returning values. A remote server may send the form on the call's own event stream or on its GET event stream; the answer is posted back on the same session. Flat strings, numbers, integers, booleans and string-enum arrays retain their JSON types; supported constraints and formats are checked before sending. Optional fields can be omitted and declared defaults require an explicit choice. Decline, Cancel and invalid answers send no form values, and an invalid form schema is refused without asking you anything.
 
-Authorization is checked before asking and again before sending answers. Startup, idle and unattended requests decline without creating a Session question; logs omit form text and answers. Human question time pauses call inactivity, while interrupt or Location close stops the native call and dismisses its own pending questions. URL elicitation is unadvertised and refused. Idle requests from remote servers are declined the same way; full native acceptance remains pending.
+Authorization is checked before asking and again before sending answers: a changed or untrusted definition, or a `cyber mcp logout` while the question is open, sends Cancel instead of your answers. `cyber exec`, other non-interactive sessions, and requests during startup or idle decline at once without creating a question; logs omit form text and answers. Human question time pauses call inactivity. Interrupting the call or closing the Location dismisses its pending questions and sends the server a best-effort `notifications/cancelled`; if the server cancels the form itself, or the call finishes while you are still answering, the question is dismissed and no answer is sent.
+
+Only form mode is supported. A URL-mode request is refused: Cyber Code never opens a browser or fetches a link for a server, and the URL is not shown or logged. Native Windows acceptance is still pending.
 
 ### Local MCP sampling
 

@@ -63,6 +63,13 @@ enum FrameRead {
     Message(Value),
 }
 
+/// What one message read during a human wait means for that wait.
+enum Waiting {
+    Continue,
+    /// The server withdrew the form, or answered the request the form belonged to.
+    Ended,
+}
+
 /// Own the IO until native stop/settlement; disposing a future does not prove server stop.
 pub struct StdioClient<R, W> {
     reader: BufReader<R>,
@@ -74,6 +81,8 @@ pub struct StdioClient<R, W> {
     protocol_version: Option<String>,
     metadata: Option<Value>,
     incoming: Vec<u8>,
+    /// A message read during a human wait that the pending request must still process.
+    deferred: Option<Value>,
     changed: IdleUpdate,
     roots: Option<super::McpRoots>,
     form_server: Option<String>,
@@ -91,6 +100,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             protocol_version: None,
             metadata: None,
             incoming: Vec::new(),
+            deferred: None,
             changed: IdleUpdate::default(),
             roots: None,
             form_server: None,
@@ -481,12 +491,20 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
                     progress = Some(value);
                     deadline = tokio::time::Instant::now() + timeout;
                 }
-                if ((method == "elicitation/create" && self.form_server.is_some())
-                    || (method == "sampling/createMessage" && self.sampling))
+                let started = tokio::time::Instant::now();
+                if method == "elicitation/create"
+                    && self.form_server.is_some()
                     && message.get("id").is_some()
                 {
-                    // Human questions and owned nested sampling have their own wait/timeout rules.
-                    let started = tokio::time::Instant::now();
+                    // A human form keeps the connection read; its time pauses inactivity.
+                    if self.wait_for_human(&message, timeout, context).await? {
+                        deadline += started.elapsed();
+                    }
+                } else if method == "sampling/createMessage"
+                    && self.sampling
+                    && message.get("id").is_some()
+                {
+                    // Owned nested sampling has its own wait/timeout rules.
                     if self.server_message(&message, timeout, context).await? {
                         deadline += started.elapsed();
                     }
@@ -504,6 +522,69 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             self.pending = None;
             return result;
         }
+    }
+
+    /// Answer `elicitation/create` while still reading the connection, so callbacks are
+    /// answered during the wait. A matching `notifications/cancelled` (or the pending
+    /// request's own response) dismisses this call's question and sends no reply. Returns
+    /// whether a human was involved.
+    async fn wait_for_human(
+        &mut self,
+        message: &Value,
+        timeout: Duration,
+        context: Option<&super::ElicitationContext<'_>>,
+    ) -> Result<bool, McpError> {
+        let id = message["id"].clone();
+        if !id.is_string() && !id.is_number() {
+            return Err(McpError::Protocol("invalid server request identity"));
+        }
+        let server = self.form_server.clone().unwrap_or_default();
+        let reply = super::elicitation::reply(&server, &message["params"], context);
+        tokio::pin!(reply);
+        loop {
+            let read = tokio::select! {
+                (mut response, interacted) = &mut reply => {
+                    response["jsonrpc"] = json!("2.0");
+                    response["id"] = id;
+                    tokio::time::timeout(timeout, self.write(&response))
+                        .await
+                        .map_err(|_| McpError::Timeout)??;
+                    return Ok(interacted);
+                }
+                read = self.read() => read?,
+            };
+            if let Waiting::Ended = self.during_wait(read, &id, timeout).await? {
+                break;
+            }
+        }
+        if let Some(context) = context {
+            context.cancel_questions().await;
+        }
+        Ok(true)
+    }
+
+    /// One message read while the form `elicitation` waits. Callbacks get the unowned
+    /// handling (roots and ping answered, nested forms declined, sampling refused) and
+    /// list-changed flags are kept; progress does not extend the deadline here.
+    async fn during_wait(
+        &mut self,
+        message: Value,
+        elicitation: &Value,
+        timeout: Duration,
+    ) -> Result<Waiting, McpError> {
+        if message.get("method").is_none() {
+            self.deferred = Some(message);
+            return Ok(Waiting::Ended);
+        }
+        validate_server_message(&message)?;
+        if message.get("id").is_none()
+            && message["method"] == "notifications/cancelled"
+            && message["params"]["requestId"] == *elicitation
+        {
+            return Ok(Waiting::Ended);
+        }
+        self.server_message(&message, timeout, None).await?;
+        Ok(Waiting::Continue)
     }
 
     async fn server_message(
@@ -586,6 +667,9 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         Ok(())
     }
     async fn read(&mut self) -> Result<Value, McpError> {
+        if let Some(message) = self.deferred.take() {
+            return Ok(message);
+        }
         match self.read_frame(true).await? {
             FrameRead::Message(message) => Ok(message),
             _ => Err(McpError::Protocol("invalid or oversized message framing")),

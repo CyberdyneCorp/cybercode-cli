@@ -91,6 +91,10 @@ impl OwnedLocalServer {
     pub fn metadata(&self) -> &Value {
         self.server.metadata()
     }
+    /// See [`LocalServer::environment`](super::LocalServer::environment).
+    pub fn environment(&self) -> Option<&str> {
+        self.server.environment()
+    }
     pub fn remote_transport(&self) -> Option<RemoteTransport> {
         self.server.remote_transport()
     }
@@ -106,6 +110,12 @@ impl OwnedLocalServer {
 
     pub fn unresolved(&self) -> bool {
         self.server.unresolved()
+    }
+
+    /// Signal the unresolved request's cancellation; it settles nothing durable.
+    pub async fn cancel_pending(&mut self, timeout: Duration) -> Result<(), McpError> {
+        self.running()?;
+        self.server.cancel_pending(timeout).await
     }
     /// Whether the OAuth credential this connection sends was removed (`cyber mcp logout`).
     pub fn logged_out(&self) -> bool {

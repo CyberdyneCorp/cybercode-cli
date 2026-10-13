@@ -100,6 +100,8 @@ pub struct LocalServer {
     aliases: super::discovery::ToolAliases,
     /// A remote server's credential layers; `None` for a local server.
     auth: Option<RemoteAuth>,
+    /// The local connection environment fingerprint; `None` for a remote server.
+    environment: Option<String>,
 }
 
 /// A stdio process or a remote Streamable HTTP session. The HTTP arm owns no process, so
@@ -268,6 +270,12 @@ impl LocalServer {
 
     pub fn metadata(&self) -> &Value {
         &self.metadata
+    }
+
+    /// The fingerprint of the roots and sandbox a local process was launched with (see
+    /// [`environment_fingerprint`]); `None` for a remote server.
+    pub fn environment(&self) -> Option<&str> {
+        self.environment.as_deref()
     }
 
     /// The remote transport in use, or `None` for a local server.
@@ -452,8 +460,14 @@ impl LocalServer {
                 "MCP tool is absent from connected server catalog",
             ));
         }
+        // A credential removed by `cyber mcp logout` while a form waits withdraws the
+        // call's authorization, so accepted answers are never forwarded.
+        let auth = self.auth.as_ref();
+        let authorize =
+            || !auth.is_some_and(RemoteAuth::logged_out) && context.is_some_and(|c| c.authorized());
+        let context = context.map(|context| context.authorized_by(&authorize));
         self.connection
-            .call_tool_with_elicitation(name, arguments, timeout, context)
+            .call_tool_with_elicitation(name, arguments, timeout, context.as_ref())
             .await
     }
 
@@ -468,7 +482,14 @@ impl LocalServer {
         self.connection.resource(request, timeout).await
     }
 
+    /// Best-effort `notifications/cancelled` for the unresolved request, sent only while the
+    /// definition is still authorized and its credential was not removed. It never settles
+    /// the request; the caller still shuts the connection down.
     pub async fn cancel_pending(&mut self, timeout: Duration) -> Result<(), McpError> {
+        self.authorize()?;
+        if self.logged_out() {
+            return Err(McpError::Protocol("MCP server credential was removed"));
+        }
         self.connection.cancel_pending(timeout).await
     }
 
@@ -590,6 +611,7 @@ impl LocalLauncher<'_> {
             mut catalog,
             resources,
             auth,
+            environment,
         } = connected;
         let mut aliases = super::discovery::ToolAliases::default();
         aliases.retain(name, &mut catalog);
@@ -601,6 +623,7 @@ impl LocalLauncher<'_> {
             connection,
             resources,
             auth,
+            environment,
             tools: tools.clone(),
             shutdown_acknowledged: false,
             authority: ServerAuthority {
@@ -660,19 +683,14 @@ impl LocalLauncher<'_> {
             ));
         };
         let cwd = self.working_directory(cwd.as_deref())?;
-        let roots_config = SandboxConfig::resolve(
-            &self.resolved.value,
-            &self.resolved.sources,
-            None,
+        let (roots, fingerprint) = local_environment(
+            self.resolved,
             self.home,
-        );
-        let writable = if roots_config.policy == Policy::ReadOnly {
-            &[][..]
-        } else {
-            roots_config.extra_writable.as_slice()
-        };
-        let roots = super::McpRoots::new(self.location, writable)
-            .map_err(|error| LocalLaunchError::before_launch(error.to_string()))?;
+            self.location,
+            server.requires_sandbox,
+            launch.required_sandbox,
+        )
+        .map_err(|error| LocalLaunchError::before_launch(error.to_string()))?;
         let sampling = self.sampling()?;
         let mut resources = self
             .prepare(server.requires_sandbox, launch.required_sandbox)
@@ -733,6 +751,7 @@ impl LocalLauncher<'_> {
                 catalog,
                 resources,
                 auth: None,
+                environment: Some(fingerprint),
             }),
             Err(error) => Err(resources.fail_connection(error).await),
         }
@@ -818,6 +837,7 @@ impl LocalLauncher<'_> {
                 catalog,
                 resources,
                 auth: Some(auth),
+                environment: None,
             }),
             Err(Opened::Connection(error)) => {
                 if let McpError::Http(failure) = &error.error {
@@ -1047,17 +1067,9 @@ impl LocalLauncher<'_> {
         required: bool,
         required_sandbox: bool,
     ) -> Result<Resources, LocalLaunchError> {
-        let mut config = SandboxConfig::resolve(
-            &self.resolved.value,
-            &self.resolved.sources,
-            None,
-            self.home,
-        );
-        if required_sandbox {
-            config.policy = Policy::WorkspaceWrite;
-        } else if !required {
-            config.policy = Policy::FullAccess;
-        }
+        let (mut config, effective) =
+            launch_sandbox(self.resolved, self.home, required, required_sandbox);
+        config.policy = effective;
         let scratch = Scratch::new(self.temp_dir)
             .map_err(|_| LocalLaunchError::before_launch("MCP scratch creation failed"))?;
         let proxy = if config.policy != Policy::FullAccess && config.network == NetworkMode::Proxy {
@@ -1157,6 +1169,64 @@ struct Connected {
     catalog: Vec<DiscoveredTool>,
     resources: Resources,
     auth: Option<RemoteAuth>,
+    environment: Option<String>,
+}
+
+/// The configured sandbox and the policy a server process actually runs under: a
+/// sandboxed hook forces workspace-write, and a server `sandbox.apply_to` does not select
+/// runs full-access.
+fn launch_sandbox(
+    resolved: &Resolved,
+    home: &Path,
+    selected: bool,
+    required_sandbox: bool,
+) -> (SandboxConfig, Policy) {
+    let config = SandboxConfig::resolve(&resolved.value, &resolved.sources, None, home);
+    let effective = if required_sandbox {
+        Policy::WorkspaceWrite
+    } else if selected {
+        config.policy
+    } else {
+        Policy::FullAccess
+    };
+    (config, effective)
+}
+
+/// The roots a local connection advertises (the Location, plus the configured writable
+/// roots unless the policy is read-only) and the fingerprint of its connection environment.
+fn local_environment(
+    resolved: &Resolved,
+    home: &Path,
+    location: &Path,
+    selected: bool,
+    required_sandbox: bool,
+) -> Result<(super::McpRoots, String), McpError> {
+    let (sandbox, effective) = launch_sandbox(resolved, home, selected, required_sandbox);
+    let writable = if sandbox.policy == Policy::ReadOnly {
+        &[][..]
+    } else {
+        sandbox.extra_writable.as_slice()
+    };
+    let roots = super::McpRoots::new(location, writable)?;
+    let fingerprint = roots.fingerprint(&sandbox, effective);
+    Ok((roots, fingerprint))
+}
+
+/// The connection environment a pool connection of `server` would capture now: the
+/// fingerprint of its roots and sandbox grant, or `None` for a remote server, which
+/// receives neither. A local environment that cannot be captured is an error; callers
+/// treat it as changed.
+pub(crate) fn environment_fingerprint(
+    resolved: &Resolved,
+    home: &Path,
+    location: &Path,
+    server: &ServerSelection,
+) -> Result<Option<String>, McpError> {
+    if !matches!(server.definition, McpServer::Local { .. }) {
+        return Ok(None);
+    }
+    local_environment(resolved, home, location, server.requires_sandbox, false)
+        .map(|(_, fingerprint)| Some(fingerprint))
 }
 
 /// The policy client and endpoint one remote connect uses for every attempt.

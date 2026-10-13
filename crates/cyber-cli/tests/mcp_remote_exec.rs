@@ -237,6 +237,96 @@ fn exec_calls_a_remote_streamable_http_tool_through_the_app_host() {
     drop(runtime);
 }
 
+/// `cyber exec` has no interactive approver, so a remote server's form elicitation during
+/// a tool call is declined at once: the fixture receives `decline`, the turn completes and
+/// the form text is never logged or printed.
+#[test]
+fn exec_declines_remote_elicitation() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let http = runtime.block_on(mcp_http::McpHttp::start(mcp_http::Behavior {
+        elicit: Some(
+            json!({"message":"PRIVATE-FORM-TEXT","requestedSchema":{"type":"object",
+            "properties":{"environment":{"type":"string","enum":["staging","prod"]}},
+            "required":["environment"]}}),
+        ),
+        ..Default::default()
+    }));
+    http.set_tools(&["ask"]);
+    let provider = Provider::start(json!({"name":"mcp__remote__ask","arguments":{"text":"ask"}}));
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    for path in ["home", "repo", "cyber/config"] {
+        std::fs::create_dir_all(root.join(path)).unwrap();
+    }
+    std::fs::write(
+        root.join("cyber/config/cyber.jsonc"),
+        json!({
+            "permissions":"allow",
+            "providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}},
+            "mcp":{"remote":{"type":"remote","url":http.url,"required":true}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(root.join("models.json"), "{}").unwrap();
+
+    let started = Instant::now();
+    let (status, stdout, stderr) = exec(&root, "ask the remote server");
+    let elapsed = started.elapsed();
+    let detail = format!(
+        "status={status:?}\nstdout={stdout}\nstderr={stderr}\nfixture={:#?}",
+        http.requests()
+    );
+    let replies = http.replies("elicit-1");
+    assert_eq!(replies.len(), 1, "{detail}");
+    assert_eq!(
+        replies[0].body["result"],
+        json!({"action":"decline"}),
+        "{detail}"
+    );
+    // The fixture would wait 30 s for a reply that never came.
+    assert!(elapsed < Duration::from_secs(25), "{elapsed:?}\n{detail}");
+    let delivered = provider.requests.lock().unwrap().iter().any(|body| {
+        body["messages"].as_array().is_some_and(|messages| {
+            messages
+                .iter()
+                .any(|message| message["role"] == "tool" && message.to_string().contains("decline"))
+        })
+    });
+    assert!(
+        delivered,
+        "the model never received the tool result\n{detail}"
+    );
+    assert_eq!(status, Some(0), "{detail}");
+    let result: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(result["result"], "remote call finished", "{detail}");
+    for text in [&stdout, &stderr] {
+        assert!(!text.contains("PRIVATE-FORM-TEXT"), "{text}");
+    }
+    /// Whether any file under `path` logged the decline; none holds the form text.
+    fn scan(path: &Path) -> bool {
+        let mut logged = false;
+        for entry in std::fs::read_dir(path).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                logged |= scan(&path);
+            } else {
+                let text =
+                    String::from_utf8_lossy(&std::fs::read(&path).unwrap_or_default()).into_owned();
+                assert!(!text.contains("PRIVATE-FORM-TEXT"), "{}", path.display());
+                logged |= text.contains("Elicitation declined without an interactive call owner");
+            }
+        }
+        logged
+    }
+    assert!(
+        scan(&root.join("cyber")),
+        "the decline was not logged\n{detail}"
+    );
+    drop(http);
+    drop(runtime);
+}
+
 /// The model reads a resource from a remote server advertising `resources`, through the
 /// app host's built-in `mcp_read_resource` and the shared MCP pool.
 #[test]
