@@ -86,14 +86,18 @@ impl Budget {
     }
 
     pub(crate) fn store(&self, text: &str) -> Result<PathBuf, String> {
+        self.store_bytes(text.as_bytes())
+    }
+
+    /// Store bytes in a new managed file under a generated name.
+    pub(crate) fn store_bytes(&self, bytes: &[u8]) -> Result<PathBuf, String> {
         std::fs::create_dir_all(&self.dir)
             .map_err(|e| format!("could not store the full output: {e}"))?;
         let path = self.dir.join(format!(
             "tool_{}",
             cyber_core::ids::new_id("out").trim_start_matches("out_")
         ));
-        write_new(&path, text.as_bytes())
-            .map_err(|e| format!("could not store the full output: {e}"))?;
+        write_new(&path, bytes).map_err(|e| format!("could not store the full output: {e}"))?;
         Ok(path)
     }
 }

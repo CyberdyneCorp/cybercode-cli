@@ -84,6 +84,8 @@ pub enum Action {
     Open(String),
     NewSession,
     LoadModels,
+    /// Refetch `/commands`, as MCP prompt commands come and go with connections.
+    LoadCommands,
     SwitchModel(String),
     SwitchMode(String),
     Fork,

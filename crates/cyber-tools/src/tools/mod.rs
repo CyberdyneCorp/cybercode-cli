@@ -6,7 +6,7 @@ mod formatters;
 mod fs;
 pub(crate) mod intelligence;
 mod lsp;
-mod mcp;
+pub(crate) mod mcp;
 pub(crate) mod memory;
 mod notebook;
 pub(crate) mod patch;
@@ -63,6 +63,9 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(agent::Agent),
         Box::new(task::TaskStop),
         Box::new(mcp::WaitForMcp),
+        Box::new(mcp::ResourceTool::List),
+        Box::new(mcp::ResourceTool::Templates),
+        Box::new(mcp::ResourceTool::Read),
         Box::new(memory::Memory),
         Box::new(tool_search::ToolSearch),
     ];
@@ -80,6 +83,7 @@ pub(crate) fn action_of(name: &str) -> &str {
     match name {
         "write" | "edit" | "apply_patch" | "notebook_edit" => "edit",
         "powershell" => "bash",
+        "mcp_list_resources" | "mcp_list_resource_templates" | "mcp_read_resource" => "read",
         other => other,
     }
 }

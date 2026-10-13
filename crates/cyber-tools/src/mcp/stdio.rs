@@ -33,10 +33,28 @@ struct Pending {
     sent: bool,
 }
 
-#[derive(Debug, Default)]
+/// What an idle drain observed; the `*_changed` flags stay set until cleared.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct IdleUpdate {
     pub closed: bool,
     pub tools_changed: bool,
+    pub prompts_changed: bool,
+    pub resources_changed: bool,
+}
+
+impl IdleUpdate {
+    /// Any `list_changed` notification is pending.
+    pub fn changed(&self) -> bool {
+        self.tools_changed || self.prompts_changed || self.resources_changed
+    }
+}
+
+/// A server listing announced by `notifications/<list>/list_changed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListChange {
+    Tools,
+    Prompts,
+    Resources,
 }
 
 enum FrameRead {
@@ -56,7 +74,7 @@ pub struct StdioClient<R, W> {
     protocol_version: Option<String>,
     metadata: Option<Value>,
     incoming: Vec<u8>,
-    tools_changed: bool,
+    changed: IdleUpdate,
     roots: Option<super::McpRoots>,
     form_server: Option<String>,
     sampling: bool,
@@ -73,7 +91,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             protocol_version: None,
             metadata: None,
             incoming: Vec::new(),
-            tools_changed: false,
+            changed: IdleUpdate::default(),
             roots: None,
             form_server: None,
             sampling: false,
@@ -136,7 +154,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
                 FrameRead::Closed => {
                     return Ok(IdleUpdate {
                         closed: true,
-                        tools_changed: self.tools_changed,
+                        ..self.changed
                     });
                 }
                 FrameRead::Message(message) => {
@@ -145,14 +163,19 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
                 }
             }
         }
-        Ok(IdleUpdate {
-            closed: false,
-            tools_changed: self.tools_changed,
-        })
+        Ok(self.changed)
     }
 
     pub fn clear_tools_changed(&mut self) {
-        self.tools_changed = false;
+        self.clear_changed(ListChange::Tools);
+    }
+
+    pub fn clear_changed(&mut self, change: ListChange) {
+        match change {
+            ListChange::Tools => self.changed.tools_changed = false,
+            ListChange::Prompts => self.changed.prompts_changed = false,
+            ListChange::Resources => self.changed.resources_changed = false,
+        }
     }
 
     pub fn unresolved(&self) -> bool {
@@ -257,6 +280,49 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         self.request("tools/list", params, timeout).await
     }
 
+    pub async fn list_resources(
+        &mut self,
+        cursor: Option<&str>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        self.resource(super::ResourceRequest::List(cursor), timeout)
+            .await
+    }
+
+    pub async fn list_resource_templates(
+        &mut self,
+        cursor: Option<&str>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        self.resource(super::ResourceRequest::Templates(cursor), timeout)
+            .await
+    }
+
+    pub async fn read_resource(
+        &mut self,
+        uri: &str,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        self.resource(super::ResourceRequest::Read(uri), timeout)
+            .await
+    }
+
+    /// One resource RPC, sent only when the server advertised `resources`; the reply is
+    /// validated before it leaves the protocol layer.
+    pub async fn resource(
+        &mut self,
+        request: super::ResourceRequest<'_>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        if !self.initialized || !self.supports("resources") {
+            return Err(McpError::Protocol("server resources are unavailable"));
+        }
+        let result = self
+            .request(request.method(), request.params(), timeout)
+            .await?;
+        super::resources::validate(request, &result)
+    }
+
     pub async fn discover_tools(
         &mut self,
         server: &str,
@@ -264,6 +330,51 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         timeout: Duration,
     ) -> Result<Vec<super::DiscoveredTool>, McpError> {
         super::discovery::discover(self, server, filter, timeout).await
+    }
+
+    /// One raw `prompts/list` page, sent only when the server advertised `prompts`.
+    pub async fn list_prompts(
+        &mut self,
+        cursor: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, McpError> {
+        if !self.initialized || !self.supports("prompts") {
+            return Err(McpError::Protocol("server prompts are unavailable"));
+        }
+        let params = cursor
+            .map(|cursor| json!({"cursor":cursor}))
+            .unwrap_or_else(|| json!({}));
+        self.request("prompts/list", params, timeout).await
+    }
+
+    /// Every valid prompt, under one deadline; empty when `prompts` is not advertised.
+    pub async fn discover_prompts(
+        &mut self,
+        server: &str,
+        timeout: Duration,
+    ) -> Result<Vec<super::DiscoveredPrompt>, McpError> {
+        if !self.initialized {
+            return Err(McpError::Protocol("MCP server is not initialized"));
+        }
+        super::prompts::discover(self, server, timeout).await
+    }
+
+    /// `prompts/get` with string arguments; the reply is validated before it is returned.
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: &serde_json::Map<String, Value>,
+        timeout: Duration,
+    ) -> Result<Vec<super::PromptMessage>, McpError> {
+        if !self.initialized || !self.supports("prompts") {
+            return Err(McpError::Protocol("server prompts are unavailable"));
+        }
+        if !super::prompts::valid_name(name) || arguments.values().any(|value| !value.is_string()) {
+            return Err(McpError::Protocol("invalid prompt request"));
+        }
+        let params = super::prompts::get_params(name, arguments);
+        let result = self.request("prompts/get", params, timeout).await?;
+        super::prompts::messages(&result)
     }
 
     pub async fn call_tool(
@@ -402,8 +513,13 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         context: Option<&super::ElicitationContext<'_>>,
     ) -> Result<bool, McpError> {
         let Some(id) = message.get("id") else {
-            if message["method"] == "notifications/tools/list_changed" {
-                self.tools_changed = true;
+            match message["method"].as_str() {
+                Some("notifications/tools/list_changed") => self.changed.tools_changed = true,
+                Some("notifications/prompts/list_changed") => self.changed.prompts_changed = true,
+                Some("notifications/resources/list_changed") => {
+                    self.changed.resources_changed = true;
+                }
+                _ => {}
             }
             return Ok(false);
         };
@@ -584,6 +700,7 @@ pub(super) fn encode(message: &Value) -> Result<Vec<u8>, McpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn passive_probe_preserves_buffered_frames_and_observes_eof() {
@@ -700,6 +817,196 @@ mod tests {
         assert_eq!(
             client.read().await.unwrap(),
             json!({"jsonrpc":"2.0","method":"notice"})
+        );
+    }
+
+    fn initialized<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+        client: &mut StdioClient<R, W>,
+        capabilities: Value,
+    ) {
+        client.initialization_started = true;
+        client.initialized = true;
+        client.metadata = Some(json!({"capabilities":capabilities}));
+    }
+
+    #[tokio::test]
+    async fn resource_requests_require_the_advertised_capability() {
+        let (reader, _peer) = tokio::io::duplex(1024);
+        let (writer, mut output) = tokio::io::duplex(1024);
+        let mut client = StdioClient::new(reader, writer);
+        initialized(&mut client, json!({"tools":{}}));
+        let timeout = Duration::from_secs(1);
+        assert!(matches!(
+            client.list_resources(None, timeout).await,
+            Err(McpError::Protocol(_))
+        ));
+        assert!(matches!(
+            client.list_resource_templates(Some("c"), timeout).await,
+            Err(McpError::Protocol(_))
+        ));
+        assert!(matches!(
+            client.read_resource("file:///x", timeout).await,
+            Err(McpError::Protocol(_))
+        ));
+        assert!(!client.unresolved());
+        drop(client);
+        let mut written = Vec::new();
+        output.read_to_end(&mut written).await.unwrap();
+        assert!(written.is_empty(), "{}", String::from_utf8_lossy(&written));
+    }
+
+    /// Answer the next request on `peer` with `result`, returning the request.
+    async fn answer(
+        requests: &mut BufReader<tokio::io::DuplexStream>,
+        peer: &mut tokio::io::DuplexStream,
+        result: Value,
+    ) -> Value {
+        let mut line = String::new();
+        requests.read_line(&mut line).await.unwrap();
+        let request: Value = serde_json::from_str(&line).unwrap();
+        let reply = json!({"jsonrpc":"2.0","id":request["id"],"result":result});
+        peer.write_all(format!("{reply}\n").as_bytes())
+            .await
+            .unwrap();
+        request
+    }
+
+    #[tokio::test]
+    async fn read_resource_validates_contents_and_keeps_the_connection() {
+        let (reader, mut peer) = tokio::io::duplex(64 * 1024);
+        let (writer, output) = tokio::io::duplex(64 * 1024);
+        let mut requests = BufReader::new(output);
+        let mut client = StdioClient::new(reader, writer);
+        initialized(&mut client, json!({"resources":{}}));
+        let timeout = Duration::from_secs(5);
+        for contents in [
+            json!([{"text":"missing uri"}]),
+            json!([{"uri":"file:///x","text":"a","blob":"YQ=="}]),
+            json!([{"uri":"file:///x","blob":"%%%"}]),
+        ] {
+            let (result, request) = tokio::join!(
+                client.read_resource("file:///x", timeout),
+                answer(&mut requests, &mut peer, json!({"contents":contents}))
+            );
+            assert!(matches!(result, Err(McpError::Protocol(_))), "{contents}");
+            assert_eq!(request["method"], "resources/read");
+            assert_eq!(request["params"]["uri"], "file:///x");
+            assert!(!client.unresolved());
+        }
+        let (result, request) = tokio::join!(
+            client.list_resources(Some("next"), timeout),
+            answer(&mut requests, &mut peer, json!({"resources":[]}))
+        );
+        assert_eq!(request["params"]["cursor"], "next");
+        assert_eq!(
+            result.unwrap(),
+            super::super::ResourceReply::Listing(json!({"resources":[]}))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_changed_notifications_set_their_own_flags() {
+        let (reader, mut peer) = tokio::io::duplex(1024);
+        let mut client = StdioClient::new(reader, tokio::io::sink());
+        peer.write_all(
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/prompts/list_changed\"}\n",
+        )
+        .await
+        .unwrap();
+        let update = client.poll_idle(Duration::from_secs(1)).await.unwrap();
+        assert!(update.prompts_changed && !update.tools_changed && !update.resources_changed);
+        assert!(update.changed());
+        peer.write_all(
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/list_changed\"}\n",
+        )
+        .await
+        .unwrap();
+        let update = client.poll_idle(Duration::from_secs(1)).await.unwrap();
+        assert!(update.prompts_changed && update.resources_changed);
+        client.clear_changed(ListChange::Prompts);
+        client.clear_changed(ListChange::Resources);
+        let update = client.poll_idle(Duration::from_secs(1)).await.unwrap();
+        assert!(!update.changed(), "{update:?}");
+    }
+
+    #[tokio::test]
+    async fn prompt_requests_require_the_advertised_capability() {
+        let (reader, _peer) = tokio::io::duplex(1024);
+        let (writer, mut output) = tokio::io::duplex(1024);
+        let mut client = StdioClient::new(reader, writer);
+        initialized(&mut client, json!({"tools":{},"resources":{}}));
+        let timeout = Duration::from_secs(1);
+        assert!(matches!(
+            client.list_prompts(None, timeout).await,
+            Err(McpError::Protocol(_))
+        ));
+        assert!(matches!(
+            client
+                .get_prompt("review_pr", &serde_json::Map::new(), timeout)
+                .await,
+            Err(McpError::Protocol(_))
+        ));
+        assert_eq!(
+            client.discover_prompts("srv", timeout).await.unwrap(),
+            Vec::new()
+        );
+        assert!(!client.unresolved());
+        drop(client);
+        let mut written = Vec::new();
+        output.read_to_end(&mut written).await.unwrap();
+        assert!(written.is_empty(), "{}", String::from_utf8_lossy(&written));
+    }
+
+    #[tokio::test]
+    async fn get_prompt_sends_string_arguments_and_validates_messages() {
+        let (reader, mut peer) = tokio::io::duplex(64 * 1024);
+        let (writer, output) = tokio::io::duplex(64 * 1024);
+        let mut requests = BufReader::new(output);
+        let mut client = StdioClient::new(reader, writer);
+        initialized(&mut client, json!({"prompts":{}}));
+        let timeout = Duration::from_secs(5);
+        let mut arguments = serde_json::Map::new();
+        arguments.insert("number".into(), json!("42"));
+        let (result, request) = tokio::join!(
+            client.get_prompt("review_pr", &arguments, timeout),
+            answer(
+                &mut requests,
+                &mut peer,
+                json!({"messages":[{"role":"user","content":{"type":"text","text":"Review 42"}}]})
+            )
+        );
+        assert_eq!(request["method"], "prompts/get");
+        assert_eq!(request["params"]["name"], "review_pr");
+        assert_eq!(request["params"]["arguments"], json!({"number":"42"}));
+        assert_eq!(
+            result.unwrap(),
+            [super::super::PromptMessage {
+                role: super::super::PromptRole::User,
+                content: super::super::PromptContent::Text("Review 42".into()),
+            }]
+        );
+        let (result, _) = tokio::join!(
+            client.get_prompt("review_pr", &arguments, timeout),
+            answer(
+                &mut requests,
+                &mut peer,
+                json!({"messages":[{"role":"system"}]})
+            )
+        );
+        assert!(matches!(result, Err(McpError::Protocol(_))));
+        assert!(!client.unresolved());
+        arguments.insert("n".into(), json!(1));
+        assert!(
+            client
+                .get_prompt("review_pr", &arguments, timeout)
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .get_prompt("a b", &serde_json::Map::new(), timeout)
+                .await
+                .is_err()
         );
     }
 

@@ -41,6 +41,14 @@ Remote MCP servers that require OAuth are signed in explicitly. `cyber` never op
 
 See [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth) for the `oauth` settings and token storage.
 
+MCP servers that advertise resources or prompts add three surfaces. Server content is always wrapped as untrusted data, never as instructions:
+
+- Resource tools: the model can call `mcp_list_resources`, `mcp_list_resource_templates` and `mcp_read_resource`. These tools are read-only (also offered in plan mode), checked as `read` on `mcp:<server>:<uri>` and capped at 512 KiB per read.
+- `@<server>:<uri>` in a prompt, for example `@docs:file:///guide.md`, attaches that resource. If it cannot be attached, a visible `[resource not attached: ...]` notice appears instead.
+- `/<server>:<prompt> [args]` runs a server prompt as a slash command, checked as `mcp_prompt` on `mcp:<server>:<prompt>`.
+
+See [MCP resources](docs/local-core-guide.md#mcp-resources) and [MCP prompts as commands](docs/local-core-guide.md#mcp-prompts-as-commands).
+
 ## What it does
 
 | Area | Current behavior |
@@ -51,7 +59,7 @@ See [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth) for the `oauth
 | Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks; `cyber review [target]` and TUI `/review` resolve uncommitted changes, ranges, commits or `pr <number>` and report validated findings most severe first |
 | Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
-| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks, local and remote MCP with OAuth sign-in, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
+| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, hooks, local and remote MCP with OAuth sign-in, resources, `@server:uri` mentions and prompt commands, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
 
 **P0 is implemented, with release gates still open:** the full local-model baseline, including the long coding task, remains incomplete. **P1 is in progress; no P1 milestone is fully accepted.** Windows confinement, native MCP OAuth keyring acceptance, plugins, complete client controls, browser verification and migration/editor integration still need work or acceptance. Later phases cover workflows, goals, remote control and cloud runners.
 
@@ -102,7 +110,7 @@ Scope: **Cyber Code, Claude Code, Codex and OpenCode coding tools**, checked **2
 | Tool permissions | Yes; full auto mode partial | Yes [docs][C2] | Yes [docs][X3] | Yes [docs][O3] |
 | OS sandbox | macOS/Linux; Windows incomplete | macOS/Linux/WSL2; native Windows unsandboxed [docs][C2] | Documented sandbox controls [docs][X3] | Permission rules documented [docs][O3]; OS isolation not established here |
 | Subagents | Partial P1 | Yes [docs][C3] | Yes [docs][X1] | Yes [docs][O4] |
-| MCP integration | Local and remote (HTTP/SSE) partial; OAuth via `cyber mcp auth`, tokens in the OS keyring (0600 file on Linux) | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
+| MCP integration | Local and remote (HTTP/SSE) partial; OAuth via `cyber mcp auth`, tokens in the OS keyring (0600 file on Linux); resource tools, `@server:uri` mentions and `/<server>:<prompt>` commands | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
 | File undo / recovery | Snapshots preserving user edits | Edit checkpoints and rewind [docs][C5] | Git checkpoints recommended [docs][X1] | Undo/redo [docs][O1] |
 | Programmatic server | HTTP/events, stdio API, TS SDK | Agent SDK [docs][C1] | App Server [docs][X4] | HTTP/OpenAPI and SDK [docs][O6] |
 | LSP integration | Navigation/feedback partial P1 | Language-server plugins [docs][C6] | Not established by cited docs | Built-in LSP support [docs][O7] |

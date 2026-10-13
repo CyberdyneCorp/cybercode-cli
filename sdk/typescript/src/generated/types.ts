@@ -86,7 +86,7 @@ export type CommandBody = {
 export type CommandInfo = {
   name: string;
   description: string;
-  /** `builtin`, `skill` or `command`. */
+  /** `builtin`, `skill`, `command` or `mcp` (a server prompt, named `<server>:<prompt>`). */
   source: string;
   argument_hint?: string | null;
   namespace?: string | null;
@@ -712,6 +712,21 @@ export type McpStatusUpdate = {
   acknowledged?: boolean | null;
   /** Public diagnostic; private launch details remain in local logs. */
   error?: string | null;
+};
+
+/**
+ * `mcp.tools.changed.1`: a server's tools and prompts were published on (re)connect or
+ * re-listed after its `list_changed` notification. A live observation of the published names, never durable;
+ * invoking them still requires ordinary authorization.
+ */
+export type McpToolsChanged = {
+  connection_id: string;
+  directory: string;
+  name: string;
+  /** Published model-visible tool names. */
+  tools: string[];
+  /** Published prompt commands, as `<server>:<prompt>`. */
+  prompts: string[];
 };
 
 export type MemoryCatalog = {

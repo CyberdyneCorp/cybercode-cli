@@ -52,6 +52,7 @@ impl Runtime {
             .inner
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
             .await?;
+        let resources = self.prompt_resources(&handle, &admission).await?;
         let prepared = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
         self.inner.ensure_admission_open(id)?;
@@ -100,6 +101,7 @@ impl Runtime {
                         source: admission.source,
                         digest,
                         hook_context,
+                        resources,
                     },
                 ),
             ],
@@ -164,6 +166,7 @@ impl Runtime {
                     parts: None,
                     delivery: Some(delivery),
                     hook_context: None,
+                    resources: Vec::new(),
                 },
             ));
         } else if !eligible_child_input(&state, requested_only) {

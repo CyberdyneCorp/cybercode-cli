@@ -340,7 +340,7 @@ pub async fn perform_owned(
                 .post(&format!("/sessions/{id}/fork"), json!({}))
                 .await,
         ),
-        Action::LoadModels | Action::LoadAgents | Action::FindFiles(_) => {
+        Action::LoadModels | Action::LoadCommands | Action::LoadAgents | Action::FindFiles(_) => {
             load_choices(client, session, action).await
         }
         Action::SaveTheme(_) | Action::Editor(_) | Action::Quit => Ok(Msg::Done),
@@ -368,6 +368,7 @@ async fn inspect_hooks(client: &Client, session: &Session, action: Action) -> Re
 async fn load_choices(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::LoadModels => models(client).await,
+        Action::LoadCommands => commands(client).await,
         Action::LoadAgents => {
             let items = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
             Ok(Msg::Agents {
@@ -614,9 +615,14 @@ fn agent_choices(data: &Value) -> Vec<Choice> {
 }
 
 /// The prompt text plus a part for each `@path` or `@path#L10-40` mention that exists.
+/// `@server:uri` is an MCP resource mention the server resolves, never a file.
 pub fn parts(text: &str, directory: &str) -> Vec<Value> {
     let mut parts = vec![json!({ "type": "text", "text": text })];
-    for token in text.split_whitespace().filter_map(|w| w.strip_prefix('@')) {
+    for token in text
+        .split_whitespace()
+        .filter_map(|w| w.strip_prefix('@'))
+        .filter(|token| !resource_mention(token))
+    {
         let (path, range) = token
             .split_once("#L")
             .map_or((token, None), |(p, r)| (p, Some(r)));
@@ -638,6 +644,17 @@ pub fn parts(text: &str, directory: &str) -> Vec<Value> {
         );
     }
     parts
+}
+
+/// A server-name-like prefix followed by `:` (this also keeps `@C:\x` from being read
+/// as a Windows path or alternate data stream).
+fn resource_mention(token: &str) -> bool {
+    token.split_once(':').is_some_and(|(server, _)| {
+        (1..=48).contains(&server.len())
+            && server
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    })
 }
 
 /// `10` or `10-40`, 1-based and inclusive.
@@ -811,5 +828,23 @@ mod tests {
         );
         assert_eq!(parse_range("5"), Some((5, 5)));
         assert_eq!(parse_range("4-2"), None);
+    }
+
+    /// `@server:uri` is an MCP resource mention the server resolves, never a file, even
+    /// when a path of that spelling exists (it also covers `@C:\x` on Windows).
+    #[test]
+    fn resource_mentions_are_not_read_as_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("remote:file:")).unwrap();
+        std::fs::write(tmp.path().join("remote:file:/guide.md"), "LOCAL FILE").unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "notes").unwrap();
+        let dir = tmp.path().display().to_string();
+        let parts = parts("@remote:file:///guide.md and @notes.txt", &dir);
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        assert_eq!(
+            parts[1]["text"],
+            "<file path=\"notes.txt\">\nnotes\n</file>"
+        );
+        assert!(!format!("{parts:?}").contains("LOCAL FILE"));
     }
 }

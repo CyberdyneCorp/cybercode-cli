@@ -194,9 +194,7 @@ async fn event_loop(
             .map_err(|e| e.to_string())?;
         let actions = tokio::select! {
             Some(Ok(ev)) = keys.next() => terminal_event(app, ev),
-            Some(ev) = server.next() => {
-                if event_is_visible(&app.session.id, &ev) { app.on_server_event(&ev) } else { Vec::new() }
-            }
+            Some(ev) = server.next() => server_event(app, &ev),
             Some(msg) = rx.recv() => {
                 match msg {
                     Ok(Msg::AdmissionStarted(request)) => {app.admissions.register(request); Vec::new()}
@@ -215,6 +213,26 @@ async fn event_loop(
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
     Ok(())
+}
+
+fn server_event(app: &mut App, event: &cyber_client::Event) -> Vec<Action> {
+    if commands_changed(event) {
+        return vec![Action::LoadCommands];
+    }
+    if event_is_visible(&app.session.id, event) {
+        app.on_server_event(event)
+    } else {
+        Vec::new()
+    }
+}
+
+/// MCP prompt commands appear when a server publishes its prompts, change on
+/// `list_changed` and go when it disconnects, so completion refetches `/commands`.
+fn commands_changed(event: &cyber_client::Event) -> bool {
+    matches!(
+        event.kind.as_str(),
+        "mcp.tools.changed.1" | "mcp.status.changed.1"
+    )
 }
 
 fn event_is_visible(session_id: &str, event: &cyber_client::Event) -> bool {
@@ -844,6 +862,50 @@ mod mode_tests {
         assert_eq!(app.session.directory, "/repo/new");
         assert_eq!(app.session.seq, 8);
     }
+    #[test]
+    fn an_mcp_prompt_published_after_startup_becomes_a_completion_choice() {
+        let mut app = app();
+        let choice = |name: &str| crate::model::Choice {
+            key: name.into(),
+            label: name.into(),
+            detail: String::new(),
+        };
+        apply(
+            &mut app,
+            Ok(Msg::Commands {
+                items: vec![choice("review")],
+                bundled_review: false,
+            }),
+            &mut Refresh::default(),
+        );
+        // Other Locations' MCP events carry no session, yet each one refetches.
+        for kind in ["mcp.status.changed.1", "mcp.tools.changed.1"] {
+            let event = cyber_client::Event {
+                kind: kind.into(),
+                data: serde_json::json!({"name":"gh","prompts":["gh:review_pr"]}),
+                seq: None,
+                session_id: None,
+            };
+            assert_eq!(server_event(&mut app, &event), vec![Action::LoadCommands]);
+        }
+        apply(
+            &mut app,
+            Ok(Msg::Commands {
+                items: vec![choice("review"), choice("gh:review_pr")],
+                bundled_review: false,
+            }),
+            &mut Refresh::default(),
+        );
+        for c in "/gh:rev".chars() {
+            app.on_key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
+        let completion = app.completion.as_ref().expect("no completion menu");
+        assert_eq!(completion.items[0].label, "gh:review_pr");
+    }
+
     #[test]
     fn an_agent_catalogue_reply_from_the_previous_directory_is_ignored() {
         let mut app = app();

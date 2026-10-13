@@ -18,6 +18,11 @@ pub enum LiveEvent {
         update: super::McpStatusUpdate,
         seq: i64,
     },
+    /// `mcp.tools.changed.1`: a server's tools or prompts were published or refreshed;
+    /// never durable.
+    McpToolsChanged {
+        update: super::McpToolsChanged,
+    },
     /// Transient hook diagnostics; raw IO is not persisted by the live bus.
     HookNotice {
         session_id: String,

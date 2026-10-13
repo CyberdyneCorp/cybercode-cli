@@ -101,6 +101,20 @@ impl From<&McpConnectionRecord> for McpStatusUpdate {
     }
 }
 
+/// `mcp.tools.changed.1`: a server's tools and prompts were published on (re)connect or
+/// re-listed after its `list_changed` notification. A live observation of the published names, never durable;
+/// invoking them still requires ordinary authorization.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct McpToolsChanged {
+    pub connection_id: String,
+    pub directory: PathBuf,
+    pub name: String,
+    /// Published model-visible tool names.
+    pub tools: Vec<String>,
+    /// Published prompt commands, as `<server>:<prompt>`.
+    pub prompts: Vec<String>,
+}
+
 /// Configured state and retained observations; status does not prove fresh native liveness.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct McpServerStatus {

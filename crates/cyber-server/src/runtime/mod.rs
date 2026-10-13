@@ -54,7 +54,7 @@ mod mcp;
 mod memory;
 pub use mcp::{
     McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
-    McpConnectionStatus, McpServerStatus, McpStatusUpdate, mcp_connections,
+    McpConnectionStatus, McpServerStatus, McpStatusUpdate, McpToolsChanged, mcp_connections,
 };
 pub use memory::{
     MemoryAdmission, MemoryChange, MemoryRecoveryAdmission, MemoryRecoveryIdentity,
@@ -240,7 +240,14 @@ pub struct CommandRequest {
 pub struct CommandPlan {
     pub text: String,
     pub skill: Option<SkillCommand>,
+    /// The admission source: `user`, or [`MCP_PROMPT_SOURCE`] for server-supplied
+    /// prompt text that must never become a user instruction.
+    pub source: &'static str,
 }
+
+/// The source of an MCP prompt command's turn: the text is the server's untrusted
+/// `<mcp_prompt>` frame, so it is not recorded as a task objective or instruction.
+pub const MCP_PROMPT_SOURCE: &str = "mcp_prompt";
 
 /// Why a command could not be planned; nothing is admitted in either case.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -252,6 +259,13 @@ pub enum CommandPlanError {
     /// The host could not run its planning helper.
     #[error("{0}")]
     Unavailable(String),
+    /// The command's arguments do not fit it, such as a missing required MCP prompt
+    /// argument.
+    #[error("{0}")]
+    Invalid(String),
+    /// The MCP server could not produce the prompt; nothing is admitted.
+    #[error("{0}")]
+    McpUnavailable(String),
 }
 
 impl From<String> for CommandPlanError {
@@ -262,7 +276,18 @@ impl From<String> for CommandPlanError {
 
 impl CommandPlan {
     pub fn plain(text: String) -> Self {
-        Self { text, skill: None }
+        Self {
+            text,
+            skill: None,
+            source: "user",
+        }
+    }
+    /// A server prompt's frame: admitted as the user turn, never as an instruction.
+    pub fn mcp_prompt(text: String) -> Self {
+        Self {
+            source: MCP_PROMPT_SOURCE,
+            ..Self::plain(text)
+        }
     }
     pub fn admission(mut self, message_id: Option<String>, delivery: Delivery) -> Admission {
         if let Some(request) = self.skill.as_mut().and_then(|skill| skill.request.as_mut()) {
@@ -273,7 +298,7 @@ impl CommandPlan {
             message_id,
             parts: vec![Content::Text { text: self.text }],
             delivery,
-            source: "user".into(),
+            source: self.source.into(),
             resume: true,
         }
     }
@@ -293,7 +318,7 @@ pub struct Admission {
     pub message_id: Option<String>,
     pub parts: Vec<Content>,
     pub delivery: Delivery,
-    /// `user`, `session`, `channel`, `loop`, `goal`, `workflow` or `hook`.
+    /// `user`, `session`, `channel`, `loop`, `goal`, `workflow`, `hook` or `mcp_prompt`.
     pub source: String,
     /// `false` admits without waking the Session.
     pub resume: bool,
@@ -598,6 +623,14 @@ impl Runtime {
         })
     }
 
+    /// Publish `mcp.tools.changed.1` after a server's tools or prompts were published or
+    /// re-listed.
+    pub fn publish_mcp_tools_changed(&self, update: McpToolsChanged) {
+        self.inner
+            .bus
+            .publish(LiveEvent::McpToolsChanged { update });
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<LiveEvent> {
         self.inner.bus.subscribe()
     }
@@ -793,29 +826,65 @@ impl Runtime {
             .await
     }
 
-    /// UserPromptSubmit for input not yet admitted; an exact retry skips it. It runs
-    /// before the lifecycle guard: every hook runner re-enters that guard to admit its
-    /// receipt, and a shutdown writer queued in between would deadlock both. The
-    /// caller rechecks admission and the exact retry once it holds the guard.
+    /// UserPromptSubmit, then resource mentions, for input not yet admitted; an exact
+    /// retry skips both. They run before the lifecycle guard: every hook runner and
+    /// permission request re-enters that guard to admit its receipt, and a shutdown
+    /// writer queued in between would deadlock both. The caller rechecks admission and
+    /// the exact retry once it holds the guard.
     async fn prompt_hooks(
         &self,
         session_id: &str,
         admission: &Admission,
         message_id: &str,
         digest: &str,
-    ) -> Result<Option<String>, RuntimeError> {
+    ) -> Result<(Option<String>, Vec<String>), RuntimeError> {
         self.inner.ensure_admission_open(session_id)?;
         let handle = self.inner.handle(session_id).await?;
         {
             let state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if existing_receipt(&state, message_id, digest)?.is_some() {
-                return Ok(None);
+                return Ok((None, Vec::new()));
             }
         }
-        self.inner
+        // A denied prompt reads no resources.
+        let context = self
+            .inner
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
-            .await
+            .await?;
+        Ok((context, self.prompt_resources(&handle, admission).await?))
+    }
+
+    /// Attach the prompt's `@server:uri` resource mentions (`mcp` → Resources) under the
+    /// Session's agent, mode and rules; a permission ask reaches the attached client. A
+    /// forked skill command hands its text to a child, so it attaches nothing here.
+    async fn prompt_resources(
+        &self,
+        handle: &Handle,
+        admission: &Admission,
+    ) -> Result<Vec<String>, RuntimeError> {
+        if admission
+            .skill_command
+            .as_ref()
+            .is_some_and(|skill| skill.fork)
+        {
+            return Ok(Vec::new());
+        }
+        self.mention_resources(handle, &admission.parts).await
+    }
+
+    async fn mention_resources(
+        &self,
+        handle: &Handle,
+        parts: &[Content],
+    ) -> Result<Vec<String>, RuntimeError> {
+        let turn = drain::turn_context_for(&*handle.state.lock().await, false);
+        let asker = self.operation_asker(&turn.session_id).await?;
+        Ok(self
+            .inner
+            .tools
+            .resolve_prompt_resources(&turn, parts, asker, self.inner.closed.child_token())
+            .await)
     }
 
     async fn admit_attempt(
@@ -836,12 +905,12 @@ impl Runtime {
         );
         // A denied prompt leaves no durable trace, including a staged revert.
         let prompt = check == PromptCheck::Run;
-        let hook_context = match check {
+        let (hook_context, resources) = match check {
             PromptCheck::Run => {
                 self.prompt_hooks(session_id, &admission, &message_id, &digest)
                     .await?
             }
-            PromptCheck::Checked(context) => context,
+            PromptCheck::Checked(context) => (context, Vec::new()),
         };
         let _admission = self.inner.open().await?;
         self.inner.ensure_admission_open(session_id)?;
@@ -879,6 +948,7 @@ impl Runtime {
                 source: admission.source,
                 digest,
                 hook_context,
+                resources,
             };
             let mut events = Vec::new();
             if let Some(attempt) = attempt {
@@ -911,13 +981,14 @@ impl Runtime {
         parts: Option<Vec<Content>>,
         delivery: Option<Delivery>,
     ) -> Result<(), RuntimeError> {
-        // Edited parts are user input: UserPromptSubmit re-checks them before commit.
-        let hook_context = match &parts {
+        // Edited parts are user input: UserPromptSubmit re-checks them and their
+        // resource mentions are resolved again before commit.
+        let (hook_context, resources) = match &parts {
             Some(parts) => {
                 self.edited_prompt_hooks(session_id, message_id, parts)
                     .await?
             }
-            None => None,
+            None => (None, Vec::new()),
         };
         self.update_input(
             session_id,
@@ -925,7 +996,7 @@ impl Runtime {
             InboxAction::Edited,
             parts,
             delivery,
-            hook_context,
+            (hook_context, resources),
         )
         .await
     }
@@ -935,17 +1006,27 @@ impl Runtime {
         session_id: &str,
         message_id: &str,
         parts: &[Content],
-    ) -> Result<Option<String>, RuntimeError> {
+    ) -> Result<(Option<String>, Vec<String>), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
-        let source = {
+        let (source, fork) = {
             let state = handle.state.lock().await;
             let row = state
                 .input(message_id)
                 .ok_or_else(|| RuntimeError::Invalid(format!("no inbox row {message_id}")))?;
             check_inbox_action(row, InboxAction::Edited)?;
-            row.source.clone()
+            let fork = row.skill_command.as_ref().is_some_and(|skill| skill.fork);
+            (row.source.clone(), fork)
         };
-        self.inner.user_prompt_hooks(&handle, parts, &source).await
+        let context = self
+            .inner
+            .user_prompt_hooks(&handle, parts, &source)
+            .await?;
+        let resources = if fork {
+            Vec::new()
+        } else {
+            self.mention_resources(&handle, parts).await?
+        };
+        Ok((context, resources))
     }
 
     /// Withdraw an unpromoted `queue` or `hold` row; it never reaches the model.
@@ -960,7 +1041,7 @@ impl Runtime {
             InboxAction::Removed,
             None,
             None,
-            None,
+            (None, Vec::new()),
         )
         .await
     }
@@ -991,7 +1072,7 @@ impl Runtime {
             InboxAction::Released,
             None,
             Some(delivery),
-            None,
+            (None, Vec::new()),
         )
         .await?;
         self.inner.start_drain(session_id, false);
@@ -1006,7 +1087,7 @@ impl Runtime {
             InboxAction::Refused,
             None,
             None,
-            None,
+            (None, Vec::new()),
         )
         .await
     }
@@ -1018,7 +1099,7 @@ impl Runtime {
         action: InboxAction,
         parts: Option<Vec<Content>>,
         delivery: Option<Delivery>,
-        hook_context: Option<String>,
+        (hook_context, resources): (Option<String>, Vec<String>),
     ) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
@@ -1038,6 +1119,7 @@ impl Runtime {
             parts,
             delivery,
             hook_context,
+            resources,
         };
         self.inner
             .commit_locked(&mut state, vec![event(INBOX_UPDATED, &payload)])?;

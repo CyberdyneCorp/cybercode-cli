@@ -78,7 +78,7 @@ pub struct ModelInfo {
 pub struct CommandInfo {
     pub name: String,
     pub description: String,
-    /// `builtin`, `skill` or `command`.
+    /// `builtin`, `skill`, `command` or `mcp` (a server prompt, named `<server>:<prompt>`).
     pub source: String,
     pub argument_hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

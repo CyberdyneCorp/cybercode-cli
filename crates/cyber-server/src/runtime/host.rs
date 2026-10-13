@@ -469,6 +469,20 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async move { self.context_observations(turn) })
     }
 
+    /// Resolve `@<server>:<uri>` resource mentions in a user prompt before admission
+    /// (`mcp` → Resources). Each block is either an attached, escaped resource or a
+    /// visible notice; they ride with the admission as untrusted user-turn data. Hosts
+    /// without MCP recognize no mentions.
+    fn resolve_prompt_resources<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _parts: &'a [cyber_llm::Content],
+        _asker: super::Asker,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async { Vec::new() })
+    }
+
     /// Dispatch a runtime lifecycle hook. Hosts without hooks observe nothing and
     /// return no decision; an error means a fail_closed handler was unavailable.
     fn lifecycle_hooks(

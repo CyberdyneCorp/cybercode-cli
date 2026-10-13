@@ -22,6 +22,9 @@ use super::{
 use crate::host::BuiltinHost;
 use crate::tools::ToolError;
 
+mod prompts;
+pub(crate) use prompts::RESERVED_SERVER;
+
 /// Shared connections, plus the stored OAuth credentials remote connections send.
 #[derive(Default)]
 pub(crate) struct Pool(Mutex<State>, OnceLock<Arc<dyn McpCredentialStore>>);
@@ -82,17 +85,43 @@ pub enum McpReconnectError {
 struct Published {
     id: String,
     tools: Vec<DiscoveredTool>,
+    prompts: Vec<super::DiscoveredPrompt>,
     instructions: Option<String>,
+    /// The server advertised the `resources` capability at initialization.
+    resources: bool,
 }
 impl Published {
     fn from_server(server: &OwnedLocalServer) -> Self {
         Self {
             id: server.record().id.clone(),
             tools: server.tools().to_vec(),
+            prompts: server.prompts().to_vec(),
+            resources: server.metadata()["capabilities"]["resources"].is_object(),
             instructions: server.metadata()["instructions"]
                 .as_str()
                 .filter(|text| !text.trim().is_empty())
                 .map(str::to_owned),
+        }
+    }
+    fn changed(
+        &self,
+        name: &str,
+        owner: &OwnedLocalServer,
+    ) -> cyber_server::runtime::McpToolsChanged {
+        cyber_server::runtime::McpToolsChanged {
+            connection_id: self.id.clone(),
+            directory: owner.record().directory.clone(),
+            name: name.into(),
+            tools: self
+                .tools
+                .iter()
+                .map(|tool| tool.exposed_name.clone())
+                .collect(),
+            prompts: self
+                .prompts
+                .iter()
+                .map(|prompt| format!("{name}:{}", prompt.name))
+                .collect(),
         }
     }
     fn instruction_block(&self, name: &str, visible: &[ToolDef]) -> Option<String> {
@@ -164,6 +193,15 @@ impl Entry {
             .is_ok_and(|server| server.as_ref().is_some_and(OwnedLocalServer::logged_out))
     }
 
+    /// Whether the entry is published and `offers` holds for its publication.
+    fn offers(&self, offers: impl FnOnce(&Published) -> bool) -> bool {
+        self.published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(offers)
+    }
+
     fn clear_published(&self) {
         *self
             .published
@@ -231,7 +269,7 @@ fn spawn_entry(
         };
         match result {
             Some(Ok(server)) => {
-                publish_server(&owned, server).await;
+                publish_server(&host, &owned, server).await;
                 start_monitor(&host, &owned, info);
             }
             Some(Err(error)) => cyber_core::log::error(
@@ -325,7 +363,7 @@ async fn reconnect_once(
     };
     match connect_entry(&host, entry, info).await {
         Ok(server) => {
-            publish_server(entry, server).await;
+            publish_server(&host, entry, server).await;
             Attempt::Connected
         }
         Err(error) => {
@@ -348,7 +386,10 @@ fn failed_attempt(error: &LocalLaunchError) -> Attempt {
     }
 }
 
-async fn publish_server(entry: &Entry, server: OwnedLocalServer) {
+/// Publish a (re)connected server, then announce its tools and prompt commands with
+/// `mcp.tools.changed.1`: its `connected` status is committed before publication, so
+/// clients refetch command listings on this event instead.
+async fn publish_server(host: &BuiltinHost, entry: &Entry, server: OwnedLocalServer) {
     entry.lost.store(false, Ordering::Release);
     if let Some(transport) = server.remote_transport() {
         *entry
@@ -356,11 +397,16 @@ async fn publish_server(entry: &Entry, server: OwnedLocalServer) {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = transport;
     }
+    let published = Published::from_server(&server);
+    let changed = published.changed(&entry.name, &server);
     *entry
         .published
         .lock()
-        .unwrap_or_else(PoisonError::into_inner) = Some(Published::from_server(&server));
+        .unwrap_or_else(PoisonError::into_inner) = Some(published);
     *entry.server.lock().await = Some(server);
+    if let Some(runtime) = host.runtime() {
+        runtime.publish_mcp_tools_changed(changed);
+    }
 }
 
 async fn connect_entry(
@@ -436,7 +482,7 @@ async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> Healt
     };
     let lost = match owner.poll_idle(Duration::from_millis(100)).await {
         Ok(update) if update.closed => true,
-        Ok(update) if update.tools_changed => match refresh_catalog(host, entry, owner).await {
+        Ok(update) if update.changed() => match refresh_catalog(host, entry, owner, update).await {
             Ok(()) => false,
             Err(error) => {
                 cyber_core::log::error("mcp", &error, json!({"server":entry.name}));
@@ -482,11 +528,23 @@ async fn check_loss(host: &std::sync::Weak<BuiltinHost>, entry: &Entry) -> Healt
     }
 }
 
+/// Re-list what a `list_changed` notification announced. Resources hold no cache, so
+/// their notification only clears; a tools or prompts refresh unpublishes the entry,
+/// rechecks the approval digest, re-lists and publishes `mcp.tools.changed.1`.
 async fn refresh_catalog(
     host: &std::sync::Weak<BuiltinHost>,
     entry: &Entry,
     owner: &mut OwnedLocalServer,
+    update: super::IdleUpdate,
 ) -> Result<(), String> {
+    if update.resources_changed {
+        owner
+            .clear_resources_changed()
+            .map_err(|error| error.to_string())?;
+    }
+    if !update.tools_changed && !update.prompts_changed {
+        return Ok(());
+    }
     entry.clear_published();
     let host = host.upgrade().ok_or("MCP host disposed")?;
     let directory = &owner.record().directory;
@@ -499,15 +557,37 @@ async fn refresh_catalog(
     if selected.digest != entry.digest {
         return Err("MCP definition changed".into());
     }
-    let refresh = owner.refresh_tools(Duration::from_secs(selected.definition.timeout().into()));
+    let refresh = refresh_lists(
+        owner,
+        update,
+        Duration::from_secs(selected.definition.timeout().into()),
+    );
     tokio::select! {
         result = refresh => result.map_err(|error| error.to_string())?,
         _ = entry.cancel.cancelled() => return Err("MCP refresh interrupted".into()),
     }
+    let published = Published::from_server(owner);
+    if let Some(runtime) = host.runtime() {
+        runtime.publish_mcp_tools_changed(published.changed(&entry.name, owner));
+    }
     *entry
         .published
         .lock()
-        .unwrap_or_else(PoisonError::into_inner) = Some(Published::from_server(owner));
+        .unwrap_or_else(PoisonError::into_inner) = Some(published);
+    Ok(())
+}
+
+async fn refresh_lists(
+    owner: &mut OwnedLocalServer,
+    update: super::IdleUpdate,
+    timeout: Duration,
+) -> Result<(), super::McpError> {
+    if update.tools_changed {
+        owner.refresh_tools(timeout).await?;
+    }
+    if update.prompts_changed {
+        owner.refresh_prompts(timeout).await?;
+    }
     Ok(())
 }
 
@@ -1075,20 +1155,7 @@ impl BuiltinHost {
             _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
         };
         let sampling_settlement = sampler.finish().await;
-        if owner.unresolved() {
-            entry.lost.store(true, Ordering::Release);
-            *entry
-                .published
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) = None;
-            if let Err(error) = owner.shutdown().await {
-                cyber_core::log::error(
-                    "mcp",
-                    &error.diagnostic,
-                    json!({"server":entry.name,"acknowledged":error.acknowledged}),
-                );
-            }
-        }
+        end_unresolved(entry, owner).await;
         inv.asker
             .cancel_questions()
             .await
@@ -1096,6 +1163,143 @@ impl BuiltinHost {
         drop(server);
         sampling_settlement.map_err(|error| ToolError::Failed(error.into()))?;
         result
+    }
+
+    /// Whether the pool is shut down or `directory` is closing, so nothing there connects.
+    pub(crate) fn mcp_location_closed(&self, directory: &Path) -> bool {
+        let Ok(directory) = directory.canonicalize() else {
+            return true;
+        };
+        let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+        pool.closed || pool.closing.contains(&directory)
+    }
+
+    /// Servers in `directory` whose published, freshly authorized connection advertised
+    /// `resources`.
+    pub(crate) fn mcp_resource_servers(&self, directory: &Path) -> Vec<String> {
+        let Ok(directory) = directory.canonicalize() else {
+            return Vec::new();
+        };
+        let names: Vec<String> = {
+            let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+            pool.entries
+                .keys()
+                .filter(|(location, _)| location == &directory)
+                .map(|(_, name)| name.clone())
+                .collect()
+        };
+        names
+            .into_iter()
+            .filter(|name| self.resource_entry(&directory, name).is_ok())
+            .collect()
+    }
+
+    /// One resource RPC on a server's shared connection. Authorization is looked up
+    /// fresh before and after taking the connection, the configured call timeout bounds
+    /// it, and a request left unresolved ends the connection as loss. The RPC runs
+    /// [`detached`], so a caller dropped mid-request still settles it.
+    pub(crate) async fn mcp_resource(
+        &self,
+        directory: &Path,
+        server: &str,
+        request: super::ResourceRequest<'_>,
+        cancel: &CancellationToken,
+    ) -> Result<super::ResourceReply, ToolError> {
+        let host = self
+            .weak
+            .upgrade()
+            .ok_or_else(|| unavailable_resources(server))?;
+        let (directory, server) = (directory.to_path_buf(), server.to_owned());
+        let request = super::resources::OwnedResourceRequest::of(request);
+        let cancel = cancel.clone();
+        detached(async move {
+            host.settled_resource(&directory, &server, request.as_request(), &cancel)
+                .await
+        })
+        .await
+    }
+
+    async fn settled_resource(
+        &self,
+        directory: &Path,
+        server: &str,
+        request: super::ResourceRequest<'_>,
+        cancel: &CancellationToken,
+    ) -> Result<super::ResourceReply, ToolError> {
+        let entry = self.resource_entry(directory, server)?;
+        let mut guard = tokio::select! {
+            guard = entry.server.lock() => guard,
+            _ = cancel.cancelled() => return Err(ToolError::Aborted),
+            _ = entry.cancel.cancelled() => return Err(ToolError::Aborted),
+        };
+        if !Arc::ptr_eq(&self.resource_entry(directory, server)?, &entry) {
+            return Err(unavailable_resources(server));
+        }
+        let owner = guard
+            .as_mut()
+            .ok_or_else(|| unavailable_resources(server))?;
+        let timeout = self.mcp_call_timeout(directory, server)?;
+        let result = tokio::select! {
+            result = owner.resource(request, timeout) => result.map_err(resource_error),
+            _ = cancel.cancelled() => Err(ToolError::Aborted),
+            _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
+        };
+        end_unresolved(&entry, owner).await;
+        result
+    }
+
+    fn mcp_call_timeout(&self, directory: &Path, server: &str) -> Result<Duration, ToolError> {
+        let config = self
+            .hook_config
+            .get()
+            .ok_or_else(|| ToolError::Failed("MCP resolver unavailable".into()))?;
+        let resolved = (config.resolve)(directory).map_err(ToolError::Failed)?;
+        let settings = McpSettings::from_config(&resolved.value).map_err(ToolError::Failed)?;
+        Ok(Duration::from_secs(settings.call_timeout(server).into()))
+    }
+
+    /// The live entry for `server` when it is published with `resources`, its Location is
+    /// open and its definition is still authorized with the digest it started with.
+    fn resource_entry(&self, directory: &Path, server: &str) -> Result<Arc<Entry>, ToolError> {
+        let directory = directory
+            .canonicalize()
+            .map_err(|_| unavailable_resources(server))?;
+        let config = self
+            .hook_config
+            .get()
+            .ok_or_else(|| unavailable_resources(server))?;
+        let resolved = (config.resolve)(&directory).map_err(ToolError::Failed)?;
+        self.live_entry(&directory, &resolved, server)
+            .filter(|entry| entry.offers(|published| published.resources))
+            .ok_or_else(|| unavailable_resources(server))
+    }
+
+    /// The entry for `server` in the canonical `directory` when its Location is open, its
+    /// connection is published and not lost, and its definition is still authorized with
+    /// the digest it started with.
+    fn live_entry(
+        &self,
+        directory: &Path,
+        resolved: &cyber_core::config::Resolved,
+        server: &str,
+    ) -> Option<Arc<Entry>> {
+        let config = self.hook_config.get()?;
+        let entry = {
+            let pool = self.mcp.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if pool.closed || pool.closing.contains(directory) {
+                return None;
+            }
+            pool.entries
+                .get(&(directory.to_path_buf(), server.to_string()))
+                .cloned()?
+        };
+        let authorized = authorize_server(resolved, &config.trust, directory, server)
+            .is_ok_and(|selection| selection.digest == entry.digest);
+        let live = authorized
+            && entry.offers(|_| true)
+            && !entry.cancel.is_cancelled()
+            && !entry.lost.load(Ordering::Acquire);
+        live.then_some(entry)
     }
 
     pub(super) fn authorize_mcp_sampling(&self, inv: &Invocation) -> Result<(), ToolError> {
@@ -1139,6 +1343,52 @@ impl BuiltinHost {
         }
         Err(stale())
     }
+}
+
+/// Run a shared-connection RPC in its own task. A caller dropped mid-request (a
+/// disconnected HTTP client, an interrupted `cyber exec`) cannot leave the request
+/// unsettled: the task still awaits the reply, timeout or cancellation and ends an
+/// unresolved request as loss before releasing the connection.
+async fn detached<T: Send + 'static>(
+    work: impl std::future::Future<Output = Result<T, ToolError>> + Send + 'static,
+) -> Result<T, ToolError> {
+    tokio::spawn(work).await.unwrap_or_else(|error| {
+        cyber_core::log::error("mcp", &error.to_string(), json!({}));
+        Err(ToolError::Failed("MCP request task failed".into()))
+    })
+}
+
+/// End a connection whose request is unresolved: unpublish it as lost and shut it down.
+async fn end_unresolved(entry: &Entry, owner: &mut OwnedLocalServer) {
+    if !owner.unresolved() {
+        return;
+    }
+    entry.lost.store(true, Ordering::Release);
+    entry.clear_published();
+    if let Err(error) = owner.shutdown().await {
+        cyber_core::log::error(
+            "mcp",
+            &error.diagnostic,
+            json!({"server":entry.name,"acknowledged":error.acknowledged}),
+        );
+    }
+}
+
+fn unavailable_resources(server: &str) -> ToolError {
+    ToolError::Failed(format!(
+        "MCP server {server} is not connected or offers no resources"
+    ))
+}
+
+/// Errors carry only typed facts: an oversized remote body is the transport limit, and a
+/// server rejection reports its JSON-RPC code, never its text.
+fn resource_error(error: super::McpError) -> ToolError {
+    ToolError::Failed(match error {
+        super::McpError::Http(super::HttpFailure::Oversized) => {
+            "MCP resource exceeds transport limit (1 MiB response)".into()
+        }
+        error => error.to_string(),
+    })
 }
 
 fn status_problem(
@@ -1276,7 +1526,9 @@ mod tests {
         let mut published = Published {
             id: "mcs_original".into(),
             tools: vec![tool.clone()],
+            prompts: Vec::new(),
             instructions: Some("guide </server> & <mcp_instructions>".into()),
+            resources: false,
         };
         let mut visible = ToolDef {
             scope: cyber_server::runtime::ToolScope::Mcp,

@@ -249,6 +249,30 @@ impl ToolHost for Tools {
         self.defs.lock().unwrap().clone()
     }
 
+    /// A prompt mentioning `@res:` gets one attachment naming the prompt it was resolved for.
+    fn resolve_prompt_resources<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        parts: &'a [cyber_llm::Content],
+        _asker: cyber_server::runtime::Asker,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Vec<String>> {
+        let text: String = parts
+            .iter()
+            .filter_map(|part| match part {
+                cyber_llm::Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        Box::pin(async move {
+            if text.contains("@res:") {
+                vec![format!("[attached for: {text}]")]
+            } else {
+                Vec::new()
+            }
+        })
+    }
+
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
         let behavior = self.behavior.lock().unwrap().get(&call.name).cloned();
         let requires_confirmation = matches!(&behavior, Some(Behavior::AskConfirm(_)));

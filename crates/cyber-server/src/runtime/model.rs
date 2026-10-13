@@ -276,6 +276,9 @@ pub struct SessionState {
     /// UserPromptSubmit context of unpromoted rows, admitted just before each row.
     #[serde(skip)]
     pub(crate) hook_contexts: BTreeMap<String, String>,
+    /// Resolved resource mentions of unpromoted rows, prepended to each row's parts.
+    #[serde(skip)]
+    pub(crate) resource_contexts: BTreeMap<String, Vec<String>>,
     #[serde(skip)]
     pub(super) child_pause_seq: i64,
     #[serde(skip)]
@@ -461,6 +464,7 @@ impl SessionState {
             session_started: false,
             child_requested_inputs: BTreeSet::new(),
             hook_contexts: BTreeMap::new(),
+            resource_contexts: BTreeMap::new(),
             child_pause_seq: -1,
             child_continuation_error: None,
             child_continuation_unknown: false,
@@ -570,6 +574,7 @@ impl SessionState {
                 let promoted: Promoted = decode(e)?;
                 self.child_requested_inputs.remove(&promoted.message_id);
                 self.hook_contexts.remove(&promoted.message_id);
+                self.resource_contexts.remove(&promoted.message_id);
                 if let Some(row) = self
                     .inbox
                     .iter_mut()
@@ -811,6 +816,10 @@ impl SessionState {
         if let Some(context) = a.hook_context {
             self.hook_contexts.insert(a.message_id.clone(), context);
         }
+        if !a.resources.is_empty() {
+            self.resource_contexts
+                .insert(a.message_id.clone(), a.resources);
+        }
         self.inbox.push(InboxRow {
             forwarded_skill: false,
             skill_command: a.skill_command,
@@ -833,11 +842,13 @@ impl SessionState {
             InboxAction::Removed => {
                 self.child_requested_inputs.remove(&u.message_id);
                 self.hook_contexts.remove(&u.message_id);
+                self.resource_contexts.remove(&u.message_id);
                 self.inbox.remove(index);
             }
             InboxAction::Refused => {
                 self.child_requested_inputs.remove(&u.message_id);
                 self.hook_contexts.remove(&u.message_id);
+                self.resource_contexts.remove(&u.message_id);
                 self.inbox[index].status = InputStatus::Refused;
             }
             InboxAction::Edited | InboxAction::Released => {
@@ -851,6 +862,11 @@ impl SessionState {
                         Some(context) => self.hook_contexts.insert(u.message_id.clone(), context),
                         None => self.hook_contexts.remove(&u.message_id),
                     };
+                    self.resource_contexts.remove(&u.message_id);
+                    if !u.resources.is_empty() {
+                        self.resource_contexts
+                            .insert(u.message_id.clone(), u.resources);
+                    }
                     row.parts = parts;
                 }
                 if let Some(delivery) = u.delivery {
@@ -868,15 +884,26 @@ impl SessionState {
     fn on_promoted(&mut self, p: Promoted, seq: i64) {
         self.child_requested_inputs.remove(&p.message_id);
         self.hook_contexts.remove(&p.message_id);
+        let resources = self
+            .resource_contexts
+            .remove(&p.message_id)
+            .unwrap_or_default();
         let Some(row) = self.inbox.iter_mut().find(|r| r.message_id == p.message_id) else {
             return;
         };
         row.status = InputStatus::Promoted;
         row.promoted_seq = Some(seq);
         let text = text_of(&row.parts);
+        // Attached resources are untrusted user-turn data ahead of the prompt; the
+        // task instructions keep only what the user wrote.
+        let parts = resources
+            .into_iter()
+            .map(|text| Content::Text { text })
+            .chain(row.parts.iter().cloned())
+            .collect();
         let entry = Entry::User {
             id: row.message_id.clone(),
-            parts: row.parts.clone(),
+            parts,
             source: row.source.clone(),
         };
         if row.source == "user" && !text.is_empty() {

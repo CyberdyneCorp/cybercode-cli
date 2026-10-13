@@ -4535,7 +4535,7 @@
           },
           "source": {
             "type": "string",
-            "description": "`builtin`, `skill` or `command`."
+            "description": "`builtin`, `skill`, `command` or `mcp` (a server prompt, named `<server>:<prompt>`)."
           },
           "argument_hint": {
             "type": [
@@ -4685,6 +4685,42 @@
           "_tag",
           "message"
         ]
+      },
+      "McpToolsChanged": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Published model-visible tool names."
+          },
+          "prompts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Published prompt commands, as `<server>:<prompt>`."
+          }
+        },
+        "required": [
+          "connection_id",
+          "directory",
+          "name",
+          "tools",
+          "prompts"
+        ],
+        "description": "`mcp.tools.changed.1`: a server's tools and prompts were published on (re)connect or\nre-listed after its `list_changed` notification. A live observation of the published names, never durable;\ninvoking them still requires ordinary authorization."
       }
     }
   },

@@ -110,6 +110,15 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
         result.location = Some(update.directory.display().to_string());
         return result;
     }
+    if let LiveEvent::McpToolsChanged { update } = event {
+        return EventEnvelope {
+            id: format!("live:{counter}"),
+            kind: "mcp.tools.changed.1".into(),
+            data: serde_json::to_value(update).unwrap_or_default(),
+            location: Some(update.directory.display().to_string()),
+            durable: None,
+        };
+    }
     if let LiveEvent::Durable {
         session_id,
         seq,
@@ -145,7 +154,9 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
 
 fn session_of(event: &LiveEvent) -> Option<&str> {
     match event {
-        LiveEvent::McpStatusChanged { .. } | LiveEvent::MemoryUpdated { .. } => None,
+        LiveEvent::McpStatusChanged { .. }
+        | LiveEvent::McpToolsChanged { .. }
+        | LiveEvent::MemoryUpdated { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }
         | LiveEvent::RequestRouted { session_id, .. }
@@ -250,6 +261,7 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
                 LiveEvent::McpStatusChanged { update, .. } => {
                     update.directory.display().to_string()
                 }
+                LiveEvent::McpToolsChanged { update } => update.directory.display().to_string(),
                 _ => {
                     let Some(session) = session_of(&event) else {
                         continue;

@@ -95,6 +95,7 @@ pub struct LocalServer {
     shutdown_acknowledged: bool,
     authority: ServerAuthority,
     catalog: Vec<super::DiscoveredTool>,
+    prompts: Vec<super::DiscoveredPrompt>,
     metadata: Value,
     aliases: super::discovery::ToolAliases,
     /// A remote server's credential layers; `None` for a local server.
@@ -109,10 +110,40 @@ enum Transport {
 }
 
 impl Transport {
-    fn clear_tools_changed(&mut self) {
+    fn clear_changed(&mut self, change: super::ListChange) {
         match self {
-            Self::Stdio(connection) => connection.clear_tools_changed(),
-            Self::Http(connection) => connection.clear_tools_changed(),
+            Self::Stdio(connection) => connection.clear_changed(change),
+            Self::Http(connection) => connection.clear_changed(change),
+        }
+    }
+
+    fn take_prompts(&mut self) -> Vec<super::DiscoveredPrompt> {
+        match self {
+            Self::Stdio(connection) => connection.take_prompts(),
+            Self::Http(connection) => connection.take_prompts(),
+        }
+    }
+
+    async fn discover_prompts(
+        &mut self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<Vec<super::DiscoveredPrompt>, McpError> {
+        match self {
+            Self::Stdio(connection) => connection.discover_prompts(name, timeout).await,
+            Self::Http(connection) => connection.discover_prompts(name, timeout).await,
+        }
+    }
+
+    async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: &serde_json::Map<String, Value>,
+        timeout: Duration,
+    ) -> Result<Vec<super::PromptMessage>, McpError> {
+        match self {
+            Self::Stdio(connection) => connection.get_prompt(name, arguments, timeout).await,
+            Self::Http(connection) => connection.get_prompt(name, arguments, timeout).await,
         }
     }
 
@@ -184,6 +215,17 @@ impl Transport {
         }
     }
 
+    async fn resource(
+        &mut self,
+        request: super::ResourceRequest<'_>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        match self {
+            Self::Stdio(connection) => connection.resource(request, timeout).await,
+            Self::Http(connection) => connection.resource(request, timeout).await,
+        }
+    }
+
     async fn cancel_pending(&mut self, timeout: Duration) -> Result<(), McpError> {
         match self {
             Self::Stdio(connection) => connection.cancel_pending(timeout).await,
@@ -220,6 +262,10 @@ impl LocalServer {
         &self.catalog
     }
 
+    pub fn prompts(&self) -> &[super::DiscoveredPrompt] {
+        &self.prompts
+    }
+
     pub fn metadata(&self) -> &Value {
         &self.metadata
     }
@@ -235,7 +281,7 @@ impl LocalServer {
     pub async fn refresh_tools(&mut self, timeout: Duration) -> Result<(), McpError> {
         self.authorize()?;
         self.refresh_headers().await?;
-        self.connection.clear_tools_changed();
+        self.connection.clear_changed(super::ListChange::Tools);
         self.catalog.clear();
         self.catalog = self
             .connection
@@ -243,6 +289,42 @@ impl LocalServer {
             .await?;
         self.aliases.retain(&self.authority.name, &mut self.catalog);
         Ok(())
+    }
+
+    /// Re-list prompts after `notifications/prompts/list_changed`; a failure leaves none.
+    pub async fn refresh_prompts(&mut self, timeout: Duration) -> Result<(), McpError> {
+        self.authorize()?;
+        self.refresh_headers().await?;
+        self.connection.clear_changed(super::ListChange::Prompts);
+        self.prompts.clear();
+        self.prompts = self
+            .connection
+            .discover_prompts(&self.authority.name, timeout)
+            .await?;
+        Ok(())
+    }
+
+    /// Resources hold no cache: a `resources/list_changed` notification only clears.
+    pub fn clear_resources_changed(&mut self) {
+        self.connection.clear_changed(super::ListChange::Resources);
+    }
+
+    /// `prompts/get` for a prompt in the connected catalog, under the same fresh
+    /// authority and credential refresh as tool calls.
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: &serde_json::Map<String, Value>,
+        timeout: Duration,
+    ) -> Result<Vec<super::PromptMessage>, McpError> {
+        self.authorize()?;
+        self.refresh_headers().await?;
+        if !self.prompts.iter().any(|prompt| prompt.name == name) {
+            return Err(McpError::Protocol(
+                "MCP prompt is absent from connected server catalog",
+            ));
+        }
+        self.connection.get_prompt(name, arguments, timeout).await
     }
 
     pub async fn call_exposed_tool(
@@ -375,6 +457,17 @@ impl LocalServer {
             .await
     }
 
+    /// A resource RPC under the same fresh authority and credential refresh as tool calls.
+    pub async fn resource(
+        &mut self,
+        request: super::ResourceRequest<'_>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        self.authorize()?;
+        self.refresh_headers().await?;
+        self.connection.resource(request, timeout).await
+    }
+
     pub async fn cancel_pending(&mut self, timeout: Duration) -> Result<(), McpError> {
         self.connection.cancel_pending(timeout).await
     }
@@ -493,7 +586,7 @@ impl LocalLauncher<'_> {
 
     fn server(&self, name: &str, tools: &McpToolFilter, connected: Connected) -> LocalServer {
         let Connected {
-            connection,
+            mut connection,
             mut catalog,
             resources,
             auth,
@@ -502,6 +595,7 @@ impl LocalLauncher<'_> {
         aliases.retain(name, &mut catalog);
         LocalServer {
             aliases,
+            prompts: connection.take_prompts(),
             metadata: connection.metadata().cloned().unwrap_or(Value::Null),
             catalog,
             connection,

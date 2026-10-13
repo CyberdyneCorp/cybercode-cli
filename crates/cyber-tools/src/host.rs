@@ -1,4 +1,5 @@
 //! The built-in tool host (`tool-registry`, `builtin-tools`, `permissions-modes`).
+mod command_mcp;
 mod command_skills;
 mod path_skills;
 mod review;
@@ -631,6 +632,16 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.runtime_lifecycle_hooks(event, cancel))
     }
 
+    fn resolve_prompt_resources<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        parts: &'a [cyber_llm::Content],
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(self.resolve_mentions(turn, parts, asker, cancel))
+    }
+
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let lsp = async {
@@ -757,6 +768,7 @@ impl ToolHost for BuiltinHost {
             return Vec::new();
         };
         let mode = Mode::parse(&turn.mode);
+        let resources = std::cell::OnceCell::new();
         let mut tools: Vec<_> = self
             .tools
             .iter()
@@ -778,6 +790,10 @@ impl ToolHost for BuiltinHost {
             .filter(|d| {
                 d.spec.name != "powershell"
                     || tools::powershell::installed(Path::new(&turn.directory)).is_some()
+            })
+            .filter(|d| {
+                !tools::mcp::RESOURCE_TOOLS.contains(&d.spec.name.as_str())
+                    || *resources.get_or_init(|| self.mcp_resources_offered(turn, &rules))
             })
             .collect();
         tools.extend(
@@ -1113,6 +1129,26 @@ fn profile_allows_tool(profile: &cyber_core::config::AgentProfile, name: &str) -
             .allow
             .as_ref()
             .is_none_or(|allow| matches(allow))
+}
+
+impl BuiltinHost {
+    /// Some freshly authorized, connected server in the Turn's Location advertises
+    /// resources and is not wholly denied by a `read` rule for `mcp:<server>:*`.
+    fn mcp_resources_offered(&self, turn: &TurnContext, rules: &[permissions::Rule]) -> bool {
+        self.mcp_resource_servers(Path::new(&turn.directory))
+            .iter()
+            .any(|server| !resource_server_denied(rules, server))
+    }
+}
+
+/// The deciding `read` rule for `mcp:<server>:*` denies and covers every URI of it.
+fn resource_server_denied(rules: &[permissions::Rule], server: &str) -> bool {
+    let prefix = format!("mcp:{server}:");
+    matches!(
+        permissions::evaluate(rules, "read", &format!("{prefix}*")),
+        (Effect::Deny, Some(rule))
+            if rule.resource.ends_with('*') && cyber_core::wildcard::matches(&rule.resource, &prefix)
+    )
 }
 
 /// Hidden when the last rule matching the action with resource `*` denies it.

@@ -224,6 +224,56 @@ async fn queued_input_can_be_edited_or_taken_back_but_steer_cannot() {
     ));
 }
 
+/// Resource mentions resolve at admission, are re-resolved when the parts are edited,
+/// survive a restart and reach the model as user-turn data ahead of the prompt.
+#[tokio::test]
+async fn resource_mentions_attach_before_the_prompt_and_follow_edits() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("ok")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    let mut q = admit("read @res:file:///a", Delivery::Queue);
+    q.resume = false;
+    let queued = h.runtime.admit(&id, q).await.unwrap();
+    h.runtime
+        .edit_input(
+            &id,
+            &queued.message_id,
+            Some(vec![Content::Text {
+                text: "read @res:file:///b".into(),
+            }]),
+            None,
+        )
+        .await
+        .unwrap();
+    let restarted = h.restart();
+    restarted.wake(&id).await.unwrap();
+    restarted.wait_idle(&id).await;
+    let state = restarted.state(&id).await.unwrap();
+    let Entry::User { parts, .. } = &state.entries[0] else {
+        panic!("{:?}", state.entries);
+    };
+    assert_eq!(
+        parts,
+        &[
+            Content::Text {
+                text: "[attached for: read @res:file:///b]".into()
+            },
+            Content::Text {
+                text: "read @res:file:///b".into()
+            }
+        ]
+    );
+    // The edited row itself keeps only what the user wrote.
+    assert_eq!(state.inbox[0].parts.len(), 1);
+    let all = transcript(&h.models.requests("test/main")[0]);
+    assert!(!all.contains("attached for: read @res:file:///a"), "{all}");
+    let attached = all.find("[attached for: read @res:file:///b]").unwrap();
+    let prompt = all.rfind("read @res:file:///b").unwrap();
+    assert!(attached < prompt, "{all}");
+}
+
 #[tokio::test]
 async fn interrupt_during_a_mutation_records_an_unknown_outcome_and_pauses_mutations() {
     let h = Harness::new(Setup {

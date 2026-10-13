@@ -146,6 +146,10 @@ pub struct Admitted {
     /// UserPromptSubmit context, committed as a system message when the row is promoted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook_context: Option<String>,
+    /// Attached `@server:uri` resources and notices, prepended to the user row as
+    /// untrusted user-turn data when it is promoted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +170,9 @@ pub struct InboxUpdated {
     /// UserPromptSubmit context for edited parts; replaces any earlier context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook_context: Option<String>,
+    /// Resource mentions resolved for edited parts; replace any earlier attachments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

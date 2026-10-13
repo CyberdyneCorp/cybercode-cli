@@ -46,7 +46,11 @@ impl BuiltinHost {
         }
         let location = Path::new(&turn.directory);
         let (skill, registry) = self.command_sources(location, name);
+        // Precedence: skills, then MCP prompts, then configured commands.
         let Some(skill) = skill else {
+            if let Some(plan) = self.mcp_prompt_plan(turn, name, arguments).await? {
+                return Ok(Some(plan));
+            }
             return Ok(registry
                 .entries
                 .get(name)
@@ -58,21 +62,7 @@ impl BuiltinHost {
             }
             cyber_llm::catalog::ModelRef::parse(model).map_err(|error| error.to_string())?;
         }
-        let inv = Invocation {
-            registration: None,
-            session_id: turn.session_id.clone(),
-            directory: turn.directory.clone(),
-            agent: turn.agent.clone(),
-            mode: turn.mode.clone(),
-            message_id: String::new(),
-            call_id: cyber_core::ids::new_id("call"),
-            name: "skill".into(),
-            input: json!({"name":skill.name}),
-            attempt: 1,
-            operation_key: cyber_core::ids::new_id("op"),
-            asker: cyber_server::runtime::Asker::detached(),
-            rules: turn.rules.clone(),
-        };
+        let inv = command_invocation(turn, "skill", json!({"name":skill.name}));
         let policy = self.policy(&inv).await?;
         let request = Request {
             tool: Some("skill".into()),
@@ -100,6 +90,7 @@ impl BuiltinHost {
         };
         Ok(Some(CommandPlan {
             text,
+            source: "user",
             skill: Some(SkillCommand {
                 agent: skill.agent.clone(),
                 fork: skill.context == cyber_core::skills::SkillContext::Fork,
@@ -140,5 +131,28 @@ impl BuiltinHost {
             hook_decision: None,
         };
         super::review::target_block(&ctx, &reader, arguments).await
+    }
+}
+
+/// The detached invocation a user command's permission checks run as.
+pub(super) fn command_invocation(
+    turn: &TurnContext,
+    name: &str,
+    input: serde_json::Value,
+) -> Invocation {
+    Invocation {
+        registration: None,
+        session_id: turn.session_id.clone(),
+        directory: turn.directory.clone(),
+        agent: turn.agent.clone(),
+        mode: turn.mode.clone(),
+        message_id: String::new(),
+        call_id: cyber_core::ids::new_id("call"),
+        name: name.into(),
+        input,
+        attempt: 1,
+        operation_key: cyber_core::ids::new_id("op"),
+        asker: cyber_server::runtime::Asker::detached(),
+        rules: turn.rules.clone(),
     }
 }

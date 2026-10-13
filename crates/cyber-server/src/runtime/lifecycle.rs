@@ -86,6 +86,7 @@ impl Inner {
             delivery: Delivery::Queue,
             source: "hook".into(),
             hook_context: None,
+            resources: Vec::new(),
         };
         self.commit(handle, vec![event(ADMITTED, &admitted)])
             .await?;

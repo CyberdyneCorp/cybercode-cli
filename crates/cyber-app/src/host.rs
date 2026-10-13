@@ -149,6 +149,17 @@ impl ToolHost for AppHost {
         self.builtin.lifecycle_hooks(event, cancel)
     }
 
+    fn resolve_prompt_resources<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        parts: &'a [cyber_llm::Content],
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Vec<String>> {
+        self.builtin
+            .resolve_prompt_resources(turn, parts, asker, cancel)
+    }
+
     fn reconcile(&self, directory: &str, call: &CallState) -> BoxFuture<'_, Reconciliation> {
         self.builtin.reconcile(directory, call)
     }

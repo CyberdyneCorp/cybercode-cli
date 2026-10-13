@@ -544,8 +544,26 @@ impl Services for AppServices {
                 provenance,
             }
         });
+        // MCP prompts (`/<server>:<prompt>`) replace project commands and yield to skills.
+        let prompts = self
+            .host
+            .mcp_prompt_commands(location)
+            .into_iter()
+            .map(|command| CommandInfo {
+                name: command.name(),
+                argument_hint: command.argument_hint(),
+                description: command.prompt.description,
+                source: "mcp".into(),
+                namespace: None,
+                provenance: None,
+            });
         let mut result = std::collections::BTreeMap::new();
-        for mut entry in builtin.chain(bundled).chain(configured).chain(skills) {
+        for mut entry in builtin
+            .chain(bundled)
+            .chain(configured)
+            .chain(prompts)
+            .chain(skills)
+        {
             if entry.source != "builtin" {
                 entry.name = cyber_core::commands::invocation_name(&entry.name);
             }

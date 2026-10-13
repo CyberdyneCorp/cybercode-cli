@@ -81,6 +81,13 @@ impl OwnedLocalServer {
             self.server.tools()
         }
     }
+    pub fn prompts(&self) -> &[super::DiscoveredPrompt] {
+        if self.closing {
+            &[]
+        } else {
+            self.server.prompts()
+        }
+    }
     pub fn metadata(&self) -> &Value {
         self.server.metadata()
     }
@@ -143,9 +150,39 @@ impl OwnedLocalServer {
         self.server.call_tool(name, arguments, timeout).await
     }
 
+    pub async fn resource(
+        &mut self,
+        request: super::ResourceRequest<'_>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        self.running()?;
+        self.server.resource(request, timeout).await
+    }
+
     pub async fn refresh_tools(&mut self, timeout: Duration) -> Result<(), McpError> {
         self.running()?;
         self.server.refresh_tools(timeout).await
+    }
+
+    pub async fn refresh_prompts(&mut self, timeout: Duration) -> Result<(), McpError> {
+        self.running()?;
+        self.server.refresh_prompts(timeout).await
+    }
+
+    pub fn clear_resources_changed(&mut self) -> Result<(), McpError> {
+        self.running()?;
+        self.server.clear_resources_changed();
+        Ok(())
+    }
+
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: &serde_json::Map<String, Value>,
+        timeout: Duration,
+    ) -> Result<Vec<super::PromptMessage>, McpError> {
+        self.running()?;
+        self.server.get_prompt(name, arguments, timeout).await
     }
 
     fn running(&self) -> Result<(), McpError> {

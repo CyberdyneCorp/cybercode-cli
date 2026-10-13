@@ -44,6 +44,8 @@ pub struct StdioConnection {
     stderr: Option<JoinHandle<std::io::Result<StderrCapture>>>,
     #[cfg(unix)]
     grace_deadline: Option<tokio::time::Instant>,
+    /// Prompts discovered at startup, until the owner takes them.
+    prompts: Vec<super::DiscoveredPrompt>,
 }
 
 /// Immutable startup capabilities and optional ownership cancellation.
@@ -132,13 +134,7 @@ impl StdioConnection {
         let discovered = tokio::select! {
             biased;
             _ = startup_cancelled(cancellation.as_ref()) => Err(McpError::Protocol("MCP startup cancelled")),
-                result = connection
-            .discover_tools(
-                name,
-                filter,
-                deadline.saturating_duration_since(tokio::time::Instant::now()),
-            )
-            => result,
+            result = connection.discover(name, filter, deadline) => result,
         };
         match discovered {
             Ok(tools) => Ok((connection, tools)),
@@ -183,6 +179,7 @@ impl StdioConnection {
             stderr: None,
             #[cfg(unix)]
             grace_deadline: None,
+            prompts: Vec::new(),
         };
         let initialized = tokio::select! {
             biased;
@@ -242,25 +239,41 @@ impl StdioConnection {
     }
 
     pub async fn poll_idle(&mut self, timeout: Duration) -> Result<super::IdleUpdate, McpError> {
+        let closed = super::IdleUpdate {
+            closed: true,
+            ..Default::default()
+        };
         if self.process.leader_exited()? {
-            return Ok(super::IdleUpdate {
-                closed: true,
-                tools_changed: false,
-            });
+            return Ok(closed);
         }
         match self.client.as_mut() {
             Some(client) => client.poll_idle(timeout).await,
-            None => Ok(super::IdleUpdate {
-                closed: true,
-                tools_changed: false,
-            }),
+            None => Ok(closed),
         }
     }
 
-    pub fn clear_tools_changed(&mut self) {
+    pub fn clear_changed(&mut self, change: super::ListChange) {
         if let Some(client) = self.client.as_mut() {
-            client.clear_tools_changed();
+            client.clear_changed(change);
         }
+    }
+
+    /// Startup discovery: tools, then prompts when advertised, inside one deadline.
+    async fn discover(
+        &mut self,
+        name: &str,
+        filter: &cyber_core::config::McpToolFilter,
+        deadline: tokio::time::Instant,
+    ) -> Result<Vec<super::DiscoveredTool>, McpError> {
+        let remaining = || deadline.saturating_duration_since(tokio::time::Instant::now());
+        let tools = self.discover_tools(name, filter, remaining()).await?;
+        self.prompts = self.discover_prompts(name, remaining()).await?;
+        Ok(tools)
+    }
+
+    /// The prompts discovered at startup; later calls return none.
+    pub fn take_prompts(&mut self) -> Vec<super::DiscoveredPrompt> {
+        std::mem::take(&mut self.prompts)
     }
 
     pub async fn disconnected(&mut self) -> Result<bool, McpError> {
@@ -294,6 +307,34 @@ impl StdioConnection {
         client.discover_tools(name, filter, timeout).await
     }
 
+    /// Prompts are optional: a rejected or invalid listing leaves none and keeps the
+    /// connection (see [`super::prompts::optional`]).
+    pub async fn discover_prompts(
+        &mut self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<Vec<super::DiscoveredPrompt>, McpError> {
+        let client = self
+            .client
+            .as_mut()
+            .ok_or(McpError::Protocol("MCP transport is closed"))?;
+        let result = client.discover_prompts(name, timeout).await;
+        super::prompts::optional(name, result, client.unresolved())
+    }
+
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: &serde_json::Map<String, Value>,
+        timeout: Duration,
+    ) -> Result<Vec<super::PromptMessage>, McpError> {
+        self.client
+            .as_mut()
+            .ok_or(McpError::Protocol("MCP transport is closed"))?
+            .get_prompt(name, arguments, timeout)
+            .await
+    }
+
     pub async fn call_tool(
         &mut self,
         name: &str,
@@ -315,6 +356,18 @@ impl StdioConnection {
             .as_mut()
             .ok_or(McpError::Protocol("MCP transport is closed"))?
             .call_tool_with_elicitation(name, arguments, timeout, context)
+            .await
+    }
+
+    pub async fn resource(
+        &mut self,
+        request: super::ResourceRequest<'_>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        self.client
+            .as_mut()
+            .ok_or(McpError::Protocol("MCP transport is closed"))?
+            .resource(request, timeout)
             .await
     }
 

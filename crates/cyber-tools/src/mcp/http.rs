@@ -260,6 +260,8 @@ pub struct HttpConnection {
     transport: RemoteTransport,
     initialized: bool,
     pinged: tokio::time::Instant,
+    /// Prompts discovered at startup, until the owner takes them.
+    prompts: Vec<super::DiscoveredPrompt>,
 }
 
 /// One transport attempt's failure and whether it may select the other transport.
@@ -369,6 +371,7 @@ impl HttpConnection {
             transport,
             initialized: false,
             pinged: tokio::time::Instant::now(),
+            prompts: Vec::new(),
         }
     }
 
@@ -400,10 +403,12 @@ impl HttpConnection {
             .await
             .map_err(|_| McpError::Timeout)??;
         self.initialized = true;
-        let client = self.client()?;
-        client
+        let tools = self
+            .client()?
             .discover_tools(startup.name, startup.filter, remaining())
-            .await
+            .await?;
+        self.prompts = self.discover_prompts(startup.name, remaining()).await?;
+        Ok(tools)
     }
 
     /// Report the bridge's typed failure in place of the resulting pipe closure.
@@ -428,7 +433,7 @@ impl HttpConnection {
         if self.bridge_closed() || self.client.is_none() {
             return Ok(IdleUpdate {
                 closed: true,
-                tools_changed: false,
+                ..Default::default()
             });
         }
         let update = self.client()?.poll_idle(timeout).await;
@@ -449,10 +454,15 @@ impl HttpConnection {
         *slot(&self.shared.listening) == Listening::Absent && self.pinged.elapsed() >= PING_EVERY
     }
 
-    pub fn clear_tools_changed(&mut self) {
+    pub fn clear_changed(&mut self, change: super::ListChange) {
         if let Some(client) = self.client.as_mut() {
-            client.clear_tools_changed();
+            client.clear_changed(change);
         }
+    }
+
+    /// The prompts discovered at startup; later calls return none.
+    pub fn take_prompts(&mut self) -> Vec<super::DiscoveredPrompt> {
+        std::mem::take(&mut self.prompts)
     }
 
     pub async fn disconnected(&mut self) -> Result<bool, McpError> {
@@ -490,6 +500,28 @@ impl HttpConnection {
         result.map_err(|error| self.classify(error))
     }
 
+    /// Prompts are optional: a rejected or invalid listing leaves none and keeps the
+    /// connection, while a transport failure still ends it.
+    pub async fn discover_prompts(
+        &mut self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<Vec<super::DiscoveredPrompt>, McpError> {
+        let result = self.client()?.discover_prompts(name, timeout).await;
+        let result = result.map_err(|error| self.classify(error));
+        super::prompts::optional(name, result, self.unresolved())
+    }
+
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: &serde_json::Map<String, Value>,
+        timeout: Duration,
+    ) -> Result<Vec<super::PromptMessage>, McpError> {
+        let result = self.client()?.get_prompt(name, arguments, timeout).await;
+        result.map_err(|error| self.classify(error))
+    }
+
     pub async fn call_tool_with_elicitation(
         &mut self,
         name: &str,
@@ -501,6 +533,15 @@ impl HttpConnection {
             .client()?
             .call_tool_with_elicitation(name, arguments, timeout, context)
             .await;
+        result.map_err(|error| self.classify(error))
+    }
+
+    pub async fn resource(
+        &mut self,
+        request: super::ResourceRequest<'_>,
+        timeout: Duration,
+    ) -> Result<super::ResourceReply, McpError> {
+        let result = self.client()?.resource(request, timeout).await;
         result.map_err(|error| self.classify(error))
     }
 

@@ -160,6 +160,16 @@ impl From<CommandPlanError> for ApiError {
                 error.body.service = Some("review".into());
                 error
             }
+            CommandPlanError::Invalid(message) => Self::invalid(message),
+            CommandPlanError::McpUnavailable(message) => {
+                let mut error = Self::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "ServiceUnavailableError",
+                    message,
+                );
+                error.body.service = Some("mcp".into());
+                error
+            }
         }
     }
 }

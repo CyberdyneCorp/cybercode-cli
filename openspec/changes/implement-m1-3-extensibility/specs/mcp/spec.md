@@ -414,6 +414,111 @@
 - **AND** a completed sampling request that crosses a soft budget SHALL record observed usage but withhold its completion from the server
 
 
+### Requirement: Resources
+(P0) When any connected server supports resources, the system SHALL add tools `mcp_list_resources`, `mcp_list_resource_templates` and `mcp_read_resource`, checked against permission `read` with resource `mcp:<server>:<uri>`. Resources SHALL also be referenceable in prompts as `@<server>:<uri>`, with binary blobs limited to 10 MiB. While every reply must fit the 1 MiB transport frame, the effective limit SHALL be 512 KiB of decoded content per read, failing closed above it; the 10 MiB blob limit applies only once the frame admits it. The client SHALL NOT send `resources/subscribe`: resource contents are read on demand and never cached, and `resources/subscribe` is not part of P1.
+
+#### Scenario: Resource mention
+- **WHEN** a user prompt contains `@docs:file:///guide.md`
+- **THEN** the resource is read and attached to the prompt
+
+#### Scenario: Resource tools follow capability negotiation
+- **WHEN** no connected, freshly authorized server in the Location advertised the `resources` capability at initialization
+- **THEN** the three resource tools SHALL NOT be offered and a call to them SHALL fail before any request
+- **AND** the client SHALL NOT send `resources/subscribe`
+
+#### Scenario: Resource tools are read-only
+- **WHEN** a Turn runs in `plan` mode
+- **THEN** the three resource tools SHALL be offered and their calls authorized as read-only
+- **AND** a listing SHALL be checked as `read` on the literal `mcp:<server>:resources/list` or `mcp:<server>:resources/templates/list`, which no read URI can equal, and an `always` reply SHALL save exactly that literal, so it never approves a read; the tools SHALL be hidden when every resource server is denied by a `read` rule covering `mcp:<server>:*` or when `read` is denied for `*`
+
+#### Scenario: Paginated listing
+- **WHEN** a listing reply carries `nextCursor`
+- **THEN** one call SHALL return one page with that `nextCursor`, which the model passes back as `cursor`
+- **AND** a reply returning the cursor it was given SHALL be refused
+
+#### Scenario: Untrusted resource contents
+- **WHEN** a read returns text and blob contents
+- **THEN** each entry SHALL require a `uri`, an optional string `mimeType` and exactly one of `text` or valid base64 `blob`
+- **AND** text SHALL be returned inside an entity-escaped `<mcp_resource server uri mime>` frame through the tool output budget, and a blob SHALL be stored as a managed file and summarized by URI, MIME type and decoded size
+- **AND** URIs SHALL be validated (non-empty, at most 2048 bytes, an RFC 3986 scheme, no control characters) and never mapped to a local path, displayed URIs SHALL omit userinfo, and failures SHALL report only typed errors and JSON-RPC codes, never server error text or the requested URI
+
+#### Scenario: Resource mention recognition
+- **WHEN** a user prompt's text contains whitespace-delimited tokens starting with `@`
+- **THEN** a token SHALL be a resource mention only when the part before the first `:` is a valid server name configured for the Location and the remainder is a valid resource URI with an RFC 3986 scheme, so `@notes.txt`, `user@docs:x`, `@unknown:file:///x` and `@C:\x` stay plain text
+- **AND** trailing `.`, `,`, `;`, `!` and `?` SHALL not be part of the URI, duplicates SHALL be read once, at most 8 mentions SHALL be read per prompt and each further mention SHALL get a notice
+- **AND** the TUI SHALL NOT read a `@name:rest` token as a file mention
+
+#### Scenario: Resource mention attachment
+- **WHEN** a user prompt (including an edited queued prompt) contains a resource mention
+- **THEN** the system SHALL resolve it at admission, after UserPromptSubmit and before the prompt is durably admitted, by running `mcp_read_resource` for the Session's agent, mode and rules, so `read` on `mcp:<server>:<uri>`, asks, hooks, the output budget and blob artifacts apply, and a Session without an approver SHALL treat an ask as a denial
+- **AND** the system SHALL wait up to 30 seconds for a mentioned server that is still connecting
+- **AND** each attachment SHALL be recorded with the admission and placed in the user message ahead of the prompt text as untrusted user-turn data (a provenance line and the entity-escaped `<mcp_resource>` frame), never as system or developer content, while the queued row keeps only the user's text; at most 256 KiB SHALL be attached per prompt
+- **AND** a forked skill command, whose text becomes a child's prompt, and prompts admitted by the system rather than the user SHALL not resolve mentions
+
+#### Scenario: Resource mention fails closed
+- **WHEN** a mention is denied, its server is not connected or does not advertise `resources`, or the read is oversized or fails
+- **THEN** the user message SHALL carry a visible `[resource not attached: @<server>:<uri> — <reason>]` notice in place of the content, with the URI's userinfo omitted and the reason entity-escaped
+- **AND** the mention SHALL never be dropped silently or fall back to a local file read
+
+#### Scenario: Resource size beyond the transport frame
+- **WHEN** a read's decoded contents exceed 512 KiB, the effective cap while every reply must fit the 1 MiB transport frame
+- **THEN** the call SHALL fail with `MCP resource exceeds transport limit` and the connection SHALL remain usable
+- **AND** a remote reply body over 1 MiB SHALL fail with the same message, ending that connection as loss
+
+### Requirement: Prompts as commands
+(P0) The system SHALL expose each server prompt as slash command `/<server>:<prompt>`, mapping declared arguments positionally to `$1..$N` and resolving prompt messages lazily at invocation.
+
+#### Scenario: MCP prompt command
+- **WHEN** server `gh` exposes prompt `review_pr` with argument `number`
+- **THEN** `/gh:review_pr 42` fetches the prompt with `number=42` and submits it
+
+#### Scenario: Prompt discovery follows capability negotiation
+- **WHEN** a local or remote server connects
+- **THEN** the client SHALL send `prompts/list` only when the server advertised the `prompts` capability, inside the same absolute startup deadline as tool discovery, and SHALL never send `prompts/get` to a server that did not advertise it
+- **AND** pagination SHALL be bounded like tool discovery: a repeated or invalid cursor or a catalog over 4 MiB SHALL fail prompt discovery closed
+- **AND** prompts SHALL be optional: a listing the server rejects with a JSON-RPC error or answers invalidly SHALL leave that server with no prompts and a log line while its tools stay connected, at startup and on `list_changed`; only a transport failure, a timeout or a request left unresolved SHALL fail the connection
+- **AND** a prompt whose name is empty, longer than 64 characters or contains whitespace, a control character or `:`, or whose arguments are malformed (an invalid or duplicate name, a non-boolean `required`), SHALL be dropped with a log line; at most 256 prompts are kept per server
+
+#### Scenario: Prompt commands are listed from fresh authority
+- **WHEN** a client lists commands for a Location
+- **THEN** each prompt of a connected server whose definition is still authorized with the digest it started with SHALL be listed as `<server>:<prompt>` with source `mcp`, namespace `<server>`, the description with control characters removed and capped at 200 characters, and an argument hint of the declared arguments (`<required>` and `[optional]`)
+- **AND** command names SHALL resolve skills first, then MCP prompts, then configured commands, so a prompt replaces a project command of the same name and a skill replaces a prompt; reserved built-ins are unaffected because prompt names always contain `:`
+- **AND** a server named `project` SHALL have no prompt commands, so it never shadows the `project:` namespace, and this SHALL be logged as a warning
+
+#### Scenario: Prompt invocation
+- **WHEN** a user runs `/<server>:<prompt> <arguments>` through the command route, the TUI or `cyber exec --command`
+- **THEN** the system SHALL wait up to 30 seconds for that server while it is still connecting, check permission action `mcp_prompt` on `mcp:<server>:<prompt>` like a user-invoked skill (allowed unless a rule denies it), tokenize the arguments like command templates and map them positionally onto the declared arguments, the last declared argument taking the remaining tokens
+- **AND** a missing required argument, or arguments for a prompt that declares none, SHALL be refused with 400 before any request
+- **AND** `prompts/get` SHALL run on the server's shared connection under its fresh authority, the catalog check and the configured call timeout, and a request left unresolved SHALL end the connection as loss; a failure SHALL be 503 (service `mcp`) with only typed errors and JSON-RPC codes, and an unknown or withdrawn prompt SHALL be 404
+
+#### Scenario: Prompt messages are untrusted
+- **WHEN** `prompts/get` returns messages
+- **THEN** each SHALL require role `user` or `assistant` and typed content, at most 256 messages and 256 KiB of text
+- **AND** the submitted user turn SHALL be one `<mcp_prompt server name>` frame of `<message role>` blocks whose text is entity-escaped, with image, audio and embedded resource content replaced by a `[<kind> content omitted]` notice
+- **AND** a word in the text starting with `@` SHALL be written as `&#64;`, so server-supplied text never triggers a resource mention
+- **AND** the turn SHALL be admitted with source `mcp_prompt`, so the server's text never becomes the task objective, a user instruction restated after compaction or a user boundary for the auto-mode evaluator
+
+#### Scenario: A dropped caller still settles the request
+- **WHEN** the caller of `prompts/get` or a resource read goes away mid-request, such as a disconnected HTTP client or an interrupted `cyber exec`
+- **THEN** the request SHALL still run to its reply, timeout or cancellation on the shared connection and a request left unresolved SHALL end the connection as loss, so the next caller never inherits it
+
+### Requirement: List-changed refresh
+(P0) The system SHALL refresh a server's tools, prompts or resources when it sends the corresponding `list_changed` notification, publishing `mcp.tools.changed.1`. Tools that disappear SHALL make later calls settle as stale.
+
+#### Scenario: Tool removed mid-session
+- **WHEN** a server removes tool `foo` and the model then calls `mcp__srv__foo`
+- **THEN** the call settles with `Stale tool call: mcp__srv__foo`
+
+#### Scenario: Prompts refreshed without reconnecting
+- **WHEN** a connected server sends `notifications/prompts/list_changed`
+- **THEN** the pool SHALL recheck the server's authorization and approval digest, re-list its prompts on the existing connection and publish the new set, so the command listing reflects it and a withdrawn prompt command is no longer found
+- **AND** the instance event stream SHALL publish the live, non-durable `mcp.tools.changed.1` with the connection id, Location, server name, the published tool names and the prompt commands, when a connection is published (connect or reconnect) and after any tools or prompts refresh, so clients such as the TUI refetch their command listing
+
+#### Scenario: Resources hold no cache
+- **WHEN** a connected server sends `notifications/resources/list_changed`
+- **THEN** the notification SHALL be acknowledged without any request, because resource listings are always fetched on demand
+- **AND** the client SHALL NOT send `resources/subscribe`, so no `notifications/resources/updated` is expected
+
 ### Requirement: Server instructions
 (P0) The system SHALL include each connected server's `instructions` in a `<mcp_instructions>` block as a Context Source keyed `mcp/instructions`, omitting servers whose tools are all denied for the agent. Instruction changes SHALL arrive as Mid-Conversation System Messages.
 
