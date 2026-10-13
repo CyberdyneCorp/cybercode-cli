@@ -120,6 +120,7 @@ async fn execute(
         snapshots: false,
         interactive: false,
         password: None,
+        mcp_credentials: None,
     })
     .await
     .map_err(CliError::runtime)?;

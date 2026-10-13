@@ -575,6 +575,7 @@ async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_l
         snapshots: false,
         interactive: true,
         password: Some("cli-memory-existing-password".into()),
+        mcp_credentials: None,
     })
     .await
     .unwrap();

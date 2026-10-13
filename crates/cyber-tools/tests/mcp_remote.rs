@@ -14,8 +14,8 @@ use cyber_core::paths::Paths;
 use cyber_core::trust::TrustStore;
 use cyber_server::runtime::{McpConnectionPhase, McpConnectionStatus, mcp_connections};
 use cyber_tools::mcp::oauth::{
-    CredentialKey, McpCredentialStore, MemoryCredentialStore, OAuthClient, StoredCredential,
-    TokenSet,
+    AuthMarker, CredentialKey, McpCredentialStore, MemoryCredentialStore, OAuthClient, OAuthError,
+    RefreshLock, StoredCredential, TokenSet,
 };
 use cyber_tools::mcp::{
     HttpFailure, IdleUpdate, LaunchFailure, LocalLauncher, LocalServer, McpError, McpLocationPin,
@@ -1477,4 +1477,156 @@ fn make_due(store: &MemoryCredentialStore, url: &str) {
     );
     credential.tokens.issued_at = None;
     store.put(&key, &credential).unwrap();
+}
+
+/// A memory store standing in for the OS keyring backend: while `blocked`, its next `find`
+/// waits at `gate` twice (on entry and before answering), as a read waiting on a Keychain
+/// prompt does; while `busy`, every `find` fails as locked by another process.
+struct SlowStore {
+    inner: MemoryCredentialStore,
+    blocked: std::sync::atomic::AtomicBool,
+    busy: std::sync::atomic::AtomicBool,
+    gate: std::sync::Barrier,
+}
+
+impl SlowStore {
+    fn new(inner: MemoryCredentialStore) -> Self {
+        Self {
+            inner,
+            blocked: std::sync::atomic::AtomicBool::new(false),
+            busy: std::sync::atomic::AtomicBool::new(false),
+            gate: std::sync::Barrier::new(2),
+        }
+    }
+}
+
+impl McpCredentialStore for SlowStore {
+    fn get(&self, key: &CredentialKey) -> Result<Option<StoredCredential>, OAuthError> {
+        self.inner.get(key)
+    }
+    fn find(
+        &self,
+        server: &str,
+        url: &str,
+    ) -> Result<Option<(CredentialKey, StoredCredential)>, OAuthError> {
+        use std::sync::atomic::Ordering;
+        if self.busy.load(Ordering::SeqCst) {
+            return Err(OAuthError::Busy);
+        }
+        if self.blocked.swap(false, Ordering::SeqCst) {
+            self.gate.wait();
+            self.gate.wait();
+        }
+        self.inner.find(server, url)
+    }
+    fn put(&self, key: &CredentialKey, credential: &StoredCredential) -> Result<(), OAuthError> {
+        self.inner.put(key, credential)
+    }
+    fn replace(
+        &self,
+        key: &CredentialKey,
+        previous: &TokenSet,
+        credential: &StoredCredential,
+    ) -> Result<bool, OAuthError> {
+        self.inner.replace(key, previous, credential)
+    }
+    fn try_lock_refresh(&self, server: &str, url: &str) -> Result<Option<RefreshLock>, OAuthError> {
+        self.inner.try_lock_refresh(server, url)
+    }
+    fn remove(&self, server: &str, url: &str) -> Result<bool, OAuthError> {
+        self.inner.remove(server, url)
+    }
+    fn remove_server(&self, server: &str) -> Result<usize, OAuthError> {
+        self.inner.remove_server(server)
+    }
+    fn marker(&self, server: &str, url: &str) -> Result<AuthMarker, OAuthError> {
+        self.inner.marker(server, url)
+    }
+    fn mark(&self, server: &str, url: &str, marker: &AuthMarker) -> Result<(), OAuthError> {
+        self.inner.mark(server, url, marker)
+    }
+    fn clear_marker(&self, server: &str, url: &str) -> Result<(), OAuthError> {
+        self.inner.clear_marker(server, url)
+    }
+}
+
+/// Regression: the stored credential was read synchronously on a runtime worker, so a
+/// keyring read waiting on the user hung startup past its deadline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blocked_credential_read_settles_startup_at_its_deadline() {
+    let http = McpHttp::start(Behavior::default()).await;
+    let fixture =
+        Fixture::new(json!({"mcp":{"remote":{"type":"remote","url":http.url,"timeout":1}}}));
+    let store = std::sync::Arc::new(SlowStore::new(unshared(stored_credential(
+        &http.url,
+        "http://127.0.0.1:9",
+        3600,
+    ))));
+    store
+        .blocked
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let connecting = {
+        let store = store.clone();
+        tokio::spawn(async move {
+            match fixture.connect_with(store).await {
+                Ok(_) => panic!("startup connected without its credential"),
+                Err(error) => (error.kind(), error.diagnostic),
+            }
+        })
+    };
+    let entered = {
+        let store = store.clone();
+        tokio::task::spawn_blocking(move || store.gate.wait())
+    };
+    entered.await.unwrap();
+    let settled = tokio::time::timeout(Duration::from_secs(20), connecting).await;
+    // Let the read finish whatever happened, so no blocking thread outlives the test.
+    let released = {
+        let store = store.clone();
+        tokio::task::spawn_blocking(move || store.gate.wait())
+    };
+    let (kind, diagnostic) = settled.expect("startup waited on the store").unwrap();
+    released.await.unwrap();
+    assert_eq!(kind, LaunchFailure::Failed);
+    assert_eq!(diagnostic, "MCP OAuth credential store timed out");
+    assert!(http.posts("initialize").is_empty());
+}
+
+/// A store locked by another process past its bounded wait fails the request, not the
+/// credential: the connection is not refused and the next request goes through.
+#[tokio::test]
+async fn a_busy_credential_store_fails_one_request_without_refusing_the_credential() {
+    let http = McpHttp::start(Behavior::default()).await;
+    let fixture = Fixture::new(json!({"mcp":{"remote":{"type":"remote","url":http.url}}}));
+    let store = std::sync::Arc::new(SlowStore::new(unshared(oauth_credential(&http.url))));
+    let mut server = fixture.connect_with(store.clone()).await.unwrap();
+    store.busy.store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = server
+        .call_tool("echo", json!({"text":"busy"}), Duration::from_secs(5))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unavailable"), "{error}");
+    assert!(!server.unresolved());
+    assert!(server.auth_refusal().is_none());
+    store.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+    server
+        .call_tool("echo", json!({"text":"again"}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(
+        http.posts("tools/call")[0].header("authorization"),
+        Some("Bearer PRIVATE-OAUTH")
+    );
+    assert!(server.shutdown().await.0);
+}
+
+fn oauth_credential(url: &str) -> std::sync::Arc<MemoryCredentialStore> {
+    stored_credential(url, "http://127.0.0.1:9", 3600)
+}
+
+/// The store behind a freshly built handle.
+fn unshared(store: std::sync::Arc<MemoryCredentialStore>) -> MemoryCredentialStore {
+    std::sync::Arc::try_unwrap(store)
+        .ok()
+        .expect("a fresh store has one handle")
 }

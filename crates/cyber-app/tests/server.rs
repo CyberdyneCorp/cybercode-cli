@@ -29,6 +29,7 @@ async fn app(root: &std::path::Path) -> App {
         snapshots: false,
         interactive: true,
         password: Some("test-password-123456".into()),
+        mcp_credentials: None,
     })
     .await
     .unwrap()
@@ -1104,6 +1105,7 @@ async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
         snapshots: false,
         interactive: false,
         password: Some("test-password-123456".into()),
+        mcp_credentials: None,
     })
     .await
     .unwrap();

@@ -78,6 +78,7 @@ pub fn serve(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
             snapshots: true,
             interactive: true,
             password: Some(password),
+            mcp_credentials: None,
         })
         .await
         .map_err(CliError::runtime)?;
@@ -110,6 +111,7 @@ fn stdio(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
             snapshots: true,
             interactive: true,
             password: None,
+            mcp_credentials: None,
         })
         .await
         .map_err(CliError::runtime)?;

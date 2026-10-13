@@ -312,6 +312,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p cyber-cli --test mcp_remote_exec
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Credential Manager layout over the in-memory vault: no test touches the real store.
+      - name: Native MCP OAuth credential store
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-tools --test mcp_oauth
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib mcp::oauth
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test mcp oauth::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native memory documents and storage ownership
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-core --test memory --test memory_storage

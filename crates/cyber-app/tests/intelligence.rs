@@ -42,6 +42,7 @@ impl Fixture {
             snapshots: false,
             interactive: true,
             password: Some("status-password".into()),
+            mcp_credentials: None,
         })
         .await
         .unwrap();

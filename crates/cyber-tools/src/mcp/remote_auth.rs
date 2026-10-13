@@ -181,7 +181,7 @@ impl RemoteAuth {
         if self.refused.is_some() {
             return Err(McpError::Protocol("MCP OAuth token refresh failed"));
         }
-        self.sync_tokens(name)?;
+        self.sync_tokens(name).await?;
         let command = self.command.as_ref().is_some_and(HeaderRefresh::due);
         let token = self
             .tokens
@@ -203,19 +203,32 @@ impl RemoteAuth {
 
     /// Adopt what the store now holds; a stored credential that fails validation or was
     /// removed (`cyber mcp logout`) is a refusal, so the connection ends and settles
-    /// `needs_auth` without sending the removed token again.
-    fn sync_tokens(&mut self, name: &str) -> Result<(), McpError> {
+    /// `needs_auth` without sending the removed token again. A store busy in another
+    /// process, or a read outlasting the server's `timeout` (an OS keyring prompt), fails
+    /// only this request: the credential is unknown, not refused.
+    async fn sync_tokens(&mut self, name: &str) -> Result<(), McpError> {
         let Some(tokens) = self.tokens.as_mut() else {
             return Ok(());
         };
-        match tokens.sync() {
-            Ok(changed) => {
+        let synced = tokio::time::timeout(self.refresh_timeout, tokens.sync()).await;
+        match synced {
+            Ok(Ok(changed)) => {
                 if changed {
                     self.publish();
                 }
                 Ok(())
             }
-            Err(error) => {
+            Ok(Err(OAuthError::Busy)) | Err(_) => {
+                cyber_core::log::error(
+                    "mcp",
+                    "MCP OAuth credential store is unavailable",
+                    json!({"server":name}),
+                );
+                Err(McpError::Protocol(
+                    "MCP OAuth credential store is unavailable",
+                ))
+            }
+            Ok(Err(error)) => {
                 cyber_core::log::error("mcp", &error.to_string(), json!({"server":name}));
                 self.refused = Some(format!("MCP OAuth credential is unusable: {error}"));
                 Err(McpError::Protocol("MCP OAuth credential is unusable"))

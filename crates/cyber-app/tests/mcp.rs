@@ -12,6 +12,14 @@ use serde_json::json;
 use std::path::Path;
 
 async fn application(root: &Path) -> App {
+    application_with(root, None).await
+}
+
+/// The app with `credentials` as its MCP OAuth credential store (`None`: the platform's).
+async fn application_with(
+    root: &Path,
+    credentials: Option<std::sync::Arc<dyn cyber_tools::mcp::oauth::McpCredentialStore>>,
+) -> App {
     let paths = Paths {
         data: root.join("data"),
         config: root.join("config"),
@@ -29,6 +37,7 @@ async fn application(root: &Path) -> App {
         snapshots: false,
         interactive: true,
         password: Some("mcp-test-password".into()),
+        mcp_credentials: credentials,
     })
     .await
     .unwrap()
@@ -1466,9 +1475,9 @@ async fn remote_tools_use_filters_permissions_hooks_and_output_caps_through_app_
     app.runtime.shutdown().await;
 }
 
-/// Stored OAuth tokens on the production remote transport. The owner-only credential file
-/// refuses on Windows (no ACL backend yet), where the app attaches no credential store.
-#[cfg(not(windows))]
+/// Stored OAuth tokens on the production remote transport, on every platform: the app
+/// attaches the injected keyring-layout store over an in-memory vault, so no test touches
+/// the real Keychain or Credential Manager.
 mod oauth {
     use super::*;
 
@@ -1482,8 +1491,16 @@ mod oauth {
             .as_secs()
     }
 
-    fn credential_store(app: &App) -> cyber_tools::mcp::oauth::FileCredentialStore {
-        cyber_tools::mcp::oauth::FileCredentialStore::new(app.paths.mcp_auth_file())
+    /// The store the app's pool uses: the OS keyring layout over an in-memory vault, so no
+    /// test touches the real Keychain or Credential Manager.
+    fn credential_store(
+        app: &App,
+    ) -> std::sync::Arc<dyn cyber_tools::mcp::oauth::McpCredentialStore> {
+        std::sync::Arc::clone(&app.mcp_credentials)
+    }
+
+    fn index_file(app: &App) -> std::path::PathBuf {
+        app.paths.data.join("mcp-auth-index.json")
     }
 
     /// Store a credential for `remote` at `url` exactly as `cyber mcp auth` would.
@@ -1494,9 +1511,21 @@ mod oauth {
         refresh: &str,
         expires_in: u64,
     ) {
-        use cyber_tools::mcp::oauth::{
-            CredentialKey, McpCredentialStore, OAuthClient, StoredCredential, TokenSet,
-        };
+        let (key, credential) = seed_credential(url, fake, refresh, expires_in);
+        credential_store(app).put(&key, &credential).unwrap();
+    }
+
+    /// The credential [`store_credential`] stores, with its key.
+    fn seed_credential(
+        url: &str,
+        fake: &oauth_as::FakeAs,
+        refresh: &str,
+        expires_in: u64,
+    ) -> (
+        cyber_tools::mcp::oauth::CredentialKey,
+        cyber_tools::mcp::oauth::StoredCredential,
+    ) {
+        use cyber_tools::mcp::oauth::{CredentialKey, OAuthClient, StoredCredential, TokenSet};
         let key = CredentialKey {
             server: "remote".into(),
             url: url.into(),
@@ -1516,11 +1545,10 @@ mod oauth {
             },
             token_endpoint: format!("{}/token", fake.origin),
         };
-        credential_store(app).put(&key, &credential).unwrap();
+        (key, credential)
     }
 
     fn stored_tokens(app: &App, url: &str) -> cyber_tools::mcp::oauth::TokenSet {
-        use cyber_tools::mcp::oauth::McpCredentialStore;
         credential_store(app)
             .find("remote", url)
             .unwrap()
@@ -1618,13 +1646,52 @@ mod oauth {
 
     /// The app with `config`, before any session opens.
     async fn oauth_app(config: serde_json::Value) -> (tempfile::TempDir, std::path::PathBuf, App) {
+        let (root, directory, app, _) = vault_app(config).await;
+        (root, directory, app)
+    }
+
+    /// [`oauth_app`] with the in-memory vault behind its credential store, which enforces the
+    /// Windows Credential Manager blob limit (2560 bytes).
+    async fn vault_app(
+        config: serde_json::Value,
+    ) -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        App,
+        std::sync::Arc<cyber_tools::mcp::oauth::MemoryVault>,
+    ) {
+        vault_app_with(config, false).await
+    }
+
+    /// [`vault_app`] that, with `legacy`, also reads and migrates the owner-only file at
+    /// `Paths::mcp_auth_file`, as the macOS store does.
+    async fn vault_app_with(
+        config: serde_json::Value,
+        legacy: bool,
+    ) -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        App,
+        std::sync::Arc<cyber_tools::mcp::oauth::MemoryVault>,
+    ) {
+        use cyber_tools::mcp::oauth::{FileCredentialStore, MemoryVault, VaultCredentialStore};
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().canonicalize().unwrap();
-        let app = application(&directory).await;
+        let vault = std::sync::Arc::new(MemoryVault::default());
+        let mut store = VaultCredentialStore::new(
+            directory.join("data/mcp-auth-index.json"),
+            std::sync::Arc::clone(&vault) as _,
+        );
+        if legacy {
+            store = store.with_legacy(FileCredentialStore::new(
+                directory.join("data/mcp-auth.json"),
+            ));
+        }
+        let app = application_with(&directory, Some(std::sync::Arc::new(store))).await;
         let mut config = config;
         config["providers"] = provider();
         std::fs::write(app.paths.config.join("cyber.json"), config.to_string()).unwrap();
-        (root, directory, app)
+        (root, directory, app, vault)
     }
 
     async fn open_turn(app: &App, directory: &Path) -> cyber_server::runtime::TurnContext {
@@ -1772,10 +1839,67 @@ mod oauth {
         app.runtime.shutdown().await;
     }
 
+    /// A credential an earlier release stored in the owner-only file is used, refreshed
+    /// once, and its rotation lands in the vault while the file forgets it. Windows never
+    /// had a file credential (the file backend refuses there).
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn legacy_file_credential_migrates_to_the_vault_on_refresh() {
+        use cyber_tools::mcp::oauth::{FileCredentialStore, McpCredentialStore as _};
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        fake.issue_refresh(SEED_REFRESH);
+        fake.expect_resource(&http.url);
+        let issued = format!("{}1", oauth_as::ACCESS_PREFIX);
+        http.require_authorization(Some(&format!("Bearer {issued}")));
+        let (_root, directory, app, vault) = vault_app_with(
+            json!({"mcp":{"remote":{"type":"remote","url":http.url}}}),
+            true,
+        )
+        .await;
+        let mut events = app.runtime.subscribe();
+        let legacy = FileCredentialStore::new(app.paths.mcp_auth_file());
+        let (key, credential) = seed_credential(&http.url, &fake, SEED_REFRESH, 120);
+        legacy.put(&key, &credential).unwrap();
+        assert!(vault.entries().is_empty());
+        open_session(&app, &directory).await;
+        wait_running(&app, &directory).await;
+
+        let posts = fake.token_posts();
+        assert_eq!(posts.len(), 1, "{:?}", fake.paths());
+        assert_eq!(posts[0].form["refresh_token"], SEED_REFRESH);
+        let initializes = http.posts("initialize");
+        assert_eq!(initializes.len(), 1);
+        assert_eq!(
+            initializes[0].header("authorization"),
+            Some(format!("Bearer {issued}").as_str())
+        );
+        // The rotated pair is in the vault and the index, and the file no longer has it.
+        let stored = stored_tokens(&app, &http.url);
+        assert_eq!(stored.access_token, issued);
+        let rotated = format!("{}1", oauth_as::REFRESH_PREFIX);
+        assert_eq!(stored.refresh_token.as_deref(), Some(rotated.as_str()));
+        let secrets: Vec<u8> = vault.entries().into_iter().flat_map(|(_, s)| s).collect();
+        let secrets = String::from_utf8_lossy(&secrets);
+        assert!(
+            secrets.contains(&issued) && secrets.contains(&rotated),
+            "{secrets}"
+        );
+        let index = std::fs::read_to_string(index_file(&app)).unwrap();
+        assert!(index.contains("\"remote\""), "{index}");
+        assert!(legacy.find("remote", &http.url).unwrap().is_none());
+        let file = std::fs::read_to_string(app.paths.mcp_auth_file()).unwrap();
+        for token in [SEED_ACCESS, SEED_REFRESH, issued.as_str(), rotated.as_str()] {
+            assert!(!file.contains(token) && !index.contains(token), "{token}");
+        }
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
     /// Rewrite the stored credential's expiry into the refresh window, as time passing
     /// would, without waiting.
     fn make_due(app: &App, url: &str) {
-        use cyber_tools::mcp::oauth::McpCredentialStore;
         let store = credential_store(app);
         let (key, mut credential) = store.find("remote", url).unwrap().expect("stored");
         credential.tokens.expires_at = Some(unix_now() + 60);
@@ -1969,7 +2093,6 @@ mod oauth {
     #[tokio::test]
     async fn removed_credential_ends_the_connection_without_a_reconnect() {
         use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
-        use cyber_tools::mcp::oauth::McpCredentialStore;
         let (http, fake, _root, directory, app, turn) = bearer_app().await;
         let mut events = app.runtime.subscribe();
         let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
@@ -2206,7 +2329,8 @@ mod oauth {
             });
         };
         let outcome =
-            cyber_tools::mcp::oauth::authenticate(&request, &credential_store(app), &present).await;
+            cyber_tools::mcp::oauth::authenticate(&request, &*credential_store(app), &present)
+                .await;
         let url = presented.lock().unwrap().clone();
         (outcome, url)
     }
@@ -2224,7 +2348,6 @@ mod oauth {
     #[tokio::test]
     async fn insufficient_scope_settles_needs_auth_and_steps_up_on_the_next_auth() {
         use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
-        use cyber_tools::mcp::oauth::McpCredentialStore;
         let (http, fake, _root, directory, app, turn) = bearer_app().await;
         let mut events = app.runtime.subscribe();
         let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
@@ -2285,7 +2408,7 @@ mod oauth {
     #[tokio::test]
     async fn needs_client_registration_is_committed_then_a_client_id_connects() {
         use cyber_server::runtime::{McpConnectionStatus, ToolOutcome};
-        use cyber_tools::mcp::oauth::{McpCredentialStore, OAuthError};
+        use cyber_tools::mcp::oauth::OAuthError;
         let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
         let fake = oauth_as::FakeAs::start().await;
         fake.serve("/prm", fake.protected_resource(&http.url));
@@ -2371,7 +2494,6 @@ mod oauth {
     #[tokio::test]
     async fn removed_credential_lets_a_connected_server_reconnect_to_needs_auth() {
         use cyber_server::runtime::McpConnectionStatus;
-        use cyber_tools::mcp::oauth::McpCredentialStore;
         let (http, fake, _root, directory, app, turn) = bearer_app().await;
         let mut events = app.runtime.subscribe();
         wait_definition(&app, &turn, "mcp__remote__echo", None).await;
@@ -2496,7 +2618,6 @@ mod oauth {
     #[tokio::test]
     async fn logout_during_an_in_session_refresh_is_not_undone() {
         use cyber_server::runtime::McpConnectionStatus;
-        use cyber_tools::mcp::oauth::McpCredentialStore;
         let (http, fake, _root, directory, app, turn) = bearer_app().await;
         let mut events = app.runtime.subscribe();
         wait_definition(&app, &turn, "mcp__remote__echo", None).await;
@@ -2518,8 +2639,9 @@ mod oauth {
                 .unwrap()
                 .is_none()
         );
-        let text = std::fs::read_to_string(app.paths.mcp_auth_file()).unwrap();
+        let text = std::fs::read_to_string(index_file(&app)).unwrap();
         assert!(!text.contains("TOKEN-SECRET"), "{text}");
+        assert!(!text.contains("\"server\":\"remote\""), "{text}");
         assert_eq!(fake.token_posts().len(), 1);
         assert_no_token_leak(&app, &directory, &mut events).await;
         app.host.close_mcp_location(&directory).await.unwrap();
@@ -2528,7 +2650,13 @@ mod oauth {
 
     #[tokio::test]
     async fn two_locations_sharing_a_due_credential_refresh_it_once() {
-        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        // Sessionless: the fixture keeps one live session, so a second Location's initialize
+        // would otherwise expire the first's handshake when both connect at once.
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior {
+            sessionless: true,
+            ..Default::default()
+        })
+        .await;
         let fake = oauth_as::FakeAs::start().await;
         fake.issue_refresh(SEED_REFRESH);
         fake.expect_resource(&http.url);
@@ -2563,6 +2691,237 @@ mod oauth {
         );
         app.host.close_mcp_location(&first).await.unwrap();
         app.host.close_mcp_location(&second).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// The app with the platform's own credential store, as `App::build` opens it when
+    /// none is injected (`oauth::open_store`). Callers never write a credential through it,
+    /// so the real Keychain or Credential Manager is never touched.
+    async fn default_store_app(
+        config: serde_json::Value,
+    ) -> (tempfile::TempDir, std::path::PathBuf, App) {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        let app = application_with(&directory, None).await;
+        let mut config = config;
+        config["providers"] = provider();
+        std::fs::write(app.paths.config.join("cyber.json"), config.to_string()).unwrap();
+        (root, directory, app)
+    }
+
+    fn scope_marker() -> cyber_tools::mcp::oauth::AuthMarker {
+        cyber_tools::mcp::oauth::AuthMarker {
+            required_scopes: vec!["mcp.write".into()],
+            ..Default::default()
+        }
+    }
+
+    /// The default store reads the owner-only file: on Linux it is the store, on macOS it
+    /// is what an earlier release wrote, read lazily with no index record, so the keyring
+    /// is never queried. An index-only write (a marker) shows which store the app built:
+    /// the keyring layout's index on macOS, the file elsewhere.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn the_default_store_sends_a_credential_from_the_owner_only_file() {
+        use cyber_server::runtime::ToolOutcome;
+        use cyber_tools::mcp::oauth::{FileCredentialStore, McpCredentialStore as _};
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (_root, directory, app) =
+            default_store_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        let (key, credential) = seed_credential(&http.url, &fake, SEED_REFRESH, 3600);
+        FileCredentialStore::new(app.paths.mcp_auth_file())
+            .put(&key, &credential)
+            .unwrap();
+        let file_before = std::fs::read(app.paths.mcp_auth_file()).unwrap();
+        let turn = open_turn(&app, &directory).await;
+        let definition = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+        assert_eq!(
+            invoke_remote(&app, &turn, &definition, "default store").await,
+            ToolOutcome::Ok("default store".into())
+        );
+        let calls = http.posts("tools/call");
+        assert_eq!(
+            calls[0].header("authorization"),
+            Some(format!("Bearer {SEED_ACCESS}").as_str())
+        );
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        // Nothing was written: no index record, the file unchanged.
+        assert!(!index_file(&app).exists());
+        assert_eq!(
+            std::fs::read(app.paths.mcp_auth_file()).unwrap(),
+            file_before
+        );
+
+        app.mcp_credentials
+            .mark("remote", &http.url, &scope_marker())
+            .unwrap();
+        let file = std::fs::read_to_string(app.paths.mcp_auth_file()).unwrap();
+        if cfg!(target_os = "macos") {
+            assert_eq!(cyber_tools::mcp::oauth::backend_name(), "keyring");
+            let index = std::fs::read_to_string(index_file(&app)).unwrap();
+            assert!(index.contains("mcp.write"), "{index}");
+            assert!(!file.contains("mcp.write"), "{file}");
+        } else {
+            assert_eq!(cyber_tools::mcp::oauth::backend_name(), "file");
+            assert!(!index_file(&app).exists());
+            assert!(file.contains("mcp.write"), "{file}");
+        }
+        assert_eq!(
+            app.mcp_credentials.marker("remote", &http.url).unwrap(),
+            scope_marker()
+        );
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// Windows: the default store keeps markers in the index (no Credential Manager call),
+    /// and a file at the legacy path, which Windows never wrote, fails the server closed
+    /// with the storage diagnostic instead of being ignored or trusted.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn the_default_store_on_windows_fails_closed_on_a_legacy_file() {
+        use cyber_server::runtime::McpConnectionStatus;
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        http.require_authorization(Some(&format!("Bearer {SEED_ACCESS}")));
+        let (_root, directory, app) =
+            default_store_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        assert_eq!(cyber_tools::mcp::oauth::backend_name(), "keyring");
+        app.mcp_credentials
+            .mark("remote", &http.url, &scope_marker())
+            .unwrap();
+        let index = std::fs::read_to_string(index_file(&app)).unwrap();
+        assert!(index.contains("mcp.write"), "{index}");
+        assert!(!app.paths.mcp_auth_file().exists());
+
+        std::fs::write(app.paths.mcp_auth_file(), "{}").unwrap();
+        open_session(&app, &directory).await;
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.status, McpConnectionStatus::Failed);
+        let error = record.error.unwrap_or_default();
+        assert!(error.contains("MCP OAuth credential"), "{error}");
+        assert!(
+            http.requests()
+                .iter()
+                .all(|seen| seen.header("authorization").is_none())
+        );
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// Store `access` for `remote` at `url` as `cyber mcp auth` would; the store's result.
+    fn put_access(
+        app: &App,
+        url: &str,
+        fake: &oauth_as::FakeAs,
+        access: &str,
+    ) -> Result<(), cyber_tools::mcp::oauth::OAuthError> {
+        use cyber_tools::mcp::oauth::{CredentialKey, OAuthClient, StoredCredential, TokenSet};
+        credential_store(app).put(
+            &CredentialKey {
+                server: "remote".into(),
+                url: url.into(),
+                issuer: format!("{}/", fake.origin),
+            },
+            &StoredCredential {
+                tokens: TokenSet {
+                    access_token: access.into(),
+                    refresh_token: Some(SEED_REFRESH.into()),
+                    expires_at: Some(unix_now() + 3600),
+                    issued_at: None,
+                    scopes: vec!["mcp.read".into()],
+                },
+                client: OAuthClient {
+                    client_id: oauth_as::REGISTERED_CLIENT.into(),
+                    client_secret: None,
+                },
+                token_endpoint: format!("{}/token", fake.origin),
+            },
+        )
+    }
+
+    /// A token larger than one Windows Credential Manager blob is split across vault
+    /// entries and reassembled whole for the bearer the app's pool sends.
+    #[tokio::test]
+    async fn oversized_token_is_split_in_the_vault_and_sent_by_the_app_pool() {
+        let access = format!("{SEED_ACCESS}-{}", "x".repeat(6000 - SEED_ACCESS.len() - 1));
+        assert_eq!(access.len(), 6000);
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        http.require_authorization(Some(&format!("Bearer {access}")));
+        let (_root, directory, app, vault) =
+            vault_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        let mut events = app.runtime.subscribe();
+        put_access(&app, &http.url, &fake, &access).unwrap();
+        let entries = vault.entries();
+        assert!(entries.iter().all(|(_, secret)| secret.len() <= 2560));
+        let access_chunks = entries
+            .iter()
+            .filter(|(account, _)| account.contains(".access."))
+            .count();
+        assert_eq!(access_chunks, 3, "{:?}", vault.accounts());
+        assert!(
+            entries
+                .iter()
+                .all(|(account, _)| !account.contains("127.0.0.1"))
+        );
+
+        open_session(&app, &directory).await;
+        wait_running(&app, &directory).await;
+        let initializes = http.posts("initialize");
+        assert_eq!(
+            initializes[0].header("authorization"),
+            Some(format!("Bearer {access}").as_str())
+        );
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        let index = std::fs::read_to_string(index_file(&app)).unwrap();
+        assert!(!index.contains("PRIVATE-"), "{index}");
+        assert!(!index.contains(&http.url), "{index}");
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
+        app.runtime.shutdown().await;
+    }
+
+    /// A credential beyond the chunk cap is refused whole: nothing is stored or truncated,
+    /// and the server settles `needs_auth` without any bearer.
+    #[tokio::test]
+    async fn overflowing_credential_fails_closed_to_needs_auth() {
+        use cyber_server::runtime::McpConnectionStatus;
+        use cyber_tools::mcp::oauth::OAuthError;
+        let access = format!("{SEED_ACCESS}-{}", "y".repeat(8 * 2560));
+        let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+        let fake = oauth_as::FakeAs::start().await;
+        http.require_authorization(Some(&format!("Bearer {access}")));
+        let (_root, directory, app, vault) =
+            vault_app(json!({"mcp":{"remote":{"type":"remote","url":http.url}}})).await;
+        let mut events = app.runtime.subscribe();
+        let error = put_access(&app, &http.url, &fake, &access).unwrap_err();
+        assert!(
+            matches!(&error, OAuthError::Storage(reason) if reason == "credential too large for the OS keyring"),
+            "{error}"
+        );
+        assert!(!error.to_string().contains("PRIVATE-"));
+        assert!(vault.entries().is_empty(), "{:?}", vault.accounts());
+        assert!(!index_file(&app).exists());
+
+        open_session(&app, &directory).await;
+        let record = wait_record(&app, &directory, |record| {
+            record.phase == McpConnectionPhase::Settled
+        })
+        .await;
+        assert_eq!(record.status, McpConnectionStatus::NeedsAuth);
+        assert!(
+            http.requests()
+                .iter()
+                .all(|seen| seen.header("authorization").is_none())
+        );
+        assert!(fake.seen().is_empty(), "{:?}", fake.paths());
+        assert_no_token_leak(&app, &directory, &mut events).await;
+        app.host.close_mcp_location(&directory).await.unwrap();
         app.runtime.shutdown().await;
     }
 }

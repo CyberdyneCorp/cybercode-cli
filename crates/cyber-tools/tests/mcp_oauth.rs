@@ -12,7 +12,8 @@ use std::time::Duration;
 use cyber_core::config::McpOAuth;
 use cyber_tools::mcp::oauth::{
     self, AuthChallenge, CallbackListener, CredentialKey, FileCredentialStore, McpCredentialStore,
-    MemoryCredentialStore, OAuthClient, OAuthError, Pkce, StoredCredential, TokenRequest, TokenSet,
+    MemoryCredentialStore, MemoryVault, OAuthClient, OAuthError, Pkce, StoredCredential,
+    TokenRequest, TokenSet, VaultCredentialStore,
 };
 use cyber_tools::mcp::{
     HeaderSet, HttpConnection, HttpFailure, HttpTarget, McpError, RemoteTransport, StartupOptions,
@@ -508,6 +509,23 @@ fn exercise(store: &dyn McpCredentialStore) {
 #[test]
 fn credential_stores_round_trip_by_exact_url_and_issuer() {
     exercise(&MemoryCredentialStore::default());
+    {
+        // The OS keyring layout, over the in-memory vault: nothing here touches a real
+        // Keychain or Credential Manager.
+        let dir = tempfile::tempdir().unwrap();
+        let index = dir.path().join("data/mcp-auth-index.json");
+        let vault = std::sync::Arc::new(MemoryVault::default());
+        exercise(&VaultCredentialStore::new(index.clone(), vault.clone()));
+        let text = std::fs::read_to_string(&index).unwrap();
+        assert!(!text.contains("mcp.example.test"), "{text}");
+        // Neither the remaining token nor its refresh token is in the index.
+        assert!(!text.contains("other-refresh"), "{text}");
+        assert!(!text.contains("\"other\""), "{text}");
+        for (account, secret) in vault.entries() {
+            assert!(!account.contains("example"), "{account}");
+            assert!(secret.len() <= 2560);
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -633,8 +651,9 @@ fn resource_url() -> Url {
     Url::parse("http://127.0.0.1:9/mcp").unwrap()
 }
 
-fn token_source(store: std::sync::Arc<dyn McpCredentialStore>) -> oauth::TokenSource {
+async fn token_source(store: std::sync::Arc<dyn McpCredentialStore>) -> oauth::TokenSource {
     oauth::TokenSource::load(store, "remote", &resource_url())
+        .await
         .unwrap()
         .expect("credential is stored")
 }
@@ -647,7 +666,7 @@ async fn refresh_follows_a_credential_moved_to_another_issuer() {
     let store = std::sync::Arc::new(MemoryCredentialStore::default());
     let (key, credential) = issued_by(&old.origin, "PRIVATE-OLD-REFRESH", 3600);
     store.put(&key, &credential).unwrap();
-    let mut source = token_source(store.clone());
+    let mut source = token_source(store.clone()).await;
     // `cyber mcp auth` re-ran against another issuer, whose token is already due.
     let (moved, credential) = issued_by(&new.origin, "PRIVATE-NEW-REFRESH", 60);
     store.put(&moved, &credential).unwrap();
@@ -677,12 +696,15 @@ async fn an_adopted_credential_is_validated_before_any_refresh() {
     let store = std::sync::Arc::new(MemoryCredentialStore::default());
     let (key, credential) = issued_by(&fake.origin, "PRIVATE-REFRESH", 3600);
     store.put(&key, &credential).unwrap();
-    let mut source = token_source(store.clone());
+    let mut source = token_source(store.clone()).await;
     // A remote issuer whose stored token endpoint is a local service.
     let (mut moved, credential) = issued_by(&fake.origin, "PRIVATE-REFRESH", 60);
     moved.issuer = "https://as.example.test/".into();
     store.put(&moved, &credential).unwrap();
-    assert!(matches!(source.sync(), Err(OAuthError::InsecureEndpoint)));
+    assert!(matches!(
+        source.sync().await,
+        Err(OAuthError::InsecureEndpoint)
+    ));
     assert!(matches!(
         source.refresh(&client()).await,
         Err(OAuthError::InsecureEndpoint)
@@ -697,7 +719,7 @@ async fn refresh_of_a_removed_credential_fails_closed_and_stores_nothing() {
     let store = std::sync::Arc::new(MemoryCredentialStore::default());
     let (key, credential) = issued_by(&fake.origin, "PRIVATE-REFRESH", 60);
     store.put(&key, &credential).unwrap();
-    let mut source = token_source(store.clone());
+    let mut source = token_source(store.clone()).await;
     assert_eq!(store.remove_server("remote").unwrap(), 1);
     assert!(matches!(
         source.refresh(&client()).await,
@@ -712,27 +734,50 @@ async fn refresh_of_a_removed_credential_fails_closed_and_stores_nothing() {
     );
 }
 
+/// A fresh handle on one shared credential store, as another process would open it.
+type Opener = Box<dyn Fn() -> std::sync::Arc<dyn McpCredentialStore> + Send + Sync>;
+
+/// Handles on the owner-only file at `<dir>/mcp-auth.json`.
 #[cfg(unix)]
-#[tokio::test]
-async fn logout_during_a_refresh_is_not_undone() {
+fn file_opener(dir: &tempfile::TempDir) -> Opener {
+    let path = dir.path().join("mcp-auth.json");
+    Box::new(move || std::sync::Arc::new(FileCredentialStore::new(path.clone())))
+}
+
+/// Handles on the OS keyring layout over one in-memory vault (never a real keyring).
+fn vault_opener(dir: &tempfile::TempDir) -> Opener {
+    let index = dir.path().join("mcp-auth-index.json");
+    let vault = std::sync::Arc::new(MemoryVault::default());
+    Box::new(move || std::sync::Arc::new(VaultCredentialStore::new(index.clone(), vault.clone())))
+}
+
+/// No file in `dir` holds a token: the vault keeps them, and the file store has
+/// forgotten them after logout.
+fn assert_no_token_in_files(dir: &tempfile::TempDir) {
+    for entry in std::fs::read_dir(dir.path()).unwrap() {
+        let path = entry.unwrap().path();
+        let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap_or_default()).into_owned();
+        assert!(!text.contains("TOKEN-SECRET"), "{}: {text}", path.display());
+        assert!(
+            !text.contains("PRIVATE-REFRESH"),
+            "{}: {text}",
+            path.display()
+        );
+    }
+}
+
+async fn logout_during_a_refresh_is_not_undone(open: Opener, dir: &tempfile::TempDir) {
     let fake = FakeAs::start().await;
     fake.issue_refresh("PRIVATE-REFRESH");
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mcp-auth.json");
-    let store = std::sync::Arc::new(FileCredentialStore::new(path.clone()));
+    let store = open();
     let (key, credential) = issued_by(&fake.origin, "PRIVATE-REFRESH", 60);
     store.put(&key, &credential).unwrap();
-    let mut source = token_source(store.clone());
+    let mut source = token_source(store.clone()).await;
     fake.hold_tokens();
     let refresh = tokio::spawn(async move { source.refresh(&client()).await });
     wait_token_posts(&fake, 1).await;
     // `cyber mcp logout` while the token request is in flight.
-    assert_eq!(
-        FileCredentialStore::new(path.clone())
-            .remove_server("remote")
-            .unwrap(),
-        1
-    );
+    assert_eq!(open().remove_server("remote").unwrap(), 1);
     fake.release_tokens();
     assert!(matches!(
         refresh.await.unwrap(),
@@ -744,24 +789,30 @@ async fn logout_during_a_refresh_is_not_undone() {
             .unwrap()
             .is_none()
     );
-    let text = std::fs::read_to_string(&path).unwrap();
-    assert!(!text.contains("TOKEN-SECRET"), "{text}");
+    assert_no_token_in_files(dir);
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn concurrent_refreshes_present_a_rotating_refresh_token_once() {
+async fn file_logout_during_a_refresh_is_not_undone() {
+    let dir = tempfile::tempdir().unwrap();
+    logout_during_a_refresh_is_not_undone(file_opener(&dir), &dir).await;
+}
+
+#[tokio::test]
+async fn vault_logout_during_a_refresh_is_not_undone() {
+    let dir = tempfile::tempdir().unwrap();
+    logout_during_a_refresh_is_not_undone(vault_opener(&dir), &dir).await;
+}
+
+async fn concurrent_refreshes_present_a_rotating_refresh_token_once(open: Opener) {
     let fake = FakeAs::start().await;
     fake.issue_refresh("PRIVATE-REFRESH");
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mcp-auth.json");
     let (key, credential) = issued_by(&fake.origin, "PRIVATE-REFRESH", 60);
-    FileCredentialStore::new(path.clone())
-        .put(&key, &credential)
-        .unwrap();
+    open().put(&key, &credential).unwrap();
     // Two holders of one credential, each with its own store handle, as two processes.
-    let mut first = token_source(std::sync::Arc::new(FileCredentialStore::new(path.clone())));
-    let mut second = token_source(std::sync::Arc::new(FileCredentialStore::new(path.clone())));
+    let mut first = token_source(open()).await;
+    let mut second = token_source(open()).await;
     assert!(first.due() && second.due());
     fake.hold_tokens();
     let first = tokio::spawn(async move { first.refresh(&client()).await.map(|()| first) });
@@ -781,6 +832,18 @@ async fn concurrent_refreshes_present_a_rotating_refresh_token_once() {
 }
 
 #[cfg(unix)]
+#[tokio::test]
+async fn file_concurrent_refreshes_present_a_rotating_refresh_token_once() {
+    let dir = tempfile::tempdir().unwrap();
+    concurrent_refreshes_present_a_rotating_refresh_token_once(file_opener(&dir)).await;
+}
+
+#[tokio::test]
+async fn vault_concurrent_refreshes_present_a_rotating_refresh_token_once() {
+    let dir = tempfile::tempdir().unwrap();
+    concurrent_refreshes_present_a_rotating_refresh_token_once(vault_opener(&dir)).await;
+}
+
 async fn wait_token_posts(fake: &FakeAs, count: usize) {
     tokio::time::timeout(Duration::from_secs(10), async {
         while fake.token_posts().len() < count {
@@ -789,4 +852,139 @@ async fn wait_token_posts(fake: &FakeAs, count: usize) {
     })
     .await
     .expect("token request never arrived");
+}
+
+/// A memory store whose `replace` waits at `gate` twice (on entry and before writing), as
+/// a keyring write waiting on the user does. Each refresh lock it hands out reports its
+/// release on `released`.
+struct GatedStore {
+    inner: MemoryCredentialStore,
+    gate: std::sync::Arc<std::sync::Barrier>,
+    released: std::sync::mpsc::Sender<()>,
+}
+
+/// A refresh lock that reports its release.
+struct Reported(
+    #[allow(dead_code)] oauth::RefreshLock,
+    std::sync::mpsc::Sender<()>,
+);
+
+impl Drop for Reported {
+    fn drop(&mut self) {
+        let _ = self.1.send(());
+    }
+}
+
+impl McpCredentialStore for GatedStore {
+    fn get(&self, key: &CredentialKey) -> Result<Option<StoredCredential>, OAuthError> {
+        self.inner.get(key)
+    }
+    fn find(
+        &self,
+        server: &str,
+        url: &str,
+    ) -> Result<Option<(CredentialKey, StoredCredential)>, OAuthError> {
+        self.inner.find(server, url)
+    }
+    fn put(&self, key: &CredentialKey, credential: &StoredCredential) -> Result<(), OAuthError> {
+        self.inner.put(key, credential)
+    }
+    fn replace(
+        &self,
+        key: &CredentialKey,
+        previous: &TokenSet,
+        credential: &StoredCredential,
+    ) -> Result<bool, OAuthError> {
+        self.gate.wait();
+        self.gate.wait();
+        self.inner.replace(key, previous, credential)
+    }
+    fn try_lock_refresh(
+        &self,
+        server: &str,
+        url: &str,
+    ) -> Result<Option<oauth::RefreshLock>, OAuthError> {
+        Ok(self
+            .inner
+            .try_lock_refresh(server, url)?
+            .map(|lock| oauth::RefreshLock::new(Reported(lock, self.released.clone()))))
+    }
+    fn remove(&self, server: &str, url: &str) -> Result<bool, OAuthError> {
+        self.inner.remove(server, url)
+    }
+    fn remove_server(&self, server: &str) -> Result<usize, OAuthError> {
+        self.inner.remove_server(server)
+    }
+    fn marker(&self, server: &str, url: &str) -> Result<oauth::AuthMarker, OAuthError> {
+        self.inner.marker(server, url)
+    }
+    fn mark(&self, server: &str, url: &str, marker: &oauth::AuthMarker) -> Result<(), OAuthError> {
+        self.inner.mark(server, url, marker)
+    }
+    fn clear_marker(&self, server: &str, url: &str) -> Result<(), OAuthError> {
+        self.inner.clear_marker(server, url)
+    }
+}
+
+/// Regression: a refresh wrote the rotated credential synchronously on a runtime worker,
+/// so a keyring write waiting on the user outlasted the caller's timeout; and a refresh
+/// dropped mid-write must keep its lock until the write ends, so no other holder presents
+/// the refresh token being rotated away.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refresh_timeout_fires_during_a_blocked_write_which_keeps_the_lock() {
+    let fake = FakeAs::start().await;
+    fake.issue_refresh("PRIVATE-REFRESH");
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let (released_tx, released) = std::sync::mpsc::channel();
+    let store = std::sync::Arc::new(GatedStore {
+        inner: MemoryCredentialStore::default(),
+        gate: gate.clone(),
+        released: released_tx,
+    });
+    let (key, credential) = issued_by(&fake.origin, "PRIVATE-REFRESH", 60);
+    store.put(&key, &credential).unwrap();
+    let mut source = token_source(store.clone()).await;
+    let refresh = tokio::spawn(async move {
+        tokio::time::timeout(Duration::from_secs(2), source.refresh(&client()))
+            .await
+            .is_err()
+    });
+    // The write of the rotated credential has begun and waits.
+    let entered = gate.clone();
+    tokio::task::spawn_blocking(move || entered.wait())
+        .await
+        .unwrap();
+    let timed_out = tokio::time::timeout(Duration::from_secs(20), refresh)
+        .await
+        .expect("the caller's timeout never fired")
+        .unwrap();
+    assert!(timed_out);
+    let url = resource_url();
+    assert!(
+        store
+            .try_lock_refresh("remote", url.as_str())
+            .unwrap()
+            .is_none()
+    );
+    assert!(released.try_recv().is_err());
+    let open = gate.clone();
+    tokio::task::spawn_blocking(move || open.wait())
+        .await
+        .unwrap();
+    tokio::task::spawn_blocking(move || released.recv_timeout(Duration::from_secs(10)))
+        .await
+        .unwrap()
+        .expect("the refresh lock was never released");
+    assert!(
+        store
+            .try_lock_refresh("remote", url.as_str())
+            .unwrap()
+            .is_some()
+    );
+    // The write finished after its caller gave up: the rotated credential is stored.
+    let (_, stored) = store.find("remote", url.as_str()).unwrap().unwrap();
+    assert_eq!(
+        stored.tokens.refresh_token,
+        Some(format!("{}1", oauth_as::REFRESH_PREFIX))
+    );
 }

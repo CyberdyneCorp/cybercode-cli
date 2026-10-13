@@ -124,6 +124,7 @@ async fn connect(ctx: &Context, launch: &LaunchArgs) -> Result<(Client, Option<A
             snapshots: true,
             interactive: true,
             password: None,
+            mcp_credentials: None,
         })
         .await
         .map_err(CliError::runtime)?;

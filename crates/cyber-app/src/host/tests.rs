@@ -23,6 +23,7 @@ async fn application(root: &std::path::Path) -> App {
         snapshots: false,
         interactive: false,
         password: None,
+        mcp_credentials: None,
     })
     .await
     .unwrap()

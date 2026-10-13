@@ -227,8 +227,10 @@ fn exec_calls_a_remote_streamable_http_tool_through_the_app_host() {
     drop(runtime);
 }
 
-/// The owner-only credential file refuses on Windows, so stored tokens are unix-only.
-#[cfg(not(windows))]
+/// Seeds the owner-only credential file, which `cyber exec` selects where there is no OS
+/// keyring backend (Linux and other unix). The keyring platforms' production path is
+/// covered through the app with an injected vault (cyber-app tests/mcp.rs `oauth::`).
+#[cfg(not(any(target_os = "macos", windows)))]
 #[test]
 fn exec_refreshes_an_expiring_oauth_token_before_calling_a_remote_tool() {
     use cyber_tools::mcp::oauth::{

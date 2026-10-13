@@ -10,6 +10,8 @@
 mod challenge;
 mod discovery;
 mod flow;
+mod keyring;
+mod lock;
 mod provider;
 mod register;
 mod store;
@@ -26,6 +28,12 @@ use reqwest::Url;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap};
 use serde_json::{Value, json};
 
+#[cfg(any(target_os = "macos", windows))]
+pub use self::keyring::OsVault;
+pub use self::keyring::{
+    BLOB_LIMIT, CHUNK_CAP, MemoryVault, SERVICE, SecretVault, VaultCredentialStore, backend_name,
+    index_file, open_store,
+};
 pub use challenge::AuthChallenge;
 pub use discovery::{AuthorizationServer, Discovery, discover};
 pub use flow::{CALLBACK_PATH, CallbackListener, Pkce, authorize_url, random_state};
@@ -90,6 +98,10 @@ pub enum OAuthError {
     Random,
     #[error("MCP credential storage failed: {0}")]
     Storage(String),
+    /// The credential store is locked by another process past the bounded wait: transient,
+    /// never a verdict on the credential.
+    #[error("MCP credential storage is busy in another process")]
+    Busy,
     /// The credential in use was removed (`cyber mcp logout`); nothing is refreshed or
     /// written back.
     #[error("the stored MCP OAuth credential was removed")]

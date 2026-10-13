@@ -1929,6 +1929,7 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
         snapshots: false,
         interactive: true,
         password: Some("tui-memory-password".into()),
+        mcp_credentials: None,
     })
     .await
     .unwrap();

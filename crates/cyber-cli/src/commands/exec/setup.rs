@@ -96,6 +96,7 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
             snapshots: !args.ephemeral,
             interactive: false,
             password: None,
+            mcp_credentials: None,
         })
         .await
         .map_err(CliError::runtime)?;

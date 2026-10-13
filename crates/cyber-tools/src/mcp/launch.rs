@@ -767,7 +767,7 @@ impl LocalLauncher<'_> {
         auth: &mut RemoteAuth,
         launch: &Startup<'_>,
     ) -> Result<(), AuthFailure> {
-        auth.tokens = self.stored_tokens(server, url, launch.name)?;
+        auth.tokens = self.stored_tokens(server, url, launch).await?;
         auth.unregistered = auth.tokens.is_none() && self.unregistered(server, url, launch.name)?;
         if auth
             .tokens
@@ -790,11 +790,14 @@ impl LocalLauncher<'_> {
         Ok(())
     }
 
-    fn stored_tokens(
+    /// The stored credential, read inside the startup deadline: an OS keyring read waiting
+    /// on the user (a Keychain prompt) settles the server failed at the deadline instead of
+    /// stalling its startup.
+    async fn stored_tokens(
         &self,
         server: &ServerSelection,
         url: &reqwest::Url,
-        name: &str,
+        launch: &Startup<'_>,
     ) -> Result<Option<TokenSource>, AuthFailure> {
         let Some(store) = self.credentials.clone() else {
             return Ok(None);
@@ -802,9 +805,16 @@ impl LocalLauncher<'_> {
         if server.definition.oauth().is_none() {
             return Ok(None);
         }
-        TokenSource::load(store, name, url).map_err(|error| {
-            AuthFailure::failed(format!("MCP OAuth credential is unusable: {error}"))
-        })
+        let loaded =
+            tokio::time::timeout_at(launch.deadline, TokenSource::load(store, launch.name, url));
+        match loaded.await {
+            Ok(loaded) => loaded.map_err(|error| {
+                AuthFailure::failed(format!("MCP OAuth credential is unusable: {error}"))
+            }),
+            Err(_) => Err(AuthFailure::failed(
+                "MCP OAuth credential store timed out".into(),
+            )),
+        }
     }
 
     /// Whether `cyber mcp auth` recorded that no client can be registered for `server` at

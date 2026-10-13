@@ -93,9 +93,13 @@ fn body(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
-/// The full flow needs the owner-only credential file, which refuses on Windows.
-#[cfg(unix)]
-mod unix {
+/// The full flow stores credentials, so it runs only where `oauth::open_store` selects the
+/// owner-only file (Linux and other non-macOS unix): on macOS and Windows the real binary
+/// would write the user's Keychain or Credential Manager. There the production path is
+/// covered in process through the app with an injected vault (cyber-app tests/mcp.rs
+/// `oauth::`).
+#[cfg(not(any(target_os = "macos", windows)))]
+mod file_backend {
     use std::io::{BufRead, BufReader, Read};
     use std::path::Path;
     use std::process::{Child, Stdio};
@@ -363,6 +367,8 @@ mod unix {
                 snapshots: false,
                 interactive: true,
                 password: Some("logout-test-password".into()),
+                // The store `cyber mcp logout` (the binary) selects on this platform.
+                mcp_credentials: Some(cyber_tools::mcp::oauth::open_store(&paths)),
             }))
             .unwrap();
         let listener = runtime
@@ -674,8 +680,10 @@ fn mcp_auth_without_registration_or_client_id_needs_client_registration() {
         fake.paths(),
         ["/prm", "/.well-known/oauth-authorization-server"]
     );
-    // The condition is recorded for the runtime, which never runs discovery itself.
-    #[cfg(unix)]
+    // The condition is recorded for the runtime, which never runs discovery itself: in the
+    // file where it is the backend, in the index (by URL digest, no URL) on keyring
+    // platforms. Recording it never touches the keyring.
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let stored: Value =
             serde_json::from_str(&std::fs::read_to_string(env.auth_file()).unwrap()).unwrap();
@@ -684,10 +692,20 @@ fn mcp_auth_without_registration_or_client_id_needs_client_registration() {
         assert_eq!(stored["markers"][0]["url"], http.url);
         assert_eq!(stored["markers"][0]["needs_client_registration"], true);
     }
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        let index = env.root.join("cyber/data/mcp-auth-index.json");
+        let text = std::fs::read_to_string(index).unwrap();
+        assert!(!text.contains(&http.url), "{text}");
+        let stored: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(stored["credentials"], json!([]));
+        assert_eq!(stored["markers"][0]["server"], "remote");
+        assert_eq!(stored["markers"][0]["needs_client_registration"], true);
+        assert!(!env.auth_file().exists());
+    }
 }
 
-/// The credential file refuses on Windows, so logout reports that instead.
-#[cfg(unix)]
+/// Through the platform's selected store; with nothing stored, no keyring entry is read.
 #[test]
 fn mcp_logout_needs_no_configuration_and_reports_nothing_removed() {
     let env = Env::new();

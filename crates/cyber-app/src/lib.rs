@@ -24,6 +24,7 @@ use cyber_server::runtime::{
     Snapshots, ToolHost,
 };
 use cyber_store::{Store, StoreOptions};
+use cyber_tools::mcp::oauth::McpCredentialStore;
 use cyber_tools::{BuiltinHost, ConfigFn, HookConfigFn, HostOptions};
 use serde_json::{Value, json};
 
@@ -51,6 +52,9 @@ pub struct AppOptions {
     pub interactive: bool,
     /// Basic-auth password for TCP; `None` disables auth (embedded).
     pub password: Option<String>,
+    /// Where remote MCP servers' OAuth credentials live. `None` (every production caller)
+    /// is this platform's store (`oauth::open_store`); embedders and tests pass their own.
+    pub mcp_credentials: Option<Arc<dyn McpCredentialStore>>,
 }
 
 pub struct App {
@@ -61,6 +65,8 @@ pub struct App {
     pub paths: Paths,
     /// Resolved config of a Location.
     pub config: Arc<ConfigFn>,
+    /// The MCP OAuth credential store the pool and hook connections use.
+    pub mcp_credentials: Arc<dyn McpCredentialStore>,
 }
 
 pub fn version() -> &'static str {
@@ -139,12 +145,13 @@ impl App {
             hook_config_loader(opts.paths.clone(), opts.home.clone()),
             cyber_core::trust::TrustStore::new(opts.paths.trust_file()),
         )?;
-        // Remote MCP servers send stored OAuth tokens. The owner-only credential file has
-        // no Windows ACL backend yet, so Windows connects without stored tokens.
-        #[cfg(not(windows))]
-        host.attach_mcp_credentials(Arc::new(cyber_tools::mcp::oauth::FileCredentialStore::new(
-            opts.paths.mcp_auth_file(),
-        )))?;
+        // Remote MCP servers send stored OAuth tokens: the OS keyring on macOS and Windows,
+        // the owner-only file elsewhere.
+        let mcp_credentials = opts
+            .mcp_credentials
+            .clone()
+            .unwrap_or_else(|| cyber_tools::mcp::oauth::open_store(&opts.paths));
+        host.attach_mcp_credentials(Arc::clone(&mcp_credentials))?;
         let lsp_options = cyber_tools::lsp::LaunchOptions {
             checkout_claim: Some(host.lsp_checkout_claim()),
             paths: opts.paths.clone(),
@@ -242,6 +249,7 @@ impl App {
             state,
             paths: opts.paths,
             config: Arc::clone(&config_for_app),
+            mcp_credentials,
         })
     }
 

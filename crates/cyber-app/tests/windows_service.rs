@@ -121,6 +121,7 @@ async fn application(root: &Path, model: Arc<Model>) -> App {
         snapshots: false,
         interactive: true,
         password: Some("test-password-123456".into()),
+        mcp_credentials: None,
     })
     .await
     .unwrap();

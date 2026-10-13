@@ -16,19 +16,18 @@
 //! lock that a holder keeps across the token request, so connections and processes sharing
 //! a credential never present the same rotating refresh token twice, while a slow
 //! authorization server never delays another server's refresh.
+//!
+//! The OS keyring backend ([`super::VaultCredentialStore`]) shares the locks and the
+//! owner-only document handling ([`super::lock`]).
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::{OAuthClient, OAuthError, TokenSet};
+use super::{OAuthClient, OAuthError, TokenSet, lock};
 
 const VERSION: u32 = 1;
-const FILE_LIMIT: u64 = 4 * 1024 * 1024;
-const LOCK_ATTEMPTS: u32 = 100;
-const LOCK_RETRY: Duration = Duration::from_millis(50);
 
 /// Which credential: the server name, its canonical URL and the token's issuer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +57,7 @@ pub struct AuthMarker {
 
 impl AuthMarker {
     /// Set what `other` sets; scopes are unioned.
-    fn merge(&mut self, other: &Self) {
+    pub(super) fn merge(&mut self, other: &Self) {
         self.needs_client_registration |= other.needs_client_registration;
         let scopes: std::collections::BTreeSet<_> = self
             .required_scopes
@@ -71,7 +70,14 @@ impl AuthMarker {
 }
 
 /// The exclusive refresh lock of one credential, released on drop.
-pub struct RefreshLock(#[allow(dead_code)] Box<dyn Send + Sync>);
+pub struct RefreshLock(#[allow(dead_code)] pub(super) Box<dyn Send + Sync>);
+
+impl RefreshLock {
+    /// A lock held until `guard` is dropped, for stores implemented elsewhere.
+    pub fn new(guard: impl Send + Sync + 'static) -> Self {
+        Self(Box::new(guard))
+    }
+}
 
 impl std::fmt::Debug for RefreshLock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -87,6 +93,12 @@ pub trait McpCredentialStore: Send + Sync {
         server: &str,
         url: &str,
     ) -> Result<Option<(CredentialKey, StoredCredential)>, OAuthError>;
+    /// Whether a credential is stored for `server` at exactly `url`, without its secrets:
+    /// a store backed by the OS keyring answers from its index, never waiting on the
+    /// keyring.
+    fn contains(&self, server: &str, url: &str) -> Result<bool, OAuthError> {
+        self.find(server, url).map(|found| found.is_some())
+    }
     /// Insert or replace; a server/URL pair keeps one credential, so a new issuer replaces
     /// the old one.
     fn put(&self, key: &CredentialKey, credential: &StoredCredential) -> Result<(), OAuthError>;
@@ -393,43 +405,25 @@ impl FileCredentialStore {
         Self { path }
     }
 
+    /// Whether anything is at the path; a symlink or an unreadable entry counts, so it is
+    /// refused rather than skipped.
+    pub(super) fn present(&self) -> bool {
+        match std::fs::symlink_metadata(&self.path) {
+            Ok(_) => true,
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        }
+    }
+
     /// Lock, read once, apply `operation`, and write back only when it reports a change.
     fn with<T>(&self, operation: impl FnOnce(&mut Document) -> (T, bool)) -> Result<T, OAuthError> {
         supported()?;
-        let _lock = self.lock()?;
+        let _lock = lock::lock_document(&self.path)?;
         let mut document = read(&self.path)?;
         let (result, changed) = operation(&mut document);
         if changed {
-            let bytes = serde_json::to_vec_pretty(&document)
-                .map_err(|_| storage("credential encoding failed"))?;
-            cyber_core::trust::write_private_atomic(&self.path, &bytes)
-                .map_err(|_| storage("credential file write failed"))?;
+            lock::write_private(&self.path, &document)?;
         }
         Ok(result)
-    }
-
-    fn lock_file(&self, extension: &str) -> Result<std::fs::File, OAuthError> {
-        let parent = self.path.parent().unwrap_or(Path::new("."));
-        std::fs::create_dir_all(parent).map_err(|_| storage("credential directory unavailable"))?;
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).truncate(false).write(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options
-            .open(self.path.with_extension(extension))
-            .map_err(|_| storage("credential lock unavailable"))
-    }
-
-    fn lock(&self) -> Result<std::fs::File, OAuthError> {
-        let file = self.lock_file("json.lock")?;
-        for _ in 0..LOCK_ATTEMPTS {
-            match file.try_lock() {
-                Ok(()) => return Ok(file),
-                Err(std::fs::TryLockError::WouldBlock) => std::thread::sleep(LOCK_RETRY),
-                Err(std::fs::TryLockError::Error(_)) => break,
-            }
-        }
-        Err(storage("credential file is locked by another process"))
     }
 }
 
@@ -463,15 +457,7 @@ impl McpCredentialStore for FileCredentialStore {
     /// is a digest of the server name and URL, never the URL itself.
     fn try_lock_refresh(&self, server: &str, url: &str) -> Result<Option<RefreshLock>, OAuthError> {
         supported()?;
-        let file = self.lock_file(&format!(
-            "json.refresh-{}.lock",
-            credential_digest(server, url)
-        ))?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(RefreshLock(Box::new(file)))),
-            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(std::fs::TryLockError::Error(_)) => Err(storage("credential refresh lock failed")),
-        }
+        lock::try_lock_refresh(&self.path, server, url)
     }
     fn remove(&self, server: &str, url: &str) -> Result<bool, OAuthError> {
         self.with(|document| {
@@ -493,8 +479,9 @@ impl McpCredentialStore for FileCredentialStore {
     }
 }
 
-/// A short hex digest naming one credential's refresh lock.
-fn credential_digest(server: &str, url: &str) -> String {
+/// A short hex digest naming one credential (server and URL) without revealing the URL:
+/// its refresh lock, and its OS keyring entries and index records.
+pub(super) fn credential_digest(server: &str, url: &str) -> String {
     use sha2::Digest;
     let digest = sha2::Sha256::new()
         .chain_update(server.as_bytes())
@@ -507,39 +494,30 @@ fn credential_digest(server: &str, url: &str) -> String {
         .collect()
 }
 
-fn storage(reason: &str) -> OAuthError {
+pub(super) fn storage(reason: &str) -> OAuthError {
     OAuthError::Storage(reason.into())
 }
 
 #[cfg(windows)]
-fn supported() -> Result<(), OAuthError> {
+pub(super) fn supported() -> Result<(), OAuthError> {
     Err(storage(
         "owner-only credential files are not supported on Windows yet",
     ))
 }
 
 #[cfg(not(windows))]
-fn supported() -> Result<(), OAuthError> {
+pub(super) fn supported() -> Result<(), OAuthError> {
     Ok(())
 }
 
 /// An absent file is an empty document; anything not owner-only and regular is refused.
-fn read(path: &Path) -> Result<Document, OAuthError> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Document {
-                version: VERSION,
-                ..Document::default()
-            });
-        }
-        Err(_) => return Err(storage("credential file unavailable")),
+fn read(path: &std::path::Path) -> Result<Document, OAuthError> {
+    let Some(bytes) = lock::read_private(path)? else {
+        return Ok(Document {
+            version: VERSION,
+            ..Document::default()
+        });
     };
-    if !metadata.is_file() || metadata.len() > FILE_LIMIT {
-        return Err(storage("credential file is not a bounded regular file"));
-    }
-    private(&metadata)?;
-    let bytes = std::fs::read(path).map_err(|_| storage("credential file unavailable"))?;
     let document: Document =
         serde_json::from_slice(&bytes).map_err(|_| storage("credential file is invalid"))?;
     if document.version != VERSION {
@@ -548,22 +526,8 @@ fn read(path: &Path) -> Result<Document, OAuthError> {
     Ok(document)
 }
 
-#[cfg(unix)]
-fn private(metadata: &std::fs::Metadata) -> Result<(), OAuthError> {
-    use std::os::unix::fs::PermissionsExt;
-    if metadata.permissions().mode() & 0o077 != 0 {
-        return Err(storage("credential file is accessible to other users"));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn private(_metadata: &std::fs::Metadata) -> Result<(), OAuthError> {
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -612,7 +576,7 @@ mod tests {
 
     /// A refresh of one credential holds only its own lock, so a slow authorization server
     /// never makes another server's refresh wait (and time out into `needs_auth`).
-    fn refresh_locks_are_per_credential(store: &dyn McpCredentialStore) {
+    pub(in super::super) fn refresh_locks_are_per_credential(store: &dyn McpCredentialStore) {
         let held = store
             .try_lock_refresh("a", "https://a.test/mcp")
             .unwrap()

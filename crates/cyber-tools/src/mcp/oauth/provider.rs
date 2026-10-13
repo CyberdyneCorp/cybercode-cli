@@ -51,13 +51,17 @@ impl TokenSource {
     /// The credential stored for `server` at exactly `url`, or `None`. A server URL that is
     /// not HTTPS (plain HTTP only on loopback), a stored issuer or token endpoint that is no
     /// longer HTTPS (or loopback HTTP from a loopback referrer) or a token that cannot be
-    /// sent as a header fails closed, so no bearer crosses the network in cleartext.
-    pub fn load(
+    /// sent as a header fails closed, so no bearer crosses the network in cleartext. The
+    /// store is read on the blocking pool (see [`Self::blocking`]), so the caller's
+    /// deadline still fires while an OS keyring read waits on the user.
+    pub async fn load(
         store: Arc<dyn McpCredentialStore>,
         server: &str,
         url: &Url,
     ) -> Result<Option<Self>, OAuthError> {
-        let Some((key, credential)) = store.find(server, url.as_str())? else {
+        let (reader, name, address) = (Arc::clone(&store), server.to_owned(), url.to_string());
+        let found = run_blocking(move || reader.find(&name, &address)).await?;
+        let Some((key, credential)) = found else {
             return Ok(None);
         };
         let resource = resource_indicator(url);
@@ -109,28 +113,36 @@ impl TokenSource {
     }
 
     /// Whether the credential in use was removed from the store (`cyber mcp logout`). A
-    /// store that cannot be read answers `false`, so nothing reconnects on its account.
+    /// store that cannot be read answers `false`, so nothing reconnects on its account. Only
+    /// the store's index is consulted ([`McpCredentialStore::contains`]), never the OS
+    /// keyring, so this never waits on the user.
     pub fn removed(&self) -> bool {
-        matches!(self.store.find(&self.key.server, &self.key.url), Ok(None))
+        matches!(
+            self.store.contains(&self.key.server, &self.key.url),
+            Ok(false)
+        )
     }
 
     /// Adopt what the store now holds for this server and URL: tokens another connection
     /// rotated, or a credential `cyber mcp auth` replaced, validated like [`Self::load`].
     /// A removed credential (`cyber mcp logout`) fails with
     /// [`OAuthError::CredentialRemoved`], so it is never sent again, whether or not a
-    /// reconnect follows. Whether the credential in use changed.
-    pub fn sync(&mut self) -> Result<bool, OAuthError> {
-        let (key, stored) = self.stored()?;
+    /// reconnect follows. Whether the credential in use changed. The store is read on the
+    /// blocking pool, so a caller's timeout still fires.
+    pub async fn sync(&mut self) -> Result<bool, OAuthError> {
+        let (key, stored) = self.stored_blocking().await?;
         self.adopt(key, stored)
     }
 
     /// Renew the access token while holding the store's refresh lock. A credential another
     /// holder already rotated and that is not due is adopted without a request; a removed
     /// credential fails closed. The response is persisted only if the stored credential is
-    /// still the refreshed one; otherwise the user's removal or replacement wins.
+    /// still the refreshed one; otherwise the user's removal or replacement wins. Store
+    /// reads and writes run on the blocking pool (see [`Self::blocking`]), so a caller's
+    /// timeout around this future still fires.
     pub async fn refresh(&mut self, http: &reqwest::Client) -> Result<(), OAuthError> {
-        let _lock = self.lock_refresh().await?;
-        let (key, stored) = self.stored()?;
+        let lock = self.lock_refresh().await?;
+        let (key, stored) = self.stored_blocking().await?;
         if self.adopt(key, stored)? && !self.due() {
             return Ok(());
         }
@@ -146,10 +158,13 @@ impl TokenSource {
             resource: &self.resource,
         };
         let tokens = refresh(http, &request, &presented, None).await?;
-        self.persist(tokens)
+        self.persist(tokens, lock).await
     }
 
-    fn persist(&mut self, mut tokens: TokenSet) -> Result<(), OAuthError> {
+    /// Store the response. The refresh `lock` is released only once the write has ended,
+    /// even when this future is dropped by a timeout meanwhile, so no other holder reads
+    /// the rotated-away refresh token while the write is still in flight.
+    async fn persist(&mut self, mut tokens: TokenSet, lock: RefreshLock) -> Result<(), OAuthError> {
         if tokens.scopes.is_empty() {
             tokens.scopes.clone_from(&self.credential.tokens.scopes);
         }
@@ -157,14 +172,22 @@ impl TokenSource {
             tokens,
             ..self.credential.clone()
         };
-        if self
-            .store
-            .replace(&self.key, &self.credential.tokens, &credential)?
-        {
+        let (key, previous, next) = (
+            self.key.clone(),
+            self.credential.tokens.clone(),
+            credential.clone(),
+        );
+        let replaced = self
+            .blocking(move |store| {
+                let _lock = lock;
+                store.replace(&key, &previous, &next)
+            })
+            .await?;
+        if replaced {
             self.credential = credential;
             return Ok(());
         }
-        let (key, stored) = self.stored()?;
+        let (key, stored) = self.stored_blocking().await?;
         self.adopt(key, stored)?;
         if self.due() {
             return Err(OAuthError::TokenRejected("credential_replaced".into()));
@@ -183,9 +206,21 @@ impl TokenSource {
         Ok(true)
     }
 
-    fn stored(&self) -> Result<(CredentialKey, StoredCredential), OAuthError> {
-        self.store
-            .find(&self.key.server, &self.key.url)?
+    /// Run a store operation on the blocking pool: an OS keyring call may wait on the user
+    /// (a Keychain prompt), which must neither stall a runtime worker nor outlast the
+    /// caller's timeout.
+    async fn blocking<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(&dyn McpCredentialStore) -> Result<T, OAuthError> + Send + 'static,
+    ) -> Result<T, OAuthError> {
+        let store = Arc::clone(&self.store);
+        run_blocking(move || operation(store.as_ref())).await
+    }
+
+    async fn stored_blocking(&self) -> Result<(CredentialKey, StoredCredential), OAuthError> {
+        let (server, url) = (self.key.server.clone(), self.key.url.clone());
+        self.blocking(move |store| store.find(&server, &url))
+            .await?
             .ok_or(OAuthError::CredentialRemoved)
     }
 
@@ -206,6 +241,15 @@ impl TokenSource {
             tokio::time::sleep(LOCK_RETRY).await;
         }
     }
+}
+
+/// Run `operation` on the blocking pool; dropping the future leaves it to finish there.
+async fn run_blocking<T: Send + 'static>(
+    operation: impl FnOnce() -> Result<T, OAuthError> + Send + 'static,
+) -> Result<T, OAuthError> {
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|_| OAuthError::Storage("credential store task failed".into()))?
 }
 
 /// The token endpoint of a stored credential: `resource` must be HTTPS (plain HTTP only

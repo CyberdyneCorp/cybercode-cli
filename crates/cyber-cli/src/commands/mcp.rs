@@ -123,7 +123,8 @@ fn auth(
         port,
         timeout: AUTH_CALLBACK_TIMEOUT,
     };
-    let credentials = oauth::FileCredentialStore::new(ctx.paths.mcp_auth_file());
+    // The same backend `App::build` selects, so the runtime finds what is stored here.
+    let credentials = oauth::open_store(&ctx.paths);
     let present = |url: &str| {
         eprintln!("Open this URL in a browser to authorize MCP server {name}:\n{url}");
         eprintln!("Waiting for the authorization callback...");
@@ -132,7 +133,11 @@ fn auth(
         .enable_all()
         .build()?;
     let outcome = runtime
-        .block_on(oauth::authenticate(&request, &credentials, &present))
+        .block_on(oauth::authenticate(
+            &request,
+            credentials.as_ref(),
+            &present,
+        ))
         .map_err(auth_error)?;
     let reconnect = runtime.block_on(reconnect_running(ctx, name));
     report(
@@ -146,7 +151,6 @@ fn auth(
 /// then, when a credential was removed, ask a healthy registered server to reconnect it,
 /// which settles `needs_auth`.
 fn logout(ctx: &Context, global: &GlobalArgs, name: &str) -> Result<(), CliError> {
-    use oauth::McpCredentialStore as _;
     // The name also becomes a request path segment.
     let valid = !name.is_empty()
         && name.len() <= 48
@@ -156,8 +160,7 @@ fn logout(ctx: &Context, global: &GlobalArgs, name: &str) -> Result<(), CliError
     if !valid {
         return Err(CliError::usage("invalid MCP server name"));
     }
-    let credentials = oauth::FileCredentialStore::new(ctx.paths.mcp_auth_file());
-    let removed = credentials
+    let removed = oauth::open_store(&ctx.paths)
         .remove_server(name)
         .map_err(|error| CliError::runtime(error.to_string()))?;
     // With nothing removed no running connection changes, so nothing is reconnected.

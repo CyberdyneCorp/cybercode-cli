@@ -44,6 +44,7 @@ impl Fixture {
             snapshots: false,
             interactive: true,
             password: Some("memory-test".into()),
+            mcp_credentials: None,
         })
         .await
         .unwrap();
