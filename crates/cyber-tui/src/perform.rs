@@ -835,8 +835,12 @@ mod tests {
     #[test]
     fn resource_mentions_are_not_read_as_files() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("remote:file:")).unwrap();
-        std::fs::write(tmp.path().join("remote:file:/guide.md"), "LOCAL FILE").unwrap();
+        // Windows file names cannot contain `:`, so the colliding file exists only on Unix.
+        #[cfg(unix)]
+        {
+            std::fs::create_dir_all(tmp.path().join("remote:file:")).unwrap();
+            std::fs::write(tmp.path().join("remote:file:/guide.md"), "LOCAL FILE").unwrap();
+        }
         std::fs::write(tmp.path().join("notes.txt"), "notes").unwrap();
         let dir = tmp.path().display().to_string();
         let parts = parts("@remote:file:///guide.md and @notes.txt", &dir);

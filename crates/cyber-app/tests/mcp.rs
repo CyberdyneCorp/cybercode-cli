@@ -577,7 +577,49 @@ async fn open_session(app: &App, directory: &Path) {
 }
 
 fn provider() -> serde_json::Value {
-    json!({"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{}}}})
+    let url = format!("{}/v1", rejecting_provider());
+    json!({"test":{"api":{"type":"openai-compatible","url":url,"settings":{"auth":"none"}},"models":{"main":{}}}})
+}
+
+/// A provider endpoint that answers every request with a non-retryable 400, so a Turn
+/// fails at once after promotion. A refused port is retried with backoff, and on Windows
+/// each refused connect itself takes about two seconds, which outlasts the Drain waits.
+fn rejecting_provider() -> &'static str {
+    static URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    URL.get_or_init(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                std::thread::spawn(move || reject(stream));
+            }
+        });
+        url
+    })
+}
+
+/// Read one whole request (headers and `Content-Length` body) before answering, so the
+/// close never resets a connection with unread data.
+fn reject(mut stream: std::net::TcpStream) {
+    use std::io::{BufRead, Read, Write};
+    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+    let mut length = 0;
+    let mut line = String::new();
+    while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse().unwrap_or(0);
+        }
+        line.clear();
+    }
+    let _ = reader.read_exact(&mut vec![0; length]);
+    let body = r#"{"error":{"message":"test provider rejects requests"}}"#;
+    let _ = write!(
+        stream,
+        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
 }
 
 #[tokio::test]
