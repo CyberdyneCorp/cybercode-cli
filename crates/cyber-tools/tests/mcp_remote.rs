@@ -1140,7 +1140,11 @@ async fn owned_headers_command_failure_settles_a_redacted_record() {
 async fn headers_refresh_swaps_credentials_on_the_live_session_and_failure_is_loss() {
     let http = McpHttp::start(Behavior::default()).await;
     let tokens = Tokens::new(r#"{"Authorization":"Bearer T1"}"#);
-    let fixture = Fixture::commanded(&http.url, &tokens.command(None), Some(1));
+    // The interval runs from the command's start, and starting PowerShell on Windows can
+    // take over a second, so it leaves room for the early call before the refresh is due.
+    let every = Duration::from_secs(4);
+    let fixture = Fixture::commanded(&http.url, &tokens.command(None), Some(4));
+    let connecting = tokio::time::Instant::now();
     let mut server = fixture.connect().await.unwrap();
     tokens.write(r#"{"Authorization":"Bearer T2"}"#);
     // Before the interval elapses the old credential stays in use.
@@ -1155,7 +1159,11 @@ async fn headers_refresh_swaps_credentials_on_the_live_session_and_failure_is_lo
         .call_tool("echo", json!({"text":"early"}), Duration::from_secs(5))
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(
+        connecting.elapsed() < every,
+        "the early call outlasted the refresh interval"
+    );
+    tokio::time::sleep_until(connecting + every + Duration::from_millis(100)).await;
     assert!(
         !server
             .poll_idle(Duration::from_millis(50))
@@ -1178,8 +1186,9 @@ async fn headers_refresh_swaps_credentials_on_the_live_session_and_failure_is_lo
     );
 
     // A failed refresh never keeps the stale credential: it is reported as loss.
+    let refreshed = tokio::time::Instant::now();
     tokens.write("PRIVATE-BROKEN");
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    tokio::time::sleep_until(refreshed + every + Duration::from_millis(100)).await;
     let error = server
         .poll_idle(Duration::from_millis(50))
         .await
