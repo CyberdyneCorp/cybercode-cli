@@ -16,6 +16,7 @@ const RESERVED: &[&str] = &[
     "mode",
     "timestamp",
     "synthetic",
+    "parent_session_id",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,12 +33,22 @@ pub struct HookIdentity {
     pub project_id: String,
     pub agent: String,
     pub mode: String,
+    /// The delegating Session of a child; absent for a root Session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
 }
 
 impl HookIdentity {
     fn validate(&self) -> Result<(), String> {
         if !crate::ids::has_prefix(&self.session_id, "ses") {
             return Err("hook envelope.session_id: expected a Session ID".into());
+        }
+        if self
+            .parent_session_id
+            .as_ref()
+            .is_some_and(|parent| !crate::ids::has_prefix(parent, "ses"))
+        {
+            return Err("hook envelope.parent_session_id: expected a Session ID".into());
         }
         if self.project_id != "global" && !crate::ids::has_prefix(&self.project_id, "prj") {
             return Err("hook envelope.project_id: expected a project ID or global".into());
@@ -89,6 +100,7 @@ impl HookEvent {
             project_id,
             agent,
             mode,
+            parent_session_id: None,
         };
         let mut event = Self::new(event, identity, timestamp_ms, fields)?;
         event.payload["synthetic"] = Value::Bool(true);

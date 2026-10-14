@@ -62,6 +62,11 @@ pub fn validate(args: &ExecArgs) -> Result<(), CliError> {
             "--attach cannot be combined with --embedded or --ephemeral",
         ));
     }
+    if args.trust_project_hooks && !(args.embedded || args.ephemeral) {
+        return Err(CliError::usage(
+            "--trust-project-hooks needs --embedded or --ephemeral: a shared server cannot take an approval for one run",
+        ));
+    }
     Ok(())
 }
 
@@ -100,6 +105,11 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
         })
         .await
         .map_err(CliError::runtime)?;
+        if args.trust_project_hooks {
+            app.host
+                .attach_invocation_hook_trust(invocation_hook_trust(ctx)?)
+                .map_err(CliError::runtime)?;
+        }
         return Ok(Backend {
             client: Client::embedded(app.embedded()),
             _app: Some(app),
@@ -110,6 +120,36 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
         client: Client::http(&info.registration.url, Some(info.password)),
         _app: None,
     })
+}
+
+/// Approve the project/local handler digests resolved now, for this run only.
+fn invocation_hook_trust(
+    ctx: &Context,
+) -> Result<cyber_core::trust::HookInvocationTrust, CliError> {
+    let resolved = ctx.config()?;
+    if !resolved.trust.trusted {
+        eprintln!(
+            "warning: --trust-project-hooks approves no withheld hooks; approve the checkout configuration with `cyber trust` first"
+        );
+    }
+    let catalog =
+        cyber_core::hooks::HookCatalog::from_config(&resolved).map_err(CliError::usage)?;
+    let digests: Vec<String> = catalog
+        .definitions
+        .iter()
+        .filter(|definition| definition.scope.requires_handler_trust())
+        .map(|definition| definition.digest.clone())
+        .collect();
+    if !digests.is_empty() {
+        eprintln!(
+            "approved {} project hook(s) for this run only",
+            digests.len()
+        );
+    }
+    Ok(cyber_core::trust::HookInvocationTrust::new(
+        &resolved.trust.checkout_root,
+        &digests,
+    )?)
 }
 
 fn mode(args: &ExecArgs, global: &GlobalArgs) -> String {

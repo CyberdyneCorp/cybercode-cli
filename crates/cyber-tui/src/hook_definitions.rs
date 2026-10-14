@@ -14,6 +14,9 @@ struct Definition {
     digest: String,
     trusted: bool,
     sandbox_required: bool,
+    /// Why a managed policy refuses this definition; it never runs while set.
+    #[serde(default)]
+    skipped: Option<String>,
     #[serde(default)]
     last_run: Option<cyber_core::hooks::HookLastRun>,
 }
@@ -202,6 +205,9 @@ impl View {
                 safe(&row.paths.join(", "))
             ),
         ]);
+        if let Some(reason) = &row.skipped {
+            lines.push(format!("Skipped by {} (never runs)", safe(reason)));
+        }
         lines.extend(last_run_lines(row.last_run.as_ref()));
         lines.push("Handler (credentials redacted):".into());
         lines.extend(

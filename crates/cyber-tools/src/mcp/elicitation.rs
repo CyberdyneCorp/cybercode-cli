@@ -7,6 +7,110 @@ pub struct ElicitationContext<'a> {
     asker: &'a Asker,
     authorize: &'a (dyn Fn() -> bool + Send + Sync),
     pub(super) sampling: Option<&'a dyn super::sampling::SamplingHandler>,
+    hooks: Option<ElicitationHooks<'a>>,
+}
+
+/// The calling invocation whose Elicitation hooks gate, and whose ElicitationResult
+/// hooks observe, a form before and after the user answers it.
+#[derive(Clone, Copy)]
+pub(crate) struct ElicitationHooks<'a> {
+    pub host: &'a crate::BuiltinHost,
+    pub inv: &'a cyber_server::runtime::Invocation,
+    pub cancel: &'a tokio_util::sync::CancellationToken,
+    pub flight: &'a HookFlight,
+}
+
+/// Elicitation hooks in flight for one call. A cancelled call cancels their token and
+/// keeps driving the call until none is in flight, so a launched handler settles its
+/// receipt and activity instead of being dropped.
+#[derive(Default)]
+pub(crate) struct HookFlight {
+    running: std::sync::atomic::AtomicUsize,
+    settled: tokio::sync::Notify,
+}
+
+impl HookFlight {
+    async fn run<T>(&self, work: impl std::future::Future<Output = T>) -> T {
+        use std::sync::atomic::Ordering;
+        struct Running<'a>(&'a HookFlight);
+        impl Drop for Running<'_> {
+            fn drop(&mut self) {
+                self.0.running.fetch_sub(1, Ordering::SeqCst);
+                self.0.settled.notify_waiters();
+            }
+        }
+        self.running.fetch_add(1, Ordering::SeqCst);
+        let _running = Running(self);
+        work.await
+    }
+
+    /// Drive cancelled `work` until no hook it started is in flight, then drop it.
+    pub(crate) async fn settle<F: std::future::Future>(&self, mut work: std::pin::Pin<&mut F>) {
+        loop {
+            let settled = self.settled.notified();
+            tokio::pin!(settled);
+            settled.as_mut().enable();
+            if self.running.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                return;
+            }
+            tokio::select! {
+                _ = work.as_mut() => return,
+                _ = settled => {}
+            }
+        }
+    }
+}
+
+impl ElicitationHooks<'_> {
+    /// Whether the merged Elicitation decision lets the form reach the user. A deny,
+    /// or an unavailable `fail_closed` handler, declines it.
+    async fn admits(&self, server: &str, params: &Value) -> bool {
+        let fields = json!({
+            "mcp_server_name": server,
+            "message": params["message"],
+            "requested_schema": params["requestedSchema"],
+            "elicitation_mode": "form",
+        });
+        let owner = crate::tool_hooks::HookOwner::of(self.inv);
+        let dispatched = self
+            .flight
+            .run(Box::pin(self.host.dispatch_owned(
+                "Elicitation",
+                &owner,
+                fields.as_object().cloned().unwrap_or_default(),
+                server,
+                self.cancel.clone(),
+            )))
+            .await;
+        match dispatched {
+            Ok(Some((decision, _))) => !matches!(
+                decision.decision,
+                Some(cyber_core::hooks::HookAction::Deny | cyber_core::hooks::HookAction::Block)
+            ),
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Observational ElicitationResult with the reply about to be sent.
+    async fn observe(&self, server: &str, result: &Value) {
+        let fields = json!({
+            "mcp_server_name": server,
+            "action": result["action"],
+            "content": result.get("content"),
+        });
+        let owner = crate::tool_hooks::HookOwner::of(self.inv);
+        let _ = self
+            .flight
+            .run(Box::pin(self.host.dispatch_owned(
+                "ElicitationResult",
+                &owner,
+                fields.as_object().cloned().unwrap_or_default(),
+                server,
+                self.cancel.clone(),
+            )))
+            .await;
+    }
 }
 impl<'a> ElicitationContext<'a> {
     pub fn new(asker: &'a Asker, authorize: &'a (dyn Fn() -> bool + Send + Sync)) -> Self {
@@ -14,7 +118,13 @@ impl<'a> ElicitationContext<'a> {
             asker,
             authorize,
             sampling: None,
+            hooks: None,
         }
+    }
+    /// Run Elicitation hooks for this call's forms.
+    pub(crate) fn with_hooks(mut self, hooks: ElicitationHooks<'a>) -> Self {
+        self.hooks = Some(hooks);
+        self
     }
     /// The same call ownership whose authorization also requires `authorize`.
     pub(super) fn authorized_by(&'a self, authorize: &'a (dyn Fn() -> bool + Send + Sync)) -> Self {
@@ -22,6 +132,7 @@ impl<'a> ElicitationContext<'a> {
             asker: self.asker,
             authorize,
             sampling: self.sampling,
+            hooks: self.hooks,
         }
     }
     pub(super) fn authorized(&self) -> bool {
@@ -395,17 +506,33 @@ pub(super) async fn reply(
         );
         return (json!({"result":{"action":"decline"}}), false);
     };
+    if let Some(hooks) = &context.hooks
+        && !hooks.admits(server, params).await
+    {
+        let declined = json!({"action":"decline"});
+        hooks.observe(server, &declined).await;
+        return (json!({"result":declined}), false);
+    }
     if !(context.authorize)() {
         return (json!({"result":{"action":"cancel"}}), false);
     }
-    match context.asker.question(form.questions.clone()).await {
+    let (result, interacted) = match context.asker.question(form.questions.clone()).await {
         QuestionReply::Answers { answers } => (
-            json!({"result":if (context.authorize)() {form.answer(&answers).unwrap_or_else(|_|json!({"action":"cancel"}))} else {json!({"action":"cancel"})}}),
+            if (context.authorize)() {
+                form.answer(&answers)
+                    .unwrap_or_else(|_| json!({"action":"cancel"}))
+            } else {
+                json!({"action":"cancel"})
+            },
             true,
         ),
-        QuestionReply::Dismissed => (json!({"result":{"action":"cancel"}}), true),
-        QuestionReply::Unattended => (json!({"result":{"action":"decline"}}), false),
+        QuestionReply::Dismissed => (json!({"action":"cancel"}), true),
+        QuestionReply::Unattended => (json!({"action":"decline"}), false),
+    };
+    if let Some(hooks) = &context.hooks {
+        hooks.observe(server, &result).await;
     }
+    (json!({"result":result}), interacted)
 }
 
 #[cfg(test)]

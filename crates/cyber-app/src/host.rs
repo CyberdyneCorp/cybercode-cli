@@ -149,6 +149,14 @@ impl ToolHost for AppHost {
         self.builtin.lifecycle_hooks(event, cancel)
     }
 
+    fn take_hook_effects(
+        &self,
+        session_id: &str,
+        call_id: &str,
+    ) -> cyber_server::runtime::HookEffects {
+        self.builtin.take_hook_effects(session_id, call_id)
+    }
+
     fn resolve_prompt_resources<'a>(
         &'a self,
         turn: &'a TurnContext,

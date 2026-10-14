@@ -3274,6 +3274,7 @@ async fn hook_execution_api_is_authenticated_paginated_and_preserves_receipt_pri
                 project_id: "global".into(),
                 agent: "build".into(),
                 mode: "default".into(),
+                parent_session_id: None,
             },
             1,
             json!({"call_id":"call_receipt","tool_name":"read","tool_input":{"password":"private input"}}).as_object().unwrap().clone(),

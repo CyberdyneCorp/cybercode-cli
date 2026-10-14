@@ -256,6 +256,9 @@ impl Runtime {
         let authority = self.capture_child_admission(parent)?;
         let guard = self.inner.job_admission.clone().lock_owned().await;
         authority.verify(self, parent)?;
+        if self.is_deleting(parent) {
+            return Err(RuntimeError::Busy(parent.into()));
+        }
         if self.is_shutting_down() {
             return Err(RuntimeError::ShuttingDown);
         }
@@ -367,6 +370,25 @@ impl Runtime {
         let closed = self.inner.closed.clone();
         let running = job.clone();
         let owner = tokio::spawn(async move {
+            // Observational TaskCreated runs before the work, after the admission guard
+            // is released, in its own runtime-owned task. Cancellation or shutdown
+            // stops waiting for it, since a canceller may hold the parent Session while
+            // awaiting this Job, and cancels its handlers, which still settle.
+            if let Some(runtime) = weak.upgrade() {
+                let created = CancellationToken::new();
+                runtime.spawn_task_created(
+                    running.clone(),
+                    control.stop.child_token(),
+                    created.clone(),
+                );
+                drop(runtime);
+                tokio::select! {
+                    biased;
+                    _ = closed.cancelled() => {}
+                    _ = control.stop.cancelled() => {}
+                    _ = created.cancelled() => {}
+                }
+            }
             let work = std::panic::AssertUnwindSafe(work).catch_unwind();
             let (status, result) = tokio::select! {
                 biased;
@@ -376,7 +398,7 @@ impl Runtime {
             };
             if let Some(runtime) = weak.upgrade() {
                 if status != JobStatus::Completed {
-                    let _ = runtime.interrupt(&running.child_id).await;
+                    let _ = runtime.interrupt_for_owner(&running.child_id).await;
                 }
                 if let Err(error) = runtime
                     .finish_job(
@@ -401,13 +423,15 @@ impl Runtime {
                     .remove(&running.id);
             }
             control.done.cancel();
-            // Observational JobEnded runs after settlement, so waiters never block on it.
+            // Observational TaskCompleted and JobEnded run after settlement, so waiters
+            // never block on them.
             // A deleted parent (suppressed notice) observes nothing.
             if control.notify.load(std::sync::atomic::Ordering::SeqCst)
                 && let Some(runtime) = weak.upgrade()
                 && let Ok(Some(job)) = runtime.find_job(&running.id)
                 && job.status != JobStatus::Running
             {
+                runtime.inner.task_completed(&job).await;
                 runtime.inner.job_ended(&job).await;
             }
         });
@@ -593,6 +617,7 @@ impl Runtime {
                 self.notify_job(job).await?;
             }
             if let Some(Some(job)) = ended.map(|id| self.find_job(&id)).transpose()? {
+                self.inner.task_completed(&job).await;
                 self.inner.job_ended(&job).await;
             }
         }

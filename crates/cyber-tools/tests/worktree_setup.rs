@@ -2099,3 +2099,146 @@ async fn lsp_unopened_deletion_retains_all_managed_claims_through_cancelled_clos
         .await
         .unwrap();
 }
+
+/// WorktreeCreate runs after worktree permission and before any git effect; its
+/// deny refuses the creation.
+#[cfg(unix)]
+#[tokio::test]
+async fn worktree_create_hook_deny_refuses_creation_before_git_effects() {
+    use cyber_server::runtime::NoSnapshots;
+    let (fixture, repository, _) = owned().await;
+    fixture.set_config(json!({"permissions": {"worktree": "allow"}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let deny =
+        r#"cat > worktree-event.json; printf '%s' '{"decision":"deny","reason":"no worktrees"}'"#;
+    attach_global_hooks(
+        &flow,
+        json!({"WorktreeCreate":[{"matcher":"refused","hooks":[{"type":"command","id":"guard","command":deny}]}]}),
+    );
+    let inv = creation_source(&flow).await;
+    let error = flow
+        .f
+        .host
+        .create_worktree_session(
+            &inv,
+            CancellationToken::new(),
+            creation_request(&flow.f, "refused"),
+        )
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("blocked by hook guard: no worktrees"),
+        "{error}"
+    );
+    assert!(
+        !repository
+            .common_dir
+            .join("cyber-worktrees/refused.json")
+            .exists()
+    );
+    let event: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(flow.f.repo.join("worktree-event.json")).unwrap())
+            .unwrap();
+    assert_eq!(event["event"], "WorktreeCreate");
+    assert_eq!(event["name"], "refused");
+    assert_eq!(event["session_id"], inv.session_id);
+}
+
+/// Attach a live hook resolver whose global configuration holds `hooks`.
+#[cfg(unix)]
+fn attach_global_hooks(flow: &support::flow::Flow, hooks: serde_json::Value) {
+    let env = std::collections::HashMap::from([(
+        "CYBER_HOME".into(),
+        flow.f.dir.path().join("hook-config").display().to_string(),
+    )]);
+    let paths = cyber_core::paths::Paths::resolve(&env, flow.f.dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.jsonc"),
+        json!({"hooks":hooks}).to_string(),
+    )
+    .unwrap();
+    let home = flow.f.dir.path().to_path_buf();
+    let trust = cyber_core::trust::TrustStore::new(paths.trust_file());
+    flow.f
+        .host
+        .attach_hook_config(
+            Arc::new(move |location| {
+                cyber_core::config::load(&cyber_core::config::LoadRequest {
+                    location,
+                    paths: &paths,
+                    env: &env,
+                    home: &home,
+                    profile: None,
+                    overrides: &[],
+                    flags: json!({}),
+                })
+                .map_err(|error| error.to_string())
+            }),
+            trust,
+        )
+        .unwrap();
+}
+
+/// WorktreeCreate runs before shutdown admission is held, so shutdown completes
+/// while a handler is still held rather than waiting behind it: the handler stops
+/// with the runtime (never by finishing), its receipt settles, and the creation is
+/// refused before any git effect. A release-file barrier replaces wall-clock
+/// timing. The pre-fix nested-admission deadlock needs shutdown's writer to queue
+/// between a handler's cancellation check and its admission read, which no
+/// external barrier can order (see `p1-status.md`).
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_during_a_held_worktree_create_hook_settles_without_git_effects() {
+    use cyber_server::runtime::{HookExecutionStatus, NoSnapshots};
+    let (fixture, repository, _) = owned().await;
+    fixture.set_config(json!({"permissions": {"worktree": "allow"}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let held = r#"cat >/dev/null; touch hook-started; while [ ! -f release ]; do sleep 0.02; done; touch hook-finished; printf '%s' '{"decision":"allow"}'"#;
+    attach_global_hooks(
+        &flow,
+        json!({"WorktreeCreate":[{"hooks":[{"type":"command","id":"held","command":held}]}]}),
+    );
+    let inv = creation_source(&flow).await;
+    let repo = flow.f.repo.clone();
+    let creation = flow.f.host.create_worktree_session(
+        &inv,
+        CancellationToken::new(),
+        creation_request(&flow.f, "late"),
+    );
+    let shutdown = async {
+        while !repo.join("hook-started").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(20), flow.runtime.shutdown())
+            .await
+            .expect("shutdown does not wait behind the held hook");
+        std::fs::write(repo.join("release"), "").unwrap();
+    };
+    let (created, ()) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        tokio::join!(creation, shutdown)
+    })
+    .await
+    .expect("creation and shutdown settle");
+    assert!(
+        !repo.join("hook-finished").exists(),
+        "the handler stopped with the runtime while still held"
+    );
+    assert!(created.is_err(), "creation after shutdown must be refused");
+    assert!(
+        !repository
+            .common_dir
+            .join("cyber-worktrees/late.json")
+            .exists()
+    );
+    let receipts = flow.runtime.hook_executions(&inv.session_id, 10).unwrap();
+    assert_eq!(receipts.len(), 1, "{receipts:?}");
+    assert_eq!(receipts[0].event, "WorktreeCreate");
+    assert!(
+        matches!(receipts[0].status, HookExecutionStatus::Completed),
+        "{receipts:?}"
+    );
+}

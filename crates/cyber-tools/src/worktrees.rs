@@ -92,6 +92,7 @@ impl BuiltinHost {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: self,
             inv: &inv,
             policy: self.policy_for(&inv, None).await?,
@@ -153,6 +154,7 @@ impl BuiltinHost {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: self,
             inv: &inv,
             policy: self.policy(&inv).await?,
@@ -264,6 +266,7 @@ impl BuiltinHost {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: self,
             inv,
             policy: self.policy(inv).await?,
@@ -331,6 +334,7 @@ impl BuiltinHost {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,
@@ -476,10 +480,15 @@ impl BuiltinHost {
         explicit: bool,
     ) -> io::Result<WorktreeSession> {
         let owned_cancel = cancel.child_token();
+        // Permission prompts and WorktreeCreate hooks run before shutdown admission is
+        // held: hook admission takes it again, and a writer queued in between would
+        // block that nested read behind this one.
+        self.admit_worktree_creation(inv, owned_cancel.clone(), &request, explicit)
+            .await?;
         let (repository, managed, recipe) = runtime
             .own_worktree_setup(
                 owned_cancel.clone(),
-                self.create_worktree(inv, owned_cancel, &request, explicit),
+                self.create_worktree(inv, owned_cancel, &request),
             )
             .await?;
         if cancel.is_cancelled() {
@@ -526,25 +535,28 @@ impl BuiltinHost {
         })
     }
 
-    async fn create_worktree(
-        &self,
-        inv: &Invocation,
+    /// The worktree call context of one creation step under current policy.
+    async fn worktree_ctx<'a>(
+        &'a self,
+        inv: &'a Invocation,
         cancel: CancellationToken,
-        request: &WorktreeSessionRequest,
-        explicit: bool,
-    ) -> io::Result<(Repository, Managed, SetupRecipe)> {
-        let location = Path::new(&inv.directory).canonicalize()?;
-        let ctx = Ctx {
+    ) -> io::Result<Ctx<'a>> {
+        Ok(Ctx {
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,
-            location,
+            location: Path::new(&inv.directory).canonicalize()?,
             cancel,
-        };
+        })
+    }
+
+    /// Current configuration and settings; a read-only sandbox refuses creation.
+    fn worktree_config(&self, ctx: &Ctx<'_>) -> io::Result<(serde_json::Value, Settings)> {
         let (config, sources) = (self.opts.config)(&ctx.location).map_err(io::Error::other)?;
         let sandbox = cyber_sandbox::SandboxConfig::resolve(
             &config,
@@ -559,6 +571,19 @@ impl BuiltinHost {
             ));
         }
         let settings = Settings::from_config(&config).map_err(io::Error::other)?;
+        Ok((config, settings))
+    }
+
+    /// Worktree permission and WorktreeCreate hooks, before any git effect.
+    async fn admit_worktree_creation(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        request: &WorktreeSessionRequest,
+        explicit: bool,
+    ) -> io::Result<()> {
+        let ctx = self.worktree_ctx(inv, cancel).await?;
+        self.worktree_config(&ctx)?;
         authorize_worktree(
             &ctx,
             explicit,
@@ -571,6 +596,20 @@ impl BuiltinHost {
         )
         .await
         .map_err(tool_error)?;
+        self.worktree_create_hooks(inv, request.name.as_str(), ctx.cancel.clone())
+            .await
+            .map_err(tool_error)
+    }
+
+    /// The git effects of an admitted creation, under shutdown admission.
+    async fn create_worktree(
+        &self,
+        inv: &Invocation,
+        cancel: CancellationToken,
+        request: &WorktreeSessionRequest,
+    ) -> io::Result<(Repository, Managed, SetupRecipe)> {
+        let ctx = self.worktree_ctx(inv, cancel).await?;
+        let (config, settings) = self.worktree_config(&ctx)?;
         if ctx.cancel.is_cancelled() {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
@@ -718,6 +757,7 @@ impl BuiltinHost {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,

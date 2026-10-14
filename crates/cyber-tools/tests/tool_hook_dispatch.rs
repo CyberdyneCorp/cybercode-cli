@@ -296,7 +296,16 @@ async fn project_command_requires_individual_approval_at_actual_dispatch() {
         std::fs::read_to_string(f.f.repo.join("a.txt")).unwrap(),
         "safe"
     );
-    assert!(f.runtime.hook_executions(&first, 10).unwrap().is_empty());
+    let skipped = f.runtime.hook_executions(&first, 10).unwrap();
+    assert_eq!(skipped.len(), 1, "{skipped:#?}");
+    assert_eq!(
+        skipped[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Skipped)
+    );
+    assert_eq!(
+        skipped[0].decision.as_ref().unwrap().reason.as_deref(),
+        Some("untrusted")
+    );
     trust.approve_hook(&f.f.repo, &digest).unwrap();
     let second = f.session("bypass").await;
     f.prompt(&second, "write").await;
@@ -376,7 +385,7 @@ async fn hook_ask_requires_user_reply_even_in_bypass_mode() {
 }
 
 #[tokio::test]
-async fn unavailable_async_definition_does_not_deduplicate_a_supported_guard() {
+async fn async_definition_does_not_deduplicate_a_synchronous_guard() {
     let f = Flow::new(
         vec![
             call(
@@ -404,13 +413,12 @@ async fn unavailable_async_definition_does_not_deduplicate_a_supported_guard() {
             .await
             .contains("supported guard")
     );
-    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
-    assert_eq!(receipts.len(), 2);
-    assert!(
-        receipts
-            .iter()
-            .any(|record| record.outcome == Some(cyber_core::hooks::HookOutcome::Error))
-    );
+    // Both ran: the background run's deny is recorded but ignored.
+    let receipts = wait_receipts(&f, &session, 2).await;
+    assert!(receipts.iter().all(|record| {
+        record.status == HookExecutionStatus::Completed
+            && record.outcome == Some(cyber_core::hooks::HookOutcome::Blocked)
+    }));
 }
 
 #[tokio::test]
@@ -768,7 +776,7 @@ async fn fail_closed_parallel_admission_cancels_siblings_and_retains_original_er
         false,
     );
     f.f.write("a.txt", "safe");
-    let refusal = json!({"type":"command","id":"refusal","timeout":10,"fail_closed":true,"command":"cat >/dev/null; while [ ! -f started-a ]; do sleep 0.02; done; printf '{\"additional_context\":\"not admitted\"}'"});
+    let refusal = json!({"type":"command","id":"refusal","timeout":10,"fail_closed":true,"command":"cat >/dev/null; while [ ! -f started-a ]; do sleep 0.02; done; printf '{not json'"});
     hooks(
         &f,
         json!({"concurrency":2,"PostToolUse":[{"matcher":"read","hooks":[waiting_command("a"),refusal,{"type":"command","command":"cat >/dev/null; touch queued-effect"}]}]}),
@@ -779,7 +787,7 @@ async fn fail_closed_parallel_admission_cancels_siblings_and_retains_original_er
     assert!(
         f.output(&session, "call_read")
             .await
-            .contains("hook context/continuation admission unavailable")
+            .contains("post-hook failed: hook refusal unavailable")
     );
     assert!(!f.f.repo.join("queued-effect").exists());
     let records = f.runtime.hook_executions(&session, 10).unwrap();
@@ -881,4 +889,599 @@ async fn memory_pre_hook_denial_preserves_normal_receipt_and_has_no_storage_effe
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].status, HookExecutionStatus::Completed);
     assert_eq!(receipts[0].tool_name.as_deref(), Some("memory"));
+}
+
+fn handler(id: &str, output: &str) -> Value {
+    let mut handler = command(output);
+    handler["id"] = json!(id);
+    handler
+}
+
+fn system_texts(state: &cyber_server::runtime::SessionState) -> Vec<String> {
+    state
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            cyber_server::runtime::Entry::System { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn hook_notices(live: &mut tokio::sync::broadcast::Receiver<LiveEvent>) -> Vec<(String, String)> {
+    let mut notices = Vec::new();
+    while let Ok(event) = live.try_recv() {
+        if let LiveEvent::HookNotice {
+            hook_id, message, ..
+        } = event
+        {
+            notices.push((hook_id, message));
+        }
+    }
+    notices
+}
+
+#[tokio::test]
+async fn post_tool_context_reaches_the_next_request_in_declared_order() {
+    let f = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.write("a.txt", "safe");
+    let mut second = handler("second", r#"{"additional_context":"two"}"#);
+    second["fail_closed"] = json!(true);
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"read","hooks":[handler("pre", r#"{"additional_context":"zero"}"#)]}],
+            "PostToolUse":[{"matcher":"read","hooks":[handler("first", r#"{"additional_context":"one"}"#),second]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("default").await;
+    f.prompt(&session, "read").await;
+    f.settle(&session).await;
+    // A fail_closed handler that returns context is no longer refused.
+    assert!(f.output(&session, "call_read").await.contains("safe"));
+    let requests = f.main.requests();
+    assert_eq!(requests.len(), 2);
+    let expected = "[hook pre] zero\n[hook first] one\n[hook second] two";
+    assert!(!format!("{:?}", requests[0].messages).contains("zero"));
+    let state = f.runtime.state(&session).await.unwrap();
+    assert_eq!(system_texts(&state), [expected]);
+    let second = serde_json::to_string(&requests[1].messages).unwrap();
+    assert_eq!(second.matches("[hook first] one").count(), 1, "{second}");
+    assert!(
+        hook_notices(&mut live)
+            .iter()
+            .all(|(_, message)| !message.contains("admission"))
+    );
+}
+
+#[tokio::test]
+async fn continue_false_sticks_over_a_later_continue_true_and_stops_after_the_turn() {
+    let f = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("never requested"),
+        ],
+        false,
+    );
+    f.f.write("a.txt", "safe");
+    let mut stop = handler(
+        "guard",
+        r#"{"continue":false,"stop_reason":"policy stop","additional_context":"why"}"#,
+    );
+    stop["fail_closed"] = json!(true);
+    hooks(
+        &f,
+        json!({"PostToolUse":[{"matcher":"read","hooks":[stop,handler("later", r#"{"continue":true}"#)]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("default").await;
+    f.prompt(&session, "read").await;
+    f.settle(&session).await;
+    assert_eq!(
+        f.main.requests().len(),
+        1,
+        "no request after the stopped Turn"
+    );
+    let state = f.runtime.state(&session).await.unwrap();
+    assert_eq!(state.calls["call_read"].status, CallStatus::Ok);
+    assert_eq!(
+        system_texts(&state),
+        ["[hook guard] why", "[hook guard] policy stop"]
+    );
+    assert!(
+        hook_notices(&mut live).contains(&("guard".into(), "policy stop".into())),
+        "the stop reason is shown"
+    );
+    assert!(!f.runtime.is_running(&session));
+}
+
+#[tokio::test]
+async fn suppress_output_hides_notices_but_keeps_the_receipt_and_deny_reason() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":"a.txt","content":"unsafe"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    let mut quiet = handler(
+        "guard",
+        r#"{"decision":"deny","reason":"policy","suppress_output":true}"#,
+    );
+    quiet["system_message"] = json!("Checked quietly");
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[quiet]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("a.txt").exists());
+    assert!(
+        f.output(&session, "call_write")
+            .await
+            .contains("blocked by hook guard: policy"),
+        "the model-facing deny reason is never suppressed"
+    );
+    assert_eq!(hook_notices(&mut live), []);
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Blocked)
+    );
+    assert_eq!(
+        receipts[0]
+            .decision
+            .as_ref()
+            .and_then(|d| d.suppress_output),
+        Some(true)
+    );
+}
+
+/// A PermissionDenied hook for `write` that counts its runs in `denied-count`.
+fn denied_hook(output: &str) -> Value {
+    json!({"PermissionDenied":[{"matcher":"write","hooks":[{"type":"command","id":"retry","command":format!(
+        "cat > denied.json; printf x >> denied-count; printf '%s' '{}'",
+        output.replace('\'', "'\\''")
+    )}]}]})
+}
+
+fn denied_runs(f: &Flow) -> usize {
+    std::fs::read_to_string(f.f.repo.join("denied-count"))
+        .unwrap_or_default()
+        .len()
+}
+
+fn write_flow(path: &str) -> Flow {
+    Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":path,"content":"original"}),
+            ),
+            text("done"),
+        ],
+        false,
+    )
+}
+
+#[tokio::test]
+async fn permission_denied_retry_runs_the_rewritten_call_once() {
+    let f = write_flow("protected.txt");
+    f.f.set_config(json!({"permissions":{"edit":{"protected*":"deny","*":"allow"}}}));
+    hooks(
+        &f,
+        denied_hook(
+            r#"{"decision":"retry","updated_input":{"path":"allowed.txt","content":"safe"}}"#,
+        ),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("protected.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("allowed.txt")).unwrap(),
+        "safe"
+    );
+    assert_eq!(denied_runs(&f), 1);
+    let event: Value =
+        serde_json::from_slice(&std::fs::read(f.f.repo.join("denied.json")).unwrap()).unwrap();
+    assert_eq!(event["event"], "PermissionDenied");
+    assert_eq!(event["tool_input"]["path"], "protected.txt");
+    assert_eq!(event["call_id"], "call_write");
+    assert!(
+        event["reason"].as_str().unwrap().contains("denied"),
+        "{event}"
+    );
+    let state = f.runtime.state(&session).await.unwrap();
+    assert_eq!(state.calls["call_write"].status, CallStatus::Ok);
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].event, "PermissionDenied");
+}
+
+#[tokio::test]
+async fn permission_denied_retry_cannot_bypass_hard_denies_or_mode_ceilings() {
+    // A retried call that is still denied stays denied without a second event.
+    let f = write_flow("protected.txt");
+    f.f.set_config(json!({"permissions":{"edit":{"protected*":"deny","*":"allow"}}}));
+    hooks(
+        &f,
+        denied_hook(
+            r#"{"decision":"retry","updated_input":{"path":"protected-too.txt","content":"x"}}"#,
+        ),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("protected.txt").exists());
+    assert!(!f.f.repo.join("protected-too.txt").exists());
+    assert!(
+        f.output(&session, "call_write")
+            .await
+            .contains("Permission denied"),
+        "{}",
+        f.output(&session, "call_write").await
+    );
+    assert_eq!(denied_runs(&f), 1);
+    let state = f.runtime.state(&session).await.unwrap();
+    assert_eq!(state.calls["call_write"].status, CallStatus::Error);
+
+    // The Plan Mode ceiling refuses the retried input as well.
+    let f = write_flow("a.txt");
+    hooks(
+        &f,
+        denied_hook(r#"{"decision":"retry","updated_input":{"path":"b.txt","content":"x"}}"#),
+    );
+    let session = f.session("plan").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("a.txt").exists());
+    assert!(!f.f.repo.join("b.txt").exists());
+    assert_eq!(denied_runs(&f), 1);
+
+    // A later deny beats an earlier retry, so nothing is re-issued.
+    let f = write_flow("protected.txt");
+    f.f.set_config(json!({"permissions":{"edit":{"protected*":"deny","*":"allow"}}}));
+    hooks(
+        &f,
+        json!({"PermissionDenied":[{"matcher":"write","hooks":[
+            handler("retry", r#"{"decision":"retry","updated_input":{"path":"allowed.txt","content":"x"}}"#),
+            handler("veto", r#"{"decision":"deny","reason":"no retries"}"#)
+        ]}]}),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("allowed.txt").exists());
+    assert_eq!(f.runtime.hook_executions(&session, 10).unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn permission_denied_retry_input_must_match_the_tool_schema() {
+    let f = write_flow("protected.txt");
+    f.f.set_config(json!({"permissions":{"edit":{"protected*":"deny","*":"allow"}}}));
+    hooks(
+        &f,
+        denied_hook(r#"{"decision":"retry","updated_input":{"path":42}}"#),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    assert_eq!(
+        f.output(&session, "call_write").await,
+        "hook produced invalid tool input"
+    );
+    assert_eq!(denied_runs(&f), 1);
+}
+
+async fn wait_receipts(
+    f: &Flow,
+    session: &str,
+    count: usize,
+) -> Vec<cyber_server::runtime::HookExecutionRecord> {
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let receipts = f.runtime.hook_executions(session, 10).unwrap();
+            if receipts.len() == count
+                && receipts
+                    .iter()
+                    .all(|receipt| receipt.status != HookExecutionStatus::Running)
+            {
+                return receipts;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("hook receipts did not settle")
+}
+
+#[tokio::test]
+async fn async_fail_closed_handler_that_times_out_does_not_block_the_event() {
+    let f = write_flow("a.txt");
+    let held = json!({"type":"command","id":"background","async":true,"fail_closed":true,"timeout":1,
+        "command":"cat >/dev/null; while [ ! -f release ]; do sleep 0.02; done; printf '{\"decision\":\"deny\"}'"});
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[held]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    // A blocking fail_closed handler would have timed out and refused the write.
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("a.txt")).unwrap(),
+        "original"
+    );
+    let receipts = wait_receipts(&f, &session, 1).await;
+    assert_eq!(receipts[0].status, HookExecutionStatus::Completed);
+    assert_eq!(
+        receipts[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Timeout)
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        hook_notices(&mut live)
+            .iter()
+            .any(|(_, message)| message.contains("timed out")),
+    );
+}
+
+#[tokio::test]
+async fn async_notification_hook_does_not_delay_the_permission_prompt() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_write",
+                "write",
+                json!({"path":"a.txt","content":"safe"}),
+            ),
+            text("done"),
+        ],
+        true,
+    );
+    let webhook = json!({"type":"command","id":"webhook","async":true,"timeout":10,
+        "command":"cat > notification.json; while [ ! -f release ]; do sleep 0.02; done; printf '{}'"});
+    hooks(
+        &f,
+        json!({"Notification":[{"matcher":"permission_prompt","hooks":[webhook]}]}),
+    );
+    let session = f.session("default").await;
+    f.prompt(&session, "write").await;
+    let pending = f.pending(&session).await;
+    f.runtime
+        .reply_permission(&pending.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    f.settle(&session).await;
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("a.txt")).unwrap(),
+        "safe"
+    );
+    assert_eq!(
+        f.runtime.hook_executions(&session, 10).unwrap()[0].status,
+        HookExecutionStatus::Running
+    );
+    std::fs::write(f.f.repo.join("release"), "").unwrap();
+    let receipts = wait_receipts(&f, &session, 1).await;
+    assert_eq!(receipts[0].event, "Notification");
+    assert_eq!(receipts[0].status, HookExecutionStatus::Completed);
+    let event: Value =
+        serde_json::from_slice(&std::fs::read(f.f.repo.join("notification.json")).unwrap())
+            .unwrap();
+    assert_eq!(event["notification_type"], "permission_prompt");
+    assert_eq!(event["tool_name"], "write");
+}
+
+/// A resolver over `CYBER_HOME` (and optional extra variables) whose project
+/// configuration is approved at checkout level, never per handler.
+fn approved_project(f: &Flow, extra: &[(&str, String)]) {
+    let mut env = std::collections::HashMap::from([(
+        "CYBER_HOME".to_string(),
+        f.f.dir.path().join("hook-config").display().to_string(),
+    )]);
+    env.extend(
+        extra
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.clone())),
+    );
+    let paths = Paths::resolve(&env, f.f.dir.path());
+    paths.ensure().unwrap();
+    let trust_path = paths.trust_file();
+    let home = f.f.dir.path().to_path_buf();
+    let load = std::sync::Arc::new(move |location: &std::path::Path| {
+        config::load(&LoadRequest {
+            location,
+            paths: &paths,
+            env: &env,
+            home: &home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .map_err(|error| error.to_string())
+    });
+    let resolved = load(&f.f.repo).unwrap();
+    if let Some(digest) = &resolved.trust.digest {
+        TrustStore::new(&trust_path)
+            .approve(&resolved.trust.checkout_root, digest)
+            .unwrap();
+    }
+    f.f.host
+        .attach_hook_config(load, TrustStore::new(trust_path))
+        .unwrap();
+}
+
+fn marker(f: &Flow, name: &str) -> Value {
+    let path = f.f.dir.path().join(name);
+    json!({"type":"command","id":name,"command":format!("cat >/dev/null; printf x >> '{}'", path.display())})
+}
+
+fn two_writes() -> Vec<Vec<cyber_llm::adapters::ScriptStep>> {
+    vec![
+        call("call_a", "write", json!({"path":"a.txt","content":"a"})),
+        text("done"),
+        call("call_b", "write", json!({"path":"b.txt","content":"b"})),
+        text("done"),
+        call("call_c", "write", json!({"path":"c.txt","content":"c"})),
+        text("done"),
+    ]
+}
+
+#[tokio::test]
+async fn untrusted_handlers_share_one_notice_per_session_and_leave_skipped_receipts() {
+    let f = Flow::new(two_writes(), false);
+    std::fs::write(
+        f.f.repo.join("cyber.jsonc"),
+        json!({"hooks":{
+            "PreToolUse":[{"matcher":"write","hooks":[marker(&f,"pre-one"),marker(&f,"pre-two")]}],
+            "PostToolUse":[{"matcher":"write","hooks":[marker(&f,"post")]}]
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    approved_project(&f, &[]);
+    let mut live = f.runtime.subscribe();
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write a").await;
+    f.settle(&session).await;
+    f.prompt(&session, "write b").await;
+    f.settle(&session).await;
+    assert!(
+        f.f.repo.join("b.txt").exists(),
+        "skips never block the call"
+    );
+    for name in ["pre-one", "pre-two", "post"] {
+        assert!(!f.f.dir.path().join(name).exists(), "{name} ran untrusted");
+    }
+    let notices: Vec<_> = hook_notices(&mut live)
+        .into_iter()
+        .filter(|(id, _)| id == "trust")
+        .collect();
+    assert_eq!(
+        notices,
+        [(
+            "trust".to_string(),
+            "3 untrusted hooks changed \u{2014} review with /hooks".to_string()
+        )]
+    );
+    let receipts = f.runtime.hook_executions(&session, 20).unwrap();
+    assert_eq!(receipts.len(), 6, "{receipts:#?}");
+    for receipt in &receipts {
+        assert_eq!(
+            receipt.outcome,
+            Some(cyber_core::hooks::HookOutcome::Skipped)
+        );
+        assert_eq!(receipt.status, HookExecutionStatus::Completed);
+        assert!(!receipt.once);
+        assert_eq!(
+            receipt.decision.as_ref().unwrap().reason.as_deref(),
+            Some("untrusted")
+        );
+    }
+    // A second Session gets its own single notice.
+    let other = f.session("bypass").await;
+    f.prompt(&other, "write a").await;
+    f.settle(&other).await;
+    let again: Vec<_> = hook_notices(&mut live)
+        .into_iter()
+        .filter(|(id, _)| id == "trust")
+        .collect();
+    assert_eq!(again.len(), 1, "{again:?}");
+}
+
+#[tokio::test]
+async fn managed_only_policy_runs_only_managed_hooks_and_counts_skips_per_event() {
+    let f = Flow::new(two_writes(), false);
+    let managed = f.f.dir.path().join("managed-policy");
+    std::fs::create_dir_all(&managed).unwrap();
+    std::fs::write(
+        managed.join("cyber-policy.jsonc"),
+        json!({
+            "hooks":{"PreToolUse":[{"matcher":"write","hooks":[marker(&f,"managed")]}]},
+            "policy":{"hooks":{"managed_only":true}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        f.f.repo.join("cyber.jsonc"),
+        json!({"hooks":{"PreToolUse":[{"matcher":"write","hooks":[marker(&f,"project")]}]}})
+            .to_string(),
+    )
+    .unwrap();
+    let env = std::collections::HashMap::from([(
+        "CYBER_HOME".to_string(),
+        f.f.dir.path().join("hook-config").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, f.f.dir.path());
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.jsonc"),
+        json!({"hooks":{"PreToolUse":[{"matcher":"write","hooks":[marker(&f,"global")]}]}})
+            .to_string(),
+    )
+    .unwrap();
+    approved_project(
+        &f,
+        &[("CYBER_MANAGED_POLICY_DIR", managed.display().to_string())],
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write a").await;
+    f.settle(&session).await;
+    f.prompt(&session, "write b").await;
+    f.settle(&session).await;
+    let runs = |name: &str| {
+        std::fs::read_to_string(f.f.dir.path().join(name))
+            .unwrap_or_default()
+            .len()
+    };
+    assert_eq!(runs("managed"), 2, "the managed hook runs for every call");
+    assert_eq!(runs("global"), 0);
+    assert_eq!(runs("project"), 0);
+    let notices: Vec<_> = hook_notices(&mut live)
+        .into_iter()
+        .filter(|(id, _)| id == "managed-policy" || id == "trust")
+        .collect();
+    assert_eq!(
+        notices,
+        [(
+            "managed-policy".to_string(),
+            "2 hooks skipped by managed-only policy".to_string()
+        )]
+    );
+    let receipts = f.runtime.hook_executions(&session, 20).unwrap();
+    let skipped: Vec<_> = receipts
+        .iter()
+        .filter(|receipt| receipt.outcome == Some(cyber_core::hooks::HookOutcome::Skipped))
+        .collect();
+    assert_eq!(skipped.len(), 4, "{receipts:#?}");
+    assert!(skipped.iter().all(|receipt| {
+        receipt.scope != cyber_core::hooks::HookScope::Managed
+            && receipt.decision.as_ref().unwrap().reason.as_deref() == Some("managed-only policy")
+    }));
+    let ran: Vec<_> = receipts
+        .iter()
+        .filter(|receipt| receipt.outcome == Some(cyber_core::hooks::HookOutcome::Ok))
+        .collect();
+    assert_eq!(ran.len(), 2, "{receipts:#?}");
+    assert!(
+        ran.iter()
+            .all(|receipt| receipt.scope == cyber_core::hooks::HookScope::Managed)
+    );
 }

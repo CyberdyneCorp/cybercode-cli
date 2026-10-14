@@ -55,7 +55,7 @@ impl ChildGuard {
         let owner = tokio::spawn(async move {
             tokio::select! {
                 biased;
-                _ = cancel.cancelled() => { if let Some(runtime) = weak.upgrade() { let _ = runtime.interrupt(&id).await; } }
+                _ = cancel.cancelled() => { if let Some(runtime) = weak.upgrade() { let _ = runtime.interrupt_for_owner(&id).await; } }
                 _ = done.cancelled() => {}
             }
             drop(held);

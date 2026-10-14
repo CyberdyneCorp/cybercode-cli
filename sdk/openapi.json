@@ -933,6 +933,25 @@
           "directory": {
             "type": "string"
           },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Captured envelope project; receipts admitted before it was recorded mean `global`."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "agent": {
             "type": "string"
           },
@@ -3750,7 +3769,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ReviewedHook"
-            }
+            },
+            "description": "Eligible definitions first, then those a managed policy skips."
+          },
+          "managed_policy": {
+            "$ref": "#/components/schemas/ManagedPolicy",
+            "description": "The OS-managed policy that restricted or contributed hooks."
           },
           "withheld_definitions": {
             "type": "array",
@@ -3770,6 +3794,7 @@
         },
         "required": [
           "hooks",
+          "managed_policy",
           "withheld_definitions",
           "withheld_hooks",
           "checkout_trusted"
@@ -3814,6 +3839,13 @@
           },
           "sandbox_required": {
             "type": "boolean"
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a managed policy refuses this definition; it never runs while set."
           },
           "last_run": {
             "anyOf": [
@@ -4029,6 +4061,34 @@
           "unknown"
         ],
         "description": "A committed observation, never proof that a recorded process is still live."
+      },
+      "ManagedPolicy": {
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`managed:<file>` labels of the documents read, lowest priority first."
+          },
+          "managed_only": {
+            "type": "boolean",
+            "description": "`policy.hooks.managed_only`: only managed-scope hooks run."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a present policy could not be used. Every non-managed hook is refused."
+          }
+        },
+        "required": [
+          "sources",
+          "managed_only"
+        ],
+        "description": "The hook-related state of the managed policy for one configuration load."
       },
       "RawHookSection": {
         "type": "object",

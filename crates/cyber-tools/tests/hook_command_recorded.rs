@@ -59,6 +59,7 @@ impl Recorded {
                 project_id: "global".into(),
                 agent: state.info.agent,
                 mode: state.info.mode,
+                parent_session_id: None,
             },
             1,
             json!({"tool_input":{"command":"private request"}})

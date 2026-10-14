@@ -148,6 +148,7 @@ impl BuiltinHost {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: self,
             inv,
             policy: self.policy(inv).await.map_err(io::Error::other)?,
@@ -484,6 +485,7 @@ impl ChildWorktree {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: &host,
             inv: &self.invocation,
             policy: host
@@ -541,6 +543,7 @@ impl ChildWorktree {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             policy: host
                 .policy(&self.invocation)
                 .await

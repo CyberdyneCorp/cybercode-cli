@@ -50,6 +50,9 @@ struct ListedHook<'a> {
     definition: &'a HookDefinition,
     trusted: bool,
     sandbox_required: bool,
+    /// Why a managed policy refuses this definition; it never runs while set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped: Option<String>,
     last_run: Option<cyber_core::hooks::HookLastRun>,
 }
 
@@ -101,16 +104,25 @@ fn list(
     ctx: &Context,
 ) -> Result<(), CliError> {
     let database = review_database(ctx)?;
-    let hooks: Vec<_> = catalog
+    let reason = catalog.policy.skip_reason();
+    let eligible = catalog
         .definitions
         .iter()
-        .map(|definition| {
+        .map(|definition| (definition, None));
+    let skipped = catalog
+        .skipped
+        .iter()
+        .map(|definition| (definition, Some(reason.clone())));
+    let hooks: Vec<_> = eligible
+        .chain(skipped)
+        .map(|(definition, skipped)| {
             Ok(ListedHook {
                 definition,
                 trusted: definition.is_trusted(&resolved.trust.checkout_root, store, None)?,
                 sandbox_required: definition
                     .scope
                     .requires_sandbox(catalog.settings.sandbox_all),
+                skipped,
                 last_run: database
                     .as_ref()
                     .map(|store| {
@@ -128,9 +140,13 @@ fn list(
         resolved.trust.definitions.as_slice()
     };
     if output::is_json(global.format) {
-        let value =
-            serde_json::json!({"hooks":hooks,"withheld_definitions":withheld,"withheld_hooks":raw});
+        let value = serde_json::json!({"hooks":hooks,"managed_policy":catalog.policy,"withheld_definitions":withheld,"withheld_hooks":raw});
         return output::json(&cyber_core::config::redact_secrets(&value));
+    }
+    if let Some(error) = &catalog.policy.error {
+        println!("managed policy malformed; only managed hooks may run: {error}");
+    } else if catalog.policy.managed_only {
+        println!("managed-only policy: only managed hooks run");
     }
     for hook in hooks {
         println!(
@@ -142,6 +158,9 @@ fn list(
             hook.definition.digest
         );
         println!("  {} {}", hook.definition.source, hook.definition.pointer);
+        if let Some(reason) = &hook.skipped {
+            println!("  skipped by {reason}");
+        }
         match hook.last_run {
             Some(run) => println!(
                 "  last run: {} started_ms={} outcome={} duration_ms={} acknowledged={} must_stop={} session={}",

@@ -271,6 +271,9 @@ pub struct SessionState {
     /// SessionStart's durable marker was replayed; it never runs again.
     #[serde(skip)]
     pub(crate) session_started: bool,
+    /// The step count after which a SessionStart `continue: false` ends the Drain.
+    #[serde(skip)]
+    pub(crate) hook_stop_step: Option<u32>,
     #[serde(skip)]
     pub(crate) child_requested_inputs: BTreeSet<String>,
     /// UserPromptSubmit context of unpromoted rows, admitted just before each row.
@@ -462,6 +465,7 @@ impl SessionState {
             loaded_tools: BTreeSet::new(),
             first_turn_started: false,
             session_started: false,
+            hook_stop_step: None,
             child_requested_inputs: BTreeSet::new(),
             hook_contexts: BTreeMap::new(),
             resource_contexts: BTreeMap::new(),
@@ -612,7 +616,11 @@ impl SessionState {
             "session.context.epoch_started" => self.on_epoch(decode(e)?),
             "session.context.updated" => self.on_context_updated(decode(e)?),
             "session.system.added" => self.on_system(decode(e)?),
-            "session.hooks.session_started" => self.session_started = true,
+            "session.hooks.session_started" => {
+                let marker: super::events::SessionStarted = decode(e)?;
+                self.session_started = true;
+                self.hook_stop_step = marker.stop_after_step;
+            }
             "session.step.started" => self.on_step_started(decode(e)?),
             "session.text.ended" | "session.reasoning.ended" => self.on_content(kind, decode(e)?),
             "session.tool.called" => self.on_called(decode(e)?),

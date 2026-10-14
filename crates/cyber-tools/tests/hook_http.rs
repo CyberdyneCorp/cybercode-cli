@@ -339,6 +339,7 @@ async fn session_subtree_stop_cancels_and_acknowledges_owned_http_transport() {
             project_id: "global".into(),
             agent: "build".into(),
             mode: "default".into(),
+            parent_session_id: None,
         },
         1,
         Default::default(),

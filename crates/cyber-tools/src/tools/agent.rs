@@ -254,6 +254,7 @@ pub(crate) async fn fork_skill(
         inv: &inv,
         cancel: ctx.cancel.clone(),
         hook_decision: None,
+        denial: Default::default(),
     };
     run_with_skill(
         &child_ctx,
@@ -423,7 +424,7 @@ async fn subagent_start(ctx: &Ctx<'_>, spawn: &Spawn) -> Result<(), ToolError> {
     });
     ctx.host
         .subagent_start_hooks(
-            crate::tool_hooks::hook_identity(ctx.inv),
+            &crate::tool_hooks::HookOwner::of(ctx.inv),
             &spawn.profile.name,
             fields.as_object().cloned().unwrap_or_default(),
             ctx.cancel.clone(),
@@ -434,7 +435,7 @@ async fn subagent_start(ctx: &Ctx<'_>, spawn: &Spawn) -> Result<(), ToolError> {
 fn subagent_stop(ctx: &Ctx<'_>, spawn: &Spawn) -> SubagentStop {
     SubagentStop {
         host: ctx.host.weak.clone(),
-        identity: crate::tool_hooks::hook_identity(ctx.inv),
+        owner: crate::tool_hooks::HookOwner::of(ctx.inv),
         agent_type: spawn.profile.name.clone(),
         child_session_id: spawn.child_id.clone(),
         subagent_name: spawn.name.clone(),

@@ -92,6 +92,10 @@ pub struct ExecArgs {
     /// Exit with code 5 when any action was denied.
     #[arg(long)]
     pub fail_on_deny: bool,
+    /// Run the currently resolved project/local hooks for this run only, without
+    /// approving them for later runs (needs --embedded or --ephemeral).
+    #[arg(long)]
+    pub trust_project_hooks: bool,
 }
 
 pub const EXIT_ERROR: u8 = 1;

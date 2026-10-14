@@ -94,6 +94,23 @@
 #### Scenario: Managed-only policy
 - **WHEN** the organization policy sets `hooks.managed_only: true`
 - **THEN** project, local, global and plugin hooks SHALL be skipped and a single notice SHALL list how many were skipped
+- **AND** invocation hooks from `--config` or `CYBER_CONFIG*` SHALL also be skipped, and each matching skipped handler SHALL leave a `skipped` receipt whose reason is `managed-only policy`
+- **AND** the notice SHALL be shown once per event per Session as `N hooks skipped by managed-only policy`
+- **AND** `/hooks`, `cyber hooks list` and `GET /hooks` SHALL list the skipped definitions with that reason, from the same catalog dispatch uses
+
+#### Scenario: Managed policy source
+- **WHEN** the OS-managed directory (`/etc/cyber`, `/Library/Application Support/cyber` on macOS, `%ProgramData%\cyber` on Windows) holds `cyber-policy.json` or `cyber-policy.jsonc`
+- **THEN** its `hooks` event arrays SHALL resolve with `managed:<file>` origins in the managed scope, run first and unsandboxed unless `hooks.sandbox_all`, need no handler approval and never be substituted
+- **AND** `policy.hooks.managed_only` SHALL be read only from that document; `policy` in user, project, profile and CLI layers SHALL never restrict or relax hooks
+- **AND** on Unix a document not owned by root SHALL be ignored with the warning `managed policy file not root-owned; ignored`, and a root-owned document writable by group or others with `managed policy file writable by non-root users; ignored`
+- **AND** on Windows `%ProgramData%` SHALL come from the known-folder store, not the environment, and a document SHALL be ignored with the warning `managed policy file not admin-owned; ignored` unless the file and its `cyber` directory are owned by SYSTEM, Administrators or TrustedInstaller, neither has a NULL DACL, no other principal may write, append to, delete or re-ACL the file, and no other principal may delete, delete children of or re-ACL the directory
+- **AND** `CYBER_MANAGED_POLICY_DIR` MAY name another directory for tests and packaging, and SHALL be ignored with a warning while the OS-managed directory holds a policy document
+- **AND** a managed `mcp_tool` handler's server, and a managed `prompt` handler's evaluator reference and its provider, SHALL be defined by global configuration alone; when any project, profile, `--config` or `CYBER_CONFIG*` layer contributes to them the handler SHALL be unavailable (refusing when `fail_closed`) and SHALL never call the shadowing server or model
+
+#### Scenario: Malformed managed policy fails closed
+- **WHEN** a managed policy document cannot be read or parsed, is not an object, sets `policy.hooks.managed_only` to a non-boolean, uses a top-level key other than `$schema`, `hooks` or `policy`, a `policy` key other than `hooks` or an unsupported `policy.hooks` key, or holds an invalid or non-event `hooks` entry
+- **THEN** no managed hook from it SHALL run and every non-managed hook SHALL be skipped as though `managed_only` were set
+- **AND** the notice, receipts and review SHALL name the reason `managed policy is malformed (<diagnostic>)`
 
 #### Scenario: Selected profile preserves hook origins
 - **WHEN** global, project and local files contribute hooks to the same selected profile
@@ -107,6 +124,16 @@
 #### Scenario: Changed hook requires re-trust
 - **WHEN** a teammate changes `.cyber/cyber.jsonc` hook command after the user trusted it
 - **THEN** the hook is skipped and the TUI shows `1 untrusted hook changed — review with /hooks`
+
+#### Scenario: Untrusted skips are aggregated and recorded
+- **WHEN** one or more matching project or local handlers are skipped as untrusted during a Session
+- **THEN** the Session SHALL receive one notice `N untrusted hook(s) changed — review with /hooks` (singular `hook` for one), where N counts every resolved handler still awaiting approval
+- **AND** each skipped handler SHALL leave a settled `skipped` receipt with reason `untrusted` that claims no `once` slot
+
+#### Scenario: Exec approves inspected hooks for one run
+- **WHEN** the user runs `cyber exec --embedded --trust-project-hooks` (or `--ephemeral`) in a checkout whose configuration is approved
+- **THEN** only the project/local handler digests resolved at startup SHALL run for that invocation, and no handler approval SHALL be stored
+- **AND** the flag SHALL be refused as a usage error without `--embedded` or `--ephemeral`, because a shared server cannot take an approval for one run
 
 #### Scenario: Workspace approval does not approve handlers
 - **WHEN** a checkout's configuration is approved but its hook handler digest is not
@@ -138,6 +165,7 @@
 - **AND** malformed, oversized, nonobject, spoofed-envelope and unknown-event inputs SHALL be rejected before opening the execution database
 - **AND** the CLI SHALL use standalone host ownership without application startup, model calls or Session recovery
 - **AND** per-handler and merged decisions SHALL be reported in declared order, including explicit skipped/untrusted and unsupported/error outcomes
+- **AND** an `async` handler SHALL run to completion and be reported as a background handler (`background: true`) whose decision contributes only `additional_context` to the merged decision, rather than as unsupported or incomplete
 - **AND** incomplete execution, unknown termination or unsupported handlers SHALL produce a nonzero exit status rather than claim successful execution
 - **AND** Ctrl-C SHALL signal cancellation and retain the execution future until launched process owners settle
 
@@ -259,6 +287,23 @@
 - **THEN** those fields SHALL be ignored and identified for debug diagnostics
 - **AND** malformed applicable decision fields SHALL fail decision validation
 
+#### Scenario: Tool-event context commits with the call's settlement
+- **WHEN** `PreToolUse`, `PermissionRequest`, `PostToolUse` or `PostToolUseFailure` handlers return `additional_context` for a call
+- **THEN** each handler's context SHALL be tagged `[hook <id>]`, accumulated in declared order across the call's events, and committed as a system message with reason `hook_context` in the same commit as the call's settlement, immediately after it
+- **AND** the model SHALL see it from the next request on, and a recreated runtime SHALL replay it without admitting it again
+- **AND** returning context SHALL NOT make a `fail_closed` handler unavailable
+
+#### Scenario: Stop request ends the Drain after the current Turn
+- **WHEN** the merged decision of a tool event, `Stop` or `SessionStart` carries `continue: false`
+- **THEN** the Drain SHALL end after the current Turn: a tool event's remaining calls in that Turn still run and settle and no further request is made, a `Stop` SHALL admit no continuation even with `decision: block`, and `SessionStart` SHALL end it once the first Turn completes (durably, across a restart)
+- **AND** the `stop_reason` (or `continue: false`), tagged `[hook <id>]`, SHALL be recorded durably as a system message with reason `hook_stop` and shown as a transient notice from that hook
+- **AND** events that cannot apply context or a stop request yet (including `UserPromptSubmit` `continue: false`) SHALL leave a notice, and a `fail_closed` handler SHALL refuse rather than drop it
+
+#### Scenario: Suppressed output
+- **WHEN** a handler's decision sets `suppress_output: true`
+- **THEN** its `system_message` and its blocked/rewrite notices SHALL NOT be shown
+- **AND** its durable receipt, the model-facing deny reason and any stop reason SHALL remain, and diagnostics for failures SHALL still be shown
+
 ### Requirement: Decision merging
 (P1) When several hooks return decisions for one event, the system SHALL apply them in execution order and combine them: any `deny` SHALL win over `ask`, and `ask` SHALL win over `allow`. `updated_input` SHALL chain, with each later hook receiving the previous hook's output. `additional_context` values SHALL be concatenated. Any `continue: false` SHALL stop continuation.
 
@@ -313,8 +358,50 @@
 - **THEN** the rewritten call is evaluated once more and runs if the rules allow it
 
 #### Scenario: Payload cannot replace captured identity
-- **WHEN** event-specific data contains event, session_id, location, project_id, agent, mode or timestamp
+- **WHEN** event-specific data contains event, session_id, location, project_id, agent, mode, timestamp or parent_session_id
 - **THEN** envelope construction SHALL refuse that payload rather than overwriting the captured identity
+
+#### Scenario: Envelope carries the Session's project identity
+- **WHEN** a hook event is built for a Session whose Location is in a git checkout
+- **THEN** `project_id` SHALL be that checkout's project ID (`global` outside git), `location.workspace` SHALL be the checkout root, and a child Session's events SHALL carry `parent_session_id` (absent for a root Session)
+- **AND** the identity SHALL be resolved from the Session's Location off the async runtime once per Location, and only when a definition exists for the event
+- **AND** durable hook admission SHALL refuse an event whose project, workspace or parent differs from the Session's own, and the receipt SHALL record them so replay revalidates and settlement cannot rebind them
+
+#### Scenario: Runtime lifecycle events with an existing producer
+- **WHEN** a Session is interrupted, switches model, compacts, settles a Turn's tool calls, is archived or deleted, registers or settles a background Job, or loads instruction files into its context
+- **THEN** the runtime SHALL emit `Interrupt` (`running`), `PreModelSwitch`/`PostModelSwitch` (`from`, `to`, `automatic`; the target model as matcher subject), `PreCompact`/`PostCompact` (`trigger` as matcher subject, `instructions`; `tokens_before`/`tokens_after` after), `PostToolBatch` (`message_id` and each call's `call_id`, `tool_name` and `status`), `SessionEnd` (`reason` `archive` or `delete`), `TaskCreated`/`TaskCompleted` (the Job JSON as `job`, `status`; the Job kind as matcher subject) and `InstructionsLoaded` (`source`, `load_reason` `session_start` or `changed`, `file_paths`, `digest`) through the runtime lifecycle-hook port
+- **AND** each hook SHALL be captured under the Session lock and awaited only after it and the runtime lifecycle guard are released
+- **AND** `PreModelSwitch` `deny` SHALL refuse a user switch with `blocked by hook <id>: <reason>` and record nothing, while an automatic profile-driven switch SHALL only be observed
+- **AND** `PreCompact` `additional_context` SHALL be appended to the summary instructions and never admitted as a message, and an unavailable `fail_closed` `PreCompact` handler SHALL refuse the compaction
+- **AND** `PostToolBatch` SHALL run once per Turn after every group settled, interrupted calls included; its context SHALL commit as a `hook_context` system message, its `continue: false` SHALL end the Drain after the Turn, and an unavailable `fail_closed` handler SHALL fail the Drain
+- **AND** `PostToolBatch` SHALL run Drain-owned so an interrupt cancels its handlers cooperatively; a Drain interrupted while it runs SHALL commit nothing from it, and after an interrupt it SHALL only be observed, in a runtime-owned task the interrupt never waits for
+- **AND** a Session deletion SHALL fence the Session and its descendants against new Drains and child Jobs and make every refusal before `SessionEnd`, so hooks observe only a deletion that then happens, once; before deleting it SHALL cancel and await the subtree's in-flight hook executions
+- **AND** `InstructionsLoaded` `file_paths` SHALL list the files actually read for the source, never paths parsed from instruction content
+- **AND** `InstructionsLoaded` SHALL run once per changed instruction source text, when the source first enters a Session's context or changes
+- **AND** `Interrupt`, `PostModelSwitch`, `PostCompact`, `SessionEnd`, `TaskCreated`, `TaskCompleted` and `InstructionsLoaded` SHALL be observational: decisions SHALL be ignored and handler failures, including an unavailable `fail_closed` handler, SHALL only be logged and never block the interrupt, switch, compaction, archive, deletion or Job
+- **AND** an interrupt, Job stop or shutdown SHALL cancel in-flight Safe Boundary (`PreModelSwitch`, `PostModelSwitch`, `InstructionsLoaded`, `PreCompact`, `PostCompact`), `TaskCreated`, `Elicitation` and `ElicitationResult` handlers cooperatively and let their receipts settle rather than dropping a launched handler, so the Session stays interruptible without recovery; a Job SHALL stop waiting for its `TaskCreated` handlers when cancelled
+- **AND** `WorktreeCreate` handlers and the worktree permission prompt SHALL run before runtime shutdown admission is held for the git effects
+- **AND** `Interrupt` SHALL NOT run for an owner-initiated child interrupt, `TaskCreated` SHALL be abandoned rather than awaited when its Job is cancelled or the runtime shuts down, and `TaskCompleted` SHALL follow `JobEnded`'s suppression rules, running immediately before it
+
+#### Scenario: Events deferred for lack of a producer
+- **WHEN** the P1 event set is compared with the runtime's producers
+- **THEN** `Setup`, `DirectoryAdded`, `Notification`, `FileChanged`, `CwdChanged` and `ConfigChange` SHALL remain unemitted until a first-run marker, directory addition, notification, file watcher, working-directory change or configuration reload producer exists
+- **AND** `WorktreeRemove`, whose producer exists, SHALL remain unemitted until it is wired to the same dispatch, and `Notification` SHALL be emitted only for the permission-prompt and question producers until idle, authentication and other notification producers exist
+
+#### Scenario: Tool-side events with an existing producer
+- **WHEN** an attended permission prompt or `question` tool question is about to be published, an MCP server sends a form elicitation to an attended call, or a worktree is created
+- **THEN** `Notification` (`notification_type` `permission_prompt` or `question` as matcher subject, `message`, `tool_name`, `call_id`) SHALL run before the prompt is published, and SHALL be observational: decisions SHALL be ignored and no handler failure SHALL block or withhold the prompt
+- **AND** `Elicitation` (`mcp_server_name` as matcher subject, `message`, `requested_schema`, `elicitation_mode`) SHALL run before the user is asked; a `deny`, or an unavailable `fail_closed` handler, SHALL decline the request without asking the user
+- **AND** `ElicitationResult` (`mcp_server_name`, `action`, `content`) SHALL observe the reply about to be sent, including a hook decline, and SHALL ignore decisions
+- **AND** `WorktreeCreate` (`name` as payload field and matcher subject) SHALL run after worktree permission and before any git effect; a `deny` or an unavailable `fail_closed` handler SHALL refuse the creation with `blocked by hook <id>: <reason>`, while `allow` and `ask` SHALL neither grant nor prompt
+
+#### Scenario: PermissionDenied runs at denial boundaries and retries once
+- **WHEN** a tool call is refused by a deny rule or Mode ceiling (`denied_by` `rule`), an auto-mode block (`auto`), a user rejection (`user`) or the lack of an approver (`unattended`)
+- **THEN** `PermissionDenied` SHALL run once for the call with the tool fields, `reason`, `denied_by` and the refused `permission` (`action`, `resources`), chaining `updated_input` like `PreToolUse`
+- **AND** a merged `retry` (which any later `ask` or `deny` overrides) SHALL re-issue the call once with its `updated_input`, or the denied input when absent, after tool-schema validation (`hook produced invalid tool input` on failure), the auto-mode override check and full permission evaluation; a `PreToolUse` `allow` for the original input SHALL NOT carry over, while an `ask` SHALL
+- **AND** when the re-issued input differs from the denied input, `PreToolUse` SHALL run on it first like on a first attempt: its `deny` or `block` SHALL refuse the retry, its `ask` SHALL force a prompt and its `updated_input` SHALL apply, while its `allow` SHALL NOT skip permission evaluation
+- **AND** the retry SHALL NOT bypass deny rules, Mode ceilings or auto blocks, its denial SHALL be final without running `PermissionDenied` again, and a refused retry SHALL leave no effect of either input
+- **AND** a `PermissionRequest` hook denial SHALL NOT run `PermissionDenied`, and context and `continue: false` SHALL commit with the call's settlement like other tool events
 
 #### Scenario: Chained rewrite preserves envelope
 - **WHEN** a PreToolUse or PermissionDenied decision rewrites tool input
@@ -358,6 +445,11 @@
 - **WHEN** a `PostToolUse` command hook exits with code 1
 - **THEN** the turn continues and a warning with the hook id and stderr is shown
 
+#### Scenario: Unavailable fail_closed post-tool handler
+- **WHEN** a `fail_closed` `PostToolUse` or `PostToolUseFailure` handler times out, cannot launch or returns invalid output
+- **THEN** the call SHALL settle as an error `Tool settled; post-hook failed: hook <id> unavailable` and launched siblings SHALL be cancelled
+- **AND** without `fail_closed` the failure SHALL only produce a notice
+
 #### Scenario: Simultaneous command streams
 - **WHEN** a command writes stdout and stderr before consuming a large event from stdin
 - **THEN** all three streams SHALL progress concurrently and the owned exit code SHALL remain available
@@ -372,6 +464,7 @@
 #### Scenario: Captured command decision interpretation
 - **WHEN** a command exits successfully with complete JSON object output
 - **THEN** its applicable decision fields SHALL be validated against the event
+- **AND** a leading UTF-8 byte-order mark and CRLF line endings, as Windows PowerShell may write them, SHALL NOT turn a decision into plain output
 - **AND** non-JSON output SHALL mean success without a decision
 - **AND** truncated output or malformed decision objects SHALL be errors rather than accepted allow decisions
 
@@ -424,6 +517,11 @@
 
 ### Requirement: Hook observability
 (P1) Every hook execution SHALL be recorded as a durable `hook.executed.1` event with hook id, event, scope, duration, outcome (`ok`, `blocked`, `error`, `timeout`, `skipped`) and decision. Execution SHALL NOT record stdin or stdout contents unless `telemetry.log_hook_io` is true. Outcomes SHALL be visible in the transcript when a hook blocks or modifies an action.
+
+#### Scenario: Skipped handlers leave receipts
+- **WHEN** a matching handler does not run because it is untrusted or a managed policy refuses it
+- **THEN** a settled `hook.executed.1` receipt with outcome `skipped` and the reason in its decision SHALL be recorded under the Session's current admission fences
+- **AND** a handler whose matcher, paths or `if` condition does not match SHALL leave no receipt
 
 #### Scenario: Blocked action visible
 - **WHEN** a hook blocks an `edit`
@@ -487,6 +585,11 @@
 #### Scenario: Concurrent request decisions preserve declared order
 - **WHEN** two PermissionRequest handlers deny and the later declared handler finishes first
 - **THEN** the final merged denial SHALL retain the later declared handler's reason
+
+#### Scenario: Rewrite chains stay sequential
+- **WHEN** `PreToolUse` or `PermissionDenied` handlers match an event
+- **THEN** they SHALL run one at a time in declared order, by design, because each handler's `updated_input` becomes the next handler's `tool_input`
+- **AND** every other event SHALL use the concurrent pool
 
 #### Scenario: Parallel interruption settles owned commands
 - **WHEN** interruption or a fail-closed admission error stops a fixed-input hook event
@@ -580,3 +683,22 @@
 - **AND** a durable marker SHALL be committed together with its context, so it SHALL NOT run or admit its context again on later Turns or after the runtime is recreated, including a restart before the first Turn opened
 - **AND** its context SHALL be committed as a tagged system message before the first prompt
 - **AND** its decisions SHALL be ignored, an unavailable `fail_closed` handler SHALL end the Drain with a `hook` error before any Turn, and child Sessions SHALL report their launch through `SubagentStart` instead
+
+### Requirement: Timeouts and async hooks
+(P1) Each handler SHALL time out after `timeout` seconds (default 60, maximum 600). A timeout SHALL be treated as a non-blocking error unless `fail_closed` is set. A handler with `async: true` SHALL run in the background without blocking the event, and its decision SHALL be ignored except for `additional_context`, which SHALL be admitted at the next Safe Boundary.
+
+#### Scenario: Async notification hook
+- **WHEN** a `Notification` hook with `async: true` posts to a chat webhook taking 5 s
+- **THEN** the session is not delayed
+
+#### Scenario: Async admission precedes the event and settles once
+- **WHEN** a trusted `async` handler matches an event
+- **THEN** its durable receipt SHALL be admitted, with once claims and admission fences unchanged, before the event proceeds, and the handler SHALL then run in a runtime-owned task the event never awaits
+- **AND** an `async` handler SHALL NOT deduplicate an identical synchronous command
+- **AND** interrupt, subtree stop and shutdown SHALL cancel that task through its execution activity, and shutdown SHALL join it; work that does not settle within a bounded grace period after cancellation SHALL be disposed and its receipt recorded `unknown`, and otherwise the receipt SHALL settle exactly once
+
+#### Scenario: Async decisions, context and failures
+- **WHEN** an `async` handler completes
+- **THEN** its `decision`, `updated_input`, `continue` and `stop_reason` SHALL be ignored with a debug log, and its `additional_context`, tagged `[hook <id>]`, SHALL be queued for its Session and committed as a `hook_context` system message at the next Safe Boundary, before that Turn's request
+- **AND** `fail_closed` SHALL NOT block the event of an `async` handler: an admission failure, timeout or invalid output SHALL be recorded on its receipt and shown only as a notice
+- **AND** queued context SHALL be process-local: context still queued when the runtime stops SHALL be lost while the receipt remains

@@ -192,6 +192,7 @@ mod tests {
                 project_id: "global".into(),
                 agent: "coder".into(),
                 mode: "default".into(),
+                parent_session_id: None,
             },
             1,
             fields,

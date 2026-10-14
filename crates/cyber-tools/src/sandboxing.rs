@@ -453,6 +453,7 @@ mod tests {
             loaded_skill: Default::default(),
             compiler_feedback: Default::default(),
             hook_decision: None,
+            denial: Default::default(),
             host: &host,
             inv: &inv,
             policy: host.policy(&inv).await.unwrap(),

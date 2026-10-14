@@ -389,6 +389,10 @@ export type HookExecutionRecord = {
   tool_name?: string | null;
   scope: HookScope;
   directory: string;
+  /** Captured envelope project; receipts admitted before it was recorded mean `global`. */
+  project_id?: string | null;
+  workspace?: string | null;
+  parent_session_id?: string | null;
   agent: string;
   mode: string;
   started_ms: number;
@@ -445,7 +449,10 @@ export type HookOutcome = "ok" | "blocked" | "error" | "timeout" | "skipped";
 
 /** Read-only configuration inspection; digests refer to original unredacted definitions. */
 export type HookReview = {
+  /** Eligible definitions first, then those a managed policy skips. */
   hooks: ReviewedHook[];
+  /** The OS-managed policy that restricted or contributed hooks. */
+  managed_policy: ManagedPolicy;
   withheld_definitions: string[];
   withheld_hooks: RawHookSection[];
   checkout_trusted: boolean;
@@ -679,6 +686,16 @@ export type LspTransition = {
   closed: boolean;
   /** Admission is reopened lazily; this operation starts no language server. */
   reloaded: boolean;
+};
+
+/** The hook-related state of the managed policy for one configuration load. */
+export type ManagedPolicy = {
+  /** `managed:<file>` labels of the documents read, lowest priority first. */
+  sources: string[];
+  /** `policy.hooks.managed_only`: only managed-scope hooks run. */
+  managed_only: boolean;
+  /** Why a present policy could not be used. Every non-managed hook is refused. */
+  error?: string | null;
 };
 
 export type McpClosed = {
@@ -1030,6 +1047,8 @@ export type ReviewedHook = {
   digest: string;
   trusted: boolean;
   sandbox_required: boolean;
+  /** Why a managed policy refuses this definition; it never runs while set. */
+  skipped?: string | null;
   last_run?: HookLastRun | null;
 };
 

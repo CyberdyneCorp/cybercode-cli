@@ -191,6 +191,9 @@ fn print(run: &HookTestRun, global: &GlobalArgs) -> Result<(), CliError> {
             result.kind,
             result.report.outcome
         );
+        if result.background {
+            println!("  async: runs in the background at events; only additional_context applies");
+        }
         println!(
             "  decision: {}",
             serde_json::to_string(&result.report.decision)

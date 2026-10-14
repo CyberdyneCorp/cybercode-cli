@@ -47,6 +47,7 @@ async fn event(h: &Harness, id: &str) -> HookEvent {
             project_id: "global".into(),
             agent: info.agent,
             mode: info.mode,
+            parent_session_id: None,
         },
         1,
         json!({"tool_input":{"command":"private stdin"}})
@@ -322,8 +323,15 @@ async fn once_admission_is_exclusive_across_runtimes_and_survives_unknown_restar
     );
     let mut owners = [left.unwrap(), right.unwrap()];
     assert_eq!(owners.iter().filter(|owner| owner.is_some()).count(), 1);
-    let mut owner = owners.iter_mut().find_map(Option::take).unwrap();
-    owner.mark_launch(&h.runtime).unwrap();
+    // Either runtime may win the claim; only its owner can mark the launch.
+    let (winner, mut owner) = owners
+        .iter_mut()
+        .enumerate()
+        .find_map(|(index, owner)| owner.take().map(|owner| (index, owner)))
+        .unwrap();
+    owner
+        .mark_launch(if winner == 0 { &h.runtime } else { &peer })
+        .unwrap();
     drop(owner);
     let replay = h.restart();
     assert!(
@@ -693,4 +701,182 @@ async fn synthetic_once_claims_are_per_test_identity_and_io_policy_remains_pinne
         .read(|conn| Ok(conn.query_row("SELECT count(*) FROM session", [], |row| row.get(0))?))
         .unwrap();
     assert_eq!(count, 0);
+}
+
+/// Turn the Harness checkout into a real git repository with an origin, so its
+/// project identity is a `prj_` ID rather than `global`. No network is used.
+fn real_checkout(h: &Harness) -> cyber_core::project::Project {
+    std::fs::remove_dir_all(h.repo.join(".git")).unwrap();
+    for args in [
+        &["init", "--quiet"][..],
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/acme/receipts.git",
+        ][..],
+    ] {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&h.repo)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    cyber_core::project::identify(&h.repo)
+}
+
+#[tokio::test]
+async fn admission_binds_the_session_project_identity_and_receipts_keep_it() {
+    let h = Harness::new(Setup::default());
+    let project = real_checkout(&h);
+    assert_ne!(project.id, "global");
+    let session = h.session().await;
+    let envelope = h.runtime.session_envelope(&session).await.unwrap();
+    assert_eq!(envelope.project_id, project.id);
+    assert_eq!(
+        envelope.workspace.as_deref(),
+        Some(project.worktree.display().to_string().as_str())
+    );
+    assert_eq!(envelope.parent_session_id, None);
+    let definition = definition(&h);
+    // A host that forges the placeholder `global` identity is refused before any receipt.
+    let error = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition, false)
+        .await
+        .err()
+        .expect("a mismatched project identity is refused");
+    assert!(error.to_string().contains("identity"), "{error}");
+    assert!(h.runtime.hook_executions(&session, 10).unwrap().is_empty());
+    let info = h.state(&session).await.info;
+    let identity = envelope.identity(&session, &info.directory, &info.agent, &info.mode);
+    let owned = HookEvent::new("PreToolUse", identity, 1, serde_json::Map::new()).unwrap();
+    assert_eq!(owned.as_json()["project_id"], json!(project.id));
+    let owner = h
+        .runtime
+        .start_hook_execution(&owned, &definition, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        owner.record().project_id.as_deref(),
+        Some(project.id.as_str())
+    );
+    assert_eq!(owner.record().workspace, envelope.workspace);
+    let id = owner.record().id.clone();
+    // A terminal receipt cannot rebind the admitted project identity.
+    let mut rebound = serde_json::to_value(owner.record()).unwrap();
+    rebound["project_id"] = json!("global");
+    rebound["status"] = json!("completed");
+    rebound["duration_ms"] = json!(1);
+    rebound["outcome"] = json!("ok");
+    rebound["decision"] = json!({});
+    rebound["acknowledged"] = json!(true);
+    assert!(
+        h.store
+            .append(
+                &id,
+                Expected::Seq(0),
+                vec![NewEvent::new("hook.executed.1", rebound)]
+            )
+            .is_err()
+    );
+    owner.finish(result()).unwrap();
+    let replay = h.restart().hook_executions(&session, 10).unwrap();
+    assert_eq!(replay[0].project_id.as_deref(), Some(project.id.as_str()));
+    assert_eq!(replay[0].workspace, envelope.workspace);
+}
+
+async fn wait_status(h: &Harness, session: &str, status: HookExecutionStatus) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while h.runtime.hook_executions(session, 10).unwrap()[0].status != status {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("async receipt did not settle");
+}
+
+#[tokio::test]
+async fn async_receipt_is_admitted_before_effects_and_settles_exactly_once() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), false)
+        .await
+        .unwrap();
+    let id = owner.record().id.clone();
+    // Admission is durable before the background work starts.
+    assert_eq!(
+        h.runtime.hook_executions(&session, 10).unwrap()[0].status,
+        HookExecutionStatus::Running
+    );
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    h.runtime
+        .spawn_hook_execution(owner, |owner| async move {
+            let _ = released.await;
+            owner.finish(result()).unwrap();
+        })
+        .unwrap();
+    assert_eq!(
+        h.runtime.hook_executions(&session, 10).unwrap()[0].status,
+        HookExecutionStatus::Running
+    );
+    release.send(()).unwrap();
+    wait_status(&h, &session, HookExecutionStatus::Completed).await;
+    let events = h.store.read_events(&id, -1, 10).unwrap().events;
+    assert_eq!(events.len(), 2, "one admission and one terminal receipt");
+    h.runtime.shutdown().await;
+    assert_eq!(h.store.read_events(&id, -1, 10).unwrap().events.len(), 2);
+}
+
+#[tokio::test]
+async fn async_owner_disposed_during_shutdown_is_recorded_unknown() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), false)
+        .await
+        .unwrap();
+    let id = owner.record().id.clone();
+    // Work that never acknowledges cancellation is disposed after the grace period.
+    h.runtime
+        .spawn_hook_execution(owner, |owner| async move {
+            let _owner = owner;
+            std::future::pending::<()>().await;
+        })
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(20), h.runtime.shutdown())
+        .await
+        .expect("shutdown must not wait on unacknowledged hook work forever");
+    let record = h.runtime.hook_executions(&session, 10).unwrap().remove(0);
+    assert_eq!(record.status, HookExecutionStatus::Unknown);
+    assert_eq!(record.acknowledged, Some(false));
+    assert!(record.must_stop);
+    assert_eq!(h.store.read_events(&id, -1, 10).unwrap().events.len(), 2);
+
+    // Work that acknowledges cancellation settles its own receipt during shutdown.
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let owner = h
+        .runtime
+        .start_hook_execution(&event(&h, &session).await, &definition(&h), false)
+        .await
+        .unwrap();
+    h.runtime
+        .spawn_hook_execution(owner, |owner| async move {
+            owner.cancellation().cancelled().await;
+            let mut stopped = result();
+            stopped.outcome = HookOutcome::Skipped;
+            stopped.decision = HookDecision::default();
+            stopped.must_stop = true;
+            owner.finish(stopped).unwrap();
+        })
+        .unwrap();
+    h.runtime.shutdown().await;
+    let record = h.runtime.hook_executions(&session, 10).unwrap().remove(0);
+    assert_eq!(record.status, HookExecutionStatus::Completed);
+    assert_eq!(record.outcome, Some(HookOutcome::Skipped));
 }

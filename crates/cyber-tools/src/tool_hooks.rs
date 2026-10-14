@@ -1,18 +1,17 @@
 //! Command hooks at the built-in tool boundary; lifecycle_hooks reuses this dispatch.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use futures::{FutureExt, StreamExt, stream};
 use std::time::Instant;
 
-use cyber_core::config::Resolved;
+use cyber_core::config::{HookKind, Resolved};
 use cyber_core::hooks::{
-    HookAction, HookCatalog, HookDecision, HookDefinition, HookEvent, HookIdentity, HookLocation,
-    HookOutcome,
+    HookAction, HookCatalog, HookDecision, HookDefinition, HookEvent, HookIdentity, HookOutcome,
 };
-use cyber_core::trust::TrustStore;
-use cyber_server::runtime::{HookExecutionResult, Invocation, ToolOutcome};
+use cyber_core::trust::{HookInvocationTrust, TrustStore};
+use cyber_server::runtime::{HookEffects, Invocation, ToolOutcome};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -21,6 +20,8 @@ use crate::hook_commands::{HookCommandReport, HookCommandRunner};
 use crate::tools::ToolError;
 
 pub type HookConfigFn = dyn Fn(&Path) -> Result<Resolved, String> + Send + Sync;
+/// Tool-event hook effects awaiting settlement, keyed by (Session, call).
+pub(crate) type PendingEffects = Mutex<HashMap<(String, String), HookEffects>>;
 pub(crate) struct HooksConfig {
     pub(crate) resolve: Arc<HookConfigFn>,
     pub(crate) trust: TrustStore,
@@ -36,6 +37,24 @@ impl BuiltinHost {
         self.hook_config
             .set(HooksConfig { resolve, trust })
             .map_err(|_| "Hook configuration resolver is already attached".into())
+    }
+
+    /// Approve exactly these inspected project/local handler digests for this host's
+    /// lifetime (`cyber exec --trust-project-hooks`). Nothing is persisted, and a
+    /// changed definition has a different digest and stays unapproved.
+    pub fn attach_invocation_hook_trust(&self, trust: HookInvocationTrust) -> Result<(), String> {
+        self.hook_invocation_trust
+            .set(trust)
+            .map_err(|_| "Invocation hook approval is already attached".into())
+    }
+
+    /// The effects tool-event hooks recorded for a call, taken once at settlement.
+    pub(crate) fn take_tool_hook_effects(&self, session_id: &str, call_id: &str) -> HookEffects {
+        self.hook_effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&(session_id.to_owned(), call_id.to_owned()))
+            .unwrap_or_default()
     }
 
     /// Reload definitions and exact approvals without dispatching handlers.
@@ -91,8 +110,10 @@ impl BuiltinHost {
         if self.hook_config.get().is_none() {
             return Ok(None);
         }
-        let event = event("PreToolUse", inv, Value::Null)?;
-        let decision = self.dispatch_tool_hooks(event, &inv.name, cancel).await?;
+        let decision = self
+            .dispatch_tool_event("PreToolUse", inv, Value::Null, cancel)
+            .await?;
+        self.record_hook_effects(inv, &decision);
         if matches!(
             decision.decision,
             Some(HookAction::Deny | HookAction::Block)
@@ -122,8 +143,10 @@ impl BuiltinHost {
         if self.hook_config.get().is_none() {
             return Ok(None);
         }
-        let event = event("PermissionRequest", inv, json!({"permission":ask}))?;
-        let decision = self.dispatch_tool_hooks(event, &inv.name, cancel).await?;
+        let decision = self
+            .dispatch_tool_event("PermissionRequest", inv, json!({"permission":ask}), cancel)
+            .await?;
+        self.record_hook_effects(inv, &decision);
         if matches!(
             decision.decision,
             Some(HookAction::Deny | HookAction::Block)
@@ -134,6 +157,57 @@ impl BuiltinHost {
             )));
         }
         Ok(decision.decision)
+    }
+
+    /// PermissionDenied at a deny-rule, Mode-ceiling, auto-block or user-reject
+    /// boundary. A merged `retry` returns the input to re-issue (its `updated_input`
+    /// or the denied input); the caller re-validates and re-evaluates it once.
+    pub(crate) async fn permission_denied_hooks(
+        &self,
+        inv: &Invocation,
+        denial: &PermissionDenial<'_>,
+        cancel: CancellationToken,
+    ) -> Result<Option<Value>, ToolError> {
+        if self.hook_config.get().is_none() {
+            return Ok(None);
+        }
+        let fields = json!({
+            "reason": denial.reason,
+            "denied_by": denial.source,
+            "permission": {"action": denial.action, "resources": denial.resources},
+        });
+        let decision = self
+            .dispatch_tool_event("PermissionDenied", inv, fields, cancel)
+            .await?;
+        self.record_hook_effects(inv, &decision);
+        Ok((decision.decision == Some(HookAction::Retry))
+            .then(|| decision.updated_input.unwrap_or_else(|| inv.input.clone())))
+    }
+
+    /// Notification hooks for a user-facing prompt about to be published. They are
+    /// observational: decisions are ignored and failures never block the prompt.
+    pub(crate) async fn notification_hooks(
+        &self,
+        inv: &Invocation,
+        kind: &str,
+        message: String,
+        cancel: CancellationToken,
+    ) {
+        if self.hook_config.get().is_none() || !inv.asker.attended() {
+            return;
+        }
+        let fields = json!({"notification_type":kind,"message":message,"tool_name":inv.name,"call_id":inv.call_id});
+        let fields = fields.as_object().cloned().unwrap_or_default();
+        if let Err(ToolError::Failed(error)) = self
+            .dispatch_owned("Notification", &HookOwner::of(inv), fields, kind, cancel)
+            .await
+        {
+            cyber_core::log::debug(
+                "hooks",
+                "Notification hook failed",
+                json!({"error":error,"session_id":inv.session_id}),
+            );
+        }
     }
 
     pub(crate) async fn post_tool_hooks(
@@ -161,41 +235,81 @@ impl BuiltinHost {
             } => ("PostToolUseFailure", error),
             ToolOutcome::Aborted => return Ok(()),
         };
-        let event = event(
-            kind,
-            inv,
-            json!({"tool_output":output,"duration_ms":u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)}),
-        )?;
-        self.dispatch_tool_hooks(event, &inv.name, cancel)
-            .await
-            .map(|_| ())
+        let duration = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let decision = self
+            .dispatch_tool_event(
+                kind,
+                inv,
+                json!({"tool_output":output,"duration_ms":duration}),
+                cancel,
+            )
+            .await?;
+        self.record_hook_effects(inv, &decision);
+        Ok(())
     }
 
-    pub(crate) async fn dispatch_tool_hooks(
-        &self,
-        event: HookEvent,
-        subject: &str,
-        cancel: CancellationToken,
-    ) -> Result<HookDecision, ToolError> {
-        let Some((resolved, catalog)) = self.hook_catalog(&event)? else {
-            return Ok(HookDecision::default());
-        };
-        self.dispatch_catalog(event, subject, &resolved, catalog, cancel)
-            .await
+    /// Keep a tool event's context and stop request for the call's settlement.
+    fn record_hook_effects(&self, inv: &Invocation, decision: &HookDecision) {
+        if decision.additional_context.is_none() && decision.continuation != Some(false) {
+            return;
+        }
+        self.hook_effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry((inv.session_id.clone(), inv.call_id.clone()))
+            .or_default()
+            .absorb(decision);
     }
 
-    /// Reload configuration and definitions for the event's Location.
-    pub(crate) fn hook_catalog(
+    /// Reload configuration and definitions for a Location.
+    fn hook_catalog_at(
         &self,
-        event: &HookEvent,
+        directory: &Path,
     ) -> Result<Option<(Resolved, HookCatalog)>, ToolError> {
         let Some(config) = self.hook_config.get() else {
             return Ok(None);
         };
-        let resolved =
-            (config.resolve)(&event.identity().location.directory).map_err(ToolError::Failed)?;
+        let resolved = (config.resolve)(directory).map_err(ToolError::Failed)?;
         let catalog = HookCatalog::from_config(&resolved).map_err(ToolError::Failed)?;
         Ok(Some((resolved, catalog)))
+    }
+
+    /// Dispatch an owner's event. Configuration reloads for its Location, and only
+    /// when a definition exists for `kind` does the runtime resolve the Session's
+    /// envelope identity and the handlers run. None means nothing was configured;
+    /// otherwise the merged decision and the catalog's Stop continuation cap.
+    /// The future is boxed with a declared `Send` type: handlers (MCP elicitation,
+    /// background runs) can reach dispatch again, so auto traits must not be
+    /// inferred through this recursion.
+    pub(crate) fn dispatch_owned<'a>(
+        &'a self,
+        kind: &'a str,
+        owner: &'a HookOwner,
+        fields: serde_json::Map<String, Value>,
+        subject: &'a str,
+        cancel: CancellationToken,
+    ) -> futures::future::BoxFuture<'a, Result<Option<(HookDecision, usize)>, ToolError>> {
+        Box::pin(async move {
+            let Some((resolved, catalog)) = self.hook_catalog_at(Path::new(&owner.directory))?
+            else {
+                return Ok(None);
+            };
+            if !catalog
+                .definitions
+                .iter()
+                .chain(catalog.skipped_for(kind))
+                .any(|definition| definition.event == kind)
+            {
+                return Ok(None);
+            }
+            let identity = self.hook_identity(owner).await?;
+            let event = lifecycle_event(kind, identity, fields)?;
+            let cap = catalog.settings.max_stop_continuations;
+            let decision = self
+                .dispatch_catalog(event, subject, &resolved, catalog, cancel)
+                .await?;
+            Ok(Some((decision, cap)))
+        })
     }
 
     pub(crate) async fn dispatch_catalog(
@@ -227,13 +341,22 @@ impl BuiltinHost {
         let runner = HookCommandRunner {
             resolved,
             trust: &config.trust,
-            invocation_trust: None,
+            invocation_trust: self.hook_invocation_trust.get(),
             home: &self.opts.home,
             temp_dir: &self.opts.temp_dir,
             shell: &self.opts.shell,
             helper: self.opts.sandbox_helper.as_deref(),
             credential_env_names: &credentials,
         };
+        self.report_policy_skips(&runtime, &catalog, &event, subject)
+            .await;
+        if !catalog
+            .definitions
+            .iter()
+            .any(|definition| definition.event == event.event())
+        {
+            return Ok(HookDecision::default());
+        }
         if !matches!(event.event(), "PreToolUse" | "PermissionDenied") {
             return Box::pin(
                 self.dispatch_fixed_hooks(&runner, &runtime, &catalog, &event, subject, cancel),
@@ -264,6 +387,7 @@ impl BuiltinHost {
                 continue;
             };
             self.observe_hook_report(&event, &definition, &report)?;
+            let report = crate::lifecycle_hooks::mergeable_report(&event, &definition, report);
             merge_decision(&definition, report, &mut decision);
             if let Some(input) = decision.updated_input.clone() {
                 event = event.with_tool_input(input).map_err(ToolError::Failed)?;
@@ -359,69 +483,38 @@ impl BuiltinHost {
             return Err(ToolError::Aborted);
         }
         let trusted = definition
-            .is_trusted(&runner.resolved.trust.checkout_root, runner.trust, None)
+            .is_trusted(
+                &runner.resolved.trust.checkout_root,
+                runner.trust,
+                runner.invocation_trust,
+            )
             .map_err(|error| ToolError::Failed(error.to_string()))?;
         if !trusted {
-            self.hook_notice(event, "untrusted hook skipped", &definition.digest);
+            self.untrusted_hook_skipped(runner, runtime, definition, event)
+                .await;
             return Ok(None);
         }
-        let result = if !matches!(
-            definition.kind(),
-            cyber_core::config::HookKind::Command
-                | cyber_core::config::HookKind::Http
-                | cyber_core::config::HookKind::Prompt
-                | cyber_core::config::HookKind::McpTool
-        ) || definition.handler.asynchronous
-        {
-            let owner = runtime
-                .start_hook_execution(event, definition, false)
+        if definition.handler.asynchronous {
+            // The event never waits for, or fails closed on, a background handler.
+            if let Err(error) = self
+                .start_background_hook(runner, runtime, definition, event)
                 .await
-                .map_err(|error| ToolError::Failed(error.to_string()))?;
-            owner
-                .finish(HookExecutionResult {
-                    outcome: HookOutcome::Error,
-                    decision: HookDecision::default(),
-                    acknowledged: true,
-                    must_stop: false,
-                    io: None,
-                })
-                .map_err(|error| ToolError::Failed(error.to_string()))?;
-            Err("Hook handler type or async scheduling is not implemented".to_string())
-        } else if definition.kind() == cyber_core::config::HookKind::McpTool {
-            crate::hook_mcp::HookMcpRunner { settings: runner }
-                .run_recorded(self, runtime, &definition.pointer, event, cancel)
-                .await
-        } else if definition.kind() == cyber_core::config::HookKind::Prompt {
-            crate::hook_prompt::HookPromptRunner {
-                resolved: runner.resolved,
-                trust: runner.trust,
-                invocation_trust: runner.invocation_trust,
-                home: runner.home,
-            }
-            .run_recorded(runtime, &definition.pointer, event, cancel)
-            .await
-        } else if definition.kind() == cyber_core::config::HookKind::Http {
-            crate::hook_http::HookHttpRunner {
-                resolved: runner.resolved,
-                trust: runner.trust,
-                invocation_trust: runner.invocation_trust,
-                home: runner.home,
-            }
-            .run_recorded(runtime, &definition.pointer, event, cancel)
-            .await
-        } else {
-            if let Some(command) = &definition.handler.command
-                && !commands
-                    .lock()
-                    .map_err(|_| ToolError::Failed("Hook command scheduling lock poisoned".into()))?
-                    .insert(command.clone())
             {
-                return Ok(None);
+                self.hook_notice(event, &error, &definition.digest);
             }
-            runner
-                .run_recorded(runtime, &definition.pointer, event, cancel)
-                .await
-        };
+            return Ok(None);
+        }
+        if let Some(command) = &definition.handler.command
+            && !commands
+                .lock()
+                .map_err(|_| ToolError::Failed("Hook command scheduling lock poisoned".into()))?
+                .insert(command.clone())
+        {
+            return Ok(None);
+        }
+        let result = self
+            .run_handler(runner, runtime, definition, event, cancel)
+            .await;
         match result {
             Ok(report) => Ok(Some(report)),
             Err(error) => {
@@ -441,6 +534,46 @@ impl BuiltinHost {
         }
     }
 
+    /// Run one synchronous handler through its kind's recorded runner.
+    async fn run_handler(
+        &self,
+        runner: &HookCommandRunner<'_>,
+        runtime: &cyber_server::runtime::Runtime,
+        definition: &HookDefinition,
+        event: &HookEvent,
+        cancel: CancellationToken,
+    ) -> Result<HookCommandReport, String> {
+        let pointer = &definition.pointer;
+        match definition.kind() {
+            HookKind::McpTool => {
+                crate::hook_mcp::HookMcpRunner { settings: runner }
+                    .run_recorded(self, runtime, pointer, event, cancel)
+                    .await
+            }
+            HookKind::Prompt => {
+                crate::hook_prompt::HookPromptRunner {
+                    resolved: runner.resolved,
+                    trust: runner.trust,
+                    invocation_trust: runner.invocation_trust,
+                    home: runner.home,
+                }
+                .run_recorded(runtime, pointer, event, cancel)
+                .await
+            }
+            HookKind::Http => {
+                crate::hook_http::HookHttpRunner {
+                    resolved: runner.resolved,
+                    trust: runner.trust,
+                    invocation_trust: runner.invocation_trust,
+                    home: runner.home,
+                }
+                .run_recorded(runtime, pointer, event, cancel)
+                .await
+            }
+            HookKind::Command => runner.run_recorded(runtime, pointer, event, cancel).await,
+        }
+    }
+
     fn observe_hook_report(
         &self,
         event: &HookEvent,
@@ -450,26 +583,28 @@ impl BuiltinHost {
         if report.must_stop {
             return Err(ToolError::Aborted);
         }
+        let id = definition
+            .handler
+            .id
+            .as_deref()
+            .unwrap_or(&definition.digest);
+        if !report.ignored_fields.is_empty() {
+            cyber_core::log::debug(
+                "hooks",
+                "hook decision fields ignored for this event",
+                json!({"hook_id":id,"event":event.event(),"fields":report.ignored_fields}),
+            );
+        }
         if let Some(diagnostic) = &report.diagnostic {
             self.hook_notice(event, diagnostic, &definition.digest);
         }
         if crate::lifecycle_hooks::observed_unavailable(event, definition, report) {
-            return Err(ToolError::Failed(format!(
-                "hook {} unavailable",
-                definition
-                    .handler
-                    .id
-                    .as_deref()
-                    .unwrap_or(&definition.digest)
-            )));
+            return Err(ToolError::Failed(format!("hook {id} unavailable")));
         }
-        // UserPromptSubmit/SessionStart context is admitted; other events defer it.
-        let deferred_context = report.decision.additional_context.is_some()
-            && !crate::lifecycle_hooks::admits_context(event);
-        if deferred_context || report.decision.continuation == Some(false) {
+        if crate::lifecycle_hooks::unapplied_effect(event, &report.decision) {
             self.hook_notice(
                 event,
-                "hook context/continuation admission remains unavailable",
+                "hook context/continuation admission remains unavailable for this event",
                 &definition.digest,
             );
             if definition.handler.fail_closed {
@@ -478,27 +613,20 @@ impl BuiltinHost {
                 ));
             }
         }
+        // suppress_output hides the hook's own output; receipts and the model-facing
+        // deny reason are never suppressed.
+        if report.suppresses_output() {
+            return Ok(());
+        }
         if report.outcome == HookOutcome::Blocked {
             self.hook_notice(
                 event,
                 report.decision.reason.as_deref().unwrap_or("blocked"),
-                definition
-                    .handler
-                    .id
-                    .as_deref()
-                    .unwrap_or(&definition.digest),
+                id,
             );
         }
         if report.decision.updated_input.is_some() {
-            self.hook_notice(
-                event,
-                "hook rewrote tool input",
-                definition
-                    .handler
-                    .id
-                    .as_deref()
-                    .unwrap_or(&definition.digest),
-            );
+            self.hook_notice(event, "hook rewrote tool input", id);
         }
         Ok(())
     }
@@ -526,28 +654,74 @@ pub(crate) fn merge_decision(
     decision.merge(report.decision);
 }
 
-fn event(kind: &str, inv: &Invocation, extra: Value) -> Result<HookEvent, ToolError> {
-    let mut fields = json!({"tool_name":inv.name,"tool_input":inv.input,"call_id":inv.call_id})
-        .as_object()
-        .expect("object")
-        .clone();
-    if let Some(extra) = extra.as_object() {
-        fields.extend(extra.clone());
-    }
-    lifecycle_event(kind, hook_identity(inv), fields)
+/// One permission denial a PermissionDenied hook observes.
+pub(crate) struct PermissionDenial<'a> {
+    /// `rule` (deny rules and Mode ceilings), `auto`, `user` or `unattended`.
+    pub(crate) source: &'a str,
+    pub(crate) reason: &'a str,
+    pub(crate) action: &'a str,
+    pub(crate) resources: &'a [String],
 }
 
-/// Captured envelope identity of the Session that owns an invocation.
-pub(crate) fn hook_identity(inv: &Invocation) -> HookIdentity {
-    HookIdentity {
-        session_id: inv.session_id.clone(),
-        location: HookLocation {
-            directory: inv.directory.clone().into(),
-            workspace: None,
-        },
-        project_id: "global".into(),
-        agent: inv.agent.clone(),
-        mode: inv.mode.clone(),
+/// The invocation fields a hook envelope captures; the runtime supplies the
+/// Session-derived project identity at dispatch.
+#[derive(Debug, Clone)]
+pub(crate) struct HookOwner {
+    pub(crate) session_id: String,
+    pub(crate) directory: String,
+    pub(crate) agent: String,
+    pub(crate) mode: String,
+}
+
+impl HookOwner {
+    pub(crate) fn of(inv: &Invocation) -> Self {
+        Self {
+            session_id: inv.session_id.clone(),
+            directory: inv.directory.clone(),
+            agent: inv.agent.clone(),
+            mode: inv.mode.clone(),
+        }
+    }
+}
+
+impl BuiltinHost {
+    /// Captured envelope identity of the Session that owns an invocation, with the
+    /// Session-derived project, workspace and parent that hook admission requires.
+    pub(crate) async fn hook_identity(&self, owner: &HookOwner) -> Result<HookIdentity, ToolError> {
+        let runtime = self
+            .runtime()
+            .ok_or_else(|| ToolError::Failed("Hook execution requires runtime ownership".into()))?;
+        let envelope = runtime
+            .session_envelope(&owner.session_id)
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
+        Ok(envelope.identity(
+            &owner.session_id,
+            &owner.directory,
+            &owner.agent,
+            &owner.mode,
+        ))
+    }
+
+    /// Dispatch a tool event for an invocation with its tool fields and `extra`.
+    async fn dispatch_tool_event(
+        &self,
+        kind: &str,
+        inv: &Invocation,
+        extra: Value,
+        cancel: CancellationToken,
+    ) -> Result<HookDecision, ToolError> {
+        let mut fields = json!({"tool_name":inv.name,"tool_input":inv.input,"call_id":inv.call_id})
+            .as_object()
+            .expect("object")
+            .clone();
+        if let Some(extra) = extra.as_object() {
+            fields.extend(extra.clone());
+        }
+        let dispatched = self
+            .dispatch_owned(kind, &HookOwner::of(inv), fields, &inv.name, cancel)
+            .await?;
+        Ok(dispatched.map(|(decision, _)| decision).unwrap_or_default())
     }
 }
 
@@ -596,7 +770,105 @@ pub(crate) fn target_paths(event: &HookEvent, home: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Notice owners for aggregated skips, shown as `hook <id>: <message>`.
+const TRUST_NOTICE: &str = "trust";
+const POLICY_NOTICE: &str = "managed-policy";
+
+fn hooks_noun(count: usize) -> &'static str {
+    if count == 1 { "hook" } else { "hooks" }
+}
+
 impl BuiltinHost {
+    /// Report and record the matching handlers a managed policy refuses: one notice
+    /// per event per Session, and a `skipped` receipt for each handler.
+    async fn report_policy_skips(
+        &self,
+        runtime: &cyber_server::runtime::Runtime,
+        catalog: &HookCatalog,
+        event: &HookEvent,
+        subject: &str,
+    ) {
+        let paths = target_paths(event, &self.opts.home);
+        let skipped: Vec<_> = catalog
+            .skipped_for(event.event())
+            .filter(|definition| definition.matches_event(event, subject, &paths))
+            .collect();
+        if skipped.is_empty() {
+            return;
+        }
+        let reason = catalog.policy.skip_reason();
+        for definition in &skipped {
+            self.record_skip(runtime, event, definition, &reason).await;
+        }
+        let session = &event.identity().session_id;
+        if self.first_notice(format!("{POLICY_NOTICE}\0{session}\0{}", event.event())) {
+            let count = skipped.len();
+            let message = format!("{count} {} skipped by {reason}", hooks_noun(count));
+            self.hook_notice(event, &message, POLICY_NOTICE);
+        }
+    }
+
+    /// Record an untrusted handler's skip; the Session's first one also reports how
+    /// many resolved handlers await review.
+    async fn untrusted_hook_skipped(
+        &self,
+        runner: &HookCommandRunner<'_>,
+        runtime: &cyber_server::runtime::Runtime,
+        definition: &HookDefinition,
+        event: &HookEvent,
+    ) {
+        self.record_skip(runtime, event, definition, "untrusted")
+            .await;
+        let session = &event.identity().session_id;
+        if !self.first_notice(format!("{TRUST_NOTICE}\0{session}")) {
+            return;
+        }
+        let root = &runner.resolved.trust.checkout_root;
+        let count = HookCatalog::from_config(runner.resolved)
+            .map(|catalog| {
+                catalog
+                    .definitions
+                    .iter()
+                    .filter(|definition| {
+                        !definition
+                            .is_trusted(root, runner.trust, runner.invocation_trust)
+                            .unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(1)
+            .max(1);
+        let message = format!(
+            "{count} untrusted {} changed \u{2014} review with /hooks",
+            hooks_noun(count)
+        );
+        self.hook_notice(event, &message, TRUST_NOTICE);
+    }
+
+    async fn record_skip(
+        &self,
+        runtime: &cyber_server::runtime::Runtime,
+        event: &HookEvent,
+        definition: &HookDefinition,
+        reason: &str,
+    ) {
+        if let Err(error) = runtime.record_skipped_hook(event, definition, reason).await {
+            cyber_core::log::debug(
+                "hooks",
+                "skipped hook receipt not recorded",
+                json!({"error":error.to_string(),"digest":definition.digest}),
+            );
+        }
+    }
+
+    /// Whether `key` is noticed for the first time in this host.
+    fn first_notice(&self, key: String) -> bool {
+        self.hook_notices
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key)
+    }
+
     fn hook_notice(&self, event: &HookEvent, message: &str, digest: &str) {
         if let Some(runtime) = self.runtime() {
             runtime.hook_notice(&event.identity().session_id, digest, message);

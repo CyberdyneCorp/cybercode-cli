@@ -142,6 +142,7 @@ async fn execute(
         location: inv.directory.clone().into(),
         cancel: cancel.clone(),
         hook_decision: None,
+        denial: Default::default(),
     };
     let permission = Request {
         action: "mcp_sampling".into(),

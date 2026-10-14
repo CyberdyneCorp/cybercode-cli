@@ -210,20 +210,49 @@ impl HookCommandRunner<'_> {
         event: &HookEvent,
         cancel: CancellationToken,
     ) -> Result<HookCommandReport, String> {
+        let Some(admitted) = self.admit(runtime, pointer, event, &cancel).await? else {
+            return Ok(skipped());
+        };
+        self.run_admitted(runtime, admitted, pointer, event, cancel)
+            .await
+    }
+
+    /// Durable admission alone; None when a once handler was already claimed.
+    pub(crate) async fn admit(
+        &self,
+        runtime: &cyber_server::runtime::Runtime,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: &CancellationToken,
+    ) -> Result<Option<crate::hook_reports::Admitted>, String> {
         let (definition, _) = self.authorize(pointer, event)?;
         if cancel.is_cancelled() {
             return Err("hook command cancelled before admission".into());
         }
-        let log_io = self.resolved.value["telemetry"]["log_hook_io"]
-            .as_bool()
-            .unwrap_or(false);
-        let Some(mut owner) = runtime
-            .try_start_hook_execution(event, &definition, log_io)
+        let owner = runtime
+            .try_start_hook_execution(
+                event,
+                &definition,
+                crate::hook_reports::log_io(self.resolved),
+            )
             .await
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(skipped());
-        };
+            .map_err(|error| error.to_string())?;
+        Ok(owner.map(|owner| crate::hook_reports::Admitted { owner, definition }))
+    }
+
+    /// Launch an admitted execution and settle its receipt exactly once.
+    pub(crate) async fn run_admitted(
+        &self,
+        runtime: &cyber_server::runtime::Runtime,
+        admitted: crate::hook_reports::Admitted,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: CancellationToken,
+    ) -> Result<HookCommandReport, String> {
+        let crate::hook_reports::Admitted {
+            mut owner,
+            definition,
+        } = admitted;
         if let Some(message) = &definition.handler.status_message {
             runtime.hook_notice(
                 &event.identity().session_id,
@@ -253,6 +282,7 @@ impl HookCommandRunner<'_> {
         report.must_stop |= fenced;
         let record = owner.finish(report).map_err(|error| error.to_string())?;
         if record.acknowledged == Some(true)
+            && HookCommandReport::shows_output(&result)
             && let Some(message) = &definition.handler.system_message
         {
             runtime.hook_notice(&record.session_id, &record.hook_id, message);

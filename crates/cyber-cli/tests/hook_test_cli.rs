@@ -204,6 +204,50 @@ fn missing_mcp_server_records_failure_without_session_work() {
     env.assert_no_sessions(1);
 }
 
+#[test]
+fn managed_prompt_hook_fails_closed_when_its_evaluator_comes_from_an_invocation_layer() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let env = Env::new(json!({}));
+    std::fs::write(
+        env.root.join("cyber/config/cyber.jsonc"),
+        json!({
+            "model_roles":{"evaluator":"corp/judge"},
+            "providers":{"corp":{"api":{"type":"openai-compatible","url":url},"models":{"judge":{},"lenient":{}}}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let policy = env.root.join("policy");
+    std::fs::create_dir_all(&policy).unwrap();
+    std::fs::write(
+        policy.join("cyber-policy.json"),
+        json!({"hooks":{"Stop":[{"hooks":[{"type":"prompt","id":"judge","prompt":"judge","fail_closed":true}]}]}})
+            .to_string(),
+    )
+    .unwrap();
+    let pinned = env.root.join("models.json");
+    std::fs::write(&pinned, "{}").unwrap();
+    let shadow = json!({"model_roles":{"evaluator":"corp/lenient"}}).to_string();
+    let output = env
+        .command(&["hooks", "test", "Stop", "--format", "json"])
+        .env("CYBER_MODELS_PATH", &pinned)
+        .env("CYBER_MANAGED_POLICY_DIR", &policy)
+        .env("CYBER_CONFIG_CONTENT", shadow)
+        .output()
+        .unwrap();
+    let value = body(&output);
+    assert_eq!(value["results"][0]["scope"], "managed", "{value}");
+    assert_eq!(value["results"][0]["outcome"], "error", "{value}");
+    assert_eq!(value["decision"]["decision"], "block", "{value}");
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "the shadowed evaluator must never be asked"
+    );
+    env.assert_no_sessions(1);
+}
+
 #[cfg(unix)]
 #[test]
 fn payload_matching_rewrites_and_decisions_run_without_sessions() {
@@ -501,5 +545,37 @@ for line in sys.stdin:
         serde_json::from_slice(&std::fs::read(env.root.join("actual-input.json")).unwrap())
             .unwrap();
     assert_eq!(actual, json!({"input":{"path":"private.txt","count":2}}));
+    env.assert_no_sessions(1);
+}
+
+#[cfg(unix)]
+#[test]
+fn async_handlers_run_and_report_as_background_with_only_context_merged() {
+    let env = Env::new(
+        json!({"Notification":[{"hooks":[{"type":"command","id":"webhook","async":true,
+        "command":"cat > notified.json; printf '{\"decision\":\"deny\",\"additional_context\":\"queued\"}'"}]}]}),
+    );
+    let path = env.payload(json!({"notification_type":"permission_prompt","message":"approve?"}));
+    let output = env.run(&[
+        "hooks",
+        "test",
+        "Notification",
+        "--payload",
+        path.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = body(&output);
+    assert_eq!(value["complete"], true, "{value}");
+    assert_eq!(value["results"][0]["background"], true, "{value}");
+    assert_eq!(value["results"][0]["decision"]["decision"], "deny");
+    assert!(value["decision"]["decision"].is_null(), "{value}");
+    assert_eq!(value["decision"]["additional_context"], "queued");
+    assert!(env.root.join("notified.json").exists());
     env.assert_no_sessions(1);
 }

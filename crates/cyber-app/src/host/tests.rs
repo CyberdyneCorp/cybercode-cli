@@ -719,7 +719,11 @@ fn app_host_forwards_every_tool_host_method() {
         "pub trait ToolHost",
     );
     let forwarded = methods(include_str!("../host.rs"), "impl ToolHost for AppHost");
-    for method in ["lifecycle_hooks", "resolve_prompt_resources"] {
+    for method in [
+        "lifecycle_hooks",
+        "resolve_prompt_resources",
+        "take_hook_effects",
+    ] {
         assert!(
             trait_methods.contains(method),
             "{method}: {trait_methods:?}"

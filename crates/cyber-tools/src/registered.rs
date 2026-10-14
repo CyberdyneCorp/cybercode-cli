@@ -1,7 +1,8 @@
 //! Schema, permissions, hooks and output settlement for externally registered tools.
-use crate::host::{BuiltinHost, Ctx, fully_denied};
+use crate::host::{BuiltinHost, Ctx, DenialHooks, fully_denied};
 use crate::permissions::{Effect, Mode, Request, Rule};
 use crate::tools::ToolError;
+use cyber_core::hooks::HookAction;
 use cyber_server::runtime::{Invocation, ToolDef, ToolOutcome, TurnContext};
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -100,50 +101,36 @@ impl BuiltinHost {
                 Ok(decision) => decision,
                 Err(error) => return failure(error),
             };
-            let mut policy = match self.policy(&inv).await {
-                Ok(policy) => policy,
+            let started = std::time::Instant::now();
+            let ctx = match self
+                .registered_ctx(&inv, read_only, decision, &cancel, DenialHooks::armed())
+                .await
+            {
+                Ok(ctx) => ctx,
                 Err(error) => return ToolOutcome::Failed(error),
             };
-            if let Some(reason) = policy.skill_tool_denial(&inv.name) {
-                return ToolOutcome::Failed(reason);
-            }
-            let index = policy
-                .rules
-                .iter()
-                .rposition(|rule| rule.source == "default")
-                .map_or(0, |index| index + 1);
-            policy.rules.insert(
-                index,
-                Rule::new(
-                    &inv.name,
-                    "*",
-                    if read_only {
-                        Effect::Allow
-                    } else {
-                        Effect::Ask
-                    },
-                    "default",
-                ),
-            );
-            let ctx = Ctx {
-                skill_paths: Default::default(),
-                loaded_skill: Default::default(),
-                compiler_feedback: Default::default(),
-                host: self,
-                inv: &inv,
-                policy,
-                location: PathBuf::from(&inv.directory),
-                cancel: cancel.clone(),
-                hook_decision: decision,
+            let authorized = ctx
+                .authorize(request(&inv, read_only), vec!["*".into()], metadata.clone())
+                .await;
+            let retry = match &authorized {
+                Err(ToolError::Failed(error)) => {
+                    ctx.denial.take_retry(&ToolOutcome::Failed(error.clone()))
+                }
+                _ => None,
             };
-            let started = std::time::Instant::now();
-            let request = Request {
-                action: inv.name.clone(),
-                resources: vec!["*".into()],
-                read_only,
-                ..Default::default()
+            let (inv, authorized) = match retry {
+                None => (inv.clone(), authorized),
+                Some(input) => {
+                    let retry = Retry {
+                        schema: &definition.spec.input_schema,
+                        read_only,
+                        decision,
+                        metadata,
+                    };
+                    self.retry_registered(&inv, retry, input, &cancel).await
+                }
             };
-            let outcome = match ctx.authorize(request, vec!["*".into()], metadata).await {
+            let outcome = match authorized {
                 Err(error) => failure(error),
                 Ok(()) if cancel.is_cancelled() => ToolOutcome::Aborted,
                 Ok(()) => self.bound_registered_output(
@@ -160,6 +147,86 @@ impl BuiltinHost {
                 }
             }
         })
+    }
+
+    /// Current policy, with the registration's default rule, for one attempt.
+    async fn registered_ctx<'c>(
+        &'c self,
+        inv: &'c Invocation,
+        read_only: bool,
+        decision: Option<HookAction>,
+        cancel: &CancellationToken,
+        denial: DenialHooks,
+    ) -> Result<Ctx<'c>, String> {
+        let mut policy = self.policy(inv).await?;
+        if let Some(reason) = policy.skill_tool_denial(&inv.name) {
+            return Err(reason);
+        }
+        let index = policy
+            .rules
+            .iter()
+            .rposition(|rule| rule.source == "default")
+            .map_or(0, |index| index + 1);
+        let effect = if read_only {
+            Effect::Allow
+        } else {
+            Effect::Ask
+        };
+        policy
+            .rules
+            .insert(index, Rule::new(&inv.name, "*", effect, "default"));
+        Ok(Ctx {
+            skill_paths: Default::default(),
+            loaded_skill: Default::default(),
+            compiler_feedback: Default::default(),
+            host: self,
+            inv,
+            policy,
+            location: PathBuf::from(&inv.directory),
+            cancel: cancel.clone(),
+            hook_decision: decision,
+            denial,
+        })
+    }
+
+    /// Re-validate and re-authorize a PermissionDenied retry exactly once; its
+    /// denial is final, a hook allow does not carry, and changed input passes
+    /// PreToolUse again.
+    async fn retry_registered(
+        &self,
+        inv: &Invocation,
+        retry: Retry<'_>,
+        input: Value,
+        cancel: &CancellationToken,
+    ) -> (Invocation, Result<(), ToolError>) {
+        let retried = self
+            .retried_invocation(inv, retry.schema, input, retry.decision, cancel.clone())
+            .await;
+        let (retried, decision) = match retried {
+            Ok(retried) => retried,
+            Err(error) => return (inv.clone(), Err(error)),
+        };
+        let authorized = match self
+            .registered_ctx(
+                &retried,
+                retry.read_only,
+                decision,
+                cancel,
+                DenialHooks::default(),
+            )
+            .await
+        {
+            Ok(ctx) => {
+                ctx.authorize(
+                    request(&retried, retry.read_only),
+                    vec!["*".into()],
+                    retry.metadata,
+                )
+                .await
+            }
+            Err(error) => Err(ToolError::Failed(error)),
+        };
+        (retried, authorized)
     }
 
     fn bound_registered_output(
@@ -202,6 +269,22 @@ impl BuiltinHost {
                 .map_or_else(ToolOutcome::Crashed, ToolOutcome::Failed),
             other => other,
         }
+    }
+}
+
+struct Retry<'a> {
+    schema: &'a Value,
+    read_only: bool,
+    decision: Option<HookAction>,
+    metadata: Value,
+}
+
+fn request(inv: &Invocation, read_only: bool) -> Request {
+    Request {
+        action: inv.name.clone(),
+        resources: vec!["*".into()],
+        read_only,
+        ..Default::default()
     }
 }
 

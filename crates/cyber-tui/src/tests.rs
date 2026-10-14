@@ -2667,3 +2667,16 @@ async fn review_target_error_shows_the_server_message_without_a_task() {
     assert!(lookups(app.on_event("job.ended.1", &job)).is_empty());
     assert!(app.toast.is_none());
 }
+
+#[test]
+fn hook_definitions_review_shows_managed_policy_skips() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let generation = open_hook_definitions(&mut app);
+    let mut catalog = hook_definitions_fixture(true);
+    catalog["data"]["hooks"][0]["skipped"] = serde_json::json!("managed-only policy");
+    app.hook_definitions.apply(
+        generation,
+        crate::hook_definitions::Catalog::parse(&catalog),
+    );
+    assert!(screen(&app).contains("Skipped by managed-only policy (never runs)"));
+}

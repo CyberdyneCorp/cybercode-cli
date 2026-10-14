@@ -19,8 +19,25 @@ pub struct HookTestHandlerResult {
     pub pointer: String,
     pub scope: HookScope,
     pub kind: HookKind,
+    /// An `async` handler: at an actual event it runs in the background and only
+    /// its `additional_context` applies, so only that is merged here.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
     #[serde(flatten)]
     pub report: HookCommandReport,
+}
+
+impl HookTestHandlerResult {
+    fn merge_into(&self, definition: &HookDefinition, decision: &mut HookDecision) {
+        let mut report = self.report.clone();
+        if self.background {
+            report.decision = HookDecision {
+                additional_context: report.decision.additional_context,
+                ..HookDecision::default()
+            };
+        }
+        crate::tool_hooks::merge_decision(definition, report, decision);
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -112,7 +129,7 @@ impl BuiltinHost {
             let result = self
                 .test_handler(runner, definition, event, observer, prepared)
                 .await;
-            crate::tool_hooks::merge_decision(definition, result.report.clone(), decision);
+            result.merge_into(definition, decision);
             if let Some(input) = decision.updated_input.clone() {
                 *event = event.with_tool_input(input)?;
             }
@@ -155,7 +172,7 @@ impl BuiltinHost {
         Ok(results
             .into_iter()
             .map(|(_, definition, result)| {
-                crate::tool_hooks::merge_decision(definition, result.report.clone(), decision);
+                result.merge_into(definition, decision);
                 result
             })
             .collect())
@@ -190,6 +207,7 @@ impl BuiltinHost {
             pointer: definition.pointer.clone(),
             scope: definition.scope,
             kind: definition.kind(),
+            background: definition.handler.asynchronous,
             report,
         }
     }
@@ -279,16 +297,9 @@ fn prepare(
         Err(error) => return Prepared::Error(error.to_string()),
         Ok(true) => {}
     }
-    if !matches!(
-        definition.kind(),
-        HookKind::Command | HookKind::Http | HookKind::Prompt | HookKind::McpTool
-    ) || definition.handler.asynchronous
-    {
-        return Prepared::Error(
-            "Hook handler transport or async scheduling is not implemented".into(),
-        );
-    }
+    // Background handlers never deduplicate a synchronous command, as at dispatch.
     if let Some(command) = &definition.handler.command
+        && !definition.handler.asynchronous
         && !commands.insert(command.clone())
     {
         return Prepared::Skip("duplicate command skipped");

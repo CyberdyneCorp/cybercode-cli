@@ -179,7 +179,12 @@ async fn pass_owned(
             return Ok(());
         };
         first = false;
-        match inner.run_turn(handle, &resolved, cancel).await? {
+        let end = inner.run_turn(handle, &resolved, cancel).await?;
+        // A SessionStart `continue: false` ends the Drain after the first Turn.
+        if matches!(end, TurnEnd::Tools | TurnEnd::Done) && inner.hook_stop_reached(handle).await {
+            return Ok(());
+        }
+        match end {
             TurnEnd::SelectionChanged => first = true,
             TurnEnd::Tools => continue_tools = true,
             TurnEnd::Done => {
@@ -193,11 +198,15 @@ async fn pass_owned(
             }
             TurnEnd::Overflow if inner.options.compaction.auto && !overflow_retried => {
                 overflow_retried = true;
-                tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => return Ok(()),
-                    result = inner.compact_and_continue(handle, CompactionTrigger::Overflow, &resolved.model) => result?,
-                }
+                let compaction = inner.compact_and_continue(
+                    handle,
+                    CompactionTrigger::Overflow,
+                    &resolved.model,
+                );
+                let Some(result) = unless_cancelled(handle, cancel, compaction).await else {
+                    return Ok(());
+                };
+                result?;
                 continue_tools = true;
             }
             TurnEnd::Overflow => {
@@ -222,11 +231,12 @@ async fn prepare_pass(
     first: bool,
     cancel: &CancellationToken,
 ) -> Result<Option<PreparedModel>, RuntimeError> {
-    let (resolved, promoted) = tokio::select! {
-        biased;
-        _ = cancel.cancelled() => return Ok(None),
-        result = boundary(inner, handle, continue_tools) => result?,
+    let Some(result) =
+        unless_cancelled(handle, cancel, boundary(inner, handle, continue_tools)).await
+    else {
+        return Ok(None);
     };
+    let (resolved, promoted) = result?;
     if promoted {
         let info = handle.state.lock().await.info.clone();
         inner.tools.open_location(&info);
@@ -235,13 +245,44 @@ async fn prepare_pass(
         return Ok(None);
     }
     if inner.needs_compaction(handle, &resolved.model).await? {
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Ok(None),
-            result = inner.compact_and_continue(handle, CompactionTrigger::Auto, &resolved.model) => result?,
+        let compaction =
+            inner.compact_and_continue(handle, CompactionTrigger::Auto, &resolved.model);
+        match unless_cancelled(handle, cancel, compaction).await {
+            None => return Ok(None),
+            Some(result) => result?,
         }
     }
     Ok(Some(resolved))
+}
+
+/// Race boundary work against the Drain's cancellation. Lifecycle hooks it runs use
+/// a child of the Drain token, so on cancellation they stop cooperatively; the work
+/// is driven until none of them is in flight and only then dropped, so a launched
+/// handler settles its receipt and activity instead of leaving the Location
+/// uncertain. Work that finishes after cancellation is discarded like dropped work.
+async fn unless_cancelled<T>(
+    handle: &Handle,
+    cancel: &CancellationToken,
+    work: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::pin!(work);
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {}
+        result = &mut work => return Some(result),
+    }
+    loop {
+        let settled = handle.drain_hooks_settled.notified();
+        tokio::pin!(settled);
+        settled.as_mut().enable();
+        if handle.drain_hooks.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            return None;
+        }
+        tokio::select! {
+            _ = &mut work => return None,
+            _ = settled => {}
+        }
+    }
 }
 
 /// Initial service admission owns its readiness wait before input promotion.
@@ -295,10 +336,10 @@ async fn boundary(
     handle: &Arc<Handle>,
     continue_tools: bool,
 ) -> Result<(PreparedModel, bool), RuntimeError> {
-    let mut prepared = {
+    {
         let mut state = handle.state.lock().await;
-        let mut selected = inner.resolve_selection(&state.info, &state.model_selection)?;
         if state.mode_default_pending {
+            let selected = inner.resolve_selection(&state.info, &state.model_selection)?;
             let mode = selected
                 .permission_mode
                 .clone()
@@ -310,16 +351,13 @@ async fn boundary(
                 automatic: true,
             };
             inner.commit_locked(&mut state, vec![event(MODE_SWITCHED, &payload)])?;
-            selected = inner.resolve_selection(&state.info, &state.model_selection)?;
         }
-        if state.info.model != selected.reference {
-            let payload = Switched {
-                from: state.info.model.clone(),
-                to: selected.reference,
-                automatic: true,
-            };
-            inner.commit_locked(&mut state, vec![event(MODEL_SWITCHED, &payload)])?;
-        }
+    }
+    // The profile-derived model switch runs its observational hooks unlocked.
+    inner.automatic_model_switch(handle).await?;
+    let mut prepared = {
+        let state = handle.state.lock().await;
+        let mut selected = inner.resolve_selection(&state.info, &state.model_selection)?;
         if let Some(model) = state.boundary_command_model(continue_tools) {
             selected = inner.resolve_selection(
                 &state.info,
@@ -406,14 +444,41 @@ async fn promote(
     Ok(true)
 }
 
+impl Inner {
+    /// Take a settled call's tool-hook effects and append them after its settlement:
+    /// the context as `hook_context`, a `continue: false` as `hook_stop`. Returns the
+    /// stop reason, which the caller publishes once the events committed.
+    pub(super) fn take_call_hook_effects(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        events: &mut Vec<cyber_store::NewEvent>,
+    ) -> Option<String> {
+        let effects = self.tools.take_hook_effects(session_id, call_id);
+        events.extend(effects.context.map(hook_context));
+        let reason = effects.stop?;
+        events.push(hook_stop(reason.clone()));
+        Some(reason)
+    }
+}
+
 /// A Mid-Conversation System Message carrying hook-provided context.
 pub(crate) fn hook_context(text: String) -> cyber_store::NewEvent {
+    system(text, "hook_context")
+}
+
+/// The durable record of a hook's `continue: false`, with its tagged stop reason.
+pub(crate) fn hook_stop(text: String) -> cyber_store::NewEvent {
+    system(text, "hook_stop")
+}
+
+fn system(text: String, reason: &str) -> cyber_store::NewEvent {
     event(
         SYSTEM_ADDED,
         &SystemAdded {
             message_id: cyber_core::ids::new_id("msg"),
             text,
-            reason: "hook_context".into(),
+            reason: reason.into(),
         },
     )
 }
@@ -453,7 +518,13 @@ impl Inner {
     ) -> Result<(), RuntimeError> {
         let mut state = handle.state.lock().await;
         let observed = self.observe(&state).await;
-        let snapshot = context::snapshot(&observed).map_err(RuntimeError::ContextBlocked)?;
+        let snapshot =
+            context::snapshot(&observed.sources).map_err(RuntimeError::ContextBlocked)?;
+        let (previous, reason) = match &state.epoch {
+            Some(epoch) => (epoch.snapshot.clone(), "changed"),
+            None => (Default::default(), "session_start"),
+        };
+        let loaded = context::loaded_instructions(&previous, &snapshot, &observed.files);
         let system_prefix = snapshot
             .get("core/agent")
             .cloned()
@@ -466,6 +537,8 @@ impl Inner {
             system_prefix: Some(system_prefix),
         };
         self.commit_locked(&mut state, vec![event(EPOCH_STARTED, &payload)])?;
+        drop(state);
+        self.instructions_loaded(handle, loaded, reason).await;
         Ok(())
     }
 
@@ -476,9 +549,13 @@ impl Inner {
             return Ok(());
         };
         let observed = self.observe(&state).await;
-        let (snapshot, mut text) = context::reconcile(&epoch.snapshot, &observed);
+        let (snapshot, mut text) = context::reconcile(&epoch.snapshot, &observed.sources);
+        let loaded = context::loaded_instructions(&epoch.snapshot, &snapshot, &observed.files);
         if epoch.snapshot.contains_key("core/agent")
-            && matches!(observed.get("core/agent"), Some(context::Observed::Absent))
+            && matches!(
+                observed.sources.get("core/agent"),
+                Some(context::Observed::Absent)
+            )
             && let Some(text) = &mut text
         {
             text.push_str("\n\nThe default agent instructions now apply:\n");
@@ -492,18 +569,17 @@ impl Inner {
             };
             self.commit_locked(&mut state, vec![event(CONTEXT_UPDATED, &payload)])?;
         }
+        drop(state);
+        self.instructions_loaded(handle, loaded, "changed").await;
         Ok(())
     }
 
     /// Built-in sources plus those the tool host contributes.
-    async fn observe(
-        &self,
-        state: &SessionState,
-    ) -> std::collections::BTreeMap<String, context::Observed> {
+    async fn observe(&self, state: &SessionState) -> context::Observation {
         let mut observed = context::observe(&self.context_inputs(&state.info.directory));
         let turn = turn_context_for(state, false);
         for (key, value) in self.options.tools.context_observations_owned(&turn).await {
-            observed.insert(key, value);
+            observed.sources.insert(key, value);
         }
         observed
     }
@@ -661,6 +737,16 @@ impl Inner {
             return Ok(None);
         }
         let resolved = &prepared.model;
+        // Background hook context lands at this Safe Boundary, before the request.
+        let queued = std::mem::take(
+            &mut *handle
+                .pending_hook_context
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        if !queued.is_empty() {
+            self.commit_locked(&mut state, queued.into_iter().map(hook_context).collect())?;
+        }
         let limit = match (self.options.max_steps, state.info.max_steps) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -963,10 +1049,32 @@ impl Inner {
         Ok(TurnEnd::Stopped)
     }
 
+    /// Dispatch the Turn's calls, then run PostToolBatch once all of them settled.
+    /// Returns whether the Session was interrupted, halted or stopped by a hook.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_tools(
+        &self,
+        handle: &Handle,
+        resolved: &ResolvedModel,
+        message_id: &str,
+        calls: &[ToolCall],
+        defs: &[ToolDef],
+        limited: bool,
+        cancel: &CancellationToken,
+    ) -> Result<bool, RuntimeError> {
+        let stopped = self
+            .execute_tool_groups(handle, resolved, message_id, calls, defs, limited, cancel)
+            .await?;
+        let hook_stopped = self
+            .post_tool_batch(handle, message_id, calls, cancel)
+            .await?;
+        Ok(stopped || hook_stopped)
+    }
+
     /// Dispatch the Turn's calls: concurrency-safe neighbours in parallel, the rest in order.
     /// Returns whether the Session was interrupted or halted.
     #[allow(clippy::too_many_arguments)]
-    async fn execute_tools(
+    async fn execute_tool_groups(
         &self,
         handle: &Handle,
         resolved: &ResolvedModel,
@@ -989,6 +1097,8 @@ impl Inner {
             (turn, paused)
         };
         let groups = groups(calls, defs);
+        // A hook's `continue: false` ends the Drain after this Turn's calls settle.
+        let mut hook_stopped = false;
         for (index, group) in groups.iter().enumerate() {
             if handle.state.lock().await.result.returned.is_some() {
                 let events = groups[index..]
@@ -1048,34 +1158,48 @@ impl Inner {
                 }
             }
             let outcomes = join_all(runs).await;
-            let mut state = handle.state.lock().await;
-            let mut seen = state
-                .epoch
-                .as_ref()
-                .map(|epoch| epoch.reminded_skills.clone())
-                .unwrap_or_default();
-            let events = outcomes
-                .into_iter()
-                .map(|(call_id, def, outcome)| {
-                    settlement_with_skills(
-                        &call_id,
-                        &def,
-                        outcome,
-                        &mut seen,
-                        |output, reminder| {
-                            self.tools.finalize_skill_output(
-                                &state.info.directory,
-                                output,
-                                reminder,
-                            )
-                        },
-                    )
-                })
-                .collect();
-            self.commit_locked(&mut state, events)?;
+            hook_stopped |= self.settle_group(handle, outcomes).await?;
         }
         let halted = handle.halt.swap(false, std::sync::atomic::Ordering::SeqCst);
-        Ok(cancel.is_cancelled() || halted)
+        Ok(cancel.is_cancelled() || halted || hook_stopped)
+    }
+
+    /// Settle one group's outcomes in a single commit. Each call's hook context and
+    /// stop reason commit right after its settlement, so they are admitted at the
+    /// next Safe Boundary exactly once. Returns whether a hook asked to stop.
+    async fn settle_group(
+        &self,
+        handle: &Handle,
+        outcomes: Vec<(String, ToolDef, ToolOutcome)>,
+    ) -> Result<bool, RuntimeError> {
+        let mut state = handle.state.lock().await;
+        let mut seen = state
+            .epoch
+            .as_ref()
+            .map(|epoch| epoch.reminded_skills.clone())
+            .unwrap_or_default();
+        let (session_id, directory) = (state.info.id.clone(), state.info.directory.clone());
+        let mut events = Vec::new();
+        let mut stops = Vec::new();
+        for (call_id, def, outcome) in outcomes {
+            events.push(settlement_with_skills(
+                &call_id,
+                &def,
+                outcome,
+                &mut seen,
+                |output, reminder| {
+                    self.tools
+                        .finalize_skill_output(&directory, output, reminder)
+                },
+            ));
+            stops.extend(self.take_call_hook_effects(&session_id, &call_id, &mut events));
+        }
+        self.commit_locked(&mut state, events)?;
+        drop(state);
+        for reason in &stops {
+            self.publish_hook_stop(&session_id, reason);
+        }
+        Ok(!stops.is_empty())
     }
 
     /// Three identical calls in a row raise a `doom_loop` request

@@ -230,6 +230,16 @@ impl Tool for QuestionTool {
 }
 
 async fn ask(ctx: &Ctx<'_>, questions: Vec<Question>) -> Result<Vec<Vec<String>>, ToolError> {
+    let message = questions
+        .iter()
+        .map(|question| question.question.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Box::pin(
+        ctx.host
+            .notification_hooks(ctx.inv, "question", message, ctx.cancel.clone()),
+    )
+    .await;
     let reply = tokio::select! {
         _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted),
         r = ctx.inv.asker.question(questions) => r,

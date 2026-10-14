@@ -30,6 +30,7 @@ struct TrustFile {
 }
 
 /// Explicitly reviewed handler digests for one invocation; never persisted.
+#[derive(Debug, Clone)]
 pub struct HookInvocationTrust {
     checkout_root: PathBuf,
     digests: BTreeSet<String>,

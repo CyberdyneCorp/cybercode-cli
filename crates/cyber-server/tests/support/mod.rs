@@ -152,6 +152,8 @@ pub struct Tools {
     pub behavior: Mutex<HashMap<String, Behavior>>,
     pub executed: Mutex<Vec<Invocation>>,
     pub reconcile: Mutex<Reconciliation>,
+    /// Hook effects a call leaves for its settlement, by call id; taken once.
+    pub hook_effects: Mutex<HashMap<String, HookEffects>>,
     pub started: Notify,
     pub release: Notify,
 }
@@ -192,6 +194,7 @@ impl Tools {
             behavior: Mutex::new(behavior),
             executed: Mutex::default(),
             reconcile: Mutex::new(Reconciliation::Unknown),
+            hook_effects: Mutex::default(),
             started: Notify::new(),
             release: Notify::new(),
         })
@@ -389,6 +392,14 @@ impl ToolHost for Tools {
                 None => ToolOutcome::Failed("no behavior".into()),
             }
         })
+    }
+
+    fn take_hook_effects(&self, _session_id: &str, call_id: &str) -> HookEffects {
+        self.hook_effects
+            .lock()
+            .unwrap()
+            .remove(call_id)
+            .unwrap_or_default()
     }
 
     fn reconcile(&self, _directory: &str, _call: &CallState) -> BoxFuture<'_, Reconciliation> {

@@ -201,6 +201,10 @@ pub struct ContextUpdated {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStarted {
     pub source: String,
+    /// A SessionStart `continue: false`: the Drain ends once the Session's step
+    /// count reaches this value (after its first Turn).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_after_step: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1109,3 +1109,189 @@ fn trusted_intelligence_config_rejects_invalid_custom_server_and_formatter() {
         );
     }
 }
+
+impl Fixture {
+    /// Point the managed policy directory at a fixture directory holding `policy`.
+    fn managed(&mut self, policy: &str) -> PathBuf {
+        let dir = self.home.parent().unwrap().join("managed");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cyber-policy.jsonc");
+        std::fs::write(&path, policy).unwrap();
+        self.env.insert(
+            config::MANAGED_POLICY_DIR_ENV.into(),
+            dir.display().to_string(),
+        );
+        path
+    }
+}
+
+fn marker_group(command: &str) -> Value {
+    json!({"hooks":[{"type":"command","command":command}]})
+}
+
+#[test]
+fn hook_managed_policy_yields_managed_origins_ordered_first_and_unsandboxed() {
+    use cyber_core::hooks::{HookCatalog, HookScope};
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"hooks":{"PreToolUse":[marker_group("global")]}}).to_string(),
+    );
+    let path = f.managed(&json!({"hooks":{"PreToolUse":[marker_group("managed")]}}).to_string());
+    let resolved = f.load().unwrap();
+    let label = format!("managed:{}", path.display());
+    assert_eq!(resolved.managed.sources, std::slice::from_ref(&label));
+    assert!(!resolved.managed.restricts_hooks());
+    assert!(resolved.layers.contains(&label));
+    let catalog = HookCatalog::from_config(&resolved).unwrap();
+    let order: Vec<_> = catalog
+        .definitions
+        .iter()
+        .map(|definition| {
+            (
+                definition.scope,
+                definition.handler.command.clone().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [
+            (HookScope::Managed, "managed".to_string()),
+            (HookScope::Global, "global".to_string())
+        ]
+    );
+    assert_eq!(catalog.definitions[0].source, label);
+    assert!(catalog.skipped.is_empty());
+    assert!(!HookScope::Managed.requires_sandbox(false));
+    assert!(HookScope::Managed.requires_sandbox(true));
+    assert!(!HookScope::Managed.requires_handler_trust());
+}
+
+#[test]
+fn hook_managed_only_policy_skips_every_other_scope_in_dispatch_and_review() {
+    use cyber_core::hooks::{HookCatalog, HookReview, HookScope};
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"hooks":{"PreToolUse":[marker_group("global")]}}).to_string(),
+    );
+    f.write(
+        "cyber.jsonc",
+        &json!({"hooks":{"PreToolUse":[marker_group("project")],"Stop":[marker_group("stop")]}})
+            .to_string(),
+    );
+    f.write(
+        ".cyber/cyber.local.jsonc",
+        &json!({"hooks":{"PreToolUse":[marker_group("local")]}}).to_string(),
+    );
+    f.approve_current();
+    f.managed(
+        &json!({
+            "hooks":{"PreToolUse":[marker_group("managed")]},
+            "policy":{"hooks":{"managed_only":true}}
+        })
+        .to_string(),
+    );
+    let overrides =
+        vec![r#"hooks.PreToolUse=[{"hooks":[{"type":"command","command":"cli"}]}]"#.to_string()];
+    let resolved = config::load(&f.request(&f.repo, &overrides)).unwrap();
+    assert!(resolved.managed.managed_only);
+    let catalog = HookCatalog::from_config(&resolved).unwrap();
+    assert_eq!(catalog.definitions.len(), 1);
+    assert_eq!(catalog.definitions[0].scope, HookScope::Managed);
+    let skipped: Vec<_> = catalog
+        .skipped
+        .iter()
+        .map(|definition| definition.scope)
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            HookScope::Global,
+            HookScope::Project,
+            HookScope::Project,
+            HookScope::Local,
+            HookScope::Invocation
+        ]
+    );
+    assert_eq!(catalog.skipped_for("PreToolUse").count(), 4);
+    assert_eq!(catalog.skipped_for("Stop").count(), 1);
+    let review =
+        HookReview::from_config(&resolved, &TrustStore::new(f.paths.trust_file())).unwrap();
+    assert!(review.managed_policy.managed_only);
+    let reviewed: Vec<_> = review
+        .hooks
+        .iter()
+        .map(|hook| (hook.definition.scope, hook.skipped.clone()))
+        .collect();
+    assert_eq!(reviewed[0], (HookScope::Managed, None));
+    assert_eq!(reviewed.len(), 6);
+    assert!(
+        reviewed[1..]
+            .iter()
+            .all(|(_, skipped)| skipped.as_deref() == Some("managed-only policy"))
+    );
+}
+
+#[test]
+fn hook_malformed_managed_policy_fails_closed_for_every_non_managed_hook() {
+    use cyber_core::hooks::HookCatalog;
+    for policy in [
+        "{ \"hooks\": ".to_string(),
+        json!({"policy":{"hooks":{"managed_only":"yes"}}}).to_string(),
+        json!({"policy":{"hooks":{"allow_user_hooks":false}}}).to_string(),
+        json!({"policy":{"hook":{"managed_only":true}}}).to_string(),
+        json!({"policy":true}).to_string(),
+        json!({"Policy":{"hooks":{"managed_only":true}}}).to_string(),
+        json!({"hooks":{"BeforeEverything":[]}}).to_string(),
+        json!({"hooks":{"concurrency":1}}).to_string(),
+        json!({"hooks":{"PreToolUse":[{"hooks":[{"type":"command"}]}]}}).to_string(),
+        "[]".to_string(),
+    ] {
+        let mut f = Fixture::new();
+        f.write(
+            "global:cyber.jsonc",
+            &json!({"hooks":{"PreToolUse":[marker_group("global")]}}).to_string(),
+        );
+        f.managed(&policy);
+        let resolved = f.load().unwrap();
+        assert!(resolved.managed.error.is_some(), "{policy}");
+        assert!(resolved.managed.restricts_hooks());
+        let catalog = HookCatalog::from_config(&resolved).unwrap();
+        assert!(catalog.definitions.is_empty(), "{policy}");
+        assert_eq!(catalog.skipped.len(), 1, "{policy}");
+        assert!(
+            catalog
+                .policy
+                .skip_reason()
+                .starts_with("managed policy is malformed"),
+            "{policy}"
+        );
+    }
+}
+
+#[test]
+fn hook_policy_cannot_be_set_by_user_project_or_cli_layers() {
+    use cyber_core::hooks::HookCatalog;
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({
+            "policy":{"hooks":{"managed_only":true}},
+            "hooks":{"PreToolUse":[marker_group("global")]}
+        })
+        .to_string(),
+    );
+    f.write(
+        "cyber.jsonc",
+        &json!({"policy":{"hooks":{"managed_only":true}}}).to_string(),
+    );
+    let resolved = f.load().unwrap();
+    assert_eq!(resolved.managed, config::ManagedPolicy::default());
+    let catalog = HookCatalog::from_config(&resolved).unwrap();
+    assert_eq!(catalog.definitions.len(), 1);
+    assert!(catalog.skipped.is_empty());
+    let overrides = vec!["policy.hooks.managed_only=true".to_string()];
+    assert!(config::load(&f.request(&f.repo, &overrides)).is_err());
+}

@@ -1,14 +1,13 @@
 //! UserPromptSubmit dispatch runs outside the runtime lifecycle guard. Every hook
 //! runner re-enters that guard to admit its receipt, so a shutdown that queues its
 //! lifecycle write while a prompt hook is in flight must not deadlock either side.
+//! The same holds for the observational Interrupt hook.
 mod support;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cyber_core::config::{self, LoadRequest};
-use cyber_core::hooks::{
-    HookCatalog, HookDecision, HookDefinition, HookEvent, HookIdentity, HookLocation, HookOutcome,
-};
+use cyber_core::hooks::{HookCatalog, HookDecision, HookDefinition, HookEvent, HookOutcome};
 use cyber_core::paths::Paths;
 use cyber_server::runtime::*;
 use futures::future::BoxFuture;
@@ -25,7 +24,7 @@ const BOUND: Duration = Duration::from_secs(10);
 /// shutdown cancelled admission.
 struct Host {
     runtime: Mutex<Option<WeakRuntime>>,
-    definition: HookDefinition,
+    definitions: Vec<HookDefinition>,
     entered: CancellationToken,
     release: CancellationToken,
 }
@@ -41,19 +40,19 @@ impl Host {
             .as_ref()
             .and_then(WeakRuntime::upgrade)
             .ok_or_else(|| "runtime dropped".to_string())?;
-        let identity = HookIdentity {
-            session_id: hook.session_id,
-            location: HookLocation {
-                directory: hook.directory.into(),
-                workspace: None,
-            },
-            project_id: "global".into(),
-            agent: hook.agent,
-            mode: hook.mode,
-        };
+        let identity = runtime
+            .session_envelope(&hook.session_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .identity(&hook.session_id, &hook.directory, &hook.agent, &hook.mode);
         let event = HookEvent::new(hook.kind, identity, 1, hook.fields)?;
+        let definition = self
+            .definitions
+            .iter()
+            .find(|definition| definition.event == event.event())
+            .ok_or_else(|| format!("no {} definition", event.event()))?;
         let owner = runtime
-            .try_start_hook_execution(&event, &self.definition, false)
+            .try_start_hook_execution(&event, definition, false)
             .await
             .map_err(|error| error.to_string())?;
         if let Some(owner) = owner {
@@ -87,7 +86,7 @@ impl ToolHost for Host {
         _: CancellationToken,
     ) -> BoxFuture<'_, Result<LifecycleVerdict, String>> {
         Box::pin(async move {
-            if hook.kind != "UserPromptSubmit" {
+            if !matches!(hook.kind.as_str(), "UserPromptSubmit" | "Interrupt") {
                 return Ok(LifecycleVerdict::default());
             }
             self.admit_receipt(hook).await
@@ -95,8 +94,8 @@ impl ToolHost for Host {
     }
 }
 
-/// A real UserPromptSubmit definition, so the admission matches its digest.
-fn definition(h: &Harness) -> HookDefinition {
+/// Real UserPromptSubmit and Interrupt definitions, so admissions match their digests.
+fn definitions(h: &Harness) -> Vec<HookDefinition> {
     let env = std::collections::HashMap::from([(
         "CYBER_HOME".into(),
         h.dir.path().join("config").display().to_string(),
@@ -105,7 +104,10 @@ fn definition(h: &Harness) -> HookDefinition {
     paths.ensure().unwrap();
     std::fs::write(
         paths.config.join("cyber.jsonc"),
-        json!({"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"cat >/dev/null; sleep 30","id":"slow"}]}]}}).to_string(),
+        json!({"hooks":{
+            "UserPromptSubmit":[{"hooks":[{"type":"command","command":"cat >/dev/null; sleep 30","id":"slow"}]}],
+            "Interrupt":[{"hooks":[{"type":"command","command":"cat >/dev/null; sleep 30","id":"slow"}]}]
+        }}).to_string(),
     )
     .unwrap();
     let resolved = config::load(&LoadRequest {
@@ -118,17 +120,14 @@ fn definition(h: &Harness) -> HookDefinition {
         flags: json!({}),
     })
     .unwrap();
-    HookCatalog::from_config(&resolved)
-        .unwrap()
-        .definitions
-        .remove(0)
+    HookCatalog::from_config(&resolved).unwrap().definitions
 }
 
 async fn fixture() -> (Harness, Runtime, Arc<Host>, String) {
     let h = Harness::new(Setup::default());
     let host = Arc::new(Host {
         runtime: Mutex::new(None),
-        definition: definition(&h),
+        definitions: definitions(&h),
         entered: CancellationToken::new(),
         release: CancellationToken::new(),
     });
@@ -159,16 +158,16 @@ async fn fixture() -> (Harness, Runtime, Arc<Host>, String) {
     (h, runtime, host, session)
 }
 
-/// Queue shutdown while the prompt hook is held, then release it: both the
-/// admission and shutdown must finish, and the admission must be refused.
-async fn shutdown_during_prompt_hook<T: std::fmt::Debug + Send + 'static>(
+/// Queue shutdown while the hook is held, then release it: both the held
+/// operation and shutdown must finish.
+async fn shutdown_during_hook<T: Send + 'static>(
     runtime: &Runtime,
     host: &Host,
-    admission: JoinHandle<Result<T, RuntimeError>>,
-) {
+    operation: JoinHandle<T>,
+) -> T {
     tokio::time::timeout(BOUND, host.entered.cancelled())
         .await
-        .expect("UserPromptSubmit was dispatched");
+        .expect("the lifecycle hook was dispatched");
     let closing = tokio::spawn({
         let runtime = runtime.clone();
         async move { runtime.shutdown().await }
@@ -176,15 +175,25 @@ async fn shutdown_during_prompt_hook<T: std::fmt::Debug + Send + 'static>(
     // Let shutdown cancel admission and queue its lifecycle write first.
     tokio::time::sleep(Duration::from_millis(100)).await;
     host.release.cancel();
-    let admitted = tokio::time::timeout(BOUND, admission)
+    let result = tokio::time::timeout(BOUND, operation)
         .await
-        .expect("admission deadlocked behind a queued shutdown")
+        .expect("the hooked operation deadlocked behind a queued shutdown")
         .unwrap();
-    assert!(admitted.is_err(), "admitted during shutdown: {admitted:?}");
     tokio::time::timeout(BOUND, closing)
         .await
-        .expect("shutdown deadlocked behind an in-flight prompt hook")
+        .expect("shutdown deadlocked behind an in-flight lifecycle hook")
         .unwrap();
+    result
+}
+
+/// Admission must also be refused.
+async fn shutdown_during_prompt_hook<T: std::fmt::Debug + Send + 'static>(
+    runtime: &Runtime,
+    host: &Host,
+    admission: JoinHandle<Result<T, RuntimeError>>,
+) {
+    let admitted = shutdown_during_hook(runtime, host, admission).await;
+    assert!(admitted.is_err(), "admitted during shutdown: {admitted:?}");
 }
 
 #[tokio::test]
@@ -235,4 +244,18 @@ async fn shutdown_during_user_prompt_submit_does_not_deadlock_delegation() {
             .unwrap()
             .is_none()
     );
+}
+
+/// Interrupt is observational: a queued shutdown writer must not deadlock it, and
+/// its refused receipt never fails the interrupt itself.
+#[tokio::test]
+async fn shutdown_during_an_interrupt_hook_does_not_deadlock() {
+    let (_h, runtime, host, session) = fixture().await;
+    let interrupt = tokio::spawn({
+        let runtime = runtime.clone();
+        let session = session.clone();
+        async move { runtime.interrupt(&session).await }
+    });
+    let interrupted = shutdown_during_hook(&runtime, &host, interrupt).await;
+    assert!(interrupted.is_ok(), "{interrupted:?}");
 }

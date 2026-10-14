@@ -18,6 +18,9 @@ pub(super) const STARTED: &str = "hook.started.1";
 pub(super) const EXECUTED: &str = "hook.executed.1";
 pub(super) const ONCE_ADMITTED: &str = "Hook once handler already admitted";
 const IO_LIMIT: usize = 1024 * 1024;
+/// How long cancelled background hook work may take to settle its own receipt
+/// before it is disposed and the receipt records Unknown.
+const BACKGROUND_SETTLE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +56,13 @@ pub struct HookExecutionRecord {
     pub tool_name: Option<String>,
     pub scope: HookScope,
     pub directory: String,
+    /// Captured envelope project; receipts admitted before it was recorded mean `global`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
     pub agent: String,
     pub mode: String,
     pub started_ms: i64,
@@ -191,6 +201,9 @@ pub(super) fn admission_record(
             .map(str::to_owned),
         scope: definition.scope,
         directory: identity.location.directory.display().to_string(),
+        project_id: Some(identity.project_id.clone()),
+        workspace: identity.location.workspace.clone(),
+        parent_session_id: identity.parent_session_id.clone(),
         agent: identity.agent.clone(),
         mode: identity.mode.clone(),
         started_ms: chrono::Utc::now().timestamp_millis(),
@@ -254,6 +267,12 @@ impl Runtime {
             ));
         }
         let handle = self.inner.handle(&event.identity().session_id).await?;
+        // Envelope identity is the Session's own; a host cannot borrow another.
+        if !self.inner.envelope(&handle).await.matches(event.identity()) {
+            return Err(RuntimeError::Invalid(
+                "Hook event identity does not match its Session".into(),
+            ));
+        }
         let activity = super::activity::Scope::reserve(&self.inner, &handle).await?;
         let authority = activity.authority();
         authority.verify(self, &event.identity().session_id)?;
@@ -282,6 +301,111 @@ impl Runtime {
             started: Instant::now(),
             settled: false,
         }))
+    }
+
+    /// Record a matching handler that did not run (an untrusted handler, or one a
+    /// managed policy refuses) as an already settled `skipped` receipt under the
+    /// Session's current admission fences. No activity, execution owner or `once`
+    /// claim is created.
+    pub async fn record_skipped_hook(
+        &self,
+        event: &HookEvent,
+        definition: &HookDefinition,
+        reason: &str,
+    ) -> Result<(), RuntimeError> {
+        let _open = self.inner.open().await?;
+        if event.is_synthetic() || definition.event != event.event() {
+            return Err(RuntimeError::Invalid(
+                "Skipped hook event is synthetic or does not match its definition".into(),
+            ));
+        }
+        let handle = self.inner.handle(&event.identity().session_id).await?;
+        if !self.inner.envelope(&handle).await.matches(event.identity()) {
+            return Err(RuntimeError::Invalid(
+                "Hook event identity does not match its Session".into(),
+            ));
+        }
+        // The same Session admission fences apply; no activity is reserved.
+        let authority = self.capture_child_admission(&event.identity().session_id)?;
+        let mut record = admission_record(event, definition, false);
+        record.once = false;
+        let mut start = serde_json::to_value(&record).expect("receipt serializes");
+        start["admission_bindings"] =
+            serde_json::to_value(&authority.bindings).expect("authority serializes");
+        record.status = HookExecutionStatus::Completed;
+        record.duration_ms = Some(0);
+        record.outcome = Some(HookOutcome::Skipped);
+        record.decision = Some(HookDecision {
+            reason: Some(reason.into()),
+            ..HookDecision::default()
+        });
+        record.acknowledged = Some(true);
+        let terminal = serde_json::to_value(&record).expect("receipt serializes");
+        self.inner.store.append(
+            &record.id,
+            Expected::Seq(-1),
+            vec![
+                NewEvent::new(STARTED, start),
+                NewEvent::new(EXECUTED, terminal),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Run admitted hook work in a runtime-owned task; the event that admitted it
+    /// never waits. Interrupt, subtree stop and shutdown cancel the execution's
+    /// activity, and shutdown joins the task. Work that has not settled within a
+    /// grace period after cancellation is dropped, so its owner records Unknown.
+    pub fn spawn_hook_execution<W, F>(
+        &self,
+        owner: HookExecution,
+        work: W,
+    ) -> Result<(), RuntimeError>
+    where
+        W: FnOnce(HookExecution) -> F,
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let stop = owner.cancellation();
+        let work = work(owner);
+        let mut tasks = self
+            .inner
+            .background
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.inner.closed.is_cancelled() {
+            drop(tasks);
+            drop(work);
+            return Err(RuntimeError::ShuttingDown);
+        }
+        tasks.retain(|task| !task.is_finished());
+        tasks.push(tokio::spawn(async move {
+            tokio::pin!(work);
+            tokio::select! {
+                biased;
+                () = &mut work => {}
+                () = async {
+                    stop.cancelled().await;
+                    tokio::time::sleep(BACKGROUND_SETTLE_GRACE).await;
+                } => {}
+            }
+        }));
+        Ok(())
+    }
+
+    /// Queue tagged hook context for the Session's next Safe Boundary, where it is
+    /// committed as a `hook_context` system message before the next request.
+    pub async fn queue_hook_context(
+        &self,
+        session_id: &str,
+        text: String,
+    ) -> Result<(), RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        handle
+            .pending_hook_context
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(text);
+        Ok(())
     }
 
     pub fn hook_executions(
@@ -432,11 +556,12 @@ fn validate_identity(record: &HookExecutionRecord) -> Result<(), String> {
             session_id: record.session_id.clone(),
             location: cyber_core::hooks::HookLocation {
                 directory: record.directory.clone().into(),
-                workspace: None,
+                workspace: record.workspace.clone(),
             },
-            project_id: "global".into(),
+            project_id: record.project_id.clone().unwrap_or_else(|| "global".into()),
             agent: record.agent.clone(),
             mode: record.mode.clone(),
+            parent_session_id: record.parent_session_id.clone(),
         },
         record.started_ms,
         serde_json::Map::new(),

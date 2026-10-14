@@ -1171,12 +1171,38 @@ impl BuiltinHost {
             entry.name.clone(),
             Duration::from_secs(timeout.into()),
         );
-        let context =
-            super::ElicitationContext::new(&inv.asker, &authorize).with_sampling(&sampler);
-        let result = tokio::select! {
-            result = owner.call_exposed_tool_with_elicitation(&inv.name, inv.input.clone(), Duration::from_secs(timeout.into()), &context) => result.map_err(|error| ToolError::Failed(error.to_string())),
-            _ = cancel.cancelled() => Err(ToolError::Aborted),
-            _ = entry.cancel.cancelled() => Err(ToolError::Aborted),
+        // Elicitation hooks stop with the call or its server, and a cancelled call
+        // waits for launched handlers to settle before it is dropped.
+        let hook_cancel = cancel.child_token();
+        let flight = super::elicitation::HookFlight::default();
+        let context = super::ElicitationContext::new(&inv.asker, &authorize)
+            .with_sampling(&sampler)
+            .with_hooks(super::elicitation::ElicitationHooks {
+                host: self,
+                inv,
+                cancel: &hook_cancel,
+                flight: &flight,
+            });
+        let result = {
+            let call = owner.call_exposed_tool_with_elicitation(
+                &inv.name,
+                inv.input.clone(),
+                Duration::from_secs(timeout.into()),
+                &context,
+            );
+            tokio::pin!(call);
+            tokio::select! {
+                result = &mut call => result.map_err(|error| ToolError::Failed(error.to_string())),
+                _ = cancel.cancelled() => {
+                    flight.settle(call.as_mut()).await;
+                    Err(ToolError::Aborted)
+                }
+                _ = entry.cancel.cancelled() => {
+                    hook_cancel.cancel();
+                    flight.settle(call.as_mut()).await;
+                    Err(ToolError::Aborted)
+                }
+            }
         };
         let sampling_settlement = sampler.finish().await;
         end_unresolved(entry, owner, || {

@@ -1,5 +1,26 @@
 # P1 acceptance audit
 
+## Hooks: managed policy, trust UX, Windows command hooks and requirement audit (2026-10-13)
+
+All four hook increments were audited against the canonical [hooks](../../openspec/specs/hooks/spec.md) spec and the M1.3 delta. A requirement is checked below only when every canonical and delta scenario has a local test, at least one through the production path (`cyber exec --embedded`, the App HTTP server or the app's MCP pool), and nothing it requires is Windows-specific. The checked rows rest on macOS runs; the Unix-only suites (`tool_hook_dispatch`, `exec_lifecycle_hooks`) have no native Windows run yet.
+
+| Requirement | State | Production-path evidence | Open |
+|---|---|---|---|
+| Hook configuration | Checked | `cyber-app` `server` `hook_catalog_api_*`; `config` `hook_*` | None |
+| Hook scopes and merge order | Partial | `exec_lifecycle_hooks` `exec_applies_managed_only_policy_and_invocation_trust` (managed hook first, one `2 hooks skipped by managed-only policy` notice, skipped receipts, `cyber hooks list` agreement) | Plugin hook collection: plugins do not exist |
+| Trust for project hooks | Checked | Same test: unapproved project hook skipped with `1 untrusted hook changed — review with /hooks`, run with `--trust-project-hooks`, skipped again after | None |
+| Hooks viewer and CLI | Checked | `cyber-cli` `cli` `hook_*`, `hook_test_cli`, `hook_history`; the managed-only listing above | None |
+| Hook observability | Checked | Skipped, blocked and completed receipts read from the exec database in `exec_lifecycle_hooks` | None |
+| Matchers, Decision merging, Interaction with permissions, Parallel execution within a group, Conditional/one-shot/annotated handlers | Checked | `exec_lifecycle_hooks`, `cyber-app` `server` `application_reloads_command_hooks_at_the_builtin_boundary` | None |
+| Stop hooks and loop prevention, Hook context injection on lifecycle events, Timeouts and async hooks | Checked | `exec_lifecycle_hooks` Stop/SessionStart/UserPromptSubmit and async cases | None |
+| HTTP, Prompt and MCP tool handlers | Checked | `exec_lifecycle_hooks` async HTTP case, `cyber-app` `server` `application_emits_runtime_lifecycle_hooks_with_session_identity`, `cyber-app` `mcp` `elicitation_hook_deny_declines_through_the_real_pool` | None |
+| Decision schema | Partial | `exec_admits_tool_hook_context_and_honors_continue_false_through_the_app_host` | `UserPromptSubmit` `continue: false` is a notice, not a stop |
+| Supported events | Partial | `application_emits_runtime_lifecycle_hooks_with_session_identity`, `exec_retries_a_denied_call_once_through_a_permission_denied_hook` | `Setup`, `DirectoryAdded`, `FileChanged`, `CwdChanged`, `ConfigChange`, `WorktreeRemove` have no wired producer |
+| Command handlers | Partial | `exec_lifecycle_hooks`; Windows: `exec_hooks_windows` (PowerShell exit 2, BOM/CRLF JSON, `[Console]::In`, non-JSON stdout, HTTP context) in the Windows CI job | Windows CI run of `exec_hooks_windows` not yet observed; sandboxed Windows scopes refuse before effects |
+| Sandboxing of command hooks | Partial | Unix sandbox cases in `hook_command_launch` | Project, local and `sandbox_all` hooks on Windows still refuse: no enforcing hooks profile there |
+
+New this increment: a fail-open fix. A UTF-8 byte-order mark before a JSON decision (Windows PowerShell output) made the decision plain allowing output; it is now applied (`hook_command_results` `bom_and_crlf_framed_decisions_are_applied`, red before the fix). Windows code was type-checked locally with `clippy --target x86_64-pc-windows-gnu` only. See [status](p1-status.md#hooks-increment-4-of-4-managed-policy-trust-ux-windows-command-hooks-and-evidence-2026-10-13).
+
 ## MCP elicitation, roots and list-changed: production-path evidence (2026-10-13)
 
 The canonical `mcp` Elicitation, Roots and sampling, and List-changed refresh contracts stay unchecked: no suite below has run natively on Windows (only the `x86_64-pc-windows-gnu` Clippy type-check), the local stdio cases are Unix-only, and remote sampling has no evidence.
@@ -525,26 +546,26 @@ Canonical source: [exec-mode](../../openspec/specs/exec-mode/spec.md).
 
 Canonical source: [hooks](../../openspec/specs/hooks/spec.md).
 
-- [ ] Hook configuration
+- [x] Hook configuration
 - [ ] Hook scopes and merge order
 - [ ] Supported events
-- [ ] Matchers
+- [x] Matchers
 - [ ] Command handlers
-- [ ] HTTP handlers
-- [ ] Prompt handlers
-- [ ] MCP tool handlers
+- [x] HTTP handlers
+- [x] Prompt handlers
+- [x] MCP tool handlers
 - [ ] Decision schema
-- [ ] Decision merging
-- [ ] Interaction with permissions
-- [ ] Stop hooks and loop prevention
-- [ ] Timeouts and async hooks
-- [ ] Parallel execution within a group
+- [x] Decision merging
+- [x] Interaction with permissions
+- [x] Stop hooks and loop prevention
+- [x] Timeouts and async hooks
+- [x] Parallel execution within a group
 - [ ] Sandboxing of command hooks
-- [ ] Trust for project hooks
-- [ ] Hooks viewer and CLI
-- [ ] Hook context injection on lifecycle events
-- [ ] Hook observability
-- [ ] Conditional, one-shot and annotated handlers
+- [x] Trust for project hooks
+- [x] Hooks viewer and CLI
+- [x] Hook context injection on lifecycle events
+- [x] Hook observability
+- [x] Conditional, one-shot and annotated handlers
 
 ### installation-upgrade (1)
 

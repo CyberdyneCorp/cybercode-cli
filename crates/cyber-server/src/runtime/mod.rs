@@ -22,6 +22,7 @@ pub use child_usage::ChildrenUsage;
 mod context;
 mod continuation;
 mod delegations;
+mod deletion;
 mod drain;
 mod events;
 mod fork;
@@ -29,6 +30,7 @@ mod forked_skills;
 mod hook_tests;
 mod hooks;
 mod lifecycle;
+mod lifecycle_events;
 pub use hook_tests::{
     SyntheticHookExecution, start_synthetic_hook_execution, try_start_synthetic_hook_execution,
 };
@@ -93,10 +95,10 @@ pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
-    AgentInference, CatalogResolver, ChildContinuation, FileDiff, Invocation, LifecycleHook,
-    LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools,
-    Reconciliation, ResolvedModel, RestoreError, SkillSuggestion, Snapshot, Snapshots, ToolDef,
-    ToolHost, ToolOutcome, ToolScope, TurnContext,
+    AgentInference, CatalogResolver, ChildContinuation, FileDiff, HookEffects, Invocation,
+    LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots,
+    NoTools, Reconciliation, ResolvedModel, RestoreError, SessionEnvelope, SkillSuggestion,
+    Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
@@ -403,6 +405,13 @@ pub(crate) struct Handle {
     pub auto_blocks: Mutex<u32>,
     /// Consecutive Stop-hook continuations, reset for each new Drain and user admission.
     pub stop_continuations: std::sync::atomic::AtomicUsize,
+    /// Hook envelope identity captured for the Session's current directory.
+    pub envelope: StdMutex<Option<(String, SessionEnvelope)>>,
+    /// Tagged context from background hooks, committed at the next Safe Boundary.
+    pub pending_hook_context: StdMutex<Vec<String>>,
+    /// Drain-owned lifecycle hooks in flight; a cancelled boundary waits for them.
+    pub drain_hooks: std::sync::atomic::AtomicUsize,
+    pub drain_hooks_settled: Notify,
 }
 
 struct DrainEntry {
@@ -411,6 +420,8 @@ struct DrainEntry {
     child_settling: bool,
     cancel: CancellationToken,
     follow_up: bool,
+    /// A deletion fence, not a Drain: no Drain or child Job starts for the Session.
+    deleting: bool,
 }
 
 pub(crate) struct Inner {
@@ -1166,7 +1177,19 @@ impl Runtime {
     }
 
     /// Stop the Drain and abandon owned requests, including idle host operations; inbox rows are kept.
+    /// Interrupt hooks then observe it.
     pub async fn interrupt(&self, session_id: &str) -> Result<(), RuntimeError> {
+        let running = self.is_running(session_id);
+        self.interrupt_for_owner(session_id).await?;
+        let handle = self.inner.handle(session_id).await?;
+        self.inner.interrupted(&handle, running).await;
+        Ok(())
+    }
+
+    /// Interrupt a child on behalf of its owner's cancellation or settlement. No
+    /// Interrupt hook runs: the owner's SubagentStop/JobEnded observe the outcome,
+    /// and the canceller may hold the child while it waits for this.
+    pub async fn interrupt_for_owner(&self, session_id: &str) -> Result<(), RuntimeError> {
         let (paused, preparation) = self.pause_requested_child_input(session_id).await;
         let activities = self.inner.cancel_idle_activities(session_id);
         {
@@ -1284,18 +1307,7 @@ impl Runtime {
         cyber_llm::catalog::ModelRef::parse(model)
             .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
         let handle = self.inner.handle(session_id).await?;
-        let mut state = handle.state.lock().await;
-        if !state.model_selection.agent_default && state.model_selection.reference == model {
-            return Ok(());
-        }
-        let payload = Switched {
-            from: state.info.model.clone(),
-            to: model.into(),
-            automatic: false,
-        };
-        self.inner
-            .commit_locked(&mut state, vec![event(MODEL_SWITCHED, &payload)])?;
-        Ok(())
+        self.inner.switch_model_hooked(&handle, model).await
     }
 
     pub async fn switch_agent(&self, session_id: &str, agent: &str) -> Result<(), RuntimeError> {
@@ -1355,11 +1367,19 @@ impl Runtime {
     }
 
     /// Archived Sessions are hidden from default lists but stay resumable.
+    /// Archiving ends the Session for SessionEnd hooks, which only observe it.
     pub async fn archive(&self, session_id: &str, archived: bool) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
-        let mut state = handle.state.lock().await;
-        self.inner
-            .commit_locked(&mut state, vec![event(ARCHIVED, &Archived { archived })])?;
+        let ended = {
+            let mut state = handle.state.lock().await;
+            let ended = archived && !state.info.archived;
+            self.inner
+                .commit_locked(&mut state, vec![event(ARCHIVED, &Archived { archived })])?;
+            ended
+        };
+        if ended {
+            self.inner.session_end(&handle, "archive").await;
+        }
         Ok(())
     }
 
@@ -1467,45 +1487,6 @@ impl Runtime {
                 },
             )
             .await
-    }
-
-    /// Delete a Session, its child Sessions, inbox rows and history.
-    pub async fn delete(&self, session_id: &str) -> Result<(), RuntimeError> {
-        let _jobs = self.inner.job_admission.lock().await;
-        self.inner.handle(session_id).await?;
-        let ids = self.inner.descendants(session_id)?;
-        if self.is_running(session_id) {
-            return Err(RuntimeError::Busy(session_id.into()));
-        }
-        self.cancel_session_jobs(&ids).await?;
-        if ids.iter().any(|id| self.is_running(id)) {
-            return Err(RuntimeError::Busy(session_id.into()));
-        }
-        let doomed = ids.clone();
-        self.inner.store.transaction(move |tx| {
-            for id in &doomed {
-                tx.execute("DELETE FROM event WHERE aggregate_id = ?1", [id])?;
-                tx.execute("DELETE FROM event_sequence WHERE aggregate_id = ?1", [id])?;
-                tx.execute(
-                    "DELETE FROM session_children_charge WHERE parent_id = ?1",
-                    [id],
-                )?;
-                tx.execute("DELETE FROM session WHERE id = ?1", [id])?;
-            }
-            Ok(())
-        })?;
-        let mut sessions = self
-            .inner
-            .sessions
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        for id in ids {
-            sessions.remove(&id);
-            self.inner
-                .bus
-                .publish(LiveEvent::Deleted { session_id: id });
-        }
-        Ok(())
     }
 
     /// Sessions ordered by `updated_at` descending, with an opaque cursor.
@@ -1680,6 +1661,10 @@ impl Inner {
             recent_calls: StdMutex::default(),
             auto_blocks: Mutex::new(0),
             stop_continuations: std::sync::atomic::AtomicUsize::new(0),
+            envelope: StdMutex::default(),
+            pending_hook_context: StdMutex::default(),
+            drain_hooks: Default::default(),
+            drain_hooks_settled: Notify::new(),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))
@@ -1823,6 +1808,7 @@ impl Inner {
                 child_settling: false,
                 cancel: cancel.clone(),
                 follow_up: false,
+                deleting: false,
             },
         );
         tokio::spawn(drain::run(Arc::clone(self), id.to_string(), forced, cancel));

@@ -1,6 +1,6 @@
 //! Dedicated local MCP connections owned by synchronous hook receipts.
-use crate::hook_reports::{failure, log_io, logged_io, skipped};
-use crate::mcp::{LocalLauncher, LocalServer, authorize_server};
+use crate::hook_reports::{Admitted, failure, log_io, logged_io, skipped};
+use crate::mcp::{LocalLauncher, LocalServer, ServerSelection, authorize_server};
 use crate::{
     BuiltinHost,
     hook_commands::{HookCommandReport, HookCommandRunner},
@@ -136,17 +136,47 @@ impl HookMcpRunner<'_, '_> {
         event: &HookEvent,
         cancel: CancellationToken,
     ) -> Result<HookCommandReport, String> {
+        let Some(admitted) = self.admit(host, runtime, pointer, event, &cancel).await? else {
+            return Ok(skipped(false));
+        };
+        self.run_admitted(host, runtime, admitted, pointer, event, cancel)
+            .await
+    }
+
+    /// Durable admission alone; None when a once handler was already claimed.
+    pub(crate) async fn admit(
+        &self,
+        host: &BuiltinHost,
+        runtime: &Runtime,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Admitted>, String> {
         let (resolved, definition, _) = self.authorize(host, pointer, event)?;
         if cancel.is_cancelled() {
             return Err("MCP hook cancelled before admission".into());
         }
-        let Some(mut owner) = runtime
+        let owner = runtime
             .try_start_hook_execution(event, &definition, log_io(&resolved))
             .await
-            .map_err(|e| e.to_string())?
-        else {
-            return Ok(skipped(false));
-        };
+            .map_err(|e| e.to_string())?;
+        Ok(owner.map(|owner| Admitted { owner, definition }))
+    }
+
+    /// Call through a dedicated connection for an admitted execution; settle once.
+    pub(crate) async fn run_admitted(
+        &self,
+        host: &BuiltinHost,
+        runtime: &Runtime,
+        admitted: Admitted,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: CancellationToken,
+    ) -> Result<HookCommandReport, String> {
+        let Admitted {
+            mut owner,
+            definition,
+        } = admitted;
         if let Some(message) = &definition.handler.status_message {
             runtime.hook_notice(
                 &event.identity().session_id,
@@ -175,6 +205,7 @@ impl HookMcpRunner<'_, '_> {
             .map_err(|e| e.to_string())?;
         capture.cleanup()?;
         if capture.report.acknowledged
+            && !capture.report.suppresses_output()
             && let Some(message) = &definition.handler.system_message
         {
             runtime.hook_notice(&record.session_id, &record.hook_id, message);
@@ -196,12 +227,7 @@ impl HookMcpRunner<'_, '_> {
             Err(error) => return failed(event, None, error, true),
         };
         let name = definition.handler.server.as_deref().unwrap_or_default();
-        let selected = match authorize_server(
-            &resolved,
-            self.settings.trust,
-            &event.identity().location.directory,
-            name,
-        ) {
+        let selected = match self.select_server(&resolved, &definition, event) {
             Ok(selected) => selected,
             Err(error) => return failed(event, Some(&definition), error, true),
         };
@@ -361,16 +387,34 @@ impl HookMcpRunner<'_, '_> {
         digest: &str,
     ) -> Result<(), String> {
         let (resolved, definition, _) = self.authorize(host, pointer, event)?;
-        let selected = authorize_server(
-            &resolved,
-            self.settings.trust,
-            &event.identity().location.directory,
-            definition.handler.server.as_deref().unwrap_or_default(),
-        )?;
+        let selected = self.select_server(&resolved, &definition, event)?;
         if selected.digest != digest {
             return Err("MCP hook server definition changed during execution".into());
         }
         Ok(())
+    }
+
+    /// The handler's authorized server. A managed handler's server must be defined by
+    /// global configuration alone, so a checkout cannot shadow it with its own.
+    fn select_server(
+        &self,
+        resolved: &Resolved,
+        definition: &HookDefinition,
+        event: &HookEvent,
+    ) -> Result<ServerSelection, String> {
+        let name = definition.handler.server.as_deref().unwrap_or_default();
+        crate::hook_authority::managed_dependency(
+            resolved,
+            definition,
+            &crate::hook_authority::mcp_pointer(name),
+            "MCP server",
+        )?;
+        authorize_server(
+            resolved,
+            self.settings.trust,
+            &event.identity().location.directory,
+            name,
+        )
     }
 }
 fn failed(

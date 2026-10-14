@@ -19,6 +19,19 @@ pub struct HookCommandReport {
     pub acknowledged: bool,
 }
 
+impl HookCommandReport {
+    /// The handler's parsed `suppress_output`: hide its notices and system message.
+    /// Durable receipts and the model-facing deny reason are never suppressed.
+    pub fn suppresses_output(&self) -> bool {
+        self.decision.suppress_output == Some(true)
+    }
+
+    /// Whether a recorded run's post-run output (its `system_message`) is shown.
+    pub fn shows_output(result: &Result<Self, String>) -> bool {
+        !result.as_ref().is_ok_and(Self::suppresses_output)
+    }
+}
+
 pub fn interpret_hook_command(
     event: &HookEvent,
     hook_id: &str,
@@ -106,16 +119,13 @@ fn success(
             true,
         );
     }
-    let value = match serde_json::from_slice::<Value>(&capture.stdout.bytes) {
+    // Windows PowerShell can prefix redirected UTF-8 with a byte-order mark; a
+    // decision framed that way is still a decision, never plain allowing output.
+    let stdout = capture.stdout.bytes.as_slice();
+    let stdout = stdout.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(stdout);
+    let value = match serde_json::from_slice::<Value>(stdout) {
         Ok(value) if value.is_object() => value,
-        Err(error)
-            if capture
-                .stdout
-                .bytes
-                .iter()
-                .find(|byte| !byte.is_ascii_whitespace())
-                == Some(&b'{') =>
-        {
+        Err(error) if stdout.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'{') => {
             return unavailable(
                 event,
                 hook_id,

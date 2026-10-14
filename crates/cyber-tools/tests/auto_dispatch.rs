@@ -93,6 +93,60 @@ async fn confirmed_override_replays_exact_blocked_input_once_without_another_mod
     );
 }
 
+/// Regression: the replay ran PostToolUse but never took the call's hook effects,
+/// so its context and `continue: false` were dropped and leaked in the host map.
+#[cfg(unix)]
+#[tokio::test]
+async fn override_replay_commits_its_tool_hook_context_and_stop() {
+    let f = flow(1, verdict("block"), true);
+    let reply =
+        json!({"additional_context":"replay context","continue":false,"stop_reason":"halt replay"});
+    f.f.global_hooks(
+        json!({"PostToolUse":[{"hooks":[{"type":"command","id":"post",
+        "command":format!("cat >/dev/null; printf '%s' '{reply}'")}]}]}),
+    );
+    let id = f.session("auto").await;
+    let mut live = f.runtime.subscribe();
+    f.prompt(&id, "Write a file").await;
+    f.settle(&id).await;
+    let receipt = f.runtime.approve_auto(&id).await.unwrap();
+    let pending = f.pending(&id).await;
+    f.runtime
+        .reply_permission(&pending.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    replay_settled(&f, &id, &receipt).await;
+    let systems: Vec<String> = f
+        .runtime
+        .state(&id)
+        .await
+        .unwrap()
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            cyber_server::runtime::Entry::System { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    let context: Vec<&String> = systems
+        .iter()
+        .filter(|t| t.contains("replay context"))
+        .collect();
+    assert_eq!(context.len(), 1, "{systems:?}");
+    assert!(context[0].contains("[hook post]"), "{systems:?}");
+    assert!(
+        systems.iter().any(|t| t.contains("halt replay")),
+        "{systems:?}"
+    );
+    let mut noticed = false;
+    while let Ok(event) = live.try_recv() {
+        if let cyber_server::runtime::LiveEvent::HookNotice { message, .. } = event {
+            noticed |= message.contains("halt replay");
+        }
+    }
+    assert!(noticed, "the replay's stop is shown");
+}
+
 #[tokio::test]
 async fn rejected_override_has_no_effect_and_can_be_confirmed_later() {
     let f = flow(1, verdict("block"), true);

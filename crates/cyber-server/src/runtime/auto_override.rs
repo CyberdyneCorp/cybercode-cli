@@ -489,8 +489,15 @@ impl Inner {
             .unwrap_or_default()
             .to_owned();
         record.status = "settled".into();
-        self.commit_locked(&mut state, vec![settled, change(record)])?;
+        let session_id = state.info.id.clone();
+        let mut events = vec![settled];
+        let stop = self.take_call_hook_effects(&session_id, &replay.id, &mut events);
+        events.push(change(record));
+        self.commit_locked(&mut state, events)?;
         drop(state);
+        if let Some(reason) = &stop {
+            self.publish_hook_stop(&session_id, reason);
+        }
         if scope.control.stop.is_cancelled()
             || self.ensure_admission_open(&scope.control.source).is_err()
         {

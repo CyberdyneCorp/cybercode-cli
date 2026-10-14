@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::BuiltinHost;
 use crate::hook_commands::{HookCommandReport, HookOutcome};
-use crate::hook_reports::{failure, log_io, logged_io, skipped};
+use crate::hook_reports::{Admitted, failure, log_io, logged_io, skipped};
 
 const LIMIT: usize = 1024 * 1024;
 
@@ -111,17 +111,45 @@ impl HookHttpRunner<'_> {
         event: &HookEvent,
         cancel: CancellationToken,
     ) -> Result<HookCommandReport, String> {
+        let Some(admitted) = self.admit(runtime, pointer, event, &cancel).await? else {
+            return Ok(skipped(false));
+        };
+        self.run_admitted(runtime, admitted, pointer, event, cancel)
+            .await
+    }
+
+    /// Durable admission alone; None when a once handler was already claimed.
+    pub(crate) async fn admit(
+        &self,
+        runtime: &Runtime,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Admitted>, String> {
         let (definition, _) = self.authorize(pointer, event)?;
         if cancel.is_cancelled() {
             return Err("HTTP hook cancelled before admission".into());
         }
-        let Some(mut owner) = runtime
+        let owner = runtime
             .try_start_hook_execution(event, &definition, log_io(self.resolved))
             .await
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(skipped(false));
-        };
+            .map_err(|error| error.to_string())?;
+        Ok(owner.map(|owner| Admitted { owner, definition }))
+    }
+
+    /// Post for an admitted execution and settle its receipt exactly once.
+    pub(crate) async fn run_admitted(
+        &self,
+        runtime: &Runtime,
+        admitted: Admitted,
+        pointer: &str,
+        event: &HookEvent,
+        cancel: CancellationToken,
+    ) -> Result<HookCommandReport, String> {
+        let Admitted {
+            mut owner,
+            definition,
+        } = admitted;
         if let Some(message) = &definition.handler.status_message {
             runtime.hook_notice(
                 &event.identity().session_id,
@@ -152,6 +180,7 @@ impl HookHttpRunner<'_> {
             .finish(capture.settlement())
             .map_err(|error| error.to_string())?;
         if record.acknowledged == Some(true)
+            && !capture.report.suppresses_output()
             && let Some(message) = &definition.handler.system_message
         {
             runtime.hook_notice(&record.session_id, &record.hook_id, message);

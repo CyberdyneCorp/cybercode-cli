@@ -203,6 +203,7 @@ impl Inner {
     }
 
     /// Summarize history before the tail. Failure stops the Drain with a clear message.
+    /// PreCompact runs once a tail exists, before the start is recorded.
     pub(crate) async fn compact(
         &self,
         handle: &Handle,
@@ -216,6 +217,7 @@ impl Inner {
             return Ok(());
         };
         self.check_budget(handle).await?;
+        let instructions = self.pre_compact(handle, trigger, instructions).await?;
         self.commit(
             handle,
             vec![event(COMPACTION_STARTED, &CompactionStarted { trigger })],
@@ -255,6 +257,7 @@ impl Inner {
                 self.commit(handle, vec![event(COMPACTION_COMPLETED, &payload)])
                     .await?;
                 self.observe_budget(handle).await?;
+                self.post_compact(handle, trigger, (before, after)).await;
                 Ok(())
             }
             Err(error) => {

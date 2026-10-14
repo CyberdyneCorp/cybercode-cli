@@ -256,15 +256,60 @@ pub enum Reconciliation {
     Unknown,
 }
 
+/// Session-derived hook envelope identity (`hooks` → Supported events): the
+/// project and workspace of the Session's Location, captured once per Location,
+/// and the delegating parent of a child Session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEnvelope {
+    /// `prj_<hex>`, or `global` outside git.
+    pub project_id: String,
+    /// The checkout root of a git Location.
+    pub workspace: Option<String>,
+    pub parent_session_id: Option<String>,
+}
+
+impl SessionEnvelope {
+    /// The envelope of an event owned by `session_id` with its captured Location,
+    /// agent and Mode.
+    pub fn identity(
+        &self,
+        session_id: &str,
+        directory: &str,
+        agent: &str,
+        mode: &str,
+    ) -> cyber_core::hooks::HookIdentity {
+        cyber_core::hooks::HookIdentity {
+            session_id: session_id.into(),
+            location: cyber_core::hooks::HookLocation {
+                directory: directory.into(),
+                workspace: self.workspace.clone(),
+            },
+            project_id: self.project_id.clone(),
+            agent: agent.into(),
+            mode: mode.into(),
+            parent_session_id: self.parent_session_id.clone(),
+        }
+    }
+
+    /// Whether a hook event carries exactly this Session-derived identity.
+    pub fn matches(&self, identity: &cyber_core::hooks::HookIdentity) -> bool {
+        identity.project_id == self.project_id
+            && identity.location.workspace == self.workspace
+            && identity.parent_session_id == self.parent_session_id
+    }
+}
+
 /// A runtime-owned lifecycle event for host hook dispatch (`hooks` → Stop hooks).
-/// The runtime captures the Session identity; the host builds the envelope.
+/// The runtime captures the Session identity; the host builds the envelope and,
+/// only when a definition exists, adds the project identity from
+/// [`super::Runtime::session_envelope`], which hook admission requires.
 #[derive(Debug, Clone)]
 pub struct LifecycleHook {
     pub session_id: String,
     pub directory: String,
     pub agent: String,
     pub mode: String,
-    /// `Stop` or `StopFailure`.
+    /// A runtime lifecycle event name, such as `Stop` or `PostToolBatch`.
     pub kind: String,
     /// The matcher subject.
     pub subject: String,
@@ -279,6 +324,40 @@ pub struct LifecycleVerdict {
     /// A definition exists for the event. False means nothing was dispatched, so
     /// the runtime records nothing durable for it.
     pub configured: bool,
+}
+
+/// What tool-event hooks (PreToolUse, PermissionRequest, PostToolUse,
+/// PostToolUseFailure) left for the runtime to apply when their call settles.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookEffects {
+    /// `[hook <id>]`-tagged `additional_context`, in declared order.
+    pub context: Option<String>,
+    /// A `continue: false` request with its `[hook <id>]`-tagged stop reason.
+    pub stop: Option<String>,
+}
+
+impl HookEffects {
+    /// Accumulate one event's merged decision: context concatenates in order and
+    /// the first stop request sticks.
+    pub fn absorb(&mut self, decision: &cyber_core::hooks::HookDecision) {
+        if let Some(context) = &decision.additional_context {
+            match &mut self.context {
+                Some(existing) => {
+                    existing.push('\n');
+                    existing.push_str(context);
+                }
+                None => self.context = Some(context.clone()),
+            }
+        }
+        if decision.continuation == Some(false) && self.stop.is_none() {
+            self.stop = Some(
+                decision
+                    .stop_reason
+                    .clone()
+                    .unwrap_or_else(|| "continue: false".into()),
+            );
+        }
+    }
 }
 
 pub trait ToolHost: Send + Sync {
@@ -491,6 +570,12 @@ pub trait ToolHost: Send + Sync {
         _cancel: CancellationToken,
     ) -> BoxFuture<'_, Result<LifecycleVerdict, String>> {
         Box::pin(async { Ok(LifecycleVerdict::default()) })
+    }
+
+    /// Take, once, the hook effects recorded for a call. The runtime commits them
+    /// atomically with the call's settlement. Hosts without hooks record none.
+    fn take_hook_effects(&self, _session_id: &str, _call_id: &str) -> HookEffects {
+        HookEffects::default()
     }
 
     /// Establish, without side effects, whether a dispatched call took effect.

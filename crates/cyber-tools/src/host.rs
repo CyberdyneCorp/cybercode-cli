@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use cyber_core::env::EnvSource;
+use cyber_core::hooks::HookAction;
 use cyber_core::skills::{self, Discovery, SkillScope};
 use cyber_server::runtime::{
     CallState, Invocation, ModelResolver, PermissionAsk, PermissionReply, Reconciliation, Runtime,
@@ -58,6 +59,12 @@ pub struct BuiltinHost {
     locks: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     runtime: OnceLock<WeakRuntime>,
     pub(crate) hook_config: OnceLock<crate::tool_hooks::HooksConfig>,
+    /// Handler digests one invocation approved; never persisted.
+    pub(crate) hook_invocation_trust: OnceLock<cyber_core::trust::HookInvocationTrust>,
+    /// Aggregated skip notices already shown, by owner and Session (and event).
+    pub(crate) hook_notices: Mutex<HashSet<String>>,
+    /// Tool-event hook effects awaiting their call's settlement, by (Session, call).
+    pub(crate) hook_effects: crate::tool_hooks::PendingEffects,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -134,6 +141,9 @@ impl BuiltinHost {
             locks: Mutex::default(),
             runtime: OnceLock::new(),
             hook_config: OnceLock::new(),
+            hook_invocation_trust: OnceLock::new(),
+            hook_notices: Mutex::default(),
+            hook_effects: Default::default(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -632,6 +642,14 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.runtime_lifecycle_hooks(event, cancel))
     }
 
+    fn take_hook_effects(
+        &self,
+        session_id: &str,
+        call_id: &str,
+    ) -> cyber_server::runtime::HookEffects {
+        self.take_tool_hook_effects(session_id, call_id)
+    }
+
     fn resolve_prompt_resources<'a>(
         &'a self,
         turn: &'a TurnContext,
@@ -860,50 +878,44 @@ impl ToolHost for BuiltinHost {
                 Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
                 Err(ToolError::Aborted) => return ToolOutcome::Aborted,
             };
-            let policy = match self.policy(&inv).await {
-                Ok(policy) => policy,
+            let started = std::time::Instant::now();
+            let ctx = match self
+                .call_ctx(&inv, hook_decision, cancel.clone(), DenialHooks::armed())
+                .await
+            {
+                Ok(ctx) => ctx,
                 Err(error) => return ToolOutcome::Failed(error),
             };
-            if let Some(reason) = policy.skill_tool_denial(&inv.name) {
-                return ToolOutcome::Failed(reason);
-            }
-            let ctx = Ctx {
-                skill_paths: Default::default(),
-                loaded_skill: Default::default(),
-                compiler_feedback: Default::default(),
-                host: self,
-                policy,
-                location: PathBuf::from(&inv.directory),
-                inv: &inv,
-                cancel: cancel.clone(),
-                hook_decision,
+            let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
+            let Some(input) = ctx.denial.take_retry(&outcome) else {
+                return self.settle_call(&ctx, outcome, started).await;
             };
-            let started = std::time::Instant::now();
-            let keep_tail = matches!(inv.name.as_str(), "bash" | "powershell");
-            let outcome = match tool.run(&ctx).await {
-                Ok(output) => self.settle_output(
-                    &ctx,
-                    output,
-                    keep_tail
-                        || ctx
-                            .compiler_feedback
-                            .load(std::sync::atomic::Ordering::Acquire),
-                ),
-                Err(ToolError::Failed(message)) => ToolOutcome::Failed(message),
-                Err(ToolError::Aborted) => ToolOutcome::Aborted,
+            // A PermissionDenied retry is re-validated and re-evaluated exactly once;
+            // its denial is final. Changed input passes PreToolUse again first.
+            let schema = &tool.def().spec.input_schema;
+            let retried = self
+                .retried_invocation(&inv, schema, input, hook_decision, cancel.clone())
+                .await;
+            let (retried, decision) = match retried {
+                Ok(retried) => retried,
+                Err(ToolError::Failed(error)) => {
+                    return self
+                        .settle_call(&ctx, ToolOutcome::Failed(error), started)
+                        .await;
+                }
+                Err(ToolError::Aborted) => {
+                    return self.settle_call(&ctx, ToolOutcome::Aborted, started).await;
+                }
             };
-            if let Err(error) = self.post_tool_hooks(&inv, &outcome, started, cancel).await {
-                return self.path_skill_suggestions(
-                    &ctx,
-                    match error {
-                        ToolError::Aborted => ToolOutcome::Aborted,
-                        ToolError::Failed(error) => {
-                            ToolOutcome::Failed(format!("Tool settled; post-hook failed: {error}"))
-                        }
-                    },
-                );
-            }
-            self.path_skill_suggestions(&ctx, outcome)
+            let ctx = match self
+                .call_ctx(&retried, decision, cancel, DenialHooks::default())
+                .await
+            {
+                Ok(ctx) => ctx,
+                Err(error) => return ToolOutcome::Failed(error),
+            };
+            let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
+            self.settle_call(&ctx, outcome, started).await
         })
     }
 
@@ -1014,6 +1026,7 @@ impl ToolHost for BuiltinHost {
                 loaded_skill: Default::default(),
                 compiler_feedback: Default::default(),
                 hook_decision: None,
+                denial: Default::default(),
                 host: self,
                 policy: self.policy(&inv).await?,
                 location: PathBuf::from(&inv.directory),
@@ -1075,6 +1088,7 @@ impl ToolHost for BuiltinHost {
                 loaded_skill: Default::default(),
                 compiler_feedback: Default::default(),
                 hook_decision: None,
+                denial: Default::default(),
                 host: self,
                 policy: self.policy_for(&inv, None).await?,
                 location: PathBuf::from(&inv.directory),
@@ -1160,6 +1174,101 @@ fn fully_denied_scoped(rules: &[permissions::Rule], action: &str, tool: &str) ->
     matches!(permissions::evaluate_scoped(rules, action, "*", Some(tool)), (Effect::Deny, Some(rule)) if rule.resource == "*")
 }
 
+impl BuiltinHost {
+    /// Current policy and the call context for one attempt of a built-in call.
+    async fn call_ctx<'a>(
+        &'a self,
+        inv: &'a Invocation,
+        hook_decision: Option<HookAction>,
+        cancel: CancellationToken,
+        denial: DenialHooks,
+    ) -> Result<Ctx<'a>, String> {
+        let policy = self.policy(inv).await?;
+        if let Some(reason) = policy.skill_tool_denial(&inv.name) {
+            return Err(reason);
+        }
+        Ok(Ctx {
+            skill_paths: Default::default(),
+            loaded_skill: Default::default(),
+            compiler_feedback: Default::default(),
+            host: self,
+            policy,
+            location: PathBuf::from(&inv.directory),
+            inv,
+            cancel,
+            hook_decision,
+            denial,
+        })
+    }
+
+    async fn run_builtin(&self, tool: &dyn Tool, ctx: &Ctx<'_>) -> ToolOutcome {
+        let keep_tail = matches!(ctx.inv.name.as_str(), "bash" | "powershell");
+        match tool.run(ctx).await {
+            Ok(output) => self.settle_output(
+                ctx,
+                output,
+                keep_tail
+                    || ctx
+                        .compiler_feedback
+                        .load(std::sync::atomic::Ordering::Acquire),
+            ),
+            Err(ToolError::Failed(message)) => ToolOutcome::Failed(message),
+            Err(ToolError::Aborted) => ToolOutcome::Aborted,
+        }
+    }
+
+    /// Post-tool hooks and skill suggestions for the attempt that settled the call.
+    async fn settle_call(
+        &self,
+        ctx: &Ctx<'_>,
+        outcome: ToolOutcome,
+        started: std::time::Instant,
+    ) -> ToolOutcome {
+        match self
+            .post_tool_hooks(ctx.inv, &outcome, started, ctx.cancel.clone())
+            .await
+        {
+            Ok(()) => self.path_skill_suggestions(ctx, outcome),
+            Err(ToolError::Aborted) => self.path_skill_suggestions(ctx, ToolOutcome::Aborted),
+            Err(ToolError::Failed(error)) => self.path_skill_suggestions(
+                ctx,
+                ToolOutcome::Failed(format!("Tool settled; post-hook failed: {error}")),
+            ),
+        }
+    }
+
+    /// The re-issued invocation of a PermissionDenied retry, validated like any input,
+    /// and the hook decision its authorization starts from. Changed input is new input:
+    /// PreToolUse runs on it like on a first attempt, so a guard's deny, block, ask or
+    /// rewrite applies to what actually runs. A hook allow never carries to a retry.
+    pub(crate) async fn retried_invocation(
+        &self,
+        inv: &Invocation,
+        schema: &Value,
+        input: Value,
+        original: Option<HookAction>,
+        cancel: CancellationToken,
+    ) -> Result<(Invocation, Option<HookAction>), ToolError> {
+        let invalid = |error: String| ToolError::Failed(error);
+        crate::schema::validate(schema, &input)
+            .map_err(|_| invalid("hook produced invalid tool input".into()))?;
+        inv.asker
+            .validate_auto_override(&inv.name, &input)
+            .map_err(|error| invalid(error.to_string()))?;
+        let changed = input != inv.input;
+        let mut retried = inv.clone();
+        retried.input = input;
+        let mut asks = original == Some(HookAction::Ask);
+        if changed {
+            asks |=
+                self.pre_tool_hooks(&mut retried, schema, cancel).await? == Some(HookAction::Ask);
+        }
+        self.check_skill_tool(&retried).await.map_err(invalid)?;
+        self.check_agent_tool(&retried).map_err(invalid)?;
+        Ok((retried, asks.then_some(HookAction::Ask)))
+    }
+}
+
 /// Everything a tool needs for one call.
 pub(crate) struct Ctx<'a> {
     pub skill_paths: Mutex<Vec<PathBuf>>,
@@ -1171,6 +1280,35 @@ pub(crate) struct Ctx<'a> {
     pub location: PathBuf,
     pub cancel: CancellationToken,
     pub hook_decision: Option<cyber_core::hooks::HookAction>,
+    pub denial: DenialHooks,
+}
+
+/// PermissionDenied for one tool-call attempt. Only a call's first attempt is armed,
+/// so the event runs at most once per call; a hook's `retry` waits here for the
+/// caller to re-validate and re-issue it.
+#[derive(Default)]
+pub(crate) struct DenialHooks {
+    armed: std::sync::atomic::AtomicBool,
+    retry: Mutex<Option<Value>>,
+}
+
+impl DenialHooks {
+    pub(crate) fn armed() -> Self {
+        Self {
+            armed: std::sync::atomic::AtomicBool::new(true),
+            retry: Mutex::default(),
+        }
+    }
+
+    /// The input to re-issue once, kept only when the attempt failed.
+    pub(crate) fn take_retry(&self, outcome: &ToolOutcome) -> Option<Value> {
+        let retry = self
+            .retry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        retry.filter(|_| matches!(outcome, ToolOutcome::Failed(_)))
+    }
 }
 
 impl Ctx<'_> {
@@ -1236,24 +1374,72 @@ impl Ctx<'_> {
         req.tool = Some(self.inv.name.clone());
         let decision = self.policy.decide(&req);
         if let Decision::Deny(reason) = decision {
-            return Err(ToolError::Failed(deny_message(&reason)));
+            return Err(self.denied(&req, "rule", deny_message(&reason)).await);
         }
         if self.hook_decision == Some(cyber_core::hooks::HookAction::Ask) {
             // Force the manual route without skipping current/ancestor auto blocks.
-            self.review_auto_permission(&req, &mut metadata, false)
-                .await?;
+            self.auto_gate(&req, &mut metadata, false).await?;
             return self.ask(req, always, metadata).await;
         }
         let needs_approval = decision == Decision::Ask
             && self.hook_decision != Some(cyber_core::hooks::HookAction::Allow);
-        if self
-            .review_auto_permission(&req, &mut metadata, needs_approval)
-            .await?
-            || !needs_approval
-        {
+        if self.auto_gate(&req, &mut metadata, needs_approval).await? || !needs_approval {
             return Ok(());
         }
         self.ask(req, always, metadata).await
+    }
+
+    /// Current and ancestor auto-mode review; an auto block is a denial boundary.
+    async fn auto_gate(
+        &self,
+        req: &Request,
+        metadata: &mut Value,
+        needs_approval: bool,
+    ) -> Result<bool, ToolError> {
+        match self
+            .review_auto_permission(req, metadata, needs_approval)
+            .await
+        {
+            Err(ToolError::Failed(message)) if message.starts_with("Blocked by auto mode") => {
+                Err(self.denied(req, "auto", message).await)
+            }
+            other => other,
+        }
+    }
+
+    /// The denial error, after PermissionDenied hooks on an armed attempt; a merged
+    /// `retry` is kept for the caller, never applied here.
+    async fn denied(&self, req: &Request, source: &str, message: String) -> ToolError {
+        if !self
+            .denial
+            .armed
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return ToolError::Failed(message);
+        }
+        let denial = crate::tool_hooks::PermissionDenial {
+            source,
+            reason: &message,
+            action: &req.action,
+            resources: &req.resources,
+        };
+        match Box::pin(
+            self.host
+                .permission_denied_hooks(self.inv, &denial, self.cancel.clone()),
+        )
+        .await
+        {
+            Ok(Some(input)) => {
+                *self
+                    .denial
+                    .retry
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(input);
+            }
+            Ok(None) | Err(ToolError::Failed(_)) => {}
+            Err(ToolError::Aborted) => return ToolError::Aborted,
+        }
+        ToolError::Failed(message)
     }
 
     async fn ask(
@@ -1278,6 +1464,17 @@ impl Ctx<'_> {
         {
             return Ok(());
         }
+        Box::pin(self.host.notification_hooks(
+            self.inv,
+            "permission_prompt",
+            format!(
+                "Permission requested: {} {}",
+                req.action,
+                req.resources.join(", ")
+            ),
+            self.cancel.clone(),
+        ))
+        .await;
         let reply = tokio::select! {
             _ = self.cancel.cancelled() => return Err(ToolError::Aborted),
             reply = self.inv.asker.permission(ask) => reply,
@@ -1296,13 +1493,15 @@ impl Ctx<'_> {
                 )
                 .map_err(|e| ToolError::Failed(format!("could not save the approval: {e}")))
             }
-            PermissionReply::Reject { message: Some(m) } => {
-                Err(ToolError::Failed(format!("Rejected by user: {m}")))
-            }
+            PermissionReply::Reject { message: Some(m) } => Err(self
+                .denied(&req, "user", format!("Rejected by user: {m}"))
+                .await),
             PermissionReply::Reject { message: None } => {
-                Err(ToolError::Failed("Rejected by user".into()))
+                Err(self.denied(&req, "user", "Rejected by user".into()).await)
             }
-            PermissionReply::Unattended => Err(ToolError::Failed(unattended(self.policy.mode))),
+            PermissionReply::Unattended => Err(self
+                .denied(&req, "unattended", unattended(self.policy.mode))
+                .await),
         }
     }
 }

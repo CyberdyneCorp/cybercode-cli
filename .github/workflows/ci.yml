@@ -404,6 +404,18 @@ jobs:
       - name: Native hook command stdin and owned transport
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test windows_container_process container_hook_transport
+      # Production path: `cyber exec --embedded` with PowerShell command hooks and an
+      # HTTP context hook; the ownership helper is built earlier in this job.
+      - name: Native PowerShell and HTTP hooks through exec
+        if: ${{ !cancelled() }}
+        run: |
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test exec_hooks_windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native HTTP lifecycle hooks through the app host
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p cyber-app --test server application_emits_runtime_lifecycle_hooks_with_session_identity
       - name: Unsupported Unix bridge refuses execution
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-sandbox --test bridge

@@ -17,6 +17,7 @@ fn event(kind: &str, directory: &std::path::Path) -> HookEvent {
             project_id: "global".into(),
             agent: "coder".into(),
             mode: "default".into(),
+            parent_session_id: None,
         },
         1,
         serde_json::Map::new(),
@@ -186,4 +187,38 @@ fn timeout_policy_and_unknown_termination_remain_distinct() {
     assert_eq!(cancelled.outcome, HookOutcome::Skipped);
     assert!(cancelled.must_stop);
     assert!(cancelled.decision.decision.is_none());
+}
+
+/// Windows PowerShell may prefix redirected UTF-8 output with a byte-order mark and
+/// end lines with CRLF; a decision written that way must still be applied, never
+/// mistaken for plain (allowing) output.
+#[test]
+fn bom_and_crlf_framed_decisions_are_applied() {
+    let directory = tempfile::tempdir().unwrap();
+    let event = event("PreToolUse", directory.path());
+    let report = interpret_hook_command(
+        &event,
+        "guard",
+        false,
+        Ok(capture(
+            HookCommandEnd::Exited(Some(0)),
+            b"\xEF\xBB\xBF{\"decision\":\"deny\",\"reason\":\"bom policy\"}\r\n",
+            b"",
+        )),
+    );
+    assert_eq!(report.outcome, HookOutcome::Blocked);
+    assert_eq!(report.decision.decision, Some(HookAction::Deny));
+    assert_eq!(report.decision.reason.as_deref(), Some("bom policy"));
+    let malformed = interpret_hook_command(
+        &event,
+        "guard",
+        false,
+        Ok(capture(
+            HookCommandEnd::Exited(Some(0)),
+            b"\xEF\xBB\xBF{\"decision\":",
+            b"",
+        )),
+    );
+    assert_eq!(malformed.outcome, HookOutcome::Error);
+    assert_ne!(malformed.decision.decision, Some(HookAction::Allow));
 }

@@ -91,7 +91,12 @@ impl HookDefinition {
 #[derive(Debug, Clone)]
 pub struct HookCatalog {
     pub settings: HookSettings,
+    /// Definitions eligible to run, managed scope first.
     pub definitions: Vec<HookDefinition>,
+    /// Non-managed definitions refused by a managed-only or malformed managed policy.
+    /// They never run; dispatch reports and records them, review lists them.
+    pub skipped: Vec<HookDefinition>,
+    pub policy: crate::config::ManagedPolicy,
 }
 
 impl HookCatalog {
@@ -127,14 +132,39 @@ impl HookCatalog {
         }
         // Stable sorting preserves declared group/handler order inside each scope.
         definitions.sort_by_key(|definition| definition.scope);
+        let policy = resolved.managed.clone();
+        let skipped = if policy.restricts_hooks() {
+            let (managed, skipped) = definitions
+                .into_iter()
+                .partition(|definition| definition.scope == HookScope::Managed);
+            definitions = managed;
+            skipped
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             settings,
             definitions,
+            skipped,
+            policy,
         })
+    }
+
+    /// The policy-skipped definitions declared for `event`.
+    pub fn skipped_for<'a>(&'a self, event: &'a str) -> impl Iterator<Item = &'a HookDefinition> {
+        self.skipped
+            .iter()
+            .filter(move |definition| definition.event == event)
     }
 }
 
 fn scope(source: &str) -> Result<HookScope, String> {
+    if source
+        .strip_prefix("managed:")
+        .is_some_and(|path| !path.is_empty())
+    {
+        return Ok(HookScope::Managed);
+    }
     if source
         .strip_prefix("global:")
         .is_some_and(|path| !path.is_empty())
@@ -191,7 +221,10 @@ pub struct HookLastRun {
 /// Read-only configuration inspection; digests refer to original unredacted definitions.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct HookReview {
+    /// Eligible definitions first, then those a managed policy skips.
     pub hooks: Vec<ReviewedHook>,
+    /// The OS-managed policy that restricted or contributed hooks.
+    pub managed_policy: crate::config::ManagedPolicy,
     pub withheld_definitions: Vec<String>,
     pub withheld_hooks: Vec<crate::config::RawHookSection>,
     pub checkout_trusted: bool,
@@ -202,15 +235,26 @@ pub struct ReviewedHook {
     pub definition: HookDefinition,
     pub trusted: bool,
     pub sandbox_required: bool,
+    /// Why a managed policy refuses this definition; it never runs while set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
     pub last_run: Option<HookLastRun>,
 }
 impl HookReview {
     pub fn from_config(resolved: &Resolved, trust: &TrustStore) -> Result<Self, String> {
         let catalog = HookCatalog::from_config(resolved)?;
-        let hooks = catalog
+        let reason = catalog.policy.skip_reason();
+        let eligible = catalog
             .definitions
             .into_iter()
-            .map(|mut definition| {
+            .map(|definition| (definition, None));
+        let skipped = catalog
+            .skipped
+            .into_iter()
+            .map(|definition| (definition, Some(reason.clone())));
+        let hooks = eligible
+            .chain(skipped)
+            .map(|(mut definition, skipped)| {
                 let trusted = definition
                     .is_trusted(&resolved.trust.checkout_root, trust, None)
                     .map_err(|error| error.to_string())?;
@@ -226,12 +270,14 @@ impl HookReview {
                     definition,
                     trusted,
                     sandbox_required,
+                    skipped,
                     last_run: None,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Self {
             hooks,
+            managed_policy: catalog.policy,
             withheld_hooks: Vec::new(),
             checkout_trusted: resolved.trust.trusted,
             withheld_definitions: if resolved.trust.trusted {

@@ -3,8 +3,7 @@
 use std::sync::Weak;
 
 use cyber_core::hooks::{
-    HookAction, HookCatalog, HookDecision, HookDefinition, HookEvent, HookIdentity, HookLocation,
-    HookOutcome,
+    HookAction, HookCatalog, HookDecision, HookDefinition, HookEvent, HookOutcome,
 };
 use cyber_server::runtime::{LifecycleHook, LifecycleVerdict};
 use serde_json::{Map, Value, json};
@@ -12,20 +11,33 @@ use tokio_util::sync::CancellationToken;
 
 use crate::BuiltinHost;
 use crate::hook_commands::HookCommandReport;
-use crate::tool_hooks::lifecycle_event;
+use crate::tool_hooks::HookOwner;
 use crate::tools::ToolError;
 
 /// Events whose synthesized deny/block must not read as a decision: observational
-/// events ignore decisions, and a Stop block means "continue". An unavailable
-/// fail_closed handler still refuses the owner's next effect; any other one, even
-/// when its runner forced the failure closed (trust or launch re-authorization),
-/// only leaves a notice.
+/// events (Post* included) ignore decisions, and a Stop block means "continue". An
+/// unavailable fail_closed handler still refuses the owner's next effect; any other
+/// one, even when its runner forced the failure closed (trust or launch
+/// re-authorization), only leaves a notice.
 const DISTINCT_UNAVAILABLE: &[&str] = &[
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "Notification",
+    "ElicitationResult",
     "SubagentStop",
     "Stop",
     "StopFailure",
     "SessionStart",
+    "SessionEnd",
     "JobEnded",
+    "TaskCreated",
+    "TaskCompleted",
+    "Interrupt",
+    "PostModelSwitch",
+    "PreCompact",
+    "PostCompact",
+    "InstructionsLoaded",
 ];
 
 /// Lifecycle events the runtime dispatches through its narrow host port.
@@ -34,20 +46,62 @@ const RUNTIME_EVENTS: &[&str] = &[
     "StopFailure",
     "UserPromptSubmit",
     "SessionStart",
+    "SessionEnd",
     "JobEnded",
+    "TaskCreated",
+    "TaskCompleted",
+    "Interrupt",
+    "PreModelSwitch",
+    "PostModelSwitch",
+    "PreCompact",
+    "PostCompact",
+    "PostToolBatch",
+    "InstructionsLoaded",
 ];
 
-/// Events whose additional_context the runtime admits as a system message.
-const CONTEXT_EVENTS: &[&str] = &["UserPromptSubmit", "SessionStart"];
+/// Events whose additional_context the runtime applies: lifecycle context with its
+/// prompt or first Turn, tool-event and PostToolBatch context with the Turn's
+/// settlement, and PreCompact context in the summary instructions.
+const CONTEXT_EVENTS: &[&str] = &[
+    "UserPromptSubmit",
+    "SessionStart",
+    "PreToolUse",
+    "PermissionRequest",
+    "PermissionDenied",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "PreCompact",
+];
 
-pub(crate) fn admits_context(event: &HookEvent) -> bool {
+/// Events whose `continue: false` the runtime applies by ending the Drain after the
+/// current Turn (Stop: instead of any continuation).
+const CONTINUE_EVENTS: &[&str] = &[
+    "Stop",
+    "SessionStart",
+    "PreToolUse",
+    "PermissionRequest",
+    "PermissionDenied",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+];
+
+fn admits_context(event: &HookEvent) -> bool {
     CONTEXT_EVENTS.contains(&event.event())
+}
+
+/// A decision carries context or a stop request this event cannot apply yet; the
+/// dispatcher notices it and a fail_closed handler refuses rather than drop it.
+pub(crate) fn unapplied_effect(event: &HookEvent, decision: &HookDecision) -> bool {
+    (decision.additional_context.is_some() && !admits_context(event))
+        || (decision.continuation == Some(false) && !CONTINUE_EVENTS.contains(&event.event()))
 }
 
 /// Prepare a fixed-input report for merging. A synthesized unavailable decision on a
 /// DISTINCT_UNAVAILABLE event is dropped (fail_closed handlers were already refused
-/// by `observed_unavailable`), and admitted context is tagged with its hook id
-/// before concatenation erases the source.
+/// by `observed_unavailable`), and admitted context and a stop request's reason are
+/// tagged with their hook id before concatenation erases the source.
 pub(crate) fn mergeable_report(
     event: &HookEvent,
     definition: &HookDefinition,
@@ -56,15 +110,20 @@ pub(crate) fn mergeable_report(
     if synthesized_unavailable(event, &report) {
         report.decision = HookDecision::default();
     }
+    let id = definition
+        .handler
+        .id
+        .as_deref()
+        .unwrap_or(&definition.digest);
     if admits_context(event)
         && let Some(context) = report.decision.additional_context.take()
     {
-        let id = definition
-            .handler
-            .id
-            .as_deref()
-            .unwrap_or(&definition.digest);
         report.decision.additional_context = Some(format!("[hook {id}] {context}"));
+    }
+    if report.decision.continuation == Some(false) {
+        let reason = report.decision.stop_reason.take();
+        let reason = reason.as_deref().unwrap_or("continue: false");
+        report.decision.stop_reason = Some(format!("[hook {id}] {reason}"));
     }
     report
 }
@@ -100,52 +159,41 @@ impl BuiltinHost {
         if !RUNTIME_EVENTS.contains(&hook.kind.as_str()) {
             return Err(format!("{} is not a runtime lifecycle hook", hook.kind));
         }
-        if self.hook_config.get().is_none() {
-            return Ok(LifecycleVerdict::default());
-        }
-        let identity = HookIdentity {
+        let owner = HookOwner {
             session_id: hook.session_id,
-            location: HookLocation {
-                directory: hook.directory.into(),
-                workspace: None,
-            },
-            project_id: "global".into(),
+            directory: hook.directory,
             agent: hook.agent,
             mode: hook.mode,
         };
-        let event = lifecycle_event(&hook.kind, identity, hook.fields).map_err(failure)?;
-        let Some((resolved, catalog)) = self.hook_catalog(&event).map_err(failure)? else {
-            return Ok(LifecycleVerdict::default());
-        };
-        if !configured(&catalog, &event) {
-            return Ok(LifecycleVerdict::default());
-        }
-        let max_stop_continuations = catalog.settings.max_stop_continuations;
-        let decision =
-            Box::pin(self.dispatch_catalog(event, &hook.subject, &resolved, catalog, cancel))
-                .await
-                .map_err(failure)?;
-        Ok(LifecycleVerdict {
-            decision,
-            max_stop_continuations,
-            configured: true,
-        })
+        let dispatched = self
+            .dispatch_owned(&hook.kind, &owner, hook.fields, &hook.subject, cancel)
+            .await
+            .map_err(failure)?;
+        Ok(
+            dispatched.map_or_else(LifecycleVerdict::default, |(decision, cap)| {
+                LifecycleVerdict {
+                    decision,
+                    max_stop_continuations: cap,
+                    configured: true,
+                }
+            }),
+        )
     }
 
     /// SubagentStart runs before any child effect. Deny refuses the launch even in
     /// bypass Mode; allow and ask never grant or prompt for delegation.
     pub(crate) async fn subagent_start_hooks(
         &self,
-        identity: HookIdentity,
+        owner: &HookOwner,
         agent: &str,
         fields: Map<String, Value>,
         cancel: CancellationToken,
     ) -> Result<(), ToolError> {
-        if self.hook_config.get().is_none() {
-            return Ok(());
-        }
-        let event = lifecycle_event("SubagentStart", identity, fields)?;
-        let decision = self.dispatch_tool_hooks(event, agent, cancel).await?;
+        let decision = self
+            .dispatch_owned("SubagentStart", owner, fields, agent, cancel)
+            .await?
+            .map(|(decision, _)| decision)
+            .unwrap_or_default();
         match decision.decision {
             Some(HookAction::Deny | HookAction::Block) => Err(ToolError::Failed(format!(
                 "blocked by hook {}",
@@ -164,10 +212,42 @@ impl BuiltinHost {
     }
 }
 
+impl BuiltinHost {
+    /// WorktreeCreate runs after worktree permission and before any git effect. A
+    /// deny, or an unavailable `fail_closed` handler, refuses the creation; allow
+    /// and ask never grant it.
+    pub(crate) async fn worktree_create_hooks(
+        &self,
+        inv: &cyber_server::runtime::Invocation,
+        name: &str,
+        cancel: CancellationToken,
+    ) -> Result<(), ToolError> {
+        let fields = json!({"name": name});
+        let decision = self
+            .dispatch_owned(
+                "WorktreeCreate",
+                &HookOwner::of(inv),
+                fields.as_object().cloned().unwrap_or_default(),
+                name,
+                cancel,
+            )
+            .await?
+            .map(|(decision, _)| decision)
+            .unwrap_or_default();
+        match decision.decision {
+            Some(HookAction::Deny | HookAction::Block) => Err(ToolError::Failed(format!(
+                "blocked by hook {}",
+                decision.reason.as_deref().unwrap_or("policy")
+            ))),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Captured identity for the observational SubagentStop event at child handback.
 pub(crate) struct SubagentStop {
     pub(crate) host: Weak<BuiltinHost>,
-    pub(crate) identity: HookIdentity,
+    pub(crate) owner: HookOwner,
     pub(crate) agent_type: String,
     pub(crate) child_session_id: String,
     pub(crate) subagent_name: Option<String>,
@@ -200,13 +280,15 @@ impl SubagentStop {
             "status": status,
             "error": error,
         });
-        let event = lifecycle_event(
-            "SubagentStop",
-            self.identity.clone(),
-            fields.as_object().cloned().unwrap_or_default(),
-        )?;
+        let fields = fields.as_object().cloned().unwrap_or_default();
         match host
-            .dispatch_tool_hooks(event, &self.agent_type, cancel)
+            .dispatch_owned(
+                "SubagentStop",
+                &self.owner,
+                fields,
+                &self.agent_type,
+                cancel,
+            )
             .await
         {
             Ok(_) => result,
@@ -220,10 +302,12 @@ impl SubagentStop {
 }
 
 /// Any definition exists for this event, matched or not.
+/// Whether `event` has definitions to run, or policy-skipped ones to report.
 pub(crate) fn configured(catalog: &HookCatalog, event: &HookEvent) -> bool {
     catalog
         .definitions
         .iter()
+        .chain(catalog.skipped_for(event.event()))
         .any(|definition| definition.event == event.event())
 }
 

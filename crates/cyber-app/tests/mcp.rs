@@ -4390,6 +4390,22 @@ async fn elicitation_app(
     App,
     cyber_server::runtime::TurnContext,
 ) {
+    elicitation_app_with(form, interactive, remote, json!({})).await
+}
+
+/// [`elicitation_app`] with `extra` top-level configuration such as `hooks`.
+async fn elicitation_app_with(
+    form: serde_json::Value,
+    interactive: bool,
+    remote: serde_json::Value,
+    extra: serde_json::Value,
+) -> (
+    mcp_http::McpHttp,
+    ScriptedProvider,
+    tempfile::TempDir,
+    App,
+    cyber_server::runtime::TurnContext,
+) {
     let http = mcp_http::McpHttp::start(mcp_http::Behavior {
         elicit: Some(form),
         ..mcp_http::Behavior::default()
@@ -4401,11 +4417,14 @@ async fn elicitation_app(
     if let (Some(server), serde_json::Value::Object(extra)) = (server.as_object_mut(), remote) {
         server.extend(extra);
     }
-    let config = json!({
+    let mut config = json!({
         "permissions":"allow",
         "providers":{"test":{"api":{"type":"openai-compatible","url":provider.url,"settings":{"auth":"none"}},"models":{"main":{}}}},
         "mcp":{"remote":server}
     });
+    if let (Some(config), serde_json::Value::Object(extra)) = (config.as_object_mut(), extra) {
+        config.extend(extra);
+    }
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().canonicalize().unwrap();
     std::fs::create_dir_all(directory.join("config")).unwrap();
@@ -4534,6 +4553,53 @@ async fn remote_elicitation_through_app_host_accept_decline_cancel() {
         assert!(data.to_string().contains("MCP server remote"), "{data}");
     }
     assert!(http.awaiting_replies().is_empty());
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    close(app, &turn).await;
+}
+
+#[tokio::test]
+async fn elicitation_hook_deny_declines_through_the_real_pool() {
+    let observed =
+        r#"cat > elicitation.json; printf '%s' '{"decision":"deny","reason":"no forms"}'"#;
+    let result = "cat > elicitation-result.json; printf '{}'";
+    let hooks = json!({"hooks":{
+        "Elicitation":[{"matcher":"remote","hooks":[{"type":"command","id":"forms","command":observed}]}],
+        "ElicitationResult":[{"hooks":[{"type":"command","id":"result","command":result}]}]
+    }});
+    let (http, _provider, root, app, turn) = elicitation_app_with(
+        elicitation_form("Choose the deployment"),
+        true,
+        json!({}),
+        hooks,
+    )
+    .await;
+    let session = turn.session_id.clone();
+    let (close_url, stop, server) = listener(&app).await;
+    let base = close_url.replace("/mcp/close", "");
+    submit_prompt(&session, &base, "ask the remote server").await;
+    wait_idle(&app, &session).await;
+    let replies = http.replies("elicit-1");
+    assert_eq!(replies.len(), 1, "{:#?}", http.requests());
+    assert_eq!(replies[0].body["result"], json!({"action":"decline"}));
+    // The user was never asked.
+    assert!(question_events(&app).is_empty());
+    let receipts = app.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(receipts.len(), 2, "{receipts:#?}");
+    let directory = root.path().canonicalize().unwrap();
+    let event: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("elicitation.json")).unwrap())
+            .unwrap();
+    assert_eq!(event["event"], "Elicitation");
+    assert_eq!(event["mcp_server_name"], "remote");
+    assert_eq!(event["message"], "Choose the deployment");
+    assert!(event["requested_schema"]["properties"]["environment"].is_object());
+    assert_eq!(event["elicitation_mode"], "form");
+    let outcome: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("elicitation-result.json")).unwrap())
+            .unwrap();
+    assert_eq!(outcome["event"], "ElicitationResult");
+    assert_eq!(outcome["action"], "decline");
     stop.send(()).unwrap();
     server.await.unwrap();
     close(app, &turn).await;

@@ -10,6 +10,7 @@ mod hooks;
 mod intelligence;
 mod jsonc;
 mod load;
+mod managed;
 mod mcp;
 mod merge;
 mod subst;
@@ -36,6 +37,7 @@ pub use load::{
     LoadRequest, RawHookSection, ensure_global_config, load, project_root, trust_report,
     withheld_hook_sections,
 };
+pub use managed::{MANAGED_POLICY_DIR_ENV, ManagedPolicy, os_managed_dir};
 pub use mcp::{
     McpOAuth, McpOAuthSetting, McpServer, McpSettings, McpToolFilter, OAUTH_REDIRECT_PORT_MIN,
     transport_owned_header,
@@ -93,6 +95,8 @@ pub struct Resolved {
     pub trust: TrustReport,
     /// Labels of the layers that were merged, lowest priority first.
     pub layers: Vec<String>,
+    /// OS-managed policy state; its hooks are merged with `managed:` origins.
+    pub managed: ManagedPolicy,
 }
 
 /// Merge raw file layers without substitution, validation or trust side effects.

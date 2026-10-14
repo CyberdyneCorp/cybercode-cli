@@ -294,6 +294,7 @@ pub(super) fn launch_child(
             child_settling: false,
             cancel: cancel.clone(),
             follow_up: false,
+            deleting: false,
         },
     );
     tokio::spawn(drain::run(Arc::clone(inner), id.into(), false, cancel));

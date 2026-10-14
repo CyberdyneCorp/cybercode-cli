@@ -6,6 +6,12 @@ use cyber_core::config::Resolved;
 use cyber_core::hooks::{HookDefinition, HookEvent};
 const LIMIT: usize = 1024 * 1024;
 
+/// A durably admitted Session hook execution and the definition it admitted.
+pub(crate) struct Admitted {
+    pub owner: cyber_server::runtime::HookExecution,
+    pub definition: HookDefinition,
+}
+
 pub(crate) fn log_io(resolved: &Resolved) -> bool {
     resolved.value["telemetry"]["log_hook_io"]
         .as_bool()

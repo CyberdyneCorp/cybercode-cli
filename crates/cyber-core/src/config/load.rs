@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use super::gate::{self, canonical_json};
 use super::merge::{self, Sources};
 use super::subst::{self, SubstContext};
-use super::{ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, validate};
+use super::{ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, validate};
 use crate::env::EnvSource;
 use crate::paths::Paths;
 use crate::trust::TrustStore;
@@ -66,6 +66,12 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     if !issues.is_empty() {
         return Err(ConfigError::Invalid { issues });
     }
+    // Policy layers apply last and are read only from the OS-managed directory.
+    let managed = managed::read(req.env, &mut warnings);
+    for (label, hooks) in managed.hooks {
+        merge::merge_layer(&mut value, &json!({ "hooks": hooks }), &label, &mut sources);
+        labels.push(label);
+    }
     // Keep a template only where its project layer still supplies the merged leaf.
     let templates = templates
         .into_iter()
@@ -79,6 +85,7 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         warnings,
         trust,
         layers: labels,
+        managed: managed.policy,
     })
 }
 

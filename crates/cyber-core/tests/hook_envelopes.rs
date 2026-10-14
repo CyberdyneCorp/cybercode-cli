@@ -12,6 +12,7 @@ fn identity(directory: &std::path::Path) -> HookIdentity {
         project_id: "prj_example".into(),
         agent: "coder".into(),
         mode: "accept-edits".into(),
+        parent_session_id: None,
     }
 }
 
@@ -54,6 +55,7 @@ fn payload_cannot_spoof_any_common_envelope_field() {
         "mode",
         "timestamp",
         "synthetic",
+        "parent_session_id",
     ] {
         let mut payload = serde_json::Map::new();
         payload.insert(key.into(), json!("spoofed"));
@@ -124,6 +126,7 @@ fn synthetic_payloads_cannot_supply_envelope_fields_or_nonobjects() {
         "mode",
         "timestamp",
         "synthetic",
+        "parent_session_id",
     ] {
         let error = synthetic(directory.path(), json!({key:"spoofed"})).unwrap_err();
         assert!(error.contains(key), "{error}");
@@ -198,6 +201,7 @@ fn malformed_identity_and_unknown_events_are_refused() {
     assert!(HookEvent::new("Stop", identity(directory.path()), -1, fields(json!({}))).is_err());
     for field in [
         "session",
+        "parent",
         "project",
         "agent",
         "mode",
@@ -207,6 +211,7 @@ fn malformed_identity_and_unknown_events_are_refused() {
         let mut identity = identity(directory.path());
         match field {
             "session" => identity.session_id = "foreign".into(),
+            "parent" => identity.parent_session_id = Some("foreign".into()),
             "project" => identity.project_id = "foreign".into(),
             "agent" => identity.agent.clear(),
             "mode" => identity.mode = "invalid".into(),
@@ -218,5 +223,61 @@ fn malformed_identity_and_unknown_events_are_refused() {
             HookEvent::new("Stop", identity, 1, fields(json!({}))).is_err(),
             "{field}"
         );
+    }
+}
+
+#[test]
+fn parent_session_identity_is_captured_and_survives_chained_rewrites() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = identity(directory.path());
+    let mut identity = root.clone();
+    assert!(
+        HookEvent::new("Stop", root, 1, fields(json!({})))
+            .unwrap()
+            .as_json()
+            .get("parent_session_id")
+            .is_none(),
+        "a root Session carries no parent"
+    );
+    identity.parent_session_id = Some("ses_parent".into());
+    identity.location.workspace = Some("/checkout".into());
+    let event = HookEvent::new(
+        "PreToolUse",
+        identity,
+        123,
+        fields(json!({"tool_name":"bash","tool_input":{"command":"first"},"call_id":"call_1"})),
+    )
+    .unwrap();
+    assert_eq!(event.as_json()["parent_session_id"], "ses_parent");
+    let first = event.with_tool_input(json!({"command":"second"})).unwrap();
+    let second = first.with_tool_input(json!({"command":"third"})).unwrap();
+    for rewritten in [&first, &second] {
+        assert_eq!(rewritten.as_json()["parent_session_id"], "ses_parent");
+        assert_eq!(rewritten.as_json()["project_id"], "prj_example");
+        assert_eq!(rewritten.as_json()["location"]["workspace"], "/checkout");
+        assert_eq!(
+            rewritten.identity().parent_session_id.as_deref(),
+            Some("ses_parent")
+        );
+    }
+    assert_eq!(second.as_json()["tool_input"]["command"], "third");
+}
+
+#[test]
+fn payload_cannot_forge_project_workspace_or_parent_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    for payload in [
+        json!({"project_id":"prj_forged"}),
+        json!({"location":{"directory":"/elsewhere","workspace":"/forged"}}),
+        json!({"parent_session_id":"ses_forged"}),
+    ] {
+        let error = HookEvent::new(
+            "PostToolBatch",
+            identity(directory.path()),
+            1,
+            fields(payload.clone()),
+        )
+        .unwrap_err();
+        assert!(error.contains("cannot replace envelope field"), "{error}");
     }
 }

@@ -129,6 +129,7 @@ impl BuiltinHost {
             location: super::canonical(Path::new(&inv.directory)),
             cancel: tokio_util::sync::CancellationToken::new(),
             hook_decision: None,
+            denial: Default::default(),
         };
         super::review::target_block(&ctx, &reader, arguments).await
     }
