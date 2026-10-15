@@ -4559,6 +4559,8 @@ async fn remote_elicitation_through_app_host_accept_decline_cancel() {
 }
 
 #[tokio::test]
+// The recording hooks are POSIX shell commands; Windows runs hooks through PowerShell.
+#[cfg(unix)]
 async fn elicitation_hook_deny_declines_through_the_real_pool() {
     let observed =
         r#"cat > elicitation.json; printf '%s' '{"decision":"deny","reason":"no forms"}'"#;
