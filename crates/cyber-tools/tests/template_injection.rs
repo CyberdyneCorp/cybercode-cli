@@ -66,7 +66,21 @@ async fn expand(f: &support::Fixture, mode: &str, template: &str) -> String {
     }
 }
 
+/// Windows has no sandbox route, so these run under explicit full access with an
+/// explicitly selected Git Bash: a bare `bash` resolves to the WSL launcher in System32.
 fn fixture(permissions: Value) -> support::Fixture {
+    #[cfg(windows)]
+    let f = {
+        let bash = std::path::PathBuf::from(std::env::var_os("ProgramFiles").unwrap())
+            .join("Git/bin/bash.exe");
+        assert!(bash.is_file(), "native test requires installed Git Bash");
+        support::Fixture::with_policy(
+            &bash.display().to_string(),
+            cyber_sandbox::find_helper(),
+            Some("full-access".into()),
+        )
+    };
+    #[cfg(not(windows))]
     let f = support::Fixture::native_git();
     f.set_config(json!({ "permissions": permissions }));
     f

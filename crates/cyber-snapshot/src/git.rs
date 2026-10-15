@@ -28,6 +28,28 @@ const GIT_ENV: &[&str] = &[
     "GIT_NAMESPACE",
 ];
 
+/// Git for Windows does not accept verbatim (`\\?\`) paths as `GIT_DIR`, work tree or
+/// alternates, and `canonicalize` always returns them; use the equivalent plain form.
+/// The worktree hash keeps using the canonical spelling, so shadow directories are stable.
+#[cfg(windows)]
+pub(crate) fn git_path(path: &Path) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{unc}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn git_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 impl Shadow {
     pub fn locate(root: &Path, location: &Path) -> Option<Self> {
         let project = cyber_core::project::identify(location);
@@ -42,9 +64,9 @@ impl Shadow {
             .to_string_lossy()
             .replace('\\', "/");
         Some(Self {
-            git_dir: root.join(&project.id).join(hex),
-            worktree,
-            common_dir,
+            git_dir: git_path(&root.join(&project.id).join(hex)),
+            worktree: git_path(&worktree),
+            common_dir: git_path(&common_dir),
             pathspec: if rel.is_empty() { ".".into() } else { rel },
         })
     }
@@ -303,7 +325,7 @@ pub(crate) async fn gc(git_dir: &Path) {
         cmd.env_remove(name);
     }
     let _ = cmd
-        .env("GIT_DIR", git_dir)
+        .env("GIT_DIR", git_path(git_dir))
         .args(["gc", "--prune=7.days", "--quiet"])
         .stdin(Stdio::null())
         .output()
@@ -326,4 +348,22 @@ fn escape(path: &str) -> String {
         s.push(c);
         s
     })
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::git_path;
+    use std::path::Path;
+
+    #[test]
+    fn verbatim_paths_reach_git_in_plain_form() {
+        for (verbatim, plain) in [
+            (r"\\?\C:\data\snapshot", r"C:\data\snapshot"),
+            (r"\\?\UNC\server\share\repo", r"\\server\share\repo"),
+            (r"C:\already\plain", r"C:\already\plain"),
+            (r"\\?\Volume{0}\x", r"\\?\Volume{0}\x"),
+        ] {
+            assert_eq!(git_path(Path::new(verbatim)), Path::new(plain));
+        }
+    }
 }

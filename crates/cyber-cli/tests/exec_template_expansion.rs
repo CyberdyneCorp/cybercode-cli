@@ -132,15 +132,19 @@ fn root_with(provider: &Provider) -> (tempfile::TempDir, PathBuf, String) {
     git(&repo, &["add", "a.txt"]);
     git(&repo, &["commit", "--quiet", "-m", "init"]);
     let head = git(&repo, &["rev-parse", "--short", "HEAD"]);
-    std::fs::write(
-        root.join("cyber/config/cyber.jsonc"),
-        json!({
-            "permissions":"allow",
-            "providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let mut config = json!({
+        "permissions":"allow",
+        "providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}
+    });
+    // The full-access run needs a real shell: a bare `bash` is the WSL launcher on
+    // Windows runners and the `/bin/sh` default does not exist there.
+    if cfg!(windows) {
+        let bash =
+            PathBuf::from(std::env::var_os("ProgramFiles").unwrap()).join("Git/bin/bash.exe");
+        assert!(bash.is_file(), "native test requires installed Git Bash");
+        config["shell"] = json!(bash.display().to_string());
+    }
+    std::fs::write(root.join("cyber/config/cyber.jsonc"), config.to_string()).unwrap();
     std::fs::write(
         root.join("cyber/config/commands/head.md"),
         "Head is !`git rev-parse --short HEAD` now.",

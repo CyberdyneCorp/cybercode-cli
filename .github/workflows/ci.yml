@@ -153,10 +153,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-tools --test template_injection
       # Production path: `cyber exec --command` template injection fails closed without
-      # a Windows sandbox and runs only under explicit full access.
+      # a Windows sandbox and runs only under explicit full access. The run snapshots a
+      # git repository, so the shadow repository's plain-path units run first.
       - name: Native command template injection through exec
         if: ${{ !cancelled() }}
-        run: cargo test --locked -p cyber-cli --test exec_template_expansion
+        run: |
+          cargo test --locked -p cyber-snapshot --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test exec_template_expansion
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # Remote skill sources: cache paths, staging swap and trust through the app host
       # with an in-process fetcher; the index path validation runs in the library units.
       - name: Native remote skill sources

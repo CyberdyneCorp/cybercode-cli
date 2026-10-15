@@ -2961,14 +2961,24 @@ async fn get_skills_reports_diagnostics_scope_and_permission_effect() {
     assert_eq!(deploy["source"], json!(project.display().to_string()));
     assert_eq!(deploy["description"], "Project deploy");
     assert_eq!(deploy["permission"], "deny");
-    let notice = deploy["diagnostics"].to_string();
+    // Joined values, not JSON text: escaping would double Windows path separators.
+    let joined = |entry: &Value| {
+        entry["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let notice = joined(&deploy);
     assert!(notice.contains("replaces skill deploy"), "{notice}");
     assert!(notice.contains(&project.display().to_string()), "{notice}");
     assert!(notice.contains(&global.display().to_string()), "{notice}");
     let invalid = entry(&ops, "broken", "invalid");
     assert_eq!(invalid["scope"], "project");
     assert_eq!(invalid["permission"], Value::Null);
-    let parse = invalid["diagnostics"].to_string();
+    let parse = joined(&invalid);
     assert!(
         parse.contains(&broken.join("SKILL.md").display().to_string()),
         "{parse}"
@@ -2981,6 +2991,7 @@ async fn get_skills_reports_diagnostics_scope_and_permission_effect() {
     assert!(
         ops["command_issues"]
             .to_string()
+            .replace("\\\\", "\\")
             .contains(&repo.join(".cyber/commands/bad.md").display().to_string()),
         "{ops}"
     );
@@ -3078,6 +3089,11 @@ impl TemplateApp {
         }
         if cfg!(windows) {
             config["sandbox"] = json!({"policy":"full-access"});
+            // A bare `bash` (or the `/bin/sh` default) is not Git Bash on Windows.
+            let bash = std::path::PathBuf::from(std::env::var_os("ProgramFiles").unwrap())
+                .join("Git/bin/bash.exe");
+            assert!(bash.is_file(), "native test requires installed Git Bash");
+            config["shell"] = json!(bash.display().to_string());
         }
         std::fs::write(paths.config.join("cyber.json"), config.to_string()).unwrap();
         let application = app(&root).await;
@@ -3309,12 +3325,12 @@ async fn command_shell_injection_output_is_bounded_and_never_spilled() {
     assert!(
         big.starts_with("Big: credential-free-line\n"),
         "{}",
-        &big[..80]
+        &big[..big.len().min(80)]
     );
     assert!(
         big.ends_with("[output truncated at 20 KiB]"),
         "{}",
-        &big[big.len() - 80..]
+        &big[big.len().saturating_sub(80)..]
     );
     assert!(big.len() <= 20 * 1024 + 64, "{}", big.len());
     assert!(!big.contains("full output at"));

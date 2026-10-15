@@ -578,7 +578,7 @@ mod tests {
         found
             .diagnostics
             .iter()
-            .any(|d| d.to_string().contains(needle))
+            .any(|d| d.to_string().replace('\\', "/").contains(needle))
     }
 
     #[cfg(unix)]

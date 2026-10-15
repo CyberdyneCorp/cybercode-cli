@@ -1,5 +1,9 @@
 # P1 implementation status
 
+## Skills and commands: Windows CI fixes (2026-10-15)
+
+The first native Windows run of the skills commit failed 12 new tests. Fixes: session snapshots now pass plain paths to git on Windows, because Git for Windows rejects the verbatim (`\\?\`) `GIT_DIR` that `canonicalize` returns, and `cyber exec` in a git repository under a verbatim data root failed with `git write-tree: not a git repository` (regression: `cyber-snapshot` `verbatim_paths_reach_git_in_plain_form`, Windows only, plus `exec_template_expansion`). Shell injection keeps the bash tool's shell and sandbox: with no Windows sandbox it is `[unavailable: sandbox]`, and the native full-access tests now select Git Bash explicitly, since a bare `bash` resolves to the WSL launcher in System32. Diagnostics assertions no longer match against JSON-escaped or slash-separated paths. Verified on macOS (affected suites, workspace Clippy, fmt) and with the windows-gnu Clippy type-check; the native run is pending CI.
+
 ## Skills and commands: whole-tree re-validation (2026-10-14)
 
 Re-validation of the skills and commands work (increments 1–4 plus the shell injection gates below) on macOS, no repairs needed: workspace tests 2,541 passed, 0 failed, 4 ignored (203 binaries); workspace all-target Clippy with warnings denied; `x86_64-pc-windows-gnu` all-target Clippy for `cyber-core`, `cyber-tools`, `cyber-server`, `cyber-app`, `cyber-cli` and `cyber-tui` (stub MinGW, type-check only); `cargo fmt --check`; `generate_sdk.py --check`, TS SDK typecheck and 82 SDK tests; `openspec validate --all --strict` 62/62; spec lint 0 errors, 21 warnings. The P1 audit lists 214 requirements, matching `spec_inventory.py` (227 P1 minus 13 deferred editor requirements). Real-model review quality (needs a live model), plugin skills/commands, native Windows runs and lifecycle acceptance remain open; CI was not observed.
