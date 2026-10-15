@@ -1295,3 +1295,135 @@ fn hook_policy_cannot_be_set_by_user_project_or_cli_layers() {
     let overrides = vec!["policy.hooks.managed_only=true".to_string()];
     assert!(config::load(&f.request(&f.repo, &overrides)).is_err());
 }
+
+const MCP_SERVE_IGNORED: &str = "mcp_serve is ignored outside the global config";
+
+#[test]
+fn mcp_serve_is_read_from_the_global_config_with_defaults() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"mcp_serve":{"enabled":false,"max_mode":"plan","limits":{"max_depth":3}}})
+            .to_string(),
+    );
+    let resolved = f.load().unwrap();
+    assert!(
+        !resolved.warnings.iter().any(|w| w.contains("mcp_serve")),
+        "{:?}",
+        resolved.warnings
+    );
+    let settings = config::McpServeSettings::from_config(&resolved.value).unwrap();
+    assert!(!settings.enabled);
+    assert_eq!(settings.max_mode, "plan");
+    assert_eq!(settings.limits.max_depth, 3);
+    assert_eq!(settings.limits.sessions_per_connection, 8);
+    assert_eq!(settings.limits.max_waits, 8);
+    assert_eq!(settings.limits.max_running_sessions, 16);
+    assert_eq!(settings.limits.max_wait_seconds, 600);
+
+    let defaults = config::McpServeSettings::from_config(&json!({})).unwrap();
+    assert!(defaults.enabled);
+    assert_eq!(defaults.max_mode, "default");
+    for (mode, ceiling) in [("plan", "plan"), ("auto", "auto"), ("bypass", "auto")] {
+        let settings = config::McpServeSettings::from_config(&json!({ "mode": mode })).unwrap();
+        assert_eq!(settings.max_mode, ceiling, "global mode {mode}");
+    }
+}
+
+#[test]
+fn mcp_serve_outside_the_global_config_is_ignored_with_a_warning() {
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"mcp_serve":{"max_mode":"plan"},
+                "profiles":{"ci":{"mcp_serve":{"max_mode":"auto"}}}})
+        .to_string(),
+    );
+    f.write(
+        "cyber.jsonc",
+        &json!({"mode":"accept-edits","mcp_serve":{"max_mode":"auto"}}).to_string(),
+    );
+    f.write(
+        ".cyber/cyber.local.jsonc",
+        &json!({"mcp_serve":{"enabled":false}}).to_string(),
+    );
+    f.env.insert(
+        "CYBER_CONFIG_CONTENT".into(),
+        json!({"mcp_serve":{"limits":{"max_depth":4}}}).to_string(),
+    );
+    let overrides = vec!["mcp_serve.limits.max_waits=1".to_string()];
+    let mut req = f.request(&f.repo, &overrides);
+    req.profile = Some("ci");
+    let resolved = config::load(&req).unwrap();
+    let ignored = resolved
+        .warnings
+        .iter()
+        .filter(|w| *w == MCP_SERVE_IGNORED)
+        .count();
+    assert_eq!(ignored, 1, "{:?}", resolved.warnings);
+    assert!(
+        resolved
+            .sources
+            .iter()
+            .filter(|(pointer, _)| pointer.starts_with("/mcp_serve"))
+            .all(|(_, label)| label.starts_with("global:")),
+        "{:?}",
+        resolved.sources
+    );
+    let settings = config::McpServeSettings::from_config(&resolved.value).unwrap();
+    assert!(settings.enabled);
+    assert_eq!(settings.max_mode, "plan");
+    assert_eq!(settings.limits.max_depth, 2);
+    assert_eq!(settings.limits.max_waits, 8);
+
+    // The ceiling follows the user's global `mode`, never a project default.
+    let global = config::load_global(&f.request(&f.repo, &[])).unwrap();
+    assert_eq!(global["mode"], "default");
+    assert_eq!(
+        config::McpServeSettings::from_config(&global)
+            .unwrap()
+            .max_mode,
+        "plan"
+    );
+}
+
+#[test]
+fn invalid_mcp_serve_values_name_the_key() {
+    for (value, key) in [
+        (
+            json!({"limits":{"max_depth":9}}),
+            "mcp_serve.limits.max_depth",
+        ),
+        (
+            json!({"limits":{"max_wait_seconds":30}}),
+            "mcp_serve.limits.max_wait_seconds",
+        ),
+        (
+            json!({"limits":{"sessions_per_connection":0}}),
+            "mcp_serve.limits.sessions_per_connection",
+        ),
+        (
+            json!({"limits":{"max_waits":33}}),
+            "mcp_serve.limits.max_waits",
+        ),
+        (
+            json!({"limits":{"max_running_sessions":"many"}}),
+            "mcp_serve.limits.max_running_sessions",
+        ),
+        (json!({"limits":{"burst":1}}), "mcp_serve.limits.burst"),
+        (json!({"max_mode":"bypass"}), "mcp_serve.max_mode"),
+        (json!({"max_mode":"turbo"}), "mcp_serve.max_mode"),
+        (json!({"enabled":"yes"}), "mcp_serve.enabled"),
+        (json!({"port":4747}), "mcp_serve.port"),
+        (json!(true), "mcp_serve"),
+    ] {
+        let f = Fixture::new();
+        f.write(
+            "global:cyber.jsonc",
+            &json!({ "mcp_serve": value }).to_string(),
+        );
+        let error = f.load().unwrap_err().to_string();
+        assert!(error.contains(key), "{value}: {error}");
+        assert!(config::load_global(&f.request(&f.repo, &[])).is_err());
+    }
+}

@@ -297,7 +297,10 @@ export type DurableRef = {
 
 export type Enforcement = "soft" | "reserved";
 
-/** The JSON body of every declared failure. */
+/**
+ * The JSON body of every declared failure. Some failures add `reason`, a machine-readable
+ * refinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.
+ */
 export type ErrorBody = {
   _tag: string;
   message: string;
@@ -307,6 +310,7 @@ export type ErrorBody = {
   paths?: string[] | null;
   /** Capability group unavailable in this host or phase. */
   service?: string | null;
+  [key: string]: unknown;
 };
 
 /** One event on any stream. */
@@ -1141,7 +1145,10 @@ export type SessionRow = {
   title: string;
   directory: string;
   parent_id?: string | null;
+  agent: string;
   model: string;
+  /** The selected permission mode. */
+  mode: string;
   archived: boolean;
   created_at: number;
   updated_at: number;

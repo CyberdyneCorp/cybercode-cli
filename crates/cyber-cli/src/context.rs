@@ -59,6 +59,12 @@ impl Context {
         Ok(config::load(&self.request())?)
     }
 
+    /// The defaults and global layers only: what global-only keys (`mcp_serve`) resolve
+    /// from, without reading the Location's project configuration.
+    pub fn global_config(&self) -> Result<Value, CliError> {
+        Ok(config::load_global(&self.request())?)
+    }
+
     pub fn hook_resolver(&self) -> std::sync::Arc<cyber_tools::HookConfigFn> {
         let paths = self.paths.clone();
         let home = self.home.clone();

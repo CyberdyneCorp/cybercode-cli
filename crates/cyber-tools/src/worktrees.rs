@@ -1163,6 +1163,7 @@ async fn run(
             "Setup cancelled",
         ));
     }
+    let depth = ctx.host.process_mcp_depth(&ctx.inv.session_id);
     let mut child = Process::spawn(
         &prepared.program,
         &prepared.args,
@@ -1178,6 +1179,7 @@ async fn run(
                 .kill_on_drop(true)
                 .env("CYBER", "1")
                 .env("CYBER_SESSION_ID", &ctx.inv.session_id)
+                .env("CYBER_MCP_DEPTH", &depth)
                 .env("CYBER_PROJECT_DIR", &ctx.location);
         },
     )

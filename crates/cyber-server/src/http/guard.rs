@@ -7,8 +7,11 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use super::envelope::query_value;
 use super::error::ApiError;
+use super::serve::PeerAddr;
 use super::{AppState, Transport};
 
 pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
@@ -29,6 +32,12 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         if req.method() == Method::OPTIONS {
             return preflight(origin);
         }
+    }
+    if transport != Transport::Embedded
+        && super::mcp_serve::is_endpoint(req.uri().path())
+        && let Err(error) = local_mcp_client(&req, transport)
+    {
+        return error.into_response();
     }
     if transport == Transport::Tcp
         && !public(req.uri().path())
@@ -51,6 +60,69 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
             .insert(header::VARY, HeaderValue::from_static("Origin"));
     }
     response
+}
+
+/// MCP serve accepts trusted local clients only (`mcp-server` → Local client trust model):
+/// loopback TCP peers or the Unix socket, local credentials (never Bearer), and a
+/// loopback `Host` against DNS rebinding.
+fn local_mcp_client(req: &Request, transport: Transport) -> Result<(), ApiError> {
+    let loopback_only = || {
+        ApiError::forbidden("MCP serve accepts only local clients on loopback or the Unix socket")
+            .with_reason("loopback_only")
+    };
+    let peer = req.extensions().get::<PeerAddr>();
+    if transport == Transport::Tcp && !peer.is_some_and(|peer| loopback_peer(peer.0.ip())) {
+        return Err(loopback_only());
+    }
+    let foreign = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .is_some_and(|value| !value.as_bytes().starts_with(b"Basic "));
+    if foreign {
+        return Err(loopback_only());
+    }
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| req.uri().authority().map(|a| a.as_str()));
+    if transport == Transport::Tcp && !host.is_some_and(loopback_host) {
+        return Err(ApiError::forbidden("MCP serve requires a loopback Host")
+            .with_reason("host_not_allowed"));
+    }
+    Ok(())
+}
+
+/// `127.0.0.0/8`, `::1` and their IPv4-mapped forms.
+pub fn loopback_peer(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
+    }
+}
+
+/// `localhost`, a `127.0.0.0/8` address or `[::1]`, each with an optional port.
+pub fn loopback_host(host: &str) -> bool {
+    let (name_ok, port) = match host.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
+        Some((ip, port)) => (
+            ip.parse::<Ipv6Addr>().is_ok_and(|ip| ip.is_loopback()),
+            port,
+        ),
+        None if host.starts_with('[') => return false,
+        None => {
+            let (name, port) = host.find(':').map_or((host, ""), |at| host.split_at(at));
+            let name_ok = name.eq_ignore_ascii_case("localhost")
+                || name.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_loopback());
+            (name_ok, port)
+        }
+    };
+    let port_ok = port.is_empty()
+        || port.strip_prefix(':').is_some_and(|digits| {
+            (1..=5).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
+        });
+    name_ok && port_ok
 }
 
 fn public(path: &str) -> bool {
@@ -149,5 +221,60 @@ mod tests {
             &headers,
             &[]
         ));
+    }
+
+    #[test]
+    fn loopback_peers_are_recognized() {
+        for ip in [
+            "127.0.0.1",
+            "127.1.2.3",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:127.9.9.9",
+        ] {
+            assert!(loopback_peer(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in [
+            "192.168.1.20",
+            "10.0.0.5",
+            "0.0.0.0",
+            "fe80::1",
+            "2001:db8::1",
+            "::ffff:192.168.1.20",
+            "::",
+        ] {
+            assert!(!loopback_peer(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    #[test]
+    fn loopback_hosts_are_recognized() {
+        for host in [
+            "localhost",
+            "LOCALHOST:4747",
+            "127.0.0.1",
+            "127.0.0.1:4747",
+            "127.200.1.1:80",
+            "[::1]",
+            "[::1]:4747",
+        ] {
+            assert!(loopback_host(host), "{host}");
+        }
+        for host in [
+            "attacker.example:4747",
+            "attacker.example",
+            "localhost.attacker.example",
+            "192.168.1.20:4747",
+            "[fe80::1]:4747",
+            "[::1",
+            "::1",
+            "localhost:",
+            "localhost:abc",
+            "localhost:4747:1",
+            "127.0.0.1:123456",
+            "",
+        ] {
+            assert!(!loopback_host(host), "{host}");
+        }
     }
 }

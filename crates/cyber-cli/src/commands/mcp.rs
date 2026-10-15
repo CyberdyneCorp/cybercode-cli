@@ -36,6 +36,10 @@ pub enum McpCmd {
         #[arg(long, value_parser = clap::value_parser!(u16).range(i64::from(cyber_core::config::OAUTH_REDIRECT_PORT_MIN)..))]
         port: Option<u16>,
     },
+    /// Serve Cyber Code Sessions to an MCP client: a stdio bridge to the shared server,
+    /// or `--transport http` to print its endpoint. Reads only the global config and never
+    /// opens the database.
+    Serve(super::mcp_serve::McpServeArgs),
     /// Remove every stored OAuth credential of a server (at any URL, from any issuer) and
     /// ask a running server to reconnect without it. Tokens are not revoked remotely.
     Logout { name: String },
@@ -95,7 +99,7 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
             )
         }
         McpCmd::Auth { name, port } => auth(&resolved, &store, ctx, global, &name, port),
-        McpCmd::Untrust { .. } | McpCmd::Logout { .. } => {
+        McpCmd::Untrust { .. } | McpCmd::Logout { .. } | McpCmd::Serve(_) => {
             unreachable!("handled before configuration loading")
         }
     }

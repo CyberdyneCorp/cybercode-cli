@@ -164,11 +164,6 @@ fn mode(args: &ExecArgs, global: &GlobalArgs) -> String {
     global.mode.clone().unwrap_or_else(|| "dont-ask".into())
 }
 
-/// Never wait for a human: deny the tools that ask.
-fn never_ask() -> Value {
-    json!({ "question": "deny", "plan_enter": "deny", "plan_exit": "deny" })
-}
-
 pub async fn session(
     client: &Client,
     args: &ExecArgs,
@@ -191,7 +186,7 @@ pub async fn session(
     let Some(existing) = reused else {
         let body = json!({
             "model": global.model, "agent": args.agent, "mode": mode(args, global),
-            "title": args.name, "rules": never_ask(), "max_steps": args.max_turns,
+            "title": args.name, "rules": cyber_core::config::never_ask_rules(), "max_steps": args.max_turns,
         });
         if let Some(name) = &args.worktree {
             return crate::commands::worktrees::start(client, name, body, args.quiet).await;

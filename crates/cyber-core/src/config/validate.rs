@@ -19,6 +19,7 @@ const KNOWN_KEYS: &[&str] = &[
     "hooks",
     "plugins",
     "mcp",
+    "mcp_serve",
     "skills",
     "commands",
     "instructions",
@@ -131,6 +132,9 @@ pub fn validate(
         issues.push(error);
     }
     if let Err(error) = super::HookSettings::from_config(value) {
+        issues.push(error);
+    }
+    if let Err(error) = super::McpServeSettings::from_config(value) {
         issues.push(error);
     }
     issues

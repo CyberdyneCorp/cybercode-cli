@@ -21,7 +21,8 @@ pub struct MemoryHttpIdentity {
     pub digest: String,
 }
 
-const RETENTION_MS: i64 = 24 * 3600 * 1000;
+/// How long a stored response replays.
+pub(super) const RETENTION_MS: i64 = 24 * 3600 * 1000;
 const MAX_BODY: usize = 32 * 1024 * 1024;
 /// Single-user server: every authenticated caller is the same principal.
 const PRINCIPAL: &str = "cyber";
@@ -234,6 +235,24 @@ async fn remember(store: &Arc<Store>, key: &str, hash: String, response: Respons
         );
     }
     Response::from_parts(parts, Body::from(bytes))
+}
+
+/// A stored response of an idempotency key, read without running the request.
+pub(super) struct StoredResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+/// The stored response of `key` within retention, read-only, so a caller can replay a
+/// write before any of its own checks.
+pub(super) async fn stored(
+    store: &Arc<Store>,
+    key: &str,
+) -> Result<Option<StoredResponse>, String> {
+    Ok(lookup(store, key).await?.map(|stored| StoredResponse {
+        status: stored.status,
+        body: stored.body,
+    }))
 }
 
 async fn lookup(store: &Arc<Store>, key: &str) -> Result<Option<Stored>, String> {

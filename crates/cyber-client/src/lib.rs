@@ -61,6 +61,33 @@ pub struct Event {
     pub session_id: Option<String>,
 }
 
+/// A response whose body arrives as a stream of chunks ([`Client::send_streaming`]).
+pub struct StreamingResponse {
+    pub status: u16,
+    /// Header names are lowercase.
+    pub headers: Vec<(String, String)>,
+    pub body: futures::stream::BoxStream<'static, Result<Vec<u8>, String>>,
+}
+
+impl StreamingResponse {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The whole body.
+    pub async fn bytes(self) -> Result<Vec<u8>, ClientError> {
+        let mut body = self.body;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = body.next().await {
+            bytes.extend(chunk.map_err(ClientError::Transport)?);
+        }
+        Ok(bytes)
+    }
+}
+
 impl Client {
     /// A client for `base` (`http://127.0.0.1:4747`) with the local password.
     pub fn http(base: &str, password: Option<String>) -> Self {
@@ -72,6 +99,25 @@ impl Client {
             transport: Transport::Http {
                 base: base.trim_end_matches('/').into(),
                 password,
+                http,
+            },
+            directory: None,
+        }
+    }
+
+    /// A client for the server's Unix socket: the server authenticates it by peer
+    /// credentials, so no password is sent.
+    #[cfg(unix)]
+    pub fn unix(socket: &str) -> Self {
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .unix_socket(std::path::PathBuf::from(socket))
+            .build()
+            .unwrap_or_default();
+        Self {
+            transport: Transport::Http {
+                base: "http://localhost".into(),
+                password: None,
                 http,
             },
             directory: None,
@@ -331,6 +377,58 @@ impl Client {
         let value = serde_json::from_slice(&bytes)
             .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
         Ok((status, value))
+    }
+
+    /// One request whose response body is read as it arrives (the MCP serve bridge
+    /// relays JSON and SSE answers). Any status is returned; only a transport failure is
+    /// an error. HTTP transport only.
+    pub async fn send_streaming(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(String, String)],
+        body: Option<Vec<u8>>,
+    ) -> Result<StreamingResponse, ClientError> {
+        let Transport::Http {
+            base,
+            password,
+            http,
+        } = &self.transport
+        else {
+            return Err(ClientError::Transport(
+                "streaming requests need the HTTP transport".into(),
+            ));
+        };
+        let m = reqwest::Method::from_bytes(method.as_bytes())
+            .map_err(|e| ClientError::Transport(e.to_string()))?;
+        let mut req = http.request(m, format!("{base}/api/v1{path}"));
+        if let Some(pw) = password {
+            req = req.basic_auth("cyber", Some(pw));
+        }
+        req = self.headers(req, None);
+        for (k, v) in headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+        if let Some(body) = body {
+            req = req.body(body);
+        }
+        let res = req
+            .send()
+            .await
+            .map_err(|e| ClientError::Transport(e.to_string()))?;
+        let headers = res
+            .headers()
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
+            .collect();
+        Ok(StreamingResponse {
+            status: res.status().as_u16(),
+            headers,
+            body: res
+                .bytes_stream()
+                .map(|c| c.map(|b| b.to_vec()).map_err(|e| e.to_string()))
+                .boxed(),
+        })
     }
 
     async fn raw_embedded(

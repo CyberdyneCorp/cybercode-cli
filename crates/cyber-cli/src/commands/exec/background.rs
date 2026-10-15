@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use cyber_client::{Client, Event};
+use cyber_server::runtime::settlement::{HANDBACK_GRACE, JobSettlement, job_settlement};
 use cyber_server::runtime::{DelegationStatus, Runtime};
 use serde_json::Value;
 
@@ -15,9 +16,6 @@ use crate::error::CliError;
 /// (a lagged live stream drops events rather than blocking the server).
 const LAG_GRACE: Duration = Duration::from_secs(2);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
-/// How long ended work may stay without its handback admitted before exec
-/// presumes the admission failed (its live error may have been dropped).
-const HANDBACK_GRACE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Settle {
@@ -141,14 +139,14 @@ impl Owned {
 
     /// A running Job, or (unless stopping) an ended one whose handback is not admitted yet.
     fn job_unsettled(&mut self, job: &Value, stopping: bool) -> Result<bool, CliError> {
-        if job["status"] == "running" {
-            return Ok(true);
+        match job_settlement(job, stopping) {
+            JobSettlement::Running => Ok(true),
+            JobSettlement::Settled => Ok(false),
+            JobSettlement::AwaitingHandback => {
+                self.handback_pending(job["id"].as_str().unwrap_or_default())?;
+                Ok(true)
+            }
         }
-        if stopping || job["notified"] != false {
-            return Ok(false);
-        }
-        self.handback_pending(job["id"].as_str().unwrap_or_default())?;
-        Ok(true)
     }
 
     /// Ended work whose handback admission failed (or never arrived within the

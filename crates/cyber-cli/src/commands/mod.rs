@@ -10,6 +10,7 @@ pub mod hooks;
 pub mod import;
 pub mod intelligence;
 pub mod mcp;
+pub mod mcp_serve;
 pub mod memory;
 pub mod models;
 pub mod permissions;
@@ -46,6 +47,14 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         return import::run(args, &cli.global);
     }
     let ctx = Context::new(&cli.global)?;
+    // The MCP serve bridge logs to its own file and never loads the project configuration
+    // first.
+    let command = match command {
+        Command::Mcp {
+            cmd: mcp::McpCmd::Serve(args),
+        } => return mcp_serve::run(args, &ctx),
+        command => command,
+    };
     start_logging(&ctx, &cli.global)?;
     match command {
         Command::Lsp { cmd } => intelligence::lsp(cmd, &ctx, &cli.global),

@@ -321,10 +321,7 @@ async fn list(
         cursor: q.cursor,
         ..ListFilter::default()
     };
-    let page = state.runtime.list(&filter).map_err(|e| match e {
-        RuntimeError::Invalid(m) => ApiError::new(StatusCode::BAD_REQUEST, "InvalidCursorError", m),
-        other => other.into(),
-    })?;
+    let page = list_page(&state, &filter)?;
     let data = Page {
         data: page.sessions,
         cursor: Cursor {
@@ -336,6 +333,17 @@ async fn list(
         location: LocationInfo::of(&directory),
         data,
     }))
+}
+
+/// One page of `GET /sessions` for any filter; a bad cursor is an `InvalidCursorError`.
+pub(super) fn list_page(
+    state: &AppState,
+    filter: &ListFilter,
+) -> Result<crate::runtime::SessionPage> {
+    state.runtime.list(filter).map_err(|e| match e {
+        RuntimeError::Invalid(m) => ApiError::new(StatusCode::BAD_REQUEST, "InvalidCursorError", m),
+        other => other.into(),
+    })
 }
 
 async fn create(

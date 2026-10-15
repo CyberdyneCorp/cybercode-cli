@@ -192,7 +192,7 @@ async fn drive(
         "model": env.model,
         "mode": "bypass",
         "title": format!("eval {} #{trial}", task.id),
-        "rules": { "question": "deny", "plan_enter": "deny", "plan_exit": "deny" },
+        "rules": cyber_core::config::never_ask_rules(),
         "max_steps": task.budget.max_turns,
     });
     let created = client

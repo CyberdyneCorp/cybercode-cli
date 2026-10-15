@@ -15,6 +15,9 @@ use futures::future::BoxFuture;
 pub type HookReviewFn =
     dyn Fn(&Path) -> Result<Vec<cyber_core::config::RawHookSection>, String> + Send + Sync;
 
+/// The defaults and global configuration layers only (`config::load_global`).
+pub type GlobalConfigFn = dyn Fn() -> Result<serde_json::Value, String> + Send + Sync;
+
 pub struct AppServices {
     resolver: Arc<CatalogResolver>,
     host: Arc<BuiltinHost>,
@@ -24,6 +27,7 @@ pub struct AppServices {
     data: PathBuf,
     cache: PathBuf,
     hook_review: Arc<HookReviewFn>,
+    global: Arc<GlobalConfigFn>,
 }
 
 impl AppServices {
@@ -34,8 +38,10 @@ impl AppServices {
         config: Arc<ConfigFn>,
         paths: cyber_core::paths::Paths,
         hook_review: Arc<HookReviewFn>,
+        global: Arc<GlobalConfigFn>,
     ) -> Self {
         Self {
+            global,
             resolver,
             host,
             remote,
@@ -466,6 +472,40 @@ impl Services for AppServices {
                     id: row.model_ref,
                 })
                 .collect())
+        })
+    }
+
+    /// Read for every MCP serve request, so configuration changes apply to new requests.
+    /// An invalid global configuration fails closed.
+    fn mcp_serve(
+        &self,
+    ) -> Result<cyber_core::config::McpServeSettings, cyber_server::http::ApiError> {
+        let unavailable = |error: String| {
+            cyber_server::http::ApiError::service_unavailable(
+                "mcp_serve",
+                format!("MCP serve configuration is invalid: {error}"),
+            )
+        };
+        let global = (self.global)().map_err(unavailable)?;
+        cyber_core::config::McpServeSettings::from_config(&global).map_err(unavailable)
+    }
+
+    /// Read from the Location's resolved (trust-gated) configuration; an invalid
+    /// configuration fails closed.
+    fn location_defaults(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_server::http::LocationDefaults, cyber_server::http::ApiError> {
+        let (config, _) = (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        let text = |key: &str| {
+            config
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        Ok(cyber_server::http::LocationDefaults {
+            mode: text("mode"),
+            default_agent: text("default_agent"),
         })
     }
 

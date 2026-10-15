@@ -20,11 +20,13 @@ pub struct McpClosed {
     pub closed: bool,
 }
 
-pub fn routes() -> Router<AppState> {
+/// The `mcp` route group: Location MCP lifecycle and the MCP serve endpoint.
+pub fn routes(serve: std::sync::Arc<super::McpServeSessions>) -> Router<AppState> {
     Router::new()
         .route("/mcp", get(status))
         .route("/mcp/close", post(close))
         .route("/mcp/{name}/reconnect", post(reconnect))
+        .merge(super::mcp_serve::routes(serve))
 }
 
 async fn status(

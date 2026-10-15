@@ -51,6 +51,15 @@ See [MCP resources](docs/local-core-guide.md#mcp-resources) and [MCP prompts as 
 
 During a tool call, a local or remote server can ask you a question through [form elicitation](docs/local-core-guide.md#mcp-form-elicitation). You answer Accept, Decline or Cancel; `cyber exec` and other unattended runs decline, and Cyber Code never opens a link for a server. Local servers see the Location and writable roots as [MCP roots](docs/local-core-guide.md#mcp-workspace-roots), and a sandbox change restarts them with the new roots.
 
+Other agents can drive Cyber Code over MCP. `cyber mcp serve` is a stdio MCP server bridged to the local Cyber server, so the Sessions it creates show up in the TUI like any other:
+
+```bash
+claude mcp add cyber -- cyber mcp serve --client claude-code   # Claude Code
+./target/debug/cyber mcp serve --transport http                  # prints the loopback endpoint for HTTP clients
+```
+
+The calling agent creates and reads Sessions, sends prompts (`cyber_prompt`, with a wait or a receipt) and interrupts runs. Approvals stay with a human in a Cyber client, and new Sessions are bounded by a Mode ceiling and limits from the global configuration. See [MCP serve](docs/local-core-guide.md#mcp-serve-partial-p1) for Codex and HTTP setup, the trust model and the limits.
+
 ## What it does
 
 | Area | Current behavior |
@@ -61,7 +70,8 @@ During a tool call, a local or remote server can ask you a question through [for
 | Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks; `cyber review [target]` and TUI `/review` resolve uncommitted changes, ranges, commits or `pr <number>` and report validated findings most severe first; remote `https://` skill sources cached for offline use. Partial: real-model review quality, plugin skills and native acceptance |
 | Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
-| MCP client | Local (stdio) and remote (Streamable HTTP, legacy SSE) servers with OAuth sign-in, resource tools, `@server:uri` mentions, `/<server>:<prompt>` commands, form elicitation (declined when unattended, never opens links), workspace roots with reconnect on sandbox change, opt-in sampling (local servers), `list_changed` refresh and cancellation notices. Partial: native Windows acceptance; MCP server mode and WebSocket are not implemented |
+| MCP client | Local (stdio) and remote (Streamable HTTP, legacy SSE) servers with OAuth sign-in, resource tools, `@server:uri` mentions, `/<server>:<prompt>` commands, form elicitation (declined when unattended, never opens links), workspace roots with reconnect on sandbox change, opt-in sampling (local servers), `list_changed` refresh and cancellation notices. Partial: native Windows acceptance; WebSocket is not implemented |
+| MCP serve | `cyber mcp serve` (stdio bridge, or loopback Streamable HTTP) lets other agents create, read, prompt and interrupt Sessions, with receipts, waits with progress, idempotent retries, a Mode ceiling and limits. Nested calls through Sessions are bounded by a recursion guard. Partial: messaging tools, usage attribution and unattended approval handling |
 | Hooks | Command, HTTP, prompt and MCP-tool handlers on tool and lifecycle events, with exact handler trust, managed-only org policy, async handlers and durable receipts. Partial: plugin hooks, sandboxed hook scopes on Windows and events without a producer |
 | Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
 
@@ -114,7 +124,7 @@ Scope: **Cyber Code, Claude Code, Codex and OpenCode coding tools**, checked **2
 | Tool permissions | Yes; full auto mode partial | Yes [docs][C2] | Yes [docs][X3] | Yes [docs][O3] |
 | OS sandbox | macOS/Linux; Windows incomplete | macOS/Linux/WSL2; native Windows unsandboxed [docs][C2] | Documented sandbox controls [docs][X3] | Permission rules documented [docs][O3]; OS isolation not established here |
 | Subagents | Partial P1 | Yes [docs][C3] | Yes [docs][X1] | Yes [docs][O4] |
-| MCP integration | Client for local (stdio) and remote (Streamable HTTP, SSE) servers: OAuth via `cyber mcp auth` (OS keyring; 0600 file on Linux), resources, `@server:uri` mentions, prompt commands, form elicitation, roots, opt-in local sampling, `list_changed` refresh and cancellation. Partial: server mode, WebSocket, native Windows acceptance | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
+| MCP integration | Client for local (stdio) and remote (Streamable HTTP, SSE) servers: OAuth via `cyber mcp auth` (OS keyring; 0600 file on Linux), resources, `@server:uri` mentions, prompt commands, form elicitation, roots, opt-in local sampling, `list_changed` refresh and cancellation. `cyber mcp serve` for other agents (partial). Partial: WebSocket, native Windows acceptance | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
 | File undo / recovery | Snapshots preserving user edits | Edit checkpoints and rewind [docs][C5] | Git checkpoints recommended [docs][X1] | Undo/redo [docs][O1] |
 | Programmatic server | HTTP/events, stdio API, TS SDK | Agent SDK [docs][C1] | App Server [docs][X4] | HTTP/OpenAPI and SDK [docs][O6] |
 | LSP integration | Navigation/feedback partial P1 | Language-server plugins [docs][C6] | Not established by cited docs | Built-in LSP support [docs][O7] |

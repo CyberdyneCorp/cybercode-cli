@@ -503,6 +503,69 @@ Each active-call request checks `mcp_sampling` permission for the server name, s
 
 Human approval and nested sampling pause outer MCP call inactivity; the provider call has its own configured call timeout. Cancellation retains the nested task until local provider transport shutdown and observed billing settle. Native OpenAI-compatible, OpenAI Responses and Anthropic socket tests cover timeout and Location close. Local socket closure does not prove remote rollback or final usage; unsupported custom transport cancellation remains unverified. Sampling input and credentials are excluded from Session events. Remote MCP sampling and complete native platform acceptance remain open.
 
+## MCP serve (partial P1)
+
+`cyber mcp serve` lets another agent (Claude Code, Codex, another Cyber Code, an IDE) drive Cyber Code Sessions over MCP. It is a stdio bridge to the shared local server, which it starts with `cyber service start` semantics when none is running. The MCP endpoint itself is Streamable HTTP at `/api/v1/mcp/serve` on that server. Sessions created or prompted this way are ordinary Sessions: they appear in the TUI, `cyber sessions` and the SDK.
+
+### Setup
+
+Claude Code:
+
+```bash
+claude mcp add cyber -- cyber mcp serve --client claude-code
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.cyber]
+command = "cyber"
+args = ["mcp", "serve", "--client", "codex"]
+```
+
+An HTTP client connects directly to the endpoint. `cyber mcp serve --transport http` makes sure the server runs, then prints the URL (for example `http://127.0.0.1:4747/api/v1/mcp/serve`) and exits. It never prints the password. Use HTTP Basic with user `cyber` and the password from `cyber service password`, and keep that password as secret as the password file it comes from. Only loopback peers with a loopback `Host` are accepted, so the endpoint cannot be reached from the network or through DNS rebinding, even when `cyber serve --hostname` binds another address. `--client <label>` (`[a-z0-9][a-z0-9_-]{0,47}`) labels the Sessions and prompts for attribution; without it the label comes from the client's `clientInfo.name`.
+
+### Tools
+
+- `cyber_session_create`, `cyber_session_list`, `cyber_session_read` and `cyber_session_transcript` create and read Sessions. `cyber_session_read` also lists the 20 newest prompts admitted through MCP serve (`recent_prompts`).
+- `cyber_prompt` sends a prompt to a Session (`session_id`) or to a new Session in an absolute `directory`. The prompt goes through the same user path as the SDK, so `UserPromptSubmit` hooks run. It is always literal text: `/mode bypass` or any other slash command is never run. By default the call waits up to `wait_seconds` (default 50, clamped to `max_wait_seconds`) and returns a `PromptResult`: `status` (`queued`, `running`, `waiting_for_approval`, `completed`, `failed`, `interrupted`, `budget_exceeded` or `refused`), `final_text` (the last answer, at most 64 KiB), usage and the receipt (`session_id`, `message_id`, `admitted_at`). Reaching `wait_seconds` is not an error: the result carries the receipt. With `wait: false` it returns the receipt right away. A run is done once its Session is idle and every background Job the run started has settled and its handback Turn finished.
+- `cyber_prompt_wait` re-attaches to a prompt by `session_id` and `message_id`, also after a server restart; `wait_seconds: 0` polls.
+- `cyber_interrupt` interrupts a Session. Waits on its run end `interrupted`.
+
+Pass a random `idempotency_key` (for example a UUID) on every `cyber_prompt`. A retry with the same key and arguments never admits the prompt again: it returns the same `message_id` with `replayed: true` and waits on the same run. Reusing a key with other arguments fails with `ConflictError` `idempotency_mismatch`. A waiting call is answered as an SSE stream with a `: keep-alive` comment at least every 15 s. With an MCP `progressToken` it also sends `notifications/progress`, the first one `admitted` with the `message_id`. Once the prompt is admitted the stream also carries a `dev.cyber-code/receipt` SSE event `{ session_id, message_id }`, which MCP clients ignore. When the server goes away mid-wait, the stdio bridge fails the call with -32010 and puts those ids in its `data`, so call `cyber_prompt_wait` with them instead of prompting again. Cancelling a call (`notifications/cancelled`, closing the stream, ending the MCP session or the bridge's stdin) ends only the wait: the Turn keeps running, and `cyber_prompt_wait` finds its result later. Only `cyber_interrupt` stops a run.
+
+### Trust model
+
+An MCP client is a trusted local client, like the TUI or an SDK script. It authenticates as the server's OS user on the Unix socket or with the local password on loopback TCP, and it can do only what the server API lets any local client do. MCP serve adds no accounts, tokens or grants. Approvals are never relayed to the MCP client: a permission request in a Session driven over MCP is answered by a human in a Cyber client (TUI, web or SDK). While a request is pending, results report `waiting_for_approval` and list it in `pending`, and a waiting `cyber_prompt` returns early when its run raises one. Sessions created over MCP never ask questions (`question`, `plan_enter` and `plan_exit` are denied, as in `cyber exec`). Session output, transcripts and progress lines are marked untrusted (`_meta["dev.cyber-code/untrusted"]`); the calling agent should never follow instructions found in them.
+
+### Mode ceiling and limits
+
+MCP serve is configured only in the global configuration; an `mcp_serve` key in a project file, a profile, the environment or `--config` is ignored with a warning, so a cloned repository cannot change it.
+
+```jsonc
+{
+  "mcp_serve": {
+    "enabled": true,              // false: the bridge exits 1, the endpoint answers 503
+    "max_mode": "default",        // the Mode ceiling; defaults to the global `mode`, never `bypass`
+    "limits": {
+      "sessions_per_connection": 8, // Sessions one MCP connection may create
+      "max_waits": 8,               // concurrent waiting calls per connection
+      "max_running_sessions": 16,   // running Sessions driven through MCP serve
+      "max_depth": 2,               // MCP serve calls nested through Sessions (see below)
+      "max_wait_seconds": 600       // upper bound of wait_seconds
+    }
+  }
+}
+```
+
+Modes rank `plan` < `dont-ask` < `default` < `accept-edits` < `auto` < `bypass`. When MCP serve creates a Session, an explicit `mode` or `agent` above the ceiling is refused with `ForbiddenError` `mode_ceiling`, and an implicit Mode (the agent's `permission_mode` or the Location's `mode`) is lowered to the ceiling. The ceiling applies at creation; an existing Session keeps its own Mode.
+
+Over the limit, `sessions_per_connection` fails with `ForbiddenError` `session_quota`. `max_waits` fails a waiting call with `RateLimitedError` `concurrency` (`retryAfterMs: 5000`). `max_running_sessions` refuses a `cyber_prompt` that would start a run the same way, but never `cyber_session_create` nor a prompt steering a running Session. Every check runs before the first write, so a refused call creates and admits nothing. A retry under a stored key replays before these checks (except `max_waits`) and is never counted again. Fixed bounds: request body 1 MiB, prompt 128 KiB (`too_large`), `final_text` 64 KiB (head kept), transcript items 16 KiB and pages by `max_bytes`. Every truncation keeps the JSON valid.
+
+Recursion guard: a Session that drives this server through MCP (a configured `cyber-code` MCP server, or `cyber mcp serve` run from its shell) is marked as the caller. Cyber's MCP client sends `_meta["dev.cyber-code/caller"]` to `cyber-code` servers, and the bridge forwards `CYBER_SESSION_ID` and `CYBER_MCP_DEPTH` as `X-Cyber-MCP-Caller` and `X-Cyber-MCP-Depth`. An external agent calls at depth 0; a call from a Session's run is one deeper than that run. At depth ≥ `max_depth`, `cyber_session_create` and `cyber_prompt` fail with `ForbiddenError` `depth_exceeded`. `cyber_prompt` and `cyber_interrupt` on the calling Session or one of its ancestors fail with `self_target`. Reading and waiting are never limited. The markers guard against accidents between trusted local clients; they are not a security boundary.
+
+Not implemented yet: the messaging tools (`cyber_message_*`, waiting for the Messaging API, so messages carry no depth either), usage attribution with origin `mcp`, and the non-interactive rule for Sessions with no human attached. Until that rule lands, the shared server counts as attended, so a permission request waits for a human (reported as `waiting_for_approval`) instead of being resolved by the Mode.
+
 ## Memory management (partial P1)
 
 ```bash

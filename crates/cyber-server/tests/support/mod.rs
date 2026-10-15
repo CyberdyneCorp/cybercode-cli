@@ -154,6 +154,12 @@ pub struct Tools {
     pub reconcile: Mutex<Reconciliation>,
     /// Hook effects a call leaves for its settlement, by call id; taken once.
     pub hook_effects: Mutex<HashMap<String, HookEffects>>,
+    /// A `UserPromptSubmit` hook denying every prompt with this reason.
+    pub prompt_denial: Mutex<Option<String>>,
+    /// A `UserPromptSubmit` hook that holds each prompt until notified.
+    pub prompt_hold: Mutex<Option<Arc<Notify>>>,
+    /// One permit per prompt that entered the holding hook (and waits on `prompt_hold`).
+    pub prompt_reached: tokio::sync::Semaphore,
     pub started: Notify,
     pub release: Notify,
 }
@@ -195,6 +201,9 @@ impl Tools {
             executed: Mutex::default(),
             reconcile: Mutex::new(Reconciliation::Unknown),
             hook_effects: Mutex::default(),
+            prompt_denial: Mutex::default(),
+            prompt_hold: Mutex::default(),
+            prompt_reached: tokio::sync::Semaphore::new(0),
             started: Notify::new(),
             release: Notify::new(),
         })
@@ -243,6 +252,33 @@ impl ToolHost for Tools {
                 Some(id) => LocationLease::managed(id.clone(), Box::new(TestLocationGuard)),
                 None => LocationLease::unmanaged(),
             })
+        })
+    }
+    fn lifecycle_hooks(
+        &self,
+        event: LifecycleHook,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<LifecycleVerdict, String>> {
+        let denial = self.prompt_denial.lock().unwrap().clone();
+        let hold = self.prompt_hold.lock().unwrap().clone();
+        Box::pin(async move {
+            if event.kind == "UserPromptSubmit"
+                && let Some(hold) = hold
+            {
+                // Registered before it is reported, so `notify_waiters` reaches it.
+                let held = hold.notified();
+                self.prompt_reached.add_permits(1);
+                held.await;
+            }
+            let mut verdict = LifecycleVerdict::default();
+            if event.kind == "UserPromptSubmit"
+                && let Some(reason) = denial
+            {
+                verdict.configured = true;
+                verdict.decision.decision = Some(cyber_core::hooks::HookAction::Deny);
+                verdict.decision.reason = Some(reason);
+            }
+            Ok(verdict)
         })
     }
     fn agent_inference(&self, _turn: &TurnContext) -> Result<AgentInference, String> {

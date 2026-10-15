@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::envelope::percent_decode;
+use super::jsonrpc::{self, error};
 use super::remote_tools::RemoteTools;
 use super::{AppState, EmbeddedClient};
 
@@ -89,7 +90,7 @@ impl RpcSession {
             Ok(req) => self.dispatch(req).await,
             Err(e) => Some(error(
                 Value::Null,
-                -32700,
+                jsonrpc::PARSE_ERROR,
                 &format!("parse error: {e}"),
                 Value::Null,
             )),
@@ -114,32 +115,20 @@ impl RpcSession {
             "v1.tool.register" => self
                 .tools
                 .register(self.owner, self.out.clone(), &params, &self.reserved)
-                .map_err(|m| (-32602, m, Value::Null)),
+                .map_err(|m| (jsonrpc::INVALID_PARAMS, m, Value::Null)),
             "v1.tool.unregister" => Ok(self.unregister(&params)),
             _ => self.call(&method, &params).await,
         };
         let id = id?;
         Some(match result {
-            Ok(value) => json!({ "jsonrpc": "2.0", "id": id, "result": value }),
+            Ok(value) => jsonrpc::result(id, value),
             Err((code, message, data)) => error(id, code, &message, data),
         })
     }
 
     async fn call(&self, method: &str, params: &Value) -> Result<Value, (i64, String, Value)> {
         let req = request(method, params, "GET")?;
-        let res = self.client.request(req).await;
-        let status = res.status().as_u16();
-        let bytes = res
-            .into_body()
-            .collect()
-            .await
-            .map(|b| b.to_bytes())
-            .unwrap_or_default();
-        let body: Value = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-        };
+        let (status, body) = send(&self.client, req).await;
         if (200..300).contains(&status) {
             Ok(body)
         } else {
@@ -219,8 +208,23 @@ impl RpcSession {
     }
 }
 
-fn error(id: Value, code: i64, message: &str, data: Value) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message, "data": data } })
+/// Run one request through the router: its status and JSON body (`Null` when empty or
+/// not JSON).
+pub(super) async fn send(client: &EmbeddedClient, req: axum::http::Request<Body>) -> (u16, Value) {
+    let res = client.request(req).await;
+    let status = res.status().as_u16();
+    let bytes = res
+        .into_body()
+        .collect()
+        .await
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
+    let body = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
+    (status, body)
 }
 
 /// The HTTP request for an operation ID and its params.
@@ -230,7 +234,11 @@ fn request(
     _default: &str,
 ) -> Result<axum::http::Request<Body>, (i64, String, Value)> {
     let Some((verb, template)) = super::openapi::lookup(method) else {
-        return Err((-32601, format!("unknown method {method}"), Value::Null));
+        return Err((
+            jsonrpc::METHOD_NOT_FOUND,
+            format!("unknown method {method}"),
+            Value::Null,
+        ));
     };
     let mut path = template.to_string();
     for (name, value) in params["path"].as_object().into_iter().flatten() {
@@ -241,7 +249,7 @@ fn request(
     }
     if path.contains('{') {
         return Err((
-            -32602,
+            jsonrpc::INVALID_PARAMS,
             format!("missing path parameter in {template}"),
             Value::Null,
         ));
@@ -264,7 +272,7 @@ fn request(
         _ => Body::empty(),
     };
     req.body(body)
-        .map_err(|e| (-32602, e.to_string(), Value::Null))
+        .map_err(|e| (jsonrpc::INVALID_PARAMS, e.to_string(), Value::Null))
 }
 
 fn query_string(q: Option<&Map<String, Value>>) -> String {

@@ -216,6 +216,15 @@ impl BuiltinHost {
         self.runtime.get().and_then(WeakRuntime::upgrade)
     }
 
+    /// `CYBER_MCP_DEPTH` for a process started for the Session: its run's `mcp_depth`
+    /// (or its ancestors', for a child Session) + 1 (`mcp-server` recursion guard).
+    pub(crate) fn process_mcp_depth(&self, session_id: &str) -> String {
+        let depth = self
+            .runtime()
+            .map_or(0, |runtime| runtime.effective_mcp_depth(session_id));
+        depth.saturating_add(1).to_string()
+    }
+
     fn agent_profile(
         &self,
         directory: &Path,

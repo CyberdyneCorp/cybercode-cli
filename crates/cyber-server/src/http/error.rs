@@ -8,7 +8,8 @@ use serde::Serialize;
 
 use crate::runtime::{CommandPlanError, RuntimeError};
 
-/// The JSON body of every declared failure.
+/// The JSON body of every declared failure. Some failures add `reason`, a machine-readable
+/// refinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ErrorBody {
     #[serde(rename = "_tag")]
@@ -16,13 +17,18 @@ pub struct ErrorBody {
     pub message: String,
     /// `err_<id>` for `UnknownError`, logged server-side.
     #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
-    pub reference: Option<String>,
+    pub reference: Option<Box<str>>,
     /// Paths for rewind conflicts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<String>>,
     /// Capability group unavailable in this host or phase.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<Box<str>>,
+    /// `reason`, a machine-readable refinement of `_tag` (for example `loopback_only` or
+    /// `schema`), and fields specific to a tag or reason, such as `retryAfterMs`, `limit`
+    /// or `path`. Boxed to keep every `Result<_, ApiError>` small.
+    #[serde(flatten)]
+    pub details: Option<Box<serde_json::Map<String, serde_json::Value>>>,
 }
 
 /// `422` from `v1.command.run` when a review target cannot be resolved; nothing is admitted.
@@ -53,6 +59,7 @@ impl ApiError {
                 reference: None,
                 paths: None,
                 service: None,
+                details: None,
             },
             code: None,
         }
@@ -82,6 +89,36 @@ impl ApiError {
         Self::new(StatusCode::FORBIDDEN, "ForbiddenError", message)
     }
 
+    /// `503` for a capability group this host or configuration does not serve.
+    pub fn service_unavailable(service: &str, message: impl Into<String>) -> Self {
+        let mut error = Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceUnavailableError",
+            message,
+        );
+        error.body.service = Some(service.into());
+        error
+    }
+
+    /// `429` `RateLimitedError`: the caller may retry after `retry_after_ms`.
+    pub fn rate_limited(reason: &str, retry_after_ms: u64, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, "RateLimitedError", message)
+            .with_reason(reason)
+            .with_field("retryAfterMs", retry_after_ms)
+    }
+
+    pub fn with_reason(self, reason: &str) -> Self {
+        self.with_field("reason", reason)
+    }
+
+    pub fn with_field(mut self, name: &str, value: impl Into<serde_json::Value>) -> Self {
+        self.body
+            .details
+            .get_or_insert_default()
+            .insert(name.into(), value.into());
+        self
+    }
+
     pub fn review_target(error: cyber_core::review::TargetError) -> Self {
         let mut e = Self::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -105,7 +142,7 @@ impl ApiError {
             "UnknownError",
             "internal error",
         );
-        e.body.reference = Some(reference);
+        e.body.reference = Some(reference.into());
         e
     }
 }

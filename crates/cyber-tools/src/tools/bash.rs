@@ -283,6 +283,7 @@ async fn run_process(
         Output::Merged => (Stdio::piped(), None),
         Output::Stdout { max_bytes } => (Stdio::null(), Some(max_bytes)),
     };
+    let depth = ctx.host.process_mcp_depth(&ctx.inv.session_id);
     let mut child = Process::spawn(
         &prepared.program,
         &prepared.args,
@@ -298,6 +299,7 @@ async fn run_process(
                 .env("CYBER", "1")
                 .env("CYBER_PID", std::process::id().to_string())
                 .env("CYBER_SESSION_ID", &ctx.inv.session_id)
+                .env("CYBER_MCP_DEPTH", &depth)
                 .env("CYBER_PROJECT_DIR", &ctx.location);
         },
     )

@@ -14,7 +14,9 @@ mod hooks;
 mod idempotency;
 mod intelligence;
 mod jobs;
+mod jsonrpc;
 mod mcp;
+mod mcp_serve;
 mod memory;
 pub mod openapi;
 pub mod remote_tools;
@@ -42,13 +44,14 @@ pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
 pub use idempotency::request_fingerprint;
 pub use intelligence::{FormatterStatus, LspState, LspStatus, LspTransition};
+pub use mcp_serve::{McpServeClock, McpServeSessions};
 pub use memory::{
     MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, RecoverMemory,
     validate_edit_fingerprint,
 };
 #[cfg(unix)]
 pub use serve::serve_unix;
-pub use serve::{EmbeddedClient, serve_tcp};
+pub use serve::{EmbeddedClient, PeerAddr, serve_tcp};
 pub use service::ServiceControl;
 
 /// How a request reached the server.
@@ -135,6 +138,15 @@ pub struct AgentInfo {
     pub description: String,
     /// `primary`, `subagent` or `all`.
     pub mode: String,
+}
+
+/// The Location's own defaults for new Sessions, as its configuration states them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocationDefaults {
+    /// The configured `mode`.
+    pub mode: Option<String>,
+    /// The configured `default_agent`.
+    pub default_agent: Option<String>,
 }
 
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
@@ -346,6 +358,19 @@ pub trait Services: Send + Sync {
             Err(error)
         })
     }
+    /// MCP serve settings from the global configuration, read for every MCP serve
+    /// request. Hosts without them do not serve MCP.
+    fn mcp_serve(&self) -> Result<cyber_core::config::McpServeSettings, ApiError> {
+        Err(ApiError::service_unavailable(
+            "mcp_serve",
+            "MCP serve is unavailable in this host",
+        ))
+    }
+    /// The configured `mode` and `default_agent` of a Location; hosts without
+    /// configuration have none.
+    fn location_defaults(&self, _location: &Path) -> Result<LocationDefaults, ApiError> {
+        Ok(LocationDefaults::default())
+    }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;
@@ -431,12 +456,18 @@ async fn request_log(
 
 /// The full `/api/v1` router.
 pub fn router(state: AppState) -> Router {
+    router_with(state, Arc::new(McpServeSessions::new()))
+}
+
+/// The full `/api/v1` router with its MCP serve session table; listeners sharing one
+/// router share MCP sessions.
+pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router {
     let api = Router::new()
         .merge(sessions::routes())
         .merge(children::router())
         .merge(jobs::routes())
         .merge(hooks::routes())
-        .merge(mcp::routes())
+        .merge(mcp::routes(mcp_serve))
         .merge(intelligence::routes())
         .merge(memory::routes())
         .merge(usage::routes())

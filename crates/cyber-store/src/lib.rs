@@ -10,6 +10,7 @@ mod error;
 mod events;
 mod fs_check;
 mod lock;
+pub mod mcp_serve;
 mod migrate;
 mod query;
 mod store;

@@ -12,7 +12,9 @@ mod jsonc;
 mod load;
 mod managed;
 mod mcp;
+mod mcp_serve;
 mod merge;
+mod modes;
 mod subst;
 mod validate;
 
@@ -34,14 +36,19 @@ pub use hooks::{HookCondition, HookGroup, HookHandler, HookKind, HookSettings};
 pub use intelligence::{FormatterConfig, FormatterSettings, LspServerConfig, LspSettings};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
 pub use load::{
-    LoadRequest, RawHookSection, ensure_global_config, load, project_root, trust_report,
-    withheld_hook_sections,
+    LoadRequest, RawHookSection, ensure_global_config, load, load_global, project_root,
+    trust_report, withheld_hook_sections,
 };
 pub use managed::{MANAGED_POLICY_DIR_ENV, ManagedPolicy, os_managed_dir};
 pub use mcp::{
     McpOAuth, McpOAuthSetting, McpServer, McpSettings, McpToolFilter, OAUTH_REDIRECT_PORT_MIN,
     transport_owned_header,
 };
+pub use mcp_serve::{
+    FALLBACK_CLIENT_LABEL, McpServeLimits, McpServeSettings, derive_client_label,
+    valid_client_label,
+};
+pub use modes::{bound_mode, mode_ceiling, mode_rank, never_ask_rules};
 pub use validate::redact_secrets;
 
 /// Published JSON Schema URL written into new config documents.

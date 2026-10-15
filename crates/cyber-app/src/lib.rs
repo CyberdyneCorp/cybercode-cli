@@ -107,6 +107,22 @@ fn withheld_hook_loader(paths: Paths, home: PathBuf) -> Arc<services::HookReview
     })
 }
 
+/// The defaults and global layers only, for global-only keys such as `mcp_serve`.
+fn global_config_loader(paths: Paths, home: PathBuf) -> Arc<services::GlobalConfigFn> {
+    Arc::new(move || {
+        config::load_global(&LoadRequest {
+            location: &home,
+            paths: &paths,
+            env: &ProcessEnv,
+            home: &home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .map_err(|error| error.to_string())
+    })
+}
+
 pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
     let resolved = hook_config_loader(paths, home);
     Arc::new(move |location| resolved(location).map(|resolved| (resolved.value, resolved.sources)))
@@ -223,6 +239,7 @@ impl App {
             config,
             opts.paths.clone(),
             withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
+            global_config_loader(opts.paths.clone(), opts.home.clone()),
         );
         let state = AppState {
             service: None,

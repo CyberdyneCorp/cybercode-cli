@@ -5,6 +5,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 
 pub(crate) const VERSION: &str = "2025-11-25";
 const VERSIONS: &[&str] = &[VERSION, "2025-06-18", "2025-03-26", "2024-11-05"];
+/// The recursion marker `_meta` key a Cyber Code MCP server reads (`mcp-server`).
+const CALLER_META: &str = "dev.cyber-code/caller";
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
@@ -410,13 +412,12 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
         if name.trim().is_empty() || !arguments.is_object() {
             return Err(McpError::Protocol("invalid tool call"));
         }
-        self.request_with_elicitation(
-            "tools/call",
-            json!({"name":name,"arguments":arguments}),
-            timeout,
-            context,
-        )
-        .await
+        let mut params = json!({"name":name,"arguments":arguments});
+        if let Some(caller) = context.and_then(|context| context.caller) {
+            params["_meta"] = json!({ CALLER_META: caller });
+        }
+        self.request_with_elicitation("tools/call", params, timeout, context)
+            .await
     }
 
     async fn notify(
@@ -455,7 +456,8 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> StdioClient<R, W> {
             return Err(McpError::Protocol("previous request is unresolved"));
         }
         let id = cyber_core::ids::new_id("rpc");
-        params["_meta"] = json!({"progressToken":id});
+        // Merged, so a call's own `_meta` (the caller marker) is kept.
+        params["_meta"]["progressToken"] = json!(id);
         let message = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
         let bytes = encode(&message)?;
         self.pending = Some(Pending {

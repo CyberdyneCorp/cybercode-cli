@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use super::gate::{self, canonical_json};
 use super::merge::{self, Sources};
 use super::subst::{self, SubstContext};
-use super::{ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, validate};
+use super::{ConfigError, Resolved, SCHEMA_URL, TrustReport, jsonc, managed, mcp_serve, validate};
 use crate::env::EnvSource;
 use crate::paths::Paths;
 use crate::trust::TrustStore;
@@ -43,11 +43,15 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
     layers.extend(read_env_layers(req)?);
 
     let mut issues = Vec::new();
+    let mut warnings = Vec::new();
     let mut value = Value::Object(Map::new());
     let mut sources = Sources::new();
     let mut labels = Vec::new();
     let mut templates = Vec::new();
     for layer in &mut layers {
+        if !matches!(layer.label.split(':').next(), Some("default" | "global")) {
+            mcp_serve::strip(&mut layer.value, &mut warnings);
+        }
         if layer.label.starts_with("project:") {
             subst::templates(&layer.value, "", &layer.label, &mut templates);
         }
@@ -55,13 +59,19 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         merge::merge_layer(&mut value, &layer.value, &layer.label, &mut sources);
         labels.push(layer.label.clone());
     }
-    labels.extend(apply_profile(req, &mut value, &mut sources, &mut issues));
-    for (label, layer) in cli_layers(req, &mut issues) {
+    labels.extend(apply_profile(
+        req,
+        &mut value,
+        &mut sources,
+        &mut issues,
+        &mut warnings,
+    ));
+    for (label, mut layer) in cli_layers(req, &mut issues) {
+        mcp_serve::strip(&mut layer, &mut warnings);
         merge::merge_layer(&mut value, &layer, &label, &mut sources);
         labels.push(label);
     }
 
-    let mut warnings = Vec::new();
     issues.extend(validate::validate(&mut value, &mut sources, &mut warnings));
     if !issues.is_empty() {
         return Err(ConfigError::Invalid { issues });
@@ -87,6 +97,30 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         layers: labels,
         managed: managed.policy,
     })
+}
+
+/// The defaults and global layers only, substituted and validated: what global-only keys
+/// (`mcp_serve`) and the user's global `mode` resolve from, whatever the Location.
+pub fn load_global(req: &LoadRequest<'_>) -> Result<Value, ConfigError> {
+    let mut layers = vec![defaults_layer(req)];
+    layers.extend(read_global_layers(req)?);
+    let mut issues = Vec::new();
+    let mut value = Value::Object(Map::new());
+    let mut sources = Sources::new();
+    for layer in &mut layers {
+        substitute_layer(layer, req, &mut issues);
+        merge::merge_layer(&mut value, &layer.value, &layer.label, &mut sources);
+    }
+    issues.extend(validate::validate(
+        &mut value,
+        &mut sources,
+        &mut Vec::new(),
+    ));
+    if issues.is_empty() {
+        Ok(value)
+    } else {
+        Err(ConfigError::Invalid { issues })
+    }
 }
 
 /// Trust state of the project layers without resolving the rest.
@@ -376,6 +410,7 @@ fn apply_profile(
     value: &mut Value,
     sources: &mut Sources,
     issues: &mut Vec<String>,
+    warnings: &mut Vec<String>,
 ) -> Option<String> {
     let name = req
         .profile
@@ -410,6 +445,7 @@ fn apply_profile(
         map.remove("profiles");
         map.remove("policy");
     }
+    mcp_serve::strip(&mut overlay, warnings);
     let label = format!("profile:{name}");
     merge::merge_profile(value, &overlay, &name, sources);
     Some(label)

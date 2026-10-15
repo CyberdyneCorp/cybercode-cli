@@ -1,6 +1,7 @@
 //! Transports: TCP, the Unix socket and the in-process embedded client
 //! (`server-api` → Listener defaults, Embedded transport).
 
+use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
 
@@ -16,20 +17,31 @@ use tower::ServiceExt;
 
 use super::Transport;
 
+/// The remote address of a TCP connection, attached to each of its requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerAddr(pub SocketAddr);
+
 /// Serve the router on a bound TCP listener until `shutdown` resolves.
 pub async fn serve_tcp(
     router: Router,
     listener: tokio::net::TcpListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    serve_owned(router.layer(Extension(Transport::Tcp)), listener, shutdown).await;
+    serve_owned(
+        router.layer(Extension(Transport::Tcp)),
+        listener,
+        |addr| Some(*addr),
+        shutdown,
+    )
+    .await;
     Ok(())
 }
 
 /// Own connection tasks so a blocked socket cannot prevent listener shutdown indefinitely.
-async fn serve_owned(
+async fn serve_owned<L: axum::serve::Listener>(
     router: Router,
-    mut listener: impl axum::serve::Listener,
+    mut listener: L,
+    peer: fn(&L::Addr) -> Option<SocketAddr>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) {
     let closing = CancellationToken::new();
@@ -41,8 +53,8 @@ async fn serve_owned(
             biased;
             _ = &mut shutdown => break,
             _ = connections.join_next(), if !connections.is_empty() => {},
-            (io, _) = listener.accept() => {
-                connections.spawn(serve_connection(router.clone(), io, closing.clone()));
+            (io, addr) = listener.accept() => {
+                connections.spawn(serve_connection(router.clone(), io, peer(&addr), closing.clone()));
             }
         }
     }
@@ -54,12 +66,19 @@ async fn serve_owned(
 async fn serve_connection(
     router: Router,
     io: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    peer: Option<SocketAddr>,
     closing: CancellationToken,
 ) {
     let mut builder = Builder::new(TokioExecutor::new());
     builder.http2().enable_connect_protocol();
+    let service = router.map_request(move |mut req: Request<_>| {
+        if let Some(peer) = peer {
+            req.extensions_mut().insert(PeerAddr(peer));
+        }
+        req
+    });
     let connection =
-        builder.serve_connection_with_upgrades(TokioIo::new(io), TowerToHyperService::new(router));
+        builder.serve_connection_with_upgrades(TokioIo::new(io), TowerToHyperService::new(service));
     tokio::pin!(connection);
     tokio::select! {
         biased;
@@ -87,7 +106,13 @@ pub async fn serve_unix(
         inner: listener,
         uid,
     };
-    serve_owned(router.layer(Extension(Transport::Unix)), checked, shutdown).await;
+    serve_owned(
+        router.layer(Extension(Transport::Unix)),
+        checked,
+        |_| None,
+        shutdown,
+    )
+    .await;
     Ok(())
 }
 

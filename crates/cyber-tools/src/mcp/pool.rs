@@ -1175,7 +1175,9 @@ impl BuiltinHost {
         // waits for launched handlers to settle before it is dropped.
         let hook_cancel = cancel.child_token();
         let flight = super::elicitation::HookFlight::default();
+        let caller = caller_marker(owner.metadata(), self.runtime().as_ref(), inv);
         let context = super::ElicitationContext::new(&inv.asker, &authorize)
+            .with_caller(caller.as_ref())
             .with_sampling(&sampler)
             .with_hooks(super::elicitation::ElicitationHooks {
                 host: self,
@@ -1709,6 +1711,20 @@ fn output(result: Value) -> Result<ToolOutcome, ToolError> {
         },
         None => ToolOutcome::Ok(text),
     })
+}
+
+/// `_meta["dev.cyber-code/caller"]` for a call to a Cyber Code MCP server (`serverInfo.name`
+/// `cyber-code`): the calling Session and its depth + 1; `None` for any other server.
+fn caller_marker(
+    metadata: &Value,
+    runtime: Option<&cyber_server::runtime::Runtime>,
+    inv: &Invocation,
+) -> Option<Value> {
+    if metadata["serverInfo"]["name"] != "cyber-code" {
+        return None;
+    }
+    let depth = runtime.map_or(0, |runtime| runtime.effective_mcp_depth(&inv.session_id));
+    Some(json!({ "session_id": inv.session_id, "depth": depth.saturating_add(1) }))
 }
 
 #[cfg(test)]

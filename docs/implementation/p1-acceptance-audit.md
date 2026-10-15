@@ -1,5 +1,23 @@
 # P1 acceptance audit
 
+## MCP serve, increment 4 of 4: prompts and waiting (2026-10-15)
+
+[`add-mcp-session-server`](../../openspec/changes/add-mcp-session-server/tasks.md) (`mcp-server`) is **Partial P1**; no requirement is accepted. The table records local evidence per requirement.
+
+| Requirement | Phase | State | Production-path evidence | Open |
+|---|---|---|---|---|
+| MCP serve transports | P1 | Done locally | `cyber-cli` `mcp_serve_cli` (real bridge: lifecycle, restart re-initialize, EOF `DELETE`, `--transport http`, disabled serve, SSE progress relayed); `cyber-app` `mcp_serve` | Native Windows |
+| Local client trust model | P1 | Done locally | `cyber-server` `mcp_serve` (401, `loopback_only`, `host_not_allowed`, Unix socket) | Real-interface LAN peer on a host whose firewall allows it |
+| Served tools and errors | P1 | Partial | `cyber-app` `mcp_serve`, `cyber-server` `mcp_serve` (seven tools, schema errors, route errors, idempotency) | Messaging tools; `UnknownError` with `ref` |
+| Session creation over MCP | P1 | Done locally | `cyber-app` `mcp_serve` `production_server_creates_bounded_non_interactive_sessions_over_mcp` | Native Windows |
+| Session reading over MCP | P1 | Done locally | `cyber-app` `mcp_serve` (reading tools, `recent_prompts` across a restart); `mcp_serve_cli` | Native Windows |
+| Prompt admission over MCP | P1 | Done locally | `cyber-cli` `mcp_serve_cli` `another_agent_drives_cyber_code_through_the_bridge`; `cyber-app` `mcp_serve` `production_server_runs_prompts_over_mcp_and_rewaits_after_a_restart`, `production_server_runs_configured_prompt_hooks_for_mcp_prompts` | Usage `origin: mcp` (3.5) |
+| Prompt results and waiting | P1 | Partial | Same; `cyber-server` `mcp_serve` (timeouts, cancellation regression, interrupt, owned Job, a result bounded to its own run) | "Waiting for approval reported" with a real attached TUI (deferred to 3.1) |
+| Messaging over MCP | P1 | Deferred | — | Messaging API |
+| Approvals stay with human clients | P1 | Partial | No elicitation sent; `/mode bypass` literal (`cyber-server` `mcp_serve`) | Unattended resolution needs per-Session attached-client tracking |
+| MCP serve limits | P1 | Done locally | `cyber-server` `mcp_serve` (quota, `max_waits`, `max_running_sessions`, refusal before writes); `cyber-core` config tests | Native Windows |
+| MCP recursion guard | P1 | Partial | `cyber-app` `mcp_serve` (real MCP pool: external → A → B refused at depth 2, self-prompt refused); `cyber-server` `mcp_serve` (header markers, ancestors, run-scoped depth) | Messaging depth (no Messaging API); `CYBER_MCP_DEPTH` for hooks and PTYs |
+
 ## Skills and commands, increment 4 of 4: remote skill sources and closeout (2026-10-14)
 
 `Remote skill sources` (P1) is now done locally; its row below is updated. Production-path evidence is `cyber-app` `server` `remote_skill_source_fetches_caches_and_serves_stale_offline`: `App::build` attaches the remote skill pipeline to the production `BuiltinHost` (the policy-checked HTTPS fetcher unless `AppOptions.remote_skill_fetcher` injects one), and the test drives it over `GET /skills` and `GET /commands` with an in-process fetcher (no network). It covers the background first fetch, the cache layout, no refetch while fresh, a 25-hour-old cache with a failing fetcher (the skill stays loaded, `stale cache` and the failure reason appear, no request waits for the fetch), and a project-config URL that stays inactive until `trust_remote_skill_source` approves it and becomes inactive again once its content changes. It was red before discovery and `App::build` were wired (the remote skill never appeared) and is green after. `cyber-cli` `skills_cli` `skills_trust_approves_a_cached_project_remote_source` covers `cyber skills trust <url>` through the binary. Not run natively on Windows.

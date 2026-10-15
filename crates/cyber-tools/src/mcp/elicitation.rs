@@ -8,6 +8,8 @@ pub struct ElicitationContext<'a> {
     authorize: &'a (dyn Fn() -> bool + Send + Sync),
     pub(super) sampling: Option<&'a dyn super::sampling::SamplingHandler>,
     hooks: Option<ElicitationHooks<'a>>,
+    /// `_meta["dev.cyber-code/caller"]` of the call, sent only to Cyber Code servers.
+    pub(super) caller: Option<&'a Value>,
 }
 
 /// The calling invocation whose Elicitation hooks gate, and whose ElicitationResult
@@ -119,7 +121,14 @@ impl<'a> ElicitationContext<'a> {
             authorize,
             sampling: None,
             hooks: None,
+            caller: None,
         }
+    }
+    /// Mark the call with the calling Session and its depth (`mcp-server` recursion
+    /// guard).
+    pub(crate) fn with_caller(mut self, caller: Option<&'a Value>) -> Self {
+        self.caller = caller;
+        self
     }
     /// Run Elicitation hooks for this call's forms.
     pub(crate) fn with_hooks(mut self, hooks: ElicitationHooks<'a>) -> Self {
@@ -133,6 +142,7 @@ impl<'a> ElicitationContext<'a> {
             authorize,
             sampling: self.sampling,
             hooks: self.hooks,
+            caller: self.caller,
         }
     }
     pub(super) fn authorized(&self) -> bool {

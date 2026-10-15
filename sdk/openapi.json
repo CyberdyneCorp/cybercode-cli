@@ -1209,8 +1209,15 @@
               "null"
             ]
           },
+          "agent": {
+            "type": "string"
+          },
           "model": {
             "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "The selected permission mode."
           },
           "archived": {
             "type": "boolean"
@@ -1265,7 +1272,9 @@
           "id",
           "title",
           "directory",
+          "agent",
           "model",
+          "mode",
           "archived",
           "created_at",
           "updated_at",
@@ -4858,7 +4867,7 @@
       "ErrorBody": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "ErrorBody",
-        "description": "The JSON body of every declared failure.",
+        "description": "The JSON body of every declared failure. Some failures add `reason`, a machine-readable\nrefinement of `_tag`, and fields of their own such as `retryAfterMs` or `path`.",
         "type": "object",
         "properties": {
           "_tag": {
@@ -4895,7 +4904,8 @@
         "required": [
           "_tag",
           "message"
-        ]
+        ],
+        "additionalProperties": true
       },
       "McpToolsChanged": {
         "type": "object",

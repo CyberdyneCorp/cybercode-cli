@@ -53,6 +53,8 @@ pub use subtree_reopen::SubtreeReopenReport;
 pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod location;
 mod mcp;
+mod mcp_depth;
+pub use mcp_depth::RunMarker;
 mod memory;
 pub use mcp::{
     McpConnectionObserver, McpConnectionOwner, McpConnectionPhase, McpConnectionRecord,
@@ -68,6 +70,7 @@ mod model;
 mod requests;
 mod rewind;
 mod selection;
+pub mod settlement;
 mod shutdown;
 mod structured;
 pub use structured::StructuredSchema;
@@ -452,13 +455,23 @@ pub struct SessionRow {
     pub title: String,
     pub directory: String,
     pub parent_id: Option<String>,
+    pub agent: String,
     pub model: String,
+    /// The selected permission mode.
+    pub mode: String,
     pub archived: bool,
     pub created_at: i64,
     pub updated_at: i64,
     pub cost: f64,
     #[serde(flatten)]
     pub children_usage: ChildrenUsage,
+}
+
+impl SessionRow {
+    /// The `list` cursor that continues after this row.
+    pub fn cursor(&self) -> String {
+        format!("{}:{}", self.updated_at, self.id)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -507,6 +520,8 @@ pub(crate) struct Inner {
     pub options: RuntimeOptions,
     sessions: StdMutex<HashMap<String, Arc<Handle>>>,
     drains: StdMutex<HashMap<String, DrainEntry>>,
+    /// MCP serve recursion depth by Session, for the run (Drain) it was raised in.
+    mcp_depths: StdMutex<HashMap<String, (CancellationToken, u32)>>,
     idle: Notify,
     lifecycle: Arc<RwLock<()>>,
     shutdown_lock: Mutex<()>,
@@ -573,6 +588,7 @@ impl Runtime {
             options,
             sessions: StdMutex::default(),
             drains: StdMutex::default(),
+            mcp_depths: StdMutex::default(),
             idle: Notify::new(),
             lifecycle: Arc::new(RwLock::new(())),
             shutdown_lock: Mutex::new(()),
@@ -869,6 +885,28 @@ impl Runtime {
                 },
             )
             .await
+    }
+
+    /// The `permission_mode` an agent would give a new Session at `directory`, before any
+    /// write; `None` when the agent sets none. An unknown or hidden agent is `Invalid`.
+    pub fn agent_permission_mode(
+        &self,
+        directory: &str,
+        agent: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        let turn = TurnContext {
+            session_id: String::new(),
+            directory: directory.to_owned(),
+            agent: agent.to_owned(),
+            mode: "default".into(),
+            prefers_apply_patch: false,
+            rules: serde_json::Value::Null,
+        };
+        self.inner
+            .tools
+            .agent_inference(&turn)
+            .map(|options| options.permission_mode)
+            .map_err(RuntimeError::Invalid)
     }
 
     /// Durably admit input (`session-runtime` → Durable prompt admission, Exact-retry idempotency).
@@ -1349,6 +1387,17 @@ impl Runtime {
             .contains_key(session_id)
     }
 
+    /// The Sessions whose Drain is running.
+    pub fn running_sessions(&self) -> std::collections::HashSet<String> {
+        self.inner
+            .drains
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     /// A copy of the Session's current state.
     pub async fn state(&self, session_id: &str) -> Result<SessionState, RuntimeError> {
         let mut state = self
@@ -1608,8 +1657,7 @@ impl Runtime {
         let mut sessions = rows;
         let next = (sessions.len() > limit as usize).then(|| {
             sessions.truncate(limit as usize);
-            let last = sessions.last().expect("non-empty");
-            format!("{}:{}", last.updated_at, last.id)
+            sessions.last().expect("non-empty").cursor()
         });
         Ok(SessionPage { sessions, next })
     }
@@ -1705,7 +1753,7 @@ fn query_sessions(
 ) -> Result<Vec<SessionRow>, StoreError> {
     let (cursor_at, cursor_id) = cursor.unwrap_or((i64::MAX, String::new()));
     let mut stmt = conn.prepare(
-        "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost, children_cost, children_tokens, children_unpriced_steps, children_usage_complete, children_token_classes, children_token_classes_complete FROM session
+        "SELECT id, title, directory, parent_id, model, archived, created_at, updated_at, cost, children_cost, children_tokens, children_unpriced_steps, children_usage_complete, children_token_classes, children_token_classes_complete, agent, mode FROM session
          WHERE (?1 IS NULL OR directory = ?1)
            AND (?2 IS NULL OR parent_id = ?2)
            AND (?3 = 0 OR parent_id IS NULL)
@@ -1738,6 +1786,8 @@ fn query_sessions(
                     updated_at: r.get(7)?,
                     cost: r.get(8)?,
                     children_usage: child_usage::read(r, 9)?,
+                    agent: r.get(15)?,
+                    mode: r.get(16)?,
                 })
             },
         )?
