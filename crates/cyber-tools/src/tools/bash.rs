@@ -66,6 +66,34 @@ pub(crate) async fn run_user(ctx: &Ctx<'_>, command: &str) -> Result<String, Too
     execute(ctx, command, &ctx.location, DEFAULT_TIMEOUT_MS).await
 }
 
+/// A template's `` !`cmd` `` (`skills-commands` → Shell output injection): `bash`
+/// permission for the command text in the Session's mode, asking when the rules say so.
+pub(crate) async fn authorize_injection(ctx: &Ctx<'_>, command: &str) -> Result<(), ToolError> {
+    let analysis = analyze(command, &ctx.location);
+    authorize(ctx, command, &ctx.location, &analysis).await
+}
+
+/// Run an authorized injection in the sandbox and return its stdout, bounded by
+/// `timeout_ms` and the cancellation token. Only the first `max_bytes` are kept: reading
+/// stops there and nothing is spilled to a file. A timeout is noted after the output.
+pub(crate) async fn run_injected(
+    ctx: &Ctx<'_>,
+    command: &str,
+    timeout_ms: u64,
+    max_bytes: usize,
+) -> Result<String, ToolError> {
+    let prepared = crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell), command).await?;
+    let output = Output::Stdout { max_bytes };
+    let (capture, ended) = run_process(ctx, prepared, &ctx.location, timeout_ms, output).await?;
+    // Like shell command substitution, trailing newlines are dropped.
+    let stdout = String::from_utf8_lossy(&capture.tail);
+    let stdout = stdout.trim_end_matches(['\n', '\r']);
+    Ok(match ended {
+        Ended::TimedOut => format!("{stdout}\n[timed out after {timeout_ms} ms]"),
+        _ => stdout.to_string(),
+    })
+}
+
 async fn authorize(
     ctx: &Ctx<'_>,
     command: &str,
@@ -168,15 +196,23 @@ pub(crate) fn shell(configured: &str) -> String {
 }
 
 /// Merged output: the last 1 MiB in memory, everything in a managed file once that overflows.
+/// A bounded capture instead keeps only the first `limit` bytes and never writes a file.
 struct Capture {
     tail: Vec<u8>,
     dropped: usize,
     file: Option<(PathBuf, std::fs::File)>,
     dir: PathBuf,
+    limit: Option<usize>,
 }
 
 impl Capture {
-    fn push(&mut self, chunk: &[u8]) {
+    /// Returns `false` once a bounded capture is full, so its reader stops.
+    fn push(&mut self, chunk: &[u8]) -> bool {
+        if let Some(limit) = self.limit {
+            let room = limit.saturating_sub(self.tail.len()).min(chunk.len());
+            self.tail.extend_from_slice(&chunk[..room]);
+            return self.tail.len() < limit;
+        }
         if let Some((_, f)) = &mut self.file {
             let _ = f.write_all(chunk);
         }
@@ -187,6 +223,7 @@ impl Capture {
             self.tail.drain(..excess);
             self.dropped += excess;
         }
+        true
     }
 
     /// Start the full-output file with everything captured so far.
@@ -219,10 +256,33 @@ async fn execute(
 
 pub(super) async fn execute_prepared(
     ctx: &Ctx<'_>,
-    mut prepared: crate::sandboxing::Prepared,
+    prepared: crate::sandboxing::Prepared,
     workdir: &Path,
     timeout_ms: u64,
 ) -> Result<String, ToolError> {
+    let (capture, ended) = run_process(ctx, prepared, workdir, timeout_ms, Output::Merged).await?;
+    Ok(render(&capture, ended, timeout_ms))
+}
+
+/// Which output a command contributes: tool calls merge stderr into stdout and keep the
+/// full output; injections keep only the head of stdout.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Output {
+    Merged,
+    Stdout { max_bytes: usize },
+}
+
+async fn run_process(
+    ctx: &Ctx<'_>,
+    mut prepared: crate::sandboxing::Prepared,
+    workdir: &Path,
+    timeout_ms: u64,
+    output: Output,
+) -> Result<(Capture, Ended), ToolError> {
+    let (stderr, limit) = match output {
+        Output::Merged => (Stdio::piped(), None),
+        Output::Stdout { max_bytes } => (Stdio::null(), Some(max_bytes)),
+    };
     let mut child = Process::spawn(
         &prepared.program,
         &prepared.args,
@@ -233,7 +293,7 @@ pub(super) async fn execute_prepared(
                 .current_dir(workdir)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(stderr)
                 .kill_on_drop(true)
                 .env("CYBER", "1")
                 .env("CYBER_PID", std::process::id().to_string())
@@ -248,6 +308,7 @@ pub(super) async fn execute_prepared(
         dropped: 0,
         file: None,
         dir: ctx.host.opts.tool_output_dir.clone(),
+        limit,
     }));
     let readers = [
         child
@@ -269,11 +330,17 @@ pub(super) async fn execute_prepared(
     if matches!(ended, Ended::Cancelled) {
         return Err(ToolError::Aborted);
     }
-    Ok(render(
-        &capture.lock().unwrap_or_else(PoisonError::into_inner),
-        ended,
-        timeout_ms,
-    ))
+    let capture = std::mem::replace(
+        &mut *capture.lock().unwrap_or_else(PoisonError::into_inner),
+        Capture {
+            tail: Vec::new(),
+            dropped: 0,
+            file: None,
+            dir: PathBuf::new(),
+            limit,
+        },
+    );
+    Ok((capture, ended))
 }
 
 /// Wait for exit, timeout or cancellation, answering the proxy's network questions meanwhile.
@@ -318,10 +385,14 @@ async fn pump(mut stream: impl tokio::io::AsyncRead + Unpin, capture: Arc<Mutex<
         if n == 0 {
             break;
         }
-        capture
+        let more = capture
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(&buf[..n]);
+        // A full bounded capture closes its pipe; the writer then sees a broken pipe.
+        if !more {
+            break;
+        }
     }
 }
 

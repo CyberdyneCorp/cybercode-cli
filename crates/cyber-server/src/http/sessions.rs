@@ -496,6 +496,7 @@ async fn prompt(
     }
     let admission = Admission {
         skill_command: None,
+        template: None,
         message_id: body.id,
         parts: body.parts,
         delivery: body.delivery,

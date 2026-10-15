@@ -199,6 +199,19 @@ async fn unknown_skills_list_the_available_names() {
 }
 
 #[tokio::test]
+async fn unknown_skill_lists_only_skills_the_agent_may_load() {
+    let f = Fixture::new();
+    skill(&f, ".cyber/skills/a", "alpha", "first", "A");
+    skill(&f, ".cyber/skills/d", "deploy-prod", "deploy", "D");
+    f.set_config(json!({"permissions": {"skill": {"deploy-*": "deny", "batch": "deny"}}}));
+    let out = failed(f.call("default", "skill", json!({"name": "nope"})).await);
+    assert_eq!(
+        out,
+        "Skill \"nope\" not found. Available: alpha, customize-cyber, security-review, simplify"
+    );
+}
+
+#[tokio::test]
 async fn skill_directories_are_readable_without_prompting() {
     let f = Fixture::new();
     let user_skill = f

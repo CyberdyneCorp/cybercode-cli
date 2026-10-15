@@ -1,7 +1,7 @@
 //! Bounded command discovery with handle-fenced traversal and independent file verification.
 use super::{
     CommandOrigin, CommandProvenance, CommandSourceKind, CommandSourceScope, Commands,
-    StaticCommand, invocation_name, markdown, valid_name,
+    StaticCommand, invocation_name, markdown_template, valid_name,
 };
 use crate::import::{SourceSnapshot, command_directory, verify_command_directory};
 use cap_fs_ext::DirExt;
@@ -34,6 +34,8 @@ struct Candidate {
 }
 struct Scanner {
     candidates: BTreeMap<String, Candidate>,
+    /// Agents a command override may name; empty when the agent registry is invalid.
+    agents: BTreeMap<String, crate::config::AgentProfile>,
     issues: Vec<CommandIssue>,
     entries: usize,
     remaining: usize,
@@ -46,6 +48,20 @@ impl Scanner {
             path: path.into(),
             reason,
         });
+    }
+
+    /// A parsed definition whose overrides name a usable agent; otherwise the reason
+    /// is an issue and the definition is unavailable.
+    fn admit(
+        &mut self,
+        path: &Path,
+        parsed: Result<StaticCommand, &'static str>,
+    ) -> Option<StaticCommand> {
+        let checked = parsed.and_then(|command| match agent_issue(&command, &self.agents) {
+            Some(reason) => Err(reason),
+            None => Ok(command),
+        });
+        checked.map_err(|reason| self.issue(path, reason)).ok()
     }
 
     fn put(
@@ -222,20 +238,30 @@ impl Scanner {
             return None;
         };
         self.remaining = remaining;
-        let command = snapshot
-            .text()
-            .ok()
-            .and_then(|text| markdown(text).ok())
-            .and_then(|document| StaticCommand::parse(&document.definition).ok());
-        if snapshot.verify().is_err() || command.is_none() {
-            self.issue(
-                path,
-                "command definition is unavailable, changed or needs additional behavior",
-            );
+        if snapshot.verify().is_err() {
+            self.issue(path, "command definition is unavailable or changed");
             return None;
         }
-        command
+        let parsed = snapshot
+            .text()
+            .map_err(|_| "command definition is not UTF-8")
+            .and_then(markdown_template)
+            .and_then(|document| StaticCommand::parse_template(&document.definition));
+        self.admit(path, parsed)
     }
+}
+
+/// An override agent must be configured, and a child Session needs a subagent-capable one.
+fn agent_issue(
+    command: &StaticCommand,
+    agents: &BTreeMap<String, crate::config::AgentProfile>,
+) -> Option<&'static str> {
+    let name = command.agent.as_deref()?;
+    let Some(profile) = agents.get(name).filter(|profile| !profile.hidden) else {
+        return Some("command agent is not a configured agent");
+    };
+    (command.subtask && !profile.subagent_capable())
+        .then_some("command subtask agent cannot run as a subagent")
 }
 
 fn canonical(path: &Path, scanner: &mut Scanner) -> Option<PathBuf> {
@@ -282,7 +308,13 @@ fn command_sources<'a>(
 
 fn source_priority(source: &str, project: &Path, global: Option<&Path>) -> Priority {
     let Some(path) = source_path(source) else {
-        return (2, 0, 2);
+        // A profile overlay may come from project config; when its declaring layer was
+        // not carried through, it counts as project-controlled.
+        return if source.starts_with("profile:") {
+            (1, 0, 2)
+        } else {
+            (2, 0, 2)
+        };
     };
     // Scope belongs to the declaring layer, even if its file is a symlink.
     if source.starts_with("global:")
@@ -388,12 +420,10 @@ fn inline_sources(
                 }
                 let priority = inline_priority(name, sources, project, global);
                 if scope.project || priority.0 != 1 {
-                    scanner.put(
-                        invocation_name(name),
-                        priority,
-                        StaticCommand::parse(value).ok(),
-                        inline_origin(name, sources, priority),
-                    );
+                    let origin = inline_origin(name, sources, priority);
+                    let path = origin.paths.first().unwrap_or(&scope.location).clone();
+                    let command = scanner.admit(&path, StaticCommand::parse_template(value));
+                    scanner.put(invocation_name(name), priority, command, origin);
                 }
             }
         } else {
@@ -415,6 +445,7 @@ pub fn discover(
 ) -> Commands {
     let mut scanner = Scanner {
         candidates: BTreeMap::new(),
+        agents: crate::config::resolve_agents(config).unwrap_or_default(),
         issues: Vec::new(),
         entries: 0,
         remaining: 16 * 1024 * 1024,

@@ -13,7 +13,7 @@ use super::error::ErrorBody;
 use super::events::{EventEnvelope, HistoryPage};
 use super::service::{StopAccepted, StopService};
 use super::sessions::*;
-use super::{AgentInfo, CommandInfo, ModelInfo};
+use super::{AgentInfo, CommandInfo, ModelInfo, SkillCatalog};
 use crate::runtime::{FileDiff, InboxRow, PendingRequest, Receipt, RevertState, SessionRow};
 
 /// One HTTP operation.
@@ -738,6 +738,15 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .located()
         .ok::<Located<Vec<CommandInfo>>>(g),
+        op(
+            "get",
+            "/skills",
+            "v1.skill.list",
+            "Skills with source, scope, the agent's permission effect and diagnostics",
+        )
+        .located()
+        .query(&["agent"])
+        .ok::<Located<SkillCatalog>>(g),
         op("get", "/fs/find", "v1.fs.find", "Find files for @ mentions")
             .located()
             .query(&["query", "limit"])

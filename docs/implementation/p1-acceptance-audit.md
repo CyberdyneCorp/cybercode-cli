@@ -1,5 +1,52 @@
 # P1 acceptance audit
 
+## Skills and commands, increment 4 of 4: remote skill sources and closeout (2026-10-14)
+
+`Remote skill sources` (P1) is now done locally; its row below is updated. Production-path evidence is `cyber-app` `server` `remote_skill_source_fetches_caches_and_serves_stale_offline`: `App::build` attaches the remote skill pipeline to the production `BuiltinHost` (the policy-checked HTTPS fetcher unless `AppOptions.remote_skill_fetcher` injects one), and the test drives it over `GET /skills` and `GET /commands` with an in-process fetcher (no network). It covers the background first fetch, the cache layout, no refetch while fresh, a 25-hour-old cache with a failing fetcher (the skill stays loaded, `stale cache` and the failure reason appear, no request waits for the fetch), and a project-config URL that stays inactive until `trust_remote_skill_source` approves it and becomes inactive again once its content changes. It was red before discovery and `App::build` were wired (the remote skill never appeared) and is green after. `cyber-cli` `skills_cli` `skills_trust_approves_a_cached_project_remote_source` covers `cyber skills trust <url>` through the binary. Not run natively on Windows.
+
+Skills and commands stay **Partial P1**. Every `skills-commands` P1 contract with a local test now passes locally, but these items are still open: real-model review quality (needs a live model; deferred, not simulated), plugin skills and plugin commands (no plugin system yet), the native Windows runs and lifecycle acceptance of every row, and the remaining Partial rows below (path-triggered/forked lifecycle, scoped approvals lifecycle). See [status](p1-status.md#skills-and-commands-increment-4-of-4-remote-skill-sources-and-closeout-2026-10-14).
+
+## Skills and commands, increment 3 of 4: command overrides and agent skill preload (2026-10-14)
+
+`Custom command definitions` (P0) and `Agent, model and subtask overrides` (P0) are now done locally; the rows below are updated, and a row for the `agents-subagents` `skills` field is added. Production-path evidence goes through `AppHost` and `POST /sessions/:id/command` with a scripted provider (`cyber-app` `server` `command_overrides_route_agent_model_and_subtask`, `agent_profile_skills_preload_into_that_agent_only`) and through `cyber exec --command` (`cyber-cli` `exec_forked_command` `exec_subtask_command_runs_as_a_forked_reviewer_child`). An inline command that names a different agent is refused rather than switching the Session's agent for one Turn; the spec now says so. Nothing is accepted: no suite has run natively on Windows and lifecycle acceptance is open. See [status](p1-status.md#skills-and-commands-increment-3-of-4-command-overrides-and-agent-skill-preload-2026-10-14).
+
+## Skills and commands, increment 2 of 4: template expansion (2026-10-14)
+
+`Argument substitution` (P0), `Shell output injection` (P1) and `File and agent references` (P0) are now done locally; the rows in the table below are updated. Production-path evidence goes through `AppHost` and `POST /sessions/:id/command` (`cyber-app` `server`) and through `cyber exec --command` (`cyber-cli` `exec_template_expansion`, also added to the Windows CI job). The `command_` app tests were red with the `AppHost` forwarding of `expand_prompt_template` removed (every span became `[unavailable: sandbox]` and no references were attached) and green with it. Nothing is accepted: no suite has run natively on Windows and lifecycle acceptance is open. `Shell output injection` stays unchecked in the checklist for that reason. See [status](p1-status.md#skills-and-commands-increment-2-of-4-template-expansion-2026-10-14).
+
+## Skills and commands: requirement audit and increment 1 of 4 (2026-10-14)
+
+Every requirement of the canonical [skills-commands](../../openspec/specs/skills-commands/spec.md) spec (P0 and P1, the M1.3 delta's modified P1 requirements included) was audited, together with `system-context` "Skills, references, and MCP instruction sources", `builtin-tools` "skill tool" and `agents-subagents` "Forked subagents". "Done locally" means every scenario has a local test, at least one through the production path (`cyber-app` `AppHost`/HTTP API, `cyber exec` or the real binary); no row is accepted, because no suite has run natively on Windows (only the `x86_64-pc-windows-gnu` Clippy type-check) and lifecycle acceptance is open.
+
+| Requirement | Phase | State | Production-path evidence | Open |
+|---|---|---|---|---|
+| SKILL.md format | P0 | Done locally (increment 1) | `cyber-app` `server` `get_skills_reports_diagnostics_scope_and_permission_effect` (invalid YAML diagnostic over `GET /skills`); `cyber-cli` `skills_cli` (`/skills` data in `cyber skills list/show` and `cyber doctor`); `cyber-core` `skills` units (linked `SKILL.md`, linked skill directory and root, 1 MiB cap, `model` grammar) | Native Windows run of the fence |
+| Skill discovery locations | P0 | Partial | `get_skills_reports_diagnostics_scope_and_permission_effect` (project over global with both paths); `skills` units (compat off); URL entries at their config position (`remote_skill_source_fetches_caches_and_serves_stale_offline`) | Plugin skills (no plugins yet) |
+| Remote skill sources | P1 | Done locally (increment 4) | `cyber-app` `server` `remote_skill_source_fetches_caches_and_serves_stale_offline` (injected in-process fetcher through `AppHost`: background fetch, cache under `<cache>/skills/<host>/<source-id>/<generation>/<name>` with a per-source `.marker.json`, no refetch while fresh, offline stale cache with warning, project URL gated by `cyber skills trust` and re-gated by changed content); `cyber-cli` `skills_cli` `skills_trust_approves_a_cached_project_remote_source`; `cyber-tools` `remote_skills` units (unsafe index paths and names, oversized files keep the old cache, `http://` refused before contact, 302 not followed, network off refused, fresh cache makes no fetch, stale cache plus failing fetch, changed content changes the approval digest); `cyber-core` `config::merge` `concatenated_items_keep_their_layer` | No live HTTPS source was contacted (the production fetcher is tested against loopback HTTP for redirects only); native Windows |
+| Skill listing in system context | P0 | Done locally (increment 1) | `cyber-app` `server` `skills_listing_respects_agent_profile_and_session_rules` (scripted provider Turn: agent profile and Session ruleset); `cyber-tools` `skill_catalog` units (hard budget with 200 skills, `... N more`) | Native Windows |
+| Skill tool | P0 | Done locally (increment 1) | `cyber-app` `server` `skill_tool_and_skill_directory_reads_through_a_turn` (AppHost Turn: unknown name, real skill body and files); `cyber-tools` `web_skills` `unknown_skill_lists_only_skills_the_agent_may_load`, `skill_loads_body_with_arguments_and_sibling_files`; sibling walk bound unit | Native Windows |
+| Skill-scoped tool approvals and model | P1 | Partial | Earlier increments: `cyber-app` `server` `authenticated_skill_commands_capture_declarations_and_refuse_denials` and the scoped-approval runtime suites | Lifecycle and native acceptance |
+| Skill directories readable | P0 | Done locally | `cyber-app` `server` `skill_tool_and_skill_directory_reads_through_a_turn` (AppHost Turn in `dont-ask`: skill-directory read allowed, other external read denied); `cyber-tools` `web_skills` `skill_directories_are_readable_without_prompting` | Native Windows |
+| Skills as user commands | P0 | Done locally | `cyber-app` `server` `imported_static_commands_reach_live_catalogue_and_expansion_with_skill_precedence`, `authenticated_skill_commands_capture_declarations_and_refuse_denials` | Native Windows |
+| Custom command definitions | P0 | Done locally (increment 3) | `native_markdown_commands_reach_live_catalogue_and_refresh_after_edits`; `command_overrides_route_agent_model_and_subtask` (override fields, unknown agent as a command issue); `cyber-core` `command_overrides_parse_and_invalid_values_are_refused`, `command_overrides_are_validated_against_configured_agents` | Native Windows |
+| Command source precedence | P0 | Partial | `bundled_skill_catalogue_and_project_overrides_share_command_precedence`, `commands_resolve_real_loader_scope_labels_before_markdown_precedence` | Plugin commands |
+| Argument substitution | P0 | Done locally (increment 2) | `imported_static_commands_reach_live_catalogue_and_expansion_with_skill_precedence`; single-pass `cyber-core` `skills::template` units (argument text never substituted twice, raw command append) | Native Windows |
+| Shell output injection | P1 | Done locally (increment 2) | `cyber-app` `server` `command_shell_injection_runs_sandboxed_and_honours_permissions` (deny, untrusted refusal, provider sees output, exact retry runs nothing, plan mode), `command_shell_injection_asks_the_attached_client` (`GET /permissions/requests` and reply); `command_shell_injection_honours_the_agent_tool_list` (agent `tools.deny: [bash]`), `command_shell_injection_honours_pre_tool_use_hooks` (global `PreToolUse` deny, Unix), `command_shell_injection_arguments_never_run` (`$(...)`, backticks and `;` in arguments stay literal under an allow rule); `cyber-core` `skills::template` `arguments_inside_injections_are_quoted_shell_words`; `cyber-cli` `exec_template_expansion` (`cyber exec --command`, Windows fail-closed case); `cyber-tools` `template_injection` (cap, redaction, timeout, concurrency) | Native Windows run (added to the Windows CI job); lifecycle acceptance |
+| File and agent references | P0 | Done locally (increment 2) | `cyber-app` `server` `command_file_and_agent_references_attach_parts` (file part, `@explore` agent part, unknown and read-denied tokens stay text) | Line ranges (`@path#L1-5`) are not supported; native Windows |
+| Agent, model and subtask overrides | P0 | Done locally (increment 3) | `cyber-app` `server` `command_overrides_route_agent_model_and_subtask` (Review as subtask, agent model fallback, exact retry); `cyber-cli` `exec_forked_command` `exec_subtask_command_runs_as_a_forked_reviewer_child`; `cyber-tools` `command_skills` units (model order, forced fork); skills: `reviewer_skills`, `exec_forked_command` | An inline command naming a different agent is refused (needs `subtask: true`); native Windows and lifecycle acceptance |
+| Argument hints and autocomplete data | P0 | Done locally (increment 1) | `get_skills_reports_diagnostics_scope_and_permission_effect` (`GET /commands` derives `$1 $2`); `skills_cli` `commands_list_prints_derived_hints_and_discovery_issues` | Native Windows |
+| Built-in commands | P0 | Partial | `/skills` added to the catalogue and the TUI | Each command is owned by its capability; not audited here |
+| Bundled skills | P1 | Partial | Earlier increments (`bundled_skills`, `review_command`, `reviewer_skills`) | Real-model review quality needs a live model and is deferred; native/lifecycle acceptance |
+| Record to skill | P2 | Out of scope | None | P2 |
+| Skill and command inspection | P0 | Done locally (increment 1) | `GET /skills` over the app HTTP API, `cyber skills list/show`, `cyber commands list`, `cyber doctor` (`skills_cli`), TUI `/skills` picker (`cyber-tui` runner units) | Native Windows |
+| Path-triggered and forked skills | P1 | Partial | Earlier increments (path reminder and fork suites, `exec_forked_command`) | Aborted/unresolved reminder handling, lifecycle and native acceptance |
+| system-context: Skills, references, and MCP instruction sources | P1 | Partial | `skills_listing_respects_agent_profile_and_session_rules`; `cyber-app` host `hidden_client_override_does_not_reveal_a_lower_read_only_mcp_registration` (`core/mcp-instructions`, legacy `mcp/instructions` observed `Absent`); `cyber-server` `context` `renamed_source_withdraws_the_legacy_key` | `core/references` is not implemented |
+| builtin-tools: skill tool | P0 | Done locally | As Skill tool | Native Windows |
+| agents-subagents: Forked subagents | P1 | Partial | Forked skills reuse the fork route (earlier increments) | Owned by the agents-subagents audit |
+| agents-subagents: Agent definition fields (`skills`) | P0 | Done locally (increment 3) | `cyber-app` `server` `agent_profile_skills_preload_into_that_agent_only` (`core/agent-skills` in that agent's provider request only; `preload_issues` for unknown and model-disabled names) | Native Windows; the rest of the requirement is owned by the agents-subagents audit |
+
+New this increment: the `core/skills` listing used the configuration ruleset without the agent profile or Session rules, so an agent that denied `deploy-*` still saw `deploy-prod` (`skills_listing_respects_agent_profile_and_session_rules`, red before the fix). The listing could exceed its budget, linked or oversized `SKILL.md` files were read, and `GET /skills` did not exist (red first in `cyber-core` `skills` units and `get_skills_reports_diagnostics_scope_and_permission_effect`). See [status](p1-status.md#skills-and-commands-increment-1-of-4-agent-aware-listing-inspection-and-discovery-hardening-2026-10-14).
+
 ## Hooks: managed policy, trust UX, Windows command hooks and requirement audit (2026-10-13)
 
 All four hook increments were audited against the canonical [hooks](../../openspec/specs/hooks/spec.md) spec and the M1.3 delta. A requirement is checked below only when every canonical and delta scenario has a local test, at least one through the production path (`cyber exec --embedded`, the App HTTP server or the app's MCP pool), and nothing it requires is Windows-specific. The checked rows rest on macOS runs; the Unix-only suites (`tool_hook_dispatch`, `exec_lifecycle_hooks`) have no native Windows run yet.
@@ -396,7 +443,7 @@ Stop hooks and loop prevention now have local scenario evidence for both scenari
 
 Hook context injection on lifecycle events now has local evidence for both scenarios (see [current status](p1-status.md#userpromptsubmit-sessionstart-and-jobended-hooks-2026-10-12)): `UserPromptSubmit` context reaches the model as a tagged system message immediately before the prompt, and a denied prompt containing an API key is not admitted and returns the hook reason. `SessionStart` context is admitted once, and Background job events' `JobEnded` scenario is covered for subagent Jobs (no other Job kinds exist yet, so `exit_code` is null). The `lifecycle_hooks` cases are Unix-only and native CI has not run on this change, so both entries stay unchecked.
 
-The checklist covers 212 P1 requirements: the 225 previously listed, minus the 13 editor-integration requirements moved to P3 by `defer-editor-integration`. Every entry starts unverified at the complete requirement scope; this does not imply its foundations are absent. Acceptance needs implementation links, scenario-level tests, public-client evidence and native gates where required. No percentage is inferred from this checklist.
+The checklist covers 214 P1 requirements: the 227 P1 requirements in the canonical specs, minus the 13 editor-integration requirements moved to P3 by `defer-editor-integration`. Until 2026-10-14 it listed 212: `cli-commands` "Review command" and `exec-mode` "Background work owned by the run" were missing and are now listed (compare with `python3 scripts/spec_inventory.py`). Every entry starts unverified at the complete requirement scope; this does not imply its foundations are absent. Acceptance needs implementation links, scenario-level tests, public-client evidence and native gates where required. No percentage is inferred from this checklist.
 
 ### agents-subagents (14)
 
@@ -452,6 +499,12 @@ Canonical source: [builtin-tools](../../openspec/specs/builtin-tools/spec.md).
 - [ ] powershell tool
 - [ ] notebook_edit tool — local implementation and tests pass; fresh native CI remains pending.
 - [ ] monitor tool
+
+### cli-commands (1)
+
+Canonical source: [cli-commands](../../openspec/specs/cli-commands/spec.md).
+
+- [ ] Review command — `cyber review [target]` is implemented with the target grammar, exit codes and owned reviewer Job (`cyber-cli` `review_command`); real-model review quality, native Windows and lifecycle acceptance remain open.
 
 ### client-sdk (1)
 
@@ -533,7 +586,7 @@ Canonical source: [cross-session-messaging](../../openspec/specs/cross-session-m
 
 The 13 former P1 requirements moved to P3 with the change [defer-editor-integration](../../openspec/changes/defer-editor-integration/proposal.md). They are no longer P1 acceptance scope.
 
-### exec-mode (4)
+### exec-mode (5)
 
 Canonical source: [exec-mode](../../openspec/specs/exec-mode/spec.md).
 
@@ -541,6 +594,7 @@ Canonical source: [exec-mode](../../openspec/specs/exec-mode/spec.md).
 - [ ] Structured final output
 - [ ] CI usage
 - [ ] Streaming input and partial output
+- [ ] Background work owned by the run — forked commands and owned Jobs are awaited, handback failures and unknown admissions end the run, and timeout/budget stops cancel only owned work (`cyber-cli` `exec_forked_command`, `exec_owned_jobs`); SIGINT and `--max-tokens` have no dedicated regression, and native acceptance is open.
 
 ### hooks (20)
 
@@ -690,7 +744,7 @@ Canonical source: [session-runtime](../../openspec/specs/session-runtime/spec.md
 
 Canonical source: [skills-commands](../../openspec/specs/skills-commands/spec.md).
 
-- [ ] Remote skill sources
+- [ ] Remote skill sources — done locally in skills increment 4 (`remote_skill_source_fetches_caches_and_serves_stale_offline` through `AppHost`); unchecked until a native Windows run and acceptance.
 - [ ] Skill-scoped tool approvals and model
 - [ ] Shell output injection
 - [ ] Bundled skills

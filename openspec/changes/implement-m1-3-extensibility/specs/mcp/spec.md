@@ -536,7 +536,7 @@
 - **AND** the client SHALL NOT send `resources/subscribe`, so no `notifications/resources/updated` is expected
 
 ### Requirement: Server instructions
-(P0) The system SHALL include each connected server's `instructions` in a `<mcp_instructions>` block as a Context Source keyed `mcp/instructions`, omitting servers whose tools are all denied for the agent. Instruction changes SHALL arrive as Mid-Conversation System Messages.
+(P0) The system SHALL include each connected server's `instructions` in a `<mcp_instructions>` block as a Context Source keyed `core/mcp-instructions` (`system-context` → Skills, references, and MCP instruction sources), omitting servers whose tools are all denied for the agent. Instruction changes SHALL arrive as Mid-Conversation System Messages. Sessions whose context still holds the earlier key `mcp/instructions` SHALL receive its withdrawal.
 
 #### Scenario: Instructions omitted when tools denied
 - **WHEN** an agent's permissions deny `mcp__db__*`
@@ -549,7 +549,7 @@
 
 #### Scenario: Reconnection replaces instructions
 - **WHEN** a fresh authorized connection supplies different instructions
-- **THEN** the changed `mcp/instructions` source SHALL append a Mid-Conversation System Message
+- **THEN** the changed `core/mcp-instructions` source SHALL append a Mid-Conversation System Message
 - **AND** the existing Epoch baseline SHALL remain byte-stable
 
 #### Scenario: All instruction sources withdrawn

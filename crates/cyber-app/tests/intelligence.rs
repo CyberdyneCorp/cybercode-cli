@@ -43,6 +43,7 @@ impl Fixture {
             interactive: true,
             password: Some("status-password".into()),
             mcp_credentials: None,
+            remote_skill_fetcher: None,
         })
         .await
         .unwrap();

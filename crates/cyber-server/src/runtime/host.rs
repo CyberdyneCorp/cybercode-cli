@@ -562,6 +562,25 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Vec::new() })
     }
 
+    /// Expand a planned command template once, before admission commits
+    /// (`skills-commands` → Shell output injection, File and agent references): each
+    /// `` !`cmd` `` span becomes its sandboxed output or a visible notice, and `@`
+    /// references become attached parts. The result replaces the admitted parts. Hosts
+    /// without a sandboxed shell fail closed: nothing runs and nothing is attached.
+    fn expand_prompt_template<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        template: &'a super::PromptTemplate,
+        parts: &'a [cyber_llm::Content],
+        _asker: super::Asker,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Vec<cyber_llm::Content>, String>> {
+        Box::pin(async move {
+            let unavailable = vec!["[unavailable: sandbox]".to_string(); template.injections.len()];
+            template.apply(parts, &unavailable)
+        })
+    }
+
     /// Dispatch a runtime lifecycle hook. Hosts without hooks observe nothing and
     /// return no decision; an error means a fail_closed handler was unavailable.
     fn lifecycle_hooks(

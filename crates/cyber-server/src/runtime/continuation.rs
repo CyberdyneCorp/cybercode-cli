@@ -7,8 +7,8 @@ use tokio_util::sync::CancellationToken;
 use super::events::{ADMITTED, Admitted, RESUMED};
 use super::{
     Admission, CallStatus, ChildContinuation, ChildExecution, Delivery, DrainEntry, Handle,
-    Receipt, Runtime, RuntimeError, SessionState, digest, drain, event, existing_receipt,
-    names::Resumed, receipt_for,
+    Receipt, Runtime, RuntimeError, SessionState, drain, event, existing_receipt, names::Resumed,
+    receipt_for,
 };
 
 impl Runtime {
@@ -26,11 +26,7 @@ impl Runtime {
             .message_id
             .get_or_insert_with(|| cyber_core::ids::new_id("msg"))
             .clone();
-        let digest = digest(
-            &admission.parts,
-            admission.delivery,
-            admission.skill_command.as_ref(),
-        );
+        let digest = admission.digest();
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
             return Ok(receipt);
         }
@@ -52,7 +48,7 @@ impl Runtime {
             .inner
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
             .await?;
-        let resources = self.prompt_resources(&handle, &admission).await?;
+        let attachments = self.prompt_resources(&handle, &admission).await?;
         let prepared = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
         self.inner.ensure_admission_open(id)?;
@@ -96,12 +92,12 @@ impl Runtime {
                         admission_bindings: prepared.admission_bindings(),
                         wake: true,
                         message_id: message.clone(),
-                        parts: admission.parts,
+                        parts: attachments.parts.unwrap_or(admission.parts),
                         delivery: admission.delivery,
                         source: admission.source,
                         digest,
                         hook_context,
-                        resources,
+                        resources: attachments.resources,
                     },
                 ),
             ],

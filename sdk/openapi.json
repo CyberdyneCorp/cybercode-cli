@@ -4685,6 +4685,157 @@
           "configuration"
         ]
       },
+      "Located_SkillCatalog": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SkillCatalog"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "SkillCatalog": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillInfo"
+            }
+          },
+          "command_issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommandDiagnostic"
+            }
+          },
+          "preload_issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Skills the agent's profile preloads (`skills: [..]`) that are unknown, denied for\nthe agent or not model-invocable, and so are not preloaded."
+          }
+        },
+        "required": [
+          "agent",
+          "skills",
+          "command_issues",
+          "preload_issues"
+        ],
+        "description": "Skills for an agent plus command discovery diagnostics, for `/skills`, `cyber skills`,\n`cyber commands list` and `cyber doctor`."
+      },
+      "SkillInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The skill name; for a skipped skill, its directory name."
+          },
+          "description": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "The skill directory, the skipped `SKILL.md`, or `builtin:<name>` for an embedded skill."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SkillOrigin"
+          },
+          "status": {
+            "type": "string",
+            "description": "`loaded`, or `invalid` for a skill that was skipped."
+          },
+          "user_invocable": {
+            "type": "boolean"
+          },
+          "model_invocable": {
+            "type": "boolean"
+          },
+          "argument_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permission": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `skill` permission for the requested agent (`allow`, `ask` or `deny`); absent when\nthe skill was skipped."
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Parse errors and duplicate notices (`replaces skill <name> from <path>`)."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "source",
+          "scope",
+          "status",
+          "user_invocable",
+          "model_invocable",
+          "diagnostics"
+        ],
+        "description": "A discovered or skipped skill (`skills-commands` → Skill and command inspection)."
+      },
+      "SkillOrigin": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "builtin",
+            "description": "Embedded in the binary."
+          },
+          {
+            "type": "string",
+            "const": "user",
+            "description": "`~/.config/cyber/skills` and the home compatibility folders."
+          },
+          {
+            "type": "string",
+            "const": "project",
+            "description": "A directory from the project root down to the Location."
+          },
+          {
+            "type": "string",
+            "const": "config",
+            "description": "A local path from the `skills` configuration."
+          }
+        ],
+        "description": "The scope a skill was discovered in."
+      },
+      "CommandDiagnostic": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "description": "A command definition that was skipped or could not be read."
+      },
       "Located_Array_of_string": {
         "type": "object",
         "properties": {
@@ -9250,6 +9401,63 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Array_of_CommandInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "operationId": "v1.skill.list",
+        "summary": "Skills with source, scope, the agent's permission effect and diagnostics",
+        "tags": [
+          "skill"
+        ],
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_SkillCatalog"
                 }
               }
             }

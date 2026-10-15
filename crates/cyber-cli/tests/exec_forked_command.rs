@@ -199,6 +199,27 @@ impl Env {
         output
     }
 
+    /// Agents of every child Session in the run's embedded database.
+    fn child_agents(&self) -> Vec<String> {
+        self.query("SELECT agent FROM session WHERE parent_id IS NOT NULL")
+    }
+
+    fn query(&self, sql: &str) -> Vec<String> {
+        let dir = self.root.join("cyber/data/embedded");
+        let mut values = Vec::new();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|ext| ext != "db") {
+                continue;
+            }
+            let db = rusqlite::Connection::open(&path).unwrap();
+            let mut query = db.prepare(sql).unwrap();
+            let rows = query.query_map([], |row| row.get::<_, String>(0)).unwrap();
+            values.extend(rows.map(Result::unwrap));
+        }
+        values
+    }
+
     /// Statuses of every background Job in the run's embedded database.
     fn job_statuses(&self) -> Vec<String> {
         let dir = self.root.join("cyber/data/embedded");
@@ -335,4 +356,46 @@ fn exec_without_background_work_finishes_on_the_first_idle() {
         );
         assert!(env.job_statuses().is_empty(), "{detail}");
     }
+}
+
+/// `skills-commands` → Agent, model and subtask overrides through `cyber exec --command`:
+/// a project command with `subtask: true` and `agent: reviewer` runs as a forked
+/// reviewer child through the owned exec Job, and exec reports the handback answer.
+#[test]
+fn exec_subtask_command_runs_as_a_forked_reviewer_child() {
+    let provider = Provider::start(Duration::from_millis(500));
+    let env = Env::new(&provider, &skill(""));
+    let command = env.root.join("repo/.cyber/commands/review-sub.md");
+    std::fs::create_dir_all(command.parent().unwrap()).unwrap();
+    std::fs::write(
+        &command,
+        "---\ndescription: Review as subtask\nsubtask: true\nagent: reviewer\nmodel: corp/skill\n---\nPRIVATE FORK BODY $ARGUMENTS\n",
+    )
+    .unwrap();
+    let output = env.exec(&["--command", "review-sub", "check-the-ledger"]);
+    let requests = provider.requests();
+    let detail = describe(&output, &requests);
+    let child = requests
+        .iter()
+        .find(|body| body["model"] == "skill")
+        .unwrap_or_else(|| panic!("the subtask child never reached the provider\n{detail}"));
+    assert!(
+        child["messages"]
+            .to_string()
+            .contains("PRIVATE FORK BODY check-the-ledger"),
+        "{detail}"
+    );
+    assert!(
+        !requests.iter().any(|body| body["model"] == "main"
+            && body["messages"].to_string().contains("PRIVATE FORK BODY")),
+        "the parent saw the subtask body\n{detail}"
+    );
+    assert!(output.status.success(), "{detail}");
+    assert_eq!(
+        result(&output, &detail)["result"],
+        "final summary",
+        "{detail}"
+    );
+    assert_eq!(env.job_statuses(), ["completed"], "{detail}");
+    assert_eq!(env.child_agents(), ["reviewer"], "{detail}");
 }

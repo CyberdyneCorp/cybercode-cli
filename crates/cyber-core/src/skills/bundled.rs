@@ -1,5 +1,5 @@
 //! Instruction packages embedded in every binary; no installation writes are needed.
-use super::{Discovery, SkillSource, parse};
+use super::{Discovery, SkillDiagnostic, SkillOrigin, SkillSource, parse};
 
 const PACKAGES: &[(&str, &str)] = &[
     ("review", include_str!("bundled/review/SKILL.md")),
@@ -29,11 +29,20 @@ fn parse_packages() -> Discovery {
             }
             Ok(_) => out
                 .diagnostics
-                .push(format!("builtin:{name}: package name mismatch")),
-            Err(error) => out.diagnostics.push(format!("builtin:{name}: {error}")),
+                .push(diagnostic(name, "package name mismatch".into())),
+            Err(error) => out.diagnostics.push(diagnostic(name, error)),
         }
     }
     out
+}
+
+fn diagnostic(name: &str, message: String) -> SkillDiagnostic {
+    SkillDiagnostic {
+        path: format!("builtin:{name}"),
+        origin: SkillOrigin::Builtin,
+        replaces: None,
+        message,
+    }
 }
 
 #[cfg(test)]
@@ -102,17 +111,19 @@ mod tests {
 
     #[test]
     fn local_packages_replace_every_embedded_default_and_invalid_overrides_are_diagnostic() {
-        let tmp = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().canonicalize().unwrap();
+        let tmp = tmp.as_path();
         let scope = SkillScope {
-            location: tmp.path().join("repo"),
-            home: tmp.path().join("home"),
-            global_config_dir: tmp.path().join("global"),
+            location: tmp.join("repo"),
+            home: tmp.join("home"),
+            global_config_dir: tmp.join("global"),
             compat: false,
             extra: vec![],
         };
         let initial = all(&scope);
         assert_eq!(initial.skills.len(), 5);
-        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(tmp).unwrap().count(), 0);
         for name in initial.skills.keys() {
             let dir = scope.global_config_dir.join("skills").join(name);
             std::fs::create_dir_all(&dir).unwrap();
@@ -131,7 +142,12 @@ mod tests {
                 .all(|s| !s.is_bundled() && s.body.starts_with("LOCAL"))
         );
         assert_eq!(local.diagnostics.len(), 5);
-        assert!(local.diagnostics.iter().all(|d| d.contains("builtin:")));
+        assert!(
+            local
+                .diagnostics
+                .iter()
+                .all(|d| d.to_string().contains("builtin:"))
+        );
         let review_path = scope
             .global_config_dir
             .join("skills")
@@ -141,6 +157,7 @@ mod tests {
         let invalid = all(&scope);
         assert!(invalid.skills["review"].is_bundled());
         assert!(invalid.diagnostics.iter().any(|d| {
+            let d = d.to_string();
             d.contains(&review_path.display().to_string()) && d.contains("frontmatter")
         }));
         assert_eq!(

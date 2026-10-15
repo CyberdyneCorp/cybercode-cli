@@ -545,6 +545,14 @@ export interface Operations {
     body: undefined;
     response: void;
   };
+  "v1.skill.list": {
+    path: Record<string, never>;
+    query: {
+      agent?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_SkillCatalog;
+  };
   "v1.tool.list": {
     path: Record<string, never>;
     query: {
@@ -1496,6 +1504,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.skill.list": {
+    tag: "skill",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/skills",
+    pathParams: [],
+    query: ["agent"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.tool.list": {
     tag: "tool",
     name: "list",
@@ -1845,6 +1865,11 @@ export function createGroups(caller: Caller) {
       /** Wake existing promotable Session input without admitting a new prompt (`POST /api/v1/sessions/{sessionID}/wake`) */
       wake: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.wake"]["response"]> =>
         caller.call("v1.session.wake", { path: { sessionID } }, options),
+    },
+    skill: {
+      /** Skills with source, scope, the agent's permission effect and diagnostics (`GET /api/v1/skills`) */
+      list: (query?: Operations["v1.skill.list"]["query"], options?: RequestOptions): Promise<Operations["v1.skill.list"]["response"]> =>
+        caller.call("v1.skill.list", { query }, options),
     },
     tool: {
       /** Tools offered for an agent and mode (`GET /api/v1/tools`) */

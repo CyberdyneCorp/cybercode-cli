@@ -24,6 +24,7 @@ async fn application(root: &std::path::Path) -> App {
         interactive: false,
         password: None,
         mcp_credentials: None,
+        remote_skill_fetcher: None,
     })
     .await
     .unwrap()
@@ -593,7 +594,19 @@ for line in sys.stdin:
             .iter()
             .any(|def| def.spec.name == "mcp__lower__read")
     );
-    assert!(f.host.context_sources(&f.turn)["mcp/instructions"].contains("Lower server guidance"));
+    assert!(
+        f.host.context_sources(&f.turn)["core/mcp-instructions"].contains("Lower server guidance")
+    );
+    // The pre-rename key is always withdrawn, so a resumed Session drops it deterministically.
+    assert!(
+        !f.host
+            .context_sources(&f.turn)
+            .contains_key("mcp/instructions")
+    );
+    assert_eq!(
+        f.host.context_observations(&f.turn)["mcp/instructions"],
+        cyber_server::runtime::ContextObservation::Absent
+    );
     let native = f
         .host
         .definitions(&f.turn)
@@ -612,10 +625,10 @@ for line in sys.stdin:
     assert!(
         !f.host
             .context_sources(&f.turn)
-            .contains_key("mcp/instructions")
+            .contains_key("core/mcp-instructions")
     );
     assert_eq!(
-        f.host.context_observations(&f.turn)["mcp/instructions"],
+        f.host.context_observations(&f.turn)["core/mcp-instructions"],
         cyber_server::runtime::ContextObservation::Absent
     );
     let definitions = f.host.definitions(&f.turn);

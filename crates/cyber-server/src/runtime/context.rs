@@ -296,6 +296,33 @@ mod tests {
         assert_eq!(text.as_deref(), Some("Today's date is now: 2026-10-04"));
     }
 
+    /// A Session resumed from before the `core/mcp-instructions` rename: hosts observe the old
+    /// key as absent, so it is withdrawn and the renamed source replaces it.
+    #[test]
+    fn renamed_source_withdraws_the_legacy_key() {
+        let previous = BTreeMap::from([("mcp/instructions".to_string(), "old".to_string())]);
+        let observed = BTreeMap::from([
+            ("mcp/instructions".to_string(), Observed::Absent),
+            (
+                "core/mcp-instructions".to_string(),
+                Observed::Value("new".into()),
+            ),
+        ]);
+        let (next, text) = reconcile(&previous, &observed);
+        assert_eq!(
+            next,
+            BTreeMap::from([("core/mcp-instructions".to_string(), "new".to_string())])
+        );
+        let text = text.unwrap();
+        assert!(
+            text.contains("mcp/instructions context no longer applies"),
+            "{text}"
+        );
+        assert!(text.contains("core/mcp-instructions"), "{text}");
+        let (_, again) = reconcile(&next, &observed);
+        assert_eq!(again, None);
+    }
+
     #[test]
     fn unavailable_source_keeps_previous_value() {
         let previous = BTreeMap::from([("core/instructions".to_string(), "old".to_string())]);

@@ -79,6 +79,7 @@ pub fn serve(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
             interactive: true,
             password: Some(password),
             mcp_credentials: None,
+            remote_skill_fetcher: None,
         })
         .await
         .map_err(CliError::runtime)?;
@@ -112,6 +113,7 @@ fn stdio(args: ServeArgs, ctx: &Context) -> Result<(), CliError> {
             interactive: true,
             password: None,
             mcp_credentials: None,
+            remote_skill_fetcher: None,
         })
         .await
         .map_err(CliError::runtime)?;

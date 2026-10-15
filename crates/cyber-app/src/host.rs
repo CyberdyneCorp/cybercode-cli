@@ -168,6 +168,18 @@ impl ToolHost for AppHost {
             .resolve_prompt_resources(turn, parts, asker, cancel)
     }
 
+    fn expand_prompt_template<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        template: &'a cyber_server::runtime::PromptTemplate,
+        parts: &'a [cyber_llm::Content],
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Vec<cyber_llm::Content>, String>> {
+        self.builtin
+            .expand_prompt_template(turn, template, parts, asker, cancel)
+    }
+
     fn reconcile(&self, directory: &str, call: &CallState) -> BoxFuture<'_, Reconciliation> {
         self.builtin.reconcile(directory, call)
     }

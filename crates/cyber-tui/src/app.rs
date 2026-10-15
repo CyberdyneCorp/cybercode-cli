@@ -84,6 +84,8 @@ pub enum Action {
     Open(String),
     NewSession,
     LoadModels,
+    /// `/skills`: the Location's skills for the Session agent, with diagnostics.
+    LoadSkills,
     /// Refetch `/commands`, as MCP prompt commands come and go with connections.
     LoadCommands,
     SwitchModel(String),
@@ -116,6 +118,7 @@ pub enum PickerKind {
     Models,
     Themes,
     Modes,
+    Skills,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -892,6 +895,7 @@ impl App {
                 Vec::new()
             }
             "model" | "models" => vec![Action::LoadModels],
+            "skills" => vec![Action::LoadSkills],
             "resume" | "sessions" => vec![Action::LoadSessions],
             "new" | "clear" => vec![Action::NewSession],
             "fork" => vec![Action::Fork],
@@ -1090,6 +1094,13 @@ impl App {
             PickerKind::Themes => {
                 self.theme = theme::by_name(&choice.key);
                 vec![Action::SaveTheme(self.theme.name)]
+            }
+            // A user-invocable skill starts its command; other rows only inform.
+            PickerKind::Skills => {
+                if !choice.key.is_empty() {
+                    self.composer.set_text(&format!("/{} ", choice.key));
+                }
+                Vec::new()
             }
         }
     }

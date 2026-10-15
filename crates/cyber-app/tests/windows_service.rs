@@ -122,6 +122,7 @@ async fn application(root: &Path, model: Arc<Model>) -> App {
         interactive: true,
         password: Some("test-password-123456".into()),
         mcp_credentials: None,
+        remote_skill_fetcher: None,
     })
     .await
     .unwrap();

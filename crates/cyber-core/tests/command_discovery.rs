@@ -102,7 +102,7 @@ fn source_attribution_places_inline_values_and_unsupported_winners_without_fallb
     write(
         &scope.location,
         ".cyber/commands/blocked.md",
-        "---\nagent: reviewer\n---\nprivate-unsupported-body",
+        "---\nagent: private-missing-agent\n---\nprivate-unsupported-body",
     );
     let result = discover(&scope, &config, &sources);
     assert_eq!(result.entries["review"].template, "Project compatibility");
@@ -159,8 +159,9 @@ fn hard_links_and_advanced_definitions_never_return_body_values() {
         "!`touch sentinel`",
     );
     let result = discover(&scope, &json!({}), &BTreeMap::new());
-    assert!(result.entries.is_empty());
-    assert_eq!(result.unavailable, ["private", "shell"]);
+    // Shell injection is planned and expanded at admission, never during discovery.
+    assert_eq!(result.entries.keys().collect::<Vec<_>>(), ["shell"]);
+    assert_eq!(result.unavailable, ["private"]);
     assert!(
         result
             .issues
@@ -320,7 +321,7 @@ fn provenance_tracks_scope_labelled_winners_shadowed_sources_and_unavailable_fil
         ),
         (
             "/commands/runtime/template".into(),
-            "profile:private-profile".into(),
+            "cli:private-profile".into(),
         ),
     ]);
     let result = discover(&scope, &config, &sources);
@@ -352,6 +353,32 @@ fn provenance_tracks_scope_labelled_winners_shadowed_sources_and_unavailable_fil
     }
 }
 
+/// A profile overlay whose declaring layer is unknown may come from project config, so its
+/// commands count as project-controlled (and need a project approval to run injections).
+#[test]
+fn unresolved_profile_commands_are_project_controlled() {
+    use cyber_core::commands::CommandSourceScope;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let mut scope = fixture(&root);
+    let sources = BTreeMap::from([(
+        "/commands/review/template".into(),
+        "profile:dev".to_string(),
+    )]);
+    let config = json!({"commands":{"review":{"template":"!`id`"}}});
+    let result = discover(&scope, &config, &sources);
+    assert_eq!(
+        result.provenance["review"].winner.scope,
+        CommandSourceScope::Project
+    );
+    scope.project = false;
+    assert!(
+        !discover(&scope, &config, &sources)
+            .entries
+            .contains_key("review")
+    );
+}
+
 #[test]
 fn explicit_project_layer_scope_wins_even_inside_the_global_config_directory() {
     use cyber_core::commands::CommandSourceScope;
@@ -376,4 +403,70 @@ fn explicit_project_layer_scope_wins_even_inside_the_global_config_directory() {
             .entries
             .contains_key("review")
     );
+}
+
+/// An override naming an unknown agent, an invalid model or a subtask agent that cannot
+/// run as a subagent is a CommandIssue, and the command is unavailable without fallback.
+#[test]
+fn command_overrides_are_validated_against_configured_agents() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let scope = fixture(&root);
+    write(
+        &scope.location,
+        ".cyber/commands/review-sub.md",
+        "---\nsubtask: true\nagent: reviewer\nmodel: corp/review#high\n---\nReview",
+    );
+    write(
+        &scope.location,
+        ".cyber/commands/scribe.md",
+        "---\nagent: scribe\n---\nWrite",
+    );
+    write(
+        &scope.location,
+        ".cyber/commands/ghost.md",
+        "---\nagent: private-ghost\n---\nprivate-body",
+    );
+    write(
+        &scope.location,
+        ".cyber/commands/badmodel.md",
+        "---\nmodel: private-model\n---\nprivate-body",
+    );
+    write(
+        &scope.location,
+        ".cyber/commands/lead.md",
+        "---\nagent: lead\nsubtask: true\n---\nLead",
+    );
+    let config = json!({
+        "agents":{"scribe":{"description":"Writes","mode":"all"},"lead":{"description":"Leads","mode":"primary"}},
+        "commands":{"inline-ghost":{"template":"Go","agent":"nobody"}}
+    });
+    let result = discover(&scope, &config, &BTreeMap::new());
+    let review = &result.entries["review-sub"];
+    assert!(review.subtask);
+    assert_eq!(review.agent.as_deref(), Some("reviewer"));
+    assert_eq!(review.model.as_deref(), Some("corp/review#high"));
+    assert_eq!(result.entries["scribe"].agent.as_deref(), Some("scribe"));
+    let mut unavailable = result.unavailable.clone();
+    unavailable.sort();
+    assert_eq!(unavailable, ["badmodel", "ghost", "inline-ghost", "lead"]);
+    let reasons: Vec<_> = result.issues.iter().map(|i| i.reason).collect();
+    assert!(
+        reasons.contains(&"command agent is not a configured agent"),
+        "{reasons:?}"
+    );
+    assert!(reasons.iter().any(|r| r.contains("model")), "{reasons:?}");
+    assert!(
+        reasons.contains(&"command subtask agent cannot run as a subagent"),
+        "{reasons:?}"
+    );
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .filter(|i| i.reason == "command agent is not a configured agent")
+            .count(),
+        2
+    );
+    assert!(result.issues.iter().all(|i| !i.reason.contains("private")));
 }

@@ -41,6 +41,7 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
         Err(e) => check("config", Status::Fail, e.message.clone()),
     }];
     let config = config.map(|c| c.value).unwrap_or(Value::Null);
+    checks.extend(rt.block_on(extension_checks(ctx)));
     checks.extend(lsp_checks(ctx, &config));
     checks.extend(rt.block_on(catalog_checks(ctx, &config)));
     checks.push(database(ctx));
@@ -49,6 +50,74 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     checks.push(tool("rg", &["--version"], Status::Warn));
     checks.push(rt.block_on(server(ctx)));
     report(global, &checks)
+}
+
+/// Skill and command diagnostics as the app itself discovers them for this Location.
+async fn extension_checks(ctx: &Context) -> Vec<Check> {
+    let catalog = match super::skills::Inspector::start(ctx).await {
+        Ok(inspector) => {
+            let catalog = inspector.skills("build").await;
+            inspector.shutdown().await;
+            catalog
+        }
+        Err(error) => Err(error),
+    };
+    let catalog = match catalog {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            let detail = format!("unavailable: {}", error.message);
+            return vec![
+                check("skills", Status::Warn, detail.clone()),
+                check("commands", Status::Warn, detail),
+            ];
+        }
+    };
+    vec![skills_check(&catalog), commands_check(&catalog)]
+}
+
+fn skills_check(catalog: &Value) -> Check {
+    let entries = catalog["skills"].as_array().map_or(&[][..], Vec::as_slice);
+    let loaded = entries.iter().filter(|e| e["status"] == "loaded").count();
+    let skipped = entries.len() - loaded;
+    let preload = catalog["preload_issues"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let diagnostics: Vec<&str> = entries
+        .iter()
+        .flat_map(|e| e["diagnostics"].as_array().into_iter().flatten())
+        .chain(preload)
+        .filter_map(Value::as_str)
+        .collect();
+    let mut detail = format!("{loaded} loaded");
+    if !diagnostics.is_empty() {
+        detail.push_str(&format!("; {}", diagnostics.join("; ")));
+    }
+    let status = if skipped == 0 && preload.is_empty() {
+        Status::Pass
+    } else {
+        Status::Warn
+    };
+    check("skills", status, detail)
+}
+
+fn commands_check(catalog: &Value) -> Check {
+    let issues: Vec<String> = catalog["command_issues"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|issue| {
+            format!(
+                "{}: {}",
+                issue["path"].as_str().unwrap_or(""),
+                issue["reason"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    if issues.is_empty() {
+        check("commands", Status::Pass, "no discovery issues")
+    } else {
+        check("commands", Status::Warn, issues.join("; "))
+    }
 }
 
 fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {

@@ -23,7 +23,7 @@
 - **THEN** `explore` is absent from listings, `@` autocomplete and the `agent` tool catalogue
 
 ### Requirement: Agent definition fields
-(P0) An agent definition SHALL accept `description`, `system`, `model` (`provider/model[#variant]`), `variant`, `mode` (`primary`, `subagent` or `all`), `permission_mode` (one of the six Modes), `tools` (`allow` and `deny` lists of tool names or globs), `permissions` (ordered rules), `request` (a provider request overlay of `headers` and `body`, for example `temperature` or `top_p`, layered as defined by `provider-catalog`), `steps` (positive integer), `color`, `hidden`, `isolation` (`none` or `worktree`), `background` (boolean default for spawns), `memory` (`none`, `project` or `user`), `skills` (names preloaded into context) and `mcp` (subset of configured MCP server names). Unknown fields SHALL be rejected by schema validation, naming the agent and field.
+(P0) An agent definition SHALL accept `description`, `system`, `model` (`provider/model[#variant]`), `variant`, `mode` (`primary`, `subagent` or `all`), `permission_mode` (one of the six Modes), `tools` (`allow` and `deny` lists of tool names or globs), `permissions` (ordered rules), `request` (a provider request overlay of `headers` and `body`, for example `temperature` or `top_p`, layered as defined by `provider-catalog`), `steps` (positive integer), `color`, `hidden`, `isolation` (`none` or `worktree`), `background` (boolean default for spawns), `memory` (`none`, `project` or `user`), `skills` (names preloaded into context: each named skill that is discovered, model-invocable and not denied for the agent SHALL be added as the `core/agent-skills` Context Source of that agent's sessions, framed as the `skill` tool returns it, and any other name SHALL be listed in `preload_issues` of `GET /api/v1/skills?agent=<name>` instead of being preloaded) and `mcp` (subset of configured MCP server names). Unknown fields SHALL be rejected by schema validation, naming the agent and field.
 
 #### Scenario: Agent request options reach runtime inference
 - **WHEN** a Turn is prepared for a selected agent with configured request options
@@ -87,6 +87,10 @@
 #### Scenario: Request overlay applied
 - **WHEN** an agent sets `request.body.temperature: 0.2`
 - **THEN** its Turns send `temperature: 0.2` after provider, model and variant defaults
+
+#### Scenario: Skills preloaded for the agent
+- **WHEN** agent `scribe` sets `skills: ["notes", "missing"]` and only `notes` is discovered
+- **THEN** a `scribe` session's provider request contains the `notes` skill body, a `build` session's does not, and `GET /api/v1/skills?agent=scribe` lists `missing` in `preload_issues`
 
 #### Scenario: Malformed agent profile values are rejected before materialization
 - **WHEN** a resolved agent definition contains an invalid field type, profile mode, permission mode, model reference, nonpositive step limit or malformed tool/request overlay

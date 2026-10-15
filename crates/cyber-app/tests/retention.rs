@@ -31,6 +31,7 @@ async fn sweeps_remove_only_expired_items() {
         interactive: false,
         password: None,
         mcp_credentials: None,
+        remote_skill_fetcher: None,
     })
     .await
     .unwrap();

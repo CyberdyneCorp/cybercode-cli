@@ -17,7 +17,7 @@ Agents are named profiles (system prompt, model, mode, tools, permissions, step 
 - **THEN** the call is settled as an error without executing and no permission request is created
 
 ### Requirement: Agent definition fields
-(P0) An agent definition SHALL accept `description`, `system`, `model` (`provider/model[#variant]`), `variant`, `mode` (`primary`, `subagent` or `all`), `permission_mode` (one of the six Modes), `tools` (`allow` and `deny` lists of tool names or globs), `permissions` (ordered rules), `request` (a provider request overlay of `headers` and `body`, for example `temperature` or `top_p`, layered as defined by `provider-catalog`), `steps` (positive integer), `color`, `hidden`, `isolation` (`none` or `worktree`), `background` (boolean default for spawns), `memory` (`none`, `project` or `user`), `skills` (names preloaded into context) and `mcp` (subset of configured MCP server names). Unknown fields SHALL be rejected by schema validation, naming the agent and field.
+(P0) An agent definition SHALL accept `description`, `system`, `model` (`provider/model[#variant]`), `variant`, `mode` (`primary`, `subagent` or `all`), `permission_mode` (one of the six Modes), `tools` (`allow` and `deny` lists of tool names or globs), `permissions` (ordered rules), `request` (a provider request overlay of `headers` and `body`, for example `temperature` or `top_p`, layered as defined by `provider-catalog`), `steps` (positive integer), `color`, `hidden`, `isolation` (`none` or `worktree`), `background` (boolean default for spawns), `memory` (`none`, `project` or `user`), `skills` (names preloaded into context: each named skill that is discovered, model-invocable and not denied for the agent SHALL be added as the `core/agent-skills` Context Source of that agent's sessions, framed as the `skill` tool returns it, and any other name SHALL be listed in `preload_issues` of `GET /api/v1/skills?agent=<name>` instead of being preloaded) and `mcp` (subset of configured MCP server names). Unknown fields SHALL be rejected by schema validation, naming the agent and field.
 
 #### Scenario: Unknown field rejected
 - **WHEN** an agent definition contains `temprature: 0.2`
@@ -30,6 +30,10 @@ Agents are named profiles (system prompt, model, mode, tools, permissions, step 
 #### Scenario: Request overlay applied
 - **WHEN** an agent sets `request.body.temperature: 0.2`
 - **THEN** its Turns send `temperature: 0.2` after provider, model and variant defaults
+
+#### Scenario: Skills preloaded for the agent
+- **WHEN** agent `scribe` sets `skills: ["notes", "missing"]` and only `notes` is discovered
+- **THEN** a `scribe` session's provider request contains the `notes` skill body, a `build` session's does not, and `GET /api/v1/skills?agent=scribe` lists `missing` in `preload_issues`
 
 ### Requirement: Custom agents from config
 (P0) The system SHALL read agents from the `agents` key of `cyber.jsonc`/`cyber.json`, keyed by name. An entry matching an existing agent SHALL patch only the fields it sets; a new name SHALL create an agent with `mode: "all"`; `disabled: true` SHALL remove the agent, including built-ins other than the hidden system agents.

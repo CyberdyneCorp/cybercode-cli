@@ -15,6 +15,7 @@ use crate::commands::{
     models::ModelsArgs,
     review::ReviewArgs,
     serve::{ServeArgs, ServiceCmd},
+    skills::{CommandsCmd, SkillsCmd},
     trust::TrustCmd,
     worktrees::WorktreeCmd,
 };
@@ -128,6 +129,16 @@ pub enum Command {
     },
     /// Review and edit durable project/global memory.
     Memory(MemoryArgs),
+    /// Inspect skills: source, scope, permission effect and diagnostics.
+    Skills {
+        #[command(subcommand)]
+        cmd: SkillsCmd,
+    },
+    /// Inspect slash commands and command discovery diagnostics.
+    Commands {
+        #[command(subcommand)]
+        cmd: CommandsCmd,
+    },
     /// Review MCP server definitions, individual server approvals and OAuth credentials.
     Mcp {
         #[command(subcommand)]
@@ -178,7 +189,7 @@ pub enum Command {
     },
     /// Send one request to the server API.
     Api(ApiArgs),
-    /// Check configuration, credentials, catalog, database, sandbox, tools and server.
+    /// Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server.
     Doctor,
     /// Run evaluation manifests and write reports.
     Eval {

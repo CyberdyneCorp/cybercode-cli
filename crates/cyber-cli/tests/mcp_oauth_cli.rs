@@ -369,6 +369,7 @@ mod file_backend {
                 password: Some("logout-test-password".into()),
                 // The store `cyber mcp logout` (the binary) selects on this platform.
                 mcp_credentials: Some(cyber_tools::mcp::oauth::open_store(&paths)),
+                remote_skill_fetcher: None,
             }))
             .unwrap();
         let listener = runtime

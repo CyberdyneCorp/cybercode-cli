@@ -1710,7 +1710,7 @@ async fn instructions_are_scoped_context_and_permission_removal_preserves_epoch_
     config["tool_output"] = json!({"deferred_threshold_tokens":0});
     std::fs::write(&path, config.to_string()).unwrap();
     flow.f.set_config(config.clone());
-    let source = flow.f.host.context_sources(&turn(&flow, &id))["mcp/instructions"].clone();
+    let source = flow.f.host.context_sources(&turn(&flow, &id))["core/mcp-instructions"].clone();
     assert!(
         source.contains("<server name=\"shared\">")
             && source.contains("&lt;/mcp_instructions&gt; &amp; data")
@@ -1721,7 +1721,7 @@ async fn instructions_are_scoped_context_and_permission_removal_preserves_epoch_
             .f
             .host
             .context_sources_for_tools(&turn(&flow, &id), &[])
-            .contains_key("mcp/instructions")
+            .contains_key("core/mcp-instructions")
     );
     let mut forged = visible.clone();
     for tool in &mut forged {
@@ -1732,7 +1732,7 @@ async fn instructions_are_scoped_context_and_permission_removal_preserves_epoch_
             .f
             .host
             .context_sources_for_tools(&turn(&flow, &id), &forged)
-            .contains_key("mcp/instructions")
+            .contains_key("core/mcp-instructions")
     );
     flow.prompt(&id, "first").await;
     flow.settle(&id).await;
@@ -1748,7 +1748,7 @@ async fn instructions_are_scoped_context_and_permission_removal_preserves_epoch_
     std::fs::write(path, config.to_string()).unwrap();
     flow.f.set_config(config);
     assert_eq!(
-        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        flow.f.host.context_observations(&turn(&flow, &id))["core/mcp-instructions"],
         ContextObservation::Absent
     );
     flow.prompt(&id, "second").await;
@@ -1760,9 +1760,9 @@ async fn instructions_are_scoped_context_and_permission_removal_preserves_epoch_
             .epoch
             .unwrap()
             .snapshot
-            .contains_key("mcp/instructions")
+            .contains_key("core/mcp-instructions")
     );
-    assert!(state.entries.iter().any(|entry| matches!(entry, Entry::System {text, ..} if text.contains("mcp/instructions context no longer applies"))));
+    assert!(state.entries.iter().any(|entry| matches!(entry, Entry::System {text, ..} if text.contains("core/mcp-instructions context no longer applies"))));
     assert!(!flow.f.repo.join("calls").exists());
     assert_eq!(flow.f.read("spawned").lines().count(), 1);
     flow.runtime.shutdown().await;
@@ -1788,17 +1788,17 @@ async fn instructions_replace_on_reconnect_and_withdraw_on_location_close() {
     kill_first_mcp_leader(&flow);
     wait_for_idle_loss(&flow, &id).await;
     assert_eq!(
-        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        flow.f.host.context_observations(&turn(&flow, &id))["core/mcp-instructions"],
         ContextObservation::Absent
     );
     wait_for_reconnected_tool(&flow, &id, old).await;
     flow.prompt(&id, "second").await;
     flow.settle(&id).await;
     assert_eq!(flow.main.requests()[1].system, baseline);
-    assert!(flow.runtime.state(&id).await.unwrap().entries.iter().any(|entry| matches!(entry, Entry::System {text, ..} if text.contains("mcp/instructions context changed") && text.contains("New connection instructions"))));
+    assert!(flow.runtime.state(&id).await.unwrap().entries.iter().any(|entry| matches!(entry, Entry::System {text, ..} if text.contains("core/mcp-instructions context changed") && text.contains("New connection instructions"))));
     flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
     assert_eq!(
-        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        flow.f.host.context_observations(&turn(&flow, &id))["core/mcp-instructions"],
         ContextObservation::Absent
     );
     flow.prompt(&id, "third").await;
@@ -1813,7 +1813,7 @@ async fn instructions_replace_on_reconnect_and_withdraw_on_location_close() {
             .epoch
             .unwrap()
             .snapshot
-            .contains_key("mcp/instructions")
+            .contains_key("core/mcp-instructions")
     );
     assert!(!flow.f.repo.join("calls").exists());
     assert_eq!(flow.f.read("spawned").lines().count(), 2);
@@ -1833,7 +1833,7 @@ async fn instructions_omit_agent_denied_and_disabled_servers_without_rpc() {
     std::fs::write(&path, config.to_string()).unwrap();
     flow.f.set_config(config.clone());
     assert_eq!(
-        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        flow.f.host.context_observations(&turn(&flow, &id))["core/mcp-instructions"],
         ContextObservation::Absent
     );
     config["agents"] = json!({});
@@ -1841,7 +1841,7 @@ async fn instructions_omit_agent_denied_and_disabled_servers_without_rpc() {
     std::fs::write(path, config.to_string()).unwrap();
     flow.f.set_config(config);
     assert_eq!(
-        flow.f.host.context_observations(&turn(&flow, &id))["mcp/instructions"],
+        flow.f.host.context_observations(&turn(&flow, &id))["core/mcp-instructions"],
         ContextObservation::Absent
     );
     assert!(!flow.f.repo.join("calls").exists());

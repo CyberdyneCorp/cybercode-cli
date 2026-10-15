@@ -6,6 +6,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 mod bundled;
+mod discovery;
+mod template;
+
+pub use template::{
+    Append, Expanded, Injection, MAX_INJECTIONS, derived_argument_hint, expand, expand_template,
+};
 
 /// Captured declarations from an authorized load; instruction text is not authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +34,51 @@ pub enum SkillContext {
 pub enum SkillSource {
     Directory(PathBuf),
     Bundled,
+}
+
+/// The scope a skill was discovered in.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillOrigin {
+    /// Embedded in the binary.
+    #[default]
+    Builtin,
+    /// `~/.config/cyber/skills` and the home compatibility folders.
+    User,
+    /// A directory from the project root down to the Location.
+    Project,
+    /// A local path from the `skills` configuration.
+    Config,
+}
+
+impl SkillOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkillOrigin::Builtin => "builtin",
+            SkillOrigin::User => "user",
+            SkillOrigin::Project => "project",
+            SkillOrigin::Config => "config",
+        }
+    }
+}
+
+/// A skipped skill or a duplicate notice. `path` is the `SKILL.md`, the skill
+/// directory, or `builtin:<name>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillDiagnostic {
+    pub path: String,
+    pub origin: SkillOrigin,
+    /// The winning skill's name when this is a duplicate notice.
+    pub replaces: Option<String>,
+    pub message: String,
+}
+
+impl std::fmt::Display for SkillDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path, self.message)
+    }
 }
 
 /// Where to look for skills.
@@ -57,6 +108,7 @@ pub struct Skill {
     pub user_invocable: bool,
     pub argument_hint: Option<String>,
     pub source: SkillSource,
+    pub origin: SkillOrigin,
     pub body: String,
 }
 
@@ -84,8 +136,8 @@ impl Skill {
 pub struct Discovery {
     /// Skills by name; later locations replace earlier ones.
     pub skills: BTreeMap<String, Skill>,
-    /// Invalid skills, as `path: reason`.
-    pub diagnostics: Vec<String>,
+    /// Skipped skills and duplicate notices, in discovery order.
+    pub diagnostics: Vec<SkillDiagnostic>,
 }
 
 #[derive(Deserialize)]
@@ -134,17 +186,21 @@ impl Tools {
     }
 }
 
-/// Folders searched, in precedence order (later wins).
-pub fn roots(scope: &SkillScope) -> Vec<PathBuf> {
-    let mut roots = vec![scope.global_config_dir.join("skills")];
+/// Folders searched, in precedence order (later wins). Bases are canonical so the fenced
+/// reads below can refuse any link inside a skill root.
+pub fn roots(scope: &SkillScope) -> Vec<(PathBuf, SkillOrigin)> {
+    let global = discovery::canonical(&scope.global_config_dir);
+    let home = discovery::canonical(&scope.home);
+    let mut roots = vec![(global.join("skills"), SkillOrigin::User)];
     if scope.compat {
         roots.extend(
-            [".claude/skills", ".agents/skills", ".codex/skills"].map(|d| scope.home.join(d)),
+            [".claude/skills", ".agents/skills", ".codex/skills"]
+                .map(|d| (home.join(d), SkillOrigin::User)),
         );
     }
-    let project = crate::config::project_root(&scope.location);
-    let mut dirs: Vec<&Path> = scope
-        .location
+    let location = discovery::canonical(&scope.location);
+    let project = crate::config::project_root(&location);
+    let mut dirs: Vec<&Path> = location
         .ancestors()
         .take_while(|d| d.starts_with(&project))
         .collect();
@@ -160,56 +216,28 @@ pub fn roots(scope: &SkillScope) -> Vec<PathBuf> {
         &[".cyber/skills"]
     };
     for dir in dirs {
-        roots.extend(names.iter().map(|n| dir.join(n)));
+        roots.extend(names.iter().map(|n| (dir.join(n), SkillOrigin::Project)));
     }
-    roots.extend(scope.extra.iter().cloned());
+    roots.extend(
+        scope
+            .extra
+            .iter()
+            .map(|path| (discovery::canonical_parent(path), SkillOrigin::Config)),
+    );
     roots
 }
 
 pub fn discover(scope: &SkillScope) -> Discovery {
-    let mut out = bundled::discover();
-    for root in roots(scope) {
-        for dir in skill_dirs(&root) {
-            match load(&dir) {
-                Ok(skill) => {
-                    if let Some(previous) = out.skills.insert(skill.name.clone(), skill.clone()) {
-                        out.diagnostics.push(format!(
-                            "{}: replaces skill {} from {}",
-                            skill.source_label(),
-                            skill.name,
-                            previous.source_label()
-                        ));
-                    }
-                }
-                Err(reason) => out
-                    .diagnostics
-                    .push(format!("{}: {reason}", dir.join("SKILL.md").display())),
-            }
-        }
+    let mut scanner = discovery::Scanner::new(bundled::discover());
+    for (root, origin) in roots(scope) {
+        scanner.root(&root, origin);
     }
-    out
+    scanner.out
 }
 
-/// A root that is itself a skill directory, or the skill directories directly inside it.
-fn skill_dirs(root: &Path) -> Vec<PathBuf> {
-    if root.join("SKILL.md").is_file() {
-        return vec![root.to_path_buf()];
-    }
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut dirs: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.join("SKILL.md").is_file())
-        .collect();
-    dirs.sort();
-    dirs
-}
-
+/// Load one skill directory through the fenced reader; only the directory itself is resolved.
 pub fn load(dir: &Path) -> Result<Skill, String> {
-    let text = std::fs::read_to_string(dir.join("SKILL.md")).map_err(|e| e.to_string())?;
-    parse(&text, SkillSource::Directory(dir.to_path_buf()))
+    discovery::read(&discovery::canonical(dir))
 }
 
 fn parse(text: &str, source: SkillSource) -> Result<Skill, String> {
@@ -245,6 +273,13 @@ fn parse(text: &str, source: SkillSource) -> Result<Skill, String> {
     {
         return Err("paths must contain at most 64 bounded project-relative globs".into());
     }
+    if let Some(model) = &fm.model
+        && !valid_model_ref(model)
+    {
+        return Err(format!(
+            "invalid model {model:?}: use provider/model[#variant]"
+        ));
+    }
     let allowed_tools = fm.allowed_tools.into_vec();
     let disallowed_tools = fm.disallowed_tools.into_vec();
     validate_tool_patterns(&allowed_tools)?;
@@ -262,6 +297,7 @@ fn parse(text: &str, source: SkillSource) -> Result<Skill, String> {
         user_invocable: fm.user_invocable.unwrap_or(true),
         argument_hint: fm.argument_hint,
         source,
+        origin: SkillOrigin::Builtin,
         body: body.trim_start_matches(['\r', '\n']).to_string(),
     })
 }
@@ -277,6 +313,21 @@ fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
         &rest[..end],
         after.split_once('\n').map_or("", |(_, body)| body),
     ))
+}
+
+/// The `provider/model[#variant]` grammar of `cyber_llm::catalog::ModelRef::parse`, bounded.
+pub(crate) fn valid_model_ref(model: &str) -> bool {
+    let Some((provider, rest)) = model.split_once('/') else {
+        return false;
+    };
+    let (name, variant) = rest
+        .rsplit_once('#')
+        .map_or((rest, None), |(m, v)| (m, Some(v)));
+    model.len() <= 256
+        && !model.chars().any(char::is_control)
+        && !provider.is_empty()
+        && !name.is_empty()
+        && variant != Some("")
 }
 
 fn validate_tool_patterns(patterns: &[String]) -> Result<(), String> {
@@ -314,47 +365,34 @@ pub fn validate_name(name: &str) -> Result<(), String> {
 
 /// Captured instructions and bounded supporting-file context for either execution route.
 pub fn instruction_frame(skill: &Skill, arguments: &str) -> String {
-    let body = expand(&skill.body, arguments);
+    instruction_frame_template(skill, arguments).text
+}
+
+/// [`instruction_frame`] with the body's shell injections located in the frame.
+pub fn instruction_frame_template(skill: &Skill, arguments: &str) -> Expanded {
+    let mut body = expand_template(&skill.body, arguments, Append::Labeled);
+    body.text.truncate(body.text.trim_end().len());
     let files = sibling_files(skill, 20);
     let listing = if files.is_empty() {
         String::new()
     } else {
         format!("\n\nFiles in this skill:\n{}", files.join("\n"))
     };
-    format!(
-        "<skill name=\"{}\" base=\"{}\">\n{}{listing}\n</skill>",
+    let prefix = format!(
+        "<skill name=\"{}\" base=\"{}\">\n",
         skill.name,
-        skill.source_label(),
-        body.trim_end()
-    )
+        skill.source_label()
+    );
+    body.framed(&prefix, &format!("{listing}\n</skill>"))
 }
 
-/// Up to `limit` files beside `SKILL.md`, as sorted relative paths.
+/// Up to `limit` files beside `SKILL.md`, as sorted relative paths. The walk stops once
+/// `limit` files are found and never follows directory links.
 pub fn sibling_files(skill: &Skill, limit: usize) -> Vec<String> {
-    let Some(base) = skill.directory() else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    let mut stack = vec![base.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        entries.sort();
-        for path in entries {
-            if path.is_dir() {
-                stack.push(path);
-            } else if let Ok(rel) = path.strip_prefix(base)
-                && rel != Path::new("SKILL.md")
-            {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
-            }
-        }
-    }
-    out.sort();
-    out.truncate(limit);
-    out
+    skill
+        .directory()
+        .map(|base| discovery::sibling_files(base, limit))
+        .unwrap_or_default()
 }
 
 /// Split arguments: double- or single-quoted, or whitespace-separated, quotes stripped.
@@ -384,60 +422,6 @@ pub fn tokenize(args: &str) -> Vec<String> {
         out.push(current);
     }
     out
-}
-
-/// Substitute `$ARGUMENTS` and `$1..$N`; the highest placeholder takes the remaining tokens.
-/// Without placeholders, non-empty arguments are appended as `ARGUMENTS: <args>`.
-pub fn expand(template: &str, args: &str) -> String {
-    let numbered = regex_lite_positions(template);
-    let has_all = template.contains("$ARGUMENTS");
-    if numbered.is_empty() && !has_all {
-        return if args.trim().is_empty() {
-            template.to_string()
-        } else {
-            format!("{}\n\nARGUMENTS: {args}", template.trim_end())
-        };
-    }
-    let tokens = tokenize(args);
-    let highest = numbered.iter().copied().max().unwrap_or(0);
-    let value = |n: usize| -> String {
-        if n == highest {
-            tokens
-                .get(n - 1..)
-                .map(|rest| rest.join(" "))
-                .unwrap_or_default()
-        } else {
-            tokens.get(n - 1).cloned().unwrap_or_default()
-        }
-    };
-    let mut out = template.replace("$ARGUMENTS", args);
-    // Replace longer numbers first so `$10` is not read as `$1` followed by `0`.
-    let mut sorted = numbered;
-    sorted.sort_unstable_by(|a, b| b.cmp(a));
-    for n in sorted {
-        out = out.replace(&format!("${n}"), &value(n));
-    }
-    out
-}
-
-/// Distinct `$<n>` placeholders (n ≥ 1) in a template.
-fn regex_lite_positions(template: &str) -> Vec<usize> {
-    let mut found = Vec::new();
-    let bytes = template.as_bytes();
-    for (i, _) in template.match_indices('$') {
-        let digits: String = bytes[i + 1..]
-            .iter()
-            .take_while(|b| b.is_ascii_digit())
-            .map(|&b| b as char)
-            .collect();
-        if let Ok(n) = digits.parse::<usize>()
-            && n >= 1
-            && !found.contains(&n)
-        {
-            found.push(n);
-        }
-    }
-    found
 }
 
 #[cfg(test)]
@@ -580,19 +564,163 @@ mod tests {
         assert_eq!(found.diagnostics.len(), 2, "{:?}", found.diagnostics);
     }
 
+    fn scope_for(root: &Path) -> SkillScope {
+        SkillScope {
+            location: root.join("repo"),
+            home: root.join("home"),
+            global_config_dir: root.join("global"),
+            compat: false,
+            extra: Vec::new(),
+        }
+    }
+
+    fn reported(found: &Discovery, needle: &str) -> bool {
+        found
+            .diagnostics
+            .iter()
+            .any(|d| d.to_string().contains(needle))
+    }
+
+    #[cfg(unix)]
     #[test]
-    fn arguments_substitute_positionally_and_append_without_placeholders() {
-        assert_eq!(
-            tokenize(r#"one "two words" 'three'"#),
-            vec!["one", "two words", "three"]
+    fn linked_skill_files_and_directories_are_refused_with_diagnostics() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let outside = root.join("outside");
+        write_skill(&outside, "outside", "Outside the skill root");
+        let skills = root.join("repo/.cyber/skills");
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(skills.join("file-link")).unwrap();
+        std::os::unix::fs::symlink(outside.join("SKILL.md"), skills.join("file-link/SKILL.md"))
+            .unwrap();
+        std::os::unix::fs::symlink(&outside, skills.join("dir-link")).unwrap();
+        write_skill(&skills.join("real"), "real", "A real skill");
+        let found = discover(&scope_for(root));
+        assert!(found.skills.contains_key("real"));
+        assert!(!found.skills.contains_key("outside"), "{:?}", found.skills);
+        assert!(
+            reported(&found, "file-link/SKILL.md"),
+            "{:?}",
+            found.diagnostics
         );
-        assert_eq!(
-            expand("Fix $1 in $2", "bug src/a.rs and more"),
-            "Fix bug in src/a.rs and more"
+        assert!(
+            reported(&found, "linked SKILL.md"),
+            "{:?}",
+            found.diagnostics
         );
-        assert_eq!(expand("All: $ARGUMENTS", "a b"), "All: a b");
-        assert_eq!(expand("Do it.\n", "now"), "Do it.\n\nARGUMENTS: now");
-        assert_eq!(expand("Do it.", ""), "Do it.");
+        assert!(reported(&found, "dir-link"), "{:?}", found.diagnostics);
+        assert!(
+            reported(&found, "linked skill directory"),
+            "{:?}",
+            found.diagnostics
+        );
+        // A linked root is refused as a whole.
+        let linked_root = root.join("linked-root");
+        std::fs::create_dir_all(linked_root.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(linked_root.join("repo/.cyber")).unwrap();
+        std::os::unix::fs::symlink(&skills, linked_root.join("repo/.cyber/skills")).unwrap();
+        let found = discover(&scope_for(&linked_root));
+        assert!(!found.skills.contains_key("real"));
+        assert!(
+            reported(&found, "unavailable or linked"),
+            "{:?}",
+            found.diagnostics
+        );
+    }
+
+    #[test]
+    fn oversized_skill_md_is_refused_with_a_diagnostic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo/.cyber/skills/huge");
+        std::fs::create_dir_all(tmp.path().join("repo/.git")).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut text = "---\nname: huge\ndescription: Huge\n---\n".to_string();
+        text.push_str(&"x".repeat(1024 * 1024));
+        std::fs::write(dir.join("SKILL.md"), text).unwrap();
+        let found = discover(&scope_for(tmp.path()));
+        assert!(!found.skills.contains_key("huge"));
+        assert!(reported(&found, "huge/SKILL.md"), "{:?}", found.diagnostics);
+        assert!(reported(&found, "limit"), "{:?}", found.diagnostics);
+    }
+
+    #[test]
+    fn invalid_model_is_reported_at_discovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("repo/.git")).unwrap();
+        let skills = tmp.path().join("repo/.cyber/skills");
+        for (name, model) in [
+            ("bare", "gpt"),
+            ("variant", "openai/gpt#"),
+            ("ok", "openai/gpt-5#high"),
+        ] {
+            std::fs::create_dir_all(skills.join(name)).unwrap();
+            std::fs::write(
+                skills.join(name).join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: d\nmodel: '{model}'\n---\nBody\n"),
+            )
+            .unwrap();
+        }
+        let found = discover(&scope_for(tmp.path()));
+        assert_eq!(
+            found.skills["ok"].model.as_deref(),
+            Some("openai/gpt-5#high")
+        );
+        for name in ["bare", "variant"] {
+            assert!(!found.skills.contains_key(name));
+            assert!(
+                reported(&found, &format!("{name}/SKILL.md: invalid model")),
+                "{:?}",
+                found.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn sibling_walk_is_bounded_and_skips_directory_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("skill");
+        write_skill(&dir, "many", "Many files");
+        for i in 0..50 {
+            std::fs::create_dir_all(dir.join(format!("d{i:02}"))).unwrap();
+            std::fs::write(dir.join(format!("d{i:02}/f.md")), "x").unwrap();
+        }
+        let skill = load(&dir).unwrap();
+        let files = sibling_files(&skill, 20);
+        assert_eq!(files.len(), 20, "{files:?}");
+        assert!(!files.iter().any(|f| f == "SKILL.md"));
+        #[cfg(unix)]
+        {
+            let outside = tmp.path().join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(outside.join("secret.txt"), "x").unwrap();
+            let small = tmp.path().join("small");
+            write_skill(&small, "small", "Small");
+            std::os::unix::fs::symlink(&outside, small.join("linked")).unwrap();
+            let files = sibling_files(&load(&small).unwrap(), 20);
+            assert_eq!(files, ["linked"], "{files:?}");
+        }
+    }
+
+    #[test]
+    fn duplicate_notice_names_both_paths_and_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        let global = root.join("global/skills/deploy");
+        let project = root.join("repo/.cyber/skills/deploy");
+        write_skill(&global, "deploy", "global deploy");
+        write_skill(&project, "deploy", "project deploy");
+        let found = discover(&scope_for(&root));
+        assert_eq!(found.skills["deploy"].origin, SkillOrigin::Project);
+        assert_eq!(found.skills["deploy"].description, "project deploy");
+        let notice = found
+            .diagnostics
+            .iter()
+            .find(|d| d.replaces.as_deref() == Some("deploy"))
+            .unwrap();
+        assert_eq!(notice.origin, SkillOrigin::Project);
+        assert!(notice.to_string().contains(&project.display().to_string()));
+        assert!(notice.to_string().contains(&global.display().to_string()));
     }
 
     #[test]

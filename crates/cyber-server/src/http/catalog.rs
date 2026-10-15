@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::envelope::{Data, Located, LocationInfo, location};
 use super::error::ApiError;
-use super::{AgentInfo, AppState, CommandInfo, ModelInfo};
+use super::{AgentInfo, AppState, CommandInfo, ModelInfo, SkillCatalog};
 use crate::runtime::{PendingKind, PendingRequest, TurnContext};
 
 type Result<T> = std::result::Result<T, ApiError>;
@@ -40,6 +40,11 @@ pub struct ToolsQuery {
 }
 
 #[derive(Debug, Default, Deserialize)]
+pub struct SkillsQuery {
+    pub agent: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub struct FindQuery {
     pub query: Option<String>,
     pub limit: Option<usize>,
@@ -60,6 +65,7 @@ pub fn routes() -> Router<AppState> {
         .route("/tools", get(tools))
         .route("/tools/schema", get(tools))
         .route("/commands", get(commands))
+        .route("/skills", get(skills))
         .route("/fs/find", get(find))
         .route("/permissions/requests", get(permission_requests))
         .route("/questions/requests", get(question_requests))
@@ -154,6 +160,19 @@ async fn commands(
     let directory = location(&parts, &state.options.default_directory)?;
     Ok(Json(Located {
         data: state.services.commands(&directory),
+        location: LocationInfo::of(&directory),
+    }))
+}
+
+async fn skills(
+    State(state): State<AppState>,
+    parts: Parts,
+    Query(q): Query<SkillsQuery>,
+) -> Result<Json<Located<SkillCatalog>>> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    let agent = q.agent.unwrap_or_else(|| "build".into());
+    Ok(Json(Located {
+        data: state.services.skills(&directory, &agent)?,
         location: LocationInfo::of(&directory),
     }))
 }

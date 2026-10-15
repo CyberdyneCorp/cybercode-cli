@@ -304,6 +304,8 @@ fn doctor_reports_every_check_as_json() {
             .collect::<Vec<_>>(),
         vec![
             "config",
+            "skills",
+            "commands",
             "catalog",
             "credentials",
             "database",

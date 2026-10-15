@@ -82,6 +82,12 @@ export type CommandBody = {
   delivery?: Delivery;
 };
 
+/** A command definition that was skipped or could not be read. */
+export type CommandDiagnostic = {
+  path: string;
+  reason: string;
+};
+
 /** A slash command or skill for autocomplete. */
 export type CommandInfo = {
   name: string;
@@ -668,6 +674,12 @@ export type Located_Session = {
   data: Session;
 };
 
+/** A Location-scoped response. */
+export type Located_SkillCatalog = {
+  location: LocationInfo;
+  data: SkillCatalog;
+};
+
 export type LocationInfo = {
   directory: string;
   workspace?: string | null;
@@ -1176,6 +1188,46 @@ export type ShellBody = {
 export type ShellResult = {
   output: string;
 };
+
+/**
+ * Skills for an agent plus command discovery diagnostics, for `/skills`, `cyber skills`,
+ * `cyber commands list` and `cyber doctor`.
+ */
+export type SkillCatalog = {
+  agent: string;
+  skills: SkillInfo[];
+  command_issues: CommandDiagnostic[];
+  /**
+   * Skills the agent's profile preloads (`skills: [..]`) that are unknown, denied for
+   * the agent or not model-invocable, and so are not preloaded.
+   */
+  preload_issues: string[];
+};
+
+/** A discovered or skipped skill (`skills-commands` → Skill and command inspection). */
+export type SkillInfo = {
+  /** The skill name; for a skipped skill, its directory name. */
+  name: string;
+  description: string;
+  /** The skill directory, the skipped `SKILL.md`, or `builtin:<name>` for an embedded skill. */
+  source: string;
+  scope: SkillOrigin;
+  /** `loaded`, or `invalid` for a skill that was skipped. */
+  status: string;
+  user_invocable: boolean;
+  model_invocable: boolean;
+  argument_hint?: string | null;
+  /**
+   * The `skill` permission for the requested agent (`allow`, `ask` or `deny`); absent when
+   * the skill was skipped.
+   */
+  permission?: string | null;
+  /** Parse errors and duplicate notices (`replaces skill <name> from <path>`). */
+  diagnostics: string[];
+};
+
+/** The scope a skill was discovered in. */
+export type SkillOrigin = "builtin" | "user" | "project" | "config";
 
 /** A user statement with its source, kept outside generated prose. */
 export type Sourced = {

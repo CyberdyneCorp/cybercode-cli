@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::app::{Action, App, PickerKind};
-use crate::model::Session;
+use crate::model::{Choice, Session};
 use crate::perform::{self, Msg};
 use crate::store::LocalStore;
 use crate::{Start, Summary, TuiOptions};
@@ -268,6 +268,21 @@ fn terminal_event(app: &mut App, ev: TermEvent) -> Vec<Action> {
     }
 }
 
+/// The `/skills` picker, for the Location the request was made in.
+fn open_skills(app: &mut App, directory: &str, result: Result<Vec<Choice>, String>) {
+    if directory != app.session.directory {
+        return;
+    }
+    match result {
+        Ok(items) => app.open_picker(
+            PickerKind::Skills,
+            "Skills · Enter starts /name · scope · permission · source · diagnostics",
+            items,
+        ),
+        Err(error) => app.toast(format!("skills: {error}")),
+    }
+}
+
 fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<Action> {
     let msg = match msg {
         Ok(msg) => msg,
@@ -366,6 +381,7 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         }
         Msg::Sessions(items) => app.open_picker(PickerKind::Sessions, "Sessions", items),
         Msg::Models(items) => app.open_picker(PickerKind::Models, "Models", items),
+        Msg::Skills { directory, result } => open_skills(app, &directory, result),
         Msg::Commands {
             items,
             bundled_review,
@@ -920,5 +936,63 @@ mod mode_tests {
         };
         assert!(apply(&mut app, Ok(message), &mut Refresh::default()).is_empty());
         assert!(app.agents.is_empty());
+    }
+
+    fn skill_catalog_choices() -> Vec<crate::model::Choice> {
+        let catalog = serde_json::json!({"agent":"build","skills":[
+            {"name":"deploy","description":"Deploy","source":"/repo/.cyber/skills/deploy","scope":"project",
+             "status":"loaded","user_invocable":true,"model_invocable":true,"permission":"deny",
+             "diagnostics":["/repo/.cyber/skills/deploy: replaces skill deploy from /g/deploy"]},
+            {"name":"broken","description":"","source":"/repo/.cyber/skills/broken/SKILL.md","scope":"project",
+             "status":"invalid","user_invocable":false,"model_invocable":false,"permission":null,
+             "diagnostics":["/repo/.cyber/skills/broken/SKILL.md: invalid frontmatter\u{1b}[31m"]}
+        ]});
+        crate::perform::skill_choices(&catalog)
+    }
+
+    /// `GET /skills` rows show scope, permission, source and diagnostics; skipped
+    /// definitions have no command key.
+    #[test]
+    fn skill_rows_show_scope_permission_and_diagnostics() {
+        let items = skill_catalog_choices();
+        assert_eq!(items[0].key, "deploy");
+        assert!(
+            items[0]
+                .detail
+                .contains("project · deny · /repo/.cyber/skills/deploy")
+        );
+        assert!(
+            items[0]
+                .detail
+                .contains("replaces skill deploy from /g/deploy")
+        );
+        assert_eq!(items[1].key, "");
+        assert_eq!(items[1].label, "broken (invalid)");
+        assert!(items[1].detail.contains("skipped"));
+        assert!(items[1].detail.contains("invalid frontmatter"));
+        assert!(!items[1].detail.contains('\u{1b}'));
+    }
+
+    /// `/skills` loads the catalog into a picker; Enter on a user-invocable skill starts it.
+    #[test]
+    fn skills_command_opens_a_picker_that_starts_the_chosen_skill() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app();
+        let enter = |app: &mut App, code| app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+        for c in "/skills".chars() {
+            enter(&mut app, KeyCode::Char(c));
+        }
+        assert_eq!(enter(&mut app, KeyCode::Enter), vec![Action::LoadSkills]);
+        let message = Msg::Skills {
+            directory: app.session.directory.clone(),
+            result: Ok(skill_catalog_choices()),
+        };
+        assert!(apply(&mut app, Ok(message), &mut Refresh::default()).is_empty());
+        assert!(matches!(
+            &app.overlay,
+            crate::app::Overlay::Picker(picker) if picker.kind == PickerKind::Skills
+        ));
+        assert!(enter(&mut app, KeyCode::Enter).is_empty());
+        assert_eq!(app.composer.text(), "/deploy ");
     }
 }

@@ -15,6 +15,7 @@ pub mod models;
 pub mod permissions;
 pub mod review;
 pub mod serve;
+pub mod skills;
 pub mod trust;
 pub mod tui;
 
@@ -51,6 +52,8 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Fmt { cmd } => intelligence::fmt(cmd, &ctx, &cli.global),
         Command::Memory(args) => memory::run(args, &ctx, &cli.global),
         Command::Mcp { cmd } => mcp::run(cmd, &ctx, &cli.global),
+        Command::Skills { cmd } => skills::run(cmd, &ctx, &cli.global),
+        Command::Commands { cmd } => skills::run_commands(cmd, &ctx, &cli.global),
         Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),

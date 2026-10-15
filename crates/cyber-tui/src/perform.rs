@@ -52,6 +52,10 @@ pub enum Msg {
     },
     Sessions(Vec<Choice>),
     Models(Vec<Choice>),
+    Skills {
+        directory: String,
+        result: Result<Vec<Choice>, String>,
+    },
     Commands {
         items: Vec<Choice>,
         /// `review` resolves to the bundled skill rather than an override.
@@ -340,9 +344,11 @@ pub async fn perform_owned(
                 .post(&format!("/sessions/{id}/fork"), json!({}))
                 .await,
         ),
-        Action::LoadModels | Action::LoadCommands | Action::LoadAgents | Action::FindFiles(_) => {
-            load_choices(client, session, action).await
-        }
+        Action::LoadModels
+        | Action::LoadSkills
+        | Action::LoadCommands
+        | Action::LoadAgents
+        | Action::FindFiles(_) => load_choices(client, session, action).await,
         Action::SaveTheme(_) | Action::Editor(_) | Action::Quit => Ok(Msg::Done),
         other => converse(client, session, other, context).await,
     }
@@ -368,6 +374,18 @@ async fn inspect_hooks(client: &Client, session: &Session, action: Action) -> Re
 async fn load_choices(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::LoadModels => models(client).await,
+        Action::LoadSkills => {
+            let path = format!("/skills?agent={}", encode(&session.agent));
+            let result = client
+                .get(&path)
+                .await
+                .map(|body| skill_choices(&body["data"]))
+                .map_err(err);
+            Ok(Msg::Skills {
+                directory: session.directory.clone(),
+                result,
+            })
+        }
         Action::LoadCommands => commands(client).await,
         Action::LoadAgents => {
             let items = agent_choices(&client.get("/agents").await.map_err(err)?["data"]);
@@ -557,6 +575,50 @@ pub async fn sessions(client: &Client) -> Result<Msg, String> {
         })
         .collect();
     Ok(Msg::Sessions(items))
+}
+
+fn printable(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// `GET /skills` rows: invalid definitions are listed with their diagnostics and no key.
+pub(crate) fn skill_choices(catalog: &Value) -> Vec<Choice> {
+    let field = |entry: &Value, key: &str| printable(entry[key].as_str().unwrap_or(""));
+    catalog["skills"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|entry| {
+            let loaded = entry["status"] == "loaded";
+            let invocable = loaded && entry["user_invocable"] == true;
+            let mut detail = vec![
+                field(entry, "scope"),
+                entry["permission"].as_str().unwrap_or("skipped").into(),
+                field(entry, "source"),
+            ];
+            detail.extend(
+                entry["diagnostics"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(printable),
+            );
+            Choice {
+                key: if invocable {
+                    field(entry, "name")
+                } else {
+                    String::new()
+                },
+                label: if loaded {
+                    format!("{} — {}", field(entry, "name"), field(entry, "description"))
+                } else {
+                    format!("{} (invalid)", field(entry, "name"))
+                },
+                detail: detail.join(" · "),
+            }
+        })
+        .collect()
 }
 
 async fn models(client: &Client) -> Result<Msg, String> {

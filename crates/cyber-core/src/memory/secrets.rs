@@ -16,6 +16,14 @@ static CREDENTIALS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         .collect()
 });
 
+/// Assignments whose key only contains a credential word, as in `~/.aws/credentials`.
+static REDACTED_ASSIGNMENTS: LazyLock<[Regex; 1]> = LazyLock::new(|| {
+    [Regex::new(
+        r#"(?i)\b[a-z0-9_-]*(?:secret|access[_-]?key|session[_-]?token)[a-z0-9_-]*["']?\s*[:=]\s*\S+"#,
+    )
+    .expect("static redaction pattern")]
+});
+
 pub(super) fn check(text: &str) -> Result<(), MemoryError> {
     if CREDENTIALS.iter().any(|pattern| pattern.is_match(text))
         || text
@@ -25,6 +33,17 @@ pub(super) fn check(text: &str) -> Result<(), MemoryError> {
         return Err(MemoryError::Secret);
     }
     Ok(())
+}
+
+/// Replace each credential-shaped match with `[REDACTED]`; text that only looks random
+/// (high entropy) is kept, since command output such as hashes is legitimately so.
+pub fn redact_credentials(text: &str) -> String {
+    CREDENTIALS
+        .iter()
+        .chain(REDACTED_ASSIGNMENTS.iter())
+        .fold(text.to_string(), |text, pattern| {
+            pattern.replace_all(&text, "[REDACTED]").into_owned()
+        })
 }
 
 fn high_entropy(token: &str) -> bool {
@@ -45,4 +64,16 @@ fn high_entropy(token: &str) -> bool {
         })
         .sum();
     entropy >= 4.0
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn credential_shaped_text_is_redacted_and_the_rest_kept() {
+        let text = "ok\naws_secret_access_key = abc123\nkey AKIAABCDEFGHIJKLMNOP done\n";
+        let redacted = super::redact_credentials(text);
+        assert!(!redacted.contains("abc123") && !redacted.contains("AKIAABCDEFGHIJKLMNOP"));
+        assert!(redacted.starts_with("ok\n") && redacted.contains("done"));
+        assert_eq!(super::redact_credentials("plain hi"), "plain hi");
+    }
 }

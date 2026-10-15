@@ -45,6 +45,7 @@ impl Fixture {
             interactive: true,
             password: Some("memory-test".into()),
             mcp_credentials: None,
+            remote_skill_fetcher: None,
         })
         .await
         .unwrap();

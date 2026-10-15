@@ -15,20 +15,24 @@ pub fn merge_layer(base: &mut Value, overlay: &Value, source: &str, sources: &mu
 
 pub fn merge_profile(base: &mut Value, overlay: &Value, name: &str, sources: &mut Sources) {
     let mut origins = profile_hook_origins(base, overlay, name, sources);
-    origins.extend(profile_mcp_origins(name, sources));
+    // MCP servers and command templates keep the layer that declared them, so a profile
+    // in project config stays project-controlled.
+    for key in ["mcp", "commands"] {
+        origins.extend(profile_object_origins(name, key, sources));
+    }
     merge_layer(base, overlay, &format!("profile:{name}"), sources);
     sources.extend(origins);
 }
 
-fn profile_mcp_origins(name: &str, sources: &Sources) -> Sources {
-    let original = format!("{}/mcp", child_pointer("/profiles", name));
+fn profile_object_origins(name: &str, key: &str, sources: &Sources) -> Sources {
+    let original = format!("{}/{key}", child_pointer("/profiles", name));
     let prefix = format!("{original}/");
     sources
         .range(original.clone()..)
         .take_while(|(pointer, _)| *pointer == &original || pointer.starts_with(&prefix))
         .map(|(pointer, source)| {
             (
-                format!("/mcp{}", &pointer[original.len()..]),
+                format!("/{key}{}", &pointer[original.len()..]),
                 source.clone(),
             )
         })
@@ -130,6 +134,10 @@ fn append_arrays(
     }
     for item in over {
         if !items.contains(item) {
+            sources.insert(
+                child_pointer(pointer, &items.len().to_string()),
+                source.to_string(),
+            );
             items.push(item.clone());
         }
     }
@@ -151,6 +159,18 @@ fn record(value: &Value, pointer: &str, source: &str, sources: &mut Sources) {
             );
         }
         return;
+    }
+    if CONCAT_KEYS.contains(&pointer)
+        && let Some(items) = value.as_array()
+    {
+        // Concatenated lists keep each item's layer, so callers can tell user entries from
+        // project entries (remote skill sources).
+        for index in 0..items.len() {
+            sources.insert(
+                child_pointer(pointer, &index.to_string()),
+                source.to_string(),
+            );
+        }
     }
     match value.as_object() {
         Some(map) if !map.is_empty() => {
@@ -227,6 +247,52 @@ mod tests {
             &mut s,
         );
         assert_eq!(base, json!({"instructions": ["a", "b"], "x": [2]}));
+    }
+
+    #[test]
+    fn concatenated_items_keep_their_layer() {
+        let mut base = json!({});
+        let mut s = Sources::new();
+        merge_layer(
+            &mut base,
+            &json!({"skills": ["g", "both"]}),
+            "global:a",
+            &mut s,
+        );
+        merge_layer(
+            &mut base,
+            &json!({"skills": ["both", "p"]}),
+            "project:b",
+            &mut s,
+        );
+        assert_eq!(base["skills"], json!(["g", "both", "p"]));
+        assert_eq!(s["/skills/0"], "global:a");
+        assert_eq!(s["/skills/1"], "global:a");
+        assert_eq!(s["/skills/2"], "project:b");
+        merge_layer(
+            &mut base,
+            &json!({"skills": {"paths": ["x"]}}),
+            "project:c",
+            &mut s,
+        );
+        assert!(!s.contains_key("/skills/0"));
+        assert_eq!(s["/skills/paths/0"], "project:c");
+    }
+
+    #[test]
+    fn profile_commands_keep_their_declaring_layer() {
+        let mut base = json!({});
+        let mut s = Sources::new();
+        let profile = json!({"commands":{"review":{"template":"!`id`"}}});
+        merge_layer(
+            &mut base,
+            &json!({"profiles":{"dev":profile}}),
+            "project:/repo/cyber.json",
+            &mut s,
+        );
+        merge_profile(&mut base, &profile, "dev", &mut s);
+        assert_eq!(base["commands"]["review"]["template"], "!`id`");
+        assert_eq!(s["/commands/review/template"], "project:/repo/cyber.json");
     }
 
     #[test]

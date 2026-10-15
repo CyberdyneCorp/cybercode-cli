@@ -27,6 +27,12 @@ struct TrustFile {
     hook_approvals: Vec<Approval>,
     #[serde(default)]
     mcp_approvals: Vec<Approval>,
+    /// Project command and skill templates that run shell commands.
+    #[serde(default)]
+    template_approvals: Vec<Approval>,
+    /// Remote skill sources from project config, bound to their URL and fetched content.
+    #[serde(default)]
+    remote_skill_approvals: Vec<Approval>,
 }
 
 /// Explicitly reviewed handler digests for one invocation; never persisted.
@@ -106,14 +112,21 @@ impl TrustStore {
     pub fn revoke(&self, root: &Path) -> io::Result<bool> {
         let key = root.to_string_lossy();
         self.update(|file| {
-            let before =
-                file.approvals.len() + file.hook_approvals.len() + file.mcp_approvals.len();
+            let count = |file: &TrustFile| {
+                file.approvals.len()
+                    + file.hook_approvals.len()
+                    + file.mcp_approvals.len()
+                    + file.template_approvals.len()
+                    + file.remote_skill_approvals.len()
+            };
+            let before = count(file);
             file.approvals.retain(|a| a.checkout_root != key);
             file.hook_approvals.retain(|a| a.checkout_root != key);
             file.mcp_approvals.retain(|a| a.checkout_root != key);
-            let removed =
-                file.approvals.len() + file.hook_approvals.len() + file.mcp_approvals.len()
-                    != before;
+            file.template_approvals.retain(|a| a.checkout_root != key);
+            file.remote_skill_approvals
+                .retain(|a| a.checkout_root != key);
+            let removed = count(file) != before;
             (removed, removed)
         })
     }
@@ -193,6 +206,70 @@ impl TrustStore {
         })
     }
 
+    /// Whether this exact project template digest may run its shell injections.
+    pub fn is_template_approved(&self, root: &Path, digest: &str) -> io::Result<bool> {
+        validate_template_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        Ok(self
+            .load()?
+            .template_approvals
+            .iter()
+            .any(|a| a.checkout_root == key && a.digest == digest))
+    }
+
+    pub fn approve_template(&self, root: &Path, digest: &str) -> io::Result<()> {
+        validate_template_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        self.update(|file| {
+            file.template_approvals
+                .retain(|a| a.checkout_root != key || a.digest != digest);
+            file.template_approvals.push(Approval {
+                checkout_root: key,
+                digest: digest.into(),
+                approved_at: unix_seconds(),
+            });
+            ((), true)
+        })
+    }
+
+    pub fn revoke_template(&self, root: &Path, digest: &str) -> io::Result<bool> {
+        validate_template_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        self.update(|file| {
+            let before = file.template_approvals.len();
+            file.template_approvals
+                .retain(|a| a.checkout_root != key || a.digest != digest);
+            let removed = file.template_approvals.len() != before;
+            (removed, removed)
+        })
+    }
+
+    /// Whether a project-configured remote skill source may load this exact content.
+    pub fn is_remote_skill_approved(&self, root: &Path, digest: &str) -> io::Result<bool> {
+        validate_template_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        Ok(self
+            .load()?
+            .remote_skill_approvals
+            .iter()
+            .any(|a| a.checkout_root == key && a.digest == digest))
+    }
+
+    pub fn approve_remote_skill(&self, root: &Path, digest: &str) -> io::Result<()> {
+        validate_template_digest(digest)?;
+        let key = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        self.update(|file| {
+            file.remote_skill_approvals
+                .retain(|a| a.checkout_root != key || a.digest != digest);
+            file.remote_skill_approvals.push(Approval {
+                checkout_root: key,
+                digest: digest.into(),
+                approved_at: unix_seconds(),
+            });
+            ((), true)
+        })
+    }
+
     fn update<T>(&self, change: impl FnOnce(&mut TrustFile) -> (T, bool)) -> io::Result<T> {
         let lock_path = self.path.with_extension("lock");
         if let Some(parent) = lock_path.parent() {
@@ -224,6 +301,8 @@ impl TrustStore {
                 approvals: Vec::new(),
                 hook_approvals: Vec::new(),
                 mcp_approvals: Vec::new(),
+                template_approvals: Vec::new(),
+                remote_skill_approvals: Vec::new(),
             }),
             Err(e) => Err(e),
         }
@@ -253,6 +332,15 @@ fn validate_hook_digest(digest: &str) -> io::Result<()> {
 fn validate_mcp_digest(digest: &str) -> io::Result<()> {
     validate_hook_digest(digest)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid MCP SHA-256 digest"))
+}
+
+fn validate_template_digest(digest: &str) -> io::Result<()> {
+    validate_hook_digest(digest).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid template SHA-256 digest",
+        )
+    })
 }
 
 /// Write via a temporary file and rename, with mode 0600 on Unix. The temporary file is

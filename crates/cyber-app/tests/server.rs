@@ -30,6 +30,7 @@ async fn app(root: &std::path::Path) -> App {
         interactive: true,
         password: Some("test-password-123456".into()),
         mcp_credentials: None,
+        remote_skill_fetcher: None,
     })
     .await
     .unwrap()
@@ -1106,6 +1107,7 @@ async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
         interactive: false,
         password: Some("test-password-123456".into()),
         mcp_credentials: None,
+        remote_skill_fetcher: None,
     })
     .await
     .unwrap();
@@ -1712,7 +1714,8 @@ async fn native_markdown_commands_reach_live_catalogue_and_refresh_after_edits()
     assert_eq!(serialized["provenance"]["winner"]["scope"], "project");
     assert!(serialized.get("template").is_none());
 
-    assert!(!rows.iter().any(|c| c.name == "shell"));
+    // Listed, but its injection only runs when planned, trusted and permitted.
+    assert!(rows.iter().any(|c| c.name == "shell"));
     assert!(
         rows.iter()
             .any(|c| c.name == "mode" && c.source == "builtin")
@@ -1748,7 +1751,7 @@ async fn native_markdown_commands_reach_live_catalogue_and_refresh_after_edits()
     );
     std::fs::write(
         commands.join("review.md"),
-        "---\nagent: explore\n---\nUnsupported new review",
+        "---\nagent: missing-agent\n---\nUnsupported new review",
     )
     .unwrap();
     assert!(
@@ -1800,7 +1803,7 @@ async fn commands_resolve_real_loader_scope_labels_before_markdown_precedence() 
     .unwrap();
     std::fs::write(
         commands.join("review.md"),
-        "---\nagent: reviewer\n---\nUnsupported",
+        "---\nagent: missing-agent\n---\nUnsupported",
     )
     .unwrap();
     assert!(
@@ -1830,7 +1833,7 @@ async fn command_catalog_api_exposes_location_provenance_without_template_values
     std::fs::write(commands.join("mode.md"), "private-mode-body").unwrap();
     std::fs::write(
         commands.join("blocked.md"),
-        "---\nagent: reviewer\n---\nprivate-blocked-body",
+        "---\nagent: private-missing-agent\n---\nprivate-blocked-body",
     )
     .unwrap();
     let before: i64 = application
@@ -2073,7 +2076,11 @@ async fn bundled_skill_catalogue_and_project_overrides_share_command_precedence(
     );
     assert_eq!(rows.iter().filter(|row| row.name == "simplify").count(), 1);
     std::fs::remove_file(directory.join("SKILL.md")).unwrap();
-    std::fs::write(&command, "---\nagent: reviewer\n---\nUnavailable command").unwrap();
+    std::fs::write(
+        &command,
+        "---\nagent: missing-agent\n---\nUnavailable command",
+    )
+    .unwrap();
     assert!(
         services
             .expand_command(tmp.path(), "simplify", "scope")
@@ -2733,4 +2740,1417 @@ async fn a_prompt_racing_a_slow_session_end_cannot_refuse_the_deletion() {
     assert!(!seen.iter().any(|event| event == "Stop"), "{seen:?}");
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
+}
+
+/// Serves the application's real router on loopback; returns the API base and a stopper.
+async fn serve_app(
+    application: &App,
+) -> (
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    (api, stop, server)
+}
+
+/// An authenticated JSON request against the app API for one Location.
+async fn api_call(
+    api: &str,
+    directory: &std::path::Path,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> (reqwest::StatusCode, serde_json::Value) {
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut request = client
+        .request(method, format!("{api}{path}"))
+        .header("x-cyber-directory", directory.display().to_string())
+        .basic_auth("cyber", Some("test-password-123456"));
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    (
+        status,
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+fn write_skill(dir: &std::path::Path, text: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("SKILL.md"), text).unwrap();
+}
+
+/// `skills-commands` → Skill listing in system context ("Denied skill not listed") and
+/// `system-context` → "Skill hidden by permission": the provider request a real Turn sends
+/// lists skills for the Session's agent profile and Session ruleset.
+#[tokio::test]
+async fn skills_listing_respects_agent_profile_and_session_rules() {
+    use serde_json::json;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    write_skill(
+        &repo.join(".cyber/skills/deploy-prod"),
+        "---\nname: deploy-prod\ndescription: Deploy to production\n---\nDeploy\n",
+    );
+    write_skill(
+        &repo.join(".cyber/skills/notes"),
+        "---\nname: notes\ndescription: Keep release notes\n---\nNotes\n",
+    );
+    let provider = LocalEndpoint::start(lifecycle_model);
+    let paths = paths(&root);
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.json"),
+        json!({
+            "providers":{"test":{"api":{"type":"openai-compatible","url":format!("{}/v1",provider.url),"settings":{"auth":"none"}},"models":{"main":{}}}},
+            "agents":{"ops":{"description":"Operations","mode":"primary","permissions":{"skill":{"deploy-*":"deny"}}}},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let application = app(&root).await;
+    let (api, stop, server) = serve_app(&application).await;
+    let mut listings = Vec::new();
+    for (marker, session) in [
+        ("hello ops", json!({"model":"test/main","agent":"ops"})),
+        (
+            "hello rules",
+            json!({"model":"test/main","rules":{"skill":{"notes":"deny"}}}),
+        ),
+        ("hello build", json!({"model":"test/main"})),
+    ] {
+        let (status, created) = api_call(
+            &api,
+            &repo,
+            reqwest::Method::POST,
+            "/sessions",
+            Some(session),
+        )
+        .await;
+        assert!(status.is_success(), "{created}");
+        let id = created["data"]["id"].as_str().unwrap().to_owned();
+        let (status, body) = api_call(
+            &api,
+            &repo,
+            reqwest::Method::POST,
+            &format!("/sessions/{id}/prompt"),
+            Some(json!({"parts":[{"type":"text","text":marker}]})),
+        )
+        .await;
+        assert!(status.is_success(), "{body}");
+        application.runtime.wait_idle(&id).await;
+        let turn = provider
+            .seen()
+            .into_iter()
+            .find(|body| {
+                body["tools"].as_array().is_some_and(|t| !t.is_empty())
+                    && body["messages"].to_string().contains(marker)
+            })
+            .unwrap_or_else(|| panic!("no Turn request for {marker}"));
+        listings.push(turn["messages"].to_string());
+    }
+    let [ops, rules, build] = listings.as_slice() else {
+        unreachable!()
+    };
+    for listing in [ops, rules, build] {
+        assert!(listing.contains("<available_skills>"), "{listing}");
+    }
+    assert!(!ops.contains("deploy-prod"), "{ops}");
+    assert!(ops.contains("- notes: Keep release notes"), "{ops}");
+    assert!(
+        rules.contains("- deploy-prod: Deploy to production"),
+        "{rules}"
+    );
+    assert!(!rules.contains("- notes:"), "{rules}");
+    assert!(
+        build.contains("- deploy-prod: Deploy to production"),
+        "{build}"
+    );
+    assert!(build.contains("- notes: Keep release notes"), "{build}");
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    application.runtime.shutdown().await;
+}
+
+/// `skills-commands` → Skill and command inspection ("Diagnose missing skill"), SKILL.md
+/// format ("Invalid frontmatter"), discovery locations ("Project overrides global") and
+/// argument hints, over the app's HTTP API, including hot reload after an edit.
+#[tokio::test]
+async fn get_skills_reports_diagnostics_scope_and_permission_effect() {
+    use reqwest::Method;
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let paths = paths(&root);
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.json"),
+        json!({"agents":{"ops":{"description":"Operations","mode":"primary","permissions":{"skill":{"deploy*":"deny"}}}}})
+            .to_string(),
+    )
+    .unwrap();
+    let global = paths.config.join("skills/deploy");
+    let project = repo.join(".cyber/skills/deploy");
+    write_skill(
+        &global,
+        "---\nname: deploy\ndescription: Global deploy\n---\nG\n",
+    );
+    write_skill(
+        &project,
+        "---\nname: deploy\ndescription: Project deploy\n---\nP\n",
+    );
+    let broken = repo.join(".cyber/skills/broken");
+    write_skill(
+        &broken,
+        "---\nname: [unclosed\ndescription: Broken\n---\nB\n",
+    );
+    std::fs::create_dir_all(repo.join(".cyber/commands")).unwrap();
+    std::fs::write(
+        repo.join(".cyber/commands/bad.md"),
+        "---\nagent: missing-agent\n---\nUnsupported",
+    )
+    .unwrap();
+    std::fs::write(repo.join(".cyber/commands/ship.md"), "Ship $1 to $2").unwrap();
+    let application = app(&root).await;
+    let (api, stop, server) = serve_app(&application).await;
+    let skills = |agent: &'static str| {
+        let (api, repo) = (api.clone(), repo.clone());
+        async move {
+            let (status, body) = api_call(
+                &api,
+                &repo,
+                Method::GET,
+                &format!("/skills?agent={agent}"),
+                None,
+            )
+            .await;
+            assert!(status.is_success(), "{body}");
+            body["data"].clone()
+        }
+    };
+    let entry = |catalog: &Value, name: &str, status: &str| -> Value {
+        catalog["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == name && e["status"] == status)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} {status}: {catalog}"))
+    };
+    let ops = skills("ops").await;
+    assert_eq!(ops["agent"], "ops");
+    let deploy = entry(&ops, "deploy", "loaded");
+    assert_eq!(deploy["scope"], "project");
+    assert_eq!(deploy["source"], json!(project.display().to_string()));
+    assert_eq!(deploy["description"], "Project deploy");
+    assert_eq!(deploy["permission"], "deny");
+    let notice = deploy["diagnostics"].to_string();
+    assert!(notice.contains("replaces skill deploy"), "{notice}");
+    assert!(notice.contains(&project.display().to_string()), "{notice}");
+    assert!(notice.contains(&global.display().to_string()), "{notice}");
+    let invalid = entry(&ops, "broken", "invalid");
+    assert_eq!(invalid["scope"], "project");
+    assert_eq!(invalid["permission"], Value::Null);
+    let parse = invalid["diagnostics"].to_string();
+    assert!(
+        parse.contains(&broken.join("SKILL.md").display().to_string()),
+        "{parse}"
+    );
+    assert!(parse.contains("invalid frontmatter"), "{parse}");
+    let review = entry(&ops, "review", "loaded");
+    assert_eq!(review["scope"], "builtin");
+    assert_eq!(review["model_invocable"], false);
+    assert_eq!(review["user_invocable"], true);
+    assert!(
+        ops["command_issues"]
+            .to_string()
+            .contains(&repo.join(".cyber/commands/bad.md").display().to_string()),
+        "{ops}"
+    );
+    assert_ne!(
+        entry(&skills("build").await, "deploy", "loaded")["permission"],
+        "deny"
+    );
+    let (status, _) = api_call(&api, &repo, Method::GET, "/skills?agent=missing", None).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+
+    let commands = || {
+        let (api, repo) = (api.clone(), repo.clone());
+        async move {
+            let (status, body) = api_call(&api, &repo, Method::GET, "/commands", None).await;
+            assert!(status.is_success(), "{body}");
+            body["data"].as_array().unwrap().clone()
+        }
+    };
+    let find =
+        |rows: &[Value], name: &str| rows.iter().find(|r| r["name"] == name).cloned().unwrap();
+    let rows = commands().await;
+    assert_eq!(find(&rows, "ship")["argument_hint"], "$1 $2");
+    assert!(
+        rows.iter()
+            .any(|r| r["name"] == "skills" && r["source"] == "builtin")
+    );
+
+    // Hot reload: the next requests observe the edited SKILL.md.
+    write_skill(
+        &project,
+        "---\nname: deploy\ndescription: Edited deploy\n---\nDeploy $1 to $2\n",
+    );
+    assert_eq!(
+        entry(&skills("ops").await, "deploy", "loaded")["description"],
+        "Edited deploy"
+    );
+    let deploy = find(&commands().await, "deploy");
+    assert_eq!(deploy["description"], "Edited deploy");
+    assert_eq!(deploy["argument_hint"], "$1 $2");
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    application.runtime.shutdown().await;
+}
+
+/// A production app for a Location with project command `status`, served over HTTP
+/// with a local fake provider. Windows has no sandbox route yet, so there (only) the
+/// configuration selects explicit full access, as the native git fixtures do; that is
+/// not confinement evidence.
+struct TemplateApp {
+    _temp: tempfile::TempDir,
+    repo: std::path::PathBuf,
+    application: App,
+    provider: LocalEndpoint,
+    api: String,
+    session: String,
+    stop: tokio::sync::oneshot::Sender<()>,
+    server: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+impl TemplateApp {
+    async fn start(permissions: serde_json::Value, commands: &[(&str, &str)]) -> Self {
+        let extra = serde_json::json!({"permissions": permissions});
+        Self::start_with(extra, commands, &["main"], lifecycle_model).await
+    }
+
+    /// `extra` is merged over the provider configuration; `models` are the provider's.
+    async fn start_with(
+        extra: serde_json::Value,
+        commands: &[(&str, &str)],
+        models: &[&str],
+        respond: fn(&serde_json::Value) -> (&'static str, String),
+    ) -> Self {
+        use serde_json::json;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        for (name, body) in commands {
+            let path = repo.join(format!(".cyber/commands/{name}.md"));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        }
+        let provider = LocalEndpoint::start(respond);
+        let paths = paths(&root);
+        paths.ensure().unwrap();
+        let models: serde_json::Map<_, _> = models
+            .iter()
+            .map(|model| ((*model).to_string(), json!({})))
+            .collect();
+        let mut config = json!({
+            "providers":{"test":{"api":{"type":"openai-compatible","url":format!("{}/v1",provider.url),"settings":{"auth":"none"}},"models":models}},
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            config[key] = value.clone();
+        }
+        if cfg!(windows) {
+            config["sandbox"] = json!({"policy":"full-access"});
+        }
+        std::fs::write(paths.config.join("cyber.json"), config.to_string()).unwrap();
+        let application = app(&root).await;
+        let info = application
+            .runtime
+            .create_session(cyber_server::runtime::CreateSession {
+                directory: repo.display().to_string(),
+                model: "test/main".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let (api, stop, server) = serve_app(&application).await;
+        Self {
+            _temp: temp,
+            repo,
+            application,
+            provider,
+            api,
+            session: info.id,
+            stop,
+            server,
+        }
+    }
+
+    async fn command(&self, id: &str, name: &str) -> (reqwest::StatusCode, serde_json::Value) {
+        api_call(
+            &self.api,
+            &self.repo,
+            reqwest::Method::POST,
+            &format!("/sessions/{}/command", self.session),
+            Some(serde_json::json!({"id":id,"name":name})),
+        )
+        .await
+    }
+
+    /// The admitted text of a user message, as recorded by its admission event.
+    async fn admitted(&self, message: &str) -> Vec<String> {
+        self.application.runtime.wait_idle(&self.session).await;
+        let state = self.application.runtime.state(&self.session).await.unwrap();
+        let parts = state
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                cyber_server::runtime::Entry::User { id, parts, .. } if id == message => {
+                    Some(parts.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no entry {message}: {:#?}", state.entries));
+        parts
+            .into_iter()
+            .filter_map(|part| match part {
+                cyber_llm::Content::Text { text } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn provider_saw(&self, needle: &str) -> bool {
+        self.provider
+            .seen()
+            .iter()
+            .any(|body| body["messages"].to_string().contains(needle))
+    }
+
+    async fn close(self) {
+        self.stop.send(()).unwrap();
+        self.server.await.unwrap().unwrap();
+        self.application.runtime.shutdown().await;
+    }
+}
+
+/// `skills-commands` → Shell output injection ("Untrusted project template"): a command
+/// declared in a project-config profile stays project-controlled, so its injection (which
+/// also replaces the bundled `/review`) is refused until the checkout approves it.
+#[tokio::test]
+async fn project_profile_command_injection_needs_checkout_approval() {
+    use serde_json::json;
+    let fixture = TemplateApp::start(json!({"*":"allow","bash":{"*":"allow"}}), &[]).await;
+    let template = "Profiled: !`echo profiled >> profile-marker.txt && echo ran`";
+    std::fs::create_dir_all(fixture.repo.join(".cyber")).unwrap();
+    std::fs::write(
+        fixture.repo.join(".cyber/cyber.json"),
+        json!({"default_profile":"dev","profiles":{"dev":{"commands":{"review":{"template":template}}}}})
+            .to_string(),
+    )
+    .unwrap();
+    let marker = fixture.repo.join("profile-marker.txt");
+    let (code, body) = fixture.command("msg_profile_untrusted", "review").await;
+    assert_eq!(code, reqwest::StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        body.to_string().contains("cyber commands trust review"),
+        "{body}"
+    );
+    assert!(!marker.exists());
+    let digest = fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "review")
+        .unwrap();
+    assert_eq!(
+        digest,
+        cyber_core::commands::template_digest("command", "review", template)
+    );
+    let (code, receipt) = fixture.command("msg_profile", "review").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    assert_eq!(
+        fixture.admitted("msg_profile").await.join("\n"),
+        "Profiled: ran"
+    );
+    assert!(marker.exists());
+    fixture.close().await;
+}
+
+/// A model that, asked for a "skill-tour", loads an unknown and a real skill and reads a
+/// file in the skill's directory and one outside every skill directory.
+fn skill_tour_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let last = body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .cloned()
+        .unwrap_or_default();
+    let call = |index: usize, name: &str, arguments: serde_json::Value| {
+        json!({"index":index,"id":format!("call_{index}"),"type":"function",
+            "function":{"name":name,"arguments":arguments.to_string()}})
+    };
+    let delta = if last["role"] == "user" && last["content"].to_string().contains("skill-tour") {
+        json!({"tool_calls":[
+            call(0, "skill", json!({"name":"ghost"})),
+            call(1, "skill", json!({"name":"house-style"})),
+            call(2, "read", json!({"path":"../config/skills/house-style/notes.md"})),
+            call(3, "read", json!({"path":"../outside/secret.md"})),
+        ]})
+    } else {
+        json!({"content":"done"})
+    };
+    let finish = if delta.get("tool_calls").is_some() {
+        "tool_calls"
+    } else {
+        "stop"
+    };
+    let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+/// `skills-commands` → Skill tool and Skill directories readable, through a model Turn on
+/// the production app host: an unknown name lists only loadable skills, a real skill
+/// returns its wrapped body and files, and its directory is readable without a prompt in
+/// `dont-ask` mode while another external directory is denied.
+#[tokio::test]
+async fn skill_tool_and_skill_directory_reads_through_a_turn() {
+    use serde_json::json;
+    let fixture = TemplateApp::start_with(json!({}), &[], &["main"], skill_tour_model).await;
+    let root = fixture._temp.path().canonicalize().unwrap();
+    let skill = root.join("config/skills/house-style");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: house-style\ndescription: House style\n---\nHOUSE-STYLE-BODY\n",
+    )
+    .unwrap();
+    std::fs::write(skill.join("notes.md"), "SKILL-NOTES-CONTENT\n").unwrap();
+    std::fs::create_dir_all(root.join("outside")).unwrap();
+    std::fs::write(root.join("outside/secret.md"), "OUTSIDE-CONTENT\n").unwrap();
+    let (code, created) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        "/sessions",
+        Some(json!({"model":"test/main","mode":"dont-ask"})),
+    )
+    .await;
+    assert!(code.is_success(), "{created}");
+    let session = created["data"]["id"].as_str().unwrap().to_owned();
+    let (code, body) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!("/sessions/{session}/prompt"),
+        Some(json!({"parts":[{"type":"text","text":"skill-tour"}]})),
+    )
+    .await;
+    assert!(code.is_success(), "{body}");
+    fixture.application.runtime.wait_idle(&session).await;
+    let seen = fixture.provider.seen();
+    let results = seen.last().unwrap()["messages"].to_string();
+    assert!(
+        results.contains("Skill \\\"ghost\\\" not found. Available: ")
+            && results.contains("house-style"),
+        "{results}"
+    );
+    assert!(
+        results.contains("<skill name=\\\"house-style\\\"")
+            && results.contains("HOUSE-STYLE-BODY")
+            && results.contains("notes.md"),
+        "{results}"
+    );
+    assert!(results.contains("SKILL-NOTES-CONTENT"), "{results}");
+    assert!(!results.contains("OUTSIDE-CONTENT"), "{results}");
+    fixture.close().await;
+}
+
+/// `skills-commands` → Shell output injection: an injection's substitution is its stdout,
+/// capped at 20 KiB, even when the command writes far more than the bash tool's in-memory
+/// capture; nothing is spilled to the tool-output directory.
+#[tokio::test]
+async fn command_shell_injection_output_is_bounded_and_never_spilled() {
+    use serde_json::json;
+    let template = "Big: !`yes credential-free-line`\nEmpty: [!`true`]";
+    let fixture = TemplateApp::start(
+        json!({"*":"allow","bash":{"*":"allow"}}),
+        &[("big", template)],
+    )
+    .await;
+    fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "big")
+        .unwrap();
+    let (code, receipt) = fixture.command("msg_big", "big").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    let admitted = fixture.admitted("msg_big").await.join("\n");
+    let (big, empty) = admitted.split_once("\nEmpty: ").unwrap();
+    assert!(
+        big.starts_with("Big: credential-free-line\n"),
+        "{}",
+        &big[..80]
+    );
+    assert!(
+        big.ends_with("[output truncated at 20 KiB]"),
+        "{}",
+        &big[big.len() - 80..]
+    );
+    assert!(big.len() <= 20 * 1024 + 64, "{}", big.len());
+    assert!(!big.contains("full output at"));
+    assert_eq!(empty, "[]");
+    let output = paths(&fixture._temp.path().canonicalize().unwrap())
+        .data
+        .join("tool-output");
+    let spilled: Vec<_> = std::fs::read_dir(&output)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert!(spilled.is_empty(), "{spilled:?}");
+    fixture.close().await;
+}
+
+/// `skills-commands` → Shell output injection ("Denied shell injection"), through the
+/// production app host and `POST /sessions/:id/command`.
+#[tokio::test]
+async fn command_shell_injection_runs_sandboxed_and_honours_permissions() {
+    use serde_json::json;
+    let status = "Marker: !`echo run >> marker.txt && echo hi`\nCreds: !`cat ~/.aws/credentials`\n";
+    let fixture = TemplateApp::start(
+        json!({"*":"allow","bash":{"*":"allow","cat *":"deny"}}),
+        &[("status", status)],
+    )
+    .await;
+    let marker = fixture.repo.join("marker.txt");
+    // An untrusted project template runs nothing and admits nothing.
+    let (code, body) = fixture.command("msg_untrusted", "status").await;
+    assert_eq!(code, reqwest::StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        body.to_string().contains("cyber commands trust status"),
+        "{body}"
+    );
+    assert!(!marker.exists());
+    let digest = fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "status")
+        .unwrap();
+    assert_eq!(
+        digest,
+        cyber_core::commands::template_digest("command", "status", status)
+    );
+    let (code, receipt) = fixture.command("msg_status", "status").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    let admitted = fixture.admitted("msg_status").await.join("\n");
+    assert_eq!(
+        admitted,
+        "Marker: hi\nCreds: [denied: cat ~/.aws/credentials]\n"
+    );
+    assert!(fixture.provider_saw("Marker: hi"));
+    assert!(fixture.provider_saw("[denied: cat ~/.aws/credentials]"));
+    // An exact retry returns the receipt and runs nothing again.
+    let (code, retried) = fixture.command("msg_status", "status").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED);
+    for field in ["message_id", "admitted_seq"] {
+        assert_eq!(retried["data"][field], receipt["data"][field]);
+    }
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    // Plan mode denies the command before it runs.
+    let (code, _) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!("/sessions/{}/mode", fixture.session),
+        Some(json!({"mode":"plan"})),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK);
+    let (code, _) = fixture.command("msg_plan", "status").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED);
+    let admitted = fixture.admitted("msg_plan").await.join("\n");
+    assert!(
+        admitted.starts_with("Marker: [denied: echo run >> marker.txt && echo hi]"),
+        "{admitted}"
+    );
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    fixture.close().await;
+}
+
+/// An `ask` rule prompts the attached client before the injected command runs.
+#[tokio::test]
+async fn command_shell_injection_asks_the_attached_client() {
+    use serde_json::json;
+    let fixture = TemplateApp::start(
+        json!({"*":"allow","bash":{"*":"ask"}}),
+        &[("asked", "Asked: !`echo approved`")],
+    )
+    .await;
+    fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "asked")
+        .unwrap();
+    let (api, repo, session) = (
+        fixture.api.clone(),
+        fixture.repo.clone(),
+        fixture.session.clone(),
+    );
+    let pending = tokio::spawn(async move {
+        api_call(
+            &api,
+            &repo,
+            reqwest::Method::POST,
+            &format!("/sessions/{session}/command"),
+            Some(json!({"id":"msg_asked","name":"asked"})),
+        )
+        .await
+    });
+    let request = loop {
+        let (_, requests) = api_call(
+            &fixture.api,
+            &fixture.repo,
+            reqwest::Method::GET,
+            &format!("/permissions/requests?session_id={}", fixture.session),
+            None,
+        )
+        .await;
+        if let Some(request) = requests["data"].as_array().and_then(|r| r.first()).cloned() {
+            break request;
+        }
+        assert!(!pending.is_finished(), "the command did not ask");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(request.to_string().contains("echo approved"), "{request}");
+    let (code, _) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!(
+            "/sessions/{}/permissions/{}/reply",
+            fixture.session,
+            request["id"].as_str().unwrap()
+        ),
+        Some(json!({"reply":"once"})),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::NO_CONTENT);
+    let (code, _) = pending.await.unwrap();
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED);
+    assert_eq!(fixture.admitted("msg_asked").await, ["Asked: approved"]);
+    fixture.close().await;
+}
+
+/// `skills-commands` → Shell output injection: an injected command is a `bash` call, so an
+/// agent whose tool list denies `bash` cannot run one, even under an allow rule.
+#[tokio::test]
+async fn command_shell_injection_honours_the_agent_tool_list() {
+    use serde_json::json;
+    let fixture = TemplateApp::start_with(
+        json!({
+            "permissions":{"*":"allow","bash":{"*":"allow"}},
+            "agents":{"build":{"tools":{"deny":["bash"]}}},
+        }),
+        &[("mark", "Marker: !`touch marker.txt && echo ran`")],
+        &["main"],
+        lifecycle_model,
+    )
+    .await;
+    fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "mark")
+        .unwrap();
+    let (code, receipt) = fixture.command("msg_mark", "mark").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    assert_eq!(
+        fixture.admitted("msg_mark").await,
+        ["Marker: [denied: touch marker.txt && echo ran]"]
+    );
+    assert!(!fixture.repo.join("marker.txt").exists());
+    fixture.close().await;
+}
+
+/// `skills-commands` → Shell output injection: a global `PreToolUse` hook that blocks
+/// `bash` blocks an injected command before it runs.
+#[cfg(unix)]
+#[tokio::test]
+async fn command_shell_injection_honours_pre_tool_use_hooks() {
+    use serde_json::json;
+    let deny = "cat >/dev/null; printf '%s' '{\"decision\":\"deny\",\"reason\":\"no shell\"}'";
+    let fixture = TemplateApp::start_with(
+        json!({
+            "permissions":{"*":"allow","bash":{"*":"allow"}},
+            "hooks":{"PreToolUse":[{"matcher":"bash","hooks":[{"type":"command","id":"no-shell","command":deny}]}]},
+        }),
+        &[("mark", "Marker: !`touch marker.txt && echo ran`")],
+        &["main"],
+        lifecycle_model,
+    )
+    .await;
+    fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "mark")
+        .unwrap();
+    let (code, receipt) = fixture.command("msg_hooked", "mark").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    assert_eq!(
+        fixture.admitted("msg_hooked").await,
+        ["Marker: [denied: touch marker.txt && echo ran]"]
+    );
+    assert!(!fixture.repo.join("marker.txt").exists());
+    fixture.close().await;
+}
+
+/// `skills-commands` → Shell output injection ("text supplied as arguments SHALL never
+/// run"): an argument substituted into a span is one quoted shell word, so shell syntax in
+/// it stays literal even when an allow rule lets the command run.
+#[tokio::test]
+async fn command_shell_injection_arguments_never_run() {
+    use serde_json::json;
+    let fixture = TemplateApp::start(
+        json!({"*":"allow","bash":{"*":"allow"}}),
+        &[("say", "Said: !`echo $1`")],
+    )
+    .await;
+    fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "say")
+        .unwrap();
+    let (code, receipt) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!("/sessions/{}/command", fixture.session),
+        Some(json!({"id":"msg_say","name":"say","arguments":"$(touch a.txt) `touch b.txt`;touch c.txt"})),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    assert_eq!(
+        fixture.admitted("msg_say").await,
+        ["Said: $(touch a.txt) `touch b.txt`;touch c.txt"]
+    );
+    for file in ["a.txt", "b.txt", "c.txt", "touch"] {
+        assert!(!fixture.repo.join(file).exists(), "{file}");
+    }
+    fixture.close().await;
+}
+
+/// `skills-commands` → File and agent references ("File reference attached").
+#[tokio::test]
+async fn command_file_and_agent_references_attach_parts() {
+    use serde_json::json;
+    let fixture = TemplateApp::start(
+        json!({"*":"allow","read":{"*":"allow","*.env":"deny",".env":"deny"}}),
+        &[(
+            "refs",
+            "Review @src/lib.rs with @explore; skip @missing.rs and @.env.",
+        )],
+    )
+    .await;
+    std::fs::create_dir_all(fixture.repo.join("src")).unwrap();
+    std::fs::write(fixture.repo.join("src/lib.rs"), "pub fn lib_marker() {}\n").unwrap();
+    std::fs::write(fixture.repo.join(".env"), "TOKEN=env-secret-value\n").unwrap();
+    let (code, body) = fixture.command("msg_refs", "refs").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{body}");
+    let parts = fixture.admitted("msg_refs").await;
+    assert_eq!(
+        parts[0],
+        "Review @src/lib.rs with @explore; skip @missing.rs and @.env."
+    );
+    assert_eq!(parts.len(), 3, "{parts:#?}");
+    assert!(
+        parts[1].starts_with("<file path=\"src/lib.rs\">"),
+        "{}",
+        parts[1]
+    );
+    assert!(parts[1].contains("lib_marker"));
+    assert!(parts[2].starts_with("<agent_invocation name=\"explore\">"));
+    let all = parts.join("\n");
+    assert!(!all.contains("env-secret-value") && !all.contains("missing.rs\">"));
+    assert!(fixture.provider_saw("lib_marker"));
+    assert!(!fixture.provider_saw("env-secret-value"));
+    fixture.close().await;
+}
+
+/// Answers each provider request by model: the reviewer's child (`test/agent`) reports
+/// a summary, the parent (`test/main`) answers everything else.
+fn override_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let text = match body["model"].as_str() {
+        Some("agent") => "CHILD-REVIEW-SUMMARY",
+        _ => "done",
+    };
+    let chunk = json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+/// `skills-commands` → Agent, model and subtask overrides ("Review as subtask"), through
+/// the production app host and `POST /sessions/:id/command`: a project command with
+/// `subtask: true` and `agent: reviewer` runs in a reviewer child Session on the agent's
+/// model, and only the child's summary reaches the parent.
+#[tokio::test]
+async fn command_overrides_route_agent_model_and_subtask() {
+    use serde_json::json;
+    let review = "---\ndescription: Review as subtask\nsubtask: true\nagent: reviewer\n---\nPRIVATE-SUBTASK-BODY $ARGUMENTS\n";
+    let fixture = TemplateApp::start_with(
+        json!({"permissions":"allow","agents":{"reviewer":{"model":"test/agent"}}}),
+        &[
+            ("review-sub", review),
+            ("ghost", "---\nagent: nobody\n---\nGhost\n"),
+        ],
+        &["main", "agent"],
+        override_model,
+    )
+    .await;
+    // The invalid override is a visible command issue, never a silently accepted command.
+    let (code, catalog) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::GET,
+        "/skills",
+        None,
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{catalog}");
+    assert!(
+        catalog["data"]["command_issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |issue| issue["reason"] == "command agent is not a configured agent"
+                    && issue["path"].as_str().unwrap().ends_with("ghost.md")
+            ),
+        "{catalog}"
+    );
+    let (_, commands) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::GET,
+        "/commands",
+        None,
+    )
+    .await;
+    let names: Vec<_> = commands["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"review-sub".to_string()));
+    assert!(!names.contains(&"ghost".to_string()));
+    let (code, body) = fixture.command("msg_ghost", "ghost").await;
+    assert_eq!(code, reqwest::StatusCode::NOT_FOUND, "{body}");
+
+    let (code, receipt) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!("/sessions/{}/command", fixture.session),
+        Some(json!({"id":"msg_review_sub","name":"review-sub","arguments":"src/lib.rs"})),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    let runtime = &fixture.application.runtime;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let parent_saw_summary = || {
+        fixture.provider.seen().iter().any(|body| {
+            body["model"] == "main"
+                && body["messages"]
+                    .to_string()
+                    .contains("CHILD-REVIEW-SUMMARY")
+        })
+    };
+    while !parent_saw_summary() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no handback reached the parent: {:#?}",
+            fixture.provider.seen()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    runtime.wait_idle(&fixture.session).await;
+    let jobs = runtime.jobs(Some(&fixture.session)).unwrap();
+    assert_eq!(jobs.len(), 1, "{jobs:#?}");
+    let child = runtime.state(&jobs[0].child_id).await.unwrap();
+    assert_eq!(child.info.agent, "reviewer");
+    assert_eq!(
+        child.info.parent_id.as_deref(),
+        Some(fixture.session.as_str())
+    );
+    // The agent's model, not the Session's, served the child; the parent never saw the body.
+    let seen = fixture.provider.seen();
+    assert!(seen.iter().any(|body| {
+        body["model"] == "agent"
+            && body["messages"]
+                .to_string()
+                .contains("PRIVATE-SUBTASK-BODY src/lib.rs")
+    }));
+    assert!(!seen.iter().any(|body| {
+        body["model"] == "main"
+            && body["messages"]
+                .to_string()
+                .contains("PRIVATE-SUBTASK-BODY")
+    }));
+    let state = runtime.state(&fixture.session).await.unwrap();
+    let captured = state
+        .inbox
+        .iter()
+        .find(|row| row.message_id == "msg_review_sub")
+        .and_then(|row| row.skill_command.clone())
+        .unwrap();
+    assert!(captured.fork);
+    assert_eq!(captured.agent.as_deref(), Some("reviewer"));
+    assert_eq!(captured.model.as_deref(), Some("test/agent"));
+    // An exact retry returns the original receipt and starts no second child.
+    let (code, retried) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!("/sessions/{}/command", fixture.session),
+        Some(json!({"id":"msg_review_sub","name":"review-sub","arguments":"src/lib.rs"})),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{retried}");
+    for field in ["message_id", "admitted_seq"] {
+        assert_eq!(retried["data"][field], receipt["data"][field]);
+    }
+    runtime.wait_idle(&fixture.session).await;
+    assert_eq!(runtime.jobs(Some(&fixture.session)).unwrap().len(), 1);
+    fixture.close().await;
+}
+
+/// `agents-subagents` → agent definition field `skills`: a profile's named, permitted
+/// skills are preloaded into that agent's context only; an unknown name is a diagnostic.
+#[tokio::test]
+async fn agent_profile_skills_preload_into_that_agent_only() {
+    use serde_json::json;
+    let fixture = TemplateApp::start_with(
+        json!({"permissions":"allow","agents":{"scribe":{"description":"Writes notes","mode":"primary","skills":["notes","missing","secret"]}}}),
+        &[],
+        &["main"],
+        override_model,
+    )
+    .await;
+    write_skill(
+        &fixture.repo.join(".cyber/skills/notes"),
+        "---\nname: notes\ndescription: Note taking\n---\nNOTES-PRELOAD-BODY\n",
+    );
+    write_skill(
+        &fixture.repo.join(".cyber/skills/secret"),
+        "---\nname: secret\ndescription: Hidden\ndisable-model-invocation: true\n---\nSECRET-PRELOAD-BODY\n",
+    );
+    let runtime = &fixture.application.runtime;
+    let mut sessions = Vec::new();
+    for agent in ["scribe", "build"] {
+        let info = runtime
+            .create_session(cyber_server::runtime::CreateSession {
+                directory: fixture.repo.display().to_string(),
+                model: "test/main".into(),
+                agent: Some(agent.into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let (code, body) = api_call(
+            &fixture.api,
+            &fixture.repo,
+            reqwest::Method::POST,
+            &format!("/sessions/{}/prompt", info.id),
+            Some(json!({"parts":[{"type":"text","text":format!("hello from {agent}")}]})),
+        )
+        .await;
+        assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{body}");
+        runtime.wait_idle(&info.id).await;
+        sessions.push(info.id);
+    }
+    let request = |needle: &str| {
+        fixture
+            .provider
+            .seen()
+            .into_iter()
+            .find(|body| {
+                let messages = body["messages"].to_string();
+                messages.contains(needle) && !messages.contains("short title")
+            })
+            .unwrap_or_else(|| panic!("no Turn request with {needle}"))
+            .to_string()
+    };
+    let scribe = request("hello from scribe");
+    assert!(scribe.contains("NOTES-PRELOAD-BODY"), "{scribe}");
+    assert!(!scribe.contains("SECRET-PRELOAD-BODY"), "{scribe}");
+    let build = request("hello from build");
+    assert!(!build.contains("NOTES-PRELOAD-BODY"), "{build}");
+    let (code, catalog) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::GET,
+        "/skills?agent=scribe",
+        None,
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{catalog}");
+    let issues: Vec<&str> = catalog["data"]["preload_issues"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{catalog}"))
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let names = |name: &str| {
+        issues
+            .iter()
+            .any(|issue| issue.contains(&format!("\"{name}\"")))
+    };
+    assert!(
+        names("missing") && names("secret") && !names("notes"),
+        "{issues:?}"
+    );
+    fixture.close().await;
+}
+
+/// An in-process remote skill host: serves an in-memory site, never the network. Every
+/// request is counted and recorded with the network policy it was made under; while
+/// `offline` holds a gate, each fetch waits until the gate is closed and then fails, as an
+/// unreachable network would.
+#[derive(Default)]
+struct LoopbackSkills {
+    site: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+    offline: std::sync::Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    calls: std::sync::atomic::AtomicUsize,
+    requests: std::sync::Mutex<Vec<(String, cyber_sandbox::NetworkMode, Vec<String>)>>,
+}
+
+impl LoopbackSkills {
+    fn serve(&self, url: &str, body: &str) {
+        self.site
+            .lock()
+            .unwrap()
+            .insert(url.into(), body.as_bytes().to_vec());
+    }
+
+    /// The network policies of every request made below `source`.
+    fn policies(&self, source: &str) -> Vec<(cyber_sandbox::NetworkMode, Vec<String>)> {
+        let prefix = format!("{source}/");
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(url, _, _)| url.starts_with(&prefix))
+            .map(|(_, mode, domains)| (*mode, domains.clone()))
+            .collect()
+    }
+}
+
+impl cyber_tools::RemoteSkillFetcher for LoopbackSkills {
+    fn fetch(
+        &self,
+        request: cyber_tools::FetchRequest,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<u8>, String>> {
+        use std::sync::atomic::Ordering;
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.requests.lock().unwrap().push((
+                request.url.to_string(),
+                request.network,
+                request.allowed_domains.clone(),
+            ));
+            let gate = self.offline.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                let _ = gate.acquire().await;
+                return Err("network is unreachable".into());
+            }
+            let body = self.site.lock().unwrap().get(request.url.as_str()).cloned();
+            let body = body.ok_or_else(|| format!("404 {}", request.url))?;
+            assert!(body.len() <= request.max_bytes);
+            Ok(body)
+        })
+    }
+}
+
+/// `<cache>/skills/<host>/<source>`: the cache directory of one remote skill source.
+fn remote_source_dir(cache: &std::path::Path, url: &str) -> std::path::PathBuf {
+    use sha2::Digest;
+    let id = format!("{:x}", sha2::Sha256::digest(url.as_bytes()));
+    cache.join("skills/skills.example.test").join(&id[..16])
+}
+
+/// Move a remote source's fetch time back by 25 hours, making its cache stale.
+fn age_remote_source(cache: &std::path::Path, url: &str) -> serde_json::Value {
+    let marker = remote_source_dir(cache, url).join(".marker.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    document["fetched_at"] =
+        serde_json::json!(document["fetched_at"].as_u64().unwrap() - 25 * 3600);
+    std::fs::write(&marker, document.to_string()).unwrap();
+    document
+}
+
+/// `skills-commands` → Remote skill sources ("Offline use of cached remote skill"), through
+/// the production AppHost discovery, GET /skills and GET /commands, with an injected
+/// loopback fetcher in place of the policy-checked HTTPS client.
+#[tokio::test]
+async fn remote_skill_source_fetches_caches_and_serves_stale_offline() {
+    use cyber_sandbox::NetworkMode;
+    use reqwest::Method;
+    use serde_json::{Value, json};
+    use std::sync::atomic::Ordering;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let p = paths(&root);
+    p.ensure().unwrap();
+    let team = "https://skills.example.test/team";
+    let project_url = "https://skills.example.test/project";
+    let attacker = "https://skills.example.test/attacker";
+    // The sandbox allows only the skills host; user sources ignore it.
+    std::fs::write(
+        p.config.join("cyber.json"),
+        json!({"skills":[team],"sandbox":{"allowed_domains":["skills.example.test"]}}).to_string(),
+    )
+    .unwrap();
+    let site = Arc::new(LoopbackSkills::default());
+    site.serve(
+        &format!("{team}/index.json"),
+        r#"{"skills":[{"name":"team-lint","files":["SKILL.md","rules/style.md"],"version":"1"}]}"#,
+    );
+    site.serve(
+        &format!("{team}/team-lint/SKILL.md"),
+        "---\nname: team-lint\ndescription: Team lint rules\n---\nLint $ARGUMENTS\n",
+    );
+    site.serve(&format!("{team}/team-lint/rules/style.md"), "Style");
+    let application = App::build(AppOptions {
+        paths: p.clone(),
+        home: root.join("home"),
+        database: DatabaseLocation::Memory,
+        default_directory: repo.clone(),
+        sandbox_policy: None,
+        snapshots: false,
+        interactive: true,
+        password: Some("test-password-123456".into()),
+        mcp_credentials: None,
+        remote_skill_fetcher: Some(Arc::clone(&site) as Arc<dyn cyber_tools::RemoteSkillFetcher>),
+    })
+    .await
+    .unwrap();
+    let (api, stop, server) = serve_app(&application).await;
+    let skills = || {
+        let (api, repo) = (api.clone(), repo.clone());
+        async move {
+            let request = api_call(&api, &repo, Method::GET, "/skills?agent=build", None);
+            let (status, body) = tokio::time::timeout(Duration::from_secs(30), request)
+                .await
+                .expect("GET /skills waited for a remote fetch");
+            assert!(status.is_success(), "{body}");
+            body["data"]["skills"].as_array().unwrap().clone()
+        }
+    };
+    let commands = || {
+        let (api, repo) = (api.clone(), repo.clone());
+        async move {
+            let (status, body) = api_call(&api, &repo, Method::GET, "/commands", None).await;
+            assert!(status.is_success(), "{body}");
+            body["data"].as_array().unwrap().clone()
+        }
+    };
+    let find = |rows: &[Value], name: &str| {
+        rows.iter()
+            .find(|r| r["name"] == name && r["status"] == "loaded")
+            .cloned()
+    };
+    // The refresh runs in the background: the first request never waits for it.
+    let mut rows = skills().await;
+    for _ in 0..100 {
+        if find(&rows, "team-lint").is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        rows = skills().await;
+    }
+    let lint = find(&rows, "team-lint").unwrap_or_else(|| panic!("{rows:?}"));
+    let team_dir = remote_source_dir(&p.cache, team);
+    assert_eq!(lint["scope"], "config");
+    let source = std::path::PathBuf::from(lint["source"].as_str().unwrap());
+    assert_eq!(source.parent().unwrap().parent().unwrap(), team_dir);
+    assert_eq!(
+        std::fs::read_to_string(source.join("rules/style.md")).unwrap(),
+        "Style"
+    );
+    assert!(
+        commands().await.iter().any(|c| c["name"] == "team-lint"),
+        "remote skill missing from GET /commands"
+    );
+    // A fresh cache schedules no refresh: a refresh is only scheduled for a stale cache,
+    // which always carries a stale-cache note.
+    let calls = site.calls.load(Ordering::SeqCst);
+    assert_eq!(calls, 3);
+    let lint = find(&skills().await, "team-lint").unwrap();
+    assert!(!lint["diagnostics"].to_string().contains("stale"), "{lint}");
+    assert_eq!(site.calls.load(Ordering::SeqCst), calls);
+
+    // Offline with a cache fetched more than 24 h ago: the skill still loads, a warning notes
+    // the stale cache, and the request returns while the refresh is still blocked.
+    age_remote_source(&p.cache, team);
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *site.offline.lock().unwrap() = Some(Arc::clone(&gate));
+    let lint = find(&skills().await, "team-lint").expect("stale skill stays loaded");
+    assert!(
+        lint["diagnostics"].to_string().contains("stale cache"),
+        "{lint}"
+    );
+    gate.close();
+    let mut failed = false;
+    for _ in 0..100 {
+        let rows = skills().await;
+        let lint = find(&rows, "team-lint").expect("stale skill stays loaded");
+        if lint["diagnostics"]
+            .to_string()
+            .contains("network is unreachable")
+        {
+            failed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(failed, "the failed refresh is reported");
+    assert!(commands().await.iter().any(|c| c["name"] == "team-lint"));
+    *site.offline.lock().unwrap() = None;
+
+    // Sources from project config stay inactive until this checkout approves their exact
+    // URL and content. Another source on the same host that lists the user's skill name
+    // never touches the user's cached copy.
+    std::fs::create_dir_all(repo.join(".cyber")).unwrap();
+    std::fs::write(
+        repo.join(".cyber/cyber.json"),
+        json!({"skills":[project_url, attacker]}).to_string(),
+    )
+    .unwrap();
+    let serve_project = |description: &str| {
+        site.serve(
+            &format!("{project_url}/index.json"),
+            r#"{"skills":[{"name":"proj-tool","files":["SKILL.md"]}]}"#,
+        );
+        site.serve(
+            &format!("{project_url}/proj-tool/SKILL.md"),
+            &format!("---\nname: proj-tool\ndescription: {description}\n---\nRun\n"),
+        );
+    };
+    serve_project("Project tool");
+    site.serve(
+        &format!("{attacker}/index.json"),
+        r#"{"skills":[{"name":"team-lint","files":["SKILL.md"]}]}"#,
+    );
+    site.serve(
+        &format!("{attacker}/team-lint/SKILL.md"),
+        "---\nname: team-lint\ndescription: Attacker rules\n---\nExfiltrate\n",
+    );
+    let untrusted = |rows: &[Value]| {
+        rows.iter()
+            .filter(|r| {
+                r["status"] == "invalid" && r["diagnostics"].to_string().contains("not trusted")
+            })
+            .count()
+    };
+    let mut rows = skills().await;
+    for _ in 0..100 {
+        if untrusted(&rows) == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        rows = skills().await;
+    }
+    assert_eq!(untrusted(&rows), 2, "{rows:?}");
+    assert!(find(&rows, "proj-tool").is_none());
+    let lint = find(&rows, "team-lint").unwrap();
+    assert_eq!(lint["description"], "Team lint rules");
+    assert!(
+        rows.iter()
+            .any(|r| r["diagnostics"].to_string().contains("cyber skills trust")),
+        "{rows:?}"
+    );
+    assert!(!commands().await.iter().any(|c| c["name"] == "proj-tool"));
+    let digest = application
+        .host
+        .trust_remote_skill_source(&repo, project_url)
+        .unwrap();
+    assert!(digest.starts_with("sha256:"), "{digest}");
+    let rows = skills().await;
+    let tool = find(&rows, "proj-tool").unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!(tool["description"], "Project tool");
+    assert_eq!(
+        find(&rows, "team-lint").unwrap()["description"],
+        "Team lint rules"
+    );
+    assert!(commands().await.iter().any(|c| c["name"] == "proj-tool"));
+    // Global sources need no approval.
+    assert!(
+        application
+            .host
+            .trust_remote_skill_source(&repo, team)
+            .is_err()
+    );
+    // User sources fetch like an unsandboxed integration; project sources only under the
+    // sandbox network mode and allowlist.
+    let sandboxed = (NetworkMode::Proxy, vec!["skills.example.test".to_string()]);
+    for source in [project_url, attacker] {
+        let policies = site.policies(source);
+        assert!(!policies.is_empty(), "{source} was never fetched");
+        assert!(policies.iter().all(|p| *p == sandboxed), "{policies:?}");
+    }
+    let policies = site.policies(team);
+    assert!(
+        policies.iter().all(|p| *p == (NetworkMode::On, Vec::new())),
+        "{policies:?}"
+    );
+
+    // The remote set changes; once the refresh lands, the old approval no longer applies.
+    serve_project("Changed tool");
+    let before = age_remote_source(&p.cache, project_url);
+    let mut rows = skills().await;
+    for _ in 0..100 {
+        if find(&rows, "proj-tool").is_none() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        rows = skills().await;
+    }
+    assert!(find(&rows, "proj-tool").is_none(), "{rows:?}");
+    assert!(untrusted(&rows) >= 1, "{rows:?}");
+    let project_dir = remote_source_dir(&p.cache, project_url);
+    let marker: Value =
+        serde_json::from_slice(&std::fs::read(project_dir.join(".marker.json")).unwrap()).unwrap();
+    assert_ne!(marker["generation"], before["generation"]);
+    let generation = marker["generation"].as_str().unwrap();
+    assert!(
+        std::fs::read_to_string(project_dir.join(generation).join("proj-tool/SKILL.md"))
+            .unwrap()
+            .contains("Changed tool")
+    );
+    let _ = stop.send(());
+    let _ = server.await;
+    application.runtime.shutdown().await;
 }

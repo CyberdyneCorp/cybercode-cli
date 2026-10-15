@@ -2,7 +2,10 @@
 mod command_mcp;
 mod command_skills;
 mod path_skills;
+mod remote_sources;
 mod review;
+mod skill_catalog;
+mod template_expand;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -71,6 +74,10 @@ pub struct BuiltinHost {
     pub(crate) subagents: crate::subagents::Slots,
     pub(crate) mcp: crate::mcp::pool::Pool,
     pub(crate) lsp: OnceLock<crate::lsp::Locations>,
+    /// Per-command limit for template shell injections.
+    pub(crate) injection_timeout_ms: std::sync::atomic::AtomicU64,
+    /// The remote skill cache; without it, `https://` skill entries are reported unavailable.
+    pub(crate) remote_skills: OnceLock<crate::remote_skills::RemoteSkills>,
 }
 
 impl BuiltinHost {
@@ -147,6 +154,10 @@ impl BuiltinHost {
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
+            injection_timeout_ms: std::sync::atomic::AtomicU64::new(
+                template_expand::INJECTION_TIMEOUT.as_millis() as u64,
+            ),
+            remote_skills: OnceLock::new(),
         })
     }
 
@@ -253,11 +264,6 @@ impl BuiltinHost {
         Ok(())
     }
 
-    fn rules(&self, location: &Path) -> Vec<permissions::Rule> {
-        let (config, sources) = (self.opts.config)(location).unwrap_or_default();
-        self.rules_for(location, true, &config, &sources)
-    }
-
     fn rules_for(
         &self,
         location: &Path,
@@ -268,7 +274,7 @@ impl BuiltinHost {
         // Skill directories are readable without prompting (`skills-commands`).
         let mut allowed = self.opts.allowed_dirs.clone();
         allowed.extend(
-            self.skills_for(location, config)
+            self.skills_for(location, config, sources)
                 .skills
                 .into_values()
                 .filter_map(|s| s.directory().map(Path::to_path_buf)),
@@ -334,7 +340,7 @@ impl BuiltinHost {
 
     /// Skills have later precedence; configured reserved names use the project namespace.
     pub fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
-        if ["help", "exit", "goal", "loop", "workflows", "mode"].contains(&name) {
+        if cyber_core::commands::RESERVED.contains(&name) {
             return None;
         }
         let (skill, registry) = self.command_sources(location, name);
@@ -393,30 +399,44 @@ impl BuiltinHost {
 
     /// Skills visible from a Location, honoring `skills.compat` and `skills.paths`.
     pub(crate) fn skills(&self, location: &Path) -> Discovery {
-        let config = self.config_for(location);
-        self.skills_for(location, &config)
+        let (config, sources) = (self.opts.config)(location).unwrap_or_default();
+        self.skills_for(location, &config, &sources)
     }
 
-    fn skills_for(&self, location: &Path, config: &Value) -> Discovery {
+    /// Local entries resolve against the project root (`~/` against home); `https://`
+    /// entries contribute their cached skills at the same precedence position.
+    fn skills_for(
+        &self,
+        location: &Path,
+        config: &Value,
+        sources: &BTreeMap<String, String>,
+    ) -> Discovery {
         let settings = &config["skills"];
-        let entries = if settings.is_array() {
-            settings
+        let (entries, pointer) = if settings.is_array() {
+            (settings, "/skills")
         } else {
-            &settings["paths"]
+            (&settings["paths"], "/skills/paths")
         };
         let root = cyber_core::config::project_root(location);
-        let extra = entries
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .filter(|e| !e.starts_with("https://") && !e.starts_with("http://"))
-            .map(|e| match e.strip_prefix("~/") {
+        let mut extra = Vec::new();
+        let mut notes = Vec::new();
+        for (index, entry) in entries.as_array().into_iter().flatten().enumerate() {
+            let Some(entry) = entry.as_str() else {
+                continue;
+            };
+            if entry.contains("://") {
+                let layer = sources.get(&format!("{pointer}/{index}"));
+                let remote = self.remote_skill_dirs(location, config, sources, entry, layer);
+                extra.extend(remote.0);
+                notes.extend(remote.1);
+                continue;
+            }
+            extra.push(match entry.strip_prefix("~/") {
                 Some(rest) => self.opts.home.join(rest),
-                None => root.join(e),
-            })
-            .collect();
-        skills::discover(&SkillScope {
+                None => root.join(entry),
+            });
+        }
+        let mut found = skills::discover(&SkillScope {
             location: location.to_path_buf(),
             home: self.opts.home.clone(),
             global_config_dir: self.opts.global_config_dir.clone(),
@@ -425,7 +445,9 @@ impl BuiltinHost {
                 .and_then(Value::as_bool)
                 .unwrap_or(true),
             extra,
-        })
+        });
+        found.diagnostics.extend(notes);
+        found
     }
 
     fn websearch_available(&self, location: &Path) -> bool {
@@ -571,51 +593,6 @@ impl BuiltinHost {
     }
 }
 
-/// `<available_skills>` for permitted, model-invocable skills within a character budget.
-fn skill_listing(found: &Discovery, rules: &[permissions::Rule], budget: usize) -> Option<String> {
-    let listed: Vec<&skills::Skill> = found
-        .skills
-        .values()
-        .filter(|s| !s.disable_model_invocation)
-        .filter(|s| permissions::evaluate(rules, "skill", &s.name).0 != Effect::Deny)
-        .collect();
-    if listed.is_empty() {
-        return None;
-    }
-    let full: Vec<String> = listed
-        .iter()
-        .map(|s| format!("- {}: {}", s.name, s.description))
-        .collect();
-    let fits = full.iter().map(|l| l.len() + 1).sum::<usize>() <= budget;
-    let lines = if fits {
-        full
-    } else {
-        shortened(&listed, budget)
-    };
-    Some(format!(
-        "Skills you can load with the skill tool:\n<available_skills>\n{}\n</available_skills>",
-        lines.join("\n")
-    ))
-}
-
-/// Over budget: descriptions cut to 120 characters, then the remaining names without them.
-fn shortened(listed: &[&skills::Skill], budget: usize) -> Vec<String> {
-    let mut used = 0;
-    listed
-        .iter()
-        .map(|s| {
-            let short: String = s.description.chars().take(120).collect();
-            let line = format!("- {}: {short}", s.name);
-            used += line.len() + 1;
-            if used <= budget {
-                line
-            } else {
-                format!("- {}", s.name)
-            }
-        })
-        .collect()
-}
-
 impl ToolHost for BuiltinHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
         self.start_mcp(info);
@@ -658,6 +635,17 @@ impl ToolHost for BuiltinHost {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(self.resolve_mentions(turn, parts, asker, cancel))
+    }
+
+    fn expand_prompt_template<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        template: &'a cyber_server::runtime::PromptTemplate,
+        parts: &'a [cyber_llm::Content],
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<Vec<cyber_llm::Content>, String>> {
+        Box::pin(self.expand_template(turn, template, parts, asker, cancel))
     }
 
     fn shutdown(&self) -> BoxFuture<'_, ()> {
@@ -1539,6 +1527,13 @@ pub(crate) fn resolve_path(location: &Path, home: &Path, path: &str) -> PathBuf 
     crate::bash_analysis::normalize(&p)
 }
 
+const SKILLS_KEY: &str = "core/skills";
+/// Skills the selected agent's profile preloads (`agents-subagents` → `skills`).
+const AGENT_SKILLS_KEY: &str = "core/agent-skills";
+const MCP_INSTRUCTIONS_KEY: &str = "core/mcp-instructions";
+/// The key used before `system-context` named it `core/mcp-instructions`.
+const LEGACY_MCP_INSTRUCTIONS_KEY: &str = "mcp/instructions";
+
 /// Canonicalize the longest existing ancestor so symlinks cannot hide an escape.
 pub(crate) fn canonical(path: &Path) -> PathBuf {
     let mut existing = path.to_path_buf();
@@ -1571,14 +1566,43 @@ impl BuiltinHost {
     ) -> BTreeMap<String, String> {
         let location = Path::new(&turn.directory);
         let budget = self.listing_budget(location);
-        let listing = skill_listing(&self.skills(location), &self.rules(location), budget);
-        let mut sources = listing
-            .map(|text| BTreeMap::from([("core/skills".to_string(), text)]))
-            .unwrap_or_default();
+        // The selected agent's profile and the Session ruleset decide what is listed and
+        // preloaded; an unresolvable agent gets neither.
+        let rules = self
+            .session_rules(location, Some(&turn.agent), &turn.rules)
+            .ok();
+        let found = self.skills(location);
+        let mut sources = BTreeMap::new();
+        if let Some(rules) = &rules {
+            if let Some(text) = skill_catalog::skill_listing(&found, rules, budget) {
+                sources.insert(SKILLS_KEY.to_string(), text);
+            }
+            if let Some(text) = self.preloaded_skills(location, &turn.agent, &found, rules) {
+                sources.insert(AGENT_SKILLS_KEY.to_string(), text);
+            }
+        }
         if let Some(instructions) = self.mcp_instructions(turn, visible) {
-            sources.insert("mcp/instructions".into(), instructions);
+            sources.insert(MCP_INSTRUCTIONS_KEY.into(), instructions);
         }
         sources
+    }
+
+    /// The bodies of the skills the agent's profile preloads, as the skill tool frames them.
+    fn preloaded_skills(
+        &self,
+        location: &Path,
+        agent: &str,
+        found: &Discovery,
+        rules: &[permissions::Rule],
+    ) -> Option<String> {
+        let profile = self.agent_profile(location, agent).ok()?;
+        let (frames, _) = skill_catalog::preload(found, rules, &profile.skills);
+        (!frames.is_empty()).then(|| {
+            format!(
+                "Skills preloaded for this agent:\n\n{}",
+                frames.join("\n\n")
+            )
+        })
     }
 
     /// Typed observations include explicit withdrawal of absent MCP instructions.
@@ -1593,9 +1617,16 @@ impl BuiltinHost {
             .into_iter()
             .map(|(key, value)| (key, ContextObservation::Value(value)))
             .collect();
-        sources
-            .entry("mcp/instructions".into())
-            .or_insert(ContextObservation::Absent);
+        for key in [SKILLS_KEY, AGENT_SKILLS_KEY, MCP_INSTRUCTIONS_KEY] {
+            sources
+                .entry(key.into())
+                .or_insert(ContextObservation::Absent);
+        }
+        // Sessions started before the rename withdraw the old key deterministically.
+        sources.insert(
+            LEGACY_MCP_INSTRUCTIONS_KEY.into(),
+            ContextObservation::Absent,
+        );
         let agent = match self.agent_profile(Path::new(&turn.directory), &turn.agent) {
             Ok(profile) => match profile.system.filter(|text| !text.is_empty()) {
                 Some(text) => ContextObservation::Value(text),

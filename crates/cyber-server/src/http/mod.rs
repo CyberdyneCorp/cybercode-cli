@@ -88,6 +88,46 @@ pub struct CommandInfo {
     pub provenance: Option<cyber_core::commands::CommandProvenance>,
 }
 
+/// A discovered or skipped skill (`skills-commands` → Skill and command inspection).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SkillInfo {
+    /// The skill name; for a skipped skill, its directory name.
+    pub name: String,
+    pub description: String,
+    /// The skill directory, the skipped `SKILL.md`, or `builtin:<name>` for an embedded skill.
+    pub source: String,
+    pub scope: cyber_core::skills::SkillOrigin,
+    /// `loaded`, or `invalid` for a skill that was skipped.
+    pub status: String,
+    pub user_invocable: bool,
+    pub model_invocable: bool,
+    pub argument_hint: Option<String>,
+    /// The `skill` permission for the requested agent (`allow`, `ask` or `deny`); absent when
+    /// the skill was skipped.
+    pub permission: Option<String>,
+    /// Parse errors and duplicate notices (`replaces skill <name> from <path>`).
+    pub diagnostics: Vec<String>,
+}
+
+/// A command definition that was skipped or could not be read.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CommandDiagnostic {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
+/// Skills for an agent plus command discovery diagnostics, for `/skills`, `cyber skills`,
+/// `cyber commands list` and `cyber doctor`.
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
+pub struct SkillCatalog {
+    pub agent: String,
+    pub skills: Vec<SkillInfo>,
+    pub command_issues: Vec<CommandDiagnostic>,
+    /// Skills the agent's profile preloads (`skills: [..]`) that are unknown, denied for
+    /// the agent or not model-invocable, and so are not preloaded.
+    pub preload_issues: Vec<String>,
+}
+
 /// An agent clients can select.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AgentInfo {
@@ -312,6 +352,16 @@ pub trait Services: Send + Sync {
     fn agents(&self, location: &Path) -> Vec<AgentInfo>;
     fn tools(&self, turn: &TurnContext) -> Vec<ToolDef>;
     fn commands(&self, location: &Path) -> Vec<CommandInfo>;
+    /// Skills with source, scope, permission effect for `agent` and diagnostics.
+    fn skills(&self, _location: &Path, _agent: &str) -> Result<SkillCatalog, ApiError> {
+        let mut error = ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceUnavailableError",
+            "Skill inspection is unavailable in this host",
+        );
+        error.body.service = Some("skills".into());
+        Err(error)
+    }
     /// Files and directories under the Location matching `query`, for `@` mentions.
     fn find_files(&self, location: &Path, query: &str, limit: usize) -> Vec<String>;
     fn command_plan<'a>(

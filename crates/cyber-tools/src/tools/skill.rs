@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::{Tool, ToolError, def, failed, text};
 use crate::host::Ctx;
-use crate::permissions::Request;
+use crate::permissions::{Decision, Request};
 
 pub(crate) struct SkillTool;
 
@@ -28,10 +28,14 @@ impl Tool for SkillTool {
             let found = ctx.host.skills(&ctx.location);
             let model_invocable = |s: &&skills::Skill| !s.disable_model_invocation;
             let Some(skill) = found.skills.get(name).filter(model_invocable) else {
+                // Only skills this agent may load are named.
                 let names: Vec<&str> = found
                     .skills
                     .values()
                     .filter(model_invocable)
+                    .filter(|s| {
+                        !matches!(ctx.policy.decide(&request(&s.name)), Decision::Deny { .. })
+                    })
                     .map(|s| s.name.as_str())
                     .collect();
                 return Err(failed(format!(
@@ -39,13 +43,8 @@ impl Tool for SkillTool {
                     names.join(", ")
                 )));
             };
-            let req = Request {
-                action: "skill".into(),
-                resources: vec![name.into()],
-                read_only: true,
-                ..Request::default()
-            };
-            ctx.authorize(req, vec![name.into()], Value::Null).await?;
+            ctx.authorize(request(name), vec![name.into()], Value::Null)
+                .await?;
             let body = skills::instruction_frame(skill, text(&ctx.inv.input, "arguments"));
             if skill.context == skills::SkillContext::Fork {
                 return super::agent::fork_skill(ctx, skill, body).await;
@@ -60,5 +59,14 @@ impl Tool for SkillTool {
                 });
             Ok(body)
         })
+    }
+}
+
+fn request(name: &str) -> Request {
+    Request {
+        action: "skill".into(),
+        resources: vec![name.into()],
+        read_only: true,
+        ..Request::default()
     }
 }

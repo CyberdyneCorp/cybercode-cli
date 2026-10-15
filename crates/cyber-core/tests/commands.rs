@@ -15,7 +15,7 @@ fn markdown_frontmatter_preserves_body_and_exact_hint_spelling() {
         StaticCommand::parse(&plain.definition)
             .unwrap()
             .expand("carefully"),
-        "Review code\n\nARGUMENTS: carefully"
+        "Review code\n\ncarefully"
     );
     assert!(cyber_core::commands::markdown("---\n---\nReview").is_ok());
 }
@@ -35,6 +35,10 @@ fn markdown_unsupported_definitions_are_never_partially_accepted() {
     ] {
         let error = cyber_core::commands::markdown(document).err().unwrap();
         assert!(!error.contains("private-"));
+    }
+    for document in ["!`echo value`", "Review @src/main.rs"] {
+        let parsed = cyber_core::commands::markdown_template(document).unwrap();
+        assert!(StaticCommand::parse_template(&parsed.definition).is_ok());
     }
     assert!(
         cyber_core::commands::markdown(&format!(
@@ -63,7 +67,7 @@ fn nested_names_reserved_namespace_and_argument_expansion() {
     );
     assert_eq!(
         commands.entries["plain"].expand("carefully"),
-        "Review code\n\nARGUMENTS: carefully"
+        "Review code\n\ncarefully"
     );
     assert!(!commands.entries.contains_key("goal"));
 }
@@ -78,15 +82,101 @@ fn unsupported_execution_and_overrides_never_become_static_commands() {
         json!({"template":"{env:SECRET}"}),
         json!({"template":"review", "agent":"reviewer"}),
         json!({"template":"review", "model":"corp/model"}),
-        json!({"template":"review", "subtask":false}),
+        json!({"template":"review", "subtask":true}),
         json!({"template":"x".repeat(65537)}),
         json!({"template":"private\0value"}),
     ] {
         let error = StaticCommand::parse(&value).unwrap_err();
         assert!(!error.contains("secret") && !error.contains("sentinel"));
     }
+    for value in [
+        json!({"template":"!`touch sentinel`"}),
+        json!({"template":"Review @src/main.rs"}),
+    ] {
+        assert!(StaticCommand::parse_template(&value).is_ok());
+    }
+    assert!(StaticCommand::parse_template(&json!({"template":"{env:SECRET}"})).is_err());
     let commands =
         configured(&json!({"commands":{"../bad":{"template":"bad"},"safe":{"template":"OK"}}}));
     assert_eq!(commands.entries.len(), 1);
     assert_eq!(commands.unavailable, ["invalid command name"]);
+}
+
+#[test]
+fn configured_templates_keep_injections_and_bind_trust_digests() {
+    let commands =
+        configured(&json!({"commands":{"status":{"template":"Status !`git status $1`"}}}));
+    let expanded = commands.entries["status"].expand_template("-s");
+    assert_eq!(expanded.text, "Status !`git status -s`");
+    assert_eq!(expanded.injections[0].command, "git status -s");
+    let digest = cyber_core::commands::template_digest("command", "status", "!`a`");
+    assert!(digest.starts_with("sha256:") && digest.len() == 71);
+    assert_ne!(
+        digest,
+        cyber_core::commands::template_digest("command", "other", "!`a`")
+    );
+    assert_ne!(
+        digest,
+        cyber_core::commands::template_digest("command", "status", "!`b`")
+    );
+}
+
+/// `skills-commands` → Custom command definitions and Agent, model and subtask overrides:
+/// the override fields parse from frontmatter and configuration, and invalid values are
+/// refused instead of silently accepted.
+#[test]
+fn command_overrides_parse_and_invalid_values_are_refused() {
+    let parsed = cyber_core::commands::markdown_template(
+        "---\ndescription: Review\nagent: reviewer\nmodel: corp/review\nvariant: high\nsubtask: true\n---\nReview $ARGUMENTS\n",
+    )
+    .unwrap();
+    assert_eq!(parsed.sources["agent"], "frontmatter:agent");
+    assert_eq!(parsed.sources["subtask"], "frontmatter:subtask");
+    let command = StaticCommand::parse_template(&parsed.definition).unwrap();
+    assert_eq!(command.agent.as_deref(), Some("reviewer"));
+    assert_eq!(command.model.as_deref(), Some("corp/review"));
+    assert_eq!(command.variant.as_deref(), Some("high"));
+    assert!(command.subtask);
+    assert!(command.has_overrides());
+    let configured = StaticCommand::parse_template(
+        &json!({"template":"Go","agent":"general","model":"corp/m#low","subtask":false}),
+    )
+    .unwrap();
+    assert!(!configured.subtask && configured.has_overrides());
+    assert!(
+        !StaticCommand::parse_template(&json!({"template":"Go"}))
+            .unwrap()
+            .has_overrides()
+    );
+    for (value, reason) in [
+        (json!({"template":"Go","model":"no-provider"}), "model"),
+        (json!({"template":"Go","model":"corp/"}), "model"),
+        (json!({"template":"Go","model":"corp/m#"}), "model"),
+        (json!({"template":"Go","agent":""}), "agent"),
+        (json!({"template":"Go","agent":"a\nb"}), "agent"),
+        (json!({"template":"Go","variant":""}), "variant"),
+        (json!({"template":"Go","variant":"a#b"}), "variant"),
+        (
+            json!({"template":"Go","model":"corp/m#low","variant":"high"}),
+            "variant",
+        ),
+        (json!({"template":"Go","subtask":"yes"}), "definition"),
+        (json!({"template":"Go","agent":7}), "definition"),
+        (json!({"template":"Go","unknown":"x"}), "definition"),
+    ] {
+        let error = StaticCommand::parse_template(&value).unwrap_err();
+        assert!(error.contains(reason), "{value}: {error}");
+    }
+    for document in [
+        "---\nmodel: private-model\n---\nprivate-body",
+        "---\nsubtask: maybe\n---\nprivate-body",
+        "---\nagent: [private]\n---\nprivate-body",
+    ] {
+        let error = cyber_core::commands::markdown_template(document)
+            .err()
+            .unwrap();
+        assert!(!error.contains("private"), "{error}");
+    }
+    // Import review stays literal: overrides are not imported.
+    assert!(StaticCommand::parse(&parsed.definition).is_err());
 }

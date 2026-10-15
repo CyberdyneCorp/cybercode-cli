@@ -55,6 +55,9 @@ pub struct AppOptions {
     /// Where remote MCP servers' OAuth credentials live. `None` (every production caller)
     /// is this platform's store (`oauth::open_store`); embedders and tests pass their own.
     pub mcp_credentials: Option<Arc<dyn McpCredentialStore>>,
+    /// Fetches remote skill sources. `None` (every production caller) is the policy-checked
+    /// HTTPS client; tests inject an in-process fetcher.
+    pub remote_skill_fetcher: Option<Arc<dyn cyber_tools::RemoteSkillFetcher>>,
 }
 
 pub struct App {
@@ -152,6 +155,12 @@ impl App {
             .clone()
             .unwrap_or_else(|| cyber_tools::mcp::oauth::open_store(&opts.paths));
         host.attach_mcp_credentials(Arc::clone(&mcp_credentials))?;
+        // `https://` skill entries: cached under `<cache>/skills`, refreshed in the background.
+        let fetcher = opts
+            .remote_skill_fetcher
+            .clone()
+            .unwrap_or_else(|| Arc::new(cyber_tools::PolicyFetcher));
+        host.attach_remote_skills(opts.paths.cache.join("skills"), fetcher)?;
         let lsp_options = cyber_tools::lsp::LaunchOptions {
             checkout_claim: Some(host.lsp_checkout_claim()),
             paths: opts.paths.clone(),

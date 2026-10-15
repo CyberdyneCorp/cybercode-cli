@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use cyber_llm::catalog::{Availability, default_model, recent_models};
 use cyber_server::http::remote_tools::RemoteTools;
-use cyber_server::http::{AgentInfo, CommandInfo, ModelInfo, Services};
+use cyber_server::http::{AgentInfo, CommandInfo, ModelInfo, Services, SkillCatalog};
 use cyber_server::runtime::{CatalogResolver, ToolDef, TurnContext};
 use cyber_tools::{BuiltinHost, ConfigFn};
 use futures::future::BoxFuture;
@@ -70,6 +70,10 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
         "Review definitions/trust with /hooks; receipts with /hooks history",
     ),
     ("ps", "List background tasks"),
+    (
+        "skills",
+        "List skills with source, scope, permission and diagnostics",
+    ),
     ("stop", "Confirm stopping this Session's background tasks"),
     ("help", "Show commands and keys"),
     ("exit", "Quit"),
@@ -522,9 +526,11 @@ impl Services for AppServices {
                     "skill"
                 }
                 .into(),
+                argument_hint: skill
+                    .argument_hint
+                    .or_else(|| cyber_core::skills::derived_argument_hint(&skill.body)),
                 name: skill.name,
                 description: skill.description,
-                argument_hint: skill.argument_hint,
                 namespace: None,
                 provenance: None,
             })
@@ -539,7 +545,9 @@ impl Services for AppServices {
                 name,
                 description: command.description,
                 source: "command".into(),
-                argument_hint: command.argument_hint,
+                argument_hint: command
+                    .argument_hint
+                    .or_else(|| cyber_core::skills::derived_argument_hint(&command.template)),
                 namespace: None,
                 provenance,
             }
@@ -574,6 +582,16 @@ impl Services for AppServices {
             result.insert(entry.name.clone(), entry);
         }
         result.into_values().collect()
+    }
+
+    fn skills(
+        &self,
+        location: &Path,
+        agent: &str,
+    ) -> Result<SkillCatalog, cyber_server::http::ApiError> {
+        self.host
+            .skill_catalog(location, agent)
+            .map_err(cyber_server::http::ApiError::invalid)
     }
 
     fn find_files(&self, location: &Path, query: &str, limit: usize) -> Vec<String> {

@@ -121,6 +121,7 @@ async fn execute(
         interactive: false,
         password: None,
         mcp_credentials: None,
+        remote_skill_fetcher: None,
     })
     .await
     .map_err(CliError::runtime)?;

@@ -238,10 +238,70 @@ pub struct CommandRequest {
     pub delivery: Delivery,
 }
 
+/// A planned command or skill template (`skills-commands` → Shell output injection, File
+/// and agent references). Only the trusted command service sets it; a public prompt body
+/// cannot, so plain prompts never run shell commands or attach template references.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PromptTemplate {
+    /// `command` or `skill`.
+    pub kind: String,
+    pub name: String,
+    /// A project-controlled template runs shell commands only once `digest` is approved.
+    pub project: bool,
+    pub digest: String,
+    /// The template's `` !`cmd` `` spans in the first text part, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injections: Vec<TemplateInjection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TemplateInjection {
+    pub start: usize,
+    pub end: usize,
+    pub command: String,
+}
+
+impl PromptTemplate {
+    /// Replace each recorded span of the first text part with its output, given in span
+    /// order. A span that no longer covers its command fails closed.
+    pub fn apply(&self, parts: &[Content], outputs: &[String]) -> Result<Vec<Content>, String> {
+        let mismatch = || "command template no longer matches its plan".to_string();
+        if outputs.len() != self.injections.len() {
+            return Err(mismatch());
+        }
+        let mut parts = parts.to_vec();
+        let Some(Content::Text { text }) = parts.first_mut() else {
+            return if self.injections.is_empty() {
+                Ok(parts)
+            } else {
+                Err(mismatch())
+            };
+        };
+        let mut expanded = String::with_capacity(text.len());
+        let mut cursor = 0;
+        for (injection, output) in self.injections.iter().zip(outputs) {
+            let span = injection
+                .start
+                .checked_sub(cursor)
+                .and_then(|_| text.get(injection.start..injection.end))
+                .filter(|span| *span == format!("!`{}`", injection.command))
+                .ok_or_else(mismatch)?;
+            expanded.push_str(&text[cursor..injection.start]);
+            expanded.push_str(output);
+            cursor = injection.start + span.len();
+        }
+        expanded.push_str(&text[cursor..]);
+        *text = expanded;
+        Ok(parts)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandPlan {
     pub text: String,
     pub skill: Option<SkillCommand>,
+    /// Set for command and skill templates, which expand at admission.
+    pub template: Option<PromptTemplate>,
     /// The admission source: `user`, or [`MCP_PROMPT_SOURCE`] for server-supplied
     /// prompt text that must never become a user instruction.
     pub source: &'static str,
@@ -281,6 +341,7 @@ impl CommandPlan {
         Self {
             text,
             skill: None,
+            template: None,
             source: "user",
         }
     }
@@ -297,6 +358,7 @@ impl CommandPlan {
         }
         Admission {
             skill_command: self.skill,
+            template: self.template,
             message_id,
             parts: vec![Content::Text { text: self.text }],
             delivery,
@@ -317,6 +379,8 @@ enum PromptCheck {
 pub struct Admission {
     /// Captured by the trusted command service; public prompt bodies cannot supply this.
     pub skill_command: Option<SkillCommand>,
+    /// Captured by the trusted command service; expanded once, before commit.
+    pub template: Option<PromptTemplate>,
     pub message_id: Option<String>,
     pub parts: Vec<Content>,
     pub delivery: Delivery,
@@ -327,9 +391,20 @@ pub struct Admission {
 }
 
 impl Admission {
+    /// Exact-retry identity: computed from the parts as submitted, before expansion.
+    fn digest(&self) -> String {
+        digest(
+            &self.parts,
+            self.delivery,
+            self.skill_command.as_ref(),
+            self.template.as_ref(),
+        )
+    }
+
     pub fn text(text: impl Into<String>, delivery: Delivery) -> Self {
         Self {
             skill_command: None,
+            template: None,
             message_id: None,
             parts: vec![Content::Text { text: text.into() }],
             delivery,
@@ -837,28 +912,29 @@ impl Runtime {
             .await
     }
 
-    /// UserPromptSubmit, then resource mentions, for input not yet admitted; an exact
-    /// retry skips both. They run before the lifecycle guard: every hook runner and
-    /// permission request re-enters that guard to admit its receipt, and a shutdown
-    /// writer queued in between would deadlock both. The caller rechecks admission and
-    /// the exact retry once it holds the guard.
+    /// UserPromptSubmit, then template expansion and resource mentions, for input not
+    /// yet admitted; an exact retry skips all of them, so nothing runs twice. They run
+    /// before the lifecycle guard: every hook runner and permission request re-enters
+    /// that guard to admit its receipt, and a shutdown writer queued in between would
+    /// deadlock both. The caller rechecks admission and the exact retry once it holds
+    /// the guard.
     async fn prompt_hooks(
         &self,
         session_id: &str,
         admission: &Admission,
         message_id: &str,
         digest: &str,
-    ) -> Result<(Option<String>, Vec<String>), RuntimeError> {
+    ) -> Result<(Option<String>, PromptAttachments), RuntimeError> {
         self.inner.ensure_admission_open(session_id)?;
         let handle = self.inner.handle(session_id).await?;
         {
             let state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if existing_receipt(&state, message_id, digest)?.is_some() {
-                return Ok((None, Vec::new()));
+                return Ok((None, PromptAttachments::default()));
             }
         }
-        // A denied prompt reads no resources.
+        // A denied prompt reads no resources and runs no template commands.
         let context = self
             .inner
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
@@ -866,22 +942,52 @@ impl Runtime {
         Ok((context, self.prompt_resources(&handle, admission).await?))
     }
 
-    /// Attach the prompt's `@server:uri` resource mentions (`mcp` → Resources) under the
-    /// Session's agent, mode and rules; a permission ask reaches the attached client. A
-    /// forked skill command hands its text to a child, so it attaches nothing here.
+    /// Expand a planned template (`skills-commands` → Shell output injection, File and
+    /// agent references), then attach the prompt's `@server:uri` resource mentions
+    /// (`mcp` → Resources), all under the Session's agent, mode and rules; a permission
+    /// ask reaches the attached client. Mentions are read from the unexpanded text, so
+    /// command output never triggers a read. A forked skill command hands its expanded
+    /// text to a child, so it attaches no resources here.
     async fn prompt_resources(
         &self,
         handle: &Handle,
         admission: &Admission,
-    ) -> Result<Vec<String>, RuntimeError> {
-        if admission
+    ) -> Result<PromptAttachments, RuntimeError> {
+        let parts = match &admission.template {
+            Some(template) => Some(self.expand_template(handle, template, admission).await?),
+            None => None,
+        };
+        let fork = admission
             .skill_command
             .as_ref()
-            .is_some_and(|skill| skill.fork)
-        {
-            return Ok(Vec::new());
-        }
-        self.mention_resources(handle, &admission.parts).await
+            .is_some_and(|skill| skill.fork);
+        let resources = if fork {
+            Vec::new()
+        } else {
+            self.mention_resources(handle, &admission.parts).await?
+        };
+        Ok(PromptAttachments { resources, parts })
+    }
+
+    async fn expand_template(
+        &self,
+        handle: &Handle,
+        template: &PromptTemplate,
+        admission: &Admission,
+    ) -> Result<Vec<Content>, RuntimeError> {
+        let turn = drain::turn_context_for(&*handle.state.lock().await, false);
+        let asker = self.operation_asker(&turn.session_id).await?;
+        self.inner
+            .tools
+            .expand_prompt_template(
+                &turn,
+                template,
+                &admission.parts,
+                asker,
+                self.inner.closed.child_token(),
+            )
+            .await
+            .map_err(RuntimeError::Invalid)
     }
 
     async fn mention_resources(
@@ -909,19 +1015,15 @@ impl Runtime {
             .message_id
             .clone()
             .unwrap_or_else(|| cyber_core::ids::new_id("msg"));
-        let digest = digest(
-            &admission.parts,
-            admission.delivery,
-            admission.skill_command.as_ref(),
-        );
+        let digest = admission.digest();
         // A denied prompt leaves no durable trace, including a staged revert.
         let prompt = check == PromptCheck::Run;
-        let (hook_context, resources) = match check {
+        let (hook_context, attachments) = match check {
             PromptCheck::Run => {
                 self.prompt_hooks(session_id, &admission, &message_id, &digest)
                     .await?
             }
-            PromptCheck::Checked(context) => (context, Vec::new()),
+            PromptCheck::Checked(context) => (context, PromptAttachments::default()),
         };
         let _admission = self.inner.open().await?;
         self.inner.ensure_admission_open(session_id)?;
@@ -954,12 +1056,12 @@ impl Runtime {
                     && admission.resume
                     && admission.delivery != Delivery::Hold,
                 message_id: message_id.clone(),
-                parts: admission.parts,
+                parts: attachments.parts.unwrap_or(admission.parts),
                 delivery: admission.delivery,
                 source: admission.source,
                 digest,
                 hook_context,
-                resources,
+                resources: attachments.resources,
             };
             let mut events = Vec::new();
             if let Some(attempt) = attempt {
@@ -1520,12 +1622,28 @@ fn default_title() -> String {
     )
 }
 
-fn digest(parts: &[Content], delivery: Delivery, skill: Option<&SkillCommand>) -> String {
+fn digest(
+    parts: &[Content],
+    delivery: Delivery,
+    skill: Option<&SkillCommand>,
+    template: Option<&PromptTemplate>,
+) -> String {
     let mut body = serde_json::json!({ "parts": parts, "delivery": delivery });
     if let Some(skill) = skill {
         body["skill_command"] = serde_json::to_value(skill).expect("serializable skill command");
     }
+    if let Some(template) = template {
+        body["template"] = serde_json::to_value(template).expect("serializable template");
+    }
     format!("sha256:{:x}", Sha256::digest(body.to_string()))
+}
+
+/// Resource blocks and, for a planned template, its expanded parts, which replace the
+/// admitted parts so replay and an exact retry never run anything again.
+#[derive(Debug, Default)]
+pub(super) struct PromptAttachments {
+    pub(super) resources: Vec<String>,
+    pub(super) parts: Option<Vec<Content>>,
 }
 
 fn existing_receipt(
