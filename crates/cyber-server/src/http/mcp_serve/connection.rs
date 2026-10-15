@@ -148,11 +148,14 @@ impl Connection {
 }
 
 fn reserve(counter: &AtomicU32, limit: u32) -> bool {
-    counter
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            (n < limit).then_some(n + 1)
-        })
-        .is_ok()
+    let mut n = counter.load(Ordering::SeqCst);
+    while n < limit {
+        match counter.compare_exchange_weak(n, n + 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(current) => n = current,
+        }
+    }
+    false
 }
 
 /// A reserved Session creation of one MCP connection.
