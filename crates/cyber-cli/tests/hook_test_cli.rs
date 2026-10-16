@@ -471,8 +471,15 @@ async fn http_hook_cli_posts_synthetic_event_and_prints_decision_without_session
     let url = format!("http://{}/policy", listener.local_addr().unwrap());
     let served = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let mut bytes = [0; 8192];
-        assert!(socket.read(&mut bytes).await.unwrap() > 0);
+        // Read the whole request: closing a Windows socket with unread bytes resets the
+        // connection, and the client can lose the response.
+        let mut request = Vec::new();
+        let mut chunk = [0; 8192];
+        while !request_complete(&request) {
+            let read = socket.read(&mut chunk).await.unwrap();
+            assert!(read > 0, "request ended early");
+            request.extend_from_slice(&chunk[..read]);
+        }
         let body = r#"{"decision":"deny","reason":"remote CLI policy"}"#;
         socket
             .write_all(
@@ -494,13 +501,41 @@ async fn http_hook_cli_posts_synthetic_event_and_prints_decision_without_session
     .await
     .unwrap();
     served.await.unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(body(&output)["results"][0]["kind"], "http");
     assert_eq!(body(&output)["decision"]["decision"], "deny");
     assert_eq!(
         body(&output)["decision"]["reason"],
         "policy: remote CLI policy"
     );
+}
+
+/// Headers received and, when present, the full `Content-Length` body.
+fn request_complete(request: &[u8]) -> bool {
+    let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+    let length = headers
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    request.len() >= end + 4 + length
+}
+
+#[test]
+fn request_complete_waits_for_the_declared_body() {
+    let head = b"POST /p HTTP/1.1\r\nContent-Length: 4\r\n\r\n";
+    assert!(!request_complete(b"POST /p HTTP/1.1\r\n"));
+    assert!(!request_complete(&[head.as_slice(), b"ab"].concat()));
+    assert!(request_complete(&[head.as_slice(), b"abcd"].concat()));
+    assert!(request_complete(b"GET / HTTP/1.1\r\n\r\n"));
 }
 
 #[cfg(unix)]

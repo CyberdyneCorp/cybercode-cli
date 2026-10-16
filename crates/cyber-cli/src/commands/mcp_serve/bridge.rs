@@ -248,13 +248,18 @@ impl Bridge {
             }
             return;
         };
-        match &id {
-            Some(id) if self.was_cancelled(id) => {}
-            Some(id) => emit(&failure.frame(id)),
-            None => self.log.warn(
+        let Some(id) = &id else {
+            self.log.warn(
                 "message not delivered",
                 json!({ "error": failure.message, "data": failure.data }),
-            ),
+            );
+            return;
+        };
+        let cancelled = self.was_cancelled(id);
+        if let Some(frame) =
+            failure_answer(self.closing.load(Ordering::SeqCst), cancelled, id, &failure)
+        {
+            emit(&frame);
         }
     }
 
@@ -332,7 +337,7 @@ impl Bridge {
                     .header("content-type")
                     .is_some_and(|t| t.starts_with("text/event-stream")) =>
             {
-                return relay_events(response, id).await;
+                return relay_events(response, id, &self.closing).await;
             }
             Reply::Stream(response) => read(response).await?,
         };
@@ -402,9 +407,20 @@ impl Bridge {
 /// The server's SSE event carrying an admitted prompt's receipt (not an MCP frame).
 const RECEIPT_EVENT: &str = "dev.cyber-code/receipt";
 
+/// The answer to a request whose exchange failed. None after stdin EOF: the bridge's own
+/// `DELETE` ended the stream, and requests still in flight get no answer. None also when
+/// the client cancelled the request.
+fn failure_answer(closing: bool, cancelled: bool, id: &Value, failure: &Failure) -> Option<Value> {
+    (!closing && !cancelled).then(|| failure.frame(id))
+}
+
 /// Relay every MCP SSE event as one frame; a stream that ends before the response to `id`
-/// fails it, with the receipt of a prompt it admitted.
-async fn relay_events(response: StreamingResponse, id: Option<&Value>) -> Result<(), Failure> {
+/// fails it, with the receipt of a prompt it admitted. Nothing is relayed after stdin EOF.
+async fn relay_events(
+    response: StreamingResponse,
+    id: Option<&Value>,
+    closing: &AtomicBool,
+) -> Result<(), Failure> {
     let mut parser = SseParser::default();
     let mut body = response.body;
     let mut answered = false;
@@ -414,6 +430,9 @@ async fn relay_events(response: StreamingResponse, id: Option<&Value>) -> Result
             let Ok(frame) = serde_json::from_str::<Value>(&event.data) else {
                 continue;
             };
+            if closing.load(Ordering::SeqCst) {
+                continue;
+            }
             match event.event.as_deref() {
                 None | Some("message") => {
                     answered |= id.is_some_and(|id| frame.get("id") == Some(id));
@@ -474,6 +493,20 @@ mod tests {
         );
         let plain = Failure::unreachable().with_receipt(None);
         assert!(plain.data.get("session_id").is_none());
+    }
+
+    #[test]
+    fn requests_in_flight_at_stdin_eof_get_no_answer() {
+        // The bridge's own `DELETE` ends the waiting stream; that is not an unreachable
+        // server, and the spec gives in-flight requests no answer.
+        let failure = Failure::unreachable();
+        let id = json!(4);
+        assert_eq!(failure_answer(true, false, &id, &failure), None);
+        assert_eq!(failure_answer(false, true, &id, &failure), None);
+        assert_eq!(
+            failure_answer(false, false, &id, &failure),
+            Some(failure.frame(&id))
+        );
     }
 
     #[test]
