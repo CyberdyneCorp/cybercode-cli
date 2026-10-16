@@ -1,4 +1,5 @@
-//! Metadata-only retention checked against the still-pinned source lookup chain.
+//! Native Windows evidence for the review handoff in `snapshot.rs`: why snapshots release
+//! their handles after capture, and why full file identities still refuse replacements.
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -10,11 +11,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_SHARE_WRITE,
 };
 
-pub(super) fn retain_identity(path: &Path) -> io::Result<File> {
-    // The caller retains every original lookup handle until all identities match.
-    // Zero desired access supports metadata queries without retaining access rights.
-    // Reject final reparse points through the identity check,
-    // Ancestor rename compatibility is still under native investigation.
+/// The least intrusive handle Windows offers: zero desired access, full sharing.
+fn metadata_handle(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .read(true)
         .access_mode(0)
@@ -23,72 +21,79 @@ pub(super) fn retain_identity(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-#[cfg(test)]
+const ACCESS_DENIED: i32 = 5;
+
 mod tests {
     use super::*;
-    use std::io::Read;
+    use crate::memory::windows::identity;
 
     #[test]
     fn directory_identity_handle_allows_renaming_that_directory() {
         let temp = tempfile::tempdir().unwrap();
         let parent = temp.path().join("source");
         std::fs::create_dir(&parent).unwrap();
-        let retained = retain_identity(&parent).unwrap();
-        let identity = crate::memory::windows::identity(&retained).unwrap();
+        let retained = metadata_handle(&parent).unwrap();
+        let before = identity(&retained).unwrap();
         let moved = temp.path().join("moved");
-        std::fs::rename(&parent, &moved).expect("rename with only the directory itself retained");
-        assert_eq!(
-            crate::memory::windows::identity(&retained).unwrap(),
-            identity
-        );
-        let reopened = retain_identity(&moved).unwrap();
-        assert_eq!(
-            crate::memory::windows::identity(&reopened).unwrap(),
-            identity
-        );
+        std::fs::rename(&parent, &moved).expect("rename with only the directory itself open");
+        assert_eq!(identity(&retained).unwrap(), before);
+        assert_eq!(identity(&metadata_handle(&moved).unwrap()).unwrap(), before);
     }
 
+    /// NTFS refuses an ancestor rename while any descendant is open, even a zero-access,
+    /// fully shared handle. This is why a returned snapshot holds no handles on Windows.
     #[test]
-    fn child_directory_identity_handle_allows_renaming_ancestor() {
+    fn open_descendants_block_ancestor_renames_until_released() {
         let temp = tempfile::tempdir().unwrap();
         let parent = temp.path().join("source");
         let child = parent.join("nested");
         std::fs::create_dir_all(&child).unwrap();
-        let retained = retain_identity(&child).unwrap();
-        let identity = crate::memory::windows::identity(&retained).unwrap();
+        let file = parent.join("config.json");
+        std::fs::write(&file, b"private-source-value").unwrap();
         let moved = temp.path().join("moved");
-        std::fs::rename(&parent, &moved).expect("rename with only a child directory retained");
-        assert_eq!(
-            crate::memory::windows::identity(&retained).unwrap(),
-            identity
-        );
-        let reopened = retain_identity(&moved.join("nested")).unwrap();
-        assert_eq!(
-            crate::memory::windows::identity(&reopened).unwrap(),
-            identity
-        );
+        for descendant in [&child, &file] {
+            let handle = metadata_handle(descendant).unwrap();
+            let refused = std::fs::rename(&parent, &moved).unwrap_err();
+            assert_eq!(
+                refused.raw_os_error(),
+                Some(ACCESS_DENIED),
+                "{descendant:?}"
+            );
+            drop(handle);
+        }
+        let before = identity(&metadata_handle(&file).unwrap()).unwrap();
+        std::fs::rename(&parent, &moved).expect("rename once descendants are released");
+        let after = identity(&metadata_handle(&moved.join("config.json")).unwrap()).unwrap();
+        assert_eq!(after, before);
     }
 
+    /// Without live handles, a recreated object still gets a different full identity:
+    /// beside a moved original, and after the original is deleted (NTFS bumps the file
+    /// record's sequence number on reuse).
     #[test]
-    fn file_identity_handle_allows_renaming_ancestor() {
+    fn released_sources_keep_distinct_identities_from_replacements() {
         let temp = tempfile::tempdir().unwrap();
         let parent = temp.path().join("source");
         std::fs::create_dir(&parent).unwrap();
         let path = parent.join("config.json");
         std::fs::write(&path, b"private-source-value").unwrap();
-        let retained = retain_identity(&path).unwrap();
-        let identity = crate::memory::windows::identity(&retained).unwrap();
-        let moved = temp.path().join("moved");
-        std::fs::rename(&parent, &moved).expect("rename with only the child file retained");
-        assert_eq!(
-            crate::memory::windows::identity(&retained).unwrap(),
-            identity
+        let original = identity(&File::open(&path).unwrap()).unwrap();
+        let directory = identity(&metadata_handle(&parent).unwrap()).unwrap();
+        let moved = temp.path().join("moved-source");
+        std::fs::rename(&parent, &moved).unwrap();
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::write(&path, b"private-source-value").unwrap();
+        assert_ne!(identity(&File::open(&path).unwrap()).unwrap(), original);
+        assert_ne!(
+            identity(&metadata_handle(&parent).unwrap()).unwrap(),
+            directory
         );
-        let reopened = retain_identity(&moved.join("config.json")).unwrap();
-        assert_eq!(
-            crate::memory::windows::identity(&reopened).unwrap(),
-            identity
-        );
+        std::fs::remove_dir_all(&moved).unwrap();
+        for _ in 0..16 {
+            std::fs::remove_file(&path).unwrap();
+            std::fs::write(&path, b"private-source-value").unwrap();
+            assert_ne!(identity(&File::open(&path).unwrap()).unwrap(), original);
+        }
     }
 
     // This probe does not implement directory or empty-file identity retention.
@@ -143,36 +148,5 @@ mod tests {
         }
         // Successful creation transfers exactly one CloseHandle obligation to OwnedHandle.
         Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
-    }
-
-    #[test]
-    fn metadata_retention_preserves_identity_without_data_access_or_ancestor_rename_locks() {
-        let temp = tempfile::tempdir().unwrap();
-        let parent = temp.path().join("source");
-        std::fs::create_dir(&parent).unwrap();
-        let path = parent.join("config.json");
-        std::fs::write(&path, b"private-source-value").unwrap();
-        let identity = {
-            let original = File::open(&path).unwrap();
-            crate::memory::windows::identity(&original).unwrap()
-        };
-        let directory = retain_identity(&parent).unwrap();
-        let mut file = retain_identity(&path).unwrap();
-        assert_eq!(crate::memory::windows::identity(&file).unwrap(), identity);
-        assert_eq!(file.metadata().unwrap().len(), 20);
-        let mut bytes = Vec::new();
-        assert!(file.read_to_end(&mut bytes).is_err());
-        assert!(bytes.is_empty());
-        let moved = temp.path().join("moved-source");
-        std::fs::rename(&parent, &moved).unwrap();
-        assert!(directory.metadata().unwrap().is_dir());
-        assert_eq!(crate::memory::windows::identity(&file).unwrap(), identity);
-        std::fs::create_dir(&parent).unwrap();
-        std::fs::write(&path, b"private-source-value").unwrap();
-        let replacement = File::open(&path).unwrap();
-        assert_ne!(
-            crate::memory::windows::identity(&replacement).unwrap(),
-            identity
-        );
     }
 }

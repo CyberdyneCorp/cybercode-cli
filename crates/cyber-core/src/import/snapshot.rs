@@ -9,7 +9,7 @@ use std::{
     time::SystemTime,
 };
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 #[path = "snapshot_windows.rs"]
 mod windows;
 
@@ -62,8 +62,6 @@ fn directory_identity(dir: &Dir, path: &Path) -> Result<Identity, DiscoveryError
 
 struct OpenSource {
     _directories: Vec<Dir>,
-    #[cfg(windows)]
-    _identity_handles: Vec<File>,
     bindings: Vec<Identity>,
     file: File,
     state: FileState,
@@ -157,51 +155,10 @@ impl OpenSource {
         let state = state(&file, path)?;
         Ok(Self {
             _directories: directories,
-            #[cfg(windows)]
-            _identity_handles: Vec::new(),
             bindings,
             file,
             state,
         })
-    }
-    #[cfg(windows)]
-    fn retain_review_identities(&mut self, path: &Path) -> Result<(), DiscoveryError> {
-        let mut paths: Vec<_> = path.ancestors().skip(1).collect();
-        paths.reverse();
-        if paths.len() != self._directories.len() {
-            return Err(error(path, "source directory identity chain is incomplete"));
-        }
-        let mut handles = Vec::new();
-        for (binding, expected) in paths.iter().zip(&self.bindings) {
-            let retained = windows::retain_identity(binding).map_err(|e| {
-                let reason = match e.raw_os_error() {
-                    Some(5) => "source review identity handoff denied access",
-                    Some(6) => "source review identity handoff rejected the directory handle",
-                    Some(32) => "source review identity handoff encountered incompatible sharing",
-                    Some(87) => "source review identity handoff rejected native parameters",
-                    _ => "source directory identity cannot be retained for review",
-                };
-                error(path, reason)
-            })?;
-            if identity(&retained, path)? != *expected {
-                return Err(error(
-                    path,
-                    "source directory identity changed during review handoff",
-                ));
-            }
-            handles.push(retained);
-        }
-        let file = windows::retain_identity(path)
-            .map_err(|_| error(path, "source file identity cannot be retained for review"))?;
-        if state(&file, path)? != self.state {
-            return Err(error(path, "source file changed during review handoff"));
-        }
-        // Keep the object alive without retaining data access that can prevent
-        // NTFS ancestor renames. All content verification uses fresh fenced reads.
-        self.file = file;
-        self._identity_handles = handles;
-        self._directories.clear();
-        Ok(())
     }
     fn bytes(&mut self, path: &Path) -> Result<Vec<u8>, DiscoveryError> {
         if self.state.len > LIMIT {
@@ -226,7 +183,11 @@ impl OpenSource {
 /// A bounded source review; private bytes never appear in Debug or error messages.
 pub struct SourceSnapshot {
     path: PathBuf,
-    opened: OpenSource,
+    bindings: Vec<Identity>,
+    state: FileState,
+    /// The capture's no-follow chain and file. Unix keeps them open for the review so
+    /// their inode numbers cannot be reused; Windows releases them (see `into_review`).
+    _retained: Option<OpenSource>,
     bytes: Vec<u8>,
     digest: [u8; 32],
 }
@@ -319,7 +280,9 @@ impl SourceSnapshot {
         let bytes = opened.bytes(path)?;
         let snapshot = Self {
             path: path.into(),
-            opened,
+            bindings: opened.bindings.clone(),
+            state: opened.state.clone(),
+            _retained: Some(opened),
             digest: Sha256::digest(&bytes).into(),
             bytes,
         };
@@ -327,10 +290,16 @@ impl SourceSnapshot {
         snapshot.into_review()
     }
     fn into_review(self) -> Result<Self, DiscoveryError> {
+        // NTFS refuses to rename a directory while any descendant is open, whatever the
+        // share mode, so retained handles would freeze the user's project and source
+        // directories during review. Windows identities are full volume serial and
+        // 128-bit file IDs, which embed a reuse sequence (NTFS) or are never reused
+        // (ReFS), so a replacement keeps failing verification without live handles.
+        // The reviewed bytes were read while the whole chain was held and verified.
         #[cfg(windows)]
         {
             let mut snapshot = self;
-            snapshot.opened.retain_review_identities(&snapshot.path)?;
+            snapshot._retained = None;
             snapshot.verify()?;
             Ok(snapshot)
         }
@@ -350,7 +319,7 @@ impl SourceSnapshot {
     }
     pub fn verify(&self) -> Result<(), DiscoveryError> {
         let mut current = OpenSource::open(&self.path)?;
-        if current.bindings != self.opened.bindings || current.state != self.opened.state {
+        if current.bindings != self.bindings || current.state != self.state {
             return Err(error(
                 &self.path,
                 "source bindings or file changed since snapshot",
@@ -361,7 +330,7 @@ impl SourceSnapshot {
             return Err(error(&self.path, "source content changed since snapshot"));
         }
         let after = OpenSource::open(&self.path)?;
-        if after.bindings != self.opened.bindings || after.state != self.opened.state {
+        if after.bindings != self.bindings || after.state != self.state {
             return Err(error(
                 &self.path,
                 "source changed during snapshot verification",
