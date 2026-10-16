@@ -68,7 +68,7 @@ impl Budget {
         let path = self.store(&complete)?;
         if reminder.len() > self.max_bytes || reminder.lines().count() > self.max_lines {
             return Err(format!(
-                "Skill reminder exceeds tool output budget; complete output at {}",
+                "Reminder exceeds tool output budget; complete output at {}",
                 path.display()
             ));
         }

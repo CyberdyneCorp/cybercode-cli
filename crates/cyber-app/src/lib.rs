@@ -218,10 +218,7 @@ impl App {
             tools: Arc::new(tools) as Arc<dyn ToolHost>,
             global_config_dir: opts.paths.config.clone(),
             shell: shell(&global, &env),
-            claude_compat: global
-                .pointer("/compat/claude")
-                .and_then(Value::as_bool)
-                .unwrap_or(true),
+            claude_compat: config::claude_compat(&global),
             compaction: compaction(&global),
             retry: RetryPolicy::default(),
             max_steps: None,

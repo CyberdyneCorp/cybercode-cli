@@ -54,6 +54,17 @@ impl ToolHost for AppHost {
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         self.builtin.shutdown()
     }
+    fn claude_compat(&self, directory: &str) -> Option<bool> {
+        self.builtin.claude_compat(directory)
+    }
+
+    fn instruction_read_gate(
+        &self,
+        directory: &str,
+    ) -> Option<cyber_server::runtime::instructions::ReadGate> {
+        self.builtin.instruction_read_gate(directory)
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,

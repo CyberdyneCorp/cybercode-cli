@@ -709,6 +709,7 @@ fn doctor_reports_every_check_as_json() {
             "config",
             "skills",
             "commands",
+            "instructions",
             "catalog",
             "credentials",
             "database",
@@ -1448,6 +1449,181 @@ fn intelligence_status_honors_disabling_and_withholds_untrusted_commands() {
         .unwrap();
     assert_eq!(taplo["enabled"], true);
     assert_eq!(taplo["detected_by"], "config");
+}
+
+/// `cyber doctor` lists the instruction files in load order, CYBER.md last in its
+/// directory, and warns when one exceeds `instructions.max_bytes`.
+#[test]
+fn doctor_lists_cyber_md_and_warns_when_it_is_truncated() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join("AGENTS.md"), "agents").unwrap();
+    std::fs::write(repo.join("CYBER.md"), "cyber").unwrap();
+    let doctor = |dir: &Path| {
+        let output = env
+            .command(&["doctor", "--format", "json"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        let rows = json(&output);
+        rows["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["check"] == "instructions")
+            .cloned()
+            .unwrap()
+    };
+    // Paths are compared by file name: on Windows the reported Location may lack the
+    // `\\?\` prefix of the canonical temp directory.
+    let row = doctor(&repo);
+    assert_eq!(row["status"], "pass", "{row}");
+    let detail = row["detail"].as_str().unwrap();
+    let files: Vec<&str> = detail
+        .strip_prefix("2 loaded: ")
+        .unwrap()
+        .split(", ")
+        .collect();
+    let names: Vec<_> = files
+        .iter()
+        .map(|file| Path::new(file).file_name().unwrap().to_str().unwrap())
+        .collect();
+    assert_eq!(names, ["AGENTS.md", "CYBER.md"], "{detail}");
+    assert!(
+        files
+            .iter()
+            .all(|file| Path::new(file).starts_with(Path::new(files[0]).parent().unwrap()))
+    );
+    std::fs::write(repo.join("CYBER.md"), "x".repeat(40_000)).unwrap();
+    let row = doctor(&repo);
+    assert_eq!(row["status"], "warn", "{row}");
+    let detail = row["detail"].as_str().unwrap();
+    let warning = format!(
+        "{}CYBER.md exceeds instructions.max_bytes (32768 bytes) and was truncated",
+        std::path::MAIN_SEPARATOR
+    );
+    assert!(detail.contains(&warning), "{detail}");
+}
+
+/// The `instructions` row of `cyber doctor` run in `dir`.
+fn doctor_instructions(env: &Env, dir: &Path) -> serde_json::Value {
+    let output = env
+        .command(&["doctor", "--format", "json"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    json(&output)["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["check"] == "instructions")
+        .cloned()
+        .unwrap()
+}
+
+/// Regression: doctor read `compat.claude` from the Location's config while the runtime
+/// read it once from the server's default directory, so the two disagreed about whether
+/// a project's `CLAUDE.md` reaches the model. Both now read the Location's config (the
+/// runtime side is covered by `cyber-app` `instructions`
+/// `a_project_compat_claude_false_keeps_its_claude_md_out_of_the_request`).
+#[test]
+fn doctor_honors_a_project_compat_claude_false() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join("CLAUDE.md"), "claude").unwrap();
+    std::fs::write(repo.join("CYBER.md"), "cyber").unwrap();
+    let names = |row: &serde_json::Value| -> Vec<String> {
+        let detail = row["detail"].as_str().unwrap();
+        let (_, files) = detail.split_once(" loaded: ").unwrap();
+        files
+            .split(", ")
+            .map(|file| {
+                let name = Path::new(file).file_name().unwrap();
+                name.to_string_lossy().into_owned()
+            })
+            .collect()
+    };
+    assert_eq!(
+        names(&doctor_instructions(&env, &repo)),
+        ["CLAUDE.md", "CYBER.md"]
+    );
+    std::fs::write(repo.join("cyber.json"), r#"{"compat":{"claude":false}}"#).unwrap();
+    assert_eq!(names(&doctor_instructions(&env, &repo)), ["CYBER.md"]);
+}
+
+/// With `AGENTS.md`, `CLAUDE.md` and `CYBER.md` in one directory, doctor lists `AGENTS.md`
+/// then `CYBER.md`: `CLAUDE.md` only loads where a directory has no `AGENTS.md`.
+#[test]
+fn doctor_leaves_claude_md_out_next_to_agents_md_and_keeps_cyber_md() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    for name in ["AGENTS.md", "CLAUDE.md", "CYBER.md"] {
+        std::fs::write(repo.join(name), name).unwrap();
+    }
+    let row = doctor_instructions(&env, &repo);
+    let detail = row["detail"].as_str().unwrap();
+    let (_, files) = detail.split_once(" loaded: ").unwrap();
+    let names: Vec<_> = files
+        .split(", ")
+        .map(|file| {
+            Path::new(file)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(names, ["AGENTS.md", "CYBER.md"], "{detail}");
+}
+
+/// Regression: a project `CYBER.md` symlinked outside the checkout was loaded; doctor now
+/// shows it refused.
+#[cfg(unix)]
+#[test]
+fn doctor_warns_about_an_instruction_file_outside_the_project() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(env.root.join("secret.txt"), "secret").unwrap();
+    std::os::unix::fs::symlink("../secret.txt", repo.join("CYBER.md")).unwrap();
+    let row = doctor_instructions(&env, &repo);
+    assert_eq!(row["status"], "warn", "{row}");
+    let detail = row["detail"].as_str().unwrap();
+    assert!(detail.starts_with("no instruction files"), "{detail}");
+    assert!(
+        detail.contains("CYBER.md resolves outside the project and was not loaded"),
+        "{detail}"
+    );
+}
+
+/// Regression: doctor (like the runtime) loaded `@.env` imports of project instruction
+/// files without the read rules; it now shows them refused, and a project config that
+/// fails to parse keeps every project file out (CLAUDE.md included) instead of reading
+/// `compat.claude` from `Null` as `true`.
+#[test]
+fn doctor_refuses_protected_imports_and_project_files_under_a_broken_config() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join(".env"), "TOKEN=hunter2").unwrap();
+    std::fs::write(repo.join("CYBER.md"), "cyber\n@.env").unwrap();
+    let row = doctor_instructions(&env, &repo);
+    assert_eq!(row["status"], "warn", "{row}");
+    let detail = row["detail"].as_str().unwrap();
+    assert!(detail.starts_with("1 loaded: "), "{detail}");
+    assert!(
+        detail.contains("import @.env is not allowed by the read permission rules"),
+        "{detail}"
+    );
+    std::fs::write(repo.join("CLAUDE.md"), "claude").unwrap();
+    std::fs::write(repo.join("cyber.json"), "{ not json").unwrap();
+    let row = doctor_instructions(&env, &repo);
+    let detail = row["detail"].as_str().unwrap();
+    assert!(detail.starts_with("no instruction files"), "{detail}");
+    assert!(!detail.contains("CLAUDE.md"), "{detail}");
 }
 
 #[test]

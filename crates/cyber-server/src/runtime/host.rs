@@ -456,6 +456,18 @@ pub trait ToolHost: Send + Sync {
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+    /// `compat.claude` of the Location's resolved config (`CLAUDE.md` loads in place);
+    /// `None` uses the server-wide [`super::RuntimeOptions::claude_compat`].
+    fn claude_compat(&self, _directory: &str) -> Option<bool> {
+        None
+    }
+
+    /// The Location's `read` permission rules as a gate on project instruction files and
+    /// their imports; `None` (a host without a permission policy) loads every one.
+    fn instruction_read_gate(&self, _directory: &str) -> Option<super::instructions::ReadGate> {
+        None
+    }
+
     /// Finalize the complete reminder and tool text before recording delivered skill names.
     fn finalize_skill_output(
         &self,

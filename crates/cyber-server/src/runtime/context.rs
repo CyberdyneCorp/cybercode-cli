@@ -5,7 +5,7 @@
 //! Mid-Conversation System Message per Safe Boundary.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Inputs that sources read. `today` is injectable for tests.
 #[derive(Debug, Clone)]
@@ -13,7 +13,7 @@ pub struct ContextInputs {
     pub directory: PathBuf,
     pub global_config_dir: PathBuf,
     pub shell: String,
-    pub claude_compat: bool,
+    pub instructions: super::instructions::InstructionSettings,
     pub today: Option<String>,
 }
 
@@ -169,53 +169,25 @@ fn environment(inputs: &ContextInputs) -> String {
     )
 }
 
-const INSTRUCTIONS_FROM: &str = "Instructions from: ";
-
-/// Global `AGENTS.md`, then each directory from the project root down to the Location:
-/// `AGENTS.md`, or `CLAUDE.md` when that directory has no `AGENTS.md`, then `CONTEXT.md`.
-/// Also returns the files that were read, in load order.
+/// `core/instructions` (see [`super::instructions::load_baseline`]), plus the files read,
+/// in load order.
 fn instructions(inputs: &ContextInputs) -> (Observed, Vec<String>) {
-    let mut files = vec![inputs.global_config_dir.join("AGENTS.md")];
-    let root = cyber_core::config::project_root(&inputs.directory);
-    let mut dirs: Vec<&Path> = inputs
-        .directory
-        .ancestors()
-        .take_while(|d| d.starts_with(&root))
-        .collect();
-    dirs.reverse();
-    for dir in dirs {
-        let agents = dir.join("AGENTS.md");
-        let claude = dir.join("CLAUDE.md");
-        files.push(if inputs.claude_compat && !agents.exists() {
-            claude
-        } else {
-            agents
-        });
-        files.push(dir.join("CONTEXT.md"));
-    }
-    let mut blocks = Vec::new();
-    let mut read = Vec::new();
-    for file in files {
-        match std::fs::read_to_string(&file) {
-            Ok(text) => {
-                read.push(file.display().to_string());
-                blocks.push(format!(
-                    "{INSTRUCTIONS_FROM}{}\n{}",
-                    file.display(),
-                    text.trim_end()
-                ));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                let reason = format!("{}: {e}", file.display());
-                return (Observed::Unavailable(reason), Vec::new());
-            }
+    let loaded = super::instructions::load_baseline(
+        &inputs.global_config_dir,
+        &inputs.directory,
+        &inputs.instructions,
+    );
+    match loaded {
+        Err(reason) => (Observed::Unavailable(reason), Vec::new()),
+        Ok(loaded) => {
+            let read = loaded
+                .files
+                .iter()
+                .map(|file| file.path.display().to_string())
+                .collect();
+            let text = loaded.text().map_or(Observed::Absent, Observed::Value);
+            (text, read)
         }
-    }
-    if blocks.is_empty() {
-        (Observed::Absent, read)
-    } else {
-        (Observed::Value(blocks.join("\n\n")), read)
     }
 }
 
@@ -241,13 +213,21 @@ pub fn base_prompt(provider: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn inputs(dir: &Path) -> ContextInputs {
         ContextInputs {
             directory: dir.to_path_buf(),
             global_config_dir: dir.join("no-global"),
             shell: "zsh".into(),
-            claude_compat: true,
+            instructions: super::super::instructions::InstructionSettings {
+                claude_md: true,
+                project: true,
+                max_bytes: super::super::instructions::DEFAULT_MAX_BYTES,
+                max_total_bytes: super::super::instructions::DEFAULT_MAX_TOTAL_BYTES,
+                home: None,
+                read_gate: None,
+            },
             today: Some("2026-10-03".into()),
         }
     }

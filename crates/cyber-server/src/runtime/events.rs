@@ -305,6 +305,9 @@ pub struct ToolSettled {
     pub skill_activation: Option<cyber_core::skills::SkillActivation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_reminders: Vec<String>,
+    /// Canonical paths of nested instruction files attached to this result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instruction_reminders: Vec<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

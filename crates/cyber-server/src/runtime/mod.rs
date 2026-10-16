@@ -39,6 +39,7 @@ pub use hooks::{
     hook_execution_page, hook_last_run,
 };
 mod host;
+pub mod instructions;
 mod jobs;
 mod names;
 mod preparation;
@@ -174,7 +175,7 @@ pub struct RuntimeOptions {
     pub tools: Arc<dyn ToolHost>,
     pub global_config_dir: PathBuf,
     pub shell: String,
-    /// Load `CLAUDE.md` where a directory has no `AGENTS.md`.
+    /// Load `CLAUDE.md` where a directory has no `AGENTS.md` (`compat.claude`).
     pub claude_compat: bool,
     pub compaction: CompactionConfig,
     pub retry: RetryPolicy,
@@ -1605,6 +1606,7 @@ impl Runtime {
         let payload = ToolSettled {
             skill_activation: None,
             skill_reminders: Vec::new(),
+            instruction_reminders: Vec::new(),
             structured_output: None,
             call_id: call_id.into(),
             status,

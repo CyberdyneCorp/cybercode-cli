@@ -733,6 +733,8 @@ fn app_host_forwards_every_tool_host_method() {
     );
     let forwarded = methods(include_str!("../host.rs"), "impl ToolHost for AppHost");
     for method in [
+        "claude_compat",
+        "instruction_read_gate",
         "lifecycle_hooks",
         "resolve_prompt_resources",
         "take_hook_effects",

@@ -195,7 +195,7 @@ python3 scripts/spec_inventory.py # refresh the ROADMAP requirement table
 3. **Server-first.** The TUI, `exec` and TypeScript SDK share the public server API. IDE, web and mobile clients are planned.
 4. **Durable execution.** Prompt admission, tool calls and context changes are recorded before execution proceeds. Recovery handles interrupted streams and uncertain tool outcomes explicitly; file-backed storage uses FULL durability under the documented filesystem assumptions.
 5. **Controlled execution.** Permission rules, protected paths, an OS sandbox and snapshots constrain repository work. Production auto-mode permission requests now use durable classifier allow/block/fallback decisions; protected/manual ceilings remain. Windows enforcement and complete auto-mode controls remain M1.1 work.
-6. **Familiar conventions.** Repository instructions and skills use familiar `AGENTS.md`/`CLAUDE.md` and `SKILL.md` conventions. MCP integration and setup import are later roadmap work.
+6. **Familiar conventions.** Repository instructions and skills use familiar `AGENTS.md`/`CLAUDE.md` and `SKILL.md` conventions, plus Cyber Code's own [`CYBER.md`](#project-instructions-and-cybermd). MCP integration and setup import are later roadmap work.
 
 ## Architecture
 
@@ -262,6 +262,72 @@ The first release targets dependable local coding: inspect and edit a repository
 OpenCode, Codex and Claude Code are design references. Provider independence, a public server API, durable execution and later multi-model workflows define Cyber Code's direction. Competitor parity claims require dated, reproducible measurements rather than an undated feature matrix.
 
 The local storage decision is SQLite WAL with FULL synchronization and one writer owner. PostgreSQL supports later hosted services with multiple active instances. See the [storage decision](../docs/decisions/0001-storage-architecture.md) for alternatives and benchmark criteria.
+
+## Project instructions and CYBER.md
+
+Instruction files are privileged: their text becomes part of the system context (`core/instructions`) of every Session at a Location. Cyber Code reads four file names, from one ordered list in `crates/cyber-server/src/runtime/instructions.rs` that the baseline, nested on-read discovery and `cyber doctor` all share:
+
+| File | Role |
+|---|---|
+| `AGENTS.md` | Shared guidance that every coding agent (Codex, OpenCode, Cyber Code) reads. Put most project rules here. |
+| `CLAUDE.md` | Claude Code compatibility. Read only in a directory that has no `AGENTS.md`, so repositories that keep the two in sync are not loaded twice. |
+| `CONTEXT.md` | A description of the directory rather than agent rules. |
+| `CYBER.md` | Cyber Code's own file, in the role `CLAUDE.md` plays for Claude Code: guidance only Cyber Code should follow, such as its Modes, tools, Workflows, skills or `cyber` commands. |
+
+### Load order and precedence
+
+1. The global config directory (`$XDG_CONFIG_HOME/cyber`, default `~/.config/cyber`, or `CYBER_CONFIG_DIR`): `AGENTS.md`, then `CYBER.md`.
+2. Each directory from the project root down to the Location, root first. Within one directory the order is `AGENTS.md` (or `CLAUDE.md` when there is no `AGENTS.md`), `CONTEXT.md`, then `CYBER.md`.
+
+Later text wins ties, so a directory's `CYBER.md` refines its `AGENTS.md`, and a more specific directory refines its parents: a root `CYBER.md` still comes before `packages/api/AGENTS.md`. Each file is rendered as its own `Instructions from: <path>` block, and every file, imported ones included, is loaded once by canonical path, so a `CYBER.md` symlinked to `AGENTS.md` appears once, as `AGENTS.md`.
+
+An `AGENTS.override.md` takes the `AGENTS.md` slot of its directory and replaces that directory's `AGENTS.md`, `CLAUDE.md` and `CYBER.md`; its `CONTEXT.md` still loads.
+
+### Writing a CYBER.md
+
+Keep it short and specific to Cyber Code, and leave shared rules in `AGENTS.md`:
+
+```markdown
+# Cyber Code notes
+
+- Run `cargo test -p <crate>` before finishing; never run release builds.
+- Use the `/review` skill on uncommitted changes before handing work back.
+- Long fan-out tasks belong in `.cyber/workflows/`, not in ad hoc subagents.
+
+@docs/cyber/testing.md
+```
+
+- **Imports.** A line containing only `@path` inlines that file after its importer, as its own block. Paths resolve relative to the importing file, or to home for `@~/`. Lines inside code fences are ignored, imports nest up to a depth of 5, and a cycle is skipped with a warning naming both files.
+- **Project files stay in the project.** A project instruction file, or an import from one, that resolves (after symlinks) outside the project root is not loaded and produces a warning, so a checkout cannot pull `~/.ssh/...` or `../other-repo` into the context, whether through `@path` or through a symlinked `CYBER.md`. A symlink inside the project (`CYBER.md -> AGENTS.md`) still works. Global files are yours and may import anywhere. Unresolved imports are warnings, not errors.
+- **Project files follow your `read` rules.** A project instruction file or import loads only when your `read` permission rules allow it outright. One they ask about or deny is skipped with a warning and no prompt, so under the default rules `@.env` (or a `CYBER.md` symlinked to `.env`) never reaches the context, and neither does a file a `read` deny covers. If the project's config does not parse, no project instruction file loads and `CLAUDE.md` is treated as off until it is fixed.
+- **Only regular files.** A FIFO, device or directory in place of an instruction file is never opened for reading. In the baseline it makes the instructions unavailable, so the first Turn is blocked as for any unreadable instruction file (`cyber doctor` names it); found by a nested read, it is skipped with a warning.
+- **Size.** Each file is cut at 32768 bytes (`instructions.max_bytes`, not configurable yet) with a `[Truncated: ...]` notice, and reading stops there, however large the file is. The whole baseline, imports included, stops at 131072 bytes: the file that crosses it is cut with a notice, and later files are left out with a warning. `cyber doctor` shows both.
+- **Edits mid-session** reach the model at the next Safe Boundary as one durable context update; the cached prompt prefix is not rewritten.
+
+### Nested files on read
+
+Files in directories below the Location are not in the baseline. When the built-in `read` tool successfully reads a file under such a directory, that directory's instruction files (and those of the directories between) are appended to the result inside a `<system-reminder>` block, once per file per Context Epoch; the attachment is recorded durably with the tool settlement, and a new epoch (for example after compaction) starts over. Reads through `bash`, `grep` or MCP tools do not trigger it, and neither do denied or failed reads.
+
+One reminder carries at most 32768 bytes of instruction text. Files past that are named in the reminder (`read them with the read tool`) instead of attached. When even that reminder does not fit the tool output budget (`tool_output`), the read gets a short list of the file paths; when nothing fits, the read keeps its own output and the files can attach on a later read. Instruction files never turn a successful read into an error. Each attachment fires the `InstructionsLoaded` hook with `load_reason: "nested_read"` and the attached `file_paths`, as the baseline does with `session_start` and `changed`.
+
+### Switches
+
+These are read from the server's environment (a value of `1`, `true`, `yes` or `on`):
+
+| Switch | Effect |
+|---|---|
+| `CYBER_DISABLE_CLAUDE_MD` (or `CYBER_DISABLE_CLAUDE_COMPAT`, or `compat.claude = false` in config) | Stops loading `CLAUDE.md`. `AGENTS.md`, `CONTEXT.md` and `CYBER.md` still load. `compat.claude` is read from the resolved config of each Location, project layers included, by both the runtime and `cyber doctor`. |
+| `CYBER_DISABLE_PROJECT_CONFIG` | Skips every project instruction file, `CYBER.md` included, and nested discovery. The global `AGENTS.md` and `CYBER.md` still load. |
+
+### Checking what loads
+
+`cyber doctor` has an `instructions` line that lists, in load order, the files a new Session at the current directory loads (`N loaded: <path>, ...`), and warns about truncated files and unresolved or refused imports. `GET /api/v1/sessions/{id}/context` returns the rendered baseline with its `Instructions from:` labels.
+
+### Migrating from Claude Code
+
+No migration is needed: `CLAUDE.md` keeps loading in place. `cyber import` does not copy `CLAUDE.md` into `CYBER.md`, because both would then load and duplicate the content. To move Cyber-specific parts, put them in `CYBER.md` and, if the remaining guidance is shared, rename `CLAUDE.md` to `AGENTS.md`.
+
+Not implemented yet: `.cyber/rules/*.md` and `.claude/rules/*.md`, `.claude/CLAUDE.md`, the `~/.claude/CLAUDE.md` global fallback, a configurable `instructions.max_bytes`, per-source token sizes in `/context`, and `/init` (which is specified to generate `AGENTS.md`, not `CYBER.md`).
 
 ## Hook configuration and trust review
 

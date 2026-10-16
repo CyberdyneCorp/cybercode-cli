@@ -175,6 +175,9 @@ pub struct CallState {
 pub struct Epoch {
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub reminded_skills: std::collections::BTreeSet<String>,
+    /// Canonical paths of nested instruction files attached this epoch.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub reminded_instructions: std::collections::BTreeSet<String>,
     pub number: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
@@ -939,6 +942,7 @@ impl SessionState {
     fn on_epoch(&mut self, e: EpochStarted) {
         self.epoch = Some(Epoch {
             reminded_skills: Default::default(),
+            reminded_instructions: Default::default(),
             number: e.epoch,
             baseline: e.baseline,
             snapshot: e.snapshot,
@@ -1041,6 +1045,7 @@ impl SessionState {
                 && let Some(epoch) = &mut self.epoch
             {
                 epoch.reminded_skills.extend(s.skill_reminders);
+                epoch.reminded_instructions.extend(s.instruction_reminders);
             }
             call.skill_activation = if s.status == CallStatus::Ok {
                 s.skill_activation

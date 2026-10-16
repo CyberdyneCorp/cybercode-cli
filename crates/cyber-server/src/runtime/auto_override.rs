@@ -464,21 +464,22 @@ impl Inner {
             cancel: scope.control.stop.clone(),
             done: invocation_done.clone(),
         });
-        let (_, def, outcome) = self
+        let run = self
             .run_tool(handle, def, invocation, scope.control.stop.clone())
             .await;
         invocation_done.cancel();
+        let mut nested = self
+            .nested_instructions(handle, vec![run.nested_target()])
+            .await;
+        let nested = nested.pop().unwrap_or_default();
         let mut state = handle.state.lock().await;
-        let mut seen = state
-            .epoch
-            .as_ref()
-            .map(|epoch| epoch.reminded_skills.clone())
-            .unwrap_or_default();
-        let settled = super::drain::settlement_with_skills(
+        let mut seen = super::drain::Reminded::of(&state);
+        let (settled, loaded) = super::drain::settlement_with_reminders(
             &replay.id,
-            &def,
-            outcome,
+            &run.def,
+            run.outcome,
             &mut seen,
+            &nested,
             |output, reminder| {
                 self.tools
                     .finalize_skill_output(&state.info.directory, output, reminder)
@@ -495,6 +496,12 @@ impl Inner {
         events.push(change(record));
         self.commit_locked(&mut state, events)?;
         drop(state);
+        self.instructions_loaded(
+            handle,
+            loaded.into_iter().collect(),
+            super::drain::NESTED_LOAD_REASON,
+        )
+        .await;
         if let Some(reason) = &stop {
             self.publish_hook_stop(&session_id, reason);
         }

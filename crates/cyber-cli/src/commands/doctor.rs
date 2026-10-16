@@ -40,8 +40,9 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
         Ok(_) => check("config", Status::Pass, "parsed and valid"),
         Err(e) => check("config", Status::Fail, e.message.clone()),
     }];
-    let config = config.map(|c| c.value).unwrap_or(Value::Null);
     checks.extend(rt.block_on(extension_checks(ctx)));
+    checks.push(instructions(ctx, config.as_ref().ok()));
+    let config = config.map(|c| c.value).unwrap_or(Value::Null);
     checks.extend(lsp_checks(ctx, &config));
     checks.extend(rt.block_on(catalog_checks(ctx, &config)));
     checks.push(database(ctx));
@@ -118,6 +119,46 @@ fn commands_check(catalog: &Value) -> Check {
     } else {
         check("commands", Status::Warn, issues.join("; "))
     }
+}
+
+/// The instruction files the next Session at this Location loads, in load order, with a
+/// warning for truncated files and unresolved or refused imports. `config` is `None` when
+/// the Location's config failed to load: like the runtime, `CLAUDE.md` is then off and no
+/// project file passes the read gate.
+fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) -> Check {
+    use cyber_server::runtime::instructions::{InstructionSettings, load_baseline};
+    // The same per-Location `compat.claude` and `read` rules the runtime reads through its
+    // tool host.
+    let compat = config.is_some_and(|c| cyber_core::config::claude_compat(&c.value));
+    let mut settings = InstructionSettings::from_env(compat, &ctx.env);
+    settings.read_gate = Some(cyber_tools::permissions::instruction_read_gate(
+        config.map(|c| (&c.value, &c.sources)),
+        &ctx.location,
+    ));
+    let loaded = match load_baseline(&ctx.paths.config, &ctx.location, &settings) {
+        Ok(loaded) => loaded,
+        Err(reason) => {
+            return check(
+                "instructions",
+                Status::Warn,
+                format!("unavailable: {reason}"),
+            );
+        }
+    };
+    let files: Vec<String> = loaded
+        .files
+        .iter()
+        .map(|file| file.path.display().to_string())
+        .collect();
+    let mut detail = match files.len() {
+        0 => "no instruction files".to_owned(),
+        n => format!("{n} loaded: {}", files.join(", ")),
+    };
+    if loaded.warnings.is_empty() {
+        return check("instructions", Status::Pass, detail);
+    }
+    detail.push_str(&format!("; {}", loaded.warnings.join("; ")));
+    check("instructions", Status::Warn, detail)
 }
 
 fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {

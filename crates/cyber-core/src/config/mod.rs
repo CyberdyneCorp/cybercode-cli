@@ -53,6 +53,16 @@ pub use modes::{bound_mode, mode_ceiling, mode_rank, never_ask_rules};
 pub use validate::redact_secrets;
 pub use workflows::{TierTarget, WorkflowSettings};
 
+/// `compat.claude` of a resolved config: whether Claude Code files such as `CLAUDE.md`
+/// are read in place. On unless set to `false`. The runtime and `cyber doctor` both
+/// read it through here, from the same per-Location config.
+pub fn claude_compat(config: &Value) -> bool {
+    config
+        .pointer("/compat/claude")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
 /// Published JSON Schema URL written into new config documents.
 pub const SCHEMA_URL: &str = "https://cyber-code.dev/schema/config.json";
 

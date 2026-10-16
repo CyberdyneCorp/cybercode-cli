@@ -417,4 +417,4 @@ The debug `cyber` binary was exercised in a temporary git project with its own `
 
 ### Not part of M2.1
 
-- `CYBER.md` instruction files are not loaded yet. Project instructions come from `AGENTS.md`, `CLAUDE.md` and `CONTEXT.md` (`crates/cyber-server/src/runtime/context.rs`); `CYBER.md` support is the next planned item and needs its own change and acceptance.
+- `CYBER.md` instruction files ship in the separate change `add-cyber-md` (loading through the baseline, nested on-read discovery and `cyber doctor`, from one ordered list of file names in `crates/cyber-server/src/runtime/instructions.rs`; evidence in [P1 status](p1-status.md#2026-10-16-cybermd-project-instructions-add-cyber-md)).

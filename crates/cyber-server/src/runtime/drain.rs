@@ -584,12 +584,31 @@ impl Inner {
         observed
     }
 
+    /// What instruction files may load at `directory`: its own `compat.claude` and `read`
+    /// permission rules (through the tool host's config, as `cyber doctor` reads them) and
+    /// the process environment.
+    pub(crate) fn instruction_settings(
+        &self,
+        directory: &str,
+    ) -> super::instructions::InstructionSettings {
+        let compat = self
+            .tools
+            .claude_compat(directory)
+            .unwrap_or(self.options.claude_compat);
+        let mut settings = super::instructions::InstructionSettings::from_env(
+            compat,
+            &cyber_core::env::ProcessEnv,
+        );
+        settings.read_gate = self.tools.instruction_read_gate(directory);
+        settings
+    }
+
     pub(crate) fn context_inputs(&self, directory: &str) -> context::ContextInputs {
         context::ContextInputs {
             directory: directory.into(),
             global_config_dir: self.options.global_config_dir.clone(),
             shell: self.options.shell.clone(),
-            claude_compat: self.options.claude_compat,
+            instructions: self.instruction_settings(directory),
             today: self.options.today.clone(),
         }
     }
@@ -1170,32 +1189,36 @@ impl Inner {
     async fn settle_group(
         &self,
         handle: &Handle,
-        outcomes: Vec<(String, ToolDef, ToolOutcome)>,
+        outcomes: Vec<ToolRun>,
     ) -> Result<bool, RuntimeError> {
+        let targets = outcomes.iter().map(ToolRun::nested_target).collect();
+        let nested = self.nested_instructions(handle, targets).await;
         let mut state = handle.state.lock().await;
-        let mut seen = state
-            .epoch
-            .as_ref()
-            .map(|epoch| epoch.reminded_skills.clone())
-            .unwrap_or_default();
+        let mut seen = Reminded::of(&state);
         let (session_id, directory) = (state.info.id.clone(), state.info.directory.clone());
         let mut events = Vec::new();
         let mut stops = Vec::new();
-        for (call_id, def, outcome) in outcomes {
-            events.push(settlement_with_skills(
-                &call_id,
-                &def,
-                outcome,
+        let mut loaded = Vec::new();
+        for (run, nested) in outcomes.into_iter().zip(nested) {
+            let (settled, instructions) = settlement_with_reminders(
+                &run.call_id,
+                &run.def,
+                run.outcome,
                 &mut seen,
+                &nested,
                 |output, reminder| {
                     self.tools
                         .finalize_skill_output(&directory, output, reminder)
                 },
-            ));
-            stops.extend(self.take_call_hook_effects(&session_id, &call_id, &mut events));
+            );
+            events.push(settled);
+            loaded.extend(instructions);
+            stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
         }
         self.commit_locked(&mut state, events)?;
         drop(state);
+        self.instructions_loaded(handle, loaded, NESTED_LOAD_REASON)
+            .await;
         for reason in &stops {
             self.publish_hook_stop(&session_id, reason);
         }
@@ -1360,15 +1383,21 @@ impl Inner {
         def: ToolDef,
         invocation: Invocation,
         cancel: CancellationToken,
-    ) -> (String, ToolDef, ToolOutcome) {
+    ) -> ToolRun {
         let call_id = invocation.call_id.clone();
+        let read = self.read_target(&def, &invocation);
         if invocation.name == "return_result" {
             let state = handle.state.lock().await;
             let outcome = state.result.schema.as_ref().map_or_else(
                 || ToolOutcome::Failed("return_result requires an output schema".into()),
                 |schema| schema.outcome(invocation.input),
             );
-            return (call_id, def, outcome);
+            return ToolRun {
+                call_id,
+                def,
+                outcome,
+                read,
+            };
         }
         let run = self.tools.execute(invocation, cancel.clone());
         tokio::pin!(run);
@@ -1382,7 +1411,65 @@ impl Inner {
                 }
             },
         };
-        (call_id, def, outcome)
+        ToolRun {
+            call_id,
+            def,
+            outcome,
+            read,
+        }
+    }
+
+    /// The file a built-in `read` call targets, for nested instructions.
+    fn read_target(&self, def: &ToolDef, invocation: &Invocation) -> Option<ReadTarget> {
+        if def.scope != super::host::ToolScope::Builtin || def.spec.name != "read" {
+            return None;
+        }
+        let path = invocation.input.get("path")?.as_str()?;
+        let settings = self.instruction_settings(&invocation.directory);
+        let location = std::path::PathBuf::from(&invocation.directory);
+        Some(ReadTarget {
+            file: super::instructions::read_target(&location, settings.home.as_deref(), path),
+            location,
+            settings,
+        })
+    }
+
+    /// The instruction files each successful read in `targets` attaches (`system-context`
+    /// → Nested rule files on read), skipping the baseline, files already attached this
+    /// epoch and files an earlier target attaches. The files are read on a blocking thread
+    /// before the caller takes the Session lock, so a slow file never stalls the Session.
+    pub(super) async fn nested_instructions(
+        &self,
+        handle: &Handle,
+        targets: Vec<Option<ReadTarget>>,
+    ) -> Vec<super::instructions::Instructions> {
+        let count = targets.len();
+        let empty = || (0..count).map(|_| Default::default()).collect();
+        if targets.iter().all(Option::is_none) {
+            return empty();
+        }
+        let mut attached = Reminded::of(&*handle.state.lock().await).instructions;
+        let global = self.options.global_config_dir.clone();
+        let load = move || {
+            let mut loaded = Vec::with_capacity(targets.len());
+            for target in targets {
+                let nested = target.map_or_else(Default::default, |read| {
+                    super::instructions::load_nested(
+                        &global,
+                        &read.location,
+                        &read.file,
+                        &read.settings,
+                        &attached,
+                    )
+                });
+                attached.extend(nested.attached());
+                loaded.push(nested);
+            }
+            loaded
+        };
+        tokio::task::spawn_blocking(load)
+            .await
+            .unwrap_or_else(|_| empty())
     }
 
     /// Settle what a previous process left unfinished (`session-runtime` → Drain loop).
@@ -1504,6 +1591,7 @@ fn settled(
     let payload = ToolSettled {
         skill_activation: None,
         skill_reminders: Vec::new(),
+        instruction_reminders: Vec::new(),
         structured_output: None,
         call_id: call_id.into(),
         status,
@@ -1513,60 +1601,113 @@ fn settled(
     event(TOOL_SETTLED, &payload)
 }
 
-/// The caller holds the Session lock and commits the resulting events as one transaction.
-pub(super) fn settlement_with_skills(
+/// One finished tool call, with the file it read when it was a built-in `read`.
+pub(super) struct ToolRun {
+    pub call_id: String,
+    pub def: ToolDef,
+    pub outcome: ToolOutcome,
+    pub read: Option<ReadTarget>,
+}
+
+impl ToolRun {
+    /// The target to load nested instructions for: only a read that succeeded.
+    pub(super) fn nested_target(&self) -> Option<ReadTarget> {
+        let succeeded = matches!(
+            self.outcome,
+            ToolOutcome::Ok(_)
+                | ToolOutcome::Structured { .. }
+                | ToolOutcome::SkillSuggestions { failed: false, .. }
+        );
+        self.read.clone().filter(|_| succeeded)
+    }
+}
+
+/// A `read` call's Location, the file it targets and what may load there.
+#[derive(Clone)]
+pub(super) struct ReadTarget {
+    pub location: std::path::PathBuf,
+    pub file: std::path::PathBuf,
+    pub settings: super::instructions::InstructionSettings,
+}
+
+/// `InstructionsLoaded` `load_reason` for files a read attached.
+pub(super) const NESTED_LOAD_REASON: &str = "nested_read";
+
+/// Skills and nested instruction files already reminded of in the current Context Epoch.
+#[derive(Debug, Default)]
+pub(super) struct Reminded {
+    pub skills: std::collections::BTreeSet<String>,
+    pub instructions: std::collections::BTreeSet<String>,
+}
+
+impl Reminded {
+    pub(super) fn of(state: &SessionState) -> Self {
+        state
+            .epoch
+            .as_ref()
+            .map_or_else(Self::default, |epoch| Self {
+                skills: epoch.reminded_skills.clone(),
+                instructions: epoch.reminded_instructions.clone(),
+            })
+    }
+}
+
+/// Settle a call, appending reminders for matching skills and for `nested` instruction
+/// files (attached only to a successful result). Also returns the instruction files that
+/// entered the context, for `InstructionsLoaded`. The caller holds the Session lock and
+/// commits the resulting events as one transaction.
+pub(super) fn settlement_with_reminders(
     call_id: &str,
     def: &ToolDef,
     outcome: ToolOutcome,
-    seen: &mut std::collections::BTreeSet<String>,
-    finalize: impl FnOnce(String, &str) -> Result<String, String>,
-) -> cyber_store::NewEvent {
-    let ToolOutcome::SkillSuggestions {
-        failed,
-        mut output,
-        value,
-        skills,
-    } = outcome
-    else {
-        return settlement(call_id, def, outcome);
+    seen: &mut Reminded,
+    nested: &super::instructions::Instructions,
+    finalize: impl Fn(String, &str) -> Result<String, String>,
+) -> (
+    cyber_store::NewEvent,
+    Option<super::context::LoadedInstructions>,
+) {
+    let attach = !nested.is_empty();
+    let (failed, output, value, skills) = match outcome {
+        ToolOutcome::SkillSuggestions {
+            failed,
+            output,
+            value,
+            skills,
+        } => (failed, output, value, skills),
+        ToolOutcome::Ok(output) if attach => (false, output, None, Vec::new()),
+        ToolOutcome::Structured { output, value } if attach => {
+            (false, output, Some(value), Vec::new())
+        }
+        other => return (settlement(call_id, def, other), None),
     };
-    let mut names = Vec::new();
-    let mut lines = Vec::new();
-    for skill in skills {
-        if cyber_core::skills::validate_name(&skill.name).is_err() {
-            continue;
-        }
-        if !seen.contains(&skill.name) && !names.contains(&skill.name) {
-            names.push(skill.name.clone());
-            let description: String = skill
-                .description
-                .chars()
-                .take(120)
-                .map(|c| if c.is_control() { ' ' } else { c })
-                .collect();
-            let escaped = description
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;");
-            lines.push(format!("- {}: {}", skill.name, escaped));
-        }
-    }
-    if !lines.is_empty() {
-        let reminder = format!(
-            "\n\n<system-reminder>\nConsider loading these matching skills with the skill tool:\n{}\n</system-reminder>",
-            lines.join("\n")
-        );
-        output = match finalize(output, &reminder) {
-            Ok(output) => output,
-            Err(error) => return settlement(call_id, def, ToolOutcome::Crashed(error)),
-        };
-        seen.extend(names.iter().cloned());
-    }
-    event(
+    let (names, skill_reminder) = skill_reminder(skills, &seen.skills);
+    let skill_reminder = skill_reminder.unwrap_or_default();
+    let nested = if failed { None } else { Some(nested) };
+    let (output, instructions) = match with_reminders(output, nested, &skill_reminder, &finalize) {
+        Ok(done) => done,
+        Err(error) => return (settlement(call_id, def, ToolOutcome::Crashed(error)), None),
+    };
+    let attached = match (&instructions, nested) {
+        (Some(_), Some(nested)) => nested.attached(),
+        _ => Vec::new(),
+    };
+    seen.skills.extend(names.iter().cloned());
+    seen.instructions.extend(attached.iter().cloned());
+    let loaded =
+        instructions
+            .zip(nested)
+            .map(|(text, nested)| super::context::LoadedInstructions {
+                source: "core/instructions".into(),
+                text,
+                files: nested.paths(),
+            });
+    let settled = event(
         TOOL_SETTLED,
         &ToolSettled {
             skill_activation: None,
             skill_reminders: names,
+            instruction_reminders: attached,
             structured_output: value,
             call_id: call_id.into(),
             status: if failed {
@@ -1577,7 +1718,69 @@ pub(super) fn settlement_with_skills(
             output,
             detail: None,
         },
-    )
+    );
+    (settled, loaded)
+}
+
+/// `output` with the nested instruction reminder and then `skill`, and the instruction
+/// text it carries. A reminder that does not fit the tool output budget becomes a short
+/// pointer to the files, and one that still does not fit is left off: instruction files
+/// never fail a result. Only a skill reminder that does not fit is an error.
+fn with_reminders(
+    output: String,
+    nested: Option<&super::instructions::Instructions>,
+    skill: &str,
+    finalize: &impl Fn(String, &str) -> Result<String, String>,
+) -> Result<(String, Option<String>), String> {
+    let candidates = nested
+        .into_iter()
+        .flat_map(|nested| [nested.reminder(), nested.pointer()])
+        .flatten();
+    for instructions in candidates {
+        if let Ok(done) = finalize(output.clone(), &format!("{instructions}{skill}")) {
+            return Ok((done, Some(instructions)));
+        }
+    }
+    if skill.is_empty() {
+        return Ok((output, None));
+    }
+    finalize(output, skill).map(|done| (done, None))
+}
+
+/// The names of skills not yet reminded of, and their reminder text.
+fn skill_reminder(
+    skills: Vec<super::host::SkillSuggestion>,
+    seen: &std::collections::BTreeSet<String>,
+) -> (Vec<String>, Option<String>) {
+    let mut names = Vec::new();
+    let mut lines = Vec::new();
+    for skill in skills {
+        if cyber_core::skills::validate_name(&skill.name).is_err()
+            || seen.contains(&skill.name)
+            || names.contains(&skill.name)
+        {
+            continue;
+        }
+        names.push(skill.name.clone());
+        let description: String = skill
+            .description
+            .chars()
+            .take(120)
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        let escaped = description
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        lines.push(format!("- {}: {}", skill.name, escaped));
+    }
+    let reminder = (!lines.is_empty()).then(|| {
+        format!(
+            "\n\n<system-reminder>\nConsider loading these matching skills with the skill tool:\n{}\n</system-reminder>",
+            lines.join("\n")
+        )
+    });
+    (names, reminder)
 }
 
 /// Map an outcome to a settlement. A dispatched mutation that did not finish has an unknown outcome.
@@ -1593,6 +1796,7 @@ pub(super) fn settlement(
             &ToolSettled {
                 skill_activation: Some(activation),
                 skill_reminders: Vec::new(),
+                instruction_reminders: Vec::new(),
                 structured_output: None,
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -1621,6 +1825,7 @@ pub(super) fn settlement(
             &ToolSettled {
                 skill_activation: None,
                 skill_reminders: Vec::new(),
+                instruction_reminders: Vec::new(),
                 structured_output: Some(value),
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -1760,24 +1965,189 @@ mod skill_reminder_tests {
                 },
             ],
         };
-        let mut seen = std::collections::BTreeSet::new();
-        let first =
-            settlement_with_skills("first", &def, outcome(), &mut seen, |output, reminder| {
-                Ok(format!("{output}{reminder}"))
-            });
-        let payload: ToolSettled = serde_json::from_value(first.data).unwrap();
+        let mut seen = Reminded::default();
+        let none = crate::runtime::instructions::Instructions::default();
+        let first = settlement_with_reminders(
+            "first",
+            &def,
+            outcome(),
+            &mut seen,
+            &none,
+            |output, reminder| Ok(format!("{output}{reminder}")),
+        );
+        let payload: ToolSettled = serde_json::from_value(first.0.data).unwrap();
         assert_eq!(payload.structured_output, Some(Value::Null));
         assert_eq!(payload.skill_reminders, ["migrations"]);
-        assert_eq!(seen.len(), 1);
+        assert_eq!(seen.skills.len(), 1);
         assert_eq!(payload.output.matches("<system-reminder>").count(), 2);
         assert!(payload.output.contains("Use &lt;safe&gt; steps"));
-        let second =
-            settlement_with_skills("second", &def, outcome(), &mut seen, |output, reminder| {
-                Ok(format!("{output}{reminder}"))
-            });
-        let payload: ToolSettled = serde_json::from_value(second.data).unwrap();
+        let second = settlement_with_reminders(
+            "second",
+            &def,
+            outcome(),
+            &mut seen,
+            &none,
+            |output, reminder| Ok(format!("{output}{reminder}")),
+        );
+        let payload: ToolSettled = serde_json::from_value(second.0.data).unwrap();
         assert!(payload.skill_reminders.is_empty());
         assert_eq!(payload.structured_output, Some(Value::Null));
         assert_eq!(payload.output.matches("<system-reminder>").count(), 1);
+    }
+
+    fn read_def() -> ToolDef {
+        ToolDef {
+            scope: ToolScope::Builtin,
+            deferred: false,
+            registration: None,
+            spec: cyber_llm::ToolSpec {
+                name: "read".into(),
+                description: String::new(),
+                input_schema: serde_json::json!({}),
+            },
+            retry_safety: RetrySafety::ReadOnly,
+            concurrency_safe: true,
+        }
+    }
+
+    /// The default tool output budget's reminder rule (`Budget::apply_with_reminder`):
+    /// a reminder over 51,200 bytes or 2000 lines is an error.
+    fn default_budget(output: String, reminder: &str) -> Result<String, String> {
+        if reminder.len() > 51_200 || reminder.lines().count() > 2000 {
+            return Err("Reminder exceeds tool output budget".into());
+        }
+        Ok(format!("{output}{reminder}"))
+    }
+
+    /// Nested instructions for a read of `web/app.ts`, with `files` written under `web/`.
+    fn nested(
+        files: &[(&str, String)],
+    ) -> (tempfile::TempDir, super::super::instructions::Instructions) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("repo");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        for (name, text) in files {
+            std::fs::write(root.join("web").join(name), text).unwrap();
+        }
+        let settings = super::super::instructions::InstructionSettings::from_env(
+            true,
+            &std::collections::HashMap::<String, String>::new(),
+        );
+        let loaded = super::super::instructions::load_nested(
+            &temp.path().join("global"),
+            &root,
+            &root.join("web/app.ts"),
+            &settings,
+            &Default::default(),
+        );
+        (temp, loaded)
+    }
+
+    fn settle(
+        nested: &super::super::instructions::Instructions,
+        seen: &mut Reminded,
+        finalize: impl Fn(String, &str) -> Result<String, String>,
+    ) -> (
+        ToolSettled,
+        Option<super::super::context::LoadedInstructions>,
+    ) {
+        let outcome = ToolOutcome::Ok("file text".into());
+        let (event, loaded) =
+            settlement_with_reminders("call", &read_def(), outcome, seen, nested, finalize);
+        (serde_json::from_value(event.data).unwrap(), loaded)
+    }
+
+    /// Regression: two nested files near `instructions.max_bytes` made a reminder larger
+    /// than the tool output budget, the read settled as `Tool crashed`, and nothing was
+    /// recorded, so every later read in that directory crashed too.
+    #[test]
+    fn two_full_size_nested_files_still_settle_the_read_ok() {
+        let (_temp, nested) = nested(&[
+            ("AGENTS.md", "a".repeat(32 * 1024)),
+            ("CYBER.md", "c".repeat(32 * 1024)),
+        ]);
+        let mut seen = Reminded::default();
+        let (payload, loaded) = settle(&nested, &mut seen, default_budget);
+        assert_eq!(payload.status, CallStatus::Ok, "{}", payload.output);
+        assert!(payload.output.starts_with("file text"));
+        assert!(payload.output.contains(&"a".repeat(32 * 1024)));
+        assert!(!payload.output.contains("ccc"));
+        assert!(payload.output.contains("exceed the instruction budget"));
+        assert!(payload.output.len() <= 51_200 + "file text".len());
+        assert_eq!(payload.instruction_reminders.len(), 2);
+        assert_eq!(seen.instructions.len(), 2);
+        assert_eq!(loaded.unwrap().files.len(), 2);
+    }
+
+    /// A nested file with more lines than the budget allows is named instead of attached.
+    #[test]
+    fn a_nested_reminder_over_the_line_budget_becomes_a_pointer() {
+        let (_temp, nested) = nested(&[("CYBER.md", "line\n".repeat(5000))]);
+        let mut seen = Reminded::default();
+        let (payload, loaded) = settle(&nested, &mut seen, default_budget);
+        assert_eq!(payload.status, CallStatus::Ok, "{}", payload.output);
+        assert!(payload.output.contains("exceed the tool output budget"));
+        assert!(payload.output.contains("CYBER.md"));
+        assert!(!payload.output.contains("line\nline"));
+        assert_eq!(payload.instruction_reminders.len(), 1);
+        assert!(
+            loaded
+                .unwrap()
+                .text
+                .contains("exceed the tool output budget")
+        );
+    }
+
+    /// Regression: nested instruction files were loaded for every read, denied and failed
+    /// ones included, before the outcome was checked.
+    #[test]
+    fn only_successful_reads_load_nested_instructions() {
+        let read = ReadTarget {
+            location: "/repo".into(),
+            file: "/repo/web/app.ts".into(),
+            settings: super::super::instructions::InstructionSettings::from_env(
+                true,
+                &std::collections::HashMap::<String, String>::new(),
+            ),
+        };
+        let run = |outcome| ToolRun {
+            call_id: "call".into(),
+            def: read_def(),
+            outcome,
+            read: Some(read.clone()),
+        };
+        let failed_with_skills = ToolOutcome::SkillSuggestions {
+            failed: true,
+            output: String::new(),
+            value: None,
+            skills: Vec::new(),
+        };
+        for outcome in [
+            ToolOutcome::Failed("Denied by permission rule".into()),
+            ToolOutcome::Crashed("boom".into()),
+            failed_with_skills,
+        ] {
+            assert!(run(outcome).nested_target().is_none());
+        }
+        assert!(
+            run(ToolOutcome::Ok("text".into()))
+                .nested_target()
+                .is_some()
+        );
+    }
+
+    /// When no instruction reminder fits, the read keeps its own output and the files stay
+    /// unrecorded, so a later read can attach them.
+    #[test]
+    fn a_reminder_that_never_fits_leaves_the_read_untouched() {
+        let (_temp, nested) = nested(&[("CYBER.md", "rule".into())]);
+        let mut seen = Reminded::default();
+        let (payload, loaded) = settle(&nested, &mut seen, |_, _| Err("no room".into()));
+        assert_eq!(payload.status, CallStatus::Ok);
+        assert_eq!(payload.output, "file text");
+        assert!(payload.instruction_reminders.is_empty());
+        assert!(seen.instructions.is_empty());
+        assert!(loaded.is_none());
     }
 }

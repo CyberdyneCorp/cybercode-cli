@@ -704,6 +704,26 @@ impl ToolHost for BuiltinHost {
             tokio::join!(self.shutdown_mcp(), lsp);
         })
     }
+    /// A config that fails to load turns `CLAUDE.md` off rather than on: `config_for`'s
+    /// `Null` fallback would read as the default `true` and override an opt-out.
+    fn claude_compat(&self, directory: &str) -> Option<bool> {
+        let compat = (self.opts.config)(Path::new(directory))
+            .is_ok_and(|(config, _)| cyber_core::config::claude_compat(&config));
+        Some(compat)
+    }
+
+    fn instruction_read_gate(
+        &self,
+        directory: &str,
+    ) -> Option<cyber_server::runtime::instructions::ReadGate> {
+        let location = Path::new(directory);
+        let config = (self.opts.config)(location).ok();
+        Some(permissions::instruction_read_gate(
+            config.as_ref().map(|(config, sources)| (config, sources)),
+            location,
+        ))
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,
