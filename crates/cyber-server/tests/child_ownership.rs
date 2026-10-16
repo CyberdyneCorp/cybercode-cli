@@ -77,6 +77,34 @@ async fn child_result_owner_is_exclusive_across_runtimes_until_released() {
     assert!(other.claim_child_execution(&parent, &target).is_ok());
 }
 
+/// A server that exits without releasing (a crash) leaves its claims held; the next
+/// process to take the server lock releases them, and only them.
+#[tokio::test]
+async fn the_next_server_lock_holder_releases_only_claims_of_an_exited_server() {
+    let h = Harness::new(Setup::default());
+    let parent = h.session().await;
+    let crashed = child(&h, &parent).await;
+    let unlocked = child(&h, &parent).await;
+    // Claimed by a runtime that never held the server lock: no holder.
+    std::mem::forget(h.runtime.claim_child_execution(&parent, &unlocked).unwrap());
+    h.runtime.adopt_server_lock("srv_old").unwrap();
+    // The server process dies while it owns the child: nothing releases the claim.
+    std::mem::forget(h.runtime.claim_child_execution(&parent, &crashed).unwrap());
+
+    let next = h.restart();
+    assert!(next.claim_child_execution(&parent, &crashed).is_err());
+    assert_eq!(next.adopt_server_lock("srv_new").unwrap(), 1);
+    drop(next.claim_child_execution(&parent, &crashed).unwrap());
+    assert!(next.claim_child_execution(&parent, &unlocked).is_err());
+    assert!(next.adopt_server_lock("srv_again").is_err());
+    // The new server's own claims are not released by itself again.
+    let owner = next.claim_child_execution(&parent, &crashed).unwrap();
+    let third = h.restart();
+    assert!(third.claim_child_execution(&parent, &crashed).is_err());
+    drop(owner);
+    assert!(third.claim_child_execution(&parent, &crashed).is_ok());
+}
+
 #[tokio::test]
 async fn foreign_parent_cannot_claim_another_parents_child() {
     let h = Harness::new(Setup::default());

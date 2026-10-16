@@ -216,6 +216,19 @@ impl ToolHost for AppHost {
         self.builtin.subtask_request(turn, request, cancel)
     }
 
+    fn spawn_workflow_agent(
+        &self,
+        request: cyber_server::runtime::WorkflowAgentRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::WorkflowAgentOutput, cyber_workflow::Diagnostic>>
+    {
+        self.builtin.spawn_workflow_agent(request, cancel)
+    }
+
+    fn workflow_agent_writes(&self, directory: &str, agent: Option<&str>) -> bool {
+        self.builtin.workflow_agent_writes(directory, agent)
+    }
+
     fn shell(
         &self,
         directory: &str,

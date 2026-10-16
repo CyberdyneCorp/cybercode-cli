@@ -13,7 +13,8 @@ use cyber_llm::adapters::{ScriptStep, ScriptedAdapter};
 use cyber_llm::{FinishReason, LlmEvent, LlmRequest, ToolCall};
 use cyber_server::runtime::{
     Admission, CallStatus, CompactionConfig, CreateSession, Delivery, ModelResolver, NoSnapshots,
-    PendingKind, PermissionReply, ResolvedModel, Runtime, RuntimeOptions,
+    PendingKind, PermissionReply, ResolvedModel, Runtime, RuntimeOptions, StartWorkflowRun,
+    WorkflowRunStatus,
 };
 use tokio::sync::Notify;
 use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
@@ -91,6 +92,28 @@ fn model(tool: &str) -> Arc<Model> {
             reason: FinishReason::ToolCalls,
         }),
     ]]))))
+}
+
+fn options(root: &Path) -> AppOptions {
+    let paths = Paths {
+        data: root.join("data"),
+        config: root.join("config"),
+        state: root.join("state"),
+        cache: root.join("cache"),
+        tmp: root.join("tmp"),
+    };
+    AppOptions {
+        database: DatabaseLocation::File(paths.data.join("cyber.db")),
+        paths,
+        home: root.join("home"),
+        default_directory: root.to_path_buf(),
+        sandbox_policy: Some("full-access".into()),
+        snapshots: false,
+        interactive: true,
+        password: Some("test-password-123456".into()),
+        mcp_credentials: None,
+        remote_skill_fetcher: None,
+    }
 }
 
 async fn application(root: &Path, model: Arc<Model>) -> App {
@@ -187,6 +210,91 @@ async fn worker(root: &Path, name: &str, server: &Server) -> Worker {
         WAIT_OBJECT_0
     );
     worker
+}
+
+/// The native service stop runs the same shutdown hook as `cyber serve`: a running
+/// Workflow Run is durably paused before the tool host closes, and an App rebuilt over the
+/// same database (startup recovery) keeps it paused for a resume.
+#[tokio::test]
+async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_paused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let app = application(root, model("bash")).await;
+    let paths = app.paths.clone();
+    let running = app.runtime.clone();
+    // Hold every Workflow agent slot so the run's agent waits, started but unsettled.
+    let slots = running.workflow_slots();
+    let _held = slots
+        .clone()
+        .acquire_many_owned(slots.available_permits() as u32)
+        .await
+        .unwrap();
+    let stop = Arc::new(Notify::new());
+    let mut server = Server {
+        stop: stop.clone(),
+        task: tokio::spawn(cyber_app::run_server_until(
+            app,
+            ServeOptions {
+                port: Some(0),
+                register: true,
+                ..Default::default()
+            },
+            |_| {},
+            stop,
+        )),
+    };
+    let registration = registration(&paths).await;
+    let owner = running
+        .create_session(CreateSession {
+            directory: root.display().to_string(),
+            model: "test/scripted".into(),
+            title: Some("Workflow service shutdown".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let script = "export const meta = { name: 'service', description: 'Service shutdown' };\nexport default async () => (await agent('wait for a slot')).text;\n";
+    let run = running
+        .start_workflow_run(StartWorkflowRun {
+            module: cyber_workflow::WorkflowModule::inline(script).unwrap(),
+            args: serde_json::json!({}),
+            session_id: owner,
+            limits: cyber_workflow::Limits::default(),
+            tiers: Default::default(),
+            budget: cyber_core::budget::RunBudget::resolve(&serde_json::json!({}), &[]).unwrap(),
+            starter: Default::default(),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while running.workflow_agents(&run.id).unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the agent did not start");
+    assert_eq!(
+        cyber_app::stop_service(&paths).await.unwrap(),
+        Some(registration)
+    );
+    tokio::time::timeout(Duration::from_secs(10), &mut server.task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let paused = running.workflow_run(&run.id).unwrap().unwrap();
+    assert_eq!(paused.status, WorkflowRunStatus::Paused, "{paused:?}");
+    assert_eq!(
+        running.workflow_agents(&run.id).unwrap()[0].status,
+        "interrupted"
+    );
+
+    let rebuilt = App::build(options(root)).await.unwrap();
+    let recovered = rebuilt.runtime.workflow_run(&run.id).unwrap().unwrap();
+    assert_eq!(recovered.status, WorkflowRunStatus::Paused);
+    assert!(!rebuilt.runtime.workflow_agents_exiting(&run.id).unwrap());
+    rebuilt.runtime.shutdown().await;
 }
 
 #[tokio::test]

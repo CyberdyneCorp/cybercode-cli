@@ -225,6 +225,7 @@ fn rewritten_envelope_drives_later_handler_conditions_without_replacing_identity
             agent: "coder".into(),
             mode: "default".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         123,
         fields,

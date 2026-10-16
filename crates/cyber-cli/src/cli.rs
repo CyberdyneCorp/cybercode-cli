@@ -17,6 +17,7 @@ use crate::commands::{
     serve::{ServeArgs, ServiceCmd},
     skills::{CommandsCmd, SkillsCmd},
     trust::TrustCmd,
+    workflows::WorkflowsCmd,
     worktrees::WorktreeCmd,
 };
 
@@ -143,6 +144,11 @@ pub enum Command {
     Mcp {
         #[command(subcommand)]
         cmd: McpCmd,
+    },
+    /// List saved Workflows; run, inspect and control Workflow Runs.
+    Workflows {
+        #[command(subcommand)]
+        cmd: WorkflowsCmd,
     },
     /// Inspect managed Git worktrees of the current repository.
     Worktree {

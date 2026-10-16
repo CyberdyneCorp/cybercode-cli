@@ -205,6 +205,7 @@ async fn session_event(
             agent: "build".into(),
             mode: "bypass".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         json!({"tool_name":"write","tool_input":{"path":"a"}})
@@ -443,6 +444,7 @@ async fn recorded_prompt_usage_is_hidden_billed_and_does_not_authorize_tools() {
             agent: "build".into(),
             mode: "bypass".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         json!({"tool_name":"write","tool_input":{"path":"a"}})

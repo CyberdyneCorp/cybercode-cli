@@ -92,6 +92,7 @@ async fn history_pages_receipts_without_loading_config_or_reconciling_owners() {
                 location: HookLocation { directory: h.repo.clone(), workspace: None },
                 project_id: "global".into(), agent: "build".into(), mode: "default".into(),
                 parent_session_id: None,
+                workflow_run_id: None,
             },
             1,
             json!({"call_id":"call_history","tool_name":"read","tool_input":{"private":"private input"}})
@@ -246,6 +247,7 @@ async fn listing_shows_latest_exact_definition_observation_without_io_or_new_eve
             agent: "build".into(),
             mode: "default".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         serde_json::Map::new(),

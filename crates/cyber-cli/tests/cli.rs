@@ -5,6 +5,9 @@ use std::process::{Command, Output};
 
 use serde_json::Value;
 
+#[path = "../../cyber-app/tests/support/scripted_model.rs"]
+mod scripted_model;
+
 struct Env {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -92,12 +95,412 @@ fn unknown_command_suggests_and_exits_2() {
 
 #[test]
 fn unshipped_command_is_explicitly_unavailable() {
-    let o = Env::new().cyber(&["workflows", "list"]);
+    let o = Env::new().cyber(&["goals", "list"]);
     assert_eq!(o.status.code(), Some(2));
     assert!(
-        stderr(&o).contains("`cyber workflows` is not available in this build yet"),
+        stderr(&o).contains("`cyber goals` is not available in this build yet"),
         "{}",
         stderr(&o)
+    );
+}
+
+fn saved_workflow(path: &Path, name: &str, description: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        path,
+        format!(
+            "export const meta = {{ name: {name:?}, description: {description:?}, phases: [{{ title: 'Scan' }}] }};\n\
+             export default async function () {{ return await agent('scan'); }}\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn workflows_list_shows_saved_workflows_with_project_overrides_and_parse_errors() {
+    let env = Env::new();
+    let repo = env.repo("{}");
+    let global = env.root.join("cyber-home/config/workflows");
+    saved_workflow(&global.join("audit.js"), "audit", "Global audit");
+    saved_workflow(&global.join("plan.js"), "plan", "Plan from angles");
+    saved_workflow(
+        &repo.join(".cyber/workflows/audit.js"),
+        "audit",
+        "Audit auth endpoints",
+    );
+    saved_workflow(
+        &repo.join(".cyber/workflows/nested/review.js"),
+        "review",
+        "Multi-angle review",
+    );
+    std::fs::write(
+        repo.join(".cyber/workflows/computed.js"),
+        "const v = 1;\nexport const meta = { name: `audit-${v}`, description: 'x' };\n",
+    )
+    .unwrap();
+
+    let o = env
+        .command(&["workflows", "list"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", stderr(&o));
+    let text = stdout(&o);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines.iter().any(|l| l.starts_with("audit")
+            && l.contains("[project]")
+            && l.contains("Audit auth endpoints")),
+        "{text}"
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("plan")
+            && l.contains("[global]")
+            && l.contains("Plan from angles")),
+        "{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("review") && l.contains("Multi-angle review")),
+        "{text}"
+    );
+    assert!(!text.contains("Global audit"), "{text}");
+    assert!(
+        text.contains("computed.js: ParseError: meta must be a pure literal (2:29)"),
+        "{text}"
+    );
+
+    let o = env
+        .command(&["workflows", "list", "--format", "json"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", stderr(&o));
+    let listing = json(&o);
+    let names: Vec<&str> = listing["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["audit", "plan", "review"]);
+    let audit = &listing["workflows"][0];
+    assert_eq!(audit["scope"], "project");
+    assert_eq!(audit["phases"][0]["title"], "Scan");
+    assert!(audit["digest"].as_str().unwrap().starts_with("sha256:"));
+    assert_eq!(audit["shadowed"].as_array().unwrap().len(), 1);
+    assert_eq!(listing["issues"][0]["diagnostic"]["kind"], "ParseError");
+    assert_eq!(listing["issues"][0]["diagnostic"]["position"]["line"], 2);
+}
+
+/// A shared server the test started through the CLI, stopped when the test ends.
+struct StartedService<'a>(&'a Env, PathBuf);
+
+impl StartedService<'_> {
+    fn cyber(&self, args: &[&str]) -> Output {
+        self.0
+            .command(args)
+            .env("CYBER_MODELS_PATH", &self.1)
+            .output()
+            .unwrap()
+    }
+}
+
+impl Drop for StartedService<'_> {
+    fn drop(&mut self) {
+        let _ = self.cyber(&["service", "stop"]);
+    }
+}
+
+/// Assert an exit code, showing both output streams on failure.
+fn exits(output: &Output, code: i32) -> String {
+    assert_eq!(
+        output.status.code(),
+        Some(code),
+        "{}{}",
+        stdout(output),
+        stderr(output)
+    );
+    format!("{}{}", stdout(output), stderr(output))
+}
+
+/// A saved Workflow `x` (one agent) and a throwing `boom.js`, with the scripted model as
+/// the global default.
+fn workflow_env(env: &Env, model: &scripted_model::ScriptedModel) -> PathBuf {
+    let catalog = env.root.join("models.json");
+    std::fs::write(&catalog, "{}").unwrap();
+    let config = env.root.join("cyber-home/config");
+    std::fs::create_dir_all(config.join("workflows")).unwrap();
+    std::fs::write(config.join("cyber.jsonc"), model.config().to_string()).unwrap();
+    std::fs::write(
+        config.join("workflows/x.js"),
+        "export const meta = { name: 'x', description: 'One agent', phases: [{ title: 'Ask' }] };\nexport default async () => {\n  phase('Ask');\n  const answer = await agent('say hello', { label: 'greeter' });\n  log('answer', answer.text);\n  return { text: answer.text };\n};\n",
+    )
+    .unwrap();
+    std::fs::write(
+        env.root.join("boom.js"),
+        "export const meta = { name: 'boom', description: 'Throws' };\nexport default async () => { throw new Error('boom'); };\n",
+    )
+    .unwrap();
+    catalog
+}
+
+/// The completed run's ID, after checking the Location lists all three runs.
+fn listed_runs(service: &StartedService<'_>) -> String {
+    let runs = json(&service.cyber(&["workflows", "runs", "--format", "json"]));
+    let runs = runs.as_array().unwrap();
+    let mut statuses: Vec<&str> = runs
+        .iter()
+        .map(|run| run["status"].as_str().unwrap())
+        .collect();
+    statuses.sort_unstable();
+    assert_eq!(statuses, ["budget_exceeded", "completed", "failed"]);
+    let id = runs
+        .iter()
+        .find(|run| run["status"] == "completed")
+        .and_then(|run| run["id"].as_str())
+        .unwrap()
+        .to_owned();
+    assert!(exits(&service.cyber(&["workflows", "runs"]), 0).contains(&id));
+    id
+}
+
+fn inspect_run(service: &StartedService<'_>, id: &str) {
+    let shown = exits(&service.cyber(&["workflows", "show", id]), 0);
+    assert!(shown.contains("1 done, 0 running, 0 failed"), "{shown}");
+    assert!(shown.contains("greeter"), "{shown}");
+    let shown = json(&service.cyber(&["workflows", "show", id, "--format", "json"]));
+    assert_eq!(shown["agents"][0]["status"], "completed");
+    let logs = service.cyber(&["workflows", "logs", id]);
+    exits(&logs, 0);
+    assert_eq!(stdout(&logs).trim(), "answer agent done");
+    let resumed = exits(&service.cyber(&["workflows", "resume", id]), 1);
+    assert!(resumed.contains("completed"), "{resumed}");
+}
+
+#[test]
+fn workflows_run_against_the_shared_server_and_wait_maps_exit_codes() {
+    let model =
+        scripted_model::ScriptedModel::start(|_| serde_json::json!({"content": "agent done"}));
+    let env = Env::new();
+    let service = StartedService(&env, workflow_env(&env, &model));
+
+    let done = service.cyber(&["workflows", "run", "x", "--wait"]);
+    let text = exits(&done, 0);
+    assert!(stdout(&done).contains("agent done"), "{text}");
+    assert!(
+        text.contains("phase: Ask") && text.contains("agent greeter completed"),
+        "{text}"
+    );
+    let failed = exits(
+        &service.cyber(&["workflows", "run", "boom.js", "--wait"]),
+        1,
+    );
+    assert!(failed.contains("boom"), "{failed}");
+    let capped = service.cyber(&["workflows", "run", "x", "--max-agents", "0", "--wait"]);
+    assert!(exits(&capped, 4).contains("budget_exceeded"));
+    exits(
+        &service.cyber(&["workflows", "run", "x", "--args", "[1]"]),
+        2,
+    );
+
+    let id = listed_runs(&service);
+    inspect_run(&service, &id);
+
+    let remote = service.cyber(&["workflows", "run", "x", "--runner", "r1", "--wait"]);
+    let remote = exits(&remote, 2);
+    assert!(
+        remote.contains("`cyber workflows run --runner` is not available in this build yet"),
+        "{remote}"
+    );
+}
+
+#[test]
+fn a_workflow_run_deny_rule_refuses_cyber_workflows_run() {
+    let model =
+        scripted_model::ScriptedModel::start(|_| serde_json::json!({"content": "agent done"}));
+    let env = Env::new();
+    let catalog = workflow_env(&env, &model);
+    let mut config = model.config();
+    config["permissions"] = serde_json::json!({"workflow.run": {"x": "deny"}});
+    std::fs::write(
+        env.root.join("cyber-home/config/cyber.jsonc"),
+        config.to_string(),
+    )
+    .unwrap();
+    let service = StartedService(&env, catalog);
+    let denied = exits(&service.cyber(&["workflows", "run", "x", "--wait"]), 1);
+    assert!(denied.contains("workflow.run is denied for x"), "{denied}");
+    assert!(model.requests().is_empty(), "no agent may start");
+    // Other workflows still start.
+    exits(
+        &service.cyber(&["workflows", "run", "boom.js", "--wait"]),
+        1,
+    );
+    let runs = json(&service.cyber(&["workflows", "runs", "--format", "json"]));
+    let names: Vec<&str> = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["boom"]);
+}
+
+/// Ctrl-C while `--wait` sleeps between two polls stops the run and exits 130.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_between_polls_stops_a_waited_run() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let model = scripted_model::ScriptedModel::start(|_| serde_json::json!({"hold": true}));
+    let env = Env::new();
+    let service = StartedService(&env, workflow_env(&env, &model));
+    let mut child = service
+        .0
+        .command(&["workflows", "run", "x", "--wait"])
+        .env("CYBER_MODELS_PATH", &service.1)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while model.requests().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the agent never reached the model"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Polls take a few milliseconds and the pause between them 200: the signal almost
+    // always lands while the command sleeps.
+    std::thread::sleep(Duration::from_millis(700));
+    let pid = child.id().to_string();
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            model.release();
+            panic!("Ctrl-C did not end `cyber workflows run --wait`");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let output = child.wait_with_output().unwrap();
+    model.release();
+    assert_eq!(status.code(), Some(130), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("interrupted; stopped"),
+        "{}",
+        stderr(&output)
+    );
+    let runs = json(&service.cyber(&["workflows", "runs", "--format", "json"]));
+    assert_eq!(runs[0]["status"], "stopped", "{runs}");
+}
+
+/// The first agent answers; the second waits for [`ScriptedModel::release`].
+#[cfg(unix)]
+fn first_then_held(body: &Value) -> Value {
+    if body.to_string().contains("second step") {
+        return serde_json::json!({"hold": true});
+    }
+    serde_json::json!({"content": "first done"})
+}
+
+#[cfg(unix)]
+fn requests_with(model: &scripted_model::ScriptedModel, needle: &str) -> usize {
+    let requests = model.requests();
+    requests
+        .iter()
+        .filter(|r| r.to_string().contains(needle))
+        .count()
+}
+
+/// Poll `cyber workflows show` until `done` accepts the run.
+#[cfg(unix)]
+fn await_run(service: &StartedService<'_>, id: &str, done: impl Fn(&Value) -> bool) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let run = json(&service.cyber(&["workflows", "show", id, "--format", "json"]));
+        if done(&run) {
+            return run;
+        }
+        assert!(std::time::Instant::now() < deadline, "{run}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// A server killed with SIGKILL while a workflow agent runs never releases that agent's
+/// child ownership. The next server releases it, so resuming the run replays the
+/// settled agent without a model call and continues the interrupted child.
+#[cfg(unix)]
+#[test]
+fn a_run_resumes_after_the_server_is_killed_mid_agent() {
+    let model = scripted_model::ScriptedModel::start(first_then_held);
+    let env = Env::new();
+    let service = StartedService(&env, workflow_env(&env, &model));
+    std::fs::write(
+        env.root.join("cyber-home/config/workflows/steps.js"),
+        "export const meta = { name: 'steps', description: 'Two steps' };\nexport default async () => {\n  const a = await agent('first step');\n  const b = await agent('second step');\n  return { a: a.text, b: b.text };\n};\n",
+    )
+    .unwrap();
+    let started = service.cyber(&["workflows", "run", "steps"]);
+    exits(&started, 0);
+    let id = stdout(&started).trim().to_owned();
+    await_run(&service, &id, |run| {
+        run["agents"]
+            .as_array()
+            .is_some_and(|agents| agents.len() == 2)
+    });
+    let registration: Value = serde_json::from_slice(
+        &std::fs::read(env.root.join("cyber-home/state/server.json")).unwrap(),
+    )
+    .unwrap();
+    let pid = registration["pid"].to_string();
+    assert!(
+        Command::new("kill")
+            .args(["-KILL", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    // Let the held request end; the resumed child asks again.
+    model.release();
+
+    let paused = await_run(&service, &id, |run| run["status"] == "paused");
+    assert_eq!(paused["agents"][1]["status"], "interrupted", "{paused}");
+    exits(&service.cyber(&["workflows", "resume", &id]), 0);
+    let done = await_run(&service, &id, |run| run["status"] != "running");
+    assert_eq!(done["status"], "completed", "{done}");
+    assert_eq!(done["result"]["a"], "first done", "{done}");
+    assert_eq!(done["result"]["b"], "released answer", "{done}");
+    assert_eq!(
+        requests_with(&model, "first step"),
+        1,
+        "replayed, not asked again"
+    );
+    // The interrupted child continued: no replacement child was spawned.
+    let owner = done["session_id"].as_str().unwrap();
+    let children = json(&service.cyber(&[
+        "api",
+        "v1.session.children",
+        "--param",
+        &format!("id={owner}"),
+    ]));
+    assert_eq!(
+        children["data"]["data"].as_array().unwrap().len(),
+        2,
+        "{children}"
     );
 }
 

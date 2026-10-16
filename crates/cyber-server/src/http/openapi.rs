@@ -191,10 +191,10 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/usage",
             "v1.usage.get",
-            "Read durable Session subtree usage",
+            "Read durable Session subtree or Workflow Run usage",
         )
         .query(&["scope", "id"])
-        .ok::<Data<crate::runtime::UsageReport>>(g),
+        .ok::<Data<crate::runtime::ScopeUsage>>(g),
         op(
             "get",
             "/health",
@@ -227,6 +227,59 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "Cancel a background task and await settlement",
         )
         .ok::<Data<crate::runtime::Job>>(g),
+        op(
+            "post",
+            "/workflows/runs",
+            "v1.workflow.run",
+            "Start a Workflow Run from a saved name or an inline script; it executes in the server",
+        )
+        .status(201)
+        .body::<super::workflows::StartBody>(g)
+        .ok::<Data<crate::runtime::WorkflowRun>>(g),
+        op(
+            "get",
+            "/workflows/runs",
+            "v1.workflow.list",
+            "List Workflow Runs, newest first",
+        )
+        .query(&["session_id"])
+        .ok::<Page<crate::runtime::WorkflowRun>>(g),
+        op(
+            "get",
+            "/workflows/runs/{id}",
+            "v1.workflow.get",
+            "Read a Workflow Run with its agents",
+        )
+        .ok::<Data<super::workflows::RunDetail>>(g),
+        op(
+            "post",
+            "/workflows/runs/{id}/pause",
+            "v1.workflow.pause",
+            "Pause a run: in-flight agents finish, no new agent starts",
+        )
+        .ok::<Data<crate::runtime::WorkflowRun>>(g),
+        op(
+            "post",
+            "/workflows/runs/{id}/resume",
+            "v1.workflow.resume",
+            "Relaunch a paused, failed, stopped or budget-exceeded run through replay",
+        )
+        .optional_body::<super::workflows::ResumeBody>(g)
+        .ok::<Data<crate::runtime::WorkflowRun>>(g),
+        op(
+            "post",
+            "/workflows/runs/{id}/stop",
+            "v1.workflow.stop",
+            "Stop a run and cancel its in-flight agents",
+        )
+        .ok::<Data<crate::runtime::WorkflowRun>>(g),
+        op(
+            "get",
+            "/workflows/runs/{id}/logs",
+            "v1.workflow.logs",
+            "Read a run's log() entries",
+        )
+        .ok::<Page<crate::runtime::WorkflowLogEntry>>(g),
         op(
             "get",
             "/sessions/{sessionID}/hook-executions",

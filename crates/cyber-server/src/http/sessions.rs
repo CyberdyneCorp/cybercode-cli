@@ -364,6 +364,7 @@ async fn create(
         child_worktree_setup_pending: false,
         child_worktree: None,
         subagent_name: None,
+        workflow_run_id: None,
         fork_from: None,
         output_schema: None,
         id: body.id,

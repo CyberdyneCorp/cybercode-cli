@@ -249,6 +249,14 @@ export type Data_RevertState = {
   data: RevertState;
 };
 
+export type Data_RunDetail = {
+  data: RunDetail;
+};
+
+export type Data_ScopeUsage = {
+  data: ScopeUsage;
+};
+
 export type Data_Session = {
   data: Session;
 };
@@ -269,8 +277,8 @@ export type Data_SubtreeStopReport = {
   data: SubtreeStopReport;
 };
 
-export type Data_UsageReport = {
-  data: UsageReport;
+export type Data_WorkflowRun = {
+  data: WorkflowRun;
 };
 
 export type Delegation = {
@@ -287,6 +295,16 @@ export type DelegationPhase = "reserved" | "launching";
 export type DelegationStatus = "pending" | "cancelling" | "admitted" | "cancelled" | "failed" | "unknown";
 
 export type Delivery = "steer" | "queue" | "hold";
+
+/** One Workflow failure: a kind, a message and, for script errors, where it happened. */
+export type Diagnostic = {
+  kind: DiagnosticKind;
+  message: string;
+  position?: Position | null;
+};
+
+/** The single kind every Workflow failure is reported with. */
+export type DiagnosticKind = "ParseError" | "UnsupportedSyntax" | "ExecutionFailure" | "AgentFailed" | "SchemaMismatch" | "BudgetExceeded" | "ModelUnavailable" | "NoInteractiveUser" | "Timeout" | "PermissionDenied" | "WorkflowReplayMismatch";
 
 /** Where a durable event sits in its aggregate's history. */
 export type DurableRef = {
@@ -904,6 +922,16 @@ export type Page_SessionRow = {
   cursor: Cursor;
 };
 
+export type Page_WorkflowLogEntry = {
+  data: WorkflowLogEntry[];
+  cursor: Cursor;
+};
+
+export type Page_WorkflowRun = {
+  data: WorkflowRun[];
+  cursor: Cursor;
+};
+
 /** A request waiting for a client. Its Session remains the owner of replies. */
 export type PendingRequest = {
   id: string;
@@ -931,6 +959,12 @@ export type PermissionAsk = {
 export type PermissionReplyBody = {
   reply: ReplyKind;
   message?: string | null;
+};
+
+/** A 1-based source position in the Workflow script. */
+export type Position = {
+  line: number;
+  column: number;
 };
 
 export type ProjectInfo = {
@@ -1018,6 +1052,13 @@ export type RequestRoute = {
   directory: string;
 };
 
+export type ResumeBody = {
+  /** Accept a changed script or configuration as a new revision. */
+  revision?: boolean;
+  /** Run budget fields to override, such as a raised `max_cost_usd`. */
+  budget?: unknown;
+};
+
 export type RetrySafety = "read_only" | "idempotent" | "reconcile" | "never";
 
 export type RevertBody = {
@@ -1068,6 +1109,126 @@ export type ReviewedHook = {
   last_run?: HookLastRun | null;
 };
 
+/** Usage of one Workflow agent: its child Session with descendants. */
+export type RunAgentUsage = {
+  /** `agt_` ID. */
+  agent_id: string;
+  session_id: string;
+  /** The model reference the child ran with. */
+  model: string;
+  /** The tier the call named, when it named one. */
+  tier?: string | null;
+  cost: number;
+  total_tokens: number;
+  unpriced_steps: number;
+};
+
+/**
+ * A Workflow Run budget: the canonical [`Budget`] plus the workflow-specific `max_agents`,
+ * serialized as one flat object.
+ */
+export type RunBudget = {
+  max_turns?: number | null;
+  max_tokens?: number | null;
+  max_cost_usd?: number | null;
+  max_wall_seconds?: number | null;
+  enforcement?: Enforcement;
+  max_agents: number;
+};
+
+/** A run with its agents. */
+export type RunDetail = {
+  id: string;
+  /** `meta.name` of the script. */
+  name: string;
+  /** The owner Session: agents are its children and run under its Mode. */
+  session_id: string;
+  directory: string;
+  /** The run Mode, a ceiling for every agent. */
+  mode: string;
+  /** `inline`, or the saved module's path. */
+  origin: unknown;
+  /**
+   * An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch
+   * or save into `.cyber/workflows/`.
+   */
+  script_file?: string | null;
+  /** `sha256:` digest of the current revision's script source. */
+  digest: string;
+  /** Digest of the engine limits and model tiers the current revision runs with. */
+  config_digest?: string;
+  /**
+   * Script revision, starting at 1; a relaunch with a changed script or configuration
+   * needs a new revision.
+   */
+  revision?: number;
+  args: unknown;
+  status: WorkflowRunStatus;
+  /** Why the run is paused, stopped or ended early. */
+  reason?: string | null;
+  budget?: RunBudget | null;
+  /** Declared phases followed by titles first seen in `phase()`. */
+  phases: string[];
+  /** The current phase. */
+  phase?: string | null;
+  /** The script's return value once completed, when its JSON is at most 1 MiB. */
+  result?: unknown;
+  /** A larger return value's file (`<state>/workflows/<run_id>.result.json`). */
+  result_file?: string | null;
+  /** The start of a larger return value's JSON. */
+  result_preview?: string | null;
+  /**
+   * Agents may ask the owner's attached clients; otherwise every `ask` is rejected
+   * with `No interactive approver for workflow run`.
+   */
+  interactive?: boolean;
+  /**
+   * The owner continues when the summary is admitted (runs started by its `workflow`
+   * tool); otherwise the summary waits in its queue.
+   */
+  continue_owner?: boolean;
+  /** The summary was admitted to the owner as `msg_workflow_<run_id>`. */
+  notified?: boolean;
+  error?: Diagnostic | null;
+  started_ms: number;
+  ended_ms?: number | null;
+  agents: WorkflowAgent[];
+};
+
+/** The `scope` of a Workflow Run usage report. */
+export type RunScope = "run";
+
+/** A rollup of a run's agents by model or by tier. */
+export type RunUsageGroup = {
+  /** The model reference or tier name. */
+  key: string;
+  agents: number;
+  cost: number;
+  total_tokens: number;
+  unpriced_steps: number;
+};
+
+/**
+ * `GET /usage?scope=run`: the run's agents summed, per agent, per model and per tier
+ * (`observability-costs` → per workflow run, agent and model). The orchestrator script
+ * makes no model calls of its own.
+ */
+export type RunUsageReport = {
+  scope: RunScope;
+  id: string;
+  cost: number;
+  total_tokens: number;
+  unpriced_steps: number;
+  /** False when a child's descendant usage history is incomplete. */
+  usage_complete: boolean;
+  agents: RunAgentUsage[];
+  models: RunUsageGroup[];
+  tiers: RunUsageGroup[];
+};
+
+/** One of the usage reports a scope returns, discriminated by `scope`. */
+export type ScopeUsage = UsageReport | RunUsageReport;
+
 /** A Session with its live status. */
 export type Session = {
   id: string;
@@ -1078,6 +1239,8 @@ export type Session = {
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
+  /** The Workflow Run (`run_` ID) whose `agent()` call created this child. */
+  workflow_run_id?: string | null;
   agent: string;
   model: string;
   mode: string;
@@ -1126,6 +1289,8 @@ export type SessionInfo = {
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
+  /** The Workflow Run (`run_` ID) whose `agent()` call created this child. */
+  workflow_run_id?: string | null;
   agent: string;
   model: string;
   mode: string;
@@ -1162,6 +1327,9 @@ export type SessionRow = {
   /** False when retained historical receipts lack source token-class evidence. */
   children_token_classes_complete?: boolean;
 };
+
+/** The `scope` of a Session usage report; it discriminates [`ScopeUsage`]. */
+export type SessionScope = "session";
 
 export type SetupRecoveryRequest = {
   revision: number;
@@ -1240,6 +1408,21 @@ export type SkillOrigin = "builtin" | "user" | "project" | "config";
 export type Sourced = {
   message_id: string;
   text: string;
+};
+
+export type StartBody = {
+  /** The owner Session: agents become its children and run under its Mode. */
+  session_id: string;
+  /** A saved Workflow's `meta.name`, discovered from the owner's Location. */
+  name?: string | null;
+  /** An inline JavaScript module. */
+  script?: string | null;
+  args?: unknown;
+  /**
+   * Run budget fields, plus `max_agents`, overriding `budgets.run` and `meta.budget`:
+   * the authenticated client may raise a limit, as on resume.
+   */
+  budget?: unknown;
 };
 
 export type StopAccepted = {
@@ -1337,12 +1520,108 @@ export type UsageAmount = {
 };
 
 export type UsageReport = {
-  scope: string;
+  scope: SessionScope;
   id: string;
   own: UsageAmount;
   descendants: UsageAmount;
   total: UsageAmount;
 };
+
+/** One `agent()` call (`workflow.agent.started.1`, then `workflow.agent.settled.1`). */
+export type WorkflowAgent = {
+  /** `agt_` ID; also the child Session's subagent name. */
+  id: string;
+  run_id: string;
+  /** `sha256(prompt + canonical options)` plus the ordinal of that key in the run. */
+  call_key: string;
+  /** The child Session, when one was created. */
+  session_id?: string | null;
+  phase?: string | null;
+  label?: string | null;
+  /** The resolved model reference; `None` inherits the owner's model. */
+  model?: string | null;
+  /** The tier named by the call's `model` option. */
+  tier?: string | null;
+  /** The branch of the agent's own worktree (`workflows` → Write isolation default). */
+  branch?: string | null;
+  /**
+   * `running`, `completed`, `failed`, `cancelled` (stopped) or `interrupted` (the
+   * server stopped; a resume continues its child Session).
+   */
+  status: string;
+  /** The value the script received. */
+  result?: unknown;
+  error?: Diagnostic | null;
+  cost: number;
+  tokens: number;
+};
+
+/** One `log()` call. */
+export type WorkflowLogEntry = {
+  seq: number;
+  time_ms: number;
+  values: unknown[];
+};
+
+/** A Workflow Run as clients see it. */
+export type WorkflowRun = {
+  id: string;
+  /** `meta.name` of the script. */
+  name: string;
+  /** The owner Session: agents are its children and run under its Mode. */
+  session_id: string;
+  directory: string;
+  /** The run Mode, a ceiling for every agent. */
+  mode: string;
+  /** `inline`, or the saved module's path. */
+  origin: unknown;
+  /**
+   * An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch
+   * or save into `.cyber/workflows/`.
+   */
+  script_file?: string | null;
+  /** `sha256:` digest of the current revision's script source. */
+  digest: string;
+  /** Digest of the engine limits and model tiers the current revision runs with. */
+  config_digest?: string;
+  /**
+   * Script revision, starting at 1; a relaunch with a changed script or configuration
+   * needs a new revision.
+   */
+  revision?: number;
+  args: unknown;
+  status: WorkflowRunStatus;
+  /** Why the run is paused, stopped or ended early. */
+  reason?: string | null;
+  budget?: RunBudget | null;
+  /** Declared phases followed by titles first seen in `phase()`. */
+  phases: string[];
+  /** The current phase. */
+  phase?: string | null;
+  /** The script's return value once completed, when its JSON is at most 1 MiB. */
+  result?: unknown;
+  /** A larger return value's file (`<state>/workflows/<run_id>.result.json`). */
+  result_file?: string | null;
+  /** The start of a larger return value's JSON. */
+  result_preview?: string | null;
+  /**
+   * Agents may ask the owner's attached clients; otherwise every `ask` is rejected
+   * with `No interactive approver for workflow run`.
+   */
+  interactive?: boolean;
+  /**
+   * The owner continues when the summary is admitted (runs started by its `workflow`
+   * tool); otherwise the summary waits in its queue.
+   */
+  continue_owner?: boolean;
+  /** The summary was admitted to the owner as `msg_workflow_<run_id>`. */
+  notified?: boolean;
+  error?: Diagnostic | null;
+  started_ms: number;
+  ended_ms?: number | null;
+};
+
+export type WorkflowRunStatus = "queued" | "running" | "paused" | "completed" | "failed" | "budget_exceeded" | "stopped" | "waiting_input";
 
 export type WorktreeEntry = {
   worktree: WorktreeInfo;

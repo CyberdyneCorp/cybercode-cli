@@ -19,6 +19,7 @@ pub mod serve;
 pub mod skills;
 pub mod trust;
 pub mod tui;
+pub mod workflows;
 
 use serde_json::json;
 
@@ -64,6 +65,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Skills { cmd } => skills::run(cmd, &ctx, &cli.global),
         Command::Commands { cmd } => skills::run_commands(cmd, &ctx, &cli.global),
         Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
+        Command::Workflows { cmd } => workflows::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),
         Command::Models(args) => models::run(args, &ctx, &cli.global),
         Command::Permissions { cmd } => permissions::run(cmd, &ctx, &cli.global),

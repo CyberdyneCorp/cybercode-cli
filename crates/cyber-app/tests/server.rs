@@ -1574,6 +1574,7 @@ async fn hook_catalog_api_last_run_preserves_outcome_without_opted_in_io() {
             agent: "build".into(),
             mode: "default".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         serde_json::Map::new(),

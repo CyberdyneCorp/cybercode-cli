@@ -266,6 +266,9 @@ pub struct SessionEnvelope {
     /// The checkout root of a git Location.
     pub workspace: Option<String>,
     pub parent_session_id: Option<String>,
+    /// The Workflow Run of a workflow agent's Session (`hooks` → Hooks in subagents and
+    /// workflows).
+    pub workflow_run_id: Option<String>,
 }
 
 impl SessionEnvelope {
@@ -288,6 +291,7 @@ impl SessionEnvelope {
             agent: agent.into(),
             mode: mode.into(),
             parent_session_id: self.parent_session_id.clone(),
+            workflow_run_id: self.workflow_run_id.clone(),
         }
     }
 
@@ -314,6 +318,9 @@ pub struct LifecycleHook {
     /// The matcher subject.
     pub subject: String,
     pub fields: serde_json::Map<String, Value>,
+    /// The Workflow Run a `WorkflowRunStart`/`WorkflowRunEnd` event belongs to; the
+    /// envelope carries it as `workflow_run_id`.
+    pub workflow_run_id: Option<String>,
 }
 
 /// The merged decision of a lifecycle event and the catalog's continuation cap.
@@ -358,6 +365,72 @@ impl HookEffects {
             );
         }
     }
+}
+
+/// One Workflow `agent()` call, spawned as a child Session of the run's owner Session
+/// (`workflows` → agent() call). The runtime acquires `permit` from the server-wide
+/// Workflow agent limit; the host keeps it until the child has settled.
+pub struct WorkflowAgentRequest {
+    pub run_id: String,
+    /// The `agt_` ID of this call; also the child's subagent name.
+    pub agent_id: String,
+    /// Stable for this call across relaunches of the run: the replay key and its ordinal.
+    pub call_key: String,
+    /// The owner Session; its `mode` is the run Mode, a ceiling for the child.
+    pub owner: TurnContext,
+    pub prompt: String,
+    /// Agent profile (default `general`).
+    pub agent: Option<String>,
+    /// A resolved model reference; `None` inherits the owner's model.
+    pub model: Option<String>,
+    /// JSON Schema the child's result must match.
+    pub schema: Option<Value>,
+    pub label: Option<String>,
+    /// Continue the existing child Session named `agent_id` (an agent the run started
+    /// before it was interrupted) instead of creating one.
+    pub resume: bool,
+    /// Run the child in its own managed worktree (`worktrees` → Workflow agent isolation).
+    pub worktree: Option<RunWorktree>,
+    pub permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+/// The managed worktree of an isolated Workflow agent: `run-<ulid>-<index>` on branch
+/// `cyber/run-<ulid>/<index>`, where `<index>` is the agent's 1-based start ordinal in
+/// the run. It is kept until the run is archived or `cyber worktree prune` runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunWorktree {
+    pub name: String,
+    pub branch: String,
+}
+
+impl RunWorktree {
+    pub fn new(run_id: &str, index: u64) -> Self {
+        let id = run_id
+            .strip_prefix("run_")
+            .unwrap_or(run_id)
+            .to_ascii_lowercase();
+        Self {
+            name: format!("run-{id}-{index}"),
+            branch: format!("cyber/run-{id}/{index}"),
+        }
+    }
+}
+
+/// A settled Workflow agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowAgentOutput {
+    pub session_id: String,
+    /// The final answer; empty for a schema-governed child.
+    pub text: String,
+    /// The schema-validated result, when a schema was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured: Option<Value>,
+    /// Known cost of the child and its descendants, in USD.
+    pub cost: f64,
+    pub tokens: u64,
+    /// The branch of an isolated child's worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 pub trait ToolHost: Send + Sync {
@@ -501,6 +574,29 @@ pub trait ToolHost: Send + Sync {
         } else {
             self.subtask_with_agent(turn, request.prompt, request.agent, cancel)
         }
+    }
+
+    /// Whether a Workflow agent with this profile (default `general`) edits files in a
+    /// Location a worktree can isolate: a git checkout, and a tool set that offers an edit
+    /// tool (`workflows` → Write isolation default). Hosts without agent profiles report
+    /// false.
+    fn workflow_agent_writes(&self, _directory: &str, _agent: Option<&str>) -> bool {
+        false
+    }
+
+    /// Spawn a Workflow agent and wait for its result (`workflows` → agent() call). Failures
+    /// are typed: `AgentFailed`, `SchemaMismatch` or `PermissionDenied`.
+    fn spawn_workflow_agent(
+        &self,
+        _request: WorkflowAgentRequest,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<WorkflowAgentOutput, cyber_workflow::Diagnostic>> {
+        Box::pin(async {
+            Err(cyber_workflow::Diagnostic::new(
+                cyber_workflow::DiagnosticKind::AgentFailed,
+                "workflow agents are not supported by this host",
+            ))
+        })
     }
 
     /// Run a user shell command (`!`) in a Location under the sandbox, without prompts.

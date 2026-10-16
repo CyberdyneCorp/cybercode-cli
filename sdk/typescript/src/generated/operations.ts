@@ -575,7 +575,51 @@ export interface Operations {
       id?: QueryValue;
     };
     body: undefined;
-    response: S.UsageReport;
+    response: S.ScopeUsage;
+  };
+  "v1.workflow.get": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.RunDetail;
+  };
+  "v1.workflow.list": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.Page_WorkflowRun;
+  };
+  "v1.workflow.logs": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Page_WorkflowLogEntry;
+  };
+  "v1.workflow.pause": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.WorkflowRun;
+  };
+  "v1.workflow.resume": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.ResumeBody;
+    response: S.WorkflowRun;
+  };
+  "v1.workflow.run": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.StartBody;
+    response: S.WorkflowRun;
+  };
+  "v1.workflow.stop": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.WorkflowRun;
   };
   "v1.worktree.create": {
     path: Record<string, never>;
@@ -1552,6 +1596,90 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.workflow.get": {
+    tag: "workflow",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/workflows/runs/{id}",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.list": {
+    tag: "workflow",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/workflows/runs",
+    pathParams: [],
+    query: ["session_id"],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.workflow.logs": {
+    tag: "workflow",
+    name: "logs",
+    method: "GET",
+    path: "/api/v1/workflows/runs/{id}/logs",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.workflow.pause": {
+    tag: "workflow",
+    name: "pause",
+    method: "POST",
+    path: "/api/v1/workflows/runs/{id}/pause",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.resume": {
+    tag: "workflow",
+    name: "resume",
+    method: "POST",
+    path: "/api/v1/workflows/runs/{id}/resume",
+    pathParams: ["id"],
+    query: [],
+    body: "optional",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.run": {
+    tag: "workflow",
+    name: "run",
+    method: "POST",
+    path: "/api/v1/workflows/runs",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.stop": {
+    tag: "workflow",
+    name: "stop",
+    method: "POST",
+    path: "/api/v1/workflows/runs/{id}/stop",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.worktree.create": {
     tag: "worktree",
     name: "create",
@@ -1880,9 +2008,32 @@ export function createGroups(caller: Caller) {
         caller.call("v1.tool.schema", {}, options),
     },
     usage: {
-      /** Read durable Session subtree usage (`GET /api/v1/usage`) */
+      /** Read durable Session subtree or Workflow Run usage (`GET /api/v1/usage`) */
       get: (query?: Operations["v1.usage.get"]["query"], options?: RequestOptions): Promise<Operations["v1.usage.get"]["response"]> =>
         caller.call("v1.usage.get", { query }, options),
+    },
+    workflow: {
+      /** Read a Workflow Run with its agents (`GET /api/v1/workflows/runs/{id}`) */
+      get: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.get"]["response"]> =>
+        caller.call("v1.workflow.get", { path: { id } }, options),
+      /** List Workflow Runs, newest first (`GET /api/v1/workflows/runs`) */
+      list: (query?: Operations["v1.workflow.list"]["query"], options?: RequestOptions): Promise<Operations["v1.workflow.list"]["response"]> =>
+        caller.call("v1.workflow.list", { query }, options),
+      /** Read a run's log() entries (`GET /api/v1/workflows/runs/{id}/logs`) */
+      logs: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.logs"]["response"]> =>
+        caller.call("v1.workflow.logs", { path: { id } }, options),
+      /** Pause a run: in-flight agents finish, no new agent starts (`POST /api/v1/workflows/runs/{id}/pause`) */
+      pause: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.pause"]["response"]> =>
+        caller.call("v1.workflow.pause", { path: { id } }, options),
+      /** Relaunch a paused, failed, stopped or budget-exceeded run through replay (`POST /api/v1/workflows/runs/{id}/resume`) */
+      resume: (id: string, body?: Operations["v1.workflow.resume"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.resume"]["response"]> =>
+        caller.call("v1.workflow.resume", { path: { id }, body }, options),
+      /** Start a Workflow Run from a saved name or an inline script; it executes in the server (`POST /api/v1/workflows/runs`) */
+      run: (body: Operations["v1.workflow.run"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.run"]["response"]> =>
+        caller.call("v1.workflow.run", { body }, options),
+      /** Stop a run and cancel its in-flight agents (`POST /api/v1/workflows/runs/{id}/stop`) */
+      stop: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.stop"]["response"]> =>
+        caller.call("v1.workflow.stop", { path: { id } }, options),
     },
     worktree: {
       /** Create a managed worktree Session and run setup (`POST /api/v1/worktrees`) */

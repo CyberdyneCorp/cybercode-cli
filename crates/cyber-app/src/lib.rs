@@ -230,7 +230,21 @@ impl App {
             snapshots,
         });
         host.attach(runtime.clone());
+        // One FIFO limit for every Workflow agent of this server (`workflows.max_concurrent`,
+        // reduced to the core count), fixed at startup like the listener settings.
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        let workflow_limit = config::WorkflowSettings::from_config(&global)
+            .unwrap_or_default()
+            .effective_max_concurrent(cores);
+        runtime.configure_workflow_concurrency(workflow_limit as usize);
+        // Inline scripts and return values larger than 1 MiB (`workflows` → Run results).
+        runtime.configure_workflow_dir(opts.paths.state.join("workflows"));
         runtime.recover_jobs().await.map_err(|e| e.to_string())?;
+        // Runs a previous process left executing come back paused; resume continues them.
+        runtime
+            .recover_workflow_runs()
+            .await
+            .map_err(|e| e.to_string())?;
         let config_for_app = Arc::clone(&config);
         let services = services::AppServices::new(
             resolver,

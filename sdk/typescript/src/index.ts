@@ -25,3 +25,9 @@ export type {
 } from "./requests.js";
 export { SseParser, type SseMessage } from "./sse.js";
 export type { CyberHandle, StartOptions } from "./start.js";
+export {
+  WorkflowRunError,
+  type ResultOptions,
+  type WorkflowRunHandle,
+  type WorkflowRunInput,
+} from "./workflows.js";

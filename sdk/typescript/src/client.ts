@@ -24,6 +24,7 @@ import {
 import { eventStream } from "./stream.js";
 import type { AppTool } from "./tools.js";
 import { HttpTransport, type Transport } from "./transport.js";
+import { startWorkflowRun, type WorkflowRunHandle, type WorkflowRunInput } from "./workflows.js";
 
 /** Typed parameters of `client.request(id, params)`. */
 export type RequestParams<K extends OperationId> = {
@@ -42,7 +43,7 @@ export interface CyberClient extends Groups {}
 /**
  * A client for one Location. Generated methods live in per-tag groups (`client.session.list()`,
  * `client.message.get()`, ...); the plural groups (`sessions`, `events`, `permissions`,
- * `questions`) hold hand-written helpers.
+ * `questions`, `workflows`) hold hand-written helpers.
  */
 export class CyberClient implements Caller {
   readonly #transport: Transport;
@@ -73,6 +74,14 @@ export class CyberClient implements Caller {
   readonly permissions = {
     /** Reply to permission requests with `handler`'s decision; returns an unsubscribe function. */
     onRequest: (handler: PermissionHandler, options?: OnRequestOptions): (() => void) => onPermissionRequest(this, handler, options),
+  };
+
+  readonly workflows = {
+    /**
+     * Start a Workflow Run (a saved `name` or an inline `script`, with `args` and `budget`)
+     * and return its handle: `events()`, `status()`, `pause()`, `resume()`, `cancel()`, `result()`.
+     */
+    run: (input: WorkflowRunInput): Promise<WorkflowRunHandle> => startWorkflowRun(this, input),
   };
 
   readonly questions = {

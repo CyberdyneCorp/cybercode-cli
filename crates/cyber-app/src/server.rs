@@ -87,6 +87,11 @@ pub async fn run_server_until(
     let socket = local_socket(&opts, &app.paths)?;
     let _lock = cyber_store::OwnershipLock::acquire(&app.paths.server_lock())
         .map_err(|e| format!("another cyber server is already running for this user ({e})"))?;
+    let server_id = cyber_core::ids::new_id("srv");
+    // Holding the lock proves earlier server processes exited: release what they owned.
+    app.runtime
+        .adopt_server_lock(&server_id)
+        .map_err(|e| format!("cannot recover child ownership of an earlier server: {e}"))?;
     let retention = crate::retention::Retention::from_config(
         &(app.config)(&app.state.options.default_directory)
             .map(|(v, _)| v)
@@ -103,7 +108,7 @@ pub async fn run_server_until(
         .and_then(|l| l.local_addr().ok())
         .map(|a: SocketAddr| format!("http://{a}"));
     let registration = Registration {
-        id: cyber_core::ids::new_id("srv"),
+        id: server_id,
         version: crate::version().into(),
         url: url.clone().unwrap_or_default(),
         socket: socket.as_ref().map(|p| p.display().to_string()),

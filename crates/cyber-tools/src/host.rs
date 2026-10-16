@@ -6,6 +6,7 @@ mod remote_sources;
 mod review;
 mod skill_catalog;
 mod template_expand;
+mod workflow_agents;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -513,6 +514,35 @@ impl BuiltinHost {
             rules.extend(immutable);
         }
         Ok(rules)
+    }
+
+    /// Why a `workflow.run` rule of the owner Session denies `module`, for runs started or
+    /// resumed over the API (`workflows` → Permissions for runs). The client approves the
+    /// run by asking for it, so only a deny refuses; it holds for the bare name and for the
+    /// origin-qualified resource.
+    pub fn workflow_run_denial(
+        &self,
+        owner: &TurnContext,
+        module: &cyber_workflow::WorkflowModule,
+    ) -> Result<Option<String>, String> {
+        let rules = self.session_rules(
+            Path::new(&owner.directory),
+            Some(&owner.agent),
+            &owner.rules,
+        )?;
+        let resources = [
+            module.meta.name.clone(),
+            permissions::workflow_resource(module),
+        ];
+        let denied = resources.iter().any(|resource| {
+            permissions::evaluate(&rules, permissions::WORKFLOW_RUN, resource).0 == Effect::Deny
+        });
+        Ok(denied.then(|| {
+            format!(
+                "Permission denied: workflow.run is denied for {}",
+                module.meta.name
+            )
+        }))
     }
 
     pub(crate) async fn policy(&self, inv: &Invocation) -> Result<Policy, String> {
@@ -1030,12 +1060,17 @@ impl ToolHost for BuiltinHost {
                 inv: &inv,
                 cancel,
             };
-            let output = tools::agent::run_with_skill(&ctx, true, skill_command, hook_context)
-                .await
-                .map_err(|e| match e {
-                    ToolError::Failed(message) => message,
-                    ToolError::Aborted => "Subtask interrupted".into(),
-                })?;
+            let output = tools::agent::run_with_skill(
+                &ctx,
+                tools::agent::SpawnSource::User,
+                skill_command,
+                hook_context,
+            )
+            .await
+            .map_err(|e| match e {
+                ToolError::Failed(message) => message,
+                ToolError::Aborted => "Subtask interrupted".into(),
+            })?;
             let result: Value = serde_json::from_str(&output).map_err(|e| e.to_string())?;
             let job = result["job_id"]
                 .as_str()
@@ -1045,6 +1080,19 @@ impl ToolHost for BuiltinHost {
                 .job(job)
                 .map_err(|e| e.to_string())
         })
+    }
+
+    fn spawn_workflow_agent(
+        &self,
+        request: cyber_server::runtime::WorkflowAgentRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::WorkflowAgentOutput, cyber_workflow::Diagnostic>>
+    {
+        Box::pin(self.workflow_agent(request, cancel))
+    }
+
+    fn workflow_agent_writes(&self, directory: &str, agent: Option<&str>) -> bool {
+        self.workflow_writer(directory, agent)
     }
 
     fn shell(
@@ -1127,7 +1175,7 @@ fn offered(
     by_model && by_mode
 }
 
-fn profile_allows_tool(profile: &cyber_core::config::AgentProfile, name: &str) -> bool {
+pub(crate) fn profile_allows_tool(profile: &cyber_core::config::AgentProfile, name: &str) -> bool {
     let matches = |patterns: &[String]| {
         patterns
             .iter()
@@ -1362,6 +1410,16 @@ impl Ctx<'_> {
     }
 
     /// Decide, asking the user when the policy says `ask`.
+    /// Refuse `req` when a rule denies it, without asking: the deny part of
+    /// [`Self::authorize`].
+    pub async fn refuse_denied(&self, mut req: Request) -> Result<(), ToolError> {
+        req.tool = Some(self.inv.name.clone());
+        match self.policy.rule_denies(&req) {
+            Some(reason) => Err(self.denied(&req, "rule", deny_message(&reason)).await),
+            None => Ok(()),
+        }
+    }
+
     pub async fn authorize(
         &self,
         mut req: Request,
@@ -1496,9 +1554,20 @@ impl Ctx<'_> {
             PermissionReply::Reject { message: None } => {
                 Err(self.denied(&req, "user", "Rejected by user".into()).await)
             }
-            PermissionReply::Unattended => Err(self
-                .denied(&req, "unattended", unattended(self.policy.mode))
-                .await),
+            PermissionReply::Unattended => {
+                let message = match self.host.runtime() {
+                    Some(runtime)
+                        if runtime
+                            .session_workflow_run(&self.inv.session_id)
+                            .await
+                            .is_some() =>
+                    {
+                        cyber_server::runtime::NO_WORKFLOW_APPROVER.to_owned()
+                    }
+                    _ => unattended(self.policy.mode),
+                };
+                Err(self.denied(&req, "unattended", message).await)
+            }
         }
     }
 }

@@ -29,6 +29,11 @@ impl ModelRole {
         }
     }
 
+    /// The role named by its configuration key.
+    pub fn parse(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| role.key() == key)
+    }
+
     pub const ALL: [ModelRole; 6] = [
         Self::Default,
         Self::Small,
@@ -72,6 +77,14 @@ pub fn role_ref(config: &Value, role: ModelRole) -> Option<String> {
             explicit(role.key()).or_else(small).or_else(default)
         }
     }
+}
+
+/// The model a Workflow tier naming `role` uses (`workflows` → Model tiers and mixing).
+/// Unlike [`role_ref`], an unset role falls back to the default model explicitly, so the
+/// `verify` tier (`advisor`) still runs when no advisor is configured. `None` means no
+/// model is configured at all; the agent then inherits its parent's model.
+pub fn tier_role_ref(config: &Value, role: ModelRole) -> Option<String> {
+    role_ref(config, role).or_else(|| role_ref(config, ModelRole::Default))
 }
 
 /// The configured default model when available, else the most recently used available
@@ -146,4 +159,37 @@ pub fn record_recent(path: &Path, model_ref: &str) -> std::io::Result<()> {
     let text = serde_json::to_string_pretty(&json!({ "recent": recent }))
         .map_err(std::io::Error::other)?;
     cyber_core::trust::write_private_atomic(path, text.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tier_roles_fall_back_to_the_default_model() {
+        let config = json!({"model_roles":{"default":"p/big","small":"p/small"}});
+        assert_eq!(role_ref(&config, ModelRole::Advisor), None);
+        assert_eq!(
+            tier_role_ref(&config, ModelRole::Advisor).as_deref(),
+            Some("p/big")
+        );
+        assert_eq!(
+            tier_role_ref(&config, ModelRole::Small).as_deref(),
+            Some("p/small")
+        );
+        let advised = json!({"model":"p/big","model_roles":{"advisor":"p/wise"}});
+        assert_eq!(
+            tier_role_ref(&advised, ModelRole::Advisor).as_deref(),
+            Some("p/wise")
+        );
+        assert_eq!(tier_role_ref(&json!({}), ModelRole::Advisor), None);
+    }
+
+    #[test]
+    fn roles_parse_from_their_keys() {
+        for role in ModelRole::ALL {
+            assert_eq!(ModelRole::parse(role.key()), Some(role));
+        }
+        assert_eq!(ModelRole::parse("verify"), None);
+    }
 }

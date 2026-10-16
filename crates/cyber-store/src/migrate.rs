@@ -85,6 +85,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261015000000_mcp_serve",
         sql: include_str!("../migrations/20261015000000_mcp_serve.sql"),
     },
+    Migration {
+        id: "20261016000000_workflow_runs",
+        sql: include_str!("../migrations/20261016000000_workflow_runs.sql"),
+    },
+    Migration {
+        id: "20261017000000_workflow_budget",
+        sql: include_str!("../migrations/20261017000000_workflow_budget.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {

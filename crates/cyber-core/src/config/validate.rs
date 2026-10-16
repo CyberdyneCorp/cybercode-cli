@@ -137,6 +137,9 @@ pub fn validate(
     if let Err(error) = super::McpServeSettings::from_config(value) {
         issues.push(error);
     }
+    if let Err(error) = super::WorkflowSettings::from_config(value) {
+        issues.push(error);
+    }
     issues
 }
 

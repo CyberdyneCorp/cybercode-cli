@@ -334,6 +334,7 @@ impl Inner {
             inner: self.clone(),
         };
         request.routed_to = match runtime.ancestors(&info).await {
+            Ok(ancestors) if runtime.unattended_workflow(&info, &ancestors) => return false,
             Ok(ancestors) => ancestors
                 .into_iter()
                 .map(|info| RequestRoute {
@@ -655,5 +656,48 @@ impl Runtime {
             "",
             &info.agent,
         ))
+    }
+}
+
+/// Workflow agents of a non-interactive run (`permissions-modes` → Non-interactive
+/// behavior; `workflows` → Permissions for runs) have no approver: their requests resolve
+/// `Unattended` at once and the tool reports [`NO_WORKFLOW_APPROVER`].
+pub const NO_WORKFLOW_APPROVER: &str = "No interactive approver for workflow run";
+
+impl Runtime {
+    /// The Workflow Run a Session belongs to: its own `workflow_run_id`, or the nearest
+    /// ancestor's (a subagent of a workflow agent).
+    pub async fn session_workflow_run(&self, session_id: &str) -> Option<String> {
+        self.workflow_run_of(session_id).await.ok().flatten()
+    }
+
+    /// [`Runtime::session_workflow_run`] for checks that must fail closed: a Session or
+    /// ancestor that cannot be read is an error, not "no run".
+    pub async fn workflow_run_of(&self, session_id: &str) -> Result<Option<String>, RuntimeError> {
+        let info = self.state(session_id).await?.info;
+        if info.workflow_run_id.is_some() {
+            return Ok(info.workflow_run_id);
+        }
+        let ancestors = self.ancestors(&info).await?;
+        Ok(ancestors.into_iter().find_map(|info| info.workflow_run_id))
+    }
+
+    /// Whether a Session or one of its ancestors belongs to a run that is not
+    /// interactive. A run that cannot be read counts as not interactive.
+    fn unattended_workflow(
+        &self,
+        info: &super::SessionInfo,
+        ancestors: &[super::SessionInfo],
+    ) -> bool {
+        std::iter::once(info)
+            .chain(ancestors)
+            .filter_map(|session| session.workflow_run_id.as_deref())
+            .any(|run| {
+                !self
+                    .workflow_run(run)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|run| run.interactive)
+            })
     }
 }

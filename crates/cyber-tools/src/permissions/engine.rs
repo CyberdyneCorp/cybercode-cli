@@ -255,6 +255,32 @@ pub fn evaluate_all(rules: &[Rule], action: &str, resources: &[String]) -> Effec
         .unwrap_or(Effect::Ask)
 }
 
+/// Starting a Workflow Run, with the workflow name as resource (`workflows` → Permissions
+/// for runs).
+pub const WORKFLOW_RUN: &str = "workflow.run";
+
+/// The `workflow.run` resource of a module (`workflows` → Permissions for runs): the
+/// name of a global or bundled saved Workflow, `project:<name>` for a project one and
+/// `inline:<name>@<digest>` for an inline script. A script declares its own name, so a
+/// rule or an "always" approval for one origin never covers a script of another origin
+/// (or another inline script) that merely declares the same name. Deny rules for the
+/// bare name hold for every origin.
+pub fn workflow_resource(module: &cyber_workflow::WorkflowModule) -> String {
+    use cyber_workflow::{Origin, Scope};
+    let name = &module.meta.name;
+    match &module.origin {
+        Origin::Saved {
+            scope: Scope::Global,
+            ..
+        } => name.clone(),
+        Origin::Saved {
+            scope: Scope::Project,
+            ..
+        } => format!("project:{name}"),
+        Origin::Inline => format!("inline:{name}@{}", module.digest),
+    }
+}
+
 /// Defaults without configuration (`permissions-modes` → Default rules).
 pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
     let mut rules = vec![Rule::new("*", "*", Effect::Ask, "default")];
@@ -277,6 +303,8 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
         rules.push(Rule::new(action, "*.env.example", Effect::Allow, "default"));
     }
     rules.push(Rule::new("external_directory", "*", Effect::Ask, "default"));
+    // Explicit, so inspection names its source; `auto` and `bypass` allow it.
+    rules.push(Rule::new(WORKFLOW_RUN, "*", Effect::Ask, "default"));
     for dir in allowed_dirs {
         rules.push(Rule::new(
             "external_directory",
@@ -404,6 +432,14 @@ impl Policy {
             })
     }
 
+    /// Why a rule (or a user ceiling) denies `req`, ignoring Mode and `ask`.
+    pub(crate) fn rule_denies(&self, req: &Request) -> Option<String> {
+        match self.rule_denial(req, request_effect(&self.rules, req)) {
+            Some(Decision::Deny(reason)) => Some(reason),
+            _ => None,
+        }
+    }
+
     /// Explicit user delegation approves only spawn admission; child tools still use decide.
     pub(crate) fn user_delegation(&self, req: &Request) -> Decision {
         let ruled = request_effect(&self.rules, req);
@@ -482,6 +518,7 @@ impl Policy {
             (_, Effect::Deny) => Decision::Deny(format!("denied by rule for {}", req.action)),
             (_, Effect::Allow) => Decision::Allow,
             (Mode::Bypass, Effect::Ask) => Decision::Allow,
+            (Mode::Auto, Effect::Ask) if self.default_workflow_run(req) => Decision::Allow,
             (Mode::AcceptEdits, Effect::Ask) if req.file_edit && self.inside_location(req) => {
                 Decision::Allow
             }
@@ -490,6 +527,17 @@ impl Policy {
             }
             (_, Effect::Ask) => Decision::Ask,
         }
+    }
+
+    /// `workflow.run` asks only through its default rule: `auto` starts the run without
+    /// the classifier; a configured `ask` still reaches it.
+    fn default_workflow_run(&self, req: &Request) -> bool {
+        req.action == WORKFLOW_RUN
+            && req.resources.iter().all(|resource| {
+                evaluate(&self.rules, WORKFLOW_RUN, resource)
+                    .1
+                    .is_some_and(|rule| rule.source == "default")
+            })
     }
 
     fn inside_location(&self, req: &Request) -> bool {
@@ -661,6 +709,101 @@ mod tests {
             evaluate(&defaults(&[], false), "question", "*").0,
             Effect::Deny
         );
+    }
+
+    #[test]
+    fn a_workflow_allow_rule_or_approval_covers_only_its_origin() {
+        use cyber_workflow::{Origin, Scope, WorkflowModule};
+        let source = "export const meta = { name: 'audit', description: 'Audit' };\n";
+        let saved = |scope| {
+            WorkflowModule::parse(
+                source,
+                Origin::Saved {
+                    scope,
+                    path: "/w/audit.js".into(),
+                },
+            )
+            .unwrap()
+        };
+        let inline = WorkflowModule::inline(source).unwrap();
+        let other = WorkflowModule::inline(format!("{source}log(1);\n")).unwrap();
+        assert_eq!(workflow_resource(&saved(Scope::Global)), "audit");
+        assert_eq!(workflow_resource(&saved(Scope::Project)), "project:audit");
+        assert_eq!(
+            workflow_resource(&inline),
+            format!("inline:audit@{}", inline.digest)
+        );
+        let run = |module: &WorkflowModule| Request {
+            action: WORKFLOW_RUN.into(),
+            resources: vec![workflow_resource(module)],
+            ..Default::default()
+        };
+        // `audit: allow` (the global saved Workflow) does not cover an inline script or a
+        // project file that declares the same name.
+        let mut rules = defaults(&[], true);
+        rules.push(Rule::new(WORKFLOW_RUN, "audit", Effect::Allow, "global"));
+        let allowed = policy(rules, Mode::Default);
+        assert_eq!(allowed.decide(&run(&saved(Scope::Global))), Decision::Allow);
+        assert_eq!(allowed.decide(&run(&saved(Scope::Project))), Decision::Ask);
+        assert_eq!(allowed.decide(&run(&inline)), Decision::Ask);
+        // An "always" approval of one inline script covers only that script.
+        let mut approved = policy(defaults(&[], true), Mode::Default);
+        approved.saved = vec![Rule::new(
+            WORKFLOW_RUN,
+            &workflow_resource(&inline),
+            Effect::Allow,
+            "session",
+        )];
+        assert_eq!(approved.decide(&run(&inline)), Decision::Allow);
+        assert_eq!(approved.decide(&run(&other)), Decision::Ask);
+        assert_eq!(approved.decide(&run(&saved(Scope::Global))), Decision::Ask);
+        // A deny for the bare name holds for every origin through `rule_denies`.
+        let mut rules = defaults(&[], true);
+        rules.push(Rule::new(WORKFLOW_RUN, "audit", Effect::Deny, "global"));
+        let denied = policy(rules, Mode::Bypass);
+        let bare = Request {
+            action: WORKFLOW_RUN.into(),
+            resources: vec!["audit".into()],
+            ..Default::default()
+        };
+        assert!(denied.rule_denies(&bare).is_some());
+        assert_eq!(denied.decide(&run(&inline)), Decision::Allow);
+    }
+
+    #[test]
+    fn workflow_run_asks_by_default_with_a_visible_source_and_is_allowed_in_auto_and_bypass() {
+        let base = defaults(&[], true);
+        let (effect, rule) = evaluate(&base, WORKFLOW_RUN, "audit");
+        assert_eq!(effect, Effect::Ask);
+        let rule = rule.unwrap();
+        assert_eq!(
+            (rule.action.as_str(), rule.source.as_str()),
+            (WORKFLOW_RUN, "default")
+        );
+        let run = Request {
+            action: WORKFLOW_RUN.into(),
+            resources: vec!["audit".into()],
+            ..Default::default()
+        };
+        let decide = |rules: Vec<Rule>, mode| policy(rules, mode).decide(&run);
+        assert_eq!(decide(base.clone(), Mode::Default), Decision::Ask);
+        assert_eq!(decide(base.clone(), Mode::Auto), Decision::Allow);
+        assert_eq!(decide(base.clone(), Mode::Bypass), Decision::Allow);
+        assert!(matches!(
+            decide(base.clone(), Mode::Plan),
+            Decision::Deny(_)
+        ));
+        assert!(matches!(
+            decide(base.clone(), Mode::DontAsk),
+            Decision::Deny(_)
+        ));
+        // A configured ask is not the default: auto still classifies it.
+        let mut asked = base.clone();
+        asked.push(Rule::new(WORKFLOW_RUN, "*", Effect::Ask, "user"));
+        assert_eq!(decide(asked, Mode::Auto), Decision::Ask);
+        let mut denied = base;
+        denied.push(Rule::new(WORKFLOW_RUN, "audit", Effect::Deny, "user"));
+        assert!(matches!(decide(denied, Mode::Bypass), Decision::Deny(_)));
     }
 
     #[test]

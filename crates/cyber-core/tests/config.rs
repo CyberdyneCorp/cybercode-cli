@@ -1427,3 +1427,72 @@ fn invalid_mcp_serve_values_name_the_key() {
         assert!(config::load_global(&f.request(&f.repo, &[])).is_err());
     }
 }
+
+#[test]
+fn workflow_settings_have_defaults_and_validate_ranges_and_tiers() {
+    let f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"workflows":{"max_concurrent":4,"script_cpu_seconds":5,
+            "tiers":{"strong":"anthropic/claude-opus","fast":"role:small"}}})
+        .to_string(),
+    );
+    let resolved = f.load().unwrap();
+    let settings = config::WorkflowSettings::from_config(&resolved.value).unwrap();
+    assert_eq!(settings.max_concurrent, 4);
+    assert_eq!(settings.effective_max_concurrent(2), 2);
+    assert_eq!(settings.max_memory_mb, 256);
+    assert_eq!(settings.script_cpu_seconds, 5);
+    assert_eq!(
+        settings.tiers["strong"],
+        config::TierTarget::Model("anthropic/claude-opus".into())
+    );
+    assert_eq!(
+        settings.tiers["verify"],
+        config::TierTarget::Role("advisor".into())
+    );
+    assert_eq!(
+        settings.tiers["smart"],
+        config::TierTarget::Role("default".into())
+    );
+    let defaults = config::WorkflowSettings::from_config(&json!({})).unwrap();
+    assert_eq!(
+        (
+            defaults.max_concurrent,
+            defaults.max_memory_mb,
+            defaults.script_cpu_seconds
+        ),
+        (16, 256, 60)
+    );
+
+    for (value, key) in [
+        (json!({"max_concurrent":0}), "workflows.max_concurrent"),
+        (json!({"max_concurrent":257}), "workflows.max_concurrent"),
+        (json!({"max_memory_mb":8}), "workflows.max_memory_mb"),
+        (
+            json!({"script_cpu_seconds":"60"}),
+            "workflows.script_cpu_seconds",
+        ),
+        (
+            json!({"tiers":{"Fast/Tier":"a/b"}}),
+            "workflows.tiers.Fast/Tier",
+        ),
+        (
+            json!({"tiers":{"fast":"role:huge"}}),
+            "workflows.tiers.fast",
+        ),
+        (json!({"tiers":{"fast":"no-slash"}}), "workflows.tiers.fast"),
+        (json!({"tiers":["fast"]}), "workflows.tiers"),
+        (json!({"auto":"always"}), "workflows.auto"),
+        (json!({"turbo":true}), "workflows.turbo"),
+        (json!(1), "workflows"),
+    ] {
+        let f = Fixture::new();
+        f.write(
+            "global:cyber.jsonc",
+            &json!({ "workflows": value }).to_string(),
+        );
+        let error = f.load().unwrap_err().to_string();
+        assert!(error.contains(key), "{value}: {error}");
+    }
+}

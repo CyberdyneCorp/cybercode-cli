@@ -149,7 +149,7 @@ For a setup-pending isolated child, inspect `GET /api/v1/sessions/{parent}/child
 
 ## Usage and cost
 
-`GET /api/v1/usage?scope=session&id=<session>` returns own, descendant and combined billing from one database snapshot, including retained charges after descendant deletion. Token classes, combined known tokens, unpriced calls and attribution completeness remain separate. The SDK method is `client.usage.get({ scope: "session", id })`; other scopes currently return a tagged unavailable error.
+`GET /api/v1/usage?scope=session&id=<session>` returns own, descendant and combined billing from one database snapshot, including retained charges after descendant deletion. Token classes, combined known tokens, unpriced calls and attribution completeness remain separate. The SDK method is `client.usage.get({ scope: "session", id })`. `scope=run&id=<run_>` returns a Workflow Run rollup (total, per agent, per model and per tier); the response's `scope` field tells the two shapes apart. Other scopes currently return a tagged unavailable error.
 
 In the TUI, `/cost` reads the atomic usage API and opens a Session-and-descendants snapshot with all five token classes, cost and cache hit rate. Press `R` to refresh and `Esc` to close. Failed refreshes retain the last observed amounts with an error. Unpriced calls and incomplete historical attribution are shown explicitly; the view labels known spending as a lower bound when necessary.
 
@@ -170,6 +170,7 @@ On Linux the sandbox needs bubblewrap (`apt install bubblewrap`); without it com
 | `cyber-tui` | Terminal UI: composer, streaming rendering, permission and question prompts, pickers, themes |
 | `cyber-app` | Server assembly and lifecycle: store, catalog, tools, sandbox, snapshots, listeners, registration |
 | `cyber-client` | Rust client for the API (HTTP and in-process), used by `cyber exec` and the TUI |
+| `cyber-workflow` | Workflow module format, saved-Workflow discovery and the sandboxed QuickJS engine (P2, in progress) |
 
 The TypeScript SDK `@cyber-code/sdk` lives in [`sdk/typescript`](../sdk/typescript/README.md). It is generated from [`sdk/openapi.json`](../sdk/openapi.json) by `scripts/generate_sdk.py`; regenerate the document with `UPDATE_OPENAPI=1 cargo test -p cyber-server --test http openapi_document_is_current`.
 
@@ -612,6 +613,88 @@ Open `/memory` in the TUI for project notes, or `/memory global` for global note
 A connected root makes `running` true. An authenticated empty root set makes it false. Without registration, `running` and `roots` are null (human output: unknown). Starting/broken entries without a connected root also keep running unknown; those protocol states do not prove process termination. Retained server IDs absent from current discovery remain visible with null enabled/installed metadata. An invalid, refused or unreachable registered service fails explicitly instead of reporting stopped servers. Requests use existing credentials, bypass ambient proxies, refuse redirects and enforce a five-second deadline and one-MiB response limit.
 
 `cyber fmt status` reports detected formatter definitions and project markers without executing them. Formatter execution after edits and LSP navigation/error feedback are implemented pieces of P1; complete platform and lifecycle acceptance remains open. See [feature limits](features.md) and [P1 evidence](implementation/p1-status.md).
+
+## Workflows (P2 M2.1)
+
+A Workflow is a JavaScript ES module. It declares a pure-literal `meta` and either a default async function or top-level code, which orchestrates agents through the host API:
+
+```js
+export const meta = { name: "audit", description: "Audit auth", phases: [{ title: "Scan" }] };
+export default async function () {
+  phase("Scan");
+  const found = await agent(`List risky endpoints under ${args.dir}`);
+  return found.text;
+}
+```
+
+- **Saved Workflows.** Saved Workflows live in `~/.config/cyber/workflows/` (global) and in `.cyber/workflows/` (project, from the repository root down to the Location). A project Workflow overrides a global Workflow with the same `meta.name`.
+- **Listing.** `cyber workflows list [--format json]` shows each Workflow's name, scope and description. It also lists modules that fail to load, with their diagnostic. Examples: `ParseError: meta must be a pure literal (2:29)`, or `UnsupportedSyntax` for `require`/`import` and for `.ts` files (TypeScript is not supported yet). Listing never runs a script.
+- **Running from the CLI.** `cyber workflows run <name|file.js> [--args JSON] [--max-cost USD] [--max-turns N] [--max-tokens N] [--timeout 30m] [--max-agents N] [--wait]` starts a run on the shared server (started if needed) with a new owner Session in the current Location (`--mode` sets its Mode; default `default`). Without `--wait` it prints the `run_` ID. With `--wait` it prints phase and agent progress on stderr and the return value on stdout, and exits `0` when the run completed, `1` when it failed (or was stopped or paused elsewhere), `4` when it exceeded its budget and `130` on Ctrl-C, which stops the run. `cyber workflows runs` lists this Location's runs; `show <run_id>`, `pause`, `resume [--revision]`, `stop` and `logs` act on one run (`--format json` everywhere). `--runner` is rejected: remote runners arrive in P3.
+- **Starting from a Session.** The model starts Workflows with the `workflow` tool: `{ "name": "<saved>" }` or `{ "script": "<inline module>" }`, plus `args` and `budget`. It needs the `workflow.run` permission. Its resource names the script's origin, because a script declares its own name: `<name>` for a global saved Workflow, `project:<name>` for a project one and `inline:<name>@<digest>` for an inline script. So `{"workflow.run": {"audit": "allow"}}` allows only the global `audit`; a project `audit` or an inline script named `audit` still asks, and an "always" approval of an inline script covers only that exact script (`"inline:*": "allow"` allows every inline script). The default rule (`workflow.run` `*` `ask`, source `default`) asks in `default` Mode and allows in `auto` and `bypass`; the approval shows the name, phases and budget. A deny rule for the bare name, such as `"permissions": {"workflow.run": {"migrate": "deny"}}`, refuses every origin in every Mode, and also refuses `cyber workflows run migrate` and `POST /api/v1/workflows/runs` (`403 PermissionDenied`, on start and on resume). API and CLI starts need no approval: asking for the run approves it. The tool returns the run handle at once; inline scripts are kept at `<state>/workflows/<run_id>.js` (`script_file`). Workflow agents cannot start runs: the server refuses a run owned by a workflow agent's child Session or any Session below it (`409 Workflow agents cannot start Workflow Runs`), over the tool, the API and the CLI alike.
+- **Results.** A return value up to 1 MiB of JSON is kept as `result`; a larger one is written to `<state>/workflows/<run_id>.result.json` (`result_file`, with `result_preview`). When a run completes, fails, exceeds its budget or is stopped, one summary (`Workflow run handback: {…}` with the result preview, agent counts, cost and duration) is queued on the owner Session as message `msg_workflow_<run_id>` with source `workflow`. A run started by the `workflow` tool wakes its Session; an API or CLI run leaves the summary queued. A restart never queues a second summary. A resumed run that ends again queues a new summary, `msg_workflow_<run_id>_<n>` after the `n`th resume; the resume clears the previous attempt's `result`, `result_file` and `result_preview`.
+- **Approvals inside runs.** Runs started over the API or the CLI have no approver: any `ask` from their agents (and the agents' subagents) is rejected at once with `No interactive approver for workflow run`, so they only use what rules pre-approve. Runs started by the `workflow` tool in an attended Session route asks to its clients.
+- **Write isolation.** In a git checkout, agents whose profile can edit files (`write`, `edit`, `apply_patch` or `notebook_edit`; not in `plan` Mode) get their own worktree when another such agent of the run is in flight, including every agent of one `parallel()` fan-out. The worktree is `run-<ulid>-<index>` on branch `cyber/run-<ulid>/<index>` (`<index>` is the agent's start ordinal), the result carries `branch`, and the worktree is kept after the run (`cyber worktree prune` removes it). A single writer works in the owner's checkout; `isolation: "none"` opts out and `isolation: "worktree"` always isolates. Creating a run's worktree obeys `worktree` deny rules but does not ask.
+- **Hooks and events.** `WorkflowRunStart` and `WorkflowRunEnd` hooks fire on the owner Session with `workflow: { name, status, revision, phases, budget, reason, error }`, and their envelope carries `workflow_run_id`, as do hook events of workflow agents' Sessions. Run events (`workflow.run.*`, `workflow.agent.*`, `workflow.phase.1`, `workflow.log.1`) stream live on `GET /api/v1/event` for the run's Location.
+- **Runs over HTTP.** `POST /api/v1/workflows/runs` starts a run from `{"session_id", "script" | "name", "args", "budget"?}`: an inline module, or a saved Workflow of the Session's Location. The run executes in the server, independent of the client, and answers `201` with the run (`run_` ID, `status: "running"`). `GET /api/v1/workflows/runs[?session_id=]` lists runs, newest first. `GET /api/v1/workflows/runs/{id}` shows one run with its `status`, `revision`, `budget`, `phases`, `result` or typed `error`, and its `agents` (`running`, `completed`, `failed`, `cancelled` or `interrupted`). `GET /api/v1/workflows/runs/{id}/logs` returns the `log()` entries. An invalid script answers `400` with its `diagnostic`. The routes are the `v1.workflow.*` operations in OpenAPI; the TypeScript SDK adds `client.workflows.run({ name | script, args, budget })`, whose handle has `events()`, `status()`, `pause()`, `resume()`, `cancel()` and `result()`.
+- **Lifecycle.** A run is `running`, `paused`, `completed`, `failed`, `budget_exceeded` or `stopped` (`queued` and `waiting_input` are reserved). `POST …/runs/{id}/pause` records `paused` at once: agents in flight finish and are stored, and no new agent starts, including calls still waiting for a slot of the concurrency limit. A script that then ends on its own still records `completed` (or `failed`) with its result; a stop and the script's own end never both record an end. `POST …/runs/{id}/stop` cancels agents in flight and stops their child subtrees. `POST …/runs/{id}/resume` (`{"revision"?, "budget"?}`) relaunches a paused, failed, stopped or budget-exceeded run. It answers `409 Run has agents still exiting; retry shortly` while the previous attempt still holds an agent. Stopping the server pauses running runs before tools shut down, and a server that starts after a crash pauses runs left `running`. Child execution ownership claimed by a server records that server's registration ID; the next server to take `server.lock` releases claims an earlier server left held (the lock proves that process exited), so the interrupted agents of a run resume their child Sessions after a crash. Claims of runtimes that never held the lock stay held. A run that ends (completed or failed) with agents still in flight cancels them, and they are listed as `cancelled`. Each transition is a durable `workflow.run.*.1` event.
+- **Replay.** A relaunch re-executes the script. Each `agent()` call is keyed by `sha256(prompt + canonical options)` plus an ordinal, and each `checkpoint(name, value)` by its name. Settled results and checkpoint values are delivered from the store in their original order, with no model call. An agent that was in flight resumes its existing child Session (a stopped child's admission is reopened first, and the child's interrupted tool calls are reconciled before its next Turn). A failed agent is retried by a new agent, which counts against `max_agents`; a child whose resumed attempt failed is never resumed again. A resume reads the saved file, or an inline run's `script_file`, again (an inline run whose file is gone runs its stored source). If that script or the Workflow configuration (limits and tiers) changed, resume fails with `409 WorkflowReplayMismatch` unless `revision: true` starts a new revision. A new revision reuses completed results and checkpoints by key. A run whose script issues different calls in the same revision fails with `WorkflowReplayMismatch`. Calls are numbered as the script issues them, so results of one `Promise.all` or `parallel()` batch replay in the order they first arrived. A call rejected before it starts (bad options, an unknown tier, `ask()`) is recorded like the others. A resume runs agents under the stricter of the run's starting Mode and the owner Session's current Mode.
+- **Budgets.** A run budget layers `budgets.run`, `meta.budget` and the request's `budget`: `max_cost_usd`, `max_tokens`, `max_turns`, `max_wall_seconds` (default 14400, paused time excluded) and `max_agents` (default 200), with soft enforcement (`reserved` is refused). `budgets.run` and the defaults are a ceiling: `meta.budget` and the `workflow` tool's `budget` can only lower a limit (a larger value keeps the current one; `null` for a limit already set is refused). Only the authenticated client raises a limit, explicitly, with the `budget` of `POST /api/v1/workflows/runs` (the CLI's `--max-*` flags) or of a resume. Past `max_wall_seconds`, the first host call other than `agent()` (a checkpoint, say) rejects with `BudgetExceeded: max_wall_seconds` and the next one ends the run, so a script without agents also stops. An `agent()` call after a limit is reached rejects with `BudgetExceeded: <limit>`, `budget.exceeded.1` is recorded on the run, and the run ends `budget_exceeded`, keeping a partial result the script returns. The check before every provider Turn of an agent's child (and its descendants) also counts the run budget. `ctx.budget` reads `{ spent_tokens, spent_cost_usd, agents_started, remaining }` as of the latest result the script received (or the start of the revision). The snapshot is recorded with each result, and a resume replays it, so a script that branches on its budget repeats its earlier choices. `GET /api/v1/usage?scope=run&id=<run_>` sums the run's agents and groups cost by agent, model and tier.
+- **Agents.** Each `agent(prompt, opts)` call becomes a child Session of the owner Session (`session_id`), with `workflow_run_id` set and an `agt_` ID as its subagent name. It runs under the owner's Mode as a ceiling, and deny rules for `agent` apply. Without `schema` it resolves to `{ text, session_id, cost, tokens }`; with `schema` it resolves to the validated object, after at most one result retry (`SchemaMismatch` otherwise). Failures reject with `AgentFailed`, `SchemaMismatch`, `PermissionDenied` or `ModelUnavailable`, which scripts can catch through `e.kind`. `model` takes a `provider/model` reference or a tier: `fast` uses `model_roles.small`, `smart` the default model and `verify` `model_roles.advisor`, falling back to the default model. An unknown tier is `ModelUnavailable`. The options `goal`, `tools` and `budget` are rejected as not available yet, as is `ask()`.
+- **Concurrency.** Workflow agents of every run share one FIFO limit of `min(workflows.max_concurrent, CPU cores)`, read from the global configuration at server start. `agents.max_concurrent` does not apply to them. `parallel(thunks, { concurrency })` narrows a group further.
+- **Durable records.** Every agent is stored as `workflow.agent.started.1` before it starts and `workflow.agent.settled.1` before the script sees its result. Checkpoints, reused results and budget rejections are stored as `workflow.call.recorded.1`, phases and logs as `workflow.phase.1` and `workflow.log.1`. If a record cannot be written, the run fails. A run writes at most 100,000 records and 256 MiB of record data, a checkpoint value is at most 1 MiB of JSON, `phase()` titles are at most 200 characters and a run has at most 256 distinct titles; past any of these the run fails with `ExecutionFailure`. Calling `phase()` with the current title records nothing, and a `workflow.phase.1` event carries the phase list only when it adds a title.
+- **Worked example: fan out, then rank.** Save this as `.cyber/workflows/fanout.js` in a git checkout. Three agents analyze one item each and must answer in the `schema`; `pipeline` then maps the validated results in the script, with no model call:
+
+  ```js
+  export const meta = { name: "fanout", description: "Fan out three analysts, then rank",
+    phases: [{ title: "Analyze" }, { title: "Rank" }] };
+  const schema = { type: "object", required: ["item", "score"], additionalProperties: false,
+    properties: { item: { type: "string" }, score: { type: "number" } } };
+  export default async () => {
+    phase("Analyze");
+    const items = ["alpha", "beta", "gamma"];
+    const results = await parallel(items.map((item) => () =>
+      agent(`Score ${item} from 1 to 10`, { label: item, schema })));
+    log("analyzed", results.length);
+    phase("Rank");
+    const ranked = await pipeline(results, (r) => ({ item: r.item, score: r.score * 10 }));
+    return { total: ranked.reduce((sum, r) => sum + r.score, 0), ranked };
+  };
+  ```
+
+  ```console
+  $ cyber workflows list
+  fanout  [project]  Fan out three analysts, then rank
+  $ cyber workflows run fanout --wait        # progress on stderr, result on stdout
+  phase: Analyze
+  agent beta completed
+  agent alpha completed
+  agent gamma completed
+  phase: Rank
+  run_… completed
+  { "total": 140, "ranked": [ { "item": "alpha", "score": 50 }, … ] }
+  $ cyber workflows logs run_…
+  analyzed 3
+  $ cyber api v1.session.children --param id=<owner ses_…>
+  ```
+
+  With `"workflows": { "max_concurrent": 2 }` in the global `cyber.jsonc`, two agents run at a time and the third starts when one ends. Each agent is a child Session of the run's owner Session with `workflow_run_id` set and its `agt_` ID as subagent name; because the three agents of the fan-out can edit files, each gets its own `cyber/run-<id>/<n>` worktree. Add `--max-tokens 50` to see a budget end (`budget_exceeded`, exit `4`; agents still in flight are recorded `cancelled`), or run `cyber workflows stop <run_id>` from another terminal (`stopped`, exit `1` for the waiting command). If the server dies mid-run, the run is `paused` when it comes back; `cyber workflows resume <run_id>` replays settled agents from the store without new model calls and continues the interrupted one in its existing child Session.
+- **Not available yet.** Saved-Workflow listing under `/api/v1/workflows` answers `503 ServiceUnavailableError` with `service: "workflow"`. `ask()`, direct read-only `tools`, prompt-cache warm-up, `exec --workflow`, the TUI monitor, bundled Workflows (M2.2) and remote runners (P3) are not available yet.
+- **Configuration.** The `workflows` key accepts:
+
+  | Key | Default | Range or values |
+  |---|---|---|
+  | `max_concurrent` | 16 | 1–256 |
+  | `max_memory_mb` | 256 | 16–4096 |
+  | `script_cpu_seconds` | 60 | 1–3600 |
+  | `auto` | `suggest` | `off`, `suggest`, `on` |
+  | `auto_threshold_files` | 10 | 1–100,000 |
+  | `size_guideline` | 10 | 1–1000 |
+  | `tiers` | `fast` → `role:small`, `smart` → `role:default`, `verify` → `role:advisor` | `{ "<tier>": "provider/model" \| "role:<role>" }` |
+
+  Unknown keys and invalid values fail configuration loading.
+- **Sandbox.** Scripts run in QuickJS. They have no filesystem, network, imports, `eval` or `Function`, timers, `WebAssembly`, `WeakRef`, `FinalizationRegistry`, `SharedArrayBuffer` or `Atomics`. `Date.now()`, `Math.random()`, `performance.now()` and `new Date()` with no argument throw. Pass values through `args` instead. Describing an uncaught error counts against `script_cpu_seconds`. A script may have at most 10,000 host calls pending, and their payloads count against `max_memory_mb`; past either bound the call throws `ExecutionFailure` at once. `meta` may nest objects and arrays at most 64 levels deep.
+
+Design and progress: [`implement-m2-1-workflow-runtime`](../openspec/changes/implement-m2-1-workflow-runtime/proposal.md) and [P2 evidence](implementation/p2-status.md).
 
 ## Migration detection
 

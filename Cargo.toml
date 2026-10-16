@@ -12,6 +12,7 @@ members = [
     "crates/cyber-app",
     "crates/cyber-client",
     "crates/cyber-cli",
+    "crates/cyber-workflow",
 ]
 
 [workspace.package]

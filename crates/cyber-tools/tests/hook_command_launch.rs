@@ -103,6 +103,7 @@ impl Fixture {
                 agent: "coder".into(),
                 mode: "bypass".into(),
                 parent_session_id: None,
+                workflow_run_id: None,
             },
             1,
             json!({"tool_name":"bash","tool_input":{"command":"reviewed"}})
@@ -207,6 +208,7 @@ async fn changed_definitions_and_foreign_event_locations_refuse_before_effects()
             agent: "coder".into(),
             mode: "default".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         serde_json::Map::new(),

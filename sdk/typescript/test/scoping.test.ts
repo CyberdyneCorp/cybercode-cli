@@ -134,6 +134,7 @@ test("usage.get preserves scope identity and incomplete billing without a Locati
   const report = { scope: "session", id: "ses/parent", own: amount, descendants: amount, total: amount };
   const { client, calls } = mockClient(() => json(200, { data: report }), { directory: "/other" });
   const result = await client.usage.get({ scope: "session", id: "ses/parent" });
+  assert.ok(result.scope === "session");
   assert.equal(result.total.token_classes_complete, false);
   assert.equal(result.total.unpriced_steps, 1);
   assert.equal(calls[0]?.url.pathname, "/api/v1/usage");
@@ -196,4 +197,16 @@ test("session.approve returns a scoped replay receipt before interactive confirm
   assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses%2Fchild/approve");
   assert.equal(calls[0]?.headers.get("x-cyber-directory"), null);
   assert.equal(calls[0]?.headers.get("idempotency-key"), "confirm-replay");
+});
+
+test("usage.get narrows a Workflow Run rollup by its scope", async () => {
+  const group = { key: "test/small", agents: 2, cost: 0.5, total_tokens: 220, unpriced_steps: 0 };
+  const report = { scope: "run", id: "run_1", cost: 0.5, total_tokens: 220, unpriced_steps: 0,
+    usage_complete: true, agents: [], models: [group], tiers: [{ ...group, key: "fast" }] };
+  const { client, calls } = mockClient(() => json(200, { data: report }));
+  const result = await client.usage.get({ scope: "run", id: "run_1" });
+  assert.ok(result.scope === "run");
+  assert.equal(result.models[0]?.key, "test/small");
+  assert.equal(result.tiers[0]?.key, "fast");
+  assert.equal(calls[0]?.url.searchParams.get("scope"), "run");
 });

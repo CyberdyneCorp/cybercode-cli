@@ -77,9 +77,24 @@ pub use structured::StructuredSchema;
 mod title;
 mod usage;
 mod view;
-pub use usage::{UsageAmount, UsageReport};
+pub use usage::{
+    RunAgentUsage, RunUsageGroup, RunUsageReport, ScopeUsage, UsageAmount, UsageReport,
+};
 mod worktree_output;
 pub use worktree_output::{SessionSetupSink, SetupChannel, SetupUpdate};
+mod workflow_control;
+mod workflow_host;
+mod workflow_replay;
+mod workflow_results;
+pub mod workflow_start;
+mod workflows;
+pub use workflow_control::{AGENTS_EXITING, ResumeWorkflowRun};
+pub use workflow_host::{MAX_CHECKPOINT_BYTES, MAX_RUN_RECORD_BYTES, MAX_RUN_RECORDS};
+pub use workflow_results::{INLINE_RESULT_BYTES, attempt_handback_message_id, handback_message_id};
+pub use workflows::{
+    RunStarter, StartWorkflowRun, WORKFLOW_AGENT_STARTS_RUN, WorkflowAgent, WorkflowLogEntry,
+    WorkflowRun, WorkflowRunStatus, config_digest,
+};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -100,16 +115,17 @@ pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
     AgentInference, CatalogResolver, ChildContinuation, FileDiff, HookEffects, Invocation,
     LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots,
-    NoTools, Reconciliation, ResolvedModel, RestoreError, SessionEnvelope, SkillSuggestion,
-    Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
+    NoTools, Reconciliation, ResolvedModel, RestoreError, RunWorktree, SessionEnvelope,
+    SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
+    WorkflowAgentOutput, WorkflowAgentRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
     RevertState, RevertTarget, SessionInfo, SessionState, Sourced, StepSnapshot, TaskState, Totals,
 };
 pub use requests::{
-    Asker, PendingKind, PendingRequest, PermissionAsk, PermissionReply, Question, QuestionOption,
-    QuestionReply, RequestOrigin, RequestRoute,
+    Asker, NO_WORKFLOW_APPROVER, PendingKind, PendingRequest, PermissionAsk, PermissionReply,
+    Question, QuestionOption, QuestionReply, RequestOrigin, RequestRoute,
 };
 pub use view::{INTERRUPTED, UNKNOWN};
 
@@ -209,6 +225,8 @@ pub struct CreateSession {
     pub mode: Option<String>,
     pub parent_id: Option<String>,
     pub subagent_name: Option<String>,
+    /// The Workflow Run whose `agent()` call created this child.
+    pub workflow_run_id: Option<String>,
     pub title: Option<String>,
     /// Session ruleset in the `permissions` config shape.
     pub rules: Option<serde_json::Value>,
@@ -531,10 +549,20 @@ pub(crate) struct Inner {
     job_admission: Arc<Mutex<()>>,
     delegations: StdMutex<HashMap<String, Arc<delegations::Control>>>,
     child_executions: StdMutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
+    /// Registration ID of the server lock this runtime holds (`adopt_server_lock`).
+    server_holder: std::sync::OnceLock<String>,
     child_preparations: StdMutex<HashMap<String, Arc<preparation::Control>>>,
     activities: StdMutex<HashMap<String, Arc<activity::Control>>>,
     subtree_stops: StdMutex<HashMap<String, Arc<subtree_stop::Control>>>,
     subtree_stop_lock: Mutex<()>,
+    /// The server-wide FIFO limit of Workflow agents (`workflows` → Concurrency limit).
+    workflow_slots: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
+    /// Executing Workflow Run attempts (`workflows` → Run lifecycle states).
+    workflow_controls: StdMutex<HashMap<String, Arc<workflow_control::Control>>>,
+    /// Serializes run lifecycle transitions (pause, stop, resume, recovery, shutdown).
+    workflow_lifecycle: Mutex<()>,
+    /// `<state>/workflows`: inline scripts and results larger than 1 MiB.
+    workflow_dir: std::sync::OnceLock<PathBuf>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
@@ -598,10 +626,15 @@ impl Runtime {
             job_admission: Arc::new(Mutex::new(())),
             delegations: StdMutex::default(),
             child_executions: StdMutex::default(),
+            server_holder: std::sync::OnceLock::new(),
             child_preparations: StdMutex::default(),
             activities: StdMutex::default(),
             subtree_stops: StdMutex::default(),
             subtree_stop_lock: Mutex::new(()),
+            workflow_slots: std::sync::OnceLock::new(),
+            workflow_controls: StdMutex::default(),
+            workflow_lifecycle: Mutex::new(()),
+            workflow_dir: std::sync::OnceLock::new(),
             waiters: StdMutex::default(),
             me: me.clone(),
         });
@@ -764,6 +797,11 @@ impl Runtime {
                 "subagent_name requires a parent and 1–128 bytes".into(),
             ));
         }
+        if req.workflow_run_id.is_some() && req.parent_id.is_none() {
+            return Err(RuntimeError::Invalid(
+                "workflow_run_id requires a parent".into(),
+            ));
+        }
         if req.child_worktree_setup_pending && req.child_worktree.is_none() {
             return Err(RuntimeError::Invalid(
                 "Pending isolated setup requires a checkout binding".into(),
@@ -811,6 +849,7 @@ impl Runtime {
             worktree_id: req.worktree_id,
             parent_id: req.parent_id,
             subagent_name: req.subagent_name,
+            workflow_run_id: req.workflow_run_id,
             agent: req.agent.unwrap_or_else(|| "build".into()),
             model: req.model,
             mode: req.mode.unwrap_or_else(|| "default".into()),
@@ -1615,6 +1654,7 @@ impl Runtime {
             id: cyber_core::ids::new_id("ses"),
             title: format!("{} (fork #{})", state.info.title, forks.sessions.len() + 1),
             subagent_name: None,
+            workflow_run_id: None,
             parent_id: None,
             default_title: false,
             created_ms: chrono::Utc::now().timestamp_millis(),

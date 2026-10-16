@@ -17,6 +17,7 @@ mod merge;
 mod modes;
 mod subst;
 mod validate;
+mod workflows;
 
 pub(crate) use hooks::is_event_name;
 pub(crate) use subst::has_placeholder;
@@ -50,6 +51,7 @@ pub use mcp_serve::{
 };
 pub use modes::{bound_mode, mode_ceiling, mode_rank, never_ask_rules};
 pub use validate::redact_secrets;
+pub use workflows::{TierTarget, WorkflowSettings};
 
 /// Published JSON Schema URL written into new config documents.
 pub const SCHEMA_URL: &str = "https://cyber-code.dev/schema/config.json";

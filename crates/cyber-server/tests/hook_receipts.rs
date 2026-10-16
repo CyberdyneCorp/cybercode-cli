@@ -48,6 +48,7 @@ async fn event(h: &Harness, id: &str) -> HookEvent {
             agent: info.agent,
             mode: info.mode,
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         json!({"tool_input":{"command":"private stdin"}})

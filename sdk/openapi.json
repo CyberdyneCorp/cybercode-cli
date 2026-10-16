@@ -565,22 +565,33 @@
         ],
         "description": "A Location-scoped response."
       },
-      "Data_UsageReport": {
+      "Data_ScopeUsage": {
         "type": "object",
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/UsageReport"
+            "$ref": "#/components/schemas/ScopeUsage"
           }
         },
         "required": [
           "data"
         ]
       },
+      "ScopeUsage": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/UsageReport"
+          },
+          {
+            "$ref": "#/components/schemas/RunUsageReport"
+          }
+        ],
+        "description": "One of the usage reports a scope returns, discriminated by `scope`."
+      },
       "UsageReport": {
         "type": "object",
         "properties": {
           "scope": {
-            "type": "string"
+            "$ref": "#/components/schemas/SessionScope"
           },
           "id": {
             "type": "string"
@@ -602,6 +613,13 @@
           "descendants",
           "total"
         ]
+      },
+      "SessionScope": {
+        "type": "string",
+        "enum": [
+          "session"
+        ],
+        "description": "The `scope` of a Session usage report; it discriminates [`ScopeUsage`]."
       },
       "UsageAmount": {
         "type": "object",
@@ -678,6 +696,154 @@
           "cache_write"
         ],
         "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
+      },
+      "RunUsageReport": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/RunScope"
+          },
+          "id": {
+            "type": "string"
+          },
+          "cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "usage_complete": {
+            "type": "boolean",
+            "description": "False when a child's descendant usage history is incomplete."
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunAgentUsage"
+            }
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunUsageGroup"
+            }
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunUsageGroup"
+            }
+          }
+        },
+        "required": [
+          "scope",
+          "id",
+          "cost",
+          "total_tokens",
+          "unpriced_steps",
+          "usage_complete",
+          "agents",
+          "models",
+          "tiers"
+        ],
+        "description": "`GET /usage?scope=run`: the run's agents summed, per agent, per model and per tier\n(`observability-costs` → per workflow run, agent and model). The orchestrator script\nmakes no model calls of its own."
+      },
+      "RunScope": {
+        "type": "string",
+        "enum": [
+          "run"
+        ],
+        "description": "The `scope` of a Workflow Run usage report."
+      },
+      "RunAgentUsage": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "`agt_` ID."
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model reference the child ran with."
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tier the call named, when it named one."
+          },
+          "cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "agent_id",
+          "session_id",
+          "model",
+          "cost",
+          "total_tokens",
+          "unpriced_steps"
+        ],
+        "description": "Usage of one Workflow agent: its child Session with descendants."
+      },
+      "RunUsageGroup": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The model reference or tier name."
+          },
+          "agents": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "key",
+          "agents",
+          "cost",
+          "total_tokens",
+          "unpriced_steps"
+        ],
+        "description": "A rollup of a run's agents by model or by tier."
       },
       "Health": {
         "type": "object",
@@ -873,6 +1039,675 @@
         "required": [
           "data"
         ]
+      },
+      "StartBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "The owner Session: agents become its children and run under its Mode."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A saved Workflow's `meta.name`, discovered from the owner's Location."
+          },
+          "script": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An inline JavaScript module."
+          },
+          "args": {
+            "default": null
+          },
+          "budget": {
+            "description": "Run budget fields, plus `max_agents`, overriding `budgets.run` and `meta.budget`:\nthe authenticated client may raise a limit, as on resume.",
+            "default": null
+          }
+        },
+        "required": [
+          "session_id"
+        ]
+      },
+      "Data_WorkflowRun": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkflowRun"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "WorkflowRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "`meta.name` of the script."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "The owner Session: agents are its children and run under its Mode."
+          },
+          "directory": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "The run Mode, a ceiling for every agent."
+          },
+          "origin": {
+            "description": "`inline`, or the saved module's path."
+          },
+          "script_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "digest": {
+            "type": "string",
+            "description": "`sha256:` digest of the current revision's script source."
+          },
+          "config_digest": {
+            "type": "string",
+            "description": "Digest of the engine limits and model tiers the current revision runs with.",
+            "default": ""
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Script revision, starting at 1; a relaunch with a changed script or configuration\nneeds a new revision.",
+            "default": 1
+          },
+          "args": true,
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the run is paused, stopped or ended early."
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared phases followed by titles first seen in `phase()`."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The current phase."
+          },
+          "result": {
+            "description": "The script's return value once completed, when its JSON is at most 1 MiB."
+          },
+          "result_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A larger return value's file (`<state>/workflows/<run_id>.result.json`)."
+          },
+          "result_preview": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start of a larger return value's JSON."
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "Agents may ask the owner's attached clients; otherwise every `ask` is rejected\nwith `No interactive approver for workflow run`.",
+            "default": false
+          },
+          "continue_owner": {
+            "type": "boolean",
+            "description": "The owner continues when the summary is admitted (runs started by its `workflow`\ntool); otherwise the summary waits in its queue.",
+            "default": false
+          },
+          "notified": {
+            "type": "boolean",
+            "description": "The summary was admitted to the owner as `msg_workflow_<run_id>`.",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Diagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "session_id",
+          "directory",
+          "mode",
+          "origin",
+          "digest",
+          "args",
+          "status",
+          "phases",
+          "started_ms"
+        ],
+        "description": "A Workflow Run as clients see it."
+      },
+      "WorkflowRunStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "budget_exceeded",
+              "stopped"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "waiting_input",
+            "description": "Reserved until `ask()` lands."
+          }
+        ]
+      },
+      "RunBudget": {
+        "type": "object",
+        "properties": {
+          "max_turns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "max_cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "max_wall_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "enforcement": {
+            "$ref": "#/components/schemas/Enforcement",
+            "default": "soft"
+          },
+          "max_agents": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "max_agents"
+        ],
+        "description": "A Workflow Run budget: the canonical [`Budget`] plus the workflow-specific `max_agents`,\nserialized as one flat object."
+      },
+      "Enforcement": {
+        "type": "string",
+        "enum": [
+          "soft",
+          "reserved"
+        ]
+      },
+      "Diagnostic": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/DiagnosticKind"
+          },
+          "message": {
+            "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Position"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "description": "One Workflow failure: a kind, a message and, for script errors, where it happened."
+      },
+      "DiagnosticKind": {
+        "type": "string",
+        "enum": [
+          "ParseError",
+          "UnsupportedSyntax",
+          "ExecutionFailure",
+          "AgentFailed",
+          "SchemaMismatch",
+          "BudgetExceeded",
+          "ModelUnavailable",
+          "NoInteractiveUser",
+          "Timeout",
+          "PermissionDenied",
+          "WorkflowReplayMismatch"
+        ],
+        "description": "The single kind every Workflow failure is reported with."
+      },
+      "Position": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "column": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "line",
+          "column"
+        ],
+        "description": "A 1-based source position in the Workflow script."
+      },
+      "Page_WorkflowRun": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRun"
+            }
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ]
+      },
+      "Data_RunDetail": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RunDetail"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "RunDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "`meta.name` of the script."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "The owner Session: agents are its children and run under its Mode."
+          },
+          "directory": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "The run Mode, a ceiling for every agent."
+          },
+          "origin": {
+            "description": "`inline`, or the saved module's path."
+          },
+          "script_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "digest": {
+            "type": "string",
+            "description": "`sha256:` digest of the current revision's script source."
+          },
+          "config_digest": {
+            "type": "string",
+            "description": "Digest of the engine limits and model tiers the current revision runs with.",
+            "default": ""
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Script revision, starting at 1; a relaunch with a changed script or configuration\nneeds a new revision.",
+            "default": 1
+          },
+          "args": true,
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the run is paused, stopped or ended early."
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared phases followed by titles first seen in `phase()`."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The current phase."
+          },
+          "result": {
+            "description": "The script's return value once completed, when its JSON is at most 1 MiB."
+          },
+          "result_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A larger return value's file (`<state>/workflows/<run_id>.result.json`)."
+          },
+          "result_preview": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start of a larger return value's JSON."
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "Agents may ask the owner's attached clients; otherwise every `ask` is rejected\nwith `No interactive approver for workflow run`.",
+            "default": false
+          },
+          "continue_owner": {
+            "type": "boolean",
+            "description": "The owner continues when the summary is admitted (runs started by its `workflow`\ntool); otherwise the summary waits in its queue.",
+            "default": false
+          },
+          "notified": {
+            "type": "boolean",
+            "description": "The summary was admitted to the owner as `msg_workflow_<run_id>`.",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Diagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowAgent"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "session_id",
+          "directory",
+          "mode",
+          "origin",
+          "digest",
+          "args",
+          "status",
+          "phases",
+          "started_ms",
+          "agents"
+        ],
+        "description": "A run with its agents."
+      },
+      "WorkflowAgent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "`agt_` ID; also the child Session's subagent name."
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "call_key": {
+            "type": "string",
+            "description": "`sha256(prompt + canonical options)` plus the ordinal of that key in the run."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The child Session, when one was created."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The resolved model reference; `None` inherits the owner's model."
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tier named by the call's `model` option."
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch of the agent's own worktree (`workflows` → Write isolation default)."
+          },
+          "status": {
+            "type": "string",
+            "description": "`running`, `completed`, `failed`, `cancelled` (stopped) or `interrupted` (the\nserver stopped; a resume continues its child Session)."
+          },
+          "result": {
+            "description": "The value the script received."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Diagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "call_key",
+          "status",
+          "cost",
+          "tokens"
+        ],
+        "description": "One `agent()` call (`workflow.agent.started.1`, then `workflow.agent.settled.1`)."
+      },
+      "ResumeBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "type": "boolean",
+            "description": "Accept a changed script or configuration as a new revision.",
+            "default": false
+          },
+          "budget": {
+            "description": "Run budget fields to override, such as a raised `max_cost_usd`.",
+            "default": null
+          }
+        }
+      },
+      "Page_WorkflowLogEntry": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowLogEntry"
+            }
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ]
+      },
+      "WorkflowLogEntry": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "time_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "values": {
+            "type": "array",
+            "items": true
+          }
+        },
+        "required": [
+          "seq",
+          "time_ms",
+          "values"
+        ],
+        "description": "One `log()` call."
       },
       "Page_HookExecutionRecord": {
         "type": "object",
@@ -1371,6 +2206,13 @@
             ],
             "description": "Durable child identity within its parent, independent of title and agent."
           },
+          "workflow_run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Workflow Run (`run_` ID) whose `agent()` call created this child."
+          },
           "agent": {
             "type": "string"
           },
@@ -1465,13 +2307,6 @@
             "default": "soft"
           }
         }
-      },
-      "Enforcement": {
-        "type": "string",
-        "enum": [
-          "soft",
-          "reserved"
-        ]
       },
       "ThreadStatus": {
         "type": "string",
@@ -1660,6 +2495,13 @@
               "null"
             ],
             "description": "Durable child identity within its parent, independent of title and agent."
+          },
+          "workflow_run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Workflow Run (`run_` ID) whose `agent()` call created this child."
           },
           "agent": {
             "type": "string"
@@ -5557,7 +6399,7 @@
     "/api/v1/usage": {
       "get": {
         "operationId": "v1.usage.get",
-        "summary": "Read durable Session subtree usage",
+        "summary": "Read durable Session subtree or Workflow Run usage",
         "tags": [
           "usage"
         ],
@@ -5585,7 +6427,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Data_UsageReport"
+                  "$ref": "#/components/schemas/Data_ScopeUsage"
                 }
               }
             }
@@ -5817,6 +6659,335 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs": {
+      "post": {
+        "operationId": "v1.workflow.run",
+        "summary": "Start a Workflow Run from a saved name or an inline script; it executes in the server",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_WorkflowRun"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartBody"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "v1.workflow.list",
+        "summary": "List Workflow Runs, newest first",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WorkflowRun"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/{id}": {
+      "get": {
+        "operationId": "v1.workflow.get",
+        "summary": "Read a Workflow Run with its agents",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_RunDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/{id}/pause": {
+      "post": {
+        "operationId": "v1.workflow.pause",
+        "summary": "Pause a run: in-flight agents finish, no new agent starts",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_WorkflowRun"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/{id}/resume": {
+      "post": {
+        "operationId": "v1.workflow.resume",
+        "summary": "Relaunch a paused, failed, stopped or budget-exceeded run through replay",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_WorkflowRun"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/{id}/stop": {
+      "post": {
+        "operationId": "v1.workflow.stop",
+        "summary": "Stop a run and cancel its in-flight agents",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_WorkflowRun"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/{id}/logs": {
+      "get": {
+        "operationId": "v1.workflow.logs",
+        "summary": "Read a run's log() entries",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WorkflowLogEntry"
                 }
               }
             }

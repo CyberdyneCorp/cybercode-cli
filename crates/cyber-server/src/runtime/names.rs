@@ -127,8 +127,13 @@ impl Runtime {
         let guard = mutex
             .try_lock_owned()
             .map_err(|_| RuntimeError::Invalid("Subagent busy".into()))?;
-        let lease =
-            super::child_ownership::Lease::claim(self.inner.store.clone(), parent, id, &authority)?;
+        let lease = super::child_ownership::Lease::claim(
+            self.inner.store.clone(),
+            parent,
+            id,
+            &authority,
+            self.ownership_holder(),
+        )?;
         let done = tokio_util::sync::CancellationToken::new();
         authority = authority
             .with_operation(lease.operation_id().into())

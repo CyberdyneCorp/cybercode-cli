@@ -656,6 +656,27 @@ jobs:
       - name: Native CLI service shutdown
         if: ${{ !cancelled() }}
         run: cargo test --locked -p cyber-cli --test cli service_stop_uses_registered_http_shutdown
+      - name: Native workflow engine, runs and surfaces
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked -p cyber-workflow
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test cli workflow
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --test workflow_runs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --test workflow_agents
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test workflows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --lib workflow_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-tools --lib permissions::engine::tests::workflow_run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-core --test hook_envelopes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --bin cyber workflows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Require native Windows lint success
         if: ${{ !cancelled() && needs.windows-lint.result != 'success' }}
         run: throw 'Native Windows lint failed; see the Windows lint job logs'

@@ -13,6 +13,7 @@ cyber-store.workspace = true
 cyber-llm = { path = "../cyber-llm" }
 cyber-server = { path = "../cyber-server" }
 cyber-tools = { path = "../cyber-tools" }
+cyber-workflow = { path = "../cyber-workflow" }
 cyber-sandbox = { path = "../cyber-sandbox" }
 cyber-snapshot = { path = "../cyber-snapshot" }
 axum = "0.8"

@@ -38,6 +38,8 @@ const DISTINCT_UNAVAILABLE: &[&str] = &[
     "PreCompact",
     "PostCompact",
     "InstructionsLoaded",
+    "WorkflowRunStart",
+    "WorkflowRunEnd",
 ];
 
 /// Lifecycle events the runtime dispatches through its narrow host port.
@@ -57,6 +59,8 @@ const RUNTIME_EVENTS: &[&str] = &[
     "PostCompact",
     "PostToolBatch",
     "InstructionsLoaded",
+    "WorkflowRunStart",
+    "WorkflowRunEnd",
 ];
 
 /// Events whose additional_context the runtime applies: lifecycle context with its
@@ -164,6 +168,7 @@ impl BuiltinHost {
             directory: hook.directory,
             agent: hook.agent,
             mode: hook.mode,
+            workflow_run_id: hook.workflow_run_id,
         };
         let dispatched = self
             .dispatch_owned(&hook.kind, &owner, hook.fields, &hook.subject, cancel)

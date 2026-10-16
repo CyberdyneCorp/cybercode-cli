@@ -75,6 +75,17 @@ impl Default for JobUsage {
     }
 }
 impl JobUsage {
+    /// Known cost of the Session and its descendants, in USD.
+    pub fn total_cost(&self) -> f64 {
+        self.cost + self.children.as_ref().map_or(0.0, |c| c.children_cost)
+    }
+
+    /// Tokens of the Session and its descendants.
+    pub fn total_tokens(&self) -> u64 {
+        self.tokens
+            .saturating_add(self.children.as_ref().map_or(0, |c| c.children_tokens))
+    }
+
     /// Own usage only. Use Runtime::job_usage for a complete subtree baseline.
     pub fn of(state: &super::SessionState) -> Self {
         Self {

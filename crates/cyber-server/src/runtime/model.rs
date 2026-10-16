@@ -58,6 +58,9 @@ pub struct SessionInfo {
     /// Durable child identity within its parent, independent of title and agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_name: Option<String>,
+    /// The Workflow Run (`run_` ID) whose `agent()` call created this child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_run_id: Option<String>,
     pub agent: String,
     pub model: String,
     pub mode: String,

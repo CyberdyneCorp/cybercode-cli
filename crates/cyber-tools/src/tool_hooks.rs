@@ -671,6 +671,8 @@ pub(crate) struct HookOwner {
     pub(crate) directory: String,
     pub(crate) agent: String,
     pub(crate) mode: String,
+    /// A Workflow Run event's run; a workflow agent's Session supplies its own.
+    pub(crate) workflow_run_id: Option<String>,
 }
 
 impl HookOwner {
@@ -680,6 +682,7 @@ impl HookOwner {
             directory: inv.directory.clone(),
             agent: inv.agent.clone(),
             mode: inv.mode.clone(),
+            workflow_run_id: None,
         }
     }
 }
@@ -695,12 +698,16 @@ impl BuiltinHost {
             .session_envelope(&owner.session_id)
             .await
             .map_err(|error| ToolError::Failed(error.to_string()))?;
-        Ok(envelope.identity(
+        let mut identity = envelope.identity(
             &owner.session_id,
             &owner.directory,
             &owner.agent,
             &owner.mode,
-        ))
+        );
+        if owner.workflow_run_id.is_some() {
+            identity.workflow_run_id = owner.workflow_run_id.clone();
+        }
+        Ok(identity)
     }
 
     /// Dispatch a tool event for an invocation with its tool fields and `extra`.

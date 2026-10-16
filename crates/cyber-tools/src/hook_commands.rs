@@ -193,6 +193,7 @@ mod tests {
                 agent: "coder".into(),
                 mode: "default".into(),
                 parent_session_id: None,
+                workflow_run_id: None,
             },
             1,
             fields,

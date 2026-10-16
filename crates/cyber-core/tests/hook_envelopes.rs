@@ -13,6 +13,7 @@ fn identity(directory: &std::path::Path) -> HookIdentity {
         agent: "coder".into(),
         mode: "accept-edits".into(),
         parent_session_id: None,
+        workflow_run_id: None,
     }
 }
 
@@ -280,4 +281,38 @@ fn payload_cannot_forge_project_workspace_or_parent_identity() {
         .unwrap_err();
         assert!(error.contains("cannot replace envelope field"), "{error}");
     }
+}
+
+#[test]
+fn workflow_agent_envelopes_carry_the_run_and_payloads_cannot_forge_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut identity = identity(directory.path());
+    let event = HookEvent::new(
+        "PostToolUse",
+        identity.clone(),
+        1,
+        fields(json!({"tool_name":"edit"})),
+    )
+    .unwrap();
+    assert!(event.as_json().get("workflow_run_id").is_none());
+    identity.workflow_run_id = Some("run_42".into());
+    let event = HookEvent::new(
+        "PostToolUse",
+        identity.clone(),
+        1,
+        fields(json!({"tool_name":"edit"})),
+    )
+    .unwrap();
+    assert_eq!(event.as_json()["workflow_run_id"], "run_42");
+    let forged = HookEvent::new(
+        "PostToolUse",
+        identity.clone(),
+        1,
+        fields(json!({"workflow_run_id":"run_other"})),
+    )
+    .unwrap_err();
+    assert!(forged.contains("workflow_run_id"), "{forged}");
+    identity.workflow_run_id = Some("ses_not_a_run".into());
+    let invalid = HookEvent::new("WorkflowRunEnd", identity, 1, fields(json!({}))).unwrap_err();
+    assert!(invalid.contains("Workflow Run ID"), "{invalid}");
 }

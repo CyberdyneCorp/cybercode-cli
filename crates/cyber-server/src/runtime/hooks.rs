@@ -562,6 +562,7 @@ fn validate_identity(record: &HookExecutionRecord) -> Result<(), String> {
             agent: record.agent.clone(),
             mode: record.mode.clone(),
             parent_session_id: record.parent_session_id.clone(),
+            workflow_run_id: None,
         },
         record.started_ms,
         serde_json::Map::new(),

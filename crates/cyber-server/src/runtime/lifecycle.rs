@@ -33,6 +33,7 @@ pub(crate) fn lifecycle(
         kind: kind.into(),
         subject,
         fields: fields.as_object().cloned().unwrap_or_default(),
+        workflow_run_id: None,
     }
 }
 

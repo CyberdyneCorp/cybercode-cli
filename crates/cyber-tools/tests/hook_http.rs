@@ -340,6 +340,7 @@ async fn session_subtree_stop_cancels_and_acknowledges_owned_http_transport() {
             agent: "build".into(),
             mode: "default".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         Default::default(),

@@ -20,6 +20,7 @@ cyber-app = { path = "../cyber-app" }
 cyber-client = { path = "../cyber-client" }
 cyber-tui = { path = "../cyber-tui" }
 cyber-tools = { path = "../cyber-tools" }
+cyber-workflow = { path = "../cyber-workflow" }
 tokio-util = "0.7"
 cyber-sandbox = { path = "../cyber-sandbox" }
 rusqlite.workspace = true

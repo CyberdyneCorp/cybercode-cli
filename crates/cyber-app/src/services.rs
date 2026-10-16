@@ -1,6 +1,7 @@
 //! Catalog and Location lookups for the HTTP API.
 mod intelligence;
 mod memory;
+mod workflows;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub struct AppServices {
     recent_file: PathBuf,
     data: PathBuf,
     cache: PathBuf,
+    global_config_dir: PathBuf,
     hook_review: Arc<HookReviewFn>,
     global: Arc<GlobalConfigFn>,
 }
@@ -47,6 +49,7 @@ impl AppServices {
             remote,
             config,
             recent_file: paths.state.join("model.json"),
+            global_config_dir: paths.config,
             data: paths.data,
             cache: paths.cache,
             hook_review,
@@ -507,6 +510,37 @@ impl Services for AppServices {
             mode: text("mode"),
             default_agent: text("default_agent"),
         })
+    }
+
+    fn workflow_location(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_server::http::WorkflowLocation, cyber_server::http::ApiError> {
+        let (config, _) = (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        workflows::location(&config)
+    }
+
+    fn authorize_workflow_run(
+        &self,
+        owner: &cyber_server::runtime::TurnContext,
+        module: &cyber_workflow::WorkflowModule,
+    ) -> Result<(), cyber_server::http::ApiError> {
+        match self.host.workflow_run_denial(owner, module) {
+            Ok(None) => Ok(()),
+            Ok(Some(reason)) => {
+                Err(cyber_server::http::ApiError::forbidden(reason).with_reason("PermissionDenied"))
+            }
+            // An unreadable configuration fails closed.
+            Err(error) => Err(cyber_server::http::ApiError::invalid(error)),
+        }
+    }
+
+    fn saved_workflow(
+        &self,
+        location: &Path,
+        name: &str,
+    ) -> Result<cyber_workflow::WorkflowModule, cyber_server::http::ApiError> {
+        workflows::saved(&self.global_config_dir, location, name)
     }
 
     fn default_model(&self, location: &Path) -> Option<String> {

@@ -19,6 +19,7 @@ mod task;
 mod tool_search;
 mod web;
 pub(crate) mod websearch;
+mod workflow;
 
 use cyber_llm::ToolSpec;
 use cyber_server::runtime::{RetrySafety, ToolDef};
@@ -61,6 +62,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(session::PlanEnter),
         Box::new(session::PlanExit),
         Box::new(agent::Agent),
+        Box::new(workflow::Workflow),
         Box::new(task::TaskStop),
         Box::new(mcp::WaitForMcp),
         Box::new(mcp::ResourceTool::List),
@@ -83,6 +85,7 @@ pub(crate) fn action_of(name: &str) -> &str {
     match name {
         "write" | "edit" | "apply_patch" | "notebook_edit" => "edit",
         "powershell" => "bash",
+        "workflow" => crate::permissions::WORKFLOW_RUN,
         "mcp_list_resources" | "mcp_list_resource_templates" | "mcp_read_resource" => "read",
         other => other,
     }

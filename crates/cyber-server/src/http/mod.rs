@@ -25,7 +25,9 @@ mod serve;
 mod service;
 mod sessions;
 mod usage;
+mod workflows;
 pub mod worktrees;
+pub use workflows::WorkflowLocation;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -371,6 +373,39 @@ pub trait Services: Send + Sync {
     fn location_defaults(&self, _location: &Path) -> Result<LocationDefaults, ApiError> {
         Ok(LocationDefaults::default())
     }
+    /// Workflow engine limits and resolved model tiers of a Location (`workflows`).
+    fn workflow_location(&self, _location: &Path) -> Result<WorkflowLocation, ApiError> {
+        Err(ApiError::service_unavailable(
+            "workflow",
+            "Workflow Runs are unavailable in this host",
+        ))
+    }
+    /// Refuse starting or resuming `module` for `owner` when a `workflow.run` rule
+    /// denies it (`workflows` → Permissions for runs). An authenticated API client
+    /// approves the run by asking for it, so `ask` lets it start; only a deny refuses,
+    /// with `403 PermissionDenied`. Hosts without permission rules refuse every run.
+    fn authorize_workflow_run(
+        &self,
+        _owner: &crate::runtime::TurnContext,
+        _module: &cyber_workflow::WorkflowModule,
+    ) -> Result<(), ApiError> {
+        Err(ApiError::service_unavailable(
+            "workflow",
+            "Workflow Runs are unavailable in this host",
+        ))
+    }
+    /// The saved Workflow named `name` for a Location (`workflows` → Saved and bundled
+    /// workflows).
+    fn saved_workflow(
+        &self,
+        _location: &Path,
+        _name: &str,
+    ) -> Result<cyber_workflow::WorkflowModule, ApiError> {
+        Err(ApiError::service_unavailable(
+            "workflow",
+            "Saved Workflows are unavailable in this host",
+        ))
+    }
     fn models(&self, location: &Path) -> BoxFuture<'_, Result<Vec<ModelInfo>, String>>;
     /// The configured default model for new Sessions in a Location.
     fn default_model(&self, location: &Path) -> Option<String>;
@@ -472,6 +507,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(memory::routes())
         .merge(usage::routes())
         .merge(worktrees::routes())
+        .merge(workflows::routes())
         .merge(events::routes())
         .merge(catalog::routes())
         .merge(service::routes())

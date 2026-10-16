@@ -18,6 +18,7 @@ fn event(kind: &str, directory: &std::path::Path) -> HookEvent {
             agent: "coder".into(),
             mode: "default".into(),
             parent_session_id: None,
+            workflow_run_id: None,
         },
         1,
         serde_json::Map::new(),

@@ -30,6 +30,8 @@ impl Runtime {
     /// Pending inbox rows survive; a new runtime can resume them after restart.
     pub async fn shutdown(&self) {
         let _shutdown = self.inner.shutdown_lock.lock().await;
+        // Durable first: running Workflow Runs come back paused after a restart.
+        self.pause_workflow_runs_for_shutdown().await;
         self.inner.closed.cancel();
         {
             let _admission = self.inner.lifecycle.write().await;
@@ -73,6 +75,7 @@ impl Runtime {
         for task in tasks {
             let _ = task.await;
         }
+        self.await_workflow_exits().await;
         self.inner.tools.shutdown().await;
     }
 

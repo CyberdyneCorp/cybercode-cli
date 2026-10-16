@@ -36,6 +36,52 @@ impl Tool for Agent {
     }
 }
 
+/// Who asked for a child Session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SpawnSource {
+    /// The model, through the `agent` tool or a forked skill.
+    Model,
+    /// The user: a subtask, an `@agent` delegation or a forked skill command.
+    User,
+    /// An `agent()` call of a Workflow Run (`workflows` → agent() call), with the run's
+    /// worktree naming when the call is isolated.
+    Workflow {
+        run_id: String,
+        worktree: Option<cyber_server::runtime::RunWorktree>,
+    },
+}
+
+impl SpawnSource {
+    fn user_requested(&self) -> bool {
+        matches!(self, Self::User)
+    }
+
+    /// User and Workflow delegations obey deny rules but never ask: the user already
+    /// chose to delegate (or to start the run).
+    fn deny_only(&self) -> bool {
+        !matches!(self, Self::Model)
+    }
+
+    fn workflow_run_id(&self) -> Option<String> {
+        match self {
+            Self::Workflow { run_id, .. } => Some(run_id.clone()),
+            _ => None,
+        }
+    }
+
+    fn run_worktree(&self) -> Option<&cyber_server::runtime::RunWorktree> {
+        match self {
+            Self::Workflow { worktree, .. } => worktree.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+/// Workflow agent answers are returned whole up to this size, like run results.
+const WORKFLOW_RESULT_BYTES: usize = 1024 * 1024;
+/// Prefix of the error after a schema-governed child's single result retry failed.
+pub(crate) const SCHEMA_MISMATCH: &str = "SchemaMismatch: ";
+
 struct Spawn {
     skill_command: Option<cyber_server::runtime::SkillCommand>,
     /// UserPromptSubmit context of a user delegation, admitted with a new child's
@@ -45,7 +91,7 @@ struct Spawn {
     attachments: Vec<cyber_llm::Content>,
     max_steps: Option<u32>,
     isolation: bool,
-    user_requested: bool,
+    source: SpawnSource,
     fork: bool,
     resume: Option<SessionInfo>,
     usage: cyber_server::runtime::JobUsage,
@@ -146,7 +192,7 @@ fn configured(ctx: &Ctx<'_>, resume: Option<&SessionInfo>) -> Result<Spawn, Tool
         attachments: Vec::new(),
         max_steps: None,
         isolation,
-        user_requested: false,
+        source: SpawnSource::Model,
         fork,
         resume: resume.cloned(),
         usage: Default::default(),
@@ -190,7 +236,7 @@ fn check_features(input: &Value, profile: &AgentProfile) -> Result<bool, ToolErr
 }
 
 fn user_options(spawn: &mut Spawn, input: &Value) -> Result<(), ToolError> {
-    if spawn.user_requested {
+    if spawn.source.user_requested() {
         spawn.attachments = input
             .get("attachments")
             .cloned()
@@ -226,7 +272,30 @@ async fn effective_parent(runtime: &Runtime, session: &str) -> Result<SessionInf
 }
 
 pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, ToolError> {
-    run_with_skill(ctx, user_requested, None, None).await
+    let source = if user_requested {
+        SpawnSource::User
+    } else {
+        SpawnSource::Model
+    };
+    run_with_skill(ctx, source, None, None).await
+}
+
+/// A Workflow agent: a foreground child of the run's owner Session, holding `permit` from
+/// the server-wide Workflow limit instead of an `agents.max_concurrent` slot.
+pub(crate) async fn run_workflow(
+    ctx: &Ctx<'_>,
+    run_id: String,
+    worktree: Option<cyber_server::runtime::RunWorktree>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Result<String, ToolError> {
+    Box::pin(spawn_child(
+        ctx,
+        SpawnSource::Workflow { run_id, worktree },
+        None,
+        None,
+        Some(permit),
+    ))
+    .await
 }
 
 pub(crate) async fn fork_skill(
@@ -258,7 +327,7 @@ pub(crate) async fn fork_skill(
     };
     run_with_skill(
         &child_ctx,
-        false,
+        SpawnSource::Model,
         Some(cyber_server::runtime::SkillCommand {
             agent: skill.agent.clone(),
             fork: false,
@@ -278,9 +347,22 @@ pub(crate) async fn fork_skill(
 
 pub(crate) async fn run_with_skill(
     ctx: &Ctx<'_>,
-    user_requested: bool,
+    source: SpawnSource,
     skill_command: Option<cyber_server::runtime::SkillCommand>,
     hook_context: Option<String>,
+) -> Result<String, ToolError> {
+    // Boxed: the shared spawn future is large, and nested delegations stack it.
+    Box::pin(spawn_child(ctx, source, skill_command, hook_context, None)).await
+}
+
+/// The shared spawn path of every source. `permit` is a slot the caller already holds;
+/// without one the child waits for an `agents.max_concurrent` slot of its root.
+async fn spawn_child(
+    ctx: &Ctx<'_>,
+    source: SpawnSource,
+    skill_command: Option<cyber_server::runtime::SkillCommand>,
+    hook_context: Option<String>,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) -> Result<String, ToolError> {
     let runtime = ctx
         .host
@@ -302,7 +384,10 @@ pub(crate) async fn run_with_skill(
     spawn.skill_command = skill_command;
     spawn.hook_context = hook_context;
     spawn.authority = Some(authority);
-    spawn.user_requested = user_requested;
+    if matches!(source, SpawnSource::Workflow { .. }) {
+        spawn.result_bytes = WORKFLOW_RESULT_BYTES;
+    }
+    spawn.source = source;
     user_options(&mut spawn, &ctx.inv.input)?;
     if let Some(existing) = &resume {
         let state = runtime
@@ -361,15 +446,9 @@ pub(crate) async fn run_with_skill(
     } else {
         None
     };
-    let pool = ctx
-        .host
-        .subagents
-        .pool(&root.id, spawn.max_concurrent)
-        .map_err(failed)?;
-    let permit = tokio::select! {
-        biased;
-        _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted),
-        permit = pool.acquire_owned() => permit.map_err(|e| failed(e.to_string()))?,
+    let permit = match permit {
+        Some(permit) => permit,
+        None => subagent_slot(ctx, &root.id, spawn.max_concurrent).await?,
     };
     prepare_child_admission(ctx, &runtime, &mut spawn).await?;
     let authority = spawn
@@ -384,10 +463,24 @@ pub(crate) async fn run_with_skill(
         .await
 }
 
+/// Wait for an `agents.max_concurrent` slot shared by the subagents of one root Session.
+async fn subagent_slot(
+    ctx: &Ctx<'_>,
+    root: &str,
+    limit: usize,
+) -> Result<tokio::sync::OwnedSemaphorePermit, ToolError> {
+    let pool = ctx.host.subagents.pool(root, limit).map_err(failed)?;
+    tokio::select! {
+        biased;
+        _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
+        permit = pool.acquire_owned() => permit.map_err(|e| failed(e.to_string())),
+    }
+}
+
 /// Authorize the delegation, then let SubagentStart refuse it before any child effect.
 async fn authorize_spawn(ctx: &Ctx<'_>, spawn: &Spawn) -> Result<(), ToolError> {
     let request = delegation_request(ctx, spawn);
-    if spawn.user_requested {
+    if spawn.source.deny_only() {
         if let Decision::Deny(reason) = ctx.policy.user_delegation(&request) {
             return Err(failed(format!("Permission denied: {reason}")));
         }
@@ -419,12 +512,12 @@ async fn subagent_start(ctx: &Ctx<'_>, spawn: &Spawn) -> Result<(), ToolError> {
         "isolation": if spawn.isolation { "worktree" } else { "none" },
         "resume": spawn.resume.is_some(),
         "child_session_id": spawn.child_id,
-        "user_requested": spawn.user_requested,
+        "user_requested": spawn.source.user_requested(),
         "skill": spawn.skill_command.as_ref().map(|skill| skill.activation.name.clone()),
     });
     ctx.host
         .subagent_start_hooks(
-            &crate::tool_hooks::HookOwner::of(ctx.inv),
+            &hook_owner(ctx, spawn),
             &spawn.profile.name,
             fields.as_object().cloned().unwrap_or_default(),
             ctx.cancel.clone(),
@@ -432,10 +525,18 @@ async fn subagent_start(ctx: &Ctx<'_>, spawn: &Spawn) -> Result<(), ToolError> {
         .await
 }
 
+/// The caller's hook identity; a Workflow agent's SubagentStart/Stop envelope carries its
+/// run as `workflow_run_id` (`hooks` → Hooks in subagents and workflows).
+fn hook_owner(ctx: &Ctx<'_>, spawn: &Spawn) -> crate::tool_hooks::HookOwner {
+    let mut owner = crate::tool_hooks::HookOwner::of(ctx.inv);
+    owner.workflow_run_id = spawn.source.workflow_run_id();
+    owner
+}
+
 fn subagent_stop(ctx: &Ctx<'_>, spawn: &Spawn) -> SubagentStop {
     SubagentStop {
         host: ctx.host.weak.clone(),
-        owner: crate::tool_hooks::HookOwner::of(ctx.inv),
+        owner: hook_owner(ctx, spawn),
         agent_type: spawn.profile.name.clone(),
         child_session_id: spawn.child_id.clone(),
         subagent_name: spawn.name.clone(),
@@ -454,7 +555,7 @@ async fn prepare_child_admission(
         .verify(runtime, &ctx.inv.session_id)
         .map_err(|e| failed(e.to_string()))?;
     revalidate_spawn(ctx, spawn).await?;
-    if spawn.user_requested {
+    if spawn.source.user_requested() {
         runtime
             .mark_delegation_launching(&ctx.inv.session_id, &ctx.inv.operation_key)
             .await
@@ -476,7 +577,7 @@ async fn revalidate_spawn(ctx: &Ctx<'_>, spawn: &mut Spawn) -> Result<(), ToolEr
     let policy = ctx.host.policy(ctx.inv).await.map_err(failed)?;
     check_skill_delegation(&policy, spawn.skill_command.as_ref())?;
     let request = delegation_request(ctx, spawn);
-    let decision = if spawn.user_requested {
+    let decision = if spawn.source.deny_only() {
         policy.user_delegation(&request)
     } else {
         policy.decide(&request)
@@ -839,6 +940,7 @@ async fn create_child(
             limit.min(u32::try_from(spawn.profile.steps.unwrap_or(50)).unwrap_or(u32::MAX))
         }),
         subagent_name: spawn.name.clone(),
+        workflow_run_id: spawn.source.workflow_run_id(),
         title: Some(format!("{} (@{})", spawn.description, spawn.profile.name)),
         model: model.unwrap_or(&parent.model).into(),
         model_is_default: model.is_none() && !spawn.fork,
@@ -851,7 +953,13 @@ async fn create_child(
     let worktree = if spawn.isolation {
         Some(
             ctx.host
-                .create_child_worktree(ctx.inv, ctx.cancel.clone(), request, spawn.user_requested)
+                .create_child_worktree(
+                    ctx.inv,
+                    ctx.cancel.clone(),
+                    request,
+                    spawn.source.user_requested(),
+                    spawn.source.run_worktree(),
+                )
                 .await
                 .map_err(|e| failed(e.to_string()))?,
         )
@@ -994,7 +1102,7 @@ async fn structured_result(weak: &WeakRuntime, id: &str) -> Result<String, ToolE
         None => {
             ensure_child_finished(&state)?;
             Err(failed(format!(
-                "SchemaMismatch: {}",
+                "{SCHEMA_MISMATCH}{}",
                 state.structured_result_error()
             )))
         }

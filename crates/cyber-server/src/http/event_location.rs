@@ -1,4 +1,6 @@
-//! Location at a durable cursor, independent of the Session's latest binding.
+//! Location at a durable cursor, independent of the Session's latest binding. A Workflow
+//! Run's events belong to the Location recorded when it started, so they stream on that
+//! Location's instance stream (`workflows` → Run monitor).
 use super::{ApiError, AppState};
 use crate::runtime::{LiveEvent, RuntimeError};
 use rusqlite::OptionalExtension;
@@ -9,6 +11,7 @@ pub(super) fn changed(kind: &str, data: &Value) -> Option<String> {
     match kind {
         "session.created.1" => data["info"]["directory"].as_str(),
         "session.worktree.rebound.1" => data["to"]["path"].as_str(),
+        "workflow.run.started.1" => data["directory"].as_str(),
         _ => None,
     }
     .map(str::to_owned)
@@ -31,7 +34,7 @@ pub(super) async fn at(state: &AppState, id: &str, seq: i64) -> Result<Option<St
             Ok(db
                 .query_row(
                     "SELECT type, data FROM event WHERE aggregate_id=?1 AND seq<=?2
-             AND type IN ('session.created.1', 'session.worktree.rebound.1')
+             AND type IN ('session.created.1', 'session.worktree.rebound.1', 'workflow.run.started.1')
              ORDER BY seq DESC LIMIT 1",
                     rusqlite::params![id, seq.max(0)],
                     |row| Ok((row.get(0)?, row.get(1)?)),

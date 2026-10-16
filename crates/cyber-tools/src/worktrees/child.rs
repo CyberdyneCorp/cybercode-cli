@@ -6,6 +6,28 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::sync::Weak;
 
+/// The checkout name and branch of an isolated child: `child-<session>` on
+/// `cyber/<parent hash>/<name>`, or a Workflow agent's `run-<ulid>-<index>` on
+/// `cyber/run-<ulid>/<index>` (`worktrees` → Workflow agent isolation).
+fn child_naming(
+    id: &str,
+    parent: &str,
+    child_name: &str,
+    run: Option<&cyber_server::runtime::RunWorktree>,
+) -> io::Result<(Name, String)> {
+    if let Some(run) = run {
+        let name = Name::parse(&run.name).map_err(io::Error::other)?;
+        return Ok((name, run.branch.clone()));
+    }
+    let name = Name::parse(&format!(
+        "child-{}",
+        id.strip_prefix("ses_").unwrap_or(id).to_ascii_lowercase()
+    ))
+    .map_err(io::Error::other)?;
+    let parent_short = format!("{:x}", Sha256::digest(parent.as_bytes()));
+    Ok((name, format!("cyber/{}/{child_name}", &parent_short[..12])))
+}
+
 #[derive(Clone)]
 pub(crate) struct ChildWorktree {
     child_id: String,
@@ -23,6 +45,7 @@ impl BuiltinHost {
         cancel: CancellationToken,
         request: CreateSession,
         user_requested: bool,
+        run: Option<&cyber_server::runtime::RunWorktree>,
     ) -> io::Result<ChildWorktree> {
         let runtime = self
             .runtime()
@@ -40,13 +63,9 @@ impl BuiltinHost {
             .subagent_name
             .as_deref()
             .ok_or_else(|| io::Error::other("Isolated child requires a reserved name"))?;
-        let name = Name::parse(&format!(
-            "child-{}",
-            id.strip_prefix("ses_").unwrap_or(id).to_ascii_lowercase()
-        ))
-        .map_err(io::Error::other)?;
-        let parent_short = format!("{:x}", Sha256::digest(parent.as_bytes()));
-        let branch = format!("cyber/{}/{child_name}", &parent_short[..12]);
+        let (name, branch) = child_naming(id, parent, child_name, run)?;
+        // The user approved the run, so its isolation obeys deny rules but never asks.
+        let user_requested = user_requested || run.is_some();
         let worktree_request = WorktreeSessionRequest {
             project_id: cyber_core::project::identify(Path::new(&inv.directory)).id,
             data: self
@@ -130,7 +149,12 @@ impl BuiltinHost {
             invocation: inv.clone(),
             repository,
             managed,
-            cleanup: recipe.settings.cleanup,
+            // A run's worktrees stay until the run is archived or pruned.
+            cleanup: if run.is_some() {
+                Cleanup::Keep
+            } else {
+                recipe.settings.cleanup
+            },
         })
     }
 

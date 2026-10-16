@@ -1,0 +1,474 @@
+//! Run lifecycle control (`workflows` → Run lifecycle states, Background execution on the
+//! server): pause, stop, resume, shutdown and startup recovery.
+//!
+//! Each executing run has a process-local [`Control`], like a Job's. Durable state is the
+//! `run_` aggregate: pause and stop are recorded at once, then the engine winds down; a
+//! paused run lets in-flight agents finish and starts no new ones, a stopped run cancels
+//! them (and stops their subtrees). Resume relaunches the script through replay and is
+//! refused while the previous attempt still owns an engine thread or an agent task, so a
+//! child is never driven by two attempts. Shutdown durably pauses running runs before the
+//! tool host closes, and recovery pauses runs a crashed process left `running`.
+
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use cyber_workflow::{Diagnostic, DiagnosticKind, Limits, WorkflowModule};
+use serde_json::{Value, json};
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
+
+use super::workflow_replay::Replay;
+use super::workflows::{
+    Engine, RUN_PAUSED, RUN_RESUMED, RUN_REVISED, RUN_STOPPED, WorkflowRun, WorkflowRunStatus,
+    config_digest,
+};
+use super::{Runtime, RuntimeError};
+
+/// The refusal while an earlier attempt still owns agents.
+pub const AGENTS_EXITING: &str = "Run has agents still exiting; retry shortly";
+/// How long shutdown waits for engines and agent tasks to wind down.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Signal {
+    Running,
+    /// Let in-flight agents finish; start none.
+    Pausing,
+    /// Cancel in-flight agents.
+    Stopping,
+    /// The server is stopping: cancel and leave unsettled agents for a resume.
+    Closing,
+}
+
+/// The process-local handle of one executing attempt.
+pub(super) struct Control {
+    signal: Mutex<Signal>,
+    /// Engine threads and agent tasks still alive; an agent task owns its child (permit,
+    /// ChildGuard, ownership claim) until it returns.
+    leases: AtomicUsize,
+    /// Cancels in-flight agents: stop and shutdown.
+    pub(super) cancel: CancellationToken,
+    /// Signalled when the signal changes or an agent settles.
+    pub(super) changed: Notify,
+}
+
+/// Keeps a [`Control`] busy until dropped.
+pub(super) struct Lease(Arc<Control>);
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        self.0.leases.fetch_sub(1, Ordering::SeqCst);
+        self.0.changed.notify_waiters();
+    }
+}
+
+impl Control {
+    fn new(cancel: CancellationToken) -> Self {
+        Self {
+            signal: Mutex::new(Signal::Running),
+            leases: AtomicUsize::new(0),
+            cancel,
+            changed: Notify::new(),
+        }
+    }
+
+    pub(super) fn signal(&self) -> Signal {
+        *self.signal.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Move to `signal` unless a stronger one is set; true when it changed.
+    fn set(&self, signal: Signal) -> bool {
+        let mut current = self.signal.lock().unwrap_or_else(PoisonError::into_inner);
+        let rank = |s: Signal| match s {
+            Signal::Running => 0,
+            Signal::Pausing => 1,
+            Signal::Closing => 2,
+            Signal::Stopping => 3,
+        };
+        if rank(signal) <= rank(*current) {
+            return false;
+        }
+        *current = signal;
+        drop(current);
+        if matches!(signal, Signal::Stopping | Signal::Closing) {
+            self.cancel.cancel();
+        }
+        self.changed.notify_waiters();
+        true
+    }
+
+    pub(super) fn engine_lease(self: &Arc<Self>) -> Lease {
+        self.lease()
+    }
+
+    pub(super) fn lease(self: &Arc<Self>) -> Lease {
+        self.leases.fetch_add(1, Ordering::SeqCst);
+        Lease(Arc::clone(self))
+    }
+
+    fn busy(&self) -> bool {
+        self.leases.load(Ordering::SeqCst) > 0
+    }
+}
+
+/// A relaunch of a paused, failed, stopped or budget-halted run.
+pub struct ResumeWorkflowRun {
+    pub run_id: String,
+    /// The script to execute: the stored inline source or the re-read saved module.
+    pub module: WorkflowModule,
+    pub limits: Limits,
+    pub tiers: BTreeMap<String, Option<String>>,
+    /// Fields that override the run budget (for example a raised `max_cost_usd`).
+    pub budget: Option<Value>,
+    /// Accept a changed script or configuration as a new revision.
+    pub revision: bool,
+}
+
+impl Runtime {
+    /// Register the control of a new attempt; refused while an earlier one is alive.
+    pub(super) fn claim_workflow_control(
+        &self,
+        run_id: &str,
+    ) -> Result<Arc<Control>, RuntimeError> {
+        let mut controls = self
+            .inner
+            .workflow_controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        controls.retain(|_, control| control.busy());
+        if controls.contains_key(run_id) {
+            return Err(RuntimeError::Conflict(AGENTS_EXITING.into()));
+        }
+        let control = Arc::new(Control::new(self.inner.closed.child_token()));
+        controls.insert(run_id.to_owned(), Arc::clone(&control));
+        Ok(control)
+    }
+
+    fn workflow_control(&self, run_id: &str) -> Option<Arc<Control>> {
+        self.inner
+            .workflow_controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(run_id)
+            .filter(|control| control.busy())
+            .cloned()
+    }
+
+    /// Whether an earlier attempt or one of its agents' child Sessions is still alive.
+    pub fn workflow_agents_exiting(&self, run_id: &str) -> Result<bool, RuntimeError> {
+        if self.workflow_control(run_id).is_some() {
+            return Ok(true);
+        }
+        Ok(self
+            .workflow_children(run_id, false)?
+            .iter()
+            .any(|child| self.is_running(child)))
+    }
+
+    /// Child Sessions of the run's agents; with `unsettled`, only of agents still running.
+    fn workflow_children(
+        &self,
+        run_id: &str,
+        unsettled: bool,
+    ) -> Result<Vec<String>, RuntimeError> {
+        let run = run_id.to_owned();
+        Ok(self.inner.store.read(move |db| {
+            let mut statement = db.prepare(
+                "SELECT s.id FROM session s WHERE s.workflow_run_id = ?1 AND (?2 = 0 OR EXISTS(
+                    SELECT 1 FROM workflow_agent a WHERE a.run_id = ?1 AND a.id = s.subagent_name AND a.status = 'running'))
+                 ORDER BY s.id",
+            )?;
+            let ids = statement
+                .query_map(rusqlite::params![run, unsettled], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })?)
+    }
+
+    /// Pause a running run: in-flight agents finish and are recorded, no new agent starts.
+    pub async fn pause_workflow_run(&self, run_id: &str) -> Result<WorkflowRun, RuntimeError> {
+        let _guard = self.inner.workflow_lifecycle.lock().await;
+        let mut run = self.existing_workflow_run(run_id)?;
+        if run.status == WorkflowRunStatus::Paused {
+            return Ok(run);
+        }
+        if run.status != WorkflowRunStatus::Running {
+            return Err(RuntimeError::Conflict(format!(
+                "Run {run_id} is {}; only a running run can be paused",
+                status_name(run.status)
+            )));
+        }
+        run.status = WorkflowRunStatus::Paused;
+        run.reason = Some("paused by the user".into());
+        self.run_log().record(&run, RUN_PAUSED, json!({}))?;
+        if let Some(control) = self.workflow_control(run_id) {
+            control.set(Signal::Pausing);
+        }
+        Ok(run)
+    }
+
+    /// Stop a run: in-flight agents are cancelled and their subtrees stopped.
+    pub async fn stop_workflow_run(&self, run_id: &str) -> Result<WorkflowRun, RuntimeError> {
+        let _guard = self.inner.workflow_lifecycle.lock().await;
+        let mut run = self.existing_workflow_run(run_id)?;
+        if !(run.status.is_active() || run.status == WorkflowRunStatus::Paused) {
+            return Err(RuntimeError::Conflict(format!(
+                "Run {run_id} is {}; only a running or paused run can be stopped",
+                status_name(run.status)
+            )));
+        }
+        let live = self.workflow_control(run_id);
+        if let Some(control) = &live {
+            control.set(Signal::Stopping);
+        }
+        let mut stops = Vec::new();
+        for child in self.workflow_children(run_id, true)? {
+            if live.is_none() && !self.is_running(&child) {
+                continue;
+            }
+            match self.stop_subtree(&child).await {
+                Ok(report) => stops.push(serde_json::to_value(report).unwrap_or_default()),
+                Err(RuntimeError::SessionNotFound(_)) => {}
+                Err(error) => stops.push(json!({"session_id": child, "error": error.to_string()})),
+            }
+        }
+        run.status = WorkflowRunStatus::Stopped;
+        run.reason = Some("stopped by the user".into());
+        run.ended_ms = Some(chrono::Utc::now().timestamp_millis());
+        self.run_log()
+            .record(&run, RUN_STOPPED, json!({"stops": stops}))?;
+        self.spawn_run_ended(run.clone());
+        Ok(run)
+    }
+
+    /// Hooks and the summary of an ended run, off the lifecycle lock.
+    fn spawn_run_ended(&self, run: WorkflowRun) {
+        let runtime = self.clone();
+        tokio::spawn(async move { runtime.workflow_run_ended(run).await });
+    }
+
+    /// Relaunch a paused, failed, stopped or budget-halted run. Settled results replay
+    /// from the store, unsettled agents resume their child Sessions. A changed script or
+    /// configuration without `revision` fails closed with `WorkflowReplayMismatch`.
+    pub async fn resume_workflow_run(
+        &self,
+        resume: ResumeWorkflowRun,
+    ) -> Result<WorkflowRun, RuntimeError> {
+        if self.is_shutting_down() {
+            return Err(RuntimeError::ShuttingDown);
+        }
+        let _guard = self.inner.workflow_lifecycle.lock().await;
+        let mut run = self.existing_workflow_run(&resume.run_id)?;
+        if run.status.is_active() || run.status == WorkflowRunStatus::Completed {
+            return Err(RuntimeError::Conflict(format!(
+                "Run {} is {}; only a paused, failed, stopped or budget-exceeded run can be resumed",
+                run.id,
+                status_name(run.status)
+            )));
+        }
+        if self.workflow_agents_exiting(&run.id)? {
+            return Err(RuntimeError::Conflict(AGENTS_EXITING.into()));
+        }
+        let configured = config_digest(&resume.limits, &resume.tiers);
+        let changed = resume.module.digest != run.digest || configured != run.config_digest;
+        if changed && !resume.revision {
+            return Err(RuntimeError::Conflict(replay_mismatch(
+                &run,
+                &resume.module,
+                &configured,
+            )));
+        }
+        if let Some(layer) = &resume.budget {
+            let budget = super::workflow_host::run_budget(&run)
+                .overridden(layer)
+                .map_err(RuntimeError::Invalid)?;
+            run.budget = Some(budget);
+        }
+        // A new attempt: its end gets its own result and summary.
+        run.reason = None;
+        run.error = None;
+        run.result = None;
+        run.result_file = None;
+        run.result_preview = None;
+        run.notified = false;
+        run.ended_ms = None;
+        if changed {
+            run.revision += 1;
+            run.digest = resume.module.digest.clone();
+            run.config_digest = configured;
+            let spend = super::budget::run_spend(&self.inner.store, &run.id)?;
+            let started = self.workflow_agents(&run.id)?.len() as u64;
+            let budget = super::workflow_host::budget_snapshot(
+                &super::workflow_host::run_budget(&run),
+                &spend,
+                started,
+            );
+            self.run_log().record(
+                &run,
+                RUN_REVISED,
+                json!({"source": resume.module.source, "budget_snapshot": budget}),
+            )?;
+        }
+        let replay = Replay::load(&self.inner.store, &run.id, run.revision)?;
+        run.status = WorkflowRunStatus::Running;
+        self.run_log().record(
+            &run,
+            RUN_RESUMED,
+            json!({"replay_from_order": replay.first_open_order()}),
+        )?;
+        let engine = Engine {
+            module: resume.module,
+            limits: resume.limits,
+            tiers: resume.tiers,
+        };
+        if let Err(error) = self.launch(run.clone(), engine, replay).await {
+            run.status = WorkflowRunStatus::Failed;
+            run.error = Some(Diagnostic::execution(error.to_string()));
+            self.run_log()
+                .record(&run, super::workflows::RUN_FAILED, json!({}))?;
+            self.spawn_run_ended(run);
+            return Err(error);
+        }
+        Ok(run)
+    }
+
+    /// Startup recovery: runs a previous process left executing are durably paused, and
+    /// their unsettled agents are marked interrupted for a later resume.
+    pub async fn recover_workflow_runs(&self) -> Result<(), RuntimeError> {
+        let _guard = self.inner.workflow_lifecycle.lock().await;
+        for mut run in self.workflow_runs(None)? {
+            if !run.status.is_active() || self.workflow_control(&run.id).is_some() {
+                continue;
+            }
+            run.status = WorkflowRunStatus::Paused;
+            run.reason = Some("the server restarted; resume to continue".into());
+            self.run_log()
+                .record(&run, RUN_PAUSED, json!({"interrupted": true}))?;
+        }
+        self.recover_workflow_handbacks().await;
+        Ok(())
+    }
+
+    /// Shutdown, before admission closes: durably pause every executing run and tell its
+    /// engine to leave unsettled agents for a resume.
+    pub(super) async fn pause_workflow_runs_for_shutdown(&self) {
+        let _guard = self.inner.workflow_lifecycle.lock().await;
+        let controls: Vec<(String, Arc<Control>)> = self
+            .inner
+            .workflow_controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, control)| control.busy())
+            .map(|(id, control)| (id.clone(), Arc::clone(control)))
+            .collect();
+        for (id, control) in controls {
+            control.set(Signal::Closing);
+            let Ok(Some(mut run)) = self.workflow_run(&id) else {
+                continue;
+            };
+            if run.status != WorkflowRunStatus::Running {
+                continue;
+            }
+            run.status = WorkflowRunStatus::Paused;
+            run.reason = Some("the server stopped; resume to continue".into());
+            if let Err(error) =
+                self.run_log()
+                    .record(&run, RUN_PAUSED, json!({"interrupted": true}))
+            {
+                cyber_core::log::log(
+                    cyber_core::log::Level::Error,
+                    "workflow",
+                    "shutdown_pause_unrecorded",
+                    json!({"run_id": id, "error": error.to_string()}),
+                );
+            }
+        }
+    }
+
+    /// Shutdown, after Drains settled: wait (bounded) until engines and agent tasks end, so
+    /// no agent outlives the tool host.
+    pub(super) async fn await_workflow_exits(&self) {
+        let wait = async {
+            loop {
+                let busy: Vec<Arc<Control>> = self
+                    .inner
+                    .workflow_controls
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .values()
+                    .filter(|control| control.busy())
+                    .cloned()
+                    .collect();
+                let Some(control) = busy.first() else {
+                    return;
+                };
+                let changed = control.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if control.busy() {
+                    let _ = tokio::time::timeout(Duration::from_millis(50), changed).await;
+                }
+            }
+        };
+        let _ = tokio::time::timeout(SHUTDOWN_GRACE, wait).await;
+    }
+
+    /// Reopen a stopped child's admission before a resume drives it again.
+    pub(super) async fn reopen_stopped_child(&self, child: &str) -> Result<(), RuntimeError> {
+        let id = child.to_owned();
+        let found = self.inner.store.read(move |db| {
+            let Some(scope) = super::subtree_reopen::active_scope(db, &id)? else {
+                return Ok(None);
+            };
+            use rusqlite::OptionalExtension;
+            let receipt: Option<String> = db
+                .query_row(
+                    "SELECT id FROM event WHERE aggregate_id=?1 AND type='session.subtree.stopped.1'
+                     AND json_extract(data,'$.scope_id')=?2 ORDER BY seq DESC LIMIT 1",
+                    rusqlite::params![id, scope],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(Some((scope, receipt)))
+        })?;
+        match found {
+            None => Ok(()),
+            Some((scope, Some(receipt))) => self
+                .reopen_subtree(child, &scope, &receipt)
+                .await
+                .map(|_| ()),
+            Some((_, None)) => Err(RuntimeError::Conflict(format!(
+                "Child {child} admission is closed without a stop receipt; recovery is required"
+            ))),
+        }
+    }
+}
+
+fn replay_mismatch(run: &WorkflowRun, module: &WorkflowModule, configured: &str) -> String {
+    let what = if module.digest != run.digest {
+        format!("the script changed ({} → {})", run.digest, module.digest)
+    } else {
+        format!(
+            "the configuration changed ({} → {configured})",
+            run.config_digest
+        )
+    };
+    let error = Diagnostic::new(
+        DiagnosticKind::WorkflowReplayMismatch,
+        format!(
+            "{what} since revision {}; resume with revision: true to start a new revision",
+            run.revision
+        ),
+    );
+    error.to_string()
+}
+
+fn status_name(status: WorkflowRunStatus) -> String {
+    serde_json::to_value(status)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}

@@ -213,7 +213,25 @@ npm run build       # dist/
 `python3 scripts/generate_sdk.py --check` exits 1 when it is out of date. WebSocket operations
 (`x-websocket: true`, e.g. `GET /api/v1/ws`) get no typed method. Examples live in
 `examples/` (drive a session, stream events with resume, approve permissions, register an app
-tool).
+tool, run a workflow).
+
+## Workflow runs
+
+`client.workflows.run({ name | script, args?, budget?, session_id? })` starts a Workflow Run in
+the server (`POST /api/v1/workflows/runs`) and returns a handle. Without `session_id` it first
+creates an owner Session in the client's Location. The handle offers:
+
+- `status()`: the run with its agents (`v1.workflow.get`)
+- `events()`: this run's durable `workflow.*` events from the Location's event stream
+- `pause()`, `resume({ revision? })` and `cancel()` (stop)
+- `result()`: polls until the run ends; resolves the script's return value when it completed
+  (`{ result_file, result_preview }` above 1 MiB) and rejects with `WorkflowRunError` (carrying
+  the run) when it failed, exceeded its budget, stopped or paused
+
+```ts
+const run = await client.workflows.run({ name: "audit", args: { base: "main" }, budget: { max_cost_usd: 10 } });
+console.log(await run.result());
+```
 
 
 `await client.mcp.close()` stops shared MCP connections for the client's Location and returns a Location envelope with `{ closed: true }` after verified settlement. A later Session open may establish fresh connections. Unresolved ownership returns `ConflictError` and keeps the Location fenced for retry or recovery; the operation does not clear unknown effects. Requests use the ordinary authentication, Location routing and idempotency handling.

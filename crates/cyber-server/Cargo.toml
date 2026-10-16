@@ -11,6 +11,7 @@ publish.workspace = true
 cyber-core.workspace = true
 cyber-store.workspace = true
 cyber-llm = { path = "../cyber-llm" }
+cyber-workflow = { path = "../cyber-workflow" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 futures = "0.3"
 rusqlite.workspace = true
@@ -42,6 +43,8 @@ base64 = "0.22"
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = "0.7"
+futures = "0.3"
+cyber-workflow = { path = "../cyber-workflow" }
 
 [lints]
 workspace = true

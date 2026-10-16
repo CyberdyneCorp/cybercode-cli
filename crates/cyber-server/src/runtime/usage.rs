@@ -18,9 +18,23 @@ pub struct UsageAmount {
     pub token_classes_complete: bool,
 }
 
+/// The `scope` of a Session usage report; it discriminates [`ScopeUsage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionScope {
+    Session,
+}
+
+/// The `scope` of a Workflow Run usage report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunScope {
+    Run,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct UsageReport {
-    pub scope: String,
+    pub scope: SessionScope,
     pub id: String,
     pub own: UsageAmount,
     pub descendants: UsageAmount,
@@ -127,7 +141,7 @@ fn read(row: &rusqlite::Row<'_>, id: &str) -> rusqlite::Result<UsageReport> {
     }
     let total = combine(&own, &descendants)?;
     Ok(UsageReport {
-        scope: "session".into(),
+        scope: SessionScope::Session,
         id: id.into(),
         own,
         descendants,
@@ -135,7 +149,136 @@ fn read(row: &rusqlite::Row<'_>, id: &str) -> rusqlite::Result<UsageReport> {
     })
 }
 
+/// Usage of one Workflow agent: its child Session with descendants.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct RunAgentUsage {
+    /// `agt_` ID.
+    pub agent_id: String,
+    pub session_id: String,
+    /// The model reference the child ran with.
+    pub model: String,
+    /// The tier the call named, when it named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    pub cost: f64,
+    pub total_tokens: u64,
+    pub unpriced_steps: u64,
+}
+
+/// A rollup of a run's agents by model or by tier.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct RunUsageGroup {
+    /// The model reference or tier name.
+    pub key: String,
+    pub agents: u64,
+    pub cost: f64,
+    pub total_tokens: u64,
+    pub unpriced_steps: u64,
+}
+
+/// `GET /usage?scope=run`: the run's agents summed, per agent, per model and per tier
+/// (`observability-costs` → per workflow run, agent and model). The orchestrator script
+/// makes no model calls of its own.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct RunUsageReport {
+    pub scope: RunScope,
+    pub id: String,
+    pub cost: f64,
+    pub total_tokens: u64,
+    pub unpriced_steps: u64,
+    /// False when a child's descendant usage history is incomplete.
+    pub usage_complete: bool,
+    pub agents: Vec<RunAgentUsage>,
+    pub models: Vec<RunUsageGroup>,
+    pub tiers: Vec<RunUsageGroup>,
+}
+
+/// One of the usage reports a scope returns, discriminated by `scope`.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum ScopeUsage {
+    Session(UsageReport),
+    Run(RunUsageReport),
+}
+
+fn group(
+    agents: &[RunAgentUsage],
+    key: impl Fn(&RunAgentUsage) -> Option<String>,
+) -> Vec<RunUsageGroup> {
+    let mut groups: std::collections::BTreeMap<String, RunUsageGroup> = Default::default();
+    for agent in agents {
+        let Some(name) = key(agent) else {
+            continue;
+        };
+        let entry = groups.entry(name.clone()).or_insert(RunUsageGroup {
+            key: name,
+            agents: 0,
+            cost: 0.0,
+            total_tokens: 0,
+            unpriced_steps: 0,
+        });
+        entry.agents += 1;
+        entry.cost += agent.cost;
+        entry.total_tokens = entry.total_tokens.saturating_add(agent.total_tokens);
+        entry.unpriced_steps = entry.unpriced_steps.saturating_add(agent.unpriced_steps);
+    }
+    groups.into_values().collect()
+}
+
 impl Runtime {
+    /// Usage of a Workflow Run from the Sessions its agents created.
+    pub fn run_usage(&self, id: &str) -> Result<RunUsageReport, RuntimeError> {
+        if self.workflow_run(id)?.is_none() {
+            return Err(RuntimeError::Invalid(format!("No Workflow Run {id}")));
+        }
+        let run = id.to_owned();
+        let (agents, complete) = self.inner.store.read(move |db| {
+            let mut statement = db.prepare(
+                "SELECT COALESCE(a.id, s.subagent_name, s.id), s.id, s.model, json_extract(a.data, '$.tier'),
+                    s.cost + s.children_cost,
+                    s.input_tokens+s.output_tokens+s.reasoning_tokens+s.cache_read_tokens+s.cache_write_tokens+s.children_tokens,
+                    s.unpriced_steps + s.children_unpriced_steps, s.children_usage_complete
+                 FROM session s LEFT JOIN workflow_agent a ON a.run_id = s.workflow_run_id AND a.id = s.subagent_name
+                 WHERE s.workflow_run_id = ?1 ORDER BY s.created_at, s.id",
+            )?;
+            let mut complete = true;
+            let agents = statement
+                .query_map([&run], |row| {
+                    Ok((
+                        RunAgentUsage {
+                            agent_id: row.get(0)?,
+                            session_id: row.get(1)?,
+                            model: row.get(2)?,
+                            tier: row.get(3)?,
+                            cost: valid_cost(row.get(4)?)?,
+                            total_tokens: counter(row, 5)?,
+                            unpriced_steps: counter(row, 6)?,
+                        },
+                        row.get::<_, bool>(7)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|(agent, own)| {
+                    complete &= own;
+                    agent
+                })
+                .collect::<Vec<_>>();
+            Ok((agents, complete))
+        })?;
+        Ok(RunUsageReport {
+            scope: RunScope::Run,
+            id: id.into(),
+            cost: agents.iter().map(|a| a.cost).sum(),
+            total_tokens: agents.iter().map(|a| a.total_tokens).sum(),
+            unpriced_steps: agents.iter().map(|a| a.unpriced_steps).sum(),
+            usage_complete: complete,
+            models: group(&agents, |a| Some(a.model.clone())),
+            tiers: group(&agents, |a| a.tier.clone()),
+            agents,
+        })
+    }
+
     pub fn session_usage(&self, id: &str) -> Result<UsageReport, RuntimeError> {
         let source = id.to_owned();
         self.inner.store.read(move |db| {

@@ -25,9 +25,13 @@ impl Inner {
     /// The Session's project identity, resolved off the async runtime once per
     /// Location and cached on its handle; a rebound Location resolves again.
     pub(crate) async fn envelope(&self, handle: &Handle) -> SessionEnvelope {
-        let (directory, parent_session_id) = {
+        let (directory, parent_session_id, workflow_run_id) = {
             let state = handle.state.lock().await;
-            (state.info.directory.clone(), state.info.parent_id.clone())
+            (
+                state.info.directory.clone(),
+                state.info.parent_id.clone(),
+                state.info.workflow_run_id.clone(),
+            )
         };
         if let Some((cached, envelope)) = handle
             .envelope
@@ -50,12 +54,14 @@ impl Inner {
                 project_id: "global".into(),
                 workspace: None,
                 parent_session_id,
+                workflow_run_id,
             };
         };
         let envelope = SessionEnvelope {
             workspace: (project.id != "global").then(|| project.worktree.display().to_string()),
             project_id: project.id,
             parent_session_id,
+            workflow_run_id,
         };
         *handle
             .envelope

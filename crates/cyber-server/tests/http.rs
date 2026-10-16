@@ -2046,7 +2046,10 @@ async fn session_usage_api_rejects_missing_scope_and_preserves_unknown_history()
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["_tag"], "InvalidRequestError");
     }
-    let (status, unavailable) = api.get("/usage?scope=run&id=x").await;
+    let (status, missing) = api.get("/usage?scope=run&id=run_missing").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(missing["_tag"], "WorkflowRunNotFoundError");
+    let (status, unavailable) = api.get("/usage?scope=goal&id=x").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(unavailable["_tag"], "ServiceUnavailableError");
     assert_eq!(unavailable["service"], "usage");
@@ -3275,6 +3278,7 @@ async fn hook_execution_api_is_authenticated_paginated_and_preserves_receipt_pri
                 agent: "build".into(),
                 mode: "default".into(),
                 parent_session_id: None,
+                workflow_run_id: None,
             },
             1,
             json!({"call_id":"call_receipt","tool_name":"read","tool_input":{"password":"private input"}}).as_object().unwrap().clone(),

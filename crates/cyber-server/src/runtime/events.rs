@@ -431,6 +431,7 @@ pub fn registry() -> EventRegistry {
     super::delegations::register(&mut registry);
     super::mcp::register(&mut registry);
     super::memory::register(&mut registry);
+    super::workflows::register(&mut registry);
     registry.projector(project);
     crate::worktrees::register(&mut registry);
     registry
@@ -450,6 +451,9 @@ fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
     let d = &e.data;
     super::budget::project(tx, e)?;
     super::jobs::project(tx, e)?;
+    if e.kind.starts_with("workflow.") {
+        return super::workflows::project(tx, e);
+    }
     match e.kind.as_str() {
         CREATED => insert_session(tx, e)?,
         WORKTREE_REBOUND => {
@@ -556,8 +560,8 @@ fn project_meta(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
 fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> {
     let info = &e.data["info"];
     tx.execute(
-        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq, subagent_name, children_usage_complete)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1)",
+        "INSERT INTO session (id, title, directory, parent_id, agent, model, mode, created_at, updated_at, last_seq, subagent_name, children_usage_complete, workflow_run_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1, ?11)",
         params![
             e.aggregate_id,
             s(info, "title"),
@@ -568,7 +572,8 @@ fn insert_session(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()>
             s(info, "mode"),
             e.time_ms,
             e.seq,
-            info["subagent_name"].as_str()
+            info["subagent_name"].as_str(),
+            info["workflow_run_id"].as_str()
         ],
     )?;
     if let Some(budget) = info.get("budget").filter(|v| !v.is_null()) {

@@ -14,6 +14,10 @@ pub(super) struct Record {
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<Binding>>,
+    /// The server process (its registration ID) that claimed the ownership, when the
+    /// claiming runtime held the per-user server lock. See [`super::Runtime::adopt_server_lock`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
 }
 pub(super) struct Lease {
     id: String,
@@ -29,6 +33,7 @@ impl Lease {
         parent: &str,
         child: &str,
         authority: &AdmissionAuthority,
+        holder: Option<String>,
     ) -> Result<Self, RuntimeError> {
         let id = cyber_core::ids::new_id("op");
         let record = Record {
@@ -37,6 +42,7 @@ impl Lease {
             child_id: child.into(),
             status: "held".into(),
             admission_bindings: Some(authority.bindings.clone()),
+            holder,
         };
         store.append(&id, Expected::Seq(-1), vec![change(&record)])?;
         Ok(Self { id, store, record })
@@ -136,6 +142,7 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
                 || old.source_id != record.source_id
                 || old.parent_id != record.parent_id
                 || old.child_id != record.child_id
+                || old.holder != record.holder
                 || record.admission_bindings.is_some()
             {
                 return Err("Child ownership release differs from its reservation".into());
@@ -144,4 +151,48 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         _ => return Err("Invalid child execution ownership status".into()),
     }
     Ok(())
+}
+
+impl super::Runtime {
+    /// Mark this runtime as the process holding the per-user server lock (`server.lock`)
+    /// under the registration `server_id`. Later child ownership claims record it as their
+    /// holder, and claims an earlier server process still held are released: the
+    /// operating system granted the lock only because that process is gone, so its
+    /// ownership can never be released by its owner (for example after a crash). Claims
+    /// without a holder belong to runtimes that never held the lock and stay held.
+    /// Returns how many claims were released.
+    pub fn adopt_server_lock(&self, server_id: &str) -> Result<usize, RuntimeError> {
+        if self.inner.server_holder.set(server_id.to_owned()).is_err() {
+            return Err(RuntimeError::Invalid(
+                "The server lock was already adopted by this runtime".into(),
+            ));
+        }
+        let mut released = 0;
+        for (operation, mut record) in held(&self.inner.store)? {
+            if record
+                .holder
+                .as_deref()
+                .is_none_or(|holder| holder == server_id)
+            {
+                continue;
+            }
+            record.status = "released".into();
+            record.admission_bindings = None;
+            self.inner
+                .store
+                .append(&operation, Expected::Any, vec![change(&record)])?;
+            cyber_core::log::info(
+                "child-ownership",
+                "released ownership of a server that exited",
+                serde_json::json!({"operation_id": operation, "holder": record.holder}),
+            );
+            released += 1;
+        }
+        Ok(released)
+    }
+
+    /// The registration ID recorded on new child ownership claims.
+    pub(super) fn ownership_holder(&self) -> Option<String> {
+        self.inner.server_holder.get().cloned()
+    }
 }

@@ -1,0 +1,1 @@
+{"run_id":"<run>","name":"tooled","status":"running","phases":["One"],"budget":{"max_wall_seconds":14400.0,"enforcement":"soft","max_agents":2},"script_file":null,"message":"The run continues in the background. Its summary arrives as a queued message when it ends; do not wait or poll for it."}

@@ -1,0 +1,287 @@
+//! The `workflow` route group (`server-api` → Route groups; `workflows` → Background
+//! execution on the server, Run lifecycle states, Phases, logs and checkpoints, Permissions
+//! for runs). Runs are started, listed, shown, paused, resumed, stopped and their logs read
+//! here; they execute inside the server, independent of the client connection. Starting
+//! and resuming honour the owner Session's `workflow.run` deny rules. Paths without an operation yet
+//! (saved-Workflow listing) answer `503 ServiceUnavailableError` with
+//! `service: "workflow"`, so clients can tell a missing capability from a missing resource.
+
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::routing::{any, get, post};
+use axum::{Json, Router};
+use cyber_workflow::{Diagnostic, WorkflowModule};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::envelope::{Cursor, Data, Page};
+use super::{ApiError, AppState};
+pub use crate::runtime::workflow_start::WorkflowLocation;
+use crate::runtime::workflow_start::{self, StartError};
+use crate::runtime::{
+    ResumeWorkflowRun, RunStarter, RuntimeError, SessionInfo, StartWorkflowRun, TurnContext,
+    WorkflowAgent, WorkflowLogEntry, WorkflowRun,
+};
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/workflows/runs", get(list).post(start))
+        .route("/workflows/runs/{id}", get(show))
+        .route("/workflows/runs/{id}/pause", post(pause))
+        .route("/workflows/runs/{id}/resume", post(resume))
+        .route("/workflows/runs/{id}/stop", post(stop))
+        .route("/workflows/runs/{id}/logs", get(logs))
+        .route("/workflows", any(unavailable))
+        .route("/workflows/{*rest}", any(unavailable))
+}
+
+async fn unavailable() -> ApiError {
+    ApiError::service_unavailable(
+        "workflow",
+        "This Workflow operation is not available in this server yet",
+    )
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StartBody {
+    /// The owner Session: agents become its children and run under its Mode.
+    session_id: String,
+    /// A saved Workflow's `meta.name`, discovered from the owner's Location.
+    name: Option<String>,
+    /// An inline JavaScript module.
+    script: Option<String>,
+    #[serde(default)]
+    args: Option<Value>,
+    /// Run budget fields, plus `max_agents`, overriding `budgets.run` and `meta.budget`:
+    /// the authenticated client may raise a limit, as on resume.
+    #[serde(default)]
+    budget: Option<Value>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ResumeBody {
+    /// Accept a changed script or configuration as a new revision.
+    #[serde(default)]
+    revision: bool,
+    /// Run budget fields to override, such as a raised `max_cost_usd`.
+    #[serde(default)]
+    budget: Option<Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Filter {
+    session_id: Option<String>,
+}
+
+/// A run with its agents.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct RunDetail {
+    #[serde(flatten)]
+    run: WorkflowRun,
+    agents: Vec<WorkflowAgent>,
+}
+
+fn diagnostic(error: Diagnostic) -> ApiError {
+    let message = error.to_string();
+    ApiError::invalid(message)
+        .with_reason(error.kind.as_str())
+        .with_field(
+            "diagnostic",
+            serde_json::to_value(&error).unwrap_or_default(),
+        )
+}
+
+/// The owner Session as permission rules see it.
+fn owner_context(owner: &SessionInfo) -> TurnContext {
+    TurnContext {
+        session_id: owner.id.clone(),
+        directory: owner.directory.clone(),
+        agent: owner.agent.clone(),
+        mode: owner.mode.clone(),
+        prefers_apply_patch: false,
+        rules: owner.rules.clone(),
+    }
+}
+
+fn not_found(id: &str) -> ApiError {
+    ApiError::not_found("WorkflowRunNotFoundError", format!("No Workflow Run {id}"))
+}
+
+/// Lifecycle refusals keep their message; a replay mismatch names its diagnostic kind.
+fn lifecycle(error: RuntimeError) -> ApiError {
+    match error {
+        RuntimeError::Conflict(message) if message.starts_with("WorkflowReplayMismatch") => {
+            ApiError::conflict(message.clone()).with_reason("WorkflowReplayMismatch")
+        }
+        RuntimeError::Conflict(message) => ApiError::conflict(message),
+        error => error.into(),
+    }
+}
+
+fn start_error(error: StartError) -> ApiError {
+    match error {
+        StartError::Module(error) => diagnostic(error),
+        StartError::NotFound(_) => ApiError::not_found("WorkflowNotFoundError", error.to_string()),
+        StartError::Invalid(message) => ApiError::invalid(message),
+    }
+}
+
+async fn start(
+    State(state): State<AppState>,
+    Json(body): Json<StartBody>,
+) -> Result<(StatusCode, Json<Data<WorkflowRun>>), ApiError> {
+    let owner = state.runtime.state(&body.session_id).await?.info;
+    let location = std::path::PathBuf::from(&owner.directory);
+    let module = match (&body.name, body.script) {
+        (Some(name), None) => state.services.saved_workflow(&location, name)?,
+        (None, Some(script)) => workflow_start::inline(script).map_err(start_error)?,
+        _ => {
+            return Err(ApiError::invalid(
+                "Give exactly one of name (a saved Workflow) or script (an inline module)",
+            ));
+        }
+    };
+    state
+        .services
+        .authorize_workflow_run(&owner_context(&owner), &module)?;
+    let settings = state.services.workflow_location(&location)?;
+    let budget = workflow_start::client_budget(&settings, &module, body.budget.as_ref())
+        .map_err(start_error)?;
+    let run = state
+        .runtime
+        .start_workflow_run(StartWorkflowRun {
+            module,
+            args: body
+                .args
+                .unwrap_or_else(|| Value::Object(Default::default())),
+            session_id: owner.id,
+            limits: settings.limits,
+            tiers: settings.tiers,
+            budget,
+            starter: RunStarter::Api,
+        })
+        .await?;
+    Ok((StatusCode::CREATED, Json(Data { data: run })))
+}
+
+async fn list(
+    State(state): State<AppState>,
+    Query(filter): Query<Filter>,
+) -> Result<Json<Page<WorkflowRun>>, ApiError> {
+    if let Some(id) = &filter.session_id {
+        state.runtime.state(id).await?;
+    }
+    Ok(Json(Page {
+        data: state.runtime.workflow_runs(filter.session_id.as_deref())?,
+        cursor: Cursor::default(),
+    }))
+}
+
+fn existing(state: &AppState, id: &str) -> Result<WorkflowRun, ApiError> {
+    state.runtime.workflow_run(id)?.ok_or_else(|| not_found(id))
+}
+
+async fn show(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<RunDetail>>, ApiError> {
+    let run = existing(&state, &id)?;
+    let agents = state.runtime.workflow_agents(&id)?;
+    Ok(Json(Data {
+        data: RunDetail { run, agents },
+    }))
+}
+
+async fn pause(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<WorkflowRun>>, ApiError> {
+    existing(&state, &id)?;
+    let run = state
+        .runtime
+        .pause_workflow_run(&id)
+        .await
+        .map_err(lifecycle)?;
+    Ok(Json(Data { data: run }))
+}
+
+async fn stop(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<WorkflowRun>>, ApiError> {
+    existing(&state, &id)?;
+    let run = state
+        .runtime
+        .stop_workflow_run(&id)
+        .await
+        .map_err(lifecycle)?;
+    Ok(Json(Data { data: run }))
+}
+
+/// Relaunch through replay. Saved Workflows and an inline script's `script_file` are read
+/// again, so an edit needs `revision: true`; an inline run whose file is gone runs its
+/// stored source.
+async fn resume(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Option<Json<ResumeBody>>,
+) -> Result<Json<Data<WorkflowRun>>, ApiError> {
+    let body = body.map(|Json(body)| body).unwrap_or_default();
+    let run = existing(&state, &id)?;
+    let location = std::path::PathBuf::from(&run.directory);
+    let module = match run.origin["kind"].as_str() {
+        Some("saved") => state.services.saved_workflow(&location, &run.name)?,
+        _ => WorkflowModule::inline(inline_source(&state, &run)?).map_err(diagnostic)?,
+    };
+    let owner = state.runtime.state(&run.session_id).await?.info;
+    state
+        .services
+        .authorize_workflow_run(&owner_context(&owner), &module)?;
+    let settings = state.services.workflow_location(&location)?;
+    let run = state
+        .runtime
+        .resume_workflow_run(ResumeWorkflowRun {
+            run_id: id,
+            module,
+            limits: settings.limits,
+            tiers: settings.tiers,
+            budget: body.budget,
+            revision: body.revision,
+        })
+        .await
+        .map_err(lifecycle)?;
+    Ok(Json(Data { data: run }))
+}
+
+/// The script an inline run relaunches: its `script_file` as the user left it, else the
+/// source of its current revision.
+fn inline_source(state: &AppState, run: &WorkflowRun) -> Result<String, ApiError> {
+    if let Some(file) = &run.script_file {
+        match std::fs::read_to_string(file) {
+            Ok(source) => return Ok(source),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(ApiError::conflict(format!(
+                    "The run's script file {file} cannot be read: {error}"
+                )));
+            }
+        }
+    }
+    state
+        .runtime
+        .workflow_run_source(&run.id)?
+        .ok_or_else(|| ApiError::conflict("The run's script source is not stored"))
+}
+
+async fn logs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Page<WorkflowLogEntry>>, ApiError> {
+    existing(&state, &id)?;
+    Ok(Json(Page {
+        data: state.runtime.workflow_logs(&id)?,
+        cursor: Cursor::default(),
+    }))
+}

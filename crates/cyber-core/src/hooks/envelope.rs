@@ -17,6 +17,7 @@ const RESERVED: &[&str] = &[
     "timestamp",
     "synthetic",
     "parent_session_id",
+    "workflow_run_id",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,6 +37,9 @@ pub struct HookIdentity {
     /// The delegating Session of a child; absent for a root Session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,
+    /// The Workflow Run of a workflow agent's Session, or of a Workflow lifecycle event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_run_id: Option<String>,
 }
 
 impl HookIdentity {
@@ -49,6 +53,13 @@ impl HookIdentity {
             .is_some_and(|parent| !crate::ids::has_prefix(parent, "ses"))
         {
             return Err("hook envelope.parent_session_id: expected a Session ID".into());
+        }
+        if self
+            .workflow_run_id
+            .as_ref()
+            .is_some_and(|run| !crate::ids::has_prefix(run, "run"))
+        {
+            return Err("hook envelope.workflow_run_id: expected a Workflow Run ID".into());
         }
         if self.project_id != "global" && !crate::ids::has_prefix(&self.project_id, "prj") {
             return Err("hook envelope.project_id: expected a project ID or global".into());
@@ -101,6 +112,7 @@ impl HookEvent {
             agent,
             mode,
             parent_session_id: None,
+            workflow_run_id: None,
         };
         let mut event = Self::new(event, identity, timestamp_ms, fields)?;
         event.payload["synthetic"] = Value::Bool(true);
