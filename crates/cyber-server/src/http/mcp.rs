@@ -58,8 +58,8 @@ async fn close(
 }
 
 /// Reconnect a server settled `needs_auth` or `needs_client_registration` (for example after
-/// `cyber mcp auth`), or one running on a credential `cyber mcp logout` removed, with a fresh
-/// durable owner. The response is the status right after re-admission; later transitions
+/// `cyber mcp auth`), one settled `failed` that retained no native owner, or one running on
+/// a credential `cyber mcp logout` removed, with a fresh durable owner. The response is the status right after re-admission; later transitions
 /// follow on the event stream.
 async fn reconnect(
     State(state): State<AppState>,

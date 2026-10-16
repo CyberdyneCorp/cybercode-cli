@@ -1,0 +1,36 @@
+---
+source: crates/cyber-tui/src/screens_chrome.rs
+expression: shown
+---
+ cyber · Theme baseline                                               … running
+› How do I speed up fib?
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+
+
+
+┃
+┃ one
+┃ two
+┃ three
+┃
+┃ Build · Amini Coder test · default   … esc interrupt
+ /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+row 22: 0-6 fg=#00e5ff bg=#171c21
+row 22: 7-9 fg=#6b7a8f bg=#171c21
+row 22: 10-20 fg=#d6e4f0 bg=#171c21
+row 22: 21-35 fg=#6b7a8f bg=#171c21
+row 22: 36-40 fg=#00e5ff bg=#171c21
+row 22: 41-43 fg=#d6e4f0 bg=#171c21
+row 22: 44-53 fg=#6b7a8f bg=#171c21
+row 22: 54-79 fg=#d6e4f0 bg=#171c21

@@ -1,0 +1,58 @@
+---
+source: crates/cyber-tui/src/screens_chrome.rs
+expression: shown
+---
+› How do I speed up fib?
+                                                                                      Theme baseline
+  Plan
+                                                                                      Context
+  This keeps the cache warm:                                                          100 tokens
+                                                                                      — spent
+  1. Memoization: results are cached
+                                                                                      LSP
+  • avoids recomputation                                                              LSPs will activate as files are
+                                                                                      read
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+› HOLD on
+
+  ✗ Provider turn interrupted
+
+  ▣ Build · main · 11.3s · interrupted
+
+› FAIL now
+
+  ✗ scripted failure
+
+  ▣ Build · main · 11.3s · failed
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                     ~/work/app
+┃ Build · main test · default
+ /Users/leo/work/app                                       100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+row 13: 0-8 fg=#00e5ff bg=#0b0f14
+row 13: 9-23 fg=#6b7a8f bg=#0b0f14
+row 13: 24-83 fg=#d6e4f0 bg=#0b0f14
+row 13: 84-119 fg=#d6e4f0 bg=#13181d
+row 19: 0-8 fg=#00e5ff bg=#0b0f14
+row 19: 9-26 fg=#6b7a8f bg=#0b0f14
+row 19: 27-37 fg=#ffcc66 bg=#0b0f14
+row 19: 38-83 fg=#d6e4f0 bg=#0b0f14
+row 19: 84-119 fg=#d6e4f0 bg=#13181d
+row 25: 0-8 fg=#00e5ff bg=#0b0f14
+row 25: 9-26 fg=#6b7a8f bg=#0b0f14
+row 25: 27-32 fg=#ff6b6b bg=#0b0f14
+row 25: 33-83 fg=#d6e4f0 bg=#0b0f14
+row 25: 84-119 fg=#d6e4f0 bg=#13181d

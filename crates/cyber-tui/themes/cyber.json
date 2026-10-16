@@ -1,0 +1,72 @@
+{
+  "defs": {
+    "dark_background": "#0b0f14",
+    "light_background": "#ffffff",
+    "dark_text": "#d6e4f0",
+    "light_text": "#1f2933",
+    "dark_text_muted": "#6b7a8f",
+    "light_text_muted": "#5b6878",
+    "dark_accent": "#00e5ff",
+    "light_accent": "#00799e",
+    "dark_user": "#7aa2f7",
+    "light_user": "#3858c8",
+    "dark_success": "#7ee787",
+    "light_success": "#1a7f37",
+    "dark_warning": "#ffcc66",
+    "light_warning": "#9a6700",
+    "dark_error": "#ff6b6b",
+    "light_error": "#cf222e",
+    "dark_border": "#2b3445",
+    "light_border": "#d0d7de",
+    "dark_selection": "#1f2a3a",
+    "light_selection": "#dbeafe",
+    "dark_secondary": "#c792ea",
+    "light_secondary": "#8250df"
+  },
+  "theme": {
+    "background": {
+      "dark": "dark_background",
+      "light": "light_background"
+    },
+    "text": {
+      "dark": "dark_text",
+      "light": "light_text"
+    },
+    "text_muted": {
+      "dark": "dark_text_muted",
+      "light": "light_text_muted"
+    },
+    "accent": {
+      "dark": "dark_accent",
+      "light": "light_accent"
+    },
+    "user": {
+      "dark": "dark_user",
+      "light": "light_user"
+    },
+    "success": {
+      "dark": "dark_success",
+      "light": "light_success"
+    },
+    "warning": {
+      "dark": "dark_warning",
+      "light": "light_warning"
+    },
+    "error": {
+      "dark": "dark_error",
+      "light": "light_error"
+    },
+    "border": {
+      "dark": "dark_border",
+      "light": "light_border"
+    },
+    "selection": {
+      "dark": "dark_selection",
+      "light": "light_selection"
+    },
+    "secondary": {
+      "dark": "dark_secondary",
+      "light": "light_secondary"
+    }
+  }
+}

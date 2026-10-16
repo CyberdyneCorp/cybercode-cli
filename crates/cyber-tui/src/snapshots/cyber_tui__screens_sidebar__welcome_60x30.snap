@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: compact
+---
+ cyber · New session                                   idle
+
+           ██████╗██╗   ██╗██████╗ ███████╗██████╗
+          ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗
+          ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝
+          ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗
+          ╚██████╗   ██║   ██████╔╝███████╗██║  ██║
+           ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝
+           ██████╗ ██████╗ ██████╗ ███████╗
+          ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+          ██║     ██║   ██║██║  ██║█████╗
+          ██║     ██║   ██║██║  ██║██╔══╝
+          ╚██████╗╚██████╔╝██████╔╝███████╗
+           ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+
+              1.0.0 · local-first coding agent
+
+
+   Agent  Build
+   Model  main test
+   Mode   default
+   Path   ~/work/app
+   LSP    LSPs will activate as files are read
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                 $0.00  ctrl+p commands

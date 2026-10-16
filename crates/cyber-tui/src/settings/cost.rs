@@ -1,4 +1,6 @@
-//! Cost snapshots retain missing attribution instead of converting it to zero.
+//! The Usage tab's data (`tui` → Settings Usage tab), moved from the `/cost` overlay with
+//! its validation intact: a snapshot retains missing attribution instead of converting it
+//! to zero, and a report for another Session or with inconsistent totals is refused.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -14,6 +16,8 @@ pub struct Cost {
     unpriced: Option<u128>,
     classes_complete: bool,
     cost_complete: bool,
+    /// The server's breakdown; `None` from a server without one.
+    pub breakdown: Option<super::usage::Breakdown>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,7 +115,12 @@ impl Cost {
         let report: Report = serde_json::from_value(value.clone())
             .map_err(|_| "Malformed usage snapshot".to_string())?;
         report.validate(id)?;
+        let breakdown = value
+            .get("by_model")
+            .map(|_| super::usage::Breakdown::parse(value))
+            .transpose()?;
         Ok(Self {
+            breakdown,
             own: Some(report.own.tokens.values()),
             children: Some(report.descendants.tokens.values()),
             own_cost: Some(report.own.cost),
@@ -122,15 +131,12 @@ impl Cost {
         })
     }
 
-    pub fn lines(&self) -> Vec<String> {
-        let mut lines = vec![
-            "Session and descendants".into(),
-            String::new(),
-            format!(
-                "{:<14}{:>14}{:>14}{:>16}",
-                "Tokens", "Own", "Descendants", "Total (known)"
-            ),
-        ];
+    /// The token table and cache hit rate.
+    pub fn body(&self) -> Vec<String> {
+        let mut lines = vec![format!(
+            "{:<14}{:>14}{:>14}{:>16}",
+            "Tokens", "Own", "Descendants", "Total (known)"
+        )];
         for (index, label) in LABELS.iter().enumerate() {
             let own = self.own.map(|v| v[index]);
             let children = self.children.map(|v| v[index]);
@@ -145,31 +151,38 @@ impl Cost {
             ));
         }
         lines.push(String::new());
-        lines.push(self.cost_line());
         lines.push(format!("Cache hit rate: {}", self.cache_rate()));
         if !self.classes_complete || !self.cost_complete {
             lines.push("Attribution incomplete; known amounts are lower bounds.".into());
         }
-        lines.push(String::new());
-        lines.push("Last observed snapshot · R refresh · Esc close".into());
         lines
     }
 
-    fn cost_line(&self) -> String {
+    /// `$1.23`, `—` when every call was unpriced, or `≥ $1.23 · N unpriced calls` when
+    /// some were or attribution is incomplete.
+    pub fn total_cost(&self) -> String {
         let Some((own, children)) = self.own_cost.zip(self.children_cost) else {
-            return "Cost: unknown (missing attribution)".into();
+            return "unknown (missing attribution)".into();
         };
-        if self.cost_complete && self.unpriced == Some(0) {
-            return format!(
-                "Total cost: ${:.4} (own ${own:.4}, descendants ${children:.4})",
-                own + children
-            );
+        let total = own + children;
+        let unpriced = self.unpriced.unwrap_or(0);
+        let priced_models = self
+            .breakdown
+            .as_ref()
+            .map(|b| b.models.iter().any(|m| m.cost.is_some()));
+        if unpriced > 0
+            && (priced_models == Some(false) || (priced_models.is_none() && total == 0.0))
+        {
+            return "—".into();
         }
-        let unpriced = self.unpriced.map_or("unknown".into(), |v| v.to_string());
-        format!(
-            "Known priced cost: ${:.4} · {unpriced} unpriced calls",
-            own + children
-        )
+        if self.cost_complete && unpriced == 0 {
+            return super::usage::money(total);
+        }
+        let mut text = format!("≥ {}", super::usage::money(total));
+        if unpriced > 0 {
+            text.push_str(&format!(" · {unpriced} unpriced calls"));
+        }
+        text
     }
 
     fn cache_rate(&self) -> String {
@@ -234,14 +247,19 @@ impl CostView {
             Err(error) => self.error = Some(error),
         }
     }
-    pub fn lines(&self) -> Vec<String> {
-        let mut lines = self.snapshot.lines();
-        if self.loading {
-            lines.push("Refreshing…".into());
-        }
-        if let Some(error) = &self.error {
-            lines.push(format!("Refresh failed: {error}"));
-        }
-        lines
+    /// The last snapshot, or `None` before the first one arrives.
+    pub fn snapshot(&self) -> Option<&Cost> {
+        (self.snapshot != Cost::default()).then_some(&self.snapshot)
+    }
+
+    /// What differs between test runs (durations, reset times) is fixed through this.
+    #[cfg(test)]
+    pub fn snapshot_mut(&mut self) -> Option<&mut Cost> {
+        (self.snapshot != Cost::default()).then_some(&mut self.snapshot)
+    }
+
+    /// The last refresh's error, shown below the snapshot it left in place.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 }

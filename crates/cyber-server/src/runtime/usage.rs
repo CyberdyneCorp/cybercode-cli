@@ -197,7 +197,7 @@ pub struct RunUsageReport {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum ScopeUsage {
-    Session(UsageReport),
+    Session(Box<super::SessionUsage>),
     Run(RunUsageReport),
 }
 

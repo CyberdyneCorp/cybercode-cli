@@ -4850,3 +4850,71 @@ async fn remote_server_cancels_elicitation_dismisses_question() {
     server.await.unwrap();
     close(app, &turn).await;
 }
+
+/// A minimal stdio MCP server: `initialize`, then an empty tool list.
+#[cfg(unix)]
+const EMPTY_STDIO_SERVER: &str = r#"
+import json,sys
+for line in sys.stdin:
+    req=json.loads(line)
+    if 'id' not in req: continue
+    if req['method']=='initialize': result={'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'late','version':'1'}}
+    else: result={'tools':[]}
+    print(json.dumps({'jsonrpc':'2.0','id':req['id'],'result':result}),flush=True)
+"#;
+
+/// `POST /mcp/{name}/reconnect` re-admits a server that settled `failed` without a
+/// retained owner (the sidebar's `r`): once its script exists, it connects.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failed_server_reconnects_through_the_public_route() {
+    use std::time::Duration;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    let app = application(&directory).await;
+    let script = directory.join("late.py");
+    std::fs::write(
+        app.paths.config.join("cyber.json"),
+        json!({
+            "sandbox":{"policy":"full-access"},
+            "providers":provider(),
+            "mcp":{"late":{"type":"local","command":"/usr/bin/python3","args":["-u",script]}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    open_session(&app, &directory).await;
+    let status = |wanted: &'static str| {
+        let app = &app;
+        async move {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let body = mcp_status_body(app).await;
+                    if body.contains(&format!("\"status\":\"{wanted}\"")) {
+                        return body;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("never {wanted}"))
+        }
+    };
+    status("failed").await;
+    std::fs::write(&script, EMPTY_STDIO_SERVER).unwrap();
+    let (close_url, stop, server) = listener(&app).await;
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .post(close_url.replace("/mcp/close", "/mcp/late/reconnect"))
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    status("connected").await;
+    app.runtime.shutdown().await;
+}

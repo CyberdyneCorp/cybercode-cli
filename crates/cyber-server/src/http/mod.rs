@@ -9,6 +9,7 @@ mod envelope;
 mod error;
 mod event_location;
 mod events;
+mod files;
 mod guard;
 mod hooks;
 mod idempotency;
@@ -25,6 +26,7 @@ mod serve;
 mod service;
 mod sessions;
 mod usage;
+mod vcs;
 mod workflows;
 pub mod worktrees;
 pub use workflows::WorkflowLocation;
@@ -140,6 +142,9 @@ pub struct AgentInfo {
     pub description: String,
     /// `primary`, `subagent` or `all`.
     pub mode: String,
+    /// The configured display color (`#rrggbb` or an ANSI name), as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /// The Location's own defaults for new Sessions, as its configuration states them.
@@ -506,6 +511,8 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(intelligence::routes())
         .merge(memory::routes())
         .merge(usage::routes())
+        .merge(vcs::routes())
+        .merge(files::routes())
         .merge(worktrees::routes())
         .merge(workflows::routes())
         .merge(events::routes())

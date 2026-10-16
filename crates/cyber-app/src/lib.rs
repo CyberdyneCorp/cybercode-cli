@@ -237,6 +237,8 @@ impl App {
         // Inline scripts and return values larger than 1 MiB (`workflows` → Run results).
         runtime.configure_workflow_dir(opts.paths.state.join("workflows"));
         runtime.recover_jobs().await.map_err(|e| e.to_string())?;
+        // Index usage stored before the usage ledger existed (resumable, in batches).
+        runtime.spawn_usage_backfill();
         // Runs a previous process left executing come back paused; resume continues them.
         runtime
             .recover_workflow_runs()

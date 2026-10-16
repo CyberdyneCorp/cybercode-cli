@@ -24,13 +24,8 @@ type Term = Terminal<CrosstermBackend<std::io::Stdout>>;
 pub async fn run(opts: TuiOptions) -> Result<Summary, String> {
     let client = opts.client.at(&opts.directory);
     let store = LocalStore::new(&opts.state_dir);
-    let (session, open_picker) = open(&client, &opts).await?;
-    let theme = store
-        .get("theme")
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "cyber".into());
-    let mut app = App::new(session, store.history(&opts.directory), &theme);
-    app.composer.set_text(&store.draft(&app.session.id));
+    let env = |name: &str| std::env::var(name).ok();
+    let (mut app, open_picker) = start(&client, &store, &opts, &env).await?;
     let mut terminal = setup().map_err(|e| e.to_string())?;
     let result = event_loop(&mut terminal, &mut app, &client, &store, &opts, open_picker).await;
     teardown(&mut terminal);
@@ -39,11 +34,47 @@ pub async fn run(opts: TuiOptions) -> Result<Summary, String> {
     let s = &app.session;
     Ok(Summary {
         session_id: s.id.clone(),
-        title: s.title.clone(),
+        // Printed to the terminal after the UI closes.
+        title: crate::sidebar::clean(&s.title),
         input_tokens: s.input_tokens,
         output_tokens: s.output_tokens,
         cost: s.cost,
     })
+}
+
+/// The first Session and the UI state for it, with the appearance from `tui.jsonc`,
+/// custom themes, `kv.json` and the environment; and whether to open the picker.
+pub(crate) async fn start(
+    client: &Client,
+    store: &LocalStore,
+    opts: &TuiOptions,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<(App, bool), String> {
+    let (session, open_picker) = open(client, opts).await?;
+    let dirs = crate::prefs::config_dirs(&opts.config_dir, std::path::Path::new(&opts.directory));
+    let prefs = crate::prefs::load(store, &dirs, env);
+    let mut app = App::new(session, store.history(&opts.directory), "cyber");
+    app.reduced_motion = prefs.reduced_motion;
+    app.screen_reader = prefs.screen_reader;
+    app.keymap = prefs.keymap;
+    if let Some(fields) = prefs.statusline_fields {
+        app.statusline_fields = fields;
+    }
+    app.sidebar.preference = prefs.sidebar;
+    app.timestamps = prefs.preferences.get("timestamps") == "on";
+    app.show_reasoning = prefs.preferences.get("reasoning") == "expanded";
+    app.prefs = prefs.preferences;
+    app.welcome = prefs.welcome;
+    app.home = env("HOME").or_else(|| env("USERPROFILE"));
+    app.hyperlinks = crate::osc::hyperlinks(env);
+    let warnings = prefs.themes.warnings.clone();
+    app.set_appearance(prefs.themes, prefs.appearance);
+    app.set_theme(&prefs.theme);
+    if let Some(first) = warnings.first() {
+        app.toast(first.clone());
+    }
+    app.composer.set_text(&store.draft(&app.session.id));
+    Ok((app, open_picker))
 }
 
 /// The Session to show first, and whether to open the picker over it.
@@ -148,7 +179,7 @@ fn teardown(terminal: &mut Term) {
 
 /// Refreshes are coalesced: one in flight, at most one more queued.
 #[derive(Default)]
-struct Refresh {
+pub(crate) struct Refresh {
     in_flight: bool,
     again: bool,
     mode_in_flight: bool,
@@ -167,8 +198,61 @@ async fn event_loop(
         crate::memory::persistence::Persistence::load(&opts.state_dir, &mut app.memory);
     let (tx, mut rx) = mpsc::channel::<Result<Msg, String>>(64);
     let mut keys = EventStream::new();
-    let mut server = Box::pin(client.events(true).await.map_err(|e| e.to_string())?);
+    let mut server = Events {
+        stream: client
+            .events(true)
+            .await
+            .map_err(|e| e.to_string())?
+            .boxed(),
+        open: true,
+        ticks: 0,
+    };
     let mut refresh = Refresh::default();
+    let initial = initial_actions(app, store, opts, open_picker);
+    spawn_commands(client, &tx);
+    let initial = memory_persistence.gate(app, initial);
+    dispatch(app, client, store, &tx, &mut refresh, terminal, initial);
+    let mut tick = tokio::time::interval(Duration::from_millis(250));
+    query_background(app);
+    while !app.quit {
+        set_title(app);
+        let frame = terminal
+            .draw(|f| crate::view::draw(f, app))
+            .map_err(|e| e.to_string())?;
+        let links = app.take_screen_links();
+        if app.hyperlinks && matches!(app.overlay, crate::app::Overlay::None) {
+            let _ = crate::osc::write_hyperlinks(&mut std::io::stdout(), frame.buffer, &links);
+        }
+        let actions = tokio::select! {
+            Some(Ok(ev)) = keys.next() => terminal_event(app, ev),
+            ev = server.next() => match ev {
+                Some(ev) => server_event(app, &ev),
+                None => {
+                    app.sidebar.connection = crate::sidebar::Connection::Reconnecting;
+                    Vec::new()
+                }
+            },
+            Some(msg) = rx.recv() => received(app, store, msg, &mut refresh),
+            _ = tick.tick() => {
+                server.tick(app, client).await;
+                let actions = app.admissions.poll();
+                app.refresh_admissions();
+                actions
+            },
+        };
+        let actions = memory_persistence.gate(app, actions);
+        dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
+    }
+    Ok(())
+}
+
+/// The first refresh, stored admissions to reconcile, the picker and the `--prompt`.
+fn initial_actions(
+    app: &mut App,
+    store: &LocalStore,
+    opts: &TuiOptions,
+    open_picker: bool,
+) -> Vec<Action> {
     let mut initial = vec![Action::Refresh];
     for request in store.admissions() {
         app.admissions.register(request.clone());
@@ -183,44 +267,95 @@ async fn event_loop(
             delivery: "steer",
         });
     }
-    spawn_commands(client, &tx);
-    let initial = memory_persistence.gate(app, initial);
-    dispatch(app, client, store, &tx, &mut refresh, terminal, initial);
-    let mut tick = tokio::time::interval(Duration::from_millis(250));
-    while !app.quit {
-        set_title(app);
-        terminal
-            .draw(|f| crate::view::draw(f, app))
-            .map_err(|e| e.to_string())?;
-        let actions = tokio::select! {
-            Some(Ok(ev)) = keys.next() => terminal_event(app, ev),
-            Some(ev) = server.next() => server_event(app, &ev),
-            Some(msg) = rx.recv() => {
-                match msg {
-                    Ok(Msg::AdmissionStarted(request)) => {app.admissions.register(request); Vec::new()}
-                    Ok(Msg::AdmissionUpdated {request,result,stop}) => {
-                        let message=app.admissions.update(request,result,stop,store);
-                        app.refresh_admissions();
-                        app.toast(message);
-                        Vec::new()
-                    }
-                    other=>apply(app,other,&mut refresh),
-                }
-            },
-            _ = tick.tick() => {let actions=app.admissions.poll(); app.refresh_admissions(); actions},
-        };
-        let actions = memory_persistence.gate(app, actions);
-        dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
+    initial
+}
+
+fn received(
+    app: &mut App,
+    store: &LocalStore,
+    msg: Result<Msg, String>,
+    refresh: &mut Refresh,
+) -> Vec<Action> {
+    match msg {
+        Ok(Msg::AdmissionStarted(request)) => {
+            app.admissions.register(request);
+            Vec::new()
+        }
+        Ok(Msg::AdmissionUpdated {
+            request,
+            result,
+            stop,
+        }) => {
+            let message = app.admissions.update(request, result, stop, store);
+            app.refresh_admissions();
+            app.toast(message);
+            Vec::new()
+        }
+        other => apply(app, other, refresh),
     }
-    Ok(())
+}
+
+/// Ticks (250 ms) between attempts to reopen a closed event stream.
+const RECONNECT_TICKS: u32 = 8;
+
+/// The instance event stream, reopened after it ends.
+struct Events {
+    stream: futures::stream::BoxStream<'static, cyber_client::Event>,
+    open: bool,
+    ticks: u32,
+}
+
+impl Events {
+    /// The next event; `None` once when the stream ends, then nothing until it reopens.
+    async fn next(&mut self) -> Option<cyber_client::Event> {
+        if !self.open {
+            return std::future::pending().await;
+        }
+        let event = self.stream.next().await;
+        self.open = event.is_some();
+        event
+    }
+
+    /// Try to reopen a closed stream every [`RECONNECT_TICKS`] ticks.
+    async fn tick(&mut self, app: &mut App, client: &Client) {
+        self.ticks = self.ticks.wrapping_add(1);
+        if self.open || !self.ticks.is_multiple_of(RECONNECT_TICKS) {
+            return;
+        }
+        if let Some(stream) = reopen_events(app, client).await {
+            self.stream = stream;
+            self.open = true;
+        }
+    }
+}
+
+/// Reopen the instance event stream. Its `server.connected` event marks the connection
+/// up again and re-reads the Session and the sidebar; a failed attempt shows the
+/// connection as down until the next one.
+async fn reopen_events(
+    app: &mut App,
+    client: &Client,
+) -> Option<futures::stream::BoxStream<'static, cyber_client::Event>> {
+    let attempt = tokio::time::timeout(Duration::from_secs(2), client.events(true)).await;
+    match attempt {
+        Ok(Ok(stream)) => Some(stream.boxed()),
+        _ => {
+            app.sidebar.connection = crate::sidebar::Connection::Disconnected;
+            None
+        }
+    }
 }
 
 fn server_event(app: &mut App, event: &cyber_client::Event) -> Vec<Action> {
     if commands_changed(event) {
-        return vec![Action::LoadCommands];
+        return vec![
+            Action::LoadCommands,
+            Action::LoadSidebar(crate::sidebar::Part::Mcp),
+        ];
     }
     if event_is_visible(&app.session.id, event) {
-        app.on_server_event(event)
+        let actions = app.on_server_event(event);
+        reload_sidebar(app, actions)
     } else {
         Vec::new()
     }
@@ -249,19 +384,41 @@ fn event_is_visible(session_id: &str, event: &cyber_client::Event) -> bool {
         })
 }
 
+/// Ask the terminal for its background color (OSC 11). The reply comes back through
+/// the key stream, where [`App::probe_key`] takes it. Only on Unix terminals and in
+/// `tui.theme_mode: auto`; elsewhere `COLORFGBG` or dark stands.
+fn query_background(app: &mut App) {
+    if !cfg!(unix) || app.appearance.mode != crate::theme::ThemeMode::Auto {
+        return;
+    }
+    let mut out = std::io::stdout();
+    let sent = out
+        .write_all(crate::theme::detect::OSC11_QUERY.as_bytes())
+        .and_then(|()| out.flush());
+    if sent.is_ok() {
+        app.background_probe = Some(crate::theme::detect::Osc11Reply::new(
+            std::time::Instant::now(),
+        ));
+    }
+}
+
 fn terminal_event(app: &mut App, ev: TermEvent) -> Vec<Action> {
     match ev {
-        TermEvent::Key(key) if key.kind != KeyEventKind::Release => app.on_key(key),
+        TermEvent::Key(key) if key.kind != KeyEventKind::Release => app
+            .probe_key(key)
+            .map(|key| app.on_key(key))
+            .unwrap_or_default(),
         TermEvent::Paste(text) => {
             app.on_paste(&text);
             Vec::new()
         }
         TermEvent::FocusGained => {
             app.focused = true;
-            Vec::new()
+            app.recap_focus_gained()
         }
         TermEvent::FocusLost => {
             app.focused = false;
+            app.recap_focus_lost();
             Vec::new()
         }
         _ => Vec::new(),
@@ -283,7 +440,12 @@ fn open_skills(app: &mut App, directory: &str, result: Result<Vec<Choice>, Strin
     }
 }
 
-fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<Action> {
+pub(crate) fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<Action> {
+    let actions = apply_msg(app, msg, refresh);
+    reload_sidebar(app, actions)
+}
+
+fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<Action> {
     let msg = match msg {
         Ok(msg) => msg,
         Err(e) => {
@@ -313,6 +475,7 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
             if std::mem::take(&mut refresh.again) {
                 return vec![Action::Refresh];
             }
+            return app.recap_on_open();
         }
         Msg::ModeChanged { session_id, result } => {
             return mode_changed(app, refresh, session_id, result);
@@ -349,14 +512,14 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
                 app.hooks.apply(generation, result);
             }
         }
-        Msg::Cost {
-            session_id,
-            generation,
-            result,
-        } => {
-            if session_id == app.session.id {
-                app.cost.apply(&session_id, generation, result);
-            }
+        msg @ (Msg::Cost { .. }
+        | Msg::Status { .. }
+        | Msg::Stats { .. }
+        | Msg::Insights { .. }
+        | Msg::Limits { .. }
+        | Msg::Recap { .. }) => settings_reply(app, msg),
+        msg @ (Msg::Dir { .. } | Msg::FileHits { .. } | Msg::Preview { .. }) => {
+            explorer_reply(app, msg)
         }
         Msg::Tasks { session_id, items } => {
             if session_id == app.session.id {
@@ -384,11 +547,14 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
         Msg::Skills { directory, result } => open_skills(app, &directory, result),
         Msg::Commands {
             items,
+            palette,
             bundled_review,
         } => {
             app.commands = items;
+            app.server_commands = palette;
             app.review.set_bundled(bundled_review);
         }
+        Msg::Catalog(catalog) => app.catalog = catalog,
         Msg::Refused { command, message } => app.refused(&command, &message),
         Msg::ReviewDelegation(record) => app.review_delegation(&record),
         Msg::Files(files) => app.files = files,
@@ -403,10 +569,82 @@ fn apply(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> Vec<
             app.streaming.clear();
             return vec![Action::Refresh];
         }
+        Msg::Sidebar {
+            session_id,
+            directory,
+            loaded,
+        } => {
+            if session_id == app.session.id && directory == app.session.directory {
+                app.sidebar.apply(loaded);
+            }
+        }
         Msg::Toast(text) => app.toast(text),
         Msg::Done => {}
     }
     Vec::new()
+}
+
+/// A file explorer reply, for the Session (and directory) it was read for.
+fn explorer_reply(app: &mut App, msg: Msg) {
+    match msg {
+        Msg::Dir {
+            session_id,
+            directory,
+            path,
+            result,
+        } if session_id == app.session.id && directory == app.session.directory => match result {
+            Ok((level, changed)) => app.explorer.apply_level(path, level, changed),
+            Err(error) => app.toast(format!("files: {error}")),
+        },
+        Msg::FileHits {
+            session_id,
+            query,
+            hits,
+        } if session_id == app.session.id && query == app.explorer.filter => {
+            app.explorer.hits = hits;
+        }
+        Msg::Preview {
+            session_id,
+            path,
+            result,
+        } if session_id == app.session.id => app.apply_preview(&path, result),
+        _ => {}
+    }
+}
+
+/// A Usage or Status tab reply, for the Session it was read for.
+fn settings_reply(app: &mut App, msg: Msg) {
+    match msg {
+        Msg::Cost {
+            session_id,
+            generation,
+            result,
+        } if session_id == app.session.id => app.cost.apply(&session_id, generation, result),
+        Msg::Status {
+            session_id,
+            generation,
+            status,
+        } if session_id == app.session.id => app.settings.status.apply(generation, Ok(status)),
+        Msg::Stats { generation, result } => app.settings.stats.data.apply(generation, result),
+        Msg::Insights { generation, result } => {
+            app.settings.insights.data.apply(generation, result)
+        }
+        Msg::Limits { generation, result } => app.settings.limits.data.apply(generation, result),
+        Msg::Recap {
+            session_id,
+            manual,
+            result,
+        } => app.apply_recap(&session_id, manual, result),
+        _ => {}
+    }
+}
+
+/// Reload every sidebar source after the Session or its directory changed.
+fn reload_sidebar(app: &mut App, mut actions: Vec<Action>) -> Vec<Action> {
+    if std::mem::take(&mut app.sidebar_stale) {
+        actions.extend(crate::sidebar::Part::ALL.map(Action::LoadSidebar));
+    }
+    actions
 }
 
 fn mode_changed(
@@ -439,7 +677,47 @@ fn spawn_commands(client: &Client, tx: &mpsc::Sender<Result<Msg, String>>) {
     let (client, tx) = (client.clone(), tx.clone());
     tokio::spawn(async move {
         let _ = tx.send(perform::commands(&client).await).await;
+        let _ = tx.send(perform::catalog(&client).await).await;
     });
+}
+
+/// Save a preference the UI changed to `kv.json`.
+pub(crate) fn persist(store: &LocalStore, action: Action) {
+    match action {
+        Action::SaveTheme(name) => store.save_preference("theme", Value::String(name)),
+        Action::SavePreference { key, value } => store.save_preference(key, value),
+        _ => {}
+    }
+}
+
+/// `p` in the theme switcher: `theme` in the project's `.cyber/tui.jsonc`.
+pub(crate) fn save_project_theme(app: &mut App, name: &str) {
+    let directory = std::path::Path::new(&app.session.directory);
+    match crate::prefs::save_project_theme(directory, name) {
+        Ok(path) => app.toast(format!("Theme {name} saved to {}", path.display())),
+        Err(error) => app.toast(error),
+    }
+}
+
+fn count(lines: usize) -> String {
+    if lines == 1 {
+        "1 line".into()
+    } else {
+        format!("{lines} lines")
+    }
+}
+
+/// Copy through a native clipboard tool, or OSC 52 on the terminal without one.
+fn copy(app: &mut App, code: &str) {
+    let env = |name: &str| std::env::var(name).ok();
+    let lines = code.lines().count();
+    match crate::osc::copy(code, &env, &mut std::io::stdout()) {
+        Ok(crate::osc::Copied::Native(tool)) => {
+            app.toast(format!("Copied {} ({tool})", count(lines)))
+        }
+        Ok(crate::osc::Copied::Osc52) => app.toast(format!("Copied {} (OSC 52)", count(lines))),
+        Err(error) => app.toast(format!("Copy failed: {error}")),
+    }
 }
 
 /// Run actions: local ones here, API calls on tasks that report back through `tx`.
@@ -455,7 +733,11 @@ fn dispatch(
     for action in actions {
         match action {
             Action::Quit => app.quit = true,
-            Action::SaveTheme(name) => store.set("theme", Value::String(name.into())),
+            action @ (Action::SaveTheme(_) | Action::SavePreference { .. }) => {
+                persist(store, action)
+            }
+            Action::SaveProjectTheme(name) => save_project_theme(app, &name),
+            Action::Copy(code) => copy(app, &code),
             Action::Editor(text) => {
                 let edited = edit_externally(terminal, &text);
                 app.composer.set_text(&edited);
@@ -535,24 +817,38 @@ fn edit_externally(terminal: &mut Term, text: &str) -> String {
         .unwrap_or_else(|| text.to_string())
 }
 
-/// `cyber · <title> · <status>`.
-fn set_title(app: &App) {
+/// `cyber · <title> · <status>`. The title is server data, often written by a model, and
+/// goes into an OSC 0 sequence that ratatui does not filter: a BEL or ESC in it would end
+/// the sequence and reach the terminal as its own (an OSC 52 clipboard write, a screen
+/// clear), so control characters are removed.
+fn window_title(app: &App) -> String {
     let status = if app.session.running {
         "running"
     } else {
         "idle"
     };
+    let title = crate::sidebar::clean(&app.session.title);
+    format!("cyber · {title} · {status}")
+}
+
+fn set_title(app: &App) {
     let mut out = std::io::stdout();
-    let _ = execute!(
-        out,
-        terminal::SetTitle(format!("cyber · {} · {status}", app.session.title))
-    );
+    let _ = execute!(out, terminal::SetTitle(window_title(app)));
     let _ = out.flush();
 }
 
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    #[test]
+    fn window_title_drops_control_characters_from_a_model_written_title() {
+        let mut app = app();
+        app.session.title = "Evil\x07\x1b]52;c;SGFja2Vk\x07\x1b[2J\u{9b}2Jtitle\nsecond".into();
+        let title = window_title(&app);
+        assert_eq!(title, "cyber · Evil]52;c;SGFja2Vk[2J2Jtitle · idle");
+        assert!(!title.chars().any(char::is_control));
+    }
 
     #[test]
     fn memory_panel_responses_cannot_cross_session_location_or_dismissal() {
@@ -871,9 +1167,13 @@ mod mode_tests {
             queued: Vec::new(),
             requests: Vec::new(),
         };
-        assert_eq!(
-            apply(&mut app, Ok(snapshot), &mut Refresh::default()),
-            vec![Action::Refresh]
+        let actions = apply(&mut app, Ok(snapshot), &mut Refresh::default());
+        assert_eq!(actions[0], Action::Refresh);
+        assert!(
+            actions[1..]
+                .iter()
+                .all(|a| matches!(a, Action::LoadSidebar(_))),
+            "the rebound directory reloads the sidebar: {actions:?}"
         );
         assert_eq!(app.session.directory, "/repo/new");
         assert_eq!(app.session.seq, 8);
@@ -890,6 +1190,7 @@ mod mode_tests {
             &mut app,
             Ok(Msg::Commands {
                 items: vec![choice("review")],
+                palette: Vec::new(),
                 bundled_review: false,
             }),
             &mut Refresh::default(),
@@ -902,12 +1203,19 @@ mod mode_tests {
                 seq: None,
                 session_id: None,
             };
-            assert_eq!(server_event(&mut app, &event), vec![Action::LoadCommands]);
+            assert_eq!(
+                server_event(&mut app, &event),
+                vec![
+                    Action::LoadCommands,
+                    Action::LoadSidebar(crate::sidebar::Part::Mcp)
+                ]
+            );
         }
         apply(
             &mut app,
             Ok(Msg::Commands {
                 items: vec![choice("review"), choice("gh:review_pr")],
+                palette: Vec::new(),
                 bundled_review: false,
             }),
             &mut Refresh::default(),

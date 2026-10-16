@@ -1,0 +1,72 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: docked
+---
+› How do I speed up fib?
+                                                                                                                  Theme baseline
+  Plan
+                                                                                                                  Context
+  This keeps the cache warm:                                                                                      100 tokens
+                                                                                                                  — spent
+  1. Memoization: results are cached
+                                                                                                                  LSP
+  • avoids recomputation                                                                                          LSPs will activate as files are read
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                                 ~/work/app
+┃ Build · main test · default
+ /Users/leo/work/app                                                                   100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+row 3: 0-111 fg=#d6e4f0 bg=#0b0f14
+row 3: 112-113 fg=#d6e4f0 bg=#13181d
+row 3: 114-120 fg=#d6e4f0 bg=#13181d bold
+row 3: 121-159 fg=#d6e4f0 bg=#13181d
+row 45: 0-1 fg=#00e5ff bg=#171c21
+row 45: 2-111 fg=#d6e4f0 bg=#171c21
+row 45: 112-113 fg=#d6e4f0 bg=#13181d
+row 45: 114-123 fg=#6b7a8f bg=#13181d
+row 45: 124-159 fg=#d6e4f0 bg=#13181d
+row 47: 0-19 fg=#6b7a8f bg=#0b0f14
+row 47: 20-86 fg=#d6e4f0 bg=#0b0f14
+row 47: 87-93 fg=#6b7a8f bg=#0b0f14
+row 47: 94-101 fg=#d6e4f0 bg=#0b0f14
+row 47: 102-110 fg=#6b7a8f bg=#0b0f14
+row 47: 111-111 fg=#d6e4f0 bg=#0b0f14
+row 47: 112-113 fg=#d6e4f0 bg=#13181d
+row 47: 114-115 fg=#7ee787 bg=#13181d
+row 47: 116-125 fg=#d6e4f0 bg=#13181d bold
+row 47: 126-131 fg=#6b7a8f bg=#13181d
+row 47: 132-159 fg=#d6e4f0 bg=#13181d

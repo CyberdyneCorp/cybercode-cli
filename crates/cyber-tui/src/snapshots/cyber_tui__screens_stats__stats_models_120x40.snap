@@ -1,0 +1,56 @@
+---
+source: crates/cyber-tui/src/screens_stats.rs
+expression: "render(&mut app, 120, 40, &opts)"
+---
+
+  Settings   Status    Config    Usage    Stats
+
+   Overview    Models
+
+  All time · Last 7 days · Last 30 days    All projects
+
+  main
+    ████████████░░░░░░░░  62%  2.2m tokens · $1.72 · 173 Turns · 1 Sessions
+  small
+    ████████░░░░░░░░░░░░  38%  1.4m tokens · $1.05 · 105 Turns · 1 Sessions
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓ scroll · p period · v view · s scope · r refresh · tab next tab · 1-4 jump · esc close
+ /Users/leo/work/app                                   100 · $0.00  ctrl+p commands
+row 8: 0-3 fg=#d6e4f0 bg=#0b0f14
+row 8: 4-15 fg=#00e5ff bg=#0b0f14
+row 8: 16-23 fg=#2b3445 bg=#0b0f14
+row 8: 24-28 fg=#00e5ff bg=#0b0f14
+row 8: 29-74 fg=#6b7a8f bg=#0b0f14
+row 8: 75-119 fg=#d6e4f0 bg=#0b0f14
+row 10: 0-3 fg=#d6e4f0 bg=#0b0f14
+row 10: 4-11 fg=#00e5ff bg=#0b0f14
+row 10: 12-23 fg=#2b3445 bg=#0b0f14
+row 10: 24-28 fg=#00e5ff bg=#0b0f14
+row 10: 29-74 fg=#6b7a8f bg=#0b0f14
+row 10: 75-119 fg=#d6e4f0 bg=#0b0f14

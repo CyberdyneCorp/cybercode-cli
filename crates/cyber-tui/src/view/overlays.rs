@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use crate::app::{App, Completion, PermStep, Picker, QuestionForm};
 use crate::model::Request;
 
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
+pub(super) fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let w = width.min(area.width.saturating_sub(4));
     let h = height.min(area.height.saturating_sub(2));
     Rect {
@@ -20,10 +20,11 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
-fn frame<'a>(app: &App, title: &str) -> Block<'a> {
+pub(super) fn frame<'a>(app: &App, title: &str) -> Block<'a> {
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(app.theme.accent))
+        .border_style(Style::default().fg(app.theme.border_active))
+        .style(Style::default().fg(app.theme.text).bg(app.theme.surface))
         .title(Span::styled(
             format!(" {title} "),
             Style::default()
@@ -35,13 +36,7 @@ fn frame<'a>(app: &App, title: &str) -> Block<'a> {
 fn selectable(app: &App, text: String, selected: bool) -> Line<'static> {
     let t = &app.theme;
     if selected {
-        Line::from(Span::styled(
-            format!("❯ {text}"),
-            Style::default()
-                .fg(t.accent)
-                .bg(t.selection)
-                .add_modifier(Modifier::BOLD),
-        ))
+        Line::from(Span::styled(format!("❯ {text}"), t.selected()))
     } else {
         Line::from(Span::styled(
             format!("  {text}"),
@@ -53,7 +48,7 @@ fn selectable(app: &App, text: String, selected: bool) -> Line<'static> {
 fn picker_prompt(app: &App, p: &Picker) -> Line<'static> {
     let t = &app.theme;
     let search = vec![
-        Span::styled("search: ", Style::default().fg(t.muted)),
+        Span::styled("search: ", Style::default().fg(t.text_muted)),
         Span::raw(p.query.clone()),
     ];
     match &p.pending {
@@ -69,7 +64,7 @@ fn picker_prompt(app: &App, p: &Picker) -> Line<'static> {
             let mut spans = search;
             spans.push(Span::styled(
                 "   ^R rename ^F fork ^A archive ^D delete",
-                Style::default().fg(t.muted),
+                Style::default().fg(t.text_muted),
             ));
             Line::from(spans)
         }
@@ -94,11 +89,65 @@ pub fn picker(f: &mut Frame, app: &App, p: &Picker, area: Rect) {
     if p.filtered.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no matches",
-            Style::default().fg(app.theme.muted),
+            Style::default().fg(app.theme.text_muted),
         )));
     }
     f.render_widget(Clear, rect);
     f.render_widget(Paragraph::new(lines).block(frame(app, &p.title)), rect);
+}
+
+/// The command palette: name, description and the current key of each entry.
+pub fn palette(f: &mut Frame, app: &App, p: &crate::palette::Palette, area: Rect) {
+    let t = &app.theme;
+    let rect = centered(area, 80, 20);
+    let inner = rect.width.saturating_sub(2) as usize;
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("› ", Style::default().fg(t.accent)),
+            Span::raw(p.query.clone()),
+        ]),
+        Line::default(),
+    ];
+    let room = rect.height.saturating_sub(5) as usize;
+    let first = p.selected.saturating_sub(room.saturating_sub(1));
+    for (pos, &i) in p.filtered.iter().enumerate().skip(first).take(room) {
+        lines.push(palette_row(app, &p.entries[i], inner, pos == p.selected));
+    }
+    if p.filtered.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no matches",
+            Style::default().fg(t.text_muted),
+        )));
+    }
+    f.render_widget(Clear, rect);
+    f.render_widget(Paragraph::new(lines).block(frame(app, "Commands")), rect);
+}
+
+fn palette_row(
+    app: &App,
+    e: &crate::palette::Entry,
+    width: usize,
+    selected: bool,
+) -> Line<'static> {
+    let t = &app.theme;
+    let key = e.key.clone().unwrap_or_default();
+    let name_width = e.name.chars().count().min(28);
+    let room = width.saturating_sub(4 + name_width + key.chars().count() + 2);
+    let description: String = e.description.chars().take(room).collect();
+    let used = 2 + name_width + 2 + description.chars().count();
+    let gap = width.saturating_sub(used + key.chars().count());
+    let marker = if selected { "› " } else { "  " };
+    let name: String = e.name.chars().take(name_width).collect();
+    let text = format!("{marker}{name}  {description}{}{key}", " ".repeat(gap));
+    if selected {
+        return Line::from(Span::styled(text, t.selected()));
+    }
+    Line::from(vec![
+        Span::styled(format!("{marker}{name}  "), Style::default().fg(t.text)),
+        Span::styled(description, Style::default().fg(t.text_muted)),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(key, Style::default().fg(t.text_subtle)),
+    ])
 }
 
 pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
@@ -171,17 +220,10 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     if let Some(diff) = metadata["diff"].as_str() {
         lines.push(Line::default());
         for l in diff.lines().take(12) {
-            let color = if l.starts_with('+') {
-                t.success
-            } else if l.starts_with('-') {
-                t.error
-            } else {
-                t.muted
-            };
-            lines.push(Line::from(Span::styled(
-                format!("  {l}"),
-                Style::default().fg(color),
-            )));
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(l.to_owned(), super::messages::diff_style(t, l)),
+            ]));
         }
     }
     lines.push(Line::default());
@@ -204,7 +246,7 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
             }
             lines.push(Line::from(Span::styled(
                 "Enter to confirm · Esc to go back",
-                Style::default().fg(t.muted),
+                Style::default().fg(t.text_muted),
             )));
         }
         PermStep::Feedback(text) => {
@@ -241,7 +283,7 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
                         .fg(t.accent)
                         .add_modifier(Modifier::REVERSED)
                 } else {
-                    Style::default().fg(t.muted)
+                    Style::default().fg(t.text_muted)
                 },
             )
         })
@@ -254,7 +296,7 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
                     .fg(t.accent)
                     .add_modifier(Modifier::REVERSED)
             } else {
-                Style::default().fg(t.muted)
+                Style::default().fg(t.text_muted)
             },
         ));
     }
@@ -314,7 +356,7 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         "Enter select · Space toggle · Tab next · Esc dismiss",
-        Style::default().fg(t.muted),
+        Style::default().fg(t.text_muted),
     )));
     f.render_widget(Clear, rect);
     f.render_widget(
@@ -323,13 +365,6 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
             .block(frame(app, "Question")),
         rect,
     );
-}
-
-pub fn cost(f: &mut Frame, app: &App, area: Rect) {
-    let lines: Vec<Line> = app.cost.lines().into_iter().map(Line::from).collect();
-    let rect = centered(area, 90, lines.len() as u16 + 2);
-    f.render_widget(Clear, rect);
-    f.render_widget(Paragraph::new(lines).block(frame(app, "Cost")), rect);
 }
 
 pub fn findings(f: &mut Frame, app: &App, area: Rect) {
@@ -346,6 +381,36 @@ pub fn findings(f: &mut Frame, app: &App, area: Rect) {
             .wrap(Wrap { trim: false })
             .scroll((app.review.scroll, 0))
             .block(frame(app, "Review findings · ↑↓ scroll · Esc close")),
+        rect,
+    );
+}
+
+/// A sidebar file's patch, with the diff backgrounds; the text was cleaned of control
+/// characters when it was loaded.
+pub fn file_diff(f: &mut Frame, app: &App, index: usize, scroll: u16, area: Rect) {
+    let Some(change) = app.sidebar.changes().get(index) else {
+        return;
+    };
+    let lines: Vec<Line> = change
+        .patch
+        .lines()
+        .map(|line| {
+            Line::from(Span::styled(
+                line.to_owned(),
+                super::messages::diff_style(&app.theme, line),
+            ))
+        })
+        .collect();
+    let rect = centered(area, 110, area.height);
+    let title = format!(
+        "{} +{} -{} · ↑↓ scroll · Esc close",
+        change.file, change.additions, change.deletions
+    );
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(frame(app, &title)),
         rect,
     );
 }
@@ -372,12 +437,7 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         ("Shift+Enter, Ctrl+J", "newline"),
         ("Esc", "interrupt"),
         ("Shift+Tab", "cycle mode"),
-        ("Ctrl+T / Ctrl+O", "reasoning / expand tool output"),
         ("Ctrl+G", "edit in $EDITOR"),
-        (
-            "Ctrl+X m / l / n / t / f",
-            "model · sessions · new · theme · fork",
-        ),
         ("/model /resume /new /mode /compact /theme", "commands"),
         ("/subtask <prompt> · /tasks · /stop", "background tasks"),
         ("/agent · /subagents", "browse child and parent threads"),
@@ -386,16 +446,18 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         ("PageUp / PageDown", "scroll"),
         ("Ctrl+C", "clear, or quit when empty"),
     ];
-    let lines: Vec<Line> = rows
-        .iter()
+    // Bound keys come from the table, so a disabled binding is never listed.
+    let bound = app.keymap.help_rows(crate::app::UNAVAILABLE).into_iter();
+    let lines: Vec<Line> = bound
+        .chain(rows.iter().map(|(k, v)| ((*k).to_owned(), *v)))
         .map(|(k, v)| {
             Line::from(vec![
                 Span::styled(format!("{k:<44}"), Style::default().fg(app.theme.accent)),
-                Span::raw(*v),
+                Span::raw(v),
             ])
         })
         .collect();
-    let rect = centered(area, 80, rows.len() as u16 + 2);
+    let rect = centered(area, 80, lines.len() as u16 + 2);
     f.render_widget(Clear, rect);
     f.render_widget(Paragraph::new(lines).block(frame(app, "Keys")), rect);
 }
@@ -429,7 +491,8 @@ pub fn completion(f: &mut Frame, app: &App, c: &Completion, composer: Rect) {
         Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(app.theme.border)),
+                .border_style(Style::default().fg(app.theme.border))
+                .style(Style::default().fg(app.theme.text).bg(app.theme.surface)),
         ),
         rect,
     );

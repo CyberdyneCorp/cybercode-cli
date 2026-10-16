@@ -132,11 +132,33 @@ impl Composer {
 
     /// Up: move within the text, or to older history from the first line.
     pub fn up(&mut self) {
-        if self.row > 0 {
-            self.row -= 1;
-            self.col = self.col.min(self.lines[self.row].len());
-            return;
+        if !self.cursor_up() {
+            self.history_previous();
         }
+    }
+
+    /// Move the cursor one line up; false on the first line.
+    pub fn cursor_up(&mut self) -> bool {
+        if self.row == 0 {
+            return false;
+        }
+        self.row -= 1;
+        self.col = self.col.min(self.lines[self.row].len());
+        true
+    }
+
+    /// Move the cursor one line down; false on the last line.
+    pub fn cursor_down(&mut self) -> bool {
+        if self.row + 1 >= self.lines.len() {
+            return false;
+        }
+        self.row += 1;
+        self.col = self.col.min(self.lines[self.row].len());
+        true
+    }
+
+    /// Replace the text with the next older history entry, stashing the draft.
+    fn history_previous(&mut self) {
         let next = match self.browsing {
             None if !self.history.is_empty() => {
                 self.stash = self.text();
@@ -152,9 +174,7 @@ impl Composer {
 
     /// Down: move within the text, or to newer history from the last line.
     pub fn down(&mut self) {
-        if self.row + 1 < self.lines.len() {
-            self.row += 1;
-            self.col = self.col.min(self.lines[self.row].len());
+        if self.cursor_down() {
             return;
         }
         let Some(i) = self.browsing else { return };

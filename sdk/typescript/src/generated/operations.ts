@@ -83,6 +83,15 @@ export interface Operations {
     body: undefined;
     response: S.Located_Array_of_FormatterStatus;
   };
+  "v1.fs.content": {
+    path: Record<string, never>;
+    query: {
+      path?: QueryValue;
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_Content;
+  };
   "v1.fs.find": {
     path: Record<string, never>;
     query: {
@@ -91,6 +100,26 @@ export interface Operations {
     };
     body: undefined;
     response: S.Located_Array_of_string;
+  };
+  "v1.fs.list": {
+    path: Record<string, never>;
+    query: {
+      path?: QueryValue;
+      hidden?: QueryValue;
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_FileListing;
+  };
+  "v1.fs.search": {
+    path: Record<string, never>;
+    query: {
+      query?: QueryValue;
+      limit?: QueryValue;
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_FileSearch;
   };
   "v1.health.get": {
     path: Record<string, never>;
@@ -377,6 +406,12 @@ export interface Operations {
     body: S.ForkBody;
     response: S.Session;
   };
+  "v1.session.generateRecap": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Recap;
+  };
   "v1.session.get": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -466,6 +501,12 @@ export interface Operations {
     query: Record<string, never>;
     body: S.PromptBody;
     response: S.Receipt;
+  };
+  "v1.session.recap": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Data_Nullable_Recap;
   };
   "v1.session.reconcileDelegation": {
     path: { sessionID: string; requestID: string };
@@ -576,6 +617,37 @@ export interface Operations {
     };
     body: undefined;
     response: S.ScopeUsage;
+  };
+  "v1.usage.insights": {
+    path: Record<string, never>;
+    query: {
+      window?: QueryValue;
+      directory?: QueryValue;
+    };
+    body: undefined;
+    response: S.UsageInsights;
+  };
+  "v1.usage.limits": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.UsageLimits;
+  };
+  "v1.usage.stats": {
+    path: Record<string, never>;
+    query: {
+      period?: QueryValue;
+      directory?: QueryValue;
+      tz?: QueryValue;
+    };
+    body: undefined;
+    response: S.UsageStats;
+  };
+  "v1.vcs.status": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Vcs;
   };
   "v1.workflow.get": {
     path: { id: string };
@@ -708,6 +780,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.fs.content": {
+    tag: "fs",
+    name: "content",
+    method: "GET",
+    path: "/api/v1/files/content",
+    pathParams: [],
+    query: ["path", "session_id"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.fs.find": {
     tag: "fs",
     name: "find",
@@ -715,6 +799,30 @@ export const operations = {
     path: "/api/v1/fs/find",
     pathParams: [],
     query: ["query", "limit"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.list": {
+    tag: "fs",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/files",
+    pathParams: [],
+    query: ["path", "hidden", "session_id"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.search": {
+    tag: "fs",
+    name: "search",
+    method: "GET",
+    path: "/api/v1/files/search",
+    pathParams: [],
+    query: ["query", "limit", "session_id"],
     body: "none",
     located: true,
     unwrap: false,
@@ -1236,6 +1344,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.generateRecap": {
+    tag: "session",
+    name: "generateRecap",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/recap",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.get": {
     tag: "session",
     name: "get",
@@ -1390,6 +1510,18 @@ export const operations = {
     body: "required",
     located: false,
     unwrap: true,
+    stream: false,
+  },
+  "v1.session.recap": {
+    tag: "session",
+    name: "recap",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/recap",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
     stream: false,
   },
   "v1.session.reconcileDelegation": {
@@ -1596,6 +1728,54 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.usage.insights": {
+    tag: "usage",
+    name: "insights",
+    method: "GET",
+    path: "/api/v1/usage/insights",
+    pathParams: [],
+    query: ["window", "directory"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.usage.limits": {
+    tag: "usage",
+    name: "limits",
+    method: "GET",
+    path: "/api/v1/usage/limits",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.usage.stats": {
+    tag: "usage",
+    name: "stats",
+    method: "GET",
+    path: "/api/v1/usage/stats",
+    pathParams: [],
+    query: ["period", "directory", "tz"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.vcs.status": {
+    tag: "vcs",
+    name: "status",
+    method: "GET",
+    path: "/api/v1/vcs",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.workflow.get": {
     tag: "workflow",
     name: "get",
@@ -1757,9 +1937,18 @@ export function createGroups(caller: Caller) {
         caller.call("v1.formatter.status", {}, options),
     },
     fs: {
+      /** A project file's text (at most 1 MiB) when the Session's rules allow read (`GET /api/v1/files/content`) */
+      content: (query?: Operations["v1.fs.content"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.content"]["response"]> =>
+        caller.call("v1.fs.content", { query }, options),
       /** Find files for @ mentions (`GET /api/v1/fs/find`) */
       find: (query?: Operations["v1.fs.find"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.find"]["response"]> =>
         caller.call("v1.fs.find", { query }, options),
+      /** One project directory level with git status, ignore flags and read decisions (`GET /api/v1/files`) */
+      list: (query?: Operations["v1.fs.list"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.list"]["response"]> =>
+        caller.call("v1.fs.list", { query }, options),
+      /** Fuzzy path search over the project's non-ignored files (`GET /api/v1/files/search`) */
+      search: (query?: Operations["v1.fs.search"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.search"]["response"]> =>
+        caller.call("v1.fs.search", { query }, options),
     },
     health: {
       /** Health and version (unauthenticated) (`GET /api/v1/health`) */
@@ -1811,7 +2000,7 @@ export function createGroups(caller: Caller) {
       /** Close this Location's MCP connections; unresolved ownership returns conflict (`POST /api/v1/mcp/close`) */
       close: (options?: RequestOptions): Promise<Operations["v1.mcp.close"]["response"]> =>
         caller.call("v1.mcp.close", {}, options),
-      /** Reconnect a server waiting for authentication with a fresh owner; returns its status (`POST /api/v1/mcp/{name}/reconnect`) */
+      /** Reconnect a server waiting for authentication, or a failed one that retained no owner, with a fresh owner; returns its status (`POST /api/v1/mcp/{name}/reconnect`) */
       reconnect: (name: string, options?: RequestOptions): Promise<Operations["v1.mcp.reconnect"]["response"]> =>
         caller.call("v1.mcp.reconnect", { path: { name } }, options),
       /** Inspect configured MCP state and retained ownership observations without startup (`GET /api/v1/mcp`) */
@@ -1906,7 +2095,7 @@ export function createGroups(caller: Caller) {
       /** Delete a Session and its children (`DELETE /api/v1/sessions/{sessionID}`) */
       delete: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.delete"]["response"]> =>
         caller.call("v1.session.delete", { path: { sessionID } }, options),
-      /** File diffs for a user message (`GET /api/v1/sessions/{sessionID}/diff`) */
+      /** File diffs for a user message, or the whole Session without `message_id` (`GET /api/v1/sessions/{sessionID}/diff`) */
       diff: (sessionID: string, query?: Operations["v1.session.diff"]["query"], options?: RequestOptions): Promise<Operations["v1.session.diff"]["response"]> =>
         caller.call("v1.session.diff", { path: { sessionID }, query }, options),
       /** Replay durable events, then follow (`GET /api/v1/sessions/{sessionID}/events`) */
@@ -1915,6 +2104,9 @@ export function createGroups(caller: Caller) {
       /** Fork a Session (`POST /api/v1/sessions/{sessionID}/fork`) */
       fork: (sessionID: string, body?: Operations["v1.session.fork"]["body"], options?: RequestOptions): Promise<Operations["v1.session.fork"]["response"]> =>
         caller.call("v1.session.fork", { path: { sessionID }, body }, options),
+      /** Return the recap covering the latest finished Turn, generating it when stale (`POST /api/v1/sessions/{sessionID}/recap`) */
+      generateRecap: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.generateRecap"]["response"]> =>
+        caller.call("v1.session.generateRecap", { path: { sessionID } }, options),
       /** Get a Session (`GET /api/v1/sessions/{sessionID}`) */
       get: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.get"]["response"]> =>
         caller.call("v1.session.get", { path: { sessionID } }, options),
@@ -1954,6 +2146,9 @@ export function createGroups(caller: Caller) {
       /** Durably admit a prompt (`POST /api/v1/sessions/{sessionID}/prompt`) */
       prompt: (sessionID: string, body: Operations["v1.session.prompt"]["body"], options?: RequestOptions): Promise<Operations["v1.session.prompt"]["response"]> =>
         caller.call("v1.session.prompt", { path: { sessionID }, body }, options),
+      /** The latest Session recap, or null (`GET /api/v1/sessions/{sessionID}/recap`) */
+      recap: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.recap"]["response"]> =>
+        caller.call("v1.session.recap", { path: { sessionID } }, options),
       /** Link a lost admission receipt to an exactly bound existing Job without dispatch (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}/reconcile`) */
       reconcileDelegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.reconcileDelegation"]["response"]> =>
         caller.call("v1.session.reconcileDelegation", { path: { sessionID, requestID } }, options),
@@ -2011,6 +2206,20 @@ export function createGroups(caller: Caller) {
       /** Read durable Session subtree or Workflow Run usage (`GET /api/v1/usage`) */
       get: (query?: Operations["v1.usage.get"]["query"], options?: RequestOptions): Promise<Operations["v1.usage.get"]["response"]> =>
         caller.call("v1.usage.get", { query }, options),
+      /** Contributing factors and subagent shares of the last 24 hours or 7 days (`GET /api/v1/usage/insights`) */
+      insights: (query?: Operations["v1.usage.insights"]["query"], options?: RequestOptions): Promise<Operations["v1.usage.insights"]["response"]> =>
+        caller.call("v1.usage.insights", { query }, options),
+      /** The latest usage window readings providers reported in their responses (`GET /api/v1/usage/limits`) */
+      limits: (options?: RequestOptions): Promise<Operations["v1.usage.limits"]["response"]> =>
+        caller.call("v1.usage.limits", {}, options),
+      /** Activity per local day, streaks and per-model totals over a period (`GET /api/v1/usage/stats`) */
+      stats: (query?: Operations["v1.usage.stats"]["query"], options?: RequestOptions): Promise<Operations["v1.usage.stats"]["response"]> =>
+        caller.call("v1.usage.stats", { query }, options),
+    },
+    vcs: {
+      /** The Location's git branch, upstream, ahead/behind, worktree and dirty flag (`GET /api/v1/vcs`) */
+      status: (options?: RequestOptions): Promise<Operations["v1.vcs.status"]["response"]> =>
+        caller.call("v1.vcs.status", {}, options),
     },
     workflow: {
       /** Read a Workflow Run with its agents (`GET /api/v1/workflows/runs/{id}`) */

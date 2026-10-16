@@ -197,6 +197,29 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<crate::runtime::ScopeUsage>>(g),
         op(
             "get",
+            "/usage/stats",
+            "v1.usage.stats",
+            "Activity per local day, streaks and per-model totals over a period",
+        )
+        .query(&["period", "directory", "tz"])
+        .ok::<Data<crate::runtime::UsageStats>>(g),
+        op(
+            "get",
+            "/usage/insights",
+            "v1.usage.insights",
+            "Contributing factors and subagent shares of the last 24 hours or 7 days",
+        )
+        .query(&["window", "directory"])
+        .ok::<Data<crate::runtime::UsageInsights>>(g),
+        op(
+            "get",
+            "/usage/limits",
+            "v1.usage.limits",
+            "The latest usage window readings providers reported in their responses",
+        )
+        .ok::<Data<crate::runtime::UsageLimits>>(g),
+        op(
+            "get",
             "/health",
             "v1.health.get",
             "Health and version (unauthenticated)",
@@ -526,6 +549,20 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .status(202)
         .optional_body::<CompactBody>(g),
         op(
+            "get",
+            "/sessions/{sessionID}/recap",
+            "v1.session.recap",
+            "The latest Session recap, or null",
+        )
+        .ok::<Data<Option<crate::runtime::Recap>>>(g),
+        op(
+            "post",
+            "/sessions/{sessionID}/recap",
+            "v1.session.generateRecap",
+            "Return the recap covering the latest finished Turn, generating it when stale",
+        )
+        .ok::<Data<crate::runtime::Recap>>(g),
+        op(
             "post",
             "/sessions/{sessionID}/rewind",
             "v1.session.rewind",
@@ -626,7 +663,7 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/sessions/{sessionID}/diff",
             "v1.session.diff",
-            "File diffs for a user message",
+            "File diffs for a user message, or the whole Session without `message_id`",
         )
         .query(&["message_id"])
         .ok::<Data<Vec<FileDiff>>>(g),
@@ -741,6 +778,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Located<super::LspTransition>>(g),
         op(
             "get",
+            "/vcs",
+            "v1.vcs.status",
+            "The Location's git branch, upstream, ahead/behind, worktree and dirty flag",
+        )
+        .located()
+        .ok::<Located<super::vcs::Vcs>>(g),
+        op(
+            "get",
             "/mcp",
             "v1.mcp.status",
             "Inspect configured MCP state and retained ownership observations without startup",
@@ -759,7 +804,7 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "post",
             "/mcp/{name}/reconnect",
             "v1.mcp.reconnect",
-            "Reconnect a server waiting for authentication with a fresh owner; returns its status",
+            "Reconnect a server waiting for authentication, or a failed one that retained no owner, with a fresh owner; returns its status",
         )
         .located()
         .ok::<Located<crate::runtime::McpServerStatus>>(g),
@@ -804,6 +849,33 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             .located()
             .query(&["query", "limit"])
             .ok::<Located<Vec<String>>>(g),
+        op(
+            "get",
+            "/files",
+            "v1.fs.list",
+            "One project directory level with git status, ignore flags and read decisions",
+        )
+        .located()
+        .query(&["path", "hidden", "session_id"])
+        .ok::<Located<super::files::FileListing>>(g),
+        op(
+            "get",
+            "/files/search",
+            "v1.fs.search",
+            "Fuzzy path search over the project's non-ignored files",
+        )
+        .located()
+        .query(&["query", "limit", "session_id"])
+        .ok::<Located<super::files::FileSearch>>(g),
+        op(
+            "get",
+            "/files/content",
+            "v1.fs.content",
+            "A project file's text (at most 1 MiB) when the Session's rules allow read",
+        )
+        .located()
+        .query(&["path", "session_id"])
+        .ok::<Located<cyber_core::files::Content>>(g),
     ]
 }
 

@@ -29,7 +29,50 @@ pub enum Msg {
     Cost {
         session_id: String,
         generation: u64,
-        result: Result<crate::cost::Cost, String>,
+        result: Result<crate::settings::cost::Cost, String>,
+    },
+    /// A file explorer level, for the Session and directory it was read in.
+    Dir {
+        session_id: String,
+        directory: String,
+        path: String,
+        result: Result<(crate::explorer::Level, Option<usize>), String>,
+    },
+    /// The explorer filter's search hits.
+    FileHits {
+        session_id: String,
+        query: String,
+        hits: Vec<crate::explorer::Node>,
+    },
+    /// A file preview, or why it was refused.
+    Preview {
+        session_id: String,
+        path: String,
+        result: Result<crate::explorer::Preview, String>,
+    },
+    /// The Settings Status tab's sources, read for this Session.
+    Status {
+        session_id: String,
+        generation: u64,
+        status: crate::settings::status::Status,
+    },
+    /// A Stats tab reply; it is not tied to a Session.
+    Stats {
+        generation: u64,
+        result: Result<crate::settings::stats::Stats, String>,
+    },
+    Recap {
+        session_id: String,
+        manual: bool,
+        result: Result<Value, String>,
+    },
+    Insights {
+        generation: u64,
+        result: Result<crate::settings::insights::Insights, String>,
+    },
+    Limits {
+        generation: u64,
+        result: Result<Vec<crate::settings::limits::Reading>, String>,
     },
     HookDefinitions {
         session_id: String,
@@ -51,6 +94,7 @@ pub enum Msg {
         result: Result<Vec<Choice>, String>,
     },
     Sessions(Vec<Choice>),
+    Catalog(crate::model::Catalog),
     Models(Vec<Choice>),
     Skills {
         directory: String,
@@ -58,6 +102,8 @@ pub enum Msg {
     },
     Commands {
         items: Vec<Choice>,
+        /// The same commands with their source, for the palette.
+        palette: Vec<crate::palette::ServerCommand>,
         /// `review` resolves to the bundled skill rather than an override.
         bundled_review: bool,
     },
@@ -78,6 +124,12 @@ pub enum Msg {
     ModeChanged {
         session_id: String,
         result: Result<Session, String>,
+    },
+    /// A sidebar source answered, for the Session and directory it was read in.
+    Sidebar {
+        session_id: String,
+        directory: String,
+        loaded: crate::sidebar::Loaded,
     },
     Toast(String),
     Done,
@@ -140,6 +192,296 @@ pub async fn snapshot(client: &Client, id: &str) -> Result<Msg, String> {
         queued,
         requests,
     })
+}
+
+/// A sidebar source; 404 or 503 omits its section and any other failure keeps the last
+/// value.
+pub async fn sidebar(client: &Client, session: &Session, part: crate::sidebar::Part) -> Msg {
+    use crate::sidebar::{Loaded, Part, clean, parse_files, parse_lsp, parse_mcp, parse_vcs};
+    let at = client.at(&session.directory);
+    let loaded = match part {
+        Part::Mcp => source(&at, "/mcp", |s| Loaded::Mcp(s.map(parse_mcp))).await,
+        Part::Lsp => source(&at, "/lsp", |s| Loaded::Lsp(s.map(parse_lsp))).await,
+        Part::Vcs => source(&at, "/vcs", |s| Loaded::Vcs(s.map(parse_vcs))).await,
+        Part::Health => health(&at).await,
+        Part::Files => {
+            let path = format!("/sessions/{}/diff", encode(&session.id));
+            source(&at, &path, |s| Loaded::Files(s.map(parse_files))).await
+        }
+        Part::Parent => match &session.parent_id {
+            Some(parent) => {
+                let path = format!("/sessions/{}", encode(parent));
+                let title = |data: &Value| data["title"].as_str().map(clean);
+                source(&at, &path, |s| Loaded::Parent(s.ready().and_then(title))).await
+            }
+            None => Loaded::Parent(None),
+        },
+    };
+    Msg::Sidebar {
+        session_id: session.id.clone(),
+        directory: session.directory.clone(),
+        loaded,
+    }
+}
+
+/// Read `path` and turn its `data` (or a 404/503 as `Missing`) into a sidebar part.
+async fn source(
+    at: &Client,
+    path: &str,
+    wrap: impl FnOnce(crate::sidebar::Source<Value>) -> crate::sidebar::Loaded,
+) -> crate::sidebar::Loaded {
+    use crate::sidebar::Source;
+    match at.get(path).await {
+        Ok(mut value) => wrap(Source::Ready(value["data"].take())),
+        Err(cyber_client::ClientError::Api {
+            status: 404 | 503, ..
+        }) => wrap(Source::Missing),
+        Err(_) => crate::sidebar::Loaded::Failed,
+    }
+}
+
+/// The server version from `/health`.
+async fn health(at: &Client) -> crate::sidebar::Loaded {
+    match at.get("/health").await {
+        Ok(value) => crate::sidebar::Loaded::Version(
+            value["version"]
+                .as_str()
+                .map(crate::sidebar::clean)
+                .filter(|v| !v.is_empty()),
+        ),
+        Err(_) => crate::sidebar::Loaded::Failed,
+    }
+}
+
+async fn sidebar_action(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::ReconnectMcp(name) => reconnect_mcp(client, session, &name).await,
+        Action::LoadSidebar(part) => Ok(sidebar(client, session, part).await),
+        _ => Ok(Msg::Done),
+    }
+}
+
+/// A Settings tab or file explorer read.
+async fn panel(client: &Client, session: &Session, action: Action) -> Msg {
+    match action {
+        Action::LoadCost { generation } => load_cost(client, session, generation).await,
+        Action::LoadStats {
+            generation,
+            period,
+            project,
+            zone,
+        } => Msg::Stats {
+            generation,
+            result: load_stats(client, session, period, project, zone.as_deref()).await,
+        },
+        Action::Recap { session_id, manual } => {
+            let path = format!("/sessions/{}/recap", encode(&session_id));
+            let result = client
+                .request("POST", &path, None)
+                .await
+                .map(|value| value["data"].clone())
+                .map_err(recap_error);
+            Msg::Recap {
+                session_id,
+                manual,
+                result,
+            }
+        }
+        Action::LoadInsights { generation, window } => Msg::Insights {
+            generation,
+            result: load_insights(client, window).await,
+        },
+        Action::LoadLimits { generation } => Msg::Limits {
+            generation,
+            result: load_limits(client).await,
+        },
+        Action::LoadStatus { generation } => Msg::Status {
+            session_id: session.id.clone(),
+            generation,
+            status: status(client, session).await,
+        },
+        action => explore(client, session, action).await,
+    }
+}
+
+/// A file explorer read: a level, a search or a preview, with the Session's rules.
+async fn explore(client: &Client, session: &Session, action: Action) -> Msg {
+    use crate::explorer::{parse_hits, parse_level, parse_preview};
+    let at = client.at(&session.directory);
+    let id = encode(&session.id);
+    let session_id = session.id.clone();
+    match action {
+        Action::LoadDir { path, hidden } => {
+            let url = format!(
+                "/files?path={}&hidden={hidden}&session_id={id}",
+                encode(&path)
+            );
+            let result = at.get(&url).await.map_err(err);
+            Msg::Dir {
+                session_id,
+                directory: session.directory.clone(),
+                path,
+                result: result.map(|v| parse_level(&v["data"])),
+            }
+        }
+        Action::SearchFiles(query) => {
+            let url = format!(
+                "/files/search?query={}&limit=50&session_id={id}",
+                encode(&query)
+            );
+            let hits = at
+                .get(&url)
+                .await
+                .map_or_else(|_| Vec::new(), |v| parse_hits(&v["data"]));
+            Msg::FileHits {
+                session_id,
+                query,
+                hits,
+            }
+        }
+        Action::LoadPreview(path) => {
+            let url = format!("/files/content?path={}&session_id={id}", encode(&path));
+            let result = at.get(&url).await.map_err(refusal);
+            Msg::Preview {
+                session_id,
+                result: result.map(|v| parse_preview(&path, &v["data"])),
+                path,
+            }
+        }
+        _ => Msg::Done,
+    }
+}
+
+/// Why the server refused a preview, in words.
+fn refusal(error: cyber_client::ClientError) -> String {
+    match &error {
+        cyber_client::ClientError::Api { status: 403, .. }
+            if error.to_string().contains("outside") =>
+        {
+            "outside the project".into()
+        }
+        cyber_client::ClientError::Api { status: 403, .. } => "permission denied".into(),
+        _ => err(error),
+    }
+}
+
+/// The Status tab's sources, read together; each one fails or is missing on its own.
+pub async fn status(client: &Client, session: &Session) -> crate::settings::status::Status {
+    use crate::settings::status::{Health, Status};
+    use crate::sidebar::{parse_lsp, parse_mcp, parse_vcs};
+    let at = client.at(&session.directory);
+    let session_path = format!("/sessions/{}", encode(&session.id));
+    let (health, current, vcs, mcp, lsp) = futures::join!(
+        section(&at, "/health", Health::parse),
+        section(&at, &session_path, |v| Session::parse(&v["data"])),
+        section(&at, "/vcs", |v| parse_vcs(&v["data"])),
+        section(&at, "/mcp", |v| parse_mcp(&v["data"])),
+        section(&at, "/lsp", |v| parse_lsp(&v["data"])),
+    );
+    Status {
+        health,
+        session: current,
+        vcs,
+        mcp,
+        lsp,
+    }
+}
+
+/// One Status source: its parsed reply, `Missing` on 404 or 503, else the error.
+async fn section<T>(
+    at: &Client,
+    path: &str,
+    parse: impl FnOnce(&Value) -> T,
+) -> crate::settings::status::Section<T> {
+    use crate::settings::status::Section;
+    match at.get(path).await {
+        Ok(value) => Section::Ready(parse(&value)),
+        Err(cyber_client::ClientError::Api {
+            status: 404 | 503, ..
+        }) => Section::Missing,
+        Err(error) => Section::Failed(err(error)),
+    }
+}
+
+async fn load_cost(client: &Client, session: &Session, generation: u64) -> Msg {
+    let result = client
+        .get(&format!("/usage?scope=session&id={}", encode(&session.id)))
+        .await
+        .map_err(err)
+        .and_then(|value| crate::settings::cost::Cost::parse_report(&value["data"], &session.id));
+    Msg::Cost {
+        session_id: session.id.clone(),
+        generation,
+        result,
+    }
+}
+
+/// `GET /usage/stats` for the period, the TUI's zone and, with `project`, the Location.
+async fn load_stats(
+    client: &Client,
+    session: &Session,
+    period: &str,
+    project: bool,
+    zone: Option<&str>,
+) -> Result<crate::settings::stats::Stats, String> {
+    let mut path = format!("/usage/stats?period={}", encode(period));
+    if let Some(zone) = zone {
+        path.push_str(&format!("&tz={}", encode(zone)));
+    }
+    if project && !session.directory.is_empty() {
+        path.push_str(&format!("&directory={}", encode(&session.directory)));
+    }
+    let value = client.get(&path).await.map_err(err)?;
+    crate::settings::stats::Stats::parse(&value["data"])
+}
+
+/// `409 nothing_to_recap` in words; any other failure as the client reports it.
+fn recap_error(e: cyber_client::ClientError) -> String {
+    match &e {
+        cyber_client::ClientError::Api { status: 409, .. } => "nothing to recap yet".into(),
+        _ => err(e),
+    }
+}
+
+/// `GET /usage/insights` for the window, over every Session the server stored.
+async fn load_insights(
+    client: &Client,
+    window: &str,
+) -> Result<crate::settings::insights::Insights, String> {
+    let value = client
+        .get(&format!("/usage/insights?window={}", encode(window)))
+        .await
+        .map_err(err)?;
+    crate::settings::insights::Insights::parse(&value["data"])
+}
+
+/// `GET /usage/limits`; a server without the route reports no windows.
+async fn load_limits(client: &Client) -> Result<Vec<crate::settings::limits::Reading>, String> {
+    match client.get("/usage/limits").await {
+        Ok(value) => crate::settings::limits::parse(&value["data"]),
+        Err(cyber_client::ClientError::Api {
+            status: 404 | 503, ..
+        }) => Ok(Vec::new()),
+        Err(e) => Err(err(e)),
+    }
+}
+
+/// Reconnect a failed MCP server, then read the statuses again.
+async fn reconnect_mcp(client: &Client, session: &Session, name: &str) -> Result<Msg, String> {
+    // Server names come from the server; anything but a plain name never reaches a path.
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(format!("reconnect: invalid MCP server name {name:?}"));
+    }
+    let at = client.at(&session.directory);
+    // The route takes no body.
+    at.request("POST", &format!("/mcp/{}/reconnect", encode(name)), None)
+        .await
+        .map_err(|e| format!("reconnect {name}: {}", err(e)))?;
+    Ok(sidebar(client, session, crate::sidebar::Part::Mcp).await)
 }
 
 pub(crate) fn err(e: cyber_client::ClientError) -> String {
@@ -308,21 +650,21 @@ pub async fn perform_owned(
             crate::admissions::perform_action(client, action).await
         }
         Action::Refresh => snapshot(client, &session.id).await,
+        Action::LoadSidebar(_) | Action::ReconnectMcp(_) => {
+            sidebar_action(client, session, action).await
+        }
         Action::LoadHookDefinitions { .. }
         | Action::ChangeHookTrust { .. }
         | Action::LoadHookHistory { .. } => inspect_hooks(client, session, action).await,
-        Action::LoadCost { generation } => {
-            let result = client
-                .get(&format!("/usage?scope=session&id={}", encode(&session.id)))
-                .await
-                .map_err(err)
-                .and_then(|value| crate::cost::Cost::parse_report(&value["data"], &session.id));
-            Ok(Msg::Cost {
-                session_id: session.id.clone(),
-                generation,
-                result,
-            })
-        }
+        Action::LoadCost { .. }
+        | Action::LoadStatus { .. }
+        | Action::LoadStats { .. }
+        | Action::LoadInsights { .. }
+        | Action::LoadLimits { .. }
+        | Action::Recap { .. }
+        | Action::LoadDir { .. }
+        | Action::SearchFiles(_)
+        | Action::LoadPreview(_) => Ok(panel(client, session, action).await),
         Action::SwitchModel(_)
         | Action::SwitchMode(_)
         | Action::Fork
@@ -335,21 +677,22 @@ pub async fn perform_owned(
             session_id: session.id.clone(),
             result: crate::children::load(client, session).await,
         }),
-        Action::LoadSessions => sessions(client).await,
-        Action::Rename { .. } | Action::Archive(_) | Action::Delete(_) => {
-            manage(client, action).await
-        }
-        Action::ForkSession(id) => switched(
-            client
-                .post(&format!("/sessions/{id}/fork"), json!({}))
-                .await,
-        ),
+        Action::LoadSessions
+        | Action::Rename { .. }
+        | Action::Archive(_)
+        | Action::Delete(_)
+        | Action::ForkSession(_) => manage(client, action).await,
         Action::LoadModels
         | Action::LoadSkills
         | Action::LoadCommands
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::SaveTheme(_) | Action::Editor(_) | Action::Quit => Ok(Msg::Done),
+        Action::SaveTheme(_)
+        | Action::SaveProjectTheme(_)
+        | Action::SavePreference { .. }
+        | Action::Copy(_)
+        | Action::Editor(_)
+        | Action::Quit => Ok(Msg::Done),
         other => converse(client, session, other, context).await,
     }
 }
@@ -539,6 +882,14 @@ fn switched(result: Result<Value, cyber_client::ClientError>) -> Result<Msg, Str
 }
 
 /// Change another Session from the picker, then reload the list.
+async fn fork_session(client: &Client, id: &str) -> Result<Msg, String> {
+    switched(
+        client
+            .post(&format!("/sessions/{id}/fork"), json!({}))
+            .await,
+    )
+}
+
 async fn manage(client: &Client, action: Action) -> Result<Msg, String> {
     match action {
         Action::Rename { id, title } => client
@@ -553,6 +904,7 @@ async fn manage(client: &Client, action: Action) -> Result<Msg, String> {
             .delete(&format!("/sessions/{id}"))
             .await
             .map_err(err)?,
+        Action::ForkSession(id) => return fork_session(client, &id).await,
         _ => Value::Null,
     };
     sessions(client).await
@@ -651,10 +1003,32 @@ pub async fn commands(client: &Client) -> Result<Msg, String> {
             detail: c["description"].as_str().unwrap_or_default().into(),
         })
         .collect();
+    let palette = entries
+        .iter()
+        .map(|c| crate::palette::ServerCommand {
+            name: c["name"].as_str().unwrap_or_default().into(),
+            description: c["description"].as_str().unwrap_or_default().into(),
+            source: c["source"].as_str().unwrap_or_default().into(),
+            takes_arguments: c["argument_hint"]
+                .as_str()
+                .is_some_and(|hint| !hint.trim().is_empty()),
+        })
+        .collect();
     Ok(Msg::Commands {
         items,
+        palette,
         bundled_review,
     })
+}
+
+/// Model display names and agent colors for the composer and the Turn marker.
+pub async fn catalog(client: &Client) -> Result<Msg, String> {
+    let models = client.get("/models").await.map_err(err)?;
+    let agents = client.get("/agents").await.map_err(err)?;
+    Ok(Msg::Catalog(crate::model::Catalog::parse(
+        &models["data"],
+        &agents["data"],
+    )))
 }
 
 fn agent_choices(data: &Value) -> Vec<Choice> {

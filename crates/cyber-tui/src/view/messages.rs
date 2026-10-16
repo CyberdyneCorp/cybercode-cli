@@ -1,4 +1,7 @@
-//! The message list: Markdown-lite text, collapsible reasoning and tool cards.
+//! The message list: Markdown text with highlighted code, collapsible reasoning and tool
+//! cards.
+
+use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,53 +11,151 @@ use ratatui::widgets::Paragraph;
 
 use super::wrap::wrap;
 use crate::app::App;
+use crate::markdown::{Ctx, Rendered};
 use crate::model::{Item, Tool};
-use crate::theme::Theme;
+use crate::osc::ScreenLink;
+use crate::theme::Tokens;
 
 const COLLAPSE_OVER: usize = 30;
 const COLLAPSED_TAIL: usize = 10;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let width = area.width.saturating_sub(1) as usize;
-    let rows: Vec<Line<'static>> = lines(app)
-        .into_iter()
-        .flat_map(|l| wrap(l, width))
-        .collect();
+    let mut out = transcript(app, width);
+    let selected = select(app, &mut out);
     let height = area.height as usize;
-    let max_scroll = rows.len().saturating_sub(height);
+    let max_scroll = out.lines.len().saturating_sub(height);
     let scroll = (app.scroll as usize).min(max_scroll);
-    let start = rows.len().saturating_sub(height + scroll);
-    let visible: Vec<Line> = rows.into_iter().skip(start).take(height).collect();
+    let mut start = out.lines.len().saturating_sub(height + scroll);
+    if let Some(row) = selected.filter(|&r| r < start || r >= start + height) {
+        start = row
+            .saturating_sub(height / 3)
+            .min(out.lines.len().saturating_sub(height));
+    }
+    let links = out
+        .links
+        .iter()
+        .filter(|l| l.row >= start && l.row < start + height)
+        .map(|l| ScreenLink {
+            x: area.x + l.col as u16,
+            y: area.y + (l.row - start) as u16,
+            text: l.text.clone(),
+            url: l.url.clone(),
+        })
+        .collect();
+    app.set_screen_links(links);
+    let visible: Vec<Line> = out.lines.into_iter().skip(start).take(height).collect();
     f.render_widget(Paragraph::new(visible), area);
 }
 
-/// Every line of the conversation, unwrapped.
-pub fn lines(app: &App) -> Vec<Line<'static>> {
+/// Mark the selected code block's label row; its row, if it is drawn.
+fn select(app: &App, out: &mut Rendered) -> Option<usize> {
+    let code = out.code.get(app.code_select?)?;
+    let style = app.theme.selected();
+    let line = out.lines.get_mut(code.row)?;
+    if let Some(pad) = line.spans.get_mut(code.span) {
+        *pad = Span::styled("› ", style);
+    }
+    if let Some(label) = line.spans.get_mut(code.span + 1) {
+        label.style = style;
+    }
+    Some(code.row)
+}
+
+/// Rows already wrapped to `width`, with Markdown links and code blocks.
+struct Out<'a> {
+    ctx: Ctx<'a>,
+    rendered: Rendered,
+}
+
+impl Out<'_> {
+    fn push(&mut self, line: Line<'static>) {
+        self.rendered.lines.extend(wrap(line, self.ctx.width));
+    }
+
+    fn markdown(&mut self, rendered: &Rendered) {
+        self.rendered.append(rendered);
+    }
+}
+
+/// Every row of the conversation at `width`.
+pub fn transcript(app: &App, width: usize) -> Rendered {
     let t = &app.theme;
-    let mut out = Vec::new();
+    let mut out = Out {
+        ctx: Ctx::new(t, width, app.hyperlinks),
+        rendered: Rendered::default(),
+    };
     if app.items.is_empty() && app.streaming.is_empty() {
         out.push(Line::from(Span::styled(
             format!(
                 "  {} — ask anything. /help for commands.",
-                app.session.directory
+                crate::sidebar::display_path(&app.session.directory)
             ),
-            Style::default().fg(t.muted),
+            Style::default().fg(t.text_muted),
         )));
     }
-    for item in &app.items {
+    let markers = crate::turns::markers(&app.items, app.session.running);
+    for (i, item) in app.items.iter().enumerate() {
         item_lines(app, item, &mut out);
         out.push(Line::default());
-    }
-    for (id, text) in &app.streaming {
-        if !app.items.iter().any(|i| matches!(i, Item::Assistant { id: aid, text: done, .. } if aid == id && !done.is_empty())) {
-            out.extend(markdown(text, t));
+        if let Some(marker) = markers.iter().find(|m| m.after == i) {
+            out.push(marker_line(app, marker));
             out.push(Line::default());
         }
     }
-    out
+    for (id, text) in &app.streaming {
+        if !app.items.iter().any(|i| matches!(i, Item::Assistant { id: aid, text: done, .. } if aid == id && !done.is_empty())) {
+            let rendered = app.markdown.streaming(id, text, &out.ctx);
+            out.markdown(&rendered);
+            out.push(Line::default());
+        }
+    }
+    out.rendered
 }
 
-fn item_lines(app: &App, item: &Item, out: &mut Vec<Line<'static>>) {
+/// `▣ Build · amini-coder · 11.3s`, with the end time under `/timestamps` and the
+/// outcome of an interrupted or failed run; a sentence in screen-reader mode.
+fn marker_line(app: &App, m: &crate::turns::Marker) -> Line<'static> {
+    use crate::turns::{Outcome, duration, title_case};
+    let t = &app.theme;
+    let agent = title_case(&m.agent);
+    let model = app.catalog.model_name(&m.model);
+    let took = duration(m.duration_ms);
+    let (outcome, color) = match m.outcome {
+        Outcome::Done => ("", t.text_muted),
+        Outcome::Interrupted => ("interrupted", t.warning),
+        Outcome::Failed => ("failed", t.error),
+    };
+    let at = app
+        .timestamps
+        .then(|| crate::turns::clock(m.ended_ms, app.utc_offset_minutes));
+    if app.screen_reader {
+        let mut text = format!("  Turn finished: agent {agent}, model {model}, {took}");
+        for extra in [at.as_deref(), Some(outcome)].into_iter().flatten() {
+            if !extra.is_empty() {
+                text.push_str(&format!(", {extra}"));
+            }
+        }
+        return Line::from(Span::styled(text, Style::default().fg(t.text_muted)));
+    }
+    let tint = Style::default().fg(super::composer::agent_color(app, &m.agent));
+    let muted = Style::default().fg(t.text_muted);
+    let mut spans = vec![
+        Span::styled("  ▣ ", tint),
+        Span::styled(agent, tint),
+        Span::styled(format!(" · {model} · {took}"), muted),
+    ];
+    if let Some(at) = at {
+        spans.push(Span::styled(format!(" · {at}"), muted));
+    }
+    if !outcome.is_empty() {
+        spans.push(Span::styled(" · ", muted));
+        spans.push(Span::styled(outcome, Style::default().fg(color)));
+    }
+    Line::from(spans)
+}
+
+fn item_lines(app: &App, item: &Item, out: &mut Out) {
     let t = &app.theme;
     match item {
         Item::User { text, .. } => {
@@ -76,7 +177,9 @@ fn item_lines(app: &App, item: &Item, out: &mut Vec<Line<'static>>) {
                 .unwrap_or("context updated");
             out.push(Line::from(Span::styled(
                 format!("  ⚙ {first}"),
-                Style::default().fg(t.muted).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(t.text_muted)
+                    .add_modifier(Modifier::ITALIC),
             )));
         }
         Item::Assistant {
@@ -85,6 +188,7 @@ fn item_lines(app: &App, item: &Item, out: &mut Vec<Line<'static>>) {
             reasoning,
             tools,
             error,
+            ..
         } => {
             assistant(app, id, text, reasoning, tools, error.as_deref(), out);
         }
@@ -98,7 +202,7 @@ fn assistant(
     reasoning: &str,
     tools: &[Tool],
     error: Option<&str>,
-    out: &mut Vec<Line<'static>>,
+    out: &mut Out,
 ) {
     let t = &app.theme;
     if !reasoning.is_empty() {
@@ -106,25 +210,27 @@ fn assistant(
             for line in reasoning.lines() {
                 out.push(Line::from(Span::styled(
                     format!("  ∴ {line}"),
-                    Style::default().fg(t.muted).add_modifier(Modifier::ITALIC),
+                    Style::default()
+                        .fg(t.text_muted)
+                        .add_modifier(Modifier::ITALIC),
                 )));
             }
         } else {
             out.push(Line::from(Span::styled(
                 "  ∴ thinking (Ctrl+T to show)",
-                Style::default().fg(t.muted).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(t.text_muted)
+                    .add_modifier(Modifier::ITALIC),
             )));
         }
     }
-    let shown = if text.is_empty() {
-        app.streaming
-            .get(id)
-            .map(String::as_str)
-            .unwrap_or_default()
-    } else {
-        text
+    let rendered = match app.streaming.get(id) {
+        Some(streaming) if text.is_empty() => {
+            Arc::new(app.markdown.streaming(id, streaming, &out.ctx))
+        }
+        _ => app.markdown.message(text, &out.ctx),
     };
-    out.extend(markdown(shown, t));
+    out.markdown(&rendered);
     for tool in tools {
         tool_card(app, tool, out);
     }
@@ -136,7 +242,7 @@ fn assistant(
     }
 }
 
-fn status_style(t: &Theme, status: &str) -> Style {
+fn status_style(t: &Tokens, status: &str) -> Style {
     let color = match status {
         "completed" => t.success,
         "failed" | "unknown" => t.error,
@@ -146,7 +252,7 @@ fn status_style(t: &Theme, status: &str) -> Style {
     Style::default().fg(color)
 }
 
-fn tool_card(app: &App, tool: &Tool, out: &mut Vec<Line<'static>>) {
+fn tool_card(app: &App, tool: &Tool, out: &mut Out) {
     let t = &app.theme;
     let status = tool.display_status();
     out.push(Line::from(vec![
@@ -157,44 +263,128 @@ fn tool_card(app: &App, tool: &Tool, out: &mut Vec<Line<'static>>) {
         ),
         Span::styled(
             format!(" {}", truncate(&tool.summary(), 80)),
-            Style::default().fg(t.muted),
+            Style::default().fg(t.text_muted),
         ),
         Span::styled(format!("  {status}"), status_style(t, status)),
     ]));
-    let lines: Vec<&str> = tool.output.lines().collect();
-    let collapsed = !app.expand_tools && lines.len() > COLLAPSE_OVER;
+    let rows = tool_rows(app, tool, &out.ctx);
+    let collapsed = !app.expand_tools && rows.lines.len() > COLLAPSE_OVER;
     let shown = if collapsed {
-        &lines[lines.len() - COLLAPSED_TAIL..]
+        &rows.lines[rows.lines.len() - COLLAPSED_TAIL..]
     } else {
-        &lines[..]
+        &rows.lines[..]
     };
     if collapsed {
         out.push(Line::from(Span::styled(
             format!(
                 "    … {} lines hidden (Ctrl+O to expand)",
-                lines.len() - COLLAPSED_TAIL
+                rows.lines.len() - COLLAPSED_TAIL
             ),
-            Style::default().fg(t.muted),
+            Style::default().fg(t.text_muted),
         )));
     }
     for line in shown {
-        out.push(Line::from(vec![
-            Span::styled("    │ ", Style::default().fg(t.border)),
-            Span::styled(line.to_string(), diff_style(t, line)),
-        ]));
+        let mut spans = vec![Span::styled("    │ ", Style::default().fg(t.border))];
+        spans.extend(line.spans.iter().cloned());
+        out.push(Line::from(spans));
     }
 }
 
-/// Unified-diff lines are colored; other output is muted.
-fn diff_style(t: &Theme, line: &str) -> Style {
+/// A tool's output rows; `read` and `write` code highlighted by the file's syntax once
+/// the call succeeded.
+fn tool_rows(app: &App, tool: &Tool, ctx: &Ctx) -> Arc<Rendered> {
+    let key = (
+        &tool.call_id,
+        &tool.status,
+        &tool.output,
+        tool.input["content"].as_str(),
+        ctx.key(),
+    );
+    app.markdown.memo(&key, || {
+        let t = ctx.t;
+        let lines = code_rows(tool, t).unwrap_or_else(|| {
+            tool.output
+                .lines()
+                .map(|line| Line::from(Span::styled(line.to_string(), diff_style(t, line))))
+                .collect()
+        });
+        Rendered {
+            lines,
+            ..Rendered::default()
+        }
+    })
+}
+
+fn code_rows(tool: &Tool, t: &Tokens) -> Option<Vec<Line<'static>>> {
+    if tool.status != "ok" {
+        return None;
+    }
+    let path = tool.input["path"].as_str()?;
+    let (before, numbers, code, after) = match tool.name.as_str() {
+        "read" => {
+            let (numbers, code, notes) = numbered(&tool.output)?;
+            (Vec::new(), numbers, code, notes)
+        }
+        "write" => {
+            let code = tool.input["content"].as_str()?.to_owned();
+            let before = tool.output.lines().map(str::to_owned).collect();
+            (before, Vec::new(), code, Vec::new())
+        }
+        _ => return None,
+    };
+    let set = crate::highlight::syntaxes()?;
+    let syntax = crate::highlight::for_path(set, path)?;
+    let highlighted = crate::highlight::highlight(set, syntax, &code.replace('\t', "    "), t)?;
+    let muted = |l: String| Line::from(Span::styled(l, Style::default().fg(t.text_muted)));
+    let digits = numbers.iter().map(String::len).max().unwrap_or(0);
+    let mut lines: Vec<Line<'static>> = before.into_iter().map(muted).collect();
+    for (i, runs) in highlighted.into_iter().enumerate() {
+        let mut spans = Vec::new();
+        if let Some(n) = numbers.get(i) {
+            spans.push(Span::styled(
+                format!("{n:>digits$} "),
+                Style::default().fg(t.text_subtle),
+            ));
+        }
+        spans.extend(runs.into_iter().map(|(style, s)| Span::styled(s, style)));
+        lines.push(Line::from(spans));
+    }
+    lines.extend(after.into_iter().map(muted));
+    Some(lines)
+}
+
+/// `read` output: `<n>: <line>` rows, then notes such as `(next_offset: 5)`, as the line
+/// numbers, the code and the notes; `None` when it has no numbered rows.
+fn numbered(output: &str) -> Option<(Vec<String>, String, Vec<String>)> {
+    let mut numbers = Vec::new();
+    let mut code = String::new();
+    let mut notes = Vec::new();
+    for line in output.lines() {
+        let row = line
+            .split_once(": ")
+            .filter(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        match row {
+            Some((n, text)) if notes.is_empty() => {
+                numbers.push(n.to_owned());
+                code.push_str(text);
+                code.push('\n');
+            }
+            _ => notes.push(line.to_owned()),
+        }
+    }
+    (!numbers.is_empty()).then_some((numbers, code, notes))
+}
+
+/// Unified-diff lines use the `diff_*` tokens; other output is muted.
+pub(super) fn diff_style(t: &Tokens, line: &str) -> Style {
     if line.starts_with('+') && !line.starts_with("+++") {
-        Style::default().fg(t.success)
+        Style::default().fg(t.diff_added).bg(t.diff_added_bg)
     } else if line.starts_with('-') && !line.starts_with("---") {
-        Style::default().fg(t.error)
+        Style::default().fg(t.diff_removed).bg(t.diff_removed_bg)
     } else if line.starts_with("@@") {
-        Style::default().fg(t.accent)
+        Style::default().fg(t.info)
     } else {
-        Style::default().fg(t.muted)
+        Style::default().fg(t.diff_context)
     }
 }
 
@@ -204,79 +394,4 @@ fn truncate(s: &str, n: usize) -> String {
     } else {
         format!("{}…", s.chars().take(n).collect::<String>())
     }
-}
-
-/// Headings, bullets, fenced code and inline `code`/**bold**.
-pub fn markdown(text: &str, t: &Theme) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    let mut in_code = false;
-    for raw in text.lines() {
-        if raw.trim_start().starts_with("```") {
-            in_code = !in_code;
-            let lang = raw.trim_start().trim_start_matches('`');
-            if in_code && !lang.is_empty() {
-                out.push(Line::from(Span::styled(
-                    format!("  ┌ {lang}"),
-                    Style::default().fg(t.muted),
-                )));
-            }
-            continue;
-        }
-        if in_code {
-            out.push(Line::from(vec![
-                Span::styled("  │ ", Style::default().fg(t.border)),
-                Span::styled(raw.to_string(), Style::default().fg(t.code)),
-            ]));
-            continue;
-        }
-        out.push(prose(raw, t));
-    }
-    out
-}
-
-fn prose(raw: &str, t: &Theme) -> Line<'static> {
-    let trimmed = raw.trim_start();
-    if let Some(h) = trimmed.strip_prefix('#') {
-        let title = h.trim_start_matches('#').trim().to_string();
-        return Line::from(Span::styled(
-            format!("  {title}"),
-            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-        ));
-    }
-    let indent = raw.len() - trimmed.len();
-    let (bullet, body) = match trimmed
-        .strip_prefix("- ")
-        .or_else(|| trimmed.strip_prefix("* "))
-    {
-        Some(rest) => (format!("{}• ", " ".repeat(indent)), rest),
-        None => (" ".repeat(indent), trimmed),
-    };
-    let mut spans = vec![Span::raw(format!("  {bullet}"))];
-    spans.extend(inline(body, t));
-    Line::from(spans)
-}
-
-/// Alternate plain and `code` segments; `**bold**` inside plain text.
-fn inline(text: &str, t: &Theme) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-    for (i, segment) in text.split('`').enumerate() {
-        if i % 2 == 1 {
-            spans.push(Span::styled(
-                segment.to_string(),
-                Style::default().fg(t.code),
-            ));
-            continue;
-        }
-        for (j, part) in segment.split("**").enumerate() {
-            let style = if j % 2 == 1 {
-                Style::default().fg(t.text).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(t.text)
-            };
-            if !part.is_empty() {
-                spans.push(Span::styled(part.to_string(), style));
-            }
-        }
-    }
-    spans
 }

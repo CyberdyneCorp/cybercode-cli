@@ -1,0 +1,39 @@
+---
+source: crates/cyber-tui/src/screens_settings.rs
+expression: shown
+---
+
+  Settings   Status    Config    Usage    Stats
+
+  Client:        1.0.0
+  Server:        1.0.0
+
+  Session:       Theme baseline
+  ID:            ses_settings
+  Location:      ~/work/app
+  Branch:        not a git repository
+
+  Agent:         Build
+  Model:         Amini Coder (test)
+  Mode:          default
+  Context:       ██████████████████████████░░░░ 100 / 116 tokens (86%)
+  Auto-compact:  at 0 tokens
+
+  MCP:           none configured
+  LSP:           none running
+
+
+
+  ↑↓ scroll · r refresh · tab next tab · 1-4 jump · esc close
+ /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+row 1: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 1: 2-9 fg=#00e5ff bg=#0b0f14 bold
+row 1: 10-11 fg=#d6e4f0 bg=#0b0f14
+row 1: 12-19 fg=#00e5ff bg=#1f2a3a bold
+row 1: 20-79 fg=#d6e4f0 bg=#0b0f14
+row 14: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 14: 2-16 fg=#6b7a8f bg=#0b0f14
+row 14: 17-42 fg=#00e5ff bg=#0b0f14
+row 14: 43-46 fg=#2b3445 bg=#0b0f14
+row 14: 47-69 fg=#ffcc66 bg=#0b0f14
+row 14: 70-79 fg=#d6e4f0 bg=#0b0f14

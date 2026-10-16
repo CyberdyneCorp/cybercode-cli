@@ -1,0 +1,143 @@
+---
+source: crates/cyber-tui/src/screens_themes.rs
+expression: "render(&mut app, 124, 36, &opts)"
+---
+› How do I speed up fib?
+  ┌ Theme ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │  All  ·  Dark  ·  Light               │  Preview · synthwave-84                                                      │
+  │ › type to search                      │                                                                              │
+  │                                       │   ██████╗██╗   ██╗██████╗ ███████╗██████╗                                    │
+  │ DARK                                  │  ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗                                   │
+  │   cyber             ● ● ● ● ●  current│  ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝                                   │
+  │   system            ● ● ● ● ●         │  ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗                                   │
+  │   dracula           ● ● ● ● ●         │  ╚██████╗   ██║   ██████╔╝███████╗██║  ██║                                   │
+  │   tokyonight        ● ● ● ● ●         │   ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝                                   │
+  │   catppuccin        ● ● ● ● ●         │                                                                              │
+  │   gruvbox           ● ● ● ● ●         │    Heading                                                                   │
+  │   nord              ● ● ● ● ●         │                                                                              │
+  │   one-dark          ● ● ● ● ●         │    A paragraph with inline code and a link (https://example.com).            │
+  │   monokai           ● ● ● ● ●         │                                                                              │
+  │   everforest        ● ● ● ● ●         │    • a list item                                                             │
+  │ ❯ synthwave-84      ● ● ● ● ●         │    • another item                                                            │
+  │   rose-pine         ● ● ● ● ●         │                                                                              │
+  │   kanagawa          ● ● ● ● ●         │      rust                                                                    │
+  │   ayu-mirage        ● ● ● ● ●         │      fn main() {                                                             │
+  │   matrix            ● ● ● ● ●         │          let answer = 42; // the answer                                      │
+  │                                       │          println!("{answer}");                                               │
+  │ LIGHT                                 │      }                                                                       │
+  │   github-light      ● ● ● ● ●         │                                                                              │
+  │   solarized-light   ● ● ● ● ●         │  + an added line                                                             │
+  │   cyber-light       ● ● ● ● ●         │  - a removed line                                                            │
+  │                                       │                                                                              │
+  │                                       │  ✓ success   ⚠ warning   ✗ error                                             │
+  │                                       │                                                                              │
+  │                                       │  ▣ Build · main · 11.3s                                                      │
+  │                                       │                                                                              │
+┃ │                                       │  Contrast: text 13.3:1 AAA · muted 5.2:1 AA                                  │
+┃ │                                       │                                                                              │
+┃ │↑↓ select · tab filter · type to search · enter keep · p project · esc revert                                         │
+┃ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ /Users/leo/work/app                                          100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+row 5: 0-1 fg=#f0eff1 bg=#262335
+row 5: 2-2 fg=#ff7edb bg=#322f40
+row 5: 3-3 fg=#f0eff1 bg=#322f40
+row 5: 4-7 fg=#9a91c2 bg=#322f40 bold
+row 5: 8-41 fg=#f0eff1 bg=#322f40
+row 5: 42-42 fg=#495495 bg=#322f40
+row 5: 43-44 fg=#f0eff1 bg=#322f40
+row 5: 45-45 fg=#ff7edb bg=#322f40
+row 5: 46-46 fg=#fa81dc bg=#322f40
+row 5: 47-47 fg=#834f80 bg=#322f40
+row 5: 48-48 fg=#815081 bg=#322f40
+row 5: 49-49 fg=#7f5181 bg=#322f40
+row 5: 50-50 fg=#7c5381 bg=#322f40
+row 5: 51-51 fg=#7a5482 bg=#322f40
+row 5: 52-52 fg=#785682 bg=#322f40
+row 5: 53-53 fg=#765782 bg=#322f40
+row 5: 54-54 fg=#d29ae1 bg=#322f40
+row 5: 55-55 fg=#cd9de2 bg=#322f40
+row 5: 56-56 fg=#6f5b83 bg=#322f40
+row 5: 57-57 fg=#f0eff1 bg=#322f40
+row 5: 58-58 fg=#bea6e4 bg=#322f40
+row 5: 59-59 fg=#b9a9e4 bg=#322f40
+row 5: 60-60 fg=#666184 bg=#322f40
+row 5: 61-61 fg=#646285 bg=#322f40
+row 5: 62-62 fg=#aab2e6 bg=#322f40
+row 5: 63-63 fg=#a5b5e7 bg=#322f40
+row 5: 64-64 fg=#5d6686 bg=#322f40
+row 5: 65-65 fg=#5b6886 bg=#322f40
+row 5: 66-66 fg=#586986 bg=#322f40
+row 5: 67-67 fg=#90c2ea bg=#322f40
+row 5: 68-68 fg=#8bc5eb bg=#322f40
+row 5: 69-69 fg=#516d87 bg=#322f40
+row 5: 70-70 fg=#81cbec bg=#322f40
+row 5: 71-71 fg=#7cceed bg=#322f40
+row 5: 72-72 fg=#4a7188 bg=#322f40
+row 5: 73-73 fg=#487388 bg=#322f40
+row 5: 74-74 fg=#467489 bg=#322f40
+row 5: 75-75 fg=#447589 bg=#322f40
+row 5: 76-76 fg=#417789 bg=#322f40
+row 5: 77-77 fg=#3f788a bg=#322f40
+row 5: 78-78 fg=#59e3f1 bg=#322f40
+row 5: 79-79 fg=#54e7f2 bg=#322f40
+row 5: 80-80 fg=#387d8b bg=#322f40
+row 5: 81-81 fg=#367e8b bg=#322f40
+row 5: 82-82 fg=#347f8b bg=#322f40
+row 5: 83-83 fg=#40f3f5 bg=#322f40
+row 5: 84-84 fg=#3bf6f5 bg=#322f40
+row 5: 85-85 fg=#2d838c bg=#322f40
+row 5: 86-120 fg=#f0eff1 bg=#322f40
+row 5: 121-121 fg=#ff7edb bg=#322f40
+row 5: 122-123 fg=#f0eff1 bg=#2e2b3d
+row 16: 0-1 fg=#f0eff1 bg=#262335
+row 16: 2-2 fg=#ff7edb bg=#322f40
+row 16: 3-3 fg=#f0eff1 bg=#322f40
+row 16: 4-21 fg=#ff7edb bg=#463465 bold
+row 16: 22-22 fg=#f0eff1 bg=#322f40
+row 16: 23-23 fg=#f0eff1 bg=#262335
+row 16: 24-24 fg=#ff7edb bg=#262335
+row 16: 25-25 fg=#f0eff1 bg=#262335
+row 16: 26-26 fg=#36f9f6 bg=#262335
+row 16: 27-27 fg=#f0eff1 bg=#262335
+row 16: 28-28 fg=#72f1b8 bg=#262335
+row 16: 29-29 fg=#f0eff1 bg=#262335
+row 16: 30-30 fg=#fede5d bg=#262335
+row 16: 31-31 fg=#f0eff1 bg=#262335
+row 16: 32-32 fg=#fe4450 bg=#262335
+row 16: 33-33 fg=#f0eff1 bg=#262335
+row 16: 34-41 fg=#f0eff1 bg=#322f40
+row 16: 42-42 fg=#495495 bg=#322f40
+row 16: 43-46 fg=#f0eff1 bg=#322f40
+row 16: 47-48 fg=#9a91c2 bg=#322f40
+row 16: 49-120 fg=#f0eff1 bg=#322f40
+row 16: 121-121 fg=#ff7edb bg=#322f40
+row 16: 122-123 fg=#f0eff1 bg=#2e2b3d
+row 24: 0-1 fg=#f0eff1 bg=#262335
+row 24: 2-2 fg=#ff7edb bg=#322f40
+row 24: 3-22 fg=#f0eff1 bg=#322f40
+row 24: 23-23 fg=#f0eff1 bg=#fdf6e3
+row 24: 24-24 fg=#268bd2 bg=#fdf6e3
+row 24: 25-25 fg=#f0eff1 bg=#fdf6e3
+row 24: 26-26 fg=#d33682 bg=#fdf6e3
+row 24: 27-27 fg=#f0eff1 bg=#fdf6e3
+row 24: 28-28 fg=#859900 bg=#fdf6e3
+row 24: 29-29 fg=#f0eff1 bg=#fdf6e3
+row 24: 30-30 fg=#b58900 bg=#fdf6e3
+row 24: 31-31 fg=#f0eff1 bg=#fdf6e3
+row 24: 32-32 fg=#dc322f bg=#fdf6e3
+row 24: 33-33 fg=#f0eff1 bg=#fdf6e3
+row 24: 34-41 fg=#f0eff1 bg=#322f40
+row 24: 42-42 fg=#495495 bg=#322f40
+row 24: 43-44 fg=#f0eff1 bg=#322f40
+row 24: 45-119 fg=#72f1b8 bg=#314249
+row 24: 120-120 fg=#f0eff1 bg=#322f40
+row 24: 121-121 fg=#ff7edb bg=#322f40
+row 24: 122-123 fg=#f0eff1 bg=#2e2b3d
+row 31: 0-2 fg=#ff7edb bg=#322f40
+row 31: 3-41 fg=#f0eff1 bg=#322f40
+row 31: 42-42 fg=#495495 bg=#322f40
+row 31: 43-44 fg=#f0eff1 bg=#322f40
+row 31: 45-86 fg=#9a91c2 bg=#322f40
+row 31: 87-120 fg=#f0eff1 bg=#322f40
+row 31: 121-121 fg=#ff7edb bg=#322f40
+row 31: 122-123 fg=#f0eff1 bg=#2e2b3d

@@ -4,19 +4,52 @@ mod admissions;
 mod app;
 mod children;
 mod composer;
-mod cost;
+mod explorer;
 mod fuzzy;
+mod highlight;
 mod hook_definitions;
 mod hooks;
+mod keys;
+mod markdown;
 mod memory;
 mod model;
+mod osc;
+mod palette;
 mod perform;
+mod prefs;
+mod recap;
 mod review;
 mod runner;
+mod settings;
+mod sidebar;
 mod store;
+mod switcher;
 mod theme;
+mod turns;
 mod view;
 
+#[cfg(test)]
+mod screens;
+#[cfg(test)]
+mod screens_a11y;
+#[cfg(test)]
+mod screens_chrome;
+#[cfg(test)]
+mod screens_explorer;
+#[cfg(test)]
+mod screens_markdown;
+#[cfg(test)]
+mod screens_recap;
+#[cfg(test)]
+mod screens_settings;
+#[cfg(test)]
+mod screens_sidebar;
+#[cfg(test)]
+mod screens_stats;
+#[cfg(test)]
+mod screens_themes;
+#[cfg(test)]
+mod screens_usage;
 #[cfg(test)]
 mod tests;
 
@@ -41,6 +74,8 @@ pub struct TuiOptions {
     pub directory: String,
     /// `~/.local/state/cyber`: history, drafts, preferences.
     pub state_dir: PathBuf,
+    /// The global config directory: `tui.jsonc` and `themes/*.json`.
+    pub config_dir: PathBuf,
     pub start: Start,
     pub fork: bool,
     pub model: Option<String>,

@@ -80,6 +80,7 @@ impl Inner {
                     title,
                     usage: Some(out.usage),
                     cost,
+                    model: Some(model),
                 },
             )
         };
@@ -93,7 +94,8 @@ impl Inner {
     }
 }
 
-/// Strip reasoning tags and quotes, keep the first line, cap at 100 characters.
+/// Strip reasoning tags and quotes, keep the first line without control characters (a
+/// title reaches terminal window titles and stdout), cap at 100 characters.
 pub(crate) fn clean(raw: &str) -> String {
     let mut text = raw.to_string();
     while let (Some(start), Some(end)) = (text.find("<think>"), text.find("</think>")) {
@@ -110,7 +112,11 @@ pub(crate) fn clean(raw: &str) -> String {
     let line = line
         .trim_matches(|c| c == '"' || c == '\'' || c == '#' || c == '*')
         .trim();
-    line.chars().take(100).collect()
+    line.chars()
+        .map(|c| if c == '\t' { ' ' } else { c })
+        .filter(|c| !c.is_control())
+        .take(100)
+        .collect()
 }
 
 #[cfg(test)]
@@ -124,5 +130,13 @@ mod tests {
             "Fix flaky login test"
         );
         assert_eq!(clean(&"x".repeat(150)).len(), 100);
+    }
+
+    #[test]
+    fn drops_control_characters_a_terminal_would_act_on() {
+        assert_eq!(
+            clean("Evil\x07\x1b]52;c;SGFja2Vk\x07\x1b[2J\u{9b}2J\ttitle"),
+            "Evil]52;c;SGFja2Vk[2J2J title"
+        );
     }
 }

@@ -1,0 +1,31 @@
+---
+source: crates/cyber-tui/src/screens_chrome.rs
+expression: shown
+---
+ cyber · Theme baseline                                                                                            idle
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · Amini Coder · 11.3s
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · Amini Coder test · default
+ /Users/leo/work/app                                                                 100 (86%) · $0.00  ctrl+p commands
+row 19: 0-19 fg=#6b7a8f bg=#0b0f14
+row 19: 20-84 fg=#d6e4f0 bg=#0b0f14
+row 19: 85-93 fg=#ffcc66 bg=#0b0f14
+row 19: 94-101 fg=#6b7a8f bg=#0b0f14
+row 19: 102-109 fg=#d6e4f0 bg=#0b0f14
+row 19: 110-118 fg=#6b7a8f bg=#0b0f14
+row 19: 119-119 fg=#d6e4f0 bg=#0b0f14

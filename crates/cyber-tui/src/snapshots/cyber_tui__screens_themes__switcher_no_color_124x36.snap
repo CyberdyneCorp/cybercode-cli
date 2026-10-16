@@ -1,0 +1,41 @@
+---
+source: crates/cyber-tui/src/screens_themes.rs
+expression: "render(&mut app, 124, 36, &plain)"
+---
+› How do I speed up fib?
+  ┌ Theme ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │  All  ·  Dark  ·  Light               │  Preview · github-light                                                      │
+  │ › type to search                      │                                                                              │
+  │                                       │  Colors are disabled (NO_COLOR or tui.color none).                           │
+  │ DARK                                  │  The chosen theme applies when colors are enabled again.                     │
+  │   cyber            current            │                                                                              │
+  │   system                              │                                                                              │
+  │   dracula                             │                                                                              │
+  │   tokyonight                          │                                                                              │
+  │   catppuccin                          │                                                                              │
+  │   gruvbox                             │                                                                              │
+  │   nord                                │                                                                              │
+  │   one-dark                            │                                                                              │
+  │   monokai                             │                                                                              │
+  │   everforest                          │                                                                              │
+  │   synthwave-84                        │                                                                              │
+  │   rose-pine                           │                                                                              │
+  │   kanagawa                            │                                                                              │
+  │   ayu-mirage                          │                                                                              │
+  │   matrix                              │                                                                              │
+  │                                       │                                                                              │
+  │ LIGHT                                 │                                                                              │
+  │ ❯ github-light                        │                                                                              │
+  │   solarized-light                     │                                                                              │
+  │   cyber-light                         │                                                                              │
+  │                                       │                                                                              │
+  │                                       │                                                                              │
+  │                                       │                                                                              │
+  │                                       │                                                                              │
+  │                                       │                                                                              │
+┃ │                                       │                                                                              │
+┃ │                                       │                                                                              │
+┃ │↑↓ select · tab filter · type to search · enter keep · p project · esc revert                                         │
+┃ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ /Users/leo/work/app                                          100 · —  ctrl+p commands   ● Connected · Cyber Code 1.0.0
+row 23: 4-21 bold reverse

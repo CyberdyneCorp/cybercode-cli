@@ -51,6 +51,7 @@ pub const QUESTION_REPLIED: &str = "question.replied.1";
 pub const SNAPSHOT_TAKEN: &str = "snapshot.taken.1";
 pub const DIFF_COMPUTED: &str = "session.diff.1";
 pub const REVERTED: &str = "session.reverted.1";
+pub const RECAP_GENERATED: &str = "session.recap.generated.1";
 
 const ALL: &[&str] = &[
     CREATED,
@@ -101,6 +102,7 @@ const ALL: &[&str] = &[
     SNAPSHOT_TAKEN,
     DIFF_COMPUTED,
     REVERTED,
+    RECAP_GENERATED,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,6 +373,9 @@ pub struct CompactionCompleted {
     pub usage: Usage,
     #[serde(default)]
     pub cost: Option<f64>,
+    /// The model reference of the summary call, for the usage ledger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -386,6 +391,9 @@ pub struct Titled {
     pub usage: Option<Usage>,
     #[serde(default)]
     pub cost: Option<f64>,
+    /// The model reference of the title call, for the usage ledger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -522,6 +530,7 @@ fn project_runtime(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()
             )?;
         }
         STEP_ENDED | COMPACTION_COMPLETED | AUXILIARY_USAGE => project_usage(tx, e)?,
+        STEP_FAILED => super::usage_ledger::project(tx, e)?,
         AUTO_DECIDED if d["usage"].is_object() => project_usage(tx, e)?,
         _ => {
             if e.kind == TITLE_GENERATED && d["usage"].is_object() {
@@ -636,6 +645,7 @@ fn project_usage(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
             n("cache_write")
         ],
     )?;
+    super::usage_ledger::project(tx, e)?;
     super::child_usage::project(tx, e)
 }
 

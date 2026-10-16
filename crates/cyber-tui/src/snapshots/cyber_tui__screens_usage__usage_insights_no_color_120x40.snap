@@ -1,0 +1,46 @@
+---
+source: crates/cyber-tui/src/screens_usage.rs
+expression: "render(&mut app, 120, 40, &plain)"
+---
+
+  Settings   Status    Config    Usage    Stats
+
+  Session
+
+  Total cost:            $0.0013
+  Total duration (API):  11s
+  Total duration (wall): 3h 21m 0s
+  Usage by model:
+       main:  201.1k input, 10 output, 0 cache read, 0 cache write ($2.00)
+      small:  100 input, 10 output, 0 cache read, 0 cache write ($0.0001)
+
+  Tokens                   Own   Descendants   Total (known)
+  Input                    200             0             200
+  Output                    20             0              20
+  Reasoning                  0             0               0
+  Cache read                 0             0               0
+  Cache write                0             0               0
+
+  Cache hit rate: 0.0% (cache read / input + cache read + cache write)
+
+  What's contributing to your usage?
+  Approximate: Sessions recorded by this server only
+
+  Last 24h · These are independent characteristics of your usage, not a breakdown · % of cost
+
+  100% of your usage came from subagent-heavy sessions
+    Each subagent runs its own requests. Spawn them deliberately, and give simple subagents a cheaper model.
+
+  50% of your usage came from requests above 150k context
+    Long contexts cost more even when cached. /compact mid-task, /new when switching tasks.
+
+  Subagents                % of cost
+  explore                        50%
+  review                         50%
+
+
+
+  ↑↓ scroll · d day · w week · r refresh · tab next tab · 1-4 jump · esc close
+ /Users/leo/work/app                                   100 · $0.00  ctrl+p commands
+row 26: 2-53 bold
+row 29: 2-56 bold

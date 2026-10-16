@@ -393,9 +393,9 @@ async fn boundary(
         .unwrap_or_else(PoisonError::into_inner)
         .take();
     if let Some(instructions) = requested {
-        inner
-            .compact(handle, CompactionTrigger::Manual, instructions)
-            .await?;
+        // Boxed: the summary call's state would otherwise sit inline in every Drain future
+        // and overflow the stack of nested foreground subagents.
+        Box::pin(inner.compact(handle, CompactionTrigger::Manual, instructions)).await?;
         inner.ensure_epoch(handle, &resolved.provider).await?;
     }
     Ok((prepared, promoted))
@@ -619,7 +619,7 @@ impl Inner {
         trigger: CompactionTrigger,
         resolved: &ResolvedModel,
     ) -> Result<(), RuntimeError> {
-        self.compact(handle, trigger, None).await?;
+        Box::pin(self.compact(handle, trigger, None)).await?;
         let payload = SystemAdded {
             message_id: cyber_core::ids::new_id("msg"),
             text: CONTINUE_TEXT.into(),
@@ -988,6 +988,12 @@ impl Inner {
         self.observe_budget(handle).await?;
         let context_tokens = acc.usage.context_tokens() + acc.usage.output + acc.usage.reasoning;
         let limit = resolved.context_limit;
+        let context = super::ContextMeter::new(
+            acc.usage.context_tokens(),
+            limit,
+            u64::from(resolved.template.max_output_tokens.unwrap_or(0)),
+            &self.options.compaction,
+        );
         self.bus.publish(LiveEvent::Usage {
             session_id,
             usage: acc.usage,
@@ -998,6 +1004,7 @@ impl Inner {
             } else {
                 context_tokens as f64 / limit as f64
             },
+            context,
         });
         Ok(())
     }

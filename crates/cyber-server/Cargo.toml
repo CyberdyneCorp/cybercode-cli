@@ -13,6 +13,8 @@ cyber-store.workspace = true
 cyber-llm = { path = "../cyber-llm" }
 cyber-workflow = { path = "../cyber-workflow" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Local days in IANA zones: reads the system tz database, bundled on Windows.
+jiff = { version = "=0.2.15", default-features = false, features = ["std", "tz-system", "tzdb-bundle-platform", "tzdb-zoneinfo"] }
 futures = "0.3"
 rusqlite.workspace = true
 serde.workspace = true

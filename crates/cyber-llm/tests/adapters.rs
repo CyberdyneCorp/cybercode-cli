@@ -622,3 +622,66 @@ async fn runtime_no_tools_choice_overrides_injected_tools_on_every_adapter() {
         assert_eq!(body["tool_choice"], expected, "{kind:?}");
     }
 }
+
+/// Every adapter records the usage windows of its responses, including a rate-limited
+/// one, and a provider that sends none records nothing (`observability-costs` →
+/// Provider-reported limits).
+#[tokio::test]
+async fn adapters_record_reported_usage_windows_and_nothing_else() {
+    use cyber_llm::limits::{LimitStore, WindowPeriod};
+    let server = MockServer::start().await;
+    let chat = sse(&[(
+        "",
+        json!({"choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}]}),
+    )]) + "data: [DONE]\n\n";
+    Mock::given(path("/plan/chat/completions"))
+        .respond_with(
+            ok_stream(chat.clone())
+                .insert_header("x-codex-primary-used-percent", "40")
+                .insert_header("x-codex-primary-window-minutes", "300"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(path("/plain/chat/completions"))
+        .respond_with(ok_stream(chat))
+        .mount(&server)
+        .await;
+    Mock::given(path("/limited/messages"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("anthropic-ratelimit-unified-7d-utilization", "1.0")
+                .set_body_json(json!({"error": {"type": "rate_limit_error", "message": "x"}})),
+        )
+        .mount(&server)
+        .await;
+    let store = LimitStore::default();
+    let target = |provider: &str, base: &str| {
+        let mut endpoint = Endpoint::new(format!("{}/{base}", server.uri()), None);
+        endpoint.limits = Some(store.sink(provider));
+        endpoint
+    };
+    let plan = adapter(ApiKind::OpenaiCompatible, target("plan", "plan"));
+    collect(plan.stream(request()).await.unwrap(), |_| {})
+        .await
+        .unwrap();
+    let plain = adapter(ApiKind::OpenaiCompatible, target("local", "plain"));
+    collect(plain.stream(request()).await.unwrap(), |_| {})
+        .await
+        .unwrap();
+    let limited = adapter(ApiKind::Anthropic, target("claude", "limited"));
+    let err = limited.stream(request()).await.err().unwrap();
+    assert_eq!(err.kind, ErrorKind::RateLimit);
+    let readings = store.readings();
+    let names: Vec<(&str, &str)> = readings
+        .iter()
+        .map(|r| (r.provider.as_str(), r.window.label.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        [("claude", "Weekly limit"), ("plan", "5-hour limit")]
+    );
+    assert_eq!(readings[0].window.period, WindowPeriod::Weekly);
+    assert_eq!(readings[0].window.used_percent, 100.0);
+    assert_eq!(readings[1].window.used_percent, 40.0);
+    assert!(readings.iter().all(|r| r.observed_ms > 0));
+}

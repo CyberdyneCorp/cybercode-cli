@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::composer::Composer;
 use crate::fuzzy;
 use crate::model::{Choice, Item, Queued, Request, Session};
-use crate::theme::{self, Theme};
+use crate::theme::{Appearance, Catalog, Tokens};
 
 /// Modes Shift+Tab cycles through; the others are set with `/mode`.
 const CYCLE_MODES: [&str; 4] = ["default", "accept-edits", "plan", "auto"];
@@ -27,6 +27,8 @@ const LEADER_TIMEOUT_MS: u128 = 2000;
 /// Work for the runner.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
+    /// Put code on the clipboard (native tool, else OSC 52).
+    Copy(String),
     Memory(crate::memory::Request),
     ReconcileAdmission(crate::admissions::Request),
     Admission {
@@ -34,8 +36,52 @@ pub enum Action {
         stop: bool,
     },
     Refresh,
+    /// Read one sidebar source (`sidebar::Part`).
+    LoadSidebar(crate::sidebar::Part),
+    /// `r` on a failed MCP server in the sidebar.
+    ReconnectMcp(String),
     LoadCost {
         generation: u64,
+    },
+    /// The Settings Status tab's sources.
+    LoadStatus {
+        generation: u64,
+    },
+    /// `POST /sessions/:id/recap`; `manual` for `/recap`, whose failures are shown.
+    Recap {
+        session_id: String,
+        manual: bool,
+    },
+    /// The Usage tab's provider-reported windows (`GET /usage/limits`).
+    LoadLimits {
+        generation: u64,
+    },
+    /// The Usage tab's contributing factors (`GET /usage/insights`).
+    LoadInsights {
+        generation: u64,
+        window: &'static str,
+    },
+    /// The Settings Stats tab (`GET /usage/stats`).
+    LoadStats {
+        generation: u64,
+        period: &'static str,
+        /// Only the current Location's project.
+        project: bool,
+        zone: Option<String>,
+    },
+    /// One file explorer level (`GET /files`).
+    LoadDir {
+        path: String,
+        hidden: bool,
+    },
+    /// The explorer filter's server search.
+    SearchFiles(String),
+    /// A file's preview; an `ask` file raises the permission request first.
+    LoadPreview(String),
+    /// Save a Config tab preference to `kv.json`.
+    SavePreference {
+        key: &'static str,
+        value: Value,
     },
     Prompt {
         text: String,
@@ -97,7 +143,9 @@ pub enum Action {
     FindFiles(String),
     LoadAgents,
     RemoveQueued(String),
-    SaveTheme(&'static str),
+    SaveTheme(String),
+    /// Write `theme` to the project's `.cyber/tui.jsonc` (`p` in the theme switcher).
+    SaveProjectTheme(String),
     Rename {
         id: String,
         title: String,
@@ -116,7 +164,6 @@ pub enum PickerKind {
     Children,
     Sessions,
     Models,
-    Themes,
     Modes,
     Skills,
 }
@@ -192,7 +239,6 @@ pub enum Overlay {
     Permission(PermStep),
     Question(QuestionForm),
     Help,
-    Cost,
     HookHistory,
     HookDefinitions,
     Memory,
@@ -200,7 +246,36 @@ pub enum Overlay {
     ConfirmStopTasks,
     /// Validated findings of the last bundled review, most severe first.
     Findings,
+    /// The patch of a sidebar Modified files row.
+    FileDiff {
+        index: usize,
+        scroll: u16,
+    },
+    Palette(crate::palette::Palette),
+    /// The Settings panel; its state is `App::settings`.
+    Settings,
+    /// The file explorer; its state is `App::explorer`.
+    Files,
+    /// The theme switcher.
+    Themes(Box<crate::switcher::Switcher>),
 }
+
+/// What the composer's first character makes of the input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Prompt,
+    /// `!`: a user shell command.
+    Shell,
+    /// `/`: a slash command.
+    Command,
+}
+
+/// Bound actions whose surface is not drawn yet; they are kept out of help and the
+/// palette.
+pub const UNAVAILABLE: &[&str] = &[];
+
+/// Status line fields shown by default (`tui.statusline.fields`).
+pub const DEFAULT_FIELDS: [&str; 3] = ["cwd", "context", "cost"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Completion {
@@ -213,7 +288,7 @@ pub struct Completion {
 pub struct App {
     pub admissions: crate::admissions::Admissions,
     pub session: Session,
-    pub cost: crate::cost::CostView,
+    pub cost: crate::settings::cost::CostView,
     pub hooks: crate::hooks::View,
     pub hook_definitions: crate::hook_definitions::View,
     pub memory: crate::memory::View,
@@ -238,14 +313,73 @@ pub struct App {
     pub scroll: u16,
     pub permission_scroll: u16,
     pub toast: Option<(String, Instant)>,
-    pub theme: Theme,
+    /// The resolved tokens of the current theme.
+    pub theme: Tokens,
+    pub themes: Catalog,
+    pub appearance: Appearance,
+    /// `tui.accessibility.reduced_motion` or screen-reader mode: no animation frames.
+    pub reduced_motion: bool,
+    /// A fixed time for every frame (snapshot tests); `None` reads the real clock.
+    pub clock: Option<Instant>,
+    started: Instant,
+    /// An OSC 11 background query waiting for its reply in the key stream.
+    pub(crate) background_probe: Option<crate::theme::detect::Osc11Reply>,
+    /// Rendered Markdown blocks and the streaming split of each message.
+    pub(crate) markdown: crate::markdown::Cache,
+    /// The terminal shows OSC 8 hyperlinks.
+    pub hyperlinks: bool,
+    /// The code block selected for copying (Ctrl+X y), counted from the top.
+    pub code_select: Option<usize>,
+    /// Links the last frame drew, for the OSC 8 pass after it.
+    screen_links: std::sync::Mutex<Vec<crate::osc::ScreenLink>>,
     leader: Option<Instant>,
+    /// The merged keybinding table.
+    pub keymap: crate::keys::Keymap,
+    /// `/commands` entries for the palette.
+    pub server_commands: Vec<crate::palette::ServerCommand>,
+    /// Model display names and agent colors.
+    pub catalog: crate::model::Catalog,
+    /// `tui.statusline.fields`.
+    pub statusline_fields: Vec<String>,
+    /// `tui.accessibility.screen_reader`: statuses as sentences.
+    pub screen_reader: bool,
+    /// A fixed UTC offset in minutes for clock times (snapshot tests); `None` is local.
+    pub utc_offset_minutes: Option<i32>,
+    /// The Session sidebar's data, focus and visibility.
+    pub sidebar: crate::sidebar::Sidebar,
+    /// `tui.welcome`.
+    pub welcome: crate::view::welcome::Welcome,
+    /// The home directory, shown as `~`.
+    pub home: Option<String>,
+    /// The last frame's width, so `<leader>b` knows whether it docks or opens a drawer.
+    pub(crate) frame_width: std::sync::atomic::AtomicU16,
+    /// The Session or its directory changed: the sidebar reloads.
+    pub(crate) sidebar_stale: bool,
+    /// The Settings panel's tab, scroll and data.
+    pub settings: crate::settings::Settings,
+    /// The Config tab's preferences with their sources.
+    pub prefs: crate::prefs::Preferences,
+    /// This TUI's version, compared with the server's.
+    pub client_version: String,
+    /// The file explorer's tree, filter and preview.
+    pub explorer: crate::explorer::Explorer,
     pub quit: bool,
     pub focused: bool,
+    /// The Session recap line.
+    pub recap: crate::recap::RecapState,
+    /// The theme switcher's filter, which `theme_cycle` also follows.
+    pub theme_filter: crate::switcher::Filter,
+    /// `Theme: <name>` from `theme_cycle`, shown in the status footer.
+    pub announcement: Option<(String, Instant)>,
 }
 
 impl App {
     pub fn new(session: Session, history: Vec<String>, theme_name: &str) -> Self {
+        let themes = Catalog::default();
+        let appearance = Appearance::default();
+        let theme = themes
+            .get(theme_name)
+            .resolve(appearance.light(), appearance.depth);
         Self {
             admissions: Default::default(),
             session,
@@ -272,11 +406,120 @@ impl App {
             scroll: 0,
             permission_scroll: 0,
             toast: None,
-            theme: theme::by_name(theme_name),
+            theme,
+            themes,
+            appearance,
+            reduced_motion: false,
+            clock: None,
+            started: Instant::now(),
+            background_probe: None,
+            markdown: Default::default(),
+            hyperlinks: false,
+            code_select: None,
+            screen_links: Default::default(),
             leader: None,
+            keymap: Default::default(),
+            server_commands: Vec::new(),
+            catalog: Default::default(),
+            statusline_fields: DEFAULT_FIELDS.iter().map(|f| (*f).to_owned()).collect(),
+            screen_reader: false,
+            utc_offset_minutes: None,
+            sidebar: Default::default(),
+            welcome: Default::default(),
+            home: None,
+            frame_width: Default::default(),
+            sidebar_stale: false,
+            settings: Default::default(),
+            prefs: Default::default(),
+            client_version: env!("CARGO_PKG_VERSION").to_owned(),
+            explorer: Default::default(),
             quit: false,
             focused: true,
+            recap: Default::default(),
+            theme_filter: Default::default(),
+            announcement: None,
         }
+    }
+
+    pub(crate) fn set_screen_links(&self, links: Vec<crate::osc::ScreenLink>) {
+        *self
+            .screen_links
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = links;
+    }
+
+    pub(crate) fn take_screen_links(&self) -> Vec<crate::osc::ScreenLink> {
+        std::mem::take(
+            &mut self
+                .screen_links
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+
+    /// Every code block in the transcript, top to bottom, as the view numbers them.
+    pub fn code_blocks(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for item in &self.items {
+            if let Item::Assistant { id, text, .. } = item {
+                let shown = match self.streaming.get(id) {
+                    Some(streaming) if text.is_empty() => streaming,
+                    _ => text,
+                };
+                out.extend(crate::markdown::code_blocks(shown));
+            }
+        }
+        for (id, text) in &self.streaming {
+            let durable = self.items.iter().any(|i| {
+                matches!(i, Item::Assistant { id: aid, text: done, .. } if aid == id && !done.is_empty())
+            });
+            if !durable {
+                out.extend(crate::markdown::code_blocks(text));
+            }
+        }
+        out
+    }
+
+    /// Select the last code block (Ctrl+X y); `y` then copies it.
+    pub fn select_code(&mut self) {
+        match self.code_blocks().len() {
+            0 => self.toast("No code block to copy"),
+            n => self.code_select = Some(n - 1),
+        }
+    }
+
+    /// The command palette's "Copy last code block".
+    pub fn copy_last_code_block(&mut self) -> Vec<Action> {
+        match self.code_blocks().pop() {
+            Some(code) => vec![Action::Copy(code)],
+            None => {
+                self.toast("No code block to copy");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Keys while a code block is selected; `None` lets the key through after leaving
+    /// the selection.
+    fn code_select_key(&mut self, key: KeyEvent) -> Option<Vec<Action>> {
+        let selected = self.code_select?;
+        let blocks = self.code_blocks();
+        let last = blocks.len().checked_sub(1)?;
+        let selected = selected.min(last);
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                self.code_select = None;
+                return Some(vec![Action::Copy(blocks[selected].clone())]);
+            }
+            KeyCode::Up | KeyCode::Char('k') => self.code_select = Some(selected.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => self.code_select = Some((selected + 1).min(last)),
+            KeyCode::Esc => self.code_select = None,
+            _ => {
+                self.code_select = None;
+                return None;
+            }
+        }
+        Some(Vec::new())
     }
 
     pub(crate) fn set_session(&mut self, session: Session) {
@@ -287,20 +530,25 @@ impl App {
             }
         }
         if session.id != self.session.id {
-            self.cost.invalidate();
-            self.hooks.invalidate();
-            self.hook_definitions.invalidate();
-            if matches!(
-                self.overlay,
-                Overlay::Cost | Overlay::HookHistory | Overlay::HookDefinitions
-            ) {
-                self.overlay = Overlay::None;
-            }
+            self.forget_session_views();
         }
         if session.id != self.session.id || self.mode_selection.as_deref() == Some(&session.mode) {
             self.mode_selection = None;
         }
+        if session.id != self.session.id {
+            self.sidebar.forget_session();
+            self.sidebar_stale = true;
+            if matches!(self.overlay, Overlay::FileDiff { .. }) {
+                self.overlay = Overlay::None;
+            }
+        }
         if session.directory != self.session.directory {
+            self.explorer.forget();
+            if matches!(self.overlay, Overlay::Files) {
+                self.overlay = Overlay::None;
+            }
+            self.sidebar.forget_location();
+            self.sidebar_stale = true;
             self.hook_definitions.invalidate();
             if matches!(self.overlay, Overlay::HookDefinitions) {
                 self.overlay = Overlay::None;
@@ -309,6 +557,20 @@ impl App {
             self.completion = None;
         }
         self.session = session;
+    }
+
+    /// Another Session is shown: views of the previous one close and forget it.
+    fn forget_session_views(&mut self) {
+        self.forget_settings();
+        self.cost.invalidate();
+        self.hooks.invalidate();
+        self.hook_definitions.invalidate();
+        if matches!(
+            self.overlay,
+            Overlay::Settings | Overlay::HookHistory | Overlay::HookDefinitions
+        ) {
+            self.overlay = Overlay::None;
+        }
     }
 
     pub fn mode_label(&self) -> String {
@@ -328,7 +590,73 @@ impl App {
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {
-        self.toast = Some((text.into(), Instant::now()));
+        self.toast = Some((text.into(), self.now()));
+    }
+
+    /// The time a frame is drawn at.
+    pub fn now(&self) -> Instant {
+        self.clock.unwrap_or_else(Instant::now)
+    }
+
+    /// When the UI started.
+    #[cfg(test)]
+    pub fn started(&self) -> Instant {
+        self.started
+    }
+
+    /// Time since the UI started, for animation frames.
+    pub fn uptime(&self) -> std::time::Duration {
+        self.now().saturating_duration_since(self.started)
+    }
+
+    /// Resolve the named theme for the current appearance.
+    pub fn set_theme(&mut self, name: &str) {
+        let light = self.appearance.light();
+        self.theme = self.themes.get(name).resolve(light, self.appearance.depth);
+    }
+
+    /// Use these themes and this appearance, keeping the current theme's name.
+    pub fn set_appearance(&mut self, themes: Catalog, appearance: Appearance) {
+        let name = self.theme.name.clone();
+        self.themes = themes;
+        self.appearance = appearance;
+        self.set_theme(&name);
+    }
+
+    /// Take the keys of an OSC 11 reply out of the key stream; other keys come back.
+    pub fn probe_key(&mut self, key: KeyEvent) -> Option<KeyEvent> {
+        use crate::theme::detect::{Feed, is_light};
+        let now = self.now();
+        let Some(probe) = self.background_probe.as_mut() else {
+            return Some(key);
+        };
+        match probe.feed(key, now) {
+            Feed::Pass(key) => {
+                if !self
+                    .background_probe
+                    .as_ref()
+                    .is_some_and(|p| p.waiting(now))
+                {
+                    self.background_probe = None;
+                }
+                Some(key)
+            }
+            Feed::Swallowed => None,
+            Feed::Done(rgb) => {
+                self.background_probe = None;
+                if let Some(rgb) = rgb {
+                    self.background_detected(is_light(rgb));
+                }
+                None
+            }
+        }
+    }
+
+    /// The terminal reported its background (an OSC 11 reply): re-resolve the theme.
+    pub fn background_detected(&mut self, light: bool) {
+        self.appearance.detected_light = Some(light);
+        let name = self.theme.name.clone();
+        self.set_theme(&name);
     }
 
     /// The oldest request owned by or routed to the viewed Session.
@@ -349,6 +677,14 @@ impl App {
             self.permission_scroll = 0;
         }
         self.shown_request = request_id;
+        if !(blocking && same_request)
+            && self.active_request().is_some()
+            && let Overlay::Themes(s) = &self.overlay
+        {
+            // A prompt replaces the switcher: its preview is not kept.
+            let original = s.original.clone();
+            self.set_theme(&original);
+        }
         match (self.active_request(), blocking && same_request) {
             (Some(Request::Permission { .. }), false) => {
                 self.overlay = Overlay::Permission(PermStep::Choose(0))
@@ -427,14 +763,6 @@ impl App {
                         .collect()
                 }
             }
-            Overlay::Cost => match key.code {
-                KeyCode::Char('r' | 'R') => self.load_cost(),
-                KeyCode::Esc | KeyCode::Enter => {
-                    self.overlay = Overlay::None;
-                    Vec::new()
-                }
-                _ => Vec::new(),
-            },
             Overlay::Help => {
                 self.overlay = Overlay::None;
                 Vec::new()
@@ -443,7 +771,112 @@ impl App {
                 self.findings_key(key);
                 Vec::new()
             }
+            Overlay::Palette(_) => self.palette_key(key),
+            Overlay::Settings => self.settings_key(key),
+            Overlay::Files => self.explorer_key(key),
+            Overlay::Themes(_) => self.switcher_key(key),
+            Overlay::FileDiff { .. } => {
+                self.file_diff_key(key);
+                Vec::new()
+            }
         }
+    }
+
+    /// What the composer's input is, from its first character.
+    pub fn input_mode(&self) -> InputMode {
+        match self.composer.lines().first().and_then(|l| l.chars().next()) {
+            Some('!') => InputMode::Shell,
+            Some('/') => InputMode::Command,
+            _ => InputMode::Prompt,
+        }
+    }
+
+    pub fn open_palette(&mut self) {
+        self.completion = None;
+        let entries = crate::palette::entries(&self.keymap, &self.server_commands);
+        self.overlay = Overlay::Palette(crate::palette::Palette::new(entries));
+    }
+
+    fn palette_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let action = self.keymap.action("palette", &key, false);
+        let Overlay::Palette(palette) = &mut self.overlay else {
+            return Vec::new();
+        };
+        match (action, key.code) {
+            (Some("palette_close"), _) => self.overlay = Overlay::None,
+            (Some("palette_next"), _) => palette.step(true),
+            (Some("palette_previous"), _) => palette.step(false),
+            (Some("palette_run"), _) => return self.run_palette(),
+            (_, KeyCode::Backspace) => {
+                palette.query.pop();
+                palette.filter();
+            }
+            (_, KeyCode::Char(c)) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                palette.query.push(c);
+                palette.filter();
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn run_palette(&mut self) -> Vec<Action> {
+        let Overlay::Palette(palette) = std::mem::replace(&mut self.overlay, Overlay::None) else {
+            return Vec::new();
+        };
+        let Some(entry) = palette.current().cloned() else {
+            return Vec::new();
+        };
+        match entry.run {
+            crate::palette::Run::Slash(name) => self.slash(&name),
+            crate::palette::Run::Compose(name) => {
+                self.composer.set_text(&format!("/{name} "));
+                Vec::new()
+            }
+            crate::palette::Run::Ui(ui) => self.run_ui(ui),
+        }
+    }
+
+    fn run_ui(&mut self, ui: crate::palette::Ui) -> Vec<Action> {
+        use crate::palette::Ui;
+        match ui {
+            Ui::Settings(tab) => return self.open_settings(tab),
+            Ui::Theme => self.open_theme_switcher(false),
+            Ui::CopyLastCode => return self.copy_last_code_block(),
+            Ui::ToggleReasoning => self.show_reasoning = !self.show_reasoning,
+            Ui::ToggleToolDetails => self.expand_tools = !self.expand_tools,
+            Ui::ToggleTimestamps => self.timestamps = !self.timestamps,
+            Ui::ToggleSidebar => self.toggle_sidebar(),
+        }
+        Vec::new()
+    }
+
+    /// `/cost` and `/usage`: the Settings Usage tab, at the Session section.
+    fn open_usage(&mut self) -> Vec<Action> {
+        self.open_settings(Some(crate::settings::Tab::Usage))
+    }
+
+    /// Run a global binding's action.
+    fn run_binding(&mut self, action: &str) -> Vec<Action> {
+        match action {
+            "command_palette" => self.open_palette(),
+            "settings" => return self.open_settings(None),
+            "sidebar_toggle" => self.toggle_sidebar(),
+            "sidebar_focus" => self.focus_sidebar(),
+            "file_explorer" => return self.open_explorer(),
+            "model_list" => return vec![Action::LoadModels],
+            "session_list" => return vec![Action::LoadSessions],
+            "session_new" => return vec![Action::NewSession],
+            "theme_list" => self.open_theme_switcher(false),
+            "theme_cycle" => return self.cycle_theme(),
+            "session_fork" => return vec![Action::Fork],
+            "copy_code" => self.select_code(),
+            "help" => self.overlay = Overlay::Help,
+            "reasoning_toggle" => self.show_reasoning = !self.show_reasoning,
+            "tool_details" => self.expand_tools = !self.expand_tools,
+            _ => {}
+        }
+        Vec::new()
     }
 
     fn findings_key(&mut self, key: KeyEvent) {
@@ -592,20 +1025,9 @@ impl App {
         if started.elapsed().as_millis() > LEADER_TIMEOUT_MS {
             return None;
         }
-        Some(match key.code {
-            KeyCode::Char('m') => vec![Action::LoadModels],
-            KeyCode::Char('l') => vec![Action::LoadSessions],
-            KeyCode::Char('n') => vec![Action::NewSession],
-            KeyCode::Char('t') => {
-                self.open_themes();
-                Vec::new()
-            }
-            KeyCode::Char('f') => vec![Action::Fork],
-            KeyCode::Char('h') | KeyCode::Char('?') => {
-                self.overlay = Overlay::Help;
-                Vec::new()
-            }
-            _ => Vec::new(),
+        Some(match self.keymap.action("global", &key, true) {
+            Some(action) => self.run_binding(action),
+            None => Vec::new(),
         })
     }
 
@@ -613,18 +1035,39 @@ impl App {
         if let Some(actions) = self.leader_key(key) {
             return actions;
         }
+        if self.sidebar.focus.is_some() && !self.sidebar_visible() {
+            self.sidebar.focus = None;
+        }
+        if self.sidebar.focus.is_some() {
+            if self.keymap.is_leader(&key) {
+                self.leader = Some(Instant::now());
+                return Vec::new();
+            }
+            return self.sidebar_key(key);
+        }
+        if let Some(actions) = self.code_select_key(key) {
+            return actions;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if key.code == KeyCode::Tab && self.composer.text() == "/" {
+            self.composer.clear();
+            self.open_palette();
+            return Vec::new();
+        }
         if self.completion.is_some()
             && let Some(actions) = self.completion_key(key)
         {
             return actions;
         }
+        if self.keymap.is_leader(&key) {
+            self.leader = Some(Instant::now());
+            return Vec::new();
+        }
+        if let Some(action) = self.keymap.action("global", &key, false) {
+            return self.run_binding(action);
+        }
         let actions = match key.code {
-            KeyCode::Char('x') if ctrl => {
-                self.leader = Some(Instant::now());
-                Vec::new()
-            }
             KeyCode::Enter
                 if key.modifiers.contains(KeyModifiers::SHIFT) || alt && !self.session.running =>
             {
@@ -648,17 +1091,27 @@ impl App {
                 ]
             }
             KeyCode::Esc if self.session.running => vec![Action::Interrupt],
+            KeyCode::Esc if self.hide_recap() => Vec::new(),
             _ => self.edit_key(key, ctrl),
         };
         self.update_completion(actions)
     }
 
     fn edit_key(&mut self, key: KeyEvent, ctrl: bool) -> Vec<Action> {
+        match self.keymap.action("composer", &key, false) {
+            Some("history_previous") => self.composer.up(),
+            Some("history_next") => self.composer.down(),
+            Some("newline") => self.composer.newline(),
+            Some("editor") => return vec![Action::Editor(self.composer.text())],
+            _ => return self.edit_unbound(key, ctrl),
+        }
+        Vec::new()
+    }
+
+    /// Editing keys `tui.keybinds.composer` does not rebind. Up and Down only move the
+    /// cursor here, so a disabled history binding never recalls history.
+    fn edit_unbound(&mut self, key: KeyEvent, ctrl: bool) -> Vec<Action> {
         match key.code {
-            KeyCode::Char('j') if ctrl => self.composer.newline(),
-            KeyCode::Char('t') if ctrl => self.show_reasoning = !self.show_reasoning,
-            KeyCode::Char('o') if ctrl => self.expand_tools = !self.expand_tools,
-            KeyCode::Char('g') if ctrl => return vec![Action::Editor(self.composer.text())],
             KeyCode::Char('w') if ctrl => self.composer.delete_word(),
             KeyCode::Char('u') if ctrl => self.composer.clear(),
             KeyCode::Char('c') if ctrl => self.composer.clear(),
@@ -670,8 +1123,12 @@ impl App {
             KeyCode::Right => self.composer.right(),
             KeyCode::Home => self.composer.home(),
             KeyCode::End => self.composer.end(),
-            KeyCode::Up => self.composer.up(),
-            KeyCode::Down => self.composer.down(),
+            KeyCode::Up => {
+                self.composer.cursor_up();
+            }
+            KeyCode::Down => {
+                self.composer.cursor_down();
+            }
             KeyCode::PageUp => self.scroll = self.scroll.saturating_add(10),
             KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(10),
             _ => {}
@@ -834,6 +1291,7 @@ impl App {
         } else {
             "steer"
         };
+        self.hide_recap();
         vec![Action::Prompt { text, delivery }]
     }
 
@@ -870,10 +1328,11 @@ impl App {
                 self.toast("Use /hooks to review definitions or /hooks history for receipts");
                 Vec::new()
             }
-            "cost" => {
-                self.overlay = Overlay::Cost;
-                self.load_cost()
-            }
+            "cost" | "usage" => self.open_usage(),
+            "settings" => self.open_settings(None),
+            "status" => self.open_settings(Some(crate::settings::Tab::Status)),
+            "config" => self.open_settings(Some(crate::settings::Tab::Config)),
+            "stats" => self.open_settings(Some(crate::settings::Tab::Stats)),
             "approve" if args.is_empty() => vec![Action::ApproveAuto],
             "approve" => {
                 self.toast("Usage: /approve");
@@ -921,13 +1380,19 @@ impl App {
                 Vec::new()
             }
             "theme" => {
-                self.open_themes();
+                self.open_theme_switcher(false);
                 Vec::new()
             }
             "timestamps" => {
                 self.timestamps = !self.timestamps;
                 Vec::new()
             }
+            "recap" => self.recap_command(),
+            "sidebar" => {
+                self.toggle_sidebar();
+                Vec::new()
+            }
+            "files" => self.open_explorer(),
             "help" => {
                 self.overlay = Overlay::Help;
                 Vec::new()
@@ -952,22 +1417,10 @@ impl App {
         }
     }
 
-    fn load_cost(&mut self) -> Vec<Action> {
+    pub(crate) fn load_cost(&mut self) -> Vec<Action> {
         vec![Action::LoadCost {
             generation: self.cost.start(&self.session.id),
         }]
-    }
-
-    fn open_themes(&mut self) {
-        let items = theme::THEMES
-            .iter()
-            .map(|t| Choice {
-                key: t.name.into(),
-                label: t.name.into(),
-                detail: String::new(),
-            })
-            .collect();
-        self.overlay = Overlay::Picker(Picker::new(PickerKind::Themes, "Theme", items));
     }
 
     pub fn open_picker(&mut self, kind: PickerKind, title: &str, items: Vec<Choice>) {
@@ -1037,13 +1490,6 @@ impl App {
             KeyCode::Enter => return self.pick(),
             _ => {}
         }
-        if let Overlay::Picker(p) = &self.overlay
-            && p.kind == PickerKind::Themes
-            && let Some(choice) = p.current()
-        {
-            // Live preview.
-            self.theme = theme::by_name(&choice.key);
-        }
         Vec::new()
     }
 
@@ -1091,10 +1537,6 @@ impl App {
             PickerKind::Sessions | PickerKind::Children => vec![Action::Open(choice.key)],
             PickerKind::Models => vec![Action::SwitchModel(choice.key)],
             PickerKind::Modes => self.select_mode(&choice.key),
-            PickerKind::Themes => {
-                self.theme = theme::by_name(&choice.key);
-                vec![Action::SaveTheme(self.theme.name)]
-            }
             // A user-invocable skill starts its command; other rows only inform.
             PickerKind::Skills => {
                 if !choice.key.is_empty() {
@@ -1211,6 +1653,10 @@ impl App {
         }
         self.overlay = Overlay::None;
         self.sync_overlay();
+        // A preview waiting for this approval brings the explorer back.
+        if matches!(self.overlay, Overlay::None) && self.explorer.awaiting.is_some() {
+            self.overlay = Overlay::Files;
+        }
         actions
     }
 
@@ -1293,7 +1739,20 @@ impl App {
 
     fn apply_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
         match kind {
-            "server.connected" => vec![Action::Refresh],
+            "server.connected" => {
+                self.sidebar.connection = crate::sidebar::Connection::Connected;
+                let mut actions = vec![Action::Refresh];
+                actions.extend(crate::sidebar::Part::ALL.map(Action::LoadSidebar));
+                actions
+            }
+            "session.diff.1" => {
+                let mut actions = vec![
+                    Action::Refresh,
+                    Action::LoadSidebar(crate::sidebar::Part::Files),
+                ];
+                actions.extend(self.refresh_explorer());
+                actions
+            }
             "session.worktree.rebound.1" => {
                 if let Some(path) = data["to"]["path"].as_str().filter(|path| !path.is_empty()) {
                     let mut session = self.session.clone();
@@ -1315,7 +1774,21 @@ impl App {
                 if !self.focused {
                     notify("cyber: the session is idle");
                 }
-                vec![Action::Refresh]
+                // Language servers start as files are read, and the Turn may have changed
+                // the working tree.
+                let mut actions = vec![
+                    Action::Refresh,
+                    Action::LoadSidebar(crate::sidebar::Part::Lsp),
+                    Action::LoadSidebar(crate::sidebar::Part::Vcs),
+                ];
+                actions.extend(self.refresh_explorer());
+                actions
+            }
+            "session.usage" => {
+                if let Some(meter) = crate::model::ContextMeter::parse(&data["context"]) {
+                    self.session.context = Some(meter);
+                }
+                Vec::new()
             }
             "session.hook.notice" => {
                 self.toast(format!(

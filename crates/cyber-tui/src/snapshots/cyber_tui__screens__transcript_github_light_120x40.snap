@@ -1,0 +1,49 @@
+---
+source: crates/cyber-tui/src/screens.rs
+expression: "render(&mut app, 120, 40, &opts)"
+---
+› How do I speed up fib?
+                                                                                      Theme baseline
+  Plan
+                                                                                      Context
+  This keeps the cache warm:                                                          100 tokens
+                                                                                      — spent
+  1. Memoization: results are cached
+                                                                                      LSP
+  • avoids recomputation                                                              LSPs will activate as files are
+                                                                                      read
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                     ~/work/app
+┃ Build · main test · default
+ /Users/leo/work/app                                       100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+row 6: 0-1 fg=#24292f bg=#ffffff
+row 6: 2-4 fg=#6e7781 bg=#ffffff
+row 6: 5-16 fg=#24292f bg=#ffffff bold
+row 6: 17-83 fg=#24292f bg=#ffffff
+row 6: 84-119 fg=#24292f bg=#f6f6f7

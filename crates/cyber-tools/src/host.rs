@@ -1,6 +1,7 @@
 //! The built-in tool host (`tool-registry`, `builtin-tools`, `permissions-modes`).
 mod command_mcp;
 mod command_skills;
+mod files;
 mod path_skills;
 mod remote_sources;
 mod review;
@@ -666,6 +667,26 @@ impl ToolHost for BuiltinHost {
         self.take_tool_hook_effects(session_id, call_id)
     }
 
+    fn file_decisions<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        action: &'a str,
+        paths: &'a [PathBuf],
+    ) -> BoxFuture<'a, Vec<cyber_server::runtime::FileDecision>> {
+        Box::pin(self.decide_files(turn, action, paths))
+    }
+
+    fn authorize_file<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        action: &'a str,
+        path: &'a Path,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(self.authorize_browse(turn, action, path, asker, cancel))
+    }
+
     fn resolve_prompt_resources<'a>(
         &'a self,
         turn: &'a TurnContext,
@@ -740,6 +761,11 @@ impl ToolHost for BuiltinHost {
     ) -> Result<Option<cyber_core::budget::Budget>, String> {
         let (config, _) = (self.opts.config)(Path::new(directory))?;
         cyber_core::budget::Budget::from_config(&config, "session")
+    }
+
+    fn daily_budget(&self, directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        cyber_core::budget::Budget::from_config(&config, "daily")
     }
 
     fn request_overlay(

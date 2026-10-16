@@ -2,6 +2,10 @@
 
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
+## Provider-reported usage limits (`improve-tui-experience` section 9, 2026-10-16)
+
+Uncommitted, part of the TUI overhaul working tree (see the P1 status entry of the same date for the whole-tree validation). `cyber-llm/src/limits.rs` reads plan and rate-limit windows from provider response headers (Anthropic unified and rate-limit headers, `x-codex-*`, `x-ratelimit-*`), never from local usage; `GET /api/v1/usage/limits` (`v1.usage.limits`, SDK `client.usage.limits()`) lists the latest reading per provider and window, and the TUI Usage tab draws one meter per window with `d`/`w`. A provider without such headers yields an empty list and no meters (tested through the App router in `crates/cyber-app/tests/usage_limits.rs`). Not driven against a live provider.
+
 ## M2.1 Workflow runtime, increment 1 of 4: engine, discovery, config and surface stubs (2026-10-15)
 
 ### OpenSpec

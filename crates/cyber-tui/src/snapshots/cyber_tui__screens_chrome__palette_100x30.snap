@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_chrome.rs
+expression: shown
+---
+ cyber · Theme baseline                                                                        idle
+› How do I speed up fib?
+
+  Plan
+
+  This kee┌ Commands ────────────────────────────────────────────────────────────────────┐
+          │›                                                                             │
+  1. Memoi│                                                                              │
+          │› Settings  status, preferences, usage and stats                      ctrl+x ,│
+  • avoids│  Settings: Status  versions, session, model, context and servers             │
+          │  Settings: Config  edit TUI preferences                                      │
+    rust  │  Settings: Usage  session usage and cost                                     │
+    fn fib│  Settings: Stats  activity, streaks and per-model totals                     │
+          │  Toggle sidebar  show or hide the session sidebar                    ctrl+x b│
+  ▣ Build │  Theme…  preview and pick a theme                                    ctrl+x s│
+          │  Copy last code block  put the newest code block on the clipboard    ctrl+x y│
+          │  Toggle reasoning  show or hide model reasoning                        ctrl+t│
+          │  Toggle tool output  expand or collapse long tool output               ctrl+o│
+          │  Toggle timestamps  show or hide message times                               │
+          │  /help  keys and commands                                            ctrl+x h│
+          │  /model  switch model                                                ctrl+x m│
+          │  /sessions  open another session                                     ctrl+x l│
+          │  /new  start a new session                                           ctrl+x n│
+          │                                                                              │
+          └──────────────────────────────────────────────────────────────────────────────┘
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                                       100 · —  ctrl+p commands
+row 11: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 11: 2-3 fg=#d6e4f0 bg=#171c21
+row 11: 4-9 fg=#666f77 bg=#171c21
+row 11: 10-10 fg=#00e5ff bg=#171c21
+row 11: 11-29 fg=#d6e4f0 bg=#171c21
+row 11: 30-51 fg=#6b7a8f bg=#171c21
+row 11: 52-88 fg=#d6e4f0 bg=#171c21
+row 11: 89-89 fg=#00e5ff bg=#171c21
+row 11: 90-98 fg=#666f77 bg=#171c21
+row 11: 99-99 fg=#d6e4f0 bg=#0b0f14

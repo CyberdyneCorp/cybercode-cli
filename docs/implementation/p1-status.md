@@ -1,5 +1,23 @@
 # P1 implementation status
 
+## TUI experience overhaul (`improve-tui-experience`): whole-tree validation and docs (2026-10-16)
+
+Uncommitted. Sections 1 to 8 of `openspec/changes/improve-tui-experience/tasks.md` are implemented except 8.8 (the Nyan progress indicator); section 9 (P2) is in the P2 status. The change is not archived.
+
+Validation (macOS): `cargo test --workspace --no-fail-fast` 3,011 passed, 0 failed, 4 ignored (222 test binaries); workspace all-target Clippy with warnings denied; `x86_64-pc-windows-gnu` all-target Clippy (stub CC/AR, type-check only) for `cyber-app`, `cyber-cli`, `cyber-core`, `cyber-llm`, `cyber-server`, `cyber-store`, `cyber-tools` and `cyber-tui`; `cargo fmt --check`; `generate_sdk.py --check`, the SDK typecheck and 86 SDK tests; `openspec validate --all --strict` (66 items); `spec_lint.py` 0 errors, 21 warnings (the baseline).
+
+Acceptance through the real `./target/debug/cyber` in a pty (160×48, pyte emulator) against the shared local server and a scripted OpenAI-compatible stub, no live model: Markdown with scope-colored code and the `▣ Build · Scripted Main · 314ms` marker; the status footer and the `Ctrl+P` palette; the sidebar docked at 160 columns with a real stdio MCP server connected, hidden with a header and a `Ctrl+X b` drawer at 100, the compact footer at 50; Settings Status, Config (a `timestamps` toggle persisted in `kv.json` across `cyber -c`), Usage and Stats (heatmap, `p` period) with `cyber stats` and `--format json` showing the same numbers; `NO_COLOR` with no color cells or color SGR in the raw output; tool output carrying OSC 52, OSC 8 and CSI sequences drawn inert; and the recap after a simulated 30-minute absence, with no recap request under `tui.recap: off`.
+
+Bug found and fixed: terminal escape injection through the Session title. The TUI passed the title to the OSC 0 window title unfiltered, so a BEL in a model-written or API-set title ended the sequence and the rest ran on the terminal (the real binary showed an OSC 52 clipboard write and a CSI 2J clear). `runner.rs` `window_title()` and the exit summary now strip control characters, and the server's `title::clean` drops them from model titles. Regression tests: `cyber-tui` `window_title_drops_control_characters_from_a_model_written_title`, `cyber-server` `drops_control_characters_a_terminal_would_act_on`, and the production-path `cyber-app` `recap` `a_model_written_title_has_no_control_characters` (fails without the fix).
+
+Partial or deferred:
+- 8.8 Nyan progress indicator (`tui.spinner`) is not implemented; the spinner is the existing one.
+- The Stats book comparison line, `tui.statusline.command`, the `#` memory composer mode and the split-diff reader of `diff_style` are not implemented.
+- The focus-regained recap trigger is unit-tested but was not driven end to end; the 30-minute path was driven by shifting event times in the database.
+- Recap text from the server keeps control characters; the TUI strips them, other clients must do the same.
+- Stats and `cyber stats` print `1 days` for a one-day streak.
+- Linux musl and Windows MSVC binary growth was not measured locally (task 2.1 records the macOS numbers).
+
 ## Skills and commands: Windows CI fixes (2026-10-15)
 
 The first native Windows run of the skills commit failed 12 new tests. Fixes: session snapshots now pass plain paths to git on Windows, because Git for Windows rejects the verbatim (`\\?\`) `GIT_DIR` that `canonicalize` returns, and `cyber exec` in a git repository under a verbatim data root failed with `git write-tree: not a git repository` (regression: `cyber-snapshot` `verbatim_paths_reach_git_in_plain_form`, Windows only, plus `exec_template_expansion`). Shell injection keeps the bash tool's shell and sandbox: with no Windows sandbox it is `[unavailable: sandbox]`, and the native full-access tests now select Git Bash explicitly, since a bare `bash` resolves to the WSL launcher in System32. Diagnostics assertions no longer match against JSON-escaped or slash-separated paths. Verified on macOS (affected suites, workspace Clippy, fmt) and with the windows-gnu Clippy type-check; the native run is pending CI.

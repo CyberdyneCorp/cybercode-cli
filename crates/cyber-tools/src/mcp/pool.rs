@@ -182,7 +182,20 @@ impl Entry {
     /// Settled `needs_auth` or `needs_client_registration`, with startup finished and no
     /// live monitor or native owner.
     fn waiting_for_auth(&self) -> bool {
-        let settled = self.settled().is_some_and(waits_for_user);
+        self.settled_idle(waits_for_user)
+    }
+
+    /// Settled `failed` (a launch or initialization that never ran), with startup
+    /// finished and no live monitor or native owner; a failure that retains its owner
+    /// is not retried.
+    fn failed_idle(&self) -> bool {
+        self.settled_idle(|status| status == McpConnectionStatus::Failed)
+    }
+
+    /// Settled with a status `accepted` takes, startup finished, the monitor done and no
+    /// native owner retained.
+    fn settled_idle(&self, accepted: impl FnOnce(McpConnectionStatus) -> bool) -> bool {
+        let settled = self.settled().is_some_and(accepted);
         let idle = |task: &tokio::sync::Mutex<Option<JoinHandle<()>>>| {
             task.try_lock()
                 .is_ok_and(|task| task.as_ref().is_none_or(JoinHandle::is_finished))
@@ -777,8 +790,9 @@ impl BuiltinHost {
 
     /// Reconnect a server whose connection settled `needs_auth` or
     /// `needs_client_registration` and whose monitor stopped, typically after `cyber mcp
-    /// auth` stored a token, or a running server whose OAuth credential `cyber mcp logout`
-    /// removed (which then settles `needs_auth`). Configuration, trust and the digest
+    /// auth` stored a token, a server that settled `failed` without retaining a native
+    /// owner (the sidebar's `r`), or a running server whose OAuth credential `cyber mcp
+    /// logout` removed (which then settles `needs_auth`). Configuration, trust and the digest
     /// approval are checked first; the entry is then stopped and removed and the server is
     /// re-admitted through its Session with a fresh durable owner. The returned status is
     /// observed right after admission (`connecting`); later transitions publish events.
@@ -878,8 +892,10 @@ impl BuiltinHost {
                 "MCP definition changed; close and reopen the Location",
             ));
         }
-        if entry.cancel.is_cancelled() || !(waiting || entry.logged_out()) {
-            return Err(conflict("MCP server is not waiting for authentication"));
+        if entry.cancel.is_cancelled() || !(waiting || entry.logged_out() || entry.failed_idle()) {
+            return Err(conflict(
+                "MCP server is not waiting for authentication or failed",
+            ));
         }
         Ok(entry)
     }

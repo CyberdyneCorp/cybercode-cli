@@ -1,0 +1,48 @@
+---
+source: crates/cyber-tui/src/screens_explorer.rs
+expression: "render(&mut app, 150, 36, &opts)"
+---
+ work:main · 3 changed
+ / filter
+ M ├── ▾ crates                                               notes.md · markdown · 3 lines · +3 −0
+ M │   └── ▾ cyber-tui                                       1 ▎# Notes
+ M │       └── ▾ src                                         2 ▎one
+   │           ├── app.rs                                    3 ▎two
+ M │           └── markdown.rs
+   ├── README.md
+ ? └── notes.md
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter open · / filter · g changed only · . hidden files · @ mention · y copy path · r refresh · esc close · 4 hidden
+                                                                                100 · —  ctrl+p commands
+row 2: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 2: 1-2 fg=#ffcc66 bg=#0b0f14
+row 2: 3-60 fg=#d6e4f0 bg=#0b0f14
+row 2: 61-98 fg=#d6e4f0 bg=#0b0f14 bold
+row 2: 99-149 fg=#d6e4f0 bg=#0b0f14
+row 6: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 6: 1-2 fg=#ffcc66 bg=#0b0f14
+row 6: 3-149 fg=#d6e4f0 bg=#0b0f14

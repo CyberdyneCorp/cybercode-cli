@@ -1,0 +1,24 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: tiny
+---
+ cyber · New session               idle
+
+               Cyber Code
+
+    1.0.0 · local-first coding agent
+
+
+   Agent  Build
+   Model  main test
+   Mode   default
+   Path   ~/work/app
+   LSP    LSPs will activate as file…
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files
+┃
+┃ Build · main test · default
+                                  $0.00

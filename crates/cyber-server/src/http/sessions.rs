@@ -40,6 +40,9 @@ pub struct Session {
     #[serde(flatten)]
     pub children_usage: crate::runtime::ChildrenUsage,
     pub revert: Option<RevertState>,
+    /// The context window meter after the last finished step; null before the first
+    /// step and after a compaction.
+    pub context: Option<crate::runtime::ContextMeter>,
 }
 
 /// A history entry with the tool calls it made.
@@ -223,7 +226,8 @@ pub struct MessagesQuery {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct DiffQuery {
-    pub message_id: String,
+    /// One user message's diff; without it, every file the Session changed.
+    pub message_id: Option<String>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -256,6 +260,7 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/model"), post(model))
         .route(&format!("{s}/mode"), post(mode))
         .route(&format!("{s}/compact"), post(compact))
+        .route(&format!("{s}/recap"), get(recap).post(generate_recap))
         .route(&format!("{s}/rewind"), post(rewind))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -294,7 +299,9 @@ pub(super) fn session(state: &AppState, s: SessionState) -> Session {
     let running = status == "running";
     let effective_mode = s.effective_mode(running).to_string();
     let pending_mode = s.pending_mode(running).map(str::to_string);
+    let context = state.runtime.context_meter(&s);
     Session {
+        context,
         effective_mode,
         pending_mode,
         status: status.into(),
@@ -647,6 +654,45 @@ async fn compact(
     Ok(StatusCode::ACCEPTED)
 }
 
+/// `GET .../recap`: the latest Session recap, or `null`.
+async fn recap(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<Option<crate::runtime::Recap>>>> {
+    Ok(Json(Data {
+        data: state.runtime.recap(&id).await?,
+    }))
+}
+
+/// `POST .../recap`: the stored recap when it covers the latest finished Turn, else a new
+/// one from the `small` model. A model failure is `503` with `service: "model"`.
+async fn generate_recap(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<crate::runtime::Recap>>> {
+    match state.runtime.generate_recap(&id).await {
+        Ok(data) => Ok(Json(Data { data })),
+        Err(crate::runtime::RuntimeError::Conflict(reason))
+            if reason == crate::runtime::NOTHING_TO_RECAP =>
+        {
+            Err(
+                ApiError::conflict("The Session has no finished Turn to recap")
+                    .with_reason(crate::runtime::NOTHING_TO_RECAP),
+            )
+        }
+        Err(crate::runtime::RuntimeError::Model(message)) => {
+            let mut error = ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                format!("The recap model failed: {message}"),
+            );
+            error.body.service = Some("model".into());
+            Err(error)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 async fn rewind(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -821,9 +867,11 @@ async fn diff(
     Path(id): Path<String>,
     Query(q): Query<DiffQuery>,
 ) -> Result<Json<Data<Vec<FileDiff>>>> {
-    Ok(Json(Data {
-        data: state.runtime.diff(&id, &q.message_id).await?,
-    }))
+    let data = match &q.message_id {
+        Some(message) => state.runtime.diff(&id, message).await?,
+        None => state.runtime.session_diff(&id).await?,
+    };
+    Ok(Json(Data { data }))
 }
 
 fn owned_request(state: &AppState, session_id: &str, request_id: &str) -> Result<()> {

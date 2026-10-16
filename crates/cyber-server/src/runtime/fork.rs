@@ -28,10 +28,16 @@ pub(super) fn history(state: &SessionState, cut: usize, context: &SessionState) 
         let fresh = cyber_core::ids::new_id("msg");
         ids.insert(entry.id().to_string(), fresh.clone());
         let copy = match entry {
-            Entry::User { parts, source, .. } => Entry::User {
+            Entry::User {
+                parts,
+                source,
+                promoted_ms,
+                ..
+            } => Entry::User {
                 id: fresh,
                 parts: parts.clone(),
                 source: source.clone(),
+                promoted_ms: *promoted_ms,
             },
             Entry::System { text, epoch, .. } => Entry::System {
                 id: fresh,

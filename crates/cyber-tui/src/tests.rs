@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::app::{Action, App, Overlay, PermStep};
 use crate::model::{Item, QuestionSpec, Queued, Request, Session, Tool};
 
-fn session(running: bool) -> Session {
+pub(crate) fn session(running: bool) -> Session {
     Session {
         id: "ses_1".into(),
         title: "Fix tests".into(),
@@ -221,6 +221,7 @@ fn messages_render_text_tools_and_collapsed_output() {
         Item::User {
             id: "m1".into(),
             text: "run the tests".into(),
+            promoted_ms: None,
         },
         Item::Assistant {
             id: "m2".into(),
@@ -234,6 +235,7 @@ fn messages_render_text_tools_and_collapsed_output() {
                 output,
             }],
             error: None,
+            step: Default::default(),
         },
     ];
     let s = screen(&app);
@@ -265,7 +267,11 @@ fn streaming_text_shows_until_the_message_is_durable() {
     );
     assert_eq!(
         app.on_event("session.idle", &json!({})),
-        vec![Action::Refresh]
+        vec![
+            Action::Refresh,
+            Action::LoadSidebar(crate::sidebar::Part::Lsp),
+            Action::LoadSidebar(crate::sidebar::Part::Vcs),
+        ]
     );
     assert!(!app.session.running);
 }
@@ -301,12 +307,13 @@ fn pickers_filter_and_choose() {
         app.on_key(key(KeyCode::Enter)),
         vec![Action::SwitchModel("anthropic/claude-x".into())]
     );
+    // `<leader>s` opens the theme switcher; `<leader>t` cycles themes.
     app.on_key(with(KeyCode::Char('x'), KeyModifiers::CONTROL));
-    app.on_key(key(KeyCode::Char('t')));
+    app.on_key(key(KeyCode::Char('s')));
     typed(&mut app, "nord");
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        vec![Action::SaveTheme("nord")]
+        vec![Action::SaveTheme("nord".into())]
     );
     assert_eq!(app.theme.name, "nord");
 }
@@ -356,7 +363,7 @@ fn pending_mode_keeps_the_effective_mode_visible_and_cycles_the_selection() {
     );
     let mut app = App::new(s, Vec::new(), "cyber");
     assert!(screen(&app).contains("default → plan (pending)"));
-    assert!(screen(&app).contains("Esc to interrupt"));
+    assert!(screen(&app).contains("esc interrupt"));
     assert_eq!(
         app.on_key(key(KeyCode::BackTab)),
         vec![Action::SwitchMode("auto".into())]
@@ -993,8 +1000,18 @@ fn cost_fixture() -> serde_json::Value {
         "total":{"tokens":{"input":500,"output":100,"reasoning":10,"cache_read":500,"cache_write":200},"cost":1.0,"unpriced_steps":0,"total_tokens":1310,"usage_complete":true,"token_classes_complete":true}})
 }
 
+/// The Usage tab's `Total cost:` value.
+fn total_cost(app: &App) -> String {
+    let shown = screen(app);
+    shown
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Total cost:"))
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default()
+}
+
 fn apply_cost(app: &mut App, data: &serde_json::Value) {
-    let result = crate::cost::Cost::parse_report(data, &app.session.id);
+    let result = crate::settings::cost::Cost::parse_report(data, &app.session.id);
     app.cost.apply(&app.session.id, app.cost.generation, result);
 }
 
@@ -1004,12 +1021,21 @@ fn cost_command_refreshes_and_renders_all_classes_for_the_subtree() {
     typed(&mut app, "/cost");
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        vec![Action::LoadCost { generation: 1 }]
+        vec![
+            Action::LoadCost { generation: 1 },
+            Action::LoadLimits { generation: 1 },
+            Action::LoadInsights {
+                generation: 1,
+                window: "24h"
+            }
+        ]
     );
     apply_cost(&mut app, &cost_fixture());
     let rendered = screen(&app);
+    assert!(matches!(app.overlay, Overlay::Settings));
+    assert_eq!(app.settings.tab, crate::settings::Tab::Usage);
     for text in [
-        "Session and descendants",
+        "Session",
         "Input",
         "Output",
         "Reasoning",
@@ -1019,11 +1045,11 @@ fn cost_command_refreshes_and_renders_all_classes_for_the_subtree() {
         "100",
         "10",
         "200",
-        "$1.0000",
         "41.7%",
     ] {
         assert!(rendered.contains(text), "missing {text}: {rendered}");
     }
+    assert_eq!(total_cost(&app), "$1.00");
     assert!(app.on_key(key(KeyCode::Esc)).is_empty());
     assert!(matches!(app.overlay, Overlay::None));
 }
@@ -1045,7 +1071,7 @@ fn cost_command_discloses_unpriced_and_incomplete_attribution() {
     assert!(rendered.contains("unpriced"));
     assert!(rendered.contains("incomplete"));
     assert!(rendered.contains("Cache hit rate: unknown"));
-    assert!(!rendered.contains("Total cost: $1.0000"));
+    assert_eq!(total_cost(&app), "≥ $1.00 · 1 unpriced calls");
 }
 
 #[test]
@@ -1056,19 +1082,37 @@ fn cost_refresh_replaces_the_snapshot_and_preserves_it_on_failure() {
     apply_cost(&mut app, &cost_fixture());
     assert_eq!(
         app.on_key(key(KeyCode::Char('r'))),
-        vec![Action::LoadCost { generation: 2 }]
+        vec![
+            Action::LoadCost { generation: 2 },
+            Action::LoadLimits { generation: 2 },
+            Action::LoadInsights {
+                generation: 2,
+                window: "24h"
+            }
+        ]
     );
     let mut next = cost_fixture();
     next["descendants"]["cost"] = json!(1.75);
     next["total"]["cost"] = json!(2.0);
     apply_cost(&mut app, &next);
-    assert!(screen(&app).contains("Total cost: $2.0000"));
-    app.on_key(key(KeyCode::Char('r')));
+    assert_eq!(total_cost(&app), "$2.00");
+    // `R`, the overlay's refresh key, still refreshes for one release.
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('R'))),
+        vec![
+            Action::LoadCost { generation: 3 },
+            Action::LoadLimits { generation: 3 },
+            Action::LoadInsights {
+                generation: 3,
+                window: "24h"
+            }
+        ]
+    );
     next["descendants"]["tokens"]["input"] = json!(-1);
     apply_cost(&mut app, &next);
     let rendered = screen(&app);
-    assert!(rendered.contains("Total cost: $2.0000"));
-    assert!(rendered.contains("Refresh failed"));
+    assert_eq!(total_cost(&app), "$2.00");
+    assert!(rendered.contains("Could not load usage"), "{rendered}");
 }
 
 #[test]
@@ -1086,7 +1130,7 @@ fn cost_zero_prompt_and_invalid_classes_have_distinct_displays() {
     apply_cost(&mut app, &data);
     assert!(screen(&app).contains("no prompt tokens"));
     data["descendants"]["tokens"]["input"] = json!(-1);
-    assert!(crate::cost::Cost::parse_report(&data, "ses_1").is_err());
+    assert!(crate::settings::cost::Cost::parse_report(&data, "ses_1").is_err());
 }
 
 #[tokio::test]
@@ -1137,7 +1181,7 @@ async fn cost_command_requests_atomic_usage_instead_of_conversation_history() {
         panic!("expected usage snapshot")
     };
     app.cost.apply(&session_id, generation, result);
-    assert!(screen(&app).contains("Total cost: $1.0000"));
+    assert_eq!(total_cost(&app), "$1.00");
 }
 
 #[test]
@@ -1146,7 +1190,7 @@ fn cost_snapshot_refuses_foreign_missing_and_inconsistent_reports() {
     rounded["own"]["cost"] = json!(0.1);
     rounded["descendants"]["cost"] = json!(0.2);
     rounded["total"]["cost"] = json!(0.3);
-    assert!(crate::cost::Cost::parse_report(&rounded, "ses_1").is_ok());
+    assert!(crate::settings::cost::Cost::parse_report(&rounded, "ses_1").is_ok());
 
     for (path, value) in [
         (vec!["id"], json!("ses_foreign")),
@@ -1164,7 +1208,7 @@ fn cost_snapshot_refuses_foreign_missing_and_inconsistent_reports() {
             field = &mut field[part];
         }
         *field = value;
-        assert!(crate::cost::Cost::parse_report(&report, "ses_1").is_err());
+        assert!(crate::settings::cost::Cost::parse_report(&report, "ses_1").is_err());
     }
 }
 
@@ -1178,14 +1222,14 @@ fn cost_refresh_ignores_superseded_responses_and_invalidates_on_session_switch()
     app.cost.apply(
         "ses_1",
         first,
-        crate::cost::Cost::parse_report(&cost_fixture(), "ses_1"),
+        crate::settings::cost::Cost::parse_report(&cost_fixture(), "ses_1"),
     );
-    assert!(!screen(&app).contains("Total cost: $1.0000"));
+    assert_eq!(total_cost(&app), "");
     apply_cost(&mut app, &cost_fixture());
     let mut stale = session(false);
     stale.cost = 99.99;
     app.set_session(stale);
-    assert!(screen(&app).contains("Total cost: $1.0000"));
+    assert_eq!(total_cost(&app), "$1.00");
     let mut other = session(false);
     other.id = "ses_other".into();
     app.set_session(other);
@@ -1196,9 +1240,9 @@ fn cost_refresh_ignores_superseded_responses_and_invalidates_on_session_switch()
     app.cost.apply(
         "ses_1",
         first,
-        crate::cost::Cost::parse_report(&cost_fixture(), "ses_1"),
+        crate::settings::cost::Cost::parse_report(&cost_fixture(), "ses_1"),
     );
-    assert!(!screen(&app).contains("Total cost: $1.0000"));
+    assert_eq!(total_cost(&app), "");
 }
 
 #[test]

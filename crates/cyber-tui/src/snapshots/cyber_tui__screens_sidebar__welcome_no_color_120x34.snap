@@ -1,0 +1,38 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: "render(&mut app, 120, 34, &no_color)"
+---
+
+                                                                                      New session
+
+    ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗     Context
+   ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝     $0.00 spent
+   ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗
+   ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝       LSP
+   ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗     LSPs will activate as files are
+    ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝     read
+
+                          1.0.0 · local-first coding agent
+
+
+          Agent  Build
+          Model  main test
+          Mode   default
+          Path   ~/work/app
+          LSP    LSPs will activate as files are read
+
+
+          Tips
+          ctrl+p    command palette
+          ctrl+x b  show or hide the sidebar
+          ctrl+x m  switch model
+          ctrl+x l  sessions
+          ctrl+x h  keys
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                     ~/work/app
+┃ Build · main test · default
+ /Users/leo/work/app                                         $0.00  ctrl+p commands   ● Connected · Cyber Code 1.0.0

@@ -579,7 +579,7 @@
       "ScopeUsage": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/UsageReport"
+            "$ref": "#/components/schemas/SessionUsage"
           },
           {
             "$ref": "#/components/schemas/RunUsageReport"
@@ -587,7 +587,7 @@
         ],
         "description": "One of the usage reports a scope returns, discriminated by `scope`."
       },
-      "UsageReport": {
+      "SessionUsage": {
         "type": "object",
         "properties": {
           "scope": {
@@ -604,6 +604,62 @@
           },
           "total": {
             "$ref": "#/components/schemas/UsageAmount"
+          },
+          "by_model": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "description": "Sorted by cost, then by tokens, highest first."
+          },
+          "api_duration_ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The sum of model call durations across the tree."
+          },
+          "wall_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "From the first admitted prompt to the last recorded activity (or now while the\nSession runs); null before the first prompt."
+          },
+          "lines_added": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Summed over the Session's per-message diffs; null without snapshot history."
+          },
+          "lines_removed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "budgets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BudgetUsage"
+            }
+          },
+          "budgets_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the daily budget could not be read from the Session directory's\nconfiguration; the rest of the report is still served, without it."
+          },
+          "backfilling": {
+            "type": "boolean",
+            "description": "True while stored history is still being indexed: `by_model` may be partial."
           }
         },
         "required": [
@@ -611,8 +667,13 @@
           "id",
           "own",
           "descendants",
-          "total"
-        ]
+          "total",
+          "by_model",
+          "api_duration_ms",
+          "budgets",
+          "backfilling"
+        ],
+        "description": "The Session usage report with its breakdown over the Session and its descendants."
       },
       "SessionScope": {
         "type": "string",
@@ -696,6 +757,117 @@
           "cache_write"
         ],
         "description": "Token classes of one step. `input` excludes cache reads and writes; `output` excludes\nreasoning."
+      },
+      "ModelUsage": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Known priced cost; null when every call of this model was unpriced."
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Finished calls (provider steps and auxiliary calls)."
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "tokens",
+          "total_tokens",
+          "unpriced_steps",
+          "steps"
+        ],
+        "description": "One provider and model of the Session tree."
+      },
+      "BudgetUsage": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/BudgetScope"
+          },
+          "limits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BudgetLimit"
+            }
+          },
+          "reset_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The next local midnight, for the daily budget."
+          },
+          "zone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The IANA zone of the server's local day, for the daily budget."
+          }
+        },
+        "required": [
+          "scope",
+          "limits"
+        ],
+        "description": "A Budget that applies to the Session."
+      },
+      "BudgetScope": {
+        "type": "string",
+        "enum": [
+          "session",
+          "daily"
+        ]
+      },
+      "BudgetLimit": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`max_cost_usd`, `max_tokens` or `max_turns`."
+          },
+          "limit": {
+            "type": "number",
+            "format": "double"
+          },
+          "used": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "name",
+          "limit",
+          "used"
+        ],
+        "description": "One configured limit of a Budget and how much of it is used."
       },
       "RunUsageReport": {
         "type": "object",
@@ -844,6 +1016,616 @@
           "unpriced_steps"
         ],
         "description": "A rollup of a run's agents by model or by tier."
+      },
+      "Data_UsageStats": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UsageStats"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "UsageStats": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "type": "string",
+            "description": "`all` or `Nd`."
+          },
+          "zone": {
+            "type": "string",
+            "description": "The IANA zone of the local days."
+          },
+          "since_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The start of the period's first local day; null for `all`."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatsDay"
+            },
+            "description": "One entry per local day, oldest first; at most the last 371 for `all`."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/StatsTotals"
+          },
+          "favorite_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FavoriteModel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model with the most tokens."
+          },
+          "longest_session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LongestSession"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Days with at least one Turn."
+          },
+          "period_days": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Local days in the period (for `all`, since the first day with usage)."
+          },
+          "longest_streak": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "current_streak": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Consecutive active days up to today; today counts once it has a Turn, and a\nstreak that reached yesterday is still current."
+          },
+          "most_active_day": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The active day with the most tokens, `YYYY-MM-DD`."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatsModel"
+            },
+            "description": "Sorted by tokens, highest first."
+          },
+          "approximate_days": {
+            "type": "boolean",
+            "description": "True when part of the period was served from daily aggregates (UTC days)."
+          },
+          "backfilling": {
+            "type": "boolean",
+            "description": "True while stored history is still being indexed."
+          }
+        },
+        "required": [
+          "period",
+          "zone",
+          "days",
+          "totals",
+          "active_days",
+          "period_days",
+          "longest_streak",
+          "current_streak",
+          "models",
+          "approximate_days",
+          "backfilling"
+        ],
+        "description": "The `GET /usage/stats` response."
+      },
+      "StatsDay": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "`YYYY-MM-DD`."
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost": {
+            "type": "number",
+            "format": "double",
+            "description": "Known priced cost."
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Root Sessions with usage on this day."
+          }
+        },
+        "required": [
+          "date",
+          "tokens",
+          "total_tokens",
+          "cost",
+          "turns",
+          "sessions"
+        ],
+        "description": "One local day of the period."
+      },
+      "StatsTotals": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Known priced cost; null when every call was unpriced (or nothing ran)."
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Finished calls (provider steps and auxiliary calls)."
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Root Sessions with usage in the period."
+          }
+        },
+        "required": [
+          "tokens",
+          "total_tokens",
+          "unpriced_steps",
+          "steps",
+          "turns",
+          "sessions"
+        ]
+      },
+      "FavoriteModel": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "total_tokens"
+        ]
+      },
+      "LongestSession": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null once the Session was deleted."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "From the tree's first call to its last one in the period."
+          }
+        },
+        "required": [
+          "id",
+          "duration_ms"
+        ]
+      },
+      "StatsModel": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Known priced cost; null when every call of this model was unpriced."
+          },
+          "unpriced_steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "share": {
+            "type": "number",
+            "format": "double",
+            "description": "This model's share (0–1) of the period's tokens."
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "tokens",
+          "total_tokens",
+          "unpriced_steps",
+          "steps",
+          "turns",
+          "sessions",
+          "share"
+        ]
+      },
+      "Data_UsageInsights": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UsageInsights"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "UsageInsights": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string",
+            "description": "`24h` or `7d`."
+          },
+          "since_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "until_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/InsightBasis"
+          },
+          "total": {
+            "type": "number",
+            "format": "double",
+            "description": "The window total in the basis unit (USD or tokens)."
+          },
+          "total_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Known priced cost of the window; null when nothing priced ran."
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Finished calls in the window."
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InsightFactor"
+            },
+            "description": "`subagent_heavy`, `long_running` and `large_context`, in that order; they overlap."
+          },
+          "subagents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubagentShare"
+            },
+            "description": "Descendant usage per group, highest first."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Always `server`: only Sessions stored by this server are counted."
+          },
+          "note": {
+            "type": "string"
+          },
+          "backfilling": {
+            "type": "boolean",
+            "description": "True while stored history is still being indexed."
+          }
+        },
+        "required": [
+          "window",
+          "since_ms",
+          "until_ms",
+          "basis",
+          "total",
+          "total_tokens",
+          "steps",
+          "factors",
+          "subagents",
+          "scope",
+          "note",
+          "backfilling"
+        ],
+        "description": "The `GET /usage/insights` response."
+      },
+      "InsightBasis": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "cost",
+            "description": "Every step in the window was priced."
+          },
+          {
+            "type": "string",
+            "const": "tokens",
+            "description": "Some step was unpriced, so shares are of tokens."
+          }
+        ],
+        "description": "What the shares are shares of."
+      },
+      "InsightFactor": {
+        "type": "object",
+        "properties": {
+          "factor": {
+            "$ref": "#/components/schemas/InsightFactorKind"
+          },
+          "share": {
+            "type": "number",
+            "format": "double",
+            "description": "Share (0–1) of the window total."
+          },
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "description": "The usage behind the share, in the basis unit (USD or tokens)."
+          }
+        },
+        "required": [
+          "factor",
+          "share",
+          "amount"
+        ]
+      },
+      "InsightFactorKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "subagent_heavy",
+            "description": "Root Session trees whose descendants used more than half of the tree."
+          },
+          {
+            "type": "string",
+            "const": "long_running",
+            "description": "Sessions whose first and last step in the window are 8 or more hours apart."
+          },
+          {
+            "type": "string",
+            "const": "large_context",
+            "description": "Steps whose prompt exceeded 150,000 tokens."
+          },
+          {
+            "type": "string",
+            "const": "workflow",
+            "description": "(P2, reserved) Sessions that belong to a Workflow Run; never reported yet."
+          }
+        ],
+        "description": "A contributing factor."
+      },
+      "SubagentShare": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string",
+            "description": "The agent name, `workflow` or `fork`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SubagentGroupKind"
+          },
+          "share": {
+            "type": "number",
+            "format": "double",
+            "description": "Share (0–1) of the window total."
+          },
+          "amount": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "group",
+          "kind",
+          "share",
+          "amount"
+        ]
+      },
+      "SubagentGroupKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "agent",
+            "description": "Child Sessions running this agent."
+          },
+          {
+            "type": "string",
+            "const": "workflow",
+            "description": "Child Sessions of a Workflow Run."
+          },
+          {
+            "type": "string",
+            "const": "fork",
+            "description": "Child Sessions forked from their parent's history."
+          }
+        ],
+        "description": "How a subagent group is named."
+      },
+      "Data_UsageLimits": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UsageLimits"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "UsageLimits": {
+        "type": "object",
+        "properties": {
+          "limits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LimitReading"
+            },
+            "description": "The latest reading per provider and window, by provider then window."
+          }
+        },
+        "required": [
+          "limits"
+        ],
+        "description": "The `GET /usage/limits` reply."
+      },
+      "LimitReading": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "window": {
+            "type": "string",
+            "description": "Stable window identity within the provider (`5h`, `primary`, `requests`)."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label (`5-hour limit`, `Weekly limit (opus)`, `Requests`)."
+          },
+          "period": {
+            "$ref": "#/components/schemas/WindowPeriod"
+          },
+          "used_percent": {
+            "type": "number",
+            "format": "double",
+            "description": "Percent of the window used, 0–100."
+          },
+          "resets_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the window resets, Unix milliseconds; null when the provider did not say."
+          },
+          "observed_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the response carrying this reading arrived, Unix milliseconds."
+          }
+        },
+        "required": [
+          "provider",
+          "window",
+          "label",
+          "period",
+          "used_percent",
+          "observed_ms"
+        ],
+        "description": "The latest reading of one provider window."
+      },
+      "WindowPeriod": {
+        "type": "string",
+        "enum": [
+          "daily",
+          "weekly"
+        ],
+        "description": "Whether a window is shown in the daily or the weekly view: windows of up to a day\n(rate limits, a 5-hour plan window) are `daily`, longer ones `weekly`."
       },
       "Health": {
         "type": "object",
@@ -2613,6 +3395,17 @@
                 "type": "null"
               }
             ]
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextMeter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The context window meter after the last finished step; null before the first\nstep and after a compaction."
           }
         },
         "required": [
@@ -2706,6 +3499,46 @@
           "both"
         ],
         "description": "What a rewind restores (`snapshots-checkpoints` → Three-phase revert)."
+      },
+      "ContextMeter": {
+        "type": "object",
+        "properties": {
+          "used_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Prompt tokens of the last request: input + cache read + cache write."
+          },
+          "window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The model's context window; null when the catalog does not know it."
+          },
+          "compact_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The prompt size above which auto-compaction runs; null when the window is\nunknown or auto-compaction is off."
+          },
+          "utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`used_tokens / window`; null when the window is unknown."
+          }
+        },
+        "required": [
+          "used_tokens"
+        ]
       },
       "SetupStatus": {
         "oneOf": [
@@ -3680,6 +4513,61 @@
           }
         }
       },
+      "Data_Nullable_Recap": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Recap"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Recap": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model reference that wrote it."
+          },
+          "through_seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The last durable sequence it covers."
+          },
+          "generated_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was generated (the event time); filled from the stored event.",
+            "default": 0
+          }
+        },
+        "required": [
+          "text",
+          "model",
+          "through_seq"
+        ],
+        "description": "The latest Session recap."
+      },
+      "Data_Recap": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Recap"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "RevertBody": {
         "type": "object",
         "properties": {
@@ -3774,6 +4662,15 @@
               },
               "source": {
                 "type": "string"
+              },
+              "promoted_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Time of the durable promotion event (`session-runtime` → Assistant\nmessage timing); null only for entries recorded before it was kept.",
+                "default": null
               },
               "kind": {
                 "type": "string",
@@ -3881,6 +4778,40 @@
               "string",
               "null"
             ]
+          },
+          "error_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `session.step.failed.1` kind, such as `interrupted`.",
+            "default": null
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The agent pinned by `session.step.started.1`.",
+            "default": null
+          },
+          "started_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Time of `session.step.started.1`.",
+            "default": null
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Time of `session.step.ended.1` or `session.step.failed.1`; null while running.",
+            "default": null
           }
         },
         "required": [
@@ -5160,6 +6091,97 @@
           "reloaded"
         ]
       },
+      "Located_Vcs": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Vcs"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "Vcs": {
+        "type": "object",
+        "properties": {
+          "vcs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GitState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "`{ \"vcs\": null }` outside a git repository."
+      },
+      "GitState": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "The worktree root."
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The checked-out branch; `None` on a detached HEAD."
+          },
+          "head": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The short commit ID of HEAD; `None` before the first commit."
+          },
+          "upstream": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The upstream branch (`origin/main`), when one is configured and exists."
+          },
+          "ahead": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Commits on the branch that the upstream lacks, and the other way round; 0 without\nan upstream."
+          },
+          "behind": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "worktree": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The linked worktree's name; `None` in the main worktree."
+          },
+          "dirty": {
+            "type": "boolean",
+            "description": "Staged, unstaged or untracked (not ignored) changes exist."
+          }
+        },
+        "required": [
+          "root",
+          "ahead",
+          "behind",
+          "dirty"
+        ],
+        "description": "Branch, upstream and working-tree state of the repository a Location is in."
+      },
       "Located_Array_of_McpServerStatus": {
         "type": "object",
         "properties": {
@@ -5362,6 +6384,13 @@
           "mode": {
             "type": "string",
             "description": "`primary`, `subagent` or `all`."
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The configured display color (`#rrggbb` or an ANSI name), as written."
           }
         },
         "required": [
@@ -5705,6 +6734,231 @@
           "data"
         ],
         "description": "A Location-scoped response."
+      },
+      "Located_FileListing": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FileListing"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "FileListing": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileEntry"
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More than 2,000 entries; the rest are left out."
+          },
+          "hidden": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Dot and ignored entries left out without `hidden=true`."
+          },
+          "changed": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Changed files in the whole project, by git status."
+          },
+          "root": {
+            "type": "string",
+            "description": "The canonical project root that entry paths are relative to; it may be an\nancestor of the Location."
+          }
+        },
+        "required": [
+          "entries",
+          "truncated",
+          "hidden",
+          "changed",
+          "root"
+        ]
+      },
+      "FileEntry": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "`/`-separated, relative to the project root."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes, for files."
+          },
+          "git_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`M`, `A`, `D` or `?`; a directory shows `M` when anything below it changed."
+          },
+          "ignored": {
+            "type": "boolean",
+            "description": "Matched by `.gitignore` or `.cyberignore` (or the `.git` directory itself)."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A symlink's target, project-relative when it stays inside the project."
+          },
+          "read": {
+            "$ref": "#/components/schemas/FileDecision",
+            "description": "The `read` decision for this path."
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "kind",
+          "size",
+          "ignored",
+          "read"
+        ],
+        "description": "One directory entry."
+      },
+      "Kind": {
+        "type": "string",
+        "enum": [
+          "file",
+          "directory",
+          "symlink"
+        ]
+      },
+      "FileDecision": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "ask",
+          "deny"
+        ],
+        "description": "A path's permission decision for browsing (`server-api` → File browsing routes)."
+      },
+      "Located_FileSearch": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FileSearch"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "FileSearch": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileHit"
+            }
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "FileHit": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "read": {
+            "$ref": "#/components/schemas/FileDecision"
+          }
+        },
+        "required": [
+          "path",
+          "read"
+        ]
+      },
+      "Located_Content": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Content2"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "Content2": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binary": {
+            "type": "boolean"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lines": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Only the first [`MAX_CONTENT`] bytes are in `text`."
+          }
+        },
+        "required": [
+          "binary",
+          "size",
+          "lines",
+          "truncated"
+        ],
+        "description": "A file's content, or that it is binary."
       },
       "ErrorBody": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -6428,6 +7682,144 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_ScopeUsage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage/stats": {
+      "get": {
+        "operationId": "v1.usage.stats",
+        "summary": "Activity per local day, streaks and per-model totals over a period",
+        "tags": [
+          "usage"
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tz",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_UsageStats"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage/insights": {
+      "get": {
+        "operationId": "v1.usage.insights",
+        "summary": "Contributing factors and subagent shares of the last 24 hours or 7 days",
+        "tags": [
+          "usage"
+        ],
+        "parameters": [
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_UsageInsights"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage/limits": {
+      "get": {
+        "operationId": "v1.usage.limits",
+        "summary": "The latest usage window readings providers reported in their responses",
+        "tags": [
+          "usage"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_UsageLimits"
                 }
               }
             }
@@ -8740,6 +10132,94 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/recap": {
+      "get": {
+        "operationId": "v1.session.recap",
+        "summary": "The latest Session recap, or null",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Nullable_Recap"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "v1.session.generateRecap",
+        "summary": "Return the recap covering the latest finished Turn, generating it when stale",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Recap"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/rewind": {
       "post": {
         "operationId": "v1.session.rewind",
@@ -9418,7 +10898,7 @@
     "/api/v1/sessions/{sessionID}/diff": {
       "get": {
         "operationId": "v1.session.diff",
-        "summary": "File diffs for a user message",
+        "summary": "File diffs for a user message, or the whole Session without `message_id`",
         "tags": [
           "session"
         ],
@@ -10216,6 +11696,55 @@
         }
       }
     },
+    "/api/v1/vcs": {
+      "get": {
+        "operationId": "v1.vcs.status",
+        "summary": "The Location's git branch, upstream, ahead/behind, worktree and dirty flag",
+        "tags": [
+          "vcs"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Vcs"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mcp": {
       "get": {
         "operationId": "v1.mcp.status",
@@ -10325,7 +11854,7 @@
     "/api/v1/mcp/{name}/reconnect": {
       "post": {
         "operationId": "v1.mcp.reconnect",
-        "summary": "Reconnect a server waiting for authentication with a fresh owner; returns its status",
+        "summary": "Reconnect a server waiting for authentication, or a failed one that retained no owner, with a fresh owner; returns its status",
         "tags": [
           "mcp"
         ],
@@ -10704,6 +12233,217 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Array_of_string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files": {
+      "get": {
+        "operationId": "v1.fs.list",
+        "summary": "One project directory level with git status, ignore flags and read decisions",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hidden",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_FileListing"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/search": {
+      "get": {
+        "operationId": "v1.fs.search",
+        "summary": "Fuzzy path search over the project's non-ignored files",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_FileSearch"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/content": {
+      "get": {
+        "operationId": "v1.fs.content",
+        "summary": "A project file's text (at most 1 MiB) when the Session's rules allow read",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Content"
                 }
               }
             }

@@ -8,7 +8,7 @@ use std::sync::PoisonError;
 use tokio_util::sync::CancellationToken;
 
 use super::bus::LiveEvent;
-use super::{DrainEntry, Runtime, RuntimeError};
+use super::{DrainEntry, Runtime, RuntimeError, usage_ledger};
 
 impl Runtime {
     /// Delete a Session, its child Sessions, inbox rows and history.
@@ -30,6 +30,11 @@ impl Runtime {
         self.settle_hook_work(&ids).await;
         let doomed = ids.clone();
         let deleted = self.inner.store.transaction(move |tx| {
+            // Ledger rows outlive the Session: index what the backfill has not yet
+            // reached while the events and every owner row still exist.
+            for id in &doomed {
+                usage_ledger::project_unreached(tx, id)?;
+            }
             for id in &doomed {
                 tx.execute("DELETE FROM event WHERE aggregate_id = ?1", [id])?;
                 tx.execute("DELETE FROM event_sequence WHERE aggregate_id = ?1", [id])?;

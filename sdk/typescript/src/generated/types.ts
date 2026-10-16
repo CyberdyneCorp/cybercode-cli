@@ -11,6 +11,8 @@ export type AgentInfo = {
   description: string;
   /** `primary`, `subagent` or `all`. */
   mode: string;
+  /** The configured display color (`#rrggbb` or an ANSI name), as written. */
+  color?: string | null;
 };
 
 export type AssistantEntry = {
@@ -23,6 +25,14 @@ export type AssistantEntry = {
   calls: string[];
   finished: boolean;
   error?: string | null;
+  /** The `session.step.failed.1` kind, such as `interrupted`. */
+  error_kind?: string | null;
+  /** The agent pinned by `session.step.started.1`. */
+  agent?: string | null;
+  /** Time of `session.step.started.1`. */
+  started_ms?: number | null;
+  /** Time of `session.step.ended.1` or `session.step.failed.1`; null while running. */
+  ended_ms?: number | null;
 };
 
 export type AutoOverrideReceipt = {
@@ -38,6 +48,26 @@ export type Budget = {
   max_cost_usd?: number | null;
   max_wall_seconds?: number | null;
   enforcement?: Enforcement;
+};
+
+/** One configured limit of a Budget and how much of it is used. */
+export type BudgetLimit = {
+  /** `max_cost_usd`, `max_tokens` or `max_turns`. */
+  name: string;
+  limit: number;
+  used: number;
+};
+
+export type BudgetScope = "session" | "daily";
+
+/** A Budget that applies to the Session. */
+export type BudgetUsage = {
+  scope: BudgetScope;
+  limits: BudgetLimit[];
+  /** The next local midnight, for the daily budget. */
+  reset_ms?: number | null;
+  /** The IANA zone of the server's local day, for the daily budget. */
+  zone?: string | null;
 };
 
 export type CallState = {
@@ -164,6 +194,31 @@ export type Content = {
   type: "tool_result";
 };
 
+/** A file's content, or that it is binary. */
+export type Content2 = {
+  text?: string | null;
+  binary: boolean;
+  size: number;
+  language?: string | null;
+  lines: number;
+  /** Only the first [`MAX_CONTENT`] bytes are in `text`. */
+  truncated: boolean;
+};
+
+export type ContextMeter = {
+  /** Prompt tokens of the last request: input + cache read + cache write. */
+  used_tokens: number;
+  /** The model's context window; null when the catalog does not know it. */
+  window?: number | null;
+  /**
+   * The prompt size above which auto-compaction runs; null when the window is
+   * unknown or auto-compaction is off.
+   */
+  compact_at?: number | null;
+  /** `used_tokens / window`; null when the window is unknown. */
+  utilization?: number | null;
+};
+
 export type CreateBody = {
   budget?: Budget | null;
   id?: string | null;
@@ -241,6 +296,14 @@ export type Data_Message = {
   data: Message;
 };
 
+export type Data_Nullable_Recap = {
+  data?: Recap | null;
+};
+
+export type Data_Recap = {
+  data: Recap;
+};
+
 export type Data_Receipt = {
   data: Receipt;
 };
@@ -275,6 +338,18 @@ export type Data_SubtreeReopenReport = {
 
 export type Data_SubtreeStopReport = {
   data: SubtreeStopReport;
+};
+
+export type Data_UsageInsights = {
+  data: UsageInsights;
+};
+
+export type Data_UsageLimits = {
+  data: UsageLimits;
+};
+
+export type Data_UsageStats = {
+  data: UsageStats;
 };
 
 export type Data_WorkflowRun = {
@@ -341,6 +416,15 @@ export type EventEnvelope = {
   durable?: DurableRef | null;
 };
 
+export type FavoriteModel = {
+  provider: string;
+  model: string;
+  total_tokens: number;
+};
+
+/** A path's permission decision for browsing (`server-api` → File browsing routes). */
+export type FileDecision = "allow" | "ask" | "deny";
+
 /** One file of a diff between two snapshots. */
 export type FileDiff = {
   file: string;
@@ -349,6 +433,48 @@ export type FileDiff = {
   additions: number;
   deletions: number;
   patch: string;
+};
+
+/** One directory entry. */
+export type FileEntry = {
+  name: string;
+  /** `/`-separated, relative to the project root. */
+  path: string;
+  kind: Kind;
+  /** Bytes, for files. */
+  size: number;
+  /** `M`, `A`, `D` or `?`; a directory shows `M` when anything below it changed. */
+  git_status?: string | null;
+  /** Matched by `.gitignore` or `.cyberignore` (or the `.git` directory itself). */
+  ignored: boolean;
+  /** A symlink's target, project-relative when it stays inside the project. */
+  target?: string | null;
+  /** The `read` decision for this path. */
+  read: FileDecision;
+};
+
+export type FileHit = {
+  path: string;
+  read: FileDecision;
+};
+
+export type FileListing = {
+  entries: FileEntry[];
+  /** More than 2,000 entries; the rest are left out. */
+  truncated: boolean;
+  /** Dot and ignored entries left out without `hidden=true`. */
+  hidden: number;
+  /** Changed files in the whole project, by git status. */
+  changed: number;
+  /**
+   * The canonical project root that entry paths are relative to; it may be an
+   * ancestor of the Location.
+   */
+  root: string;
+};
+
+export type FileSearch = {
+  results: FileHit[];
 };
 
 export type ForkBody = {
@@ -362,6 +488,28 @@ export type FormatterStatus = {
   enabled: boolean;
   installed: boolean;
   detected_by: string;
+};
+
+/** Branch, upstream and working-tree state of the repository a Location is in. */
+export type GitState = {
+  /** The worktree root. */
+  root: string;
+  /** The checked-out branch; `None` on a detached HEAD. */
+  branch?: string | null;
+  /** The short commit ID of HEAD; `None` before the first commit. */
+  head?: string | null;
+  /** The upstream branch (`origin/main`), when one is configured and exists. */
+  upstream?: string | null;
+  /**
+   * Commits on the branch that the upstream lacks, and the other way round; 0 without
+   * an upstream.
+   */
+  ahead: number;
+  behind: number;
+  /** The linked worktree's name; `None` in the main worktree. */
+  worktree?: string | null;
+  /** Staged, unstaged or untracked (not ignored) changes exist. */
+  dirty: boolean;
 };
 
 export type Health = {
@@ -518,6 +666,20 @@ export type InboxRow = {
 
 export type InputStatus = "pending" | "held" | "promoted" | "refused";
 
+/** What the shares are shares of. */
+export type InsightBasis = "cost" | "tokens";
+
+export type InsightFactor = {
+  factor: InsightFactorKind;
+  /** Share (0–1) of the window total. */
+  share: number;
+  /** The usage behind the share, in the basis unit (USD or tokens). */
+  amount: number;
+};
+
+/** A contributing factor. */
+export type InsightFactorKind = "subagent_heavy" | "long_running" | "large_context" | "workflow";
+
 export type InvalidMemory = {
   filename: string;
   diagnostic: string;
@@ -545,6 +707,24 @@ export type Job = {
 };
 
 export type JobStatus = "running" | "completed" | "error" | "cancelled" | "interrupted";
+
+export type Kind = "file" | "directory" | "symlink";
+
+/** The latest reading of one provider window. */
+export type LimitReading = {
+  provider: string;
+  /** Stable window identity within the provider (`5h`, `primary`, `requests`). */
+  window: string;
+  /** Display label (`5-hour limit`, `Weekly limit (opus)`, `Requests`). */
+  label: string;
+  period: WindowPeriod;
+  /** Percent of the window used, 0–100. */
+  used_percent: number;
+  /** When the window resets, Unix milliseconds; null when the provider did not say. */
+  resets_ms?: number | null;
+  /** When the response carrying this reading arrived, Unix milliseconds. */
+  observed_ms: number;
+};
 
 /** A Location-scoped response. */
 export type Located_Array_of_AgentInfo = {
@@ -601,9 +781,27 @@ export type Located_Array_of_string = {
 };
 
 /** A Location-scoped response. */
+export type Located_Content = {
+  location: LocationInfo;
+  data: Content2;
+};
+
+/** A Location-scoped response. */
 export type Located_CreatedWorktree = {
   location: LocationInfo;
   data: CreatedWorktree;
+};
+
+/** A Location-scoped response. */
+export type Located_FileListing = {
+  location: LocationInfo;
+  data: FileListing;
+};
+
+/** A Location-scoped response. */
+export type Located_FileSearch = {
+  location: LocationInfo;
+  data: FileSearch;
 };
 
 /** A Location-scoped response. */
@@ -702,10 +900,24 @@ export type Located_SkillCatalog = {
   data: SkillCatalog;
 };
 
+/** A Location-scoped response. */
+export type Located_Vcs = {
+  location: LocationInfo;
+  data: Vcs;
+};
+
 export type LocationInfo = {
   directory: string;
   workspace?: string | null;
   project: ProjectInfo;
+};
+
+export type LongestSession = {
+  id: string;
+  /** Null once the Session was deleted. */
+  title?: string | null;
+  /** From the tree's first call to its last one in the period. */
+  duration_ms: number;
 };
 
 export type LspState = "starting" | "connected" | "broken";
@@ -873,6 +1085,11 @@ export type Message = {
   id: string;
   parts: Content[];
   source: string;
+  /**
+   * Time of the durable promotion event (`session-runtime` → Assistant
+   * message timing); null only for entries recorded before it was kept.
+   */
+  promoted_ms?: number | null;
   kind: "user";
 } | (AssistantEntry & {
   kind: "assistant";
@@ -900,6 +1117,19 @@ export type ModelInfo = {
   available: boolean;
   context_limit: number;
   reasoning: boolean;
+};
+
+/** One provider and model of the Session tree. */
+export type ModelUsage = {
+  provider: string;
+  model: string;
+  tokens: Usage;
+  total_tokens: number;
+  /** Known priced cost; null when every call of this model was unpriced. */
+  cost?: number | null;
+  unpriced_steps: number;
+  /** Finished calls (provider steps and auxiliary calls). */
+  steps: number;
 };
 
 export type Page_HookExecutionRecord = {
@@ -1012,6 +1242,17 @@ export type RawHookSection = {
   pointer: string;
   scope: HookScope;
   value: unknown;
+};
+
+/** The latest Session recap. */
+export type Recap = {
+  text: string;
+  /** The model reference that wrote it. */
+  model: string;
+  /** The last durable sequence it covers. */
+  through_seq: number;
+  /** When it was generated (the event time); filled from the stored event. */
+  generated_ms?: number;
 };
 
 /** The receipt returned for an admission and for an exact retry of it. */
@@ -1227,7 +1468,7 @@ export type RunUsageReport = {
 };
 
 /** One of the usage reports a scope returns, discriminated by `scope`. */
-export type ScopeUsage = UsageReport | RunUsageReport;
+export type ScopeUsage = SessionUsage | RunUsageReport;
 
 /** A Session with its live status. */
 export type Session = {
@@ -1271,6 +1512,11 @@ export type Session = {
   /** False when retained historical receipts lack source token-class evidence. */
   children_token_classes_complete?: boolean;
   revert?: RevertState | null;
+  /**
+   * The context window meter after the last finished step; null before the first
+   * step and after a compaction.
+   */
+  context?: ContextMeter | null;
 };
 
 export type SessionContext = {
@@ -1330,6 +1576,35 @@ export type SessionRow = {
 
 /** The `scope` of a Session usage report; it discriminates [`ScopeUsage`]. */
 export type SessionScope = "session";
+
+/** The Session usage report with its breakdown over the Session and its descendants. */
+export type SessionUsage = {
+  scope: SessionScope;
+  id: string;
+  own: UsageAmount;
+  descendants: UsageAmount;
+  total: UsageAmount;
+  /** Sorted by cost, then by tokens, highest first. */
+  by_model: ModelUsage[];
+  /** The sum of model call durations across the tree. */
+  api_duration_ms: number;
+  /**
+   * From the first admitted prompt to the last recorded activity (or now while the
+   * Session runs); null before the first prompt.
+   */
+  wall_duration_ms?: number | null;
+  /** Summed over the Session's per-message diffs; null without snapshot history. */
+  lines_added?: number | null;
+  lines_removed?: number | null;
+  budgets: BudgetUsage[];
+  /**
+   * Why the daily budget could not be read from the Session directory's
+   * configuration; the rest of the report is still served, without it.
+   */
+  budgets_error?: string | null;
+  /** True while stored history is still being indexed: `by_model` may be partial. */
+  backfilling: boolean;
+};
 
 export type SetupRecoveryRequest = {
   revision: number;
@@ -1425,6 +1700,47 @@ export type StartBody = {
   budget?: unknown;
 };
 
+/** One local day of the period. */
+export type StatsDay = {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  tokens: Usage;
+  total_tokens: number;
+  /** Known priced cost. */
+  cost: number;
+  turns: number;
+  /** Root Sessions with usage on this day. */
+  sessions: number;
+};
+
+export type StatsModel = {
+  provider: string;
+  model: string;
+  tokens: Usage;
+  total_tokens: number;
+  /** Known priced cost; null when every call of this model was unpriced. */
+  cost?: number | null;
+  unpriced_steps: number;
+  steps: number;
+  turns: number;
+  sessions: number;
+  /** This model's share (0–1) of the period's tokens. */
+  share: number;
+};
+
+export type StatsTotals = {
+  tokens: Usage;
+  total_tokens: number;
+  /** Known priced cost; null when every call was unpriced (or nothing ran). */
+  cost?: number | null;
+  unpriced_steps: number;
+  /** Finished calls (provider steps and auxiliary calls). */
+  steps: number;
+  turns: number;
+  /** Root Sessions with usage in the period. */
+  sessions: number;
+};
+
 export type StopAccepted = {
   id: string;
   stopping: boolean;
@@ -1432,6 +1748,18 @@ export type StopAccepted = {
 
 export type StopService = {
   id: string;
+};
+
+/** How a subagent group is named. */
+export type SubagentGroupKind = "agent" | "workflow" | "fork";
+
+export type SubagentShare = {
+  /** The agent name, `workflow` or `fork`. */
+  group: string;
+  kind: SubagentGroupKind;
+  /** Share (0–1) of the window total. */
+  share: number;
+  amount: number;
 };
 
 export type SubtaskBody = {
@@ -1519,13 +1847,81 @@ export type UsageAmount = {
   token_classes_complete: boolean;
 };
 
-export type UsageReport = {
-  scope: SessionScope;
-  id: string;
-  own: UsageAmount;
-  descendants: UsageAmount;
-  total: UsageAmount;
+/** The `GET /usage/insights` response. */
+export type UsageInsights = {
+  /** `24h` or `7d`. */
+  window: string;
+  since_ms: number;
+  until_ms: number;
+  basis: InsightBasis;
+  /** The window total in the basis unit (USD or tokens). */
+  total: number;
+  /** Known priced cost of the window; null when nothing priced ran. */
+  total_cost?: number | null;
+  total_tokens: number;
+  /** Finished calls in the window. */
+  steps: number;
+  /** `subagent_heavy`, `long_running` and `large_context`, in that order; they overlap. */
+  factors: InsightFactor[];
+  /** Descendant usage per group, highest first. */
+  subagents: SubagentShare[];
+  /** Always `server`: only Sessions stored by this server are counted. */
+  scope: string;
+  note: string;
+  /** True while stored history is still being indexed. */
+  backfilling: boolean;
 };
+
+/** The `GET /usage/limits` reply. */
+export type UsageLimits = {
+  /** The latest reading per provider and window, by provider then window. */
+  limits: LimitReading[];
+};
+
+/** The `GET /usage/stats` response. */
+export type UsageStats = {
+  /** `all` or `Nd`. */
+  period: string;
+  /** The IANA zone of the local days. */
+  zone: string;
+  /** The start of the period's first local day; null for `all`. */
+  since_ms?: number | null;
+  /** One entry per local day, oldest first; at most the last 371 for `all`. */
+  days: StatsDay[];
+  totals: StatsTotals;
+  /** The model with the most tokens. */
+  favorite_model?: FavoriteModel | null;
+  longest_session?: LongestSession | null;
+  /** Days with at least one Turn. */
+  active_days: number;
+  /** Local days in the period (for `all`, since the first day with usage). */
+  period_days: number;
+  longest_streak: number;
+  /**
+   * Consecutive active days up to today; today counts once it has a Turn, and a
+   * streak that reached yesterday is still current.
+   */
+  current_streak: number;
+  /** The active day with the most tokens, `YYYY-MM-DD`. */
+  most_active_day?: string | null;
+  /** Sorted by tokens, highest first. */
+  models: StatsModel[];
+  /** True when part of the period was served from daily aggregates (UTC days). */
+  approximate_days: boolean;
+  /** True while stored history is still being indexed. */
+  backfilling: boolean;
+};
+
+/** `{ "vcs": null }` outside a git repository. */
+export type Vcs = {
+  vcs?: GitState | null;
+};
+
+/**
+ * Whether a window is shown in the daily or the weekly view: windows of up to a day
+ * (rate limits, a 5-hour plan window) are `daily`, longer ones `weekly`.
+ */
+export type WindowPeriod = "daily" | "weekly";
 
 /** One `agent()` call (`workflow.agent.started.1`, then `workflow.agent.settled.1`). */
 export type WorkflowAgent = {

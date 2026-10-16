@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: drawer
+---
+ cyber · Theme baseline                                                                        idle
+› How do I speed up fib?
+                                                                      Theme baseline
+  Plan
+                                                                      Context
+  This keeps the cache warm:                                          100 tokens
+                                                                      — spent
+  1. Memoization: results are cached
+                                                                      LSP
+  • avoids recomputation                                              LSPs will activate as files
+                                                                      are read
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+                                                                      ~/work/app
+
+                                                                      ● Cyber Code 1.0.0
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                                       100 · —  ctrl+p commands

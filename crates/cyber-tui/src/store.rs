@@ -125,6 +125,24 @@ impl LocalStore {
         );
     }
 
+    /// Save a Config tab preference with the time it was saved, so a later edit of
+    /// `tui.jsonc` wins over it (`tui` → Settings Config tab). `theme` is also kept
+    /// under its old key.
+    pub fn save_preference(&self, key: &str, value: Value) {
+        let saved_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+        if key == "theme" {
+            self.set("theme", value.clone());
+        }
+        let mut prefs = self.get("prefs").unwrap_or_else(|| json!({}));
+        if !prefs.is_object() {
+            prefs = json!({});
+        }
+        prefs[key] = json!({ "value": value, "saved_ms": saved_ms });
+        self.set("prefs", prefs);
+    }
+
     pub fn draft(&self, session: &str) -> String {
         self.get(&format!("draft:{session}"))
             .and_then(|v| v.as_str().map(str::to_string))

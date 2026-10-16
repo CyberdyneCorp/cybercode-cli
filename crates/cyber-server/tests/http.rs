@@ -43,6 +43,7 @@ impl Services for FakeServices {
             name: "build".into(),
             description: "Default agent".into(),
             mode: "primary".into(),
+            color: None,
         }]
     }
     fn tools(&self, turn: &TurnContext) -> Vec<ToolDef> {
@@ -3583,4 +3584,128 @@ async fn delegation_reconciliation_api_authenticates_and_preserves_uncertain_own
         "RequestNotFoundError"
     );
     h.runtime.shutdown().await;
+}
+
+/// `session-runtime` → Assistant message timing, read back after a restart.
+#[tokio::test]
+async fn message_timing_comes_from_durable_event_times_and_survives_restart() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("c1", "clock", "{}")]),
+                text("done"),
+                support::error(cyber_llm::ErrorKind::InvalidRequest, "provider refused"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    let api = Api::new(&h);
+    let id = h.session().await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("tick"))
+        .await;
+    h.settle(&id).await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("again"))
+        .await;
+    h.settle(&id).await;
+    let (_, page) = api.get(&format!("/sessions/{id}/messages?order=asc")).await;
+    let entries = page["data"].as_array().unwrap().clone();
+    let kinds: Vec<&str> = entries
+        .iter()
+        .map(|m| m["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["user", "assistant", "assistant", "user", "assistant"]
+    );
+    let ms = |entry: &Value, key: &str| entry[key].as_i64().unwrap_or_else(|| panic!("{key}"));
+    let promoted = ms(&entries[0], "promoted_ms");
+    let (first, second) = (&entries[1], &entries[2]);
+    assert_eq!(first["agent"], "build");
+    assert!(promoted <= ms(first, "started_ms"));
+    assert!(ms(first, "started_ms") <= ms(first, "ended_ms"));
+    assert!(ms(first, "ended_ms") <= ms(second, "started_ms"));
+    assert!(ms(second, "started_ms") <= ms(second, "ended_ms"));
+    assert!(second["error_kind"].is_null());
+    let failed = &entries[4];
+    assert_eq!(failed["error"], "provider refused");
+    assert_eq!(failed["error_kind"], "invalid_request");
+    assert!(ms(failed, "ended_ms") >= ms(failed, "started_ms"));
+
+    let (_, one) = api
+        .get(&format!(
+            "/sessions/{id}/messages/{}",
+            first["id"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(one["data"]["started_ms"], first["started_ms"]);
+
+    let mut restarted = state(&h, None);
+    restarted.runtime = h.restart();
+    let replay = Api {
+        client: EmbeddedClient::new(http::router(restarted)),
+    };
+    let (_, after) = replay
+        .get(&format!("/sessions/{id}/messages?order=asc"))
+        .await;
+    for key in [
+        "promoted_ms",
+        "agent",
+        "started_ms",
+        "ended_ms",
+        "error_kind",
+    ] {
+        let before: Vec<&Value> = entries.iter().map(|e| &e[key]).collect();
+        let replayed: Vec<&Value> = after["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| &e[key])
+            .collect();
+        assert_eq!(before, replayed, "{key} after restart");
+    }
+}
+
+/// `observability-costs` → Context window meter, on the Session route and the
+/// `session.usage` live event.
+#[tokio::test]
+async fn context_meter_reports_last_request_prompt_tokens_window_and_compaction_point() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("hello")])],
+        ..Setup::default()
+    });
+    let api = Api::new(&h);
+    let id = h.session().await;
+    let (_, fresh) = api.get(&format!("/sessions/{id}")).await;
+    assert!(fresh["data"]["context"].is_null(), "unknown before a step");
+
+    let base = tcp(&h, "pw").await;
+    let res = reqwest::Client::new()
+        .get(format!("{base}/event"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut events = res.bytes_stream();
+    read_sse_until(&mut events, "server.connected").await;
+    api.post(&format!("/sessions/{id}/prompt"), prompt("hi"))
+        .await;
+    let streamed = read_sse_until(&mut events, "compact_at").await;
+    h.settle(&id).await;
+    let usage_line = streamed
+        .lines()
+        .find(|line| line.starts_with("data:") && line.contains("compact_at"))
+        .unwrap();
+    let usage: Value = serde_json::from_str(usage_line.trim_start_matches("data:").trim()).unwrap();
+    assert_eq!(usage["type"], "session.usage");
+    let expected = json!({
+        "used_tokens": 100,
+        "window": 200_000,
+        "compact_at": 199_000,
+        "utilization": 100.0 / 200_000.0,
+    });
+    assert_eq!(usage["data"]["context"], expected);
+
+    let (_, session) = api.get(&format!("/sessions/{id}")).await;
+    assert_eq!(session["data"]["context"], expected);
 }

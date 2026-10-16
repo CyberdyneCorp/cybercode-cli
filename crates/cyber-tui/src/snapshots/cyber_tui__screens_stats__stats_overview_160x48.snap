@@ -1,0 +1,70 @@
+---
+source: crates/cyber-tui/src/screens_stats.rs
+expression: "render(&mut app, width, height, &opts)"
+---
+
+  Settings   Status    Config    Usage    Stats
+
+   Overview    Models
+
+         Dec Jan  Feb Mar Apr May  Jun Jul Aug  Sep Oct
+       ▒░█▓▒··▓▒██▒░█▓·░█·▒░█▓▒·█▓▒░█▓·█·▒░█▓▒░█▓·░·▓▒░
+  Mon  █▒··▓▒░█▓▒░·▓▒░█·▒░█·▒██▒░█▓▒·█▓▒░█▓▒░·▓▒░·▓▒██·
+      ▒░·▓▒░█▓·░█▓▒██·░·▓▒░█▓▒░█·▒·█▓▒░█▓·██▒░█·▒░·▓▒░█
+  Wed ·▓▒█·▒░█▓▒░█▓·░█▓▒░█▓▒·█▓▒·█▒░█·▒░█▓▒░█··░█▓▒░█▓·
+      ·█▓▒░█▓▒░·▓·░█▓▒██·░█▓▒░·▓▒·█▓▒░█▓▒░··▒██▒░█▓·░█▓
+  Fri ▓▒░█▓·██▒·█▓▒░·▓▒░█▓▒░··▒░█▓▒██▒·█▓·░█▓▒░·▓▒░█▓▒░
+      █·▒░█▓▒·█▓·░█▓▒░█▓▒··▒░█▓▒░█·▒░█▓·░█▓·░█▓▒██▒░·▓
+
+      Less ░ ▒ ▓ █ More
+
+  All time · Last 7 days · Last 30 days    All projects
+
+  Favorite model: main              Total tokens: 3.6m
+
+  Sessions: 1                       Longest session: 339d 2h 3m
+  Active days: 278/340              Longest streak: 8 days
+  Most active day: Dec 3            Current streak: 2 days
+  Total cost: $2.77
+  Input 3.3m · Output 329.2k · Reasoning 0 · Cache read 0 · Cache write 0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓ scroll · p period · v view · s scope · r refresh · tab next tab · 1-4 jump · esc close
+ /Users/leo/work/app                                                               100 · $0.00  ctrl+p commands
+row 14: 0-10 fg=#d6e4f0 bg=#0b0f14
+row 14: 11-11 fg=#08454f bg=#0b0f14
+row 14: 12-12 fg=#d6e4f0 bg=#0b0f14
+row 14: 13-13 fg=#067a8a bg=#0b0f14
+row 14: 14-14 fg=#d6e4f0 bg=#0b0f14
+row 14: 15-15 fg=#03b0c4 bg=#0b0f14
+row 14: 16-16 fg=#d6e4f0 bg=#0b0f14
+row 14: 17-17 fg=#00e5ff bg=#0b0f14
+row 14: 18-159 fg=#d6e4f0 bg=#0b0f14
+row 16: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 16: 2-9 fg=#00e5ff bg=#0b0f14 bold
+row 16: 10-38 fg=#6b7a8f bg=#0b0f14
+row 16: 39-159 fg=#d6e4f0 bg=#0b0f14
+row 18: 0-17 fg=#d6e4f0 bg=#0b0f14
+row 18: 18-21 fg=#00e5ff bg=#0b0f14 bold
+row 18: 22-49 fg=#d6e4f0 bg=#0b0f14
+row 18: 50-53 fg=#00e5ff bg=#0b0f14
+row 18: 54-159 fg=#d6e4f0 bg=#0b0f14

@@ -20,11 +20,13 @@ mod child_usage;
 mod compaction;
 pub use child_usage::ChildrenUsage;
 mod context;
+mod context_meter;
 mod continuation;
 mod delegations;
 mod deletion;
 mod drain;
 mod events;
+mod files;
 mod fork;
 mod forked_skills;
 mod hook_tests;
@@ -75,8 +77,26 @@ pub mod settlement;
 mod shutdown;
 mod structured;
 pub use structured::StructuredSchema;
+mod recap;
+pub use recap::{NOTHING_TO_RECAP, Recap};
 mod title;
 mod usage;
+mod usage_breakdown;
+mod usage_insights;
+mod usage_ledger;
+mod usage_limits;
+pub use usage_limits::{LimitReading, UsageLimits, UsageWindow, WindowPeriod};
+mod usage_stats;
+pub use usage_breakdown::{BudgetLimit, BudgetScope, BudgetUsage, ModelUsage, SessionUsage};
+pub use usage_insights::{
+    InsightBasis, InsightFactor, InsightFactorKind, InsightWindow, InsightsRequest,
+    LARGE_CONTEXT_TOKENS, LONG_RUNNING_MS, SUBAGENT_HEAVY_SHARE, SubagentGroupKind, SubagentShare,
+    UsageInsights,
+};
+pub use usage_stats::{
+    FavoriteModel, LongestSession, MAX_PERIOD_DAYS, Period, StatsDay, StatsModel, StatsRequest,
+    StatsTotals, UsageStats,
+};
 mod view;
 pub use usage::{
     RunAgentUsage, RunUsageGroup, RunUsageReport, ScopeUsage, UsageAmount, UsageReport,
@@ -112,17 +132,19 @@ pub use auto::{AutoDecision, AutoEffect, AutoReview, AutoReviewStage};
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
+pub use context_meter::ContextMeter;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
 pub use host::{
-    AgentInference, CatalogResolver, ChildContinuation, FileDiff, HookEffects, Invocation,
-    LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots,
-    NoTools, Reconciliation, ResolvedModel, RestoreError, RunWorktree, SessionEnvelope,
-    SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext,
-    WorkflowAgentOutput, WorkflowAgentRequest,
+    AgentInference, CatalogResolver, ChildContinuation, FileDecision, FileDiff, HookEffects,
+    Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease, ModelResolver,
+    NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RunWorktree,
+    SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome,
+    ToolScope, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest,
 };
 pub use model::{
-    AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, RetrySafety,
-    RevertState, RevertTarget, SessionInfo, SessionState, Sourced, StepSnapshot, TaskState, Totals,
+    AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
+    RetrySafety, RevertState, RevertTarget, SessionInfo, SessionState, Sourced, StepSnapshot,
+    TaskState, Totals,
 };
 pub use requests::{
     Asker, NO_WORKFLOW_APPROVER, PendingKind, PendingRequest, PermissionAsk, PermissionReply,
@@ -519,6 +541,8 @@ pub(crate) struct Handle {
     /// Drain-owned lifecycle hooks in flight; a cancelled boundary waits for them.
     pub drain_hooks: std::sync::atomic::AtomicUsize,
     pub drain_hooks_settled: Notify,
+    /// Serializes recap generation, so concurrent requests make one model call.
+    pub recap: Mutex<()>,
 }
 
 struct DrainEntry {
@@ -1551,6 +1575,7 @@ impl Runtime {
                     title: title.into(),
                     usage: None,
                     cost: None,
+                    model: None,
                 },
             )],
         )?;
@@ -1875,6 +1900,7 @@ impl Inner {
             pending_hook_context: StdMutex::default(),
             drain_hooks: Default::default(),
             drain_hooks_settled: Notify::new(),
+            recap: Mutex::new(()),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

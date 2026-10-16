@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_markdown.rs
+expression: "render(&mut app, 80, 40, &opts)"
+---
+ cyber · Theme baseline                                                    idle
+› REFERENCE answer please
+
+    python
+    def fib(n):
+        # Build up solution iteratively
+        dp = [0, 1]
+        for i in range(2, n + 1):
+            dp.append(dp[i - 1] + dp[i - 2])
+        return dp[n]
+
+  This code demonstrates dynamic optimization principles:
+
+  1. Overlapping Subproblems: Both examples break down problems into smaller,
+     repeated subproblems
+  2. Optimal Substructure: Solutions are built from optimal solutions of
+     subproblems
+  3. Memoization: Results are cached to avoid recomputation
+
+  Key benefits of this approach, see the guide (https://example.com/dp):
+
+  • Time complexity improvement from exponential to polynomial
+  • Elimination of redundant computations
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                   100 · —  ctrl+p commands

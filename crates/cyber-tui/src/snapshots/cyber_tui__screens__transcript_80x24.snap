@@ -1,0 +1,55 @@
+---
+source: crates/cyber-tui/src/screens.rs
+expression: "render(&mut app, width, height, &opts)"
+---
+ cyber · Theme baseline                                                    idle
+› How do I speed up fib?
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                   100 · —  ctrl+p commands
+row 0: 0-6 fg=#00e5ff bg=#0b0f14 bold
+row 0: 7-74 fg=#d6e4f0 bg=#0b0f14
+row 0: 75-79 fg=#6b7a8f bg=#0b0f14
+row 3: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 3: 2-5 fg=#00e5ff bg=#0b0f14 bold
+row 3: 6-79 fg=#d6e4f0 bg=#0b0f14
+row 7: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 7: 2-4 fg=#6b7a8f bg=#0b0f14
+row 7: 5-16 fg=#d6e4f0 bg=#0b0f14 bold
+row 7: 17-79 fg=#d6e4f0 bg=#0b0f14
+row 12: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 12: 2-3 fg=#d6e4f0 bg=#171c21
+row 12: 4-6 fg=#c792ea bg=#171c21
+row 12: 7-9 fg=#00e5ff bg=#171c21
+row 12: 10-10 fg=#6b7a8f bg=#171c21
+row 12: 11-11 fg=#d6e4f0 bg=#171c21
+row 12: 12-12 fg=#6b7a8f bg=#171c21
+row 12: 13-16 fg=#c792ea bg=#171c21
+row 12: 17-17 fg=#6b7a8f bg=#171c21
+row 12: 18-18 fg=#c792ea bg=#171c21
+row 12: 19-20 fg=#6b7a8f bg=#171c21
+row 12: 21-25 fg=#c792ea bg=#171c21
+row 12: 26-26 fg=#6b7a8f bg=#171c21
+row 12: 27-29 fg=#c792ea bg=#171c21
+row 12: 30-30 fg=#6b7a8f bg=#171c21
+row 12: 31-78 fg=#d6e4f0 bg=#171c21
+row 12: 79-79 fg=#d6e4f0 bg=#0b0f14

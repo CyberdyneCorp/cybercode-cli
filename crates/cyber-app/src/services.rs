@@ -569,6 +569,7 @@ impl Services for AppServices {
                 name: agent.name,
                 description: agent.description,
                 mode: agent.mode,
+                color: agent.color,
             })
             .collect()
     }

@@ -17,6 +17,7 @@ pub mod permissions;
 pub mod review;
 pub mod serve;
 pub mod skills;
+pub mod stats;
 pub mod trust;
 pub mod tui;
 pub mod workflows;
@@ -78,6 +79,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Review(args) => review::run(*args, &ctx, &cli.global),
         Command::Doctor => doctor::run(&ctx, &cli.global),
+        Command::Stats(args) => stats::run(args, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
         Command::External(_) | Command::Import(_) => unreachable!("handled above"),
     }

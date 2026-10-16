@@ -1,0 +1,36 @@
+---
+source: crates/cyber-tui/src/screens_recap.rs
+expression: "render(&mut app, 100, 30, &plain)"
+---
+ cyber · Theme baseline                                                                        idle
+ ※ recap: I explained how to speed up fib with memoization and a cache. Next I'll add a benchmark
+          that compares the iterative version with the recursive one before changing the code.
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+› How do I speed up fib?
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                                       100 · —  ctrl+p commands
+row 1: 1-8 bold italic
+row 1: 9-96 italic

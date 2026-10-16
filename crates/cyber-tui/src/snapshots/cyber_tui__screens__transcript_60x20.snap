@@ -1,0 +1,51 @@
+---
+source: crates/cyber-tui/src/screens.rs
+expression: "render(&mut app, width, height, &opts)"
+---
+ cyber · Theme baseline                                idle
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app               100 · —  ctrl+p commands
+row 0: 0-6 fg=#00e5ff bg=#0b0f14 bold
+row 0: 7-54 fg=#d6e4f0 bg=#0b0f14
+row 0: 55-59 fg=#6b7a8f bg=#0b0f14
+row 2: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 2: 2-5 fg=#00e5ff bg=#0b0f14 bold
+row 2: 6-59 fg=#d6e4f0 bg=#0b0f14
+row 6: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 6: 2-4 fg=#6b7a8f bg=#0b0f14
+row 6: 5-16 fg=#d6e4f0 bg=#0b0f14 bold
+row 6: 17-59 fg=#d6e4f0 bg=#0b0f14
+row 11: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 11: 2-3 fg=#d6e4f0 bg=#171c21
+row 11: 4-6 fg=#c792ea bg=#171c21
+row 11: 7-9 fg=#00e5ff bg=#171c21
+row 11: 10-10 fg=#6b7a8f bg=#171c21
+row 11: 11-11 fg=#d6e4f0 bg=#171c21
+row 11: 12-12 fg=#6b7a8f bg=#171c21
+row 11: 13-16 fg=#c792ea bg=#171c21
+row 11: 17-17 fg=#6b7a8f bg=#171c21
+row 11: 18-18 fg=#c792ea bg=#171c21
+row 11: 19-20 fg=#6b7a8f bg=#171c21
+row 11: 21-25 fg=#c792ea bg=#171c21
+row 11: 26-26 fg=#6b7a8f bg=#171c21
+row 11: 27-29 fg=#c792ea bg=#171c21
+row 11: 30-30 fg=#6b7a8f bg=#171c21
+row 11: 31-58 fg=#d6e4f0 bg=#171c21
+row 11: 59-59 fg=#d6e4f0 bg=#0b0f14

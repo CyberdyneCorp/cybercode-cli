@@ -17,13 +17,17 @@ const DAY: u64 = 86_400;
 pub struct Sweep {
     pub tool_output_files: usize,
     pub archived_sessions: usize,
+    /// Usage ledger rows folded into daily aggregates.
+    pub usage_rows_folded: usize,
 }
 
-/// Retention settings from config: `storage.retention.{tool_output_days, archived_days}`.
+/// Retention settings from config: `storage.retention.{tool_output_days, archived_days}`
+/// and `telemetry.usage_retention_days`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Retention {
     pub tool_output_days: u64,
     pub archived_days: u64,
+    pub usage_days: u64,
 }
 
 impl Retention {
@@ -37,6 +41,10 @@ impl Retention {
         Self {
             tool_output_days: get("tool_output_days", 7),
             archived_days: get("archived_days", 90),
+            usage_days: config
+                .pointer("/telemetry/usage_retention_days")
+                .and_then(Value::as_u64)
+                .unwrap_or(365),
         }
     }
 }
@@ -53,7 +61,11 @@ pub fn spawn(
             cyber_core::log::info(
                 "retention",
                 "sweep",
-                json!({ "tool_output_files": swept.tool_output_files, "archived_sessions": swept.archived_sessions }),
+                json!({
+                    "tool_output_files": swept.tool_output_files,
+                    "archived_sessions": swept.archived_sessions,
+                    "usage_rows_folded": swept.usage_rows_folded,
+                }),
             );
             tokio::time::sleep(INTERVAL).await;
         }
@@ -73,7 +85,20 @@ pub async fn sweep(
             now,
         ),
         archived_sessions: old_archived_sessions(runtime, retention.archived_days, now).await,
+        usage_rows_folded: old_usage(runtime, retention.usage_days, now),
     }
+}
+
+/// Ledger rows older than the window fold into daily aggregates, so totals remain.
+fn old_usage(runtime: &Runtime, days: u64, now: SystemTime) -> usize {
+    if days == 0 {
+        return 0;
+    }
+    let cutoff_ms = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+        .saturating_sub((days * DAY * 1000) as i64);
+    runtime.fold_usage(cutoff_ms).unwrap_or(0)
 }
 
 fn older_than(time: SystemTime, days: u64, now: SystemTime) -> bool {
@@ -101,8 +126,10 @@ fn old_tool_output(dir: &Path, days: u64, now: SystemTime) -> usize {
         .count()
 }
 
+/// Waits while the usage ledger backfill runs, so purging old Sessions on the first
+/// start after an upgrade never races the ledger indexing them.
 async fn old_archived_sessions(runtime: &Runtime, days: u64, now: SystemTime) -> usize {
-    if days == 0 {
+    if days == 0 || runtime.usage_backfilling().unwrap_or(true) {
         return 0;
     }
     let cutoff_ms = now

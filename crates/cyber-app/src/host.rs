@@ -82,6 +82,10 @@ impl ToolHost for AppHost {
         self.builtin.session_budget(directory)
     }
 
+    fn daily_budget(&self, directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
+        self.builtin.daily_budget(directory)
+    }
+
     fn request_overlay(
         &self,
         turn: &TurnContext,
@@ -166,6 +170,27 @@ impl ToolHost for AppHost {
         call_id: &str,
     ) -> cyber_server::runtime::HookEffects {
         self.builtin.take_hook_effects(session_id, call_id)
+    }
+
+    fn file_decisions<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        action: &'a str,
+        paths: &'a [std::path::PathBuf],
+    ) -> BoxFuture<'a, Vec<cyber_server::runtime::FileDecision>> {
+        self.builtin.file_decisions(turn, action, paths)
+    }
+
+    fn authorize_file<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        action: &'a str,
+        path: &'a std::path::Path,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        self.builtin
+            .authorize_file(turn, action, path, asker, cancel)
     }
 
     fn resolve_prompt_resources<'a>(

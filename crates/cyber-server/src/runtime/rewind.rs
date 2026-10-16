@@ -296,6 +296,27 @@ impl Runtime {
         Ok(state.diffs.get(message_id).cloned().unwrap_or_default())
     }
 
+    /// Every file the Session changed: the diff from its first pre-Turn snapshot to its
+    /// latest post-Turn snapshot; empty before any snapshot.
+    pub async fn session_diff(&self, session_id: &str) -> Result<Vec<FileDiff>, RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        let (directory, first, last) = {
+            let state = handle.state.lock().await;
+            let first = state.steps.iter().find_map(|s| s.pre.clone());
+            let last = state.steps.iter().rev().find_map(|s| s.post.clone());
+            (state.info.directory.clone(), first, last)
+        };
+        let (Some(first), Some(last)) = (first, last) else {
+            return Ok(Vec::new());
+        };
+        self.inner
+            .options
+            .snapshots
+            .diff(&directory, &first, &last)
+            .await
+            .map_err(|e| RuntimeError::Conflict(format!("Session diff is unavailable: {e}")))
+    }
+
     /// Stage a rewind to just before `message_id`: restore files when the target includes
     /// code and record the revert. Repeated stages reuse the first baseline.
     pub async fn revert_stage(

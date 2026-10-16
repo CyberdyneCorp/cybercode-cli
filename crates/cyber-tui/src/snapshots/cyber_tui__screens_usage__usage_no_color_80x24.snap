@@ -1,0 +1,30 @@
+---
+source: crates/cyber-tui/src/screens_usage.rs
+expression: "render(&mut app, 80, 24, &plain)"
+---
+
+  Settings   Status    Config    Usage    Stats
+
+  Session
+
+  Total cost:            $0.0013
+  Total duration (API):  11s
+  Total duration (wall): 3h 21m 0s
+  Usage by model:
+       main:  100 input, 10 output, 0 cache read, 0 cache write ($0.0012)
+      small:  100 input, 10 output, 0 cache read, 0 cache write ($0.0001)
+
+  Tokens                   Own   Descendants   Total (known)
+  Input                    200             0             200
+  Output                    20             0              20
+  Reasoning                  0             0               0
+  Cache read                 0             0               0
+  Cache write                0             0               0
+
+  Cache hit rate: 0.0% (cache read / input + cache read + cache write)
+
+
+  ↑↓ scroll · d day · w week · r refresh · tab next tab · 1-4 jump · esc close
+ /Users/leo/work/app                               100 · $0.00  ctrl+p commands
+row 1: 2-9 bold
+row 1: 32-38 bold reverse

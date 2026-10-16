@@ -104,6 +104,8 @@ pub struct Endpoint {
     pub api_key: Option<String>,
     pub headers: Vec<(String, String)>,
     pub client: reqwest::Client,
+    /// Where the usage windows of this provider's responses are recorded, if anywhere.
+    pub limits: Option<crate::limits::LimitSink>,
 }
 
 impl Endpoint {
@@ -114,6 +116,7 @@ impl Endpoint {
             api_key,
             headers: Vec::new(),
             client,
+            limits: None,
         }
     }
 
@@ -162,6 +165,10 @@ impl Endpoint {
             .send()
             .await
             .map_err(|e| LlmError::from_reqwest(&e, &self.secrets()))?;
+        // Rate-limited and failed responses carry the windows too.
+        if let Some(sink) = &self.limits {
+            sink.observe(resp.headers());
+        }
         let status = resp.status().as_u16();
         if (200..300).contains(&status) {
             return Ok(resp);

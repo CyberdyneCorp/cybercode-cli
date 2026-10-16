@@ -76,6 +76,8 @@ pub enum LiveEvent {
         context_tokens: u64,
         context_limit: u64,
         utilization: f64,
+        /// The context window meter after this step.
+        context: super::ContextMeter,
     },
     /// A Drain stopped on an error the user must address.
     Error {

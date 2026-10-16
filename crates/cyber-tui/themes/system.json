@@ -1,0 +1,29 @@
+{
+  "theme": {
+    "background": "none",
+    "surface": "none",
+    "surface_alt": "none",
+    "text": "none",
+    "text_muted": "darkgray",
+    "text_subtle": "darkgray",
+    "accent": "cyan",
+    "secondary": "magenta",
+    "user": "blue",
+    "success": "green",
+    "warning": "yellow",
+    "error": "red",
+    "info": "cyan",
+    "border": "darkgray",
+    "border_active": "cyan",
+    "selection": "darkgray",
+    "diff_added_bg": "none",
+    "diff_removed_bg": "none",
+    "heat_0": "darkgray",
+    "heat_1": "blue",
+    "heat_2": "cyan",
+    "heat_3": "green",
+    "heat_4": "lightgreen",
+    "meter_fill": "cyan",
+    "meter_empty": "darkgray"
+  }
+}

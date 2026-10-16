@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_explorer.rs
+expression: "render(&mut app, 80, 30, &Opts::default())"
+---
+ work:main · 3 changed
+ / filter
+ M ├── ▾ crates
+ M │   └── ▾ cyber-tui
+ M │       └── ▾ src
+   │           ├── app.rs
+ M │           └── markdown.rs
+   ├── README.md
+ ? └── notes.md
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter open · / filter · g changed only · . hidden files · @ mention · y copy p…
+                                                       100 · —  ctrl+p commands

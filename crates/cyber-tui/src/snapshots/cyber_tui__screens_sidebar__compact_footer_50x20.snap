@@ -1,0 +1,24 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: compact
+---
+ cyber · Theme baseline                      idle
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" she
+┃
+┃ Build · main test · default
+                                          100 · —

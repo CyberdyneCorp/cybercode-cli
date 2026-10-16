@@ -1,0 +1,69 @@
+---
+source: crates/cyber-tui/src/screens_themes.rs
+expression: "render(&mut app, 124, 36, &light)"
+---
+› How do I speed up fib?
+  ┌ Theme ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │  All  ·  Dark  ·  Light               │  Preview · github-light                                                      │
+  │ › type to search                      │                                                                              │
+  │                                       │   ██████╗██╗   ██╗██████╗ ███████╗██████╗                                    │
+  │ DARK                                  │  ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗                                   │
+  │   cyber             ● ● ● ● ●  current│  ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝                                   │
+  │   system            ● ● ● ● ●         │  ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗                                   │
+  │   dracula           ● ● ● ● ●         │  ╚██████╗   ██║   ██████╔╝███████╗██║  ██║                                   │
+  │   tokyonight        ● ● ● ● ●         │   ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝                                   │
+  │   catppuccin        ● ● ● ● ●         │                                                                              │
+  │   gruvbox           ● ● ● ● ●         │    Heading                                                                   │
+  │   nord              ● ● ● ● ●         │                                                                              │
+  │   one-dark          ● ● ● ● ●         │    A paragraph with inline code and a link (https://example.com).            │
+  │   monokai           ● ● ● ● ●         │                                                                              │
+  │   everforest        ● ● ● ● ●         │    • a list item                                                             │
+  │   synthwave-84      ● ● ● ● ●         │    • another item                                                            │
+  │   rose-pine         ● ● ● ● ●         │                                                                              │
+  │   kanagawa          ● ● ● ● ●         │      rust                                                                    │
+  │   ayu-mirage        ● ● ● ● ●         │      fn main() {                                                             │
+  │   matrix            ● ● ● ● ●         │          let answer = 42; // the answer                                      │
+  │                                       │          println!("{answer}");                                               │
+  │ LIGHT                                 │      }                                                                       │
+  │ ❯ github-light      ● ● ● ● ●         │                                                                              │
+  │   solarized-light   ● ● ● ● ●         │  + an added line                                                             │
+  │   cyber-light       ● ● ● ● ●         │  - a removed line                                                            │
+  │                                       │                                                                              │
+  │                                       │  ✓ success   ⚠ warning   ✗ error                                             │
+  │                                       │                                                                              │
+  │                                       │  ▣ Build · main · 11.3s                                                      │
+  │                                       │                                                                              │
+┃ │                                       │  Contrast: text 14.7:1 AAA · muted 4.5:1 AA                                  │
+┃ │                                       │                                                                              │
+┃ │↑↓ select · tab filter · type to search · enter keep · p project · esc revert                                         │
+┃ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ /Users/leo/work/app                                          100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+row 23: 0-1 fg=#24292f bg=#ffffff
+row 23: 2-2 fg=#0969da bg=#f2f2f3
+row 23: 3-3 fg=#24292f bg=#f2f2f3
+row 23: 4-21 fg=#0969da bg=#ddf4ff bold
+row 23: 22-22 fg=#24292f bg=#f2f2f3
+row 23: 23-23 fg=#24292f bg=#ffffff
+row 23: 24-24 fg=#0969da bg=#ffffff
+row 23: 25-25 fg=#24292f bg=#ffffff
+row 23: 26-26 fg=#953800 bg=#ffffff
+row 23: 27-27 fg=#24292f bg=#ffffff
+row 23: 28-28 fg=#1a7f37 bg=#ffffff
+row 23: 29-29 fg=#24292f bg=#ffffff
+row 23: 30-30 fg=#9a6700 bg=#ffffff
+row 23: 31-31 fg=#24292f bg=#ffffff
+row 23: 32-32 fg=#cf222e bg=#ffffff
+row 23: 33-33 fg=#24292f bg=#ffffff
+row 23: 34-41 fg=#24292f bg=#f2f2f3
+row 23: 42-42 fg=#d0d7de bg=#f2f2f3
+row 23: 43-120 fg=#24292f bg=#f2f2f3
+row 23: 121-121 fg=#0969da bg=#f2f2f3
+row 23: 122-123 fg=#24292f bg=#f6f6f7
+row 31: 0-2 fg=#0969da bg=#f2f2f3
+row 31: 3-41 fg=#24292f bg=#f2f2f3
+row 31: 42-42 fg=#d0d7de bg=#f2f2f3
+row 31: 43-44 fg=#24292f bg=#f2f2f3
+row 31: 45-86 fg=#6e7781 bg=#f2f2f3
+row 31: 87-120 fg=#24292f bg=#f2f2f3
+row 31: 121-121 fg=#0969da bg=#f2f2f3
+row 31: 122-123 fg=#24292f bg=#f6f6f7

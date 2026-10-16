@@ -62,7 +62,12 @@ impl CompactionConfig {
 
 /// Whether the next request no longer fits: estimate > window − max(output allowance, buffer).
 pub(crate) fn needs(estimate: u64, context_limit: u64, max_output: u64, buffer: u64) -> bool {
-    context_limit > 0 && estimate > context_limit.saturating_sub(max_output.max(buffer))
+    compact_at(context_limit, max_output, buffer).is_some_and(|at| estimate > at)
+}
+
+/// The prompt size above which a request no longer fits; `None` for an unknown window.
+pub(crate) fn compact_at(context_limit: u64, max_output: u64, buffer: u64) -> Option<u64> {
+    (context_limit > 0).then(|| context_limit.saturating_sub(max_output.max(buffer)))
 }
 
 /// First entry of the verbatim tail: the newest entries up to `keep_tokens` (and at most
@@ -253,6 +258,7 @@ impl Inner {
                     trigger,
                     usage,
                     cost,
+                    model: Some(model.clone()),
                 };
                 self.commit(handle, vec![event(COMPACTION_COMPLETED, &payload)])
                     .await?;

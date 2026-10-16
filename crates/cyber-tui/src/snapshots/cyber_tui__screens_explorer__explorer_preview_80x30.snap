@@ -1,0 +1,50 @@
+---
+source: crates/cyber-tui/src/screens_explorer.rs
+expression: shown
+---
+ work:main · 3 changed
+ / filter
+ crates/cyber-tui/src/markdown.rs · rust · 6 lines
+1  //! Markdown.
+2
+3  pub fn render(text: &str) -> usize {
+4      // count the lines
+5      text.lines().count()
+6  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter open · / filter · g changed only · . hidden files · @ mention · y copy p…
+                                                       100 · —  ctrl+p commands
+row 5: 0-1 fg=#666f77 bg=#0b0f14
+row 5: 2-2 fg=#d6e4f0 bg=#0b0f14
+row 5: 3-9 fg=#c792ea bg=#0b0f14
+row 5: 10-15 fg=#00e5ff bg=#0b0f14
+row 5: 16-16 fg=#6b7a8f bg=#0b0f14
+row 5: 17-20 fg=#d6e4f0 bg=#0b0f14
+row 5: 21-21 fg=#6b7a8f bg=#0b0f14
+row 5: 22-22 fg=#c792ea bg=#0b0f14
+row 5: 23-23 fg=#d6e4f0 bg=#0b0f14
+row 5: 24-26 fg=#c792ea bg=#0b0f14
+row 5: 27-27 fg=#6b7a8f bg=#0b0f14
+row 5: 28-28 fg=#c792ea bg=#0b0f14
+row 5: 29-30 fg=#6b7a8f bg=#0b0f14
+row 5: 31-37 fg=#c792ea bg=#0b0f14
+row 5: 38-38 fg=#6b7a8f bg=#0b0f14
+row 5: 39-79 fg=#d6e4f0 bg=#0b0f14

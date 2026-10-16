@@ -48,6 +48,7 @@ pub fn run(
             client,
             directory,
             state_dir: ctx.paths.state.clone(),
+            config_dir: ctx.paths.config.clone(),
             start,
             fork: launch.fork,
             model: global.model.clone(),

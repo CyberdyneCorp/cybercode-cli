@@ -1,82 +1,197 @@
 //! Drawing (`tui` → Message and part rendering, Permission prompt, Question prompt).
 
+mod composer;
+mod explorer;
+pub(crate) mod footer;
+pub mod layout;
 mod messages;
 mod overlays;
+mod settings;
+mod sidebar;
+mod themes;
+pub mod welcome;
 mod wrap;
 
+#[cfg(test)]
+pub(crate) use messages::transcript;
+#[cfg(test)]
+pub(crate) use settings::lines as settings_lines;
+
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::{App, Overlay};
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
-    let composer_height = (app.composer.lines().len() as u16 + 2).clamp(3, 10);
-    let queued_height = (app.queued.len() as u16).min(4);
-    let [header, body, queued, status, composer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(3),
-        Constraint::Length(queued_height),
-        Constraint::Length(1),
-        Constraint::Length(composer_height),
-    ])
-    .areas(area);
-    draw_header(f, app, header);
-    messages::draw(f, app, body);
-    draw_queued(f, app, queued);
-    draw_status(f, app, status);
-    draw_composer(f, app, composer);
+    f.render_widget(Block::default().style(base(app)), area);
+    let plan = layout::plan(
+        area,
+        &layout::Inputs {
+            docked: app.sidebar.docked(area.width),
+            drawer: app.sidebar.drawer,
+            screen_reader: app.screen_reader,
+            queued: app.queued.len() as u16,
+            composer: composer::height(app),
+        },
+    );
+    app.frame_width
+        .store(area.width, std::sync::atomic::Ordering::Relaxed);
+    if plan.too_small {
+        draw_too_small(f, app, area);
+        return;
+    }
+    if matches!(app.overlay, Overlay::Settings | Overlay::Files) {
+        // Full screen over the transcript, composer and sidebar; the footer stays.
+        app.set_screen_links(Vec::new());
+        let panel = recap(
+            f,
+            app,
+            Rect {
+                height: area.height.saturating_sub(plan.footer.height),
+                ..area
+            },
+        );
+        if matches!(app.overlay, Overlay::Files) {
+            explorer::draw(f, app, panel);
+        } else {
+            settings::draw(f, app, panel);
+        }
+        footer::draw(f, app, plan.footer, plan.compact_footer);
+        return;
+    }
+    if plan.header.height > 0 {
+        draw_header(f, app, plan.header);
+    }
+    let transcript = recap(f, app, plan.transcript);
+    if welcome::shown(app) {
+        app.set_screen_links(Vec::new());
+        welcome::draw(f, app, transcript);
+    } else {
+        messages::draw(f, app, transcript);
+    }
+    draw_queued(f, app, plan.queued);
+    composer::draw(f, app, plan.composer);
+    footer::draw(f, app, plan.footer, plan.compact_footer);
+    if let Some(rect) = plan.sidebar {
+        sidebar::draw(f, app, rect);
+    }
     if let Some(c) = &app.completion {
-        overlays::completion(f, app, c, composer);
+        overlays::completion(f, app, c, plan.composer);
     }
     match &app.overlay {
-        Overlay::None => {}
+        Overlay::None | Overlay::Settings | Overlay::Files => {}
+        Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
+        Overlay::Palette(p) => overlays::palette(f, app, p, area),
         Overlay::Permission(step) => overlays::permission(f, app, step, area),
         Overlay::Question(form) => overlays::question(f, app, form, area),
-        Overlay::Cost => overlays::cost(f, app, area),
         Overlay::HookDefinitions => overlays::hook_definitions(f, app, area),
         Overlay::HookHistory => overlays::hook_history(f, app, area),
         Overlay::Memory => overlays::memory(f, app, area),
         Overlay::Help => overlays::help(f, app, area),
         Overlay::Findings => overlays::findings(f, app, area),
+        Overlay::FileDiff { index, scroll } => overlays::file_diff(f, app, *index, *scroll, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
     }
 }
 
+/// The recap block at the top of `area`, when one is shown and the rest keeps at least
+/// three rows; returns the area below it.
+fn recap(f: &mut Frame, app: &App, area: Rect) -> Rect {
+    let rows = crate::recap::rows(app, area.width.saturating_sub(2) as usize);
+    let height = rows.len() as u16;
+    if rows.is_empty() || area.height < height + 3 {
+        return area;
+    }
+    f.render_widget(
+        Paragraph::new(rows),
+        Rect {
+            x: area.x + 1,
+            width: area.width.saturating_sub(2),
+            height,
+            ..area
+        },
+    );
+    Rect {
+        y: area.y + height,
+        height: area.height - height,
+        ..area
+    }
+}
+
+/// `Terminal too small (40×10 minimum)`, centered, cut to the width.
+fn draw_too_small(f: &mut Frame, app: &App, area: Rect) {
+    app.set_screen_links(Vec::new());
+    let text = format!(
+        "Terminal too small ({}×{} minimum)",
+        layout::MIN_WIDTH,
+        layout::MIN_HEIGHT
+    );
+    let rows = (text.chars().count() as u16)
+        .div_ceil(area.width.max(1))
+        .max(1);
+    let top = area.height.saturating_sub(rows) / 2;
+    let rect = Rect {
+        y: area.y + top,
+        height: area.height - top,
+        ..area
+    };
+    f.render_widget(
+        Paragraph::new(Span::styled(text, Style::default().fg(app.theme.warning)))
+            .wrap(ratatui::widgets::Wrap { trim: true })
+            .alignment(ratatui::layout::Alignment::Center),
+        rect,
+    );
+}
+
+/// The theme's text on its background, for every cell nothing else styles.
+fn base(app: &App) -> Style {
+    Style::default().fg(app.theme.text).bg(app.theme.background)
+}
+
+/// A braille spinner frame every 250 ms (the redraw tick), or a static `…` under
+/// reduced motion.
+fn spinner(app: &App) -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    if app.reduced_motion {
+        return "…";
+    }
+    FRAMES[(app.uptime().as_millis() / 250) as usize % FRAMES.len()]
+}
+
+/// ` cyber · <title>` and the run state when the sidebar is not docked; the model, Mode
+/// and usage live in the composer info line and the status footer.
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
-    let s = &app.session;
-    let status = if s.running { "running" } else { "idle" };
-    let left = Line::from(vec![
+    let state = if app.session.running {
+        format!("{} running ", spinner(app))
+    } else {
+        "idle ".to_owned()
+    };
+    let room = (area.width as usize).saturating_sub(state.chars().count() + 10);
+    let title = layout::truncate_end(&crate::sidebar::clean(&app.session.title), room);
+    let line = Line::from(vec![
         Span::styled(
             " cyber ",
             Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("· {} ", s.title), Style::default().fg(t.text)),
-        Span::styled(
-            format!("· {} · {} · {status}", s.model, app.mode_label()),
-            Style::default().fg(t.muted),
-        ),
+        Span::styled(format!("· {title}"), Style::default().fg(t.text)),
     ]);
-    let right = format!(
-        "{} in / {} out · ${:.4} ",
-        s.input_tokens, s.output_tokens, s.cost
-    );
-    let width = area.width.saturating_sub(right.len() as u16);
-    f.render_widget(Paragraph::new(left), Rect { width, ..area });
-    let r = Rect {
-        x: area.x + width,
-        width: area.width - width,
-        ..area
+    f.render_widget(Paragraph::new(line), area);
+    let style = if app.session.running {
+        Style::default().fg(t.warning)
+    } else {
+        Style::default().fg(t.text_muted)
     };
     f.render_widget(
-        Paragraph::new(Span::styled(right, Style::default().fg(t.muted))),
-        r,
+        Paragraph::new(Line::from(Span::styled(state, style)))
+            .alignment(ratatui::layout::Alignment::Right),
+        area,
     );
 }
 
@@ -97,64 +212,4 @@ fn draw_queued(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines), area);
-}
-
-fn draw_status(f: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let text = match &app.toast {
-        Some((msg, at)) if at.elapsed().as_secs() < 6 => {
-            Span::styled(format!(" {msg}"), Style::default().fg(t.warning))
-        }
-        _ if app.admissions.pending(&app.session.id).is_some() => {
-            let entry = app
-                .admissions
-                .pending(&app.session.id)
-                .expect("pending admission");
-            Span::styled(
-                format!(
-                    " delegation {} · Esc cancels request · /admissions to inspect",
-                    entry.status
-                ),
-                Style::default().fg(t.muted),
-            )
-        }
-        _ if app.session.running => Span::styled(
-            " working… Esc to interrupt · Enter steers · Tab queues",
-            Style::default().fg(t.muted),
-        ),
-        _ => Span::styled(
-            " Enter send · Shift+Enter newline · / commands · @ files · ! shell · Ctrl+X h help",
-            Style::default().fg(t.muted),
-        ),
-    };
-    f.render_widget(Paragraph::new(text), area);
-}
-
-fn draw_composer(f: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let title = format!(" {} ", app.mode_label());
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(t.border))
-        .title(Span::styled(title, Style::default().fg(t.accent)));
-    let inner = block.inner(area);
-    let lines: Vec<Line> = app.composer.lines().into_iter().map(Line::from).collect();
-    let (row, col) = app.composer.cursor();
-    let skip = (row as u16).saturating_sub(inner.height.saturating_sub(1));
-    f.render_widget(Clear, area);
-    f.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .scroll((skip, 0))
-            .style(Style::default().fg(t.text)),
-        area,
-    );
-    if matches!(app.overlay, Overlay::None) {
-        let before: String = app.composer.lines()[row].chars().take(col).collect();
-        let x = inner.x + unicode_width::UnicodeWidthStr::width(before.as_str()) as u16;
-        f.set_cursor_position((
-            x.min(inner.right().saturating_sub(1)),
-            inner.y + row as u16 - skip,
-        ));
-    }
 }

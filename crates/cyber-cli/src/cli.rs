@@ -16,6 +16,7 @@ use crate::commands::{
     review::ReviewArgs,
     serve::{ServeArgs, ServiceCmd},
     skills::{CommandsCmd, SkillsCmd},
+    stats::StatsArgs,
     trust::TrustCmd,
     workflows::WorkflowsCmd,
     worktrees::WorktreeCmd,
@@ -197,6 +198,8 @@ pub enum Command {
     Api(ApiArgs),
     /// Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server.
     Doctor,
+    /// Usage statistics: activity, streaks, tokens, cost and per-model totals.
+    Stats(StatsArgs),
     /// Run evaluation manifests and write reports.
     Eval {
         #[command(subcommand)]

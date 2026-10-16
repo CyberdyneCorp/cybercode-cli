@@ -1,0 +1,15 @@
+{
+  "theme": {
+    "background": "#000000",
+    "text": "#00ff41",
+    "text_muted": "#00a828",
+    "accent": "#39ff14",
+    "user": "#b8ffb0",
+    "success": "#00ff41",
+    "warning": "#d7ff00",
+    "error": "#ff3b3b",
+    "border": "#003b00",
+    "selection": "#0d3d0d",
+    "secondary": "#00c832"
+  }
+}

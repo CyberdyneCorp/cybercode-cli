@@ -88,6 +88,10 @@ pub enum Entry {
         id: String,
         parts: Vec<Content>,
         source: String,
+        /// Time of the durable promotion event (`session-runtime` → Assistant
+        /// message timing); null only for entries recorded before it was kept.
+        #[serde(default)]
+        promoted_ms: Option<i64>,
     },
     Assistant(AssistantEntry),
     /// A Mid-Conversation System Message. Context updates belong to one epoch.
@@ -118,6 +122,18 @@ pub struct AssistantEntry {
     pub calls: Vec<String>,
     pub finished: bool,
     pub error: Option<String>,
+    /// The `session.step.failed.1` kind, such as `interrupted`.
+    #[serde(default)]
+    pub error_kind: Option<String>,
+    /// The agent pinned by `session.step.started.1`.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// Time of `session.step.started.1`.
+    #[serde(default)]
+    pub started_ms: Option<i64>,
+    /// Time of `session.step.ended.1` or `session.step.failed.1`; null while running.
+    #[serde(default)]
+    pub ended_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -258,6 +274,14 @@ pub struct RevertState {
     pub diff: String,
 }
 
+/// The model and usage of the last finished step.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LastStep {
+    pub provider: String,
+    pub model: String,
+    pub usage: Usage,
+}
+
 /// Snapshots around one step.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StepSnapshot {
@@ -325,10 +349,18 @@ pub struct SessionState {
     pub turn_mode: Option<String>,
     #[serde(skip)]
     pub(crate) turn_agent: Option<String>,
+    /// The last finished step's request, for the context meter; cleared by compaction.
+    /// Boxed: Session state is held in deeply nested futures, so it stays small.
+    #[serde(skip)]
+    pub last_step: Option<Box<LastStep>>,
     pub steps: Vec<StepSnapshot>,
     /// File diffs by user message.
     pub diffs: BTreeMap<String, Vec<super::host::FileDiff>>,
     pub revert: Option<RevertState>,
+    /// The latest `session.recap.generated.1`.
+    pub recap: Option<super::recap::Recap>,
+    /// Sequence of the latest finished (ended or failed) step; 0 before the first.
+    pub finished_seq: i64,
 }
 
 const MAX_INSTRUCTION_CHARS: usize = 2000;
@@ -499,9 +531,12 @@ impl SessionState {
             open_step: None,
             turn_mode: None,
             turn_agent: None,
+            last_step: None,
             steps: Vec::new(),
             diffs: BTreeMap::new(),
             revert: None,
+            recap: None,
+            finished_seq: 0,
         }
     }
 
@@ -577,7 +612,7 @@ impl SessionState {
             }
             "session.prompt.admitted" => self.on_admitted(decode(e)?, e.seq),
             "session.inbox.updated" => self.on_inbox_updated(decode(e)?),
-            "session.prompt.promoted" => self.on_promoted(decode::<Promoted>(e)?, e.seq),
+            "session.prompt.promoted" => self.on_promoted(decode::<Promoted>(e)?, e.seq, e.time_ms),
             "session.prompt.skill_forwarded" => {
                 self.turn_mode = None;
                 self.turn_agent = None;
@@ -627,17 +662,23 @@ impl SessionState {
                 self.session_started = true;
                 self.hook_stop_step = marker.stop_after_step;
             }
-            "session.step.started" => self.on_step_started(decode(e)?),
+            "session.step.started" => self.on_step_started(decode(e)?, e.time_ms),
             "session.text.ended" | "session.reasoning.ended" => self.on_content(kind, decode(e)?),
             "session.tool.called" => self.on_called(decode(e)?),
             "session.tool.dispatched" => self.on_dispatched(decode(e)?),
             "session.tool.settled" => self.on_settled(decode(e)?),
-            "session.step.ended" => self.on_step_ended(decode(e)?),
+            "session.step.ended" => {
+                self.on_step_ended(decode(e)?, e.time_ms);
+                self.finished_seq = e.seq;
+            }
             "usage.recorded" => {
                 let usage: super::events::AuxiliaryUsage = decode(e)?;
                 self.add_hidden(&usage.usage, usage.cost);
             }
-            "session.step.failed" => self.on_step_failed(decode(e)?),
+            "session.step.failed" => {
+                self.on_step_failed(decode(e)?, e.time_ms);
+                self.finished_seq = e.seq;
+            }
             _ => self.apply_meta(kind, e)?,
         }
         Ok(())
@@ -661,6 +702,15 @@ impl SessionState {
                 self.diffs.insert(d.message_id, d.diffs);
             }
             "session.reverted" => self.on_reverted(decode(e)?),
+            "session.recap.generated" => {
+                let recap: super::recap::RecapGenerated = decode(e)?;
+                self.recap = Some(super::recap::Recap {
+                    text: recap.text,
+                    model: recap.model,
+                    through_seq: recap.through_seq,
+                    generated_ms: e.time_ms,
+                });
+            }
             _ => {}
         }
         Ok(())
@@ -895,7 +945,7 @@ impl SessionState {
         }
     }
 
-    fn on_promoted(&mut self, p: Promoted, seq: i64) {
+    fn on_promoted(&mut self, p: Promoted, seq: i64, time_ms: i64) {
         self.child_requested_inputs.remove(&p.message_id);
         self.hook_contexts.remove(&p.message_id);
         let resources = self
@@ -919,6 +969,7 @@ impl SessionState {
             id: row.message_id.clone(),
             parts,
             source: row.source.clone(),
+            promoted_ms: Some(time_ms),
         };
         if row.source == "user" && !text.is_empty() {
             let sourced = Sourced {
@@ -972,10 +1023,11 @@ impl SessionState {
         });
     }
 
-    fn on_step_started(&mut self, s: StepStarted) {
+    fn on_step_started(&mut self, s: StepStarted, time_ms: i64) {
         self.first_turn_started = true;
         self.turn_mode = Some(s.mode.unwrap_or_else(|| self.info.mode.clone()));
-        self.turn_agent = Some(s.agent.unwrap_or_else(|| self.info.agent.clone()));
+        let agent = s.agent.unwrap_or_else(|| self.info.agent.clone());
+        self.turn_agent = Some(agent.clone());
         self.open_step = Some(s.message_id.clone());
         self.steps.push(StepSnapshot {
             step_id: s.message_id.clone(),
@@ -987,6 +1039,8 @@ impl SessionState {
             id: s.message_id,
             provider: s.provider,
             model: s.model,
+            agent: Some(agent),
+            started_ms: Some(time_ms),
             ..AssistantEntry::default()
         }));
     }
@@ -1059,9 +1113,16 @@ impl SessionState {
         }
     }
 
-    fn on_step_ended(&mut self, s: StepEnded) {
+    fn on_step_ended(&mut self, s: StepEnded, time_ms: i64) {
         if let Some(a) = self.assistant(&s.message_id) {
             a.finished = true;
+            a.ended_ms = Some(time_ms);
+            let (provider, model) = (a.provider.clone(), a.model.clone());
+            self.last_step = Some(Box::new(LastStep {
+                provider,
+                model,
+                usage: s.usage,
+            }));
         }
         self.open_step = None;
         self.totals.usage.add(&s.usage);
@@ -1073,9 +1134,11 @@ impl SessionState {
         self.steps_since_input = self.steps_since_input.saturating_add(1);
     }
 
-    fn on_step_failed(&mut self, f: StepFailed) {
+    fn on_step_failed(&mut self, f: StepFailed, time_ms: i64) {
         if let Some(a) = self.assistant(&f.message_id) {
             a.error = Some(f.message);
+            a.error_kind = Some(f.kind);
+            a.ended_ms = Some(time_ms);
         }
         self.open_step = None;
     }
@@ -1103,6 +1166,7 @@ impl SessionState {
             strip_media: c.trigger == CompactionTrigger::Overflow,
         });
         self.epoch_stale = true;
+        self.last_step = None;
     }
 
     /// Pending (not held) inbox rows of one delivery, in admission order.

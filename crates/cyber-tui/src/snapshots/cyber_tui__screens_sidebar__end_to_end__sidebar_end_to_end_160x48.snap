@@ -1,0 +1,52 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: "render(&mut app, 160, 48, &Opts::default())"
+---
+› WRITE the notes
+                                                                                                                  Theme baseline
+  ⏺ write notes.md  completed
+    │ Created notes.md                                                                                            Context
+    │ # Notes                                                                                                     100 tokens
+    │ one                                                                                                         — spent
+    │ two
+                                                                                                                  ▼ MCP
+  Wrote it.                                                                                                       ● context7 Connected
+                                                                                                                  ● local Connected
+  ▣ Build · main · 11.3s
+                                                                                                                  LSP
+                                                                                                                  LSPs will activate as files are read
+
+                                                                                                                  ▼ Modified files
+                                                                                                                  notes.md                               +3 -0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                                 ~/work/app:main
+┃ Build · main test · accept-edits
+ /Users/leo/work/app                                                                   100 · —  ctrl+p commands   ● Cyber Code 1.0.0

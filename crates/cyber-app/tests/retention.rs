@@ -64,6 +64,7 @@ async fn sweeps_remove_only_expired_items() {
     let policy = Retention {
         tool_output_days: 7,
         archived_days: 90,
+        usage_days: 365,
     };
     let soon = retention::sweep(&app.runtime, &paths.data, policy, now).await;
     assert_eq!((soon.tool_output_files, soon.archived_sessions), (1, 0));
@@ -72,6 +73,7 @@ async fn sweeps_remove_only_expired_items() {
     let disabled = Retention {
         tool_output_days: 0,
         archived_days: 0,
+        usage_days: 0,
     };
     assert_eq!(
         retention::sweep(&app.runtime, &paths.data, disabled, now + 365 * DAY)
@@ -79,6 +81,19 @@ async fn sweeps_remove_only_expired_items() {
             .archived_sessions,
         0
     );
+
+    // Regression: purging during the usage ledger backfill lost the purged Sessions'
+    // usage for good, so old archived Sessions wait for the backfill to finish.
+    let arm = |sql: &'static str| {
+        app.store
+            .transaction(move |tx| Ok(tx.execute_batch(sql)?))
+            .unwrap();
+    };
+    arm("INSERT INTO usage_backfill (id, cursor, target) VALUES (1, 0, 0)");
+    let backfilling = retention::sweep(&app.runtime, &paths.data, policy, now + 91 * DAY).await;
+    assert_eq!(backfilling.archived_sessions, 0);
+    assert!(app.runtime.state(&archived).await.is_ok());
+    arm("DELETE FROM usage_backfill");
 
     let later = retention::sweep(&app.runtime, &paths.data, policy, now + 91 * DAY).await;
     assert_eq!(later.archived_sessions, 1);
@@ -98,7 +113,8 @@ fn retention_reads_config_with_defaults() {
         r,
         Retention {
             tool_output_days: 7,
-            archived_days: 0
+            archived_days: 0,
+            usage_days: 365,
         }
     );
 }

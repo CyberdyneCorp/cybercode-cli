@@ -1,0 +1,28 @@
+---
+source: crates/cyber-tui/src/screens_usage.rs
+expression: "render(&mut app, 80, 24, &plain)"
+---
+
+  Settings   Status    Config    Usage    Stats
+
+
+  Tokens                   Own   Descendants   Total (known)
+  Input                    200             0             200
+  Output                    20             0              20
+  Reasoning                  0             0               0
+  Cache read                 0             0               0
+  Cache write                0             0               0
+
+  Cache hit rate: 0.0% (cache read / input + cache read + cache write)
+
+  test · 5-hour limit
+  ██████████████████████████████████░░░░░░ 85% used
+  Resets 6:00am (UTC) · Reading from 12m ago
+
+  What's contributing to your usage?
+  Approximate: Sessions recorded by this server only
+
+  Last 24h · These are independent characteristics of your usage, not a breakd
+
+  ↑↓ scroll · d day · w week · r refresh · tab next tab · 1-4 jump · esc close
+ /Users/leo/work/app                               100 · $0.00  ctrl+p commands

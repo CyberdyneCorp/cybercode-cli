@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_sidebar.rs
+expression: hidden
+---
+ cyber · Theme baseline                                                                        idle
+› How do I speed up fib?
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                                       100 · —  ctrl+p commands

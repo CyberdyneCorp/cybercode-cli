@@ -18,6 +18,37 @@ pub struct Session {
     pub cost: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Steps of the Session and its descendants without a price.
+    pub unpriced_steps: u64,
+    /// Cost of descendant Sessions; `children_incomplete` when some of it is lost.
+    pub children_cost: f64,
+    pub children_incomplete: bool,
+    /// The context window meter after the last finished step.
+    pub context: Option<ContextMeter>,
+}
+
+/// `observability-costs` → Context window meter, as the server reports it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ContextMeter {
+    pub used_tokens: u64,
+    pub window: Option<u64>,
+    pub compact_at: Option<u64>,
+}
+
+impl ContextMeter {
+    pub fn parse(v: &Value) -> Option<Self> {
+        Some(Self {
+            used_tokens: v["used_tokens"].as_u64()?,
+            window: v["window"].as_u64().filter(|w| *w > 0),
+            compact_at: v["compact_at"].as_u64(),
+        })
+    }
+
+    /// Percent of the window used, when the window is known.
+    pub fn percent(&self) -> Option<f64> {
+        self.window
+            .map(|window| self.used_tokens as f64 * 100.0 / window as f64)
+    }
 }
 
 impl Session {
@@ -58,6 +89,11 @@ impl Session {
             cost: v["totals"]["cost"].as_f64().unwrap_or(0.0),
             input_tokens: v["totals"]["usage"]["input"].as_u64().unwrap_or(0),
             output_tokens: v["totals"]["usage"]["output"].as_u64().unwrap_or(0),
+            unpriced_steps: v["totals"]["unpriced_steps"].as_u64().unwrap_or(0)
+                + v["children_unpriced_steps"].as_u64().unwrap_or(0),
+            children_cost: v["children_cost"].as_f64().unwrap_or(0.0),
+            children_incomplete: v["children_usage_complete"] == false,
+            context: ContextMeter::parse(&v["context"]),
         }
     }
 }
@@ -99,11 +135,26 @@ impl Tool {
     }
 }
 
+/// Durable timing and attribution of one assistant step (`session-runtime` →
+/// Assistant message timing).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Step {
+    pub agent: String,
+    pub provider: String,
+    pub model: String,
+    pub started_ms: Option<i64>,
+    /// `None` while the step runs.
+    pub ended_ms: Option<i64>,
+    /// The failure kind, such as `interrupted`.
+    pub error_kind: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     User {
         id: String,
         text: String,
+        promoted_ms: Option<i64>,
     },
     Assistant {
         id: String,
@@ -111,6 +162,7 @@ pub enum Item {
         reasoning: String,
         tools: Vec<Tool>,
         error: Option<String>,
+        step: Step,
     },
     System {
         id: String,
@@ -131,6 +183,7 @@ impl Item {
             "user" => Some(Item::User {
                 id,
                 text: parts_text(&v["parts"]),
+                promoted_ms: v["promoted_ms"].as_i64(),
             }),
             "system" => Some(Item::System {
                 id,
@@ -147,6 +200,14 @@ impl Item {
                     .map(tool)
                     .collect(),
                 error: v["error"].as_str().map(str::to_string),
+                step: Step {
+                    agent: v["agent"].as_str().unwrap_or_default().into(),
+                    provider: v["provider"].as_str().unwrap_or_default().into(),
+                    model: v["model"].as_str().unwrap_or_default().into(),
+                    started_ms: v["started_ms"].as_i64(),
+                    ended_ms: v["ended_ms"].as_i64(),
+                    error_kind: v["error_kind"].as_str().map(str::to_string),
+                },
             }),
             _ => None,
         }
@@ -331,4 +392,56 @@ pub struct Choice {
     pub key: String,
     pub label: String,
     pub detail: String,
+}
+
+/// Model and agent metadata from `GET /models` and `GET /agents`, for display names
+/// and agent colors.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Catalog {
+    /// `provider/model` → display name.
+    pub models: Vec<(String, String)>,
+    /// Agent name → configured color, as written.
+    pub agents: Vec<(String, Option<String>)>,
+}
+
+impl Catalog {
+    pub fn parse(models: &Value, agents: &Value) -> Self {
+        let rows = |v: &Value| v.as_array().cloned().unwrap_or_default();
+        Self {
+            models: rows(models)
+                .iter()
+                .filter_map(|m| {
+                    let id = m["id"].as_str()?;
+                    let name = m["name"].as_str().filter(|n| !n.trim().is_empty())?;
+                    Some((id.to_owned(), name.to_owned()))
+                })
+                .collect(),
+            agents: rows(agents)
+                .iter()
+                .filter_map(|a| {
+                    let name = a["name"].as_str()?;
+                    Some((name.to_owned(), a["color"].as_str().map(str::to_owned)))
+                })
+                .collect(),
+        }
+    }
+
+    /// The display name of `provider/model[#variant]`, else its model ID.
+    pub fn model_name(&self, reference: &str) -> String {
+        let base = reference.split('#').next().unwrap_or(reference);
+        let name = self
+            .models
+            .iter()
+            .find(|(id, _)| id == base)
+            .map(|(_, name)| name.as_str())
+            .unwrap_or_else(|| base.split_once('/').map_or(base, |(_, model)| model));
+        name.chars().filter(|c| !c.is_control()).collect()
+    }
+
+    pub fn agent_color(&self, agent: &str) -> Option<&str> {
+        self.agents
+            .iter()
+            .find(|(name, _)| name == agent)
+            .and_then(|(_, color)| color.as_deref())
+    }
 }

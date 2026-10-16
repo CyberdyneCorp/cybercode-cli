@@ -1,0 +1,77 @@
+---
+source: crates/cyber-tui/src/screens_markdown.rs
+expression: "render(&mut app, width, height, &opts)"
+---
+› REFERENCE answer please
+                                                                                      Theme baseline
+    python
+    def fib(n):                                                                       Context
+        # Build up solution iteratively                                               100 tokens
+        dp = [0, 1]                                                                   — spent
+        for i in range(2, n + 1):
+            dp.append(dp[i - 1] + dp[i - 2])                                          LSP
+        return dp[n]                                                                  LSPs will activate as files are
+                                                                                      read
+  This code demonstrates dynamic optimization principles:
+
+  1. Overlapping Subproblems: Both examples break down problems into smaller,
+     repeated subproblems
+  2. Optimal Substructure: Solutions are built from optimal solutions of
+     subproblems
+  3. Memoization: Results are cached to avoid recomputation
+
+  Key benefits of this approach, see the guide (https://example.com/dp):
+
+  • Time complexity improvement from exponential to polynomial
+  • Elimination of redundant computations
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                     ~/work/app
+┃ Build · main test · default
+ /Users/leo/work/app                                       100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+row 4: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 4: 2-3 fg=#d6e4f0 bg=#171c21
+row 4: 4-7 fg=#c792ea bg=#171c21
+row 4: 8-38 fg=#6b7a8f bg=#171c21 italic
+row 4: 39-82 fg=#d6e4f0 bg=#171c21
+row 4: 83-83 fg=#d6e4f0 bg=#0b0f14
+row 4: 84-85 fg=#d6e4f0 bg=#13181d
+row 4: 86-95 fg=#6b7a8f bg=#13181d
+row 4: 96-119 fg=#d6e4f0 bg=#13181d
+row 6: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 6: 2-3 fg=#d6e4f0 bg=#171c21
+row 6: 4-16 fg=#c792ea bg=#171c21
+row 6: 17-21 fg=#00e5ff bg=#171c21
+row 6: 22-22 fg=#6b7a8f bg=#171c21
+row 6: 23-23 fg=#ffcc66 bg=#171c21
+row 6: 24-24 fg=#6b7a8f bg=#171c21
+row 6: 25-27 fg=#c792ea bg=#171c21
+row 6: 28-28 fg=#d6e4f0 bg=#171c21
+row 6: 29-29 fg=#c792ea bg=#171c21
+row 6: 30-30 fg=#ffcc66 bg=#171c21
+row 6: 31-32 fg=#6b7a8f bg=#171c21
+row 6: 33-82 fg=#d6e4f0 bg=#171c21
+row 6: 83-83 fg=#d6e4f0 bg=#0b0f14
+row 6: 84-119 fg=#d6e4f0 bg=#13181d
+row 12: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 12: 2-4 fg=#6b7a8f bg=#0b0f14
+row 12: 5-28 fg=#d6e4f0 bg=#0b0f14 bold
+row 12: 29-83 fg=#d6e4f0 bg=#0b0f14
+row 12: 84-119 fg=#d6e4f0 bg=#13181d
+row 20: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 20: 2-3 fg=#6b7a8f bg=#0b0f14
+row 20: 4-83 fg=#d6e4f0 bg=#0b0f14
+row 20: 84-119 fg=#d6e4f0 bg=#13181d

@@ -1,8 +1,10 @@
 //! A local OpenAI-compatible model for production-path tests: an HTTP endpoint that
 //! answers every streamed chat request with the `delta` its reply function chooses and
 //! records each request body. A reply of `{"hold": true}` keeps the request open until
-//! [`ScriptedModel::release`], so a test can stop a server mid-Turn. It never reaches the
-//! internet.
+//! [`ScriptedModel::release`], so a test can stop a server mid-Turn, and `{"fail": 400}`
+//! answers with that HTTP error status. A `"headers"` object in a reply is sent as
+//! response headers (provider usage windows) instead of being part of the `delta`.
+//! It never reaches the internet.
 #![allow(dead_code)]
 
 use std::io::{Read, Write};
@@ -100,6 +102,25 @@ fn answer(
         }
         delta = json!({"content": "released answer"});
     }
+    let headers: String = delta
+        .as_object_mut()
+        .and_then(|d| d.remove("headers"))
+        .and_then(|h| h.as_object().cloned())
+        .unwrap_or_default()
+        .iter()
+        .map(|(name, value)| format!("{name}: {}\r\n", value.as_str().unwrap_or_default()))
+        .collect();
+    if let Some(status) = delta.get("fail").and_then(Value::as_u64) {
+        let error =
+            json!({"error": {"message": "scripted failure", "type": "invalid_request_error"}})
+                .to_string();
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status} Error\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
+            error.len()
+        );
+        return;
+    }
     let finish = if delta.get("tool_calls").is_some() {
         "tool_calls"
     } else {
@@ -110,7 +131,7 @@ fn answer(
     let reply = format!("data: {chunk}\n\ndata: [DONE]\n\n");
     let _ = write!(
         stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+        "HTTP/1.1 200 OK\r\n{headers}Content-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
         reply.len()
     );
 }

@@ -102,12 +102,19 @@ pub trait ModelResolver: Send + Sync {
 
     /// The configured model for a role, following the role fallbacks.
     fn role(&self, role: ModelRole) -> Option<String>;
+
+    /// The latest usage window readings the providers of resolved models reported
+    /// (`observability-costs` → Provider-reported limits); empty when none reported.
+    fn limits(&self) -> Vec<cyber_llm::limits::LimitReading> {
+        Vec::new()
+    }
 }
 
 /// Resolution through the catalog and the user's configuration.
 pub struct CatalogResolver {
     catalog: Catalog,
     config: Value,
+    limits: cyber_llm::limits::LimitStore,
 }
 
 impl CatalogResolver {
@@ -117,7 +124,11 @@ impl CatalogResolver {
             config: &config,
             env,
         });
-        Self { catalog, config }
+        Self {
+            catalog,
+            config,
+            limits: Default::default(),
+        }
     }
 
     pub fn catalog(&self) -> &Catalog {
@@ -136,7 +147,8 @@ impl ModelResolver for CatalogResolver {
 
     fn resolve(&self, model_ref: &str) -> Result<ResolvedModel, String> {
         let r = ModelRef::parse(model_ref).map_err(|e| e.to_string())?;
-        let target = self.catalog.resolve(&r, None).map_err(|e| e.to_string())?;
+        let mut target = self.catalog.resolve(&r, None).map_err(|e| e.to_string())?;
+        target.endpoint.limits = Some(self.limits.sink(&r.provider));
         let (_, model) = self.catalog.find(&r).map_err(|e| e.to_string())?;
         Ok(ResolvedModel {
             adapter: Arc::from(target.adapter()),
@@ -151,6 +163,10 @@ impl ModelResolver for CatalogResolver {
 
     fn role(&self, role: ModelRole) -> Option<String> {
         role_ref(&self.config, role)
+    }
+
+    fn limits(&self) -> Vec<cyber_llm::limits::LimitReading> {
+        self.limits.readings()
     }
 }
 
@@ -191,6 +207,15 @@ pub struct TurnContext {
     pub prefers_apply_patch: bool,
     /// The Session ruleset.
     pub rules: Value,
+}
+
+/// A path's permission decision for browsing (`server-api` → File browsing routes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileDecision {
+    Allow,
+    Ask,
+    Deny,
 }
 
 /// The invocation context (`tool-registry` → Invocation context).
@@ -486,6 +511,11 @@ pub trait ToolHost: Send + Sync {
         Ok(None)
     }
 
+    /// `budgets.daily`: the per-machine daily cap the Usage breakdown reports.
+    fn daily_budget(&self, _directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
+        Ok(None)
+    }
+
     /// Selected agent request options from trusted, validated Location configuration.
     fn request_overlay(
         &self,
@@ -668,6 +698,33 @@ pub trait ToolHost: Send + Sync {
         _cancel: CancellationToken,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async { Vec::new() })
+    }
+
+    /// `action` (`read` or `list`) decisions for project paths under the Session's rules
+    /// and Mode, without asking (`server-api` → File browsing routes). A Turn context
+    /// without a Session ID uses the Location's rules. Hosts without permission rules
+    /// deny every path.
+    fn file_decisions<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _action: &'a str,
+        paths: &'a [std::path::PathBuf],
+    ) -> BoxFuture<'a, Vec<FileDecision>> {
+        Box::pin(async move { vec![FileDecision::Deny; paths.len()] })
+    }
+
+    /// Authorize `action` on `path` as the `read` tool would, through the normal
+    /// permission request when the rules say `ask`. Hosts without permission rules
+    /// refuse.
+    fn authorize_file<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _action: &'a str,
+        _path: &'a std::path::Path,
+        _asker: super::Asker,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Err("File access is unavailable in this host".into()) })
     }
 
     /// Expand a planned command template once, before admission commits

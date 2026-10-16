@@ -1992,3 +1992,143 @@ fn api_reconciliation_uses_the_registered_service_without_creating_a_job() {
     let stop = env.cyber(&["service", "stop", "--format", "json"]);
     assert!(stop.status.success(), "{}", stderr(&stop));
 }
+
+/// Reads `notes.txt` once when asked to, then answers.
+fn stats_reply(body: &Value) -> Value {
+    let asked = body["messages"].to_string().contains("read the notes");
+    let answered = body["messages"]
+        .as_array()
+        .is_some_and(|m| m.iter().any(|m| m["role"] == "tool"));
+    if asked && !answered {
+        let arguments = serde_json::json!({ "path": "notes.txt" }).to_string();
+        return serde_json::json!({ "tool_calls": [{ "index": 0, "id": "call_read",
+            "type": "function", "function": { "name": "read", "arguments": arguments } }] });
+    }
+    serde_json::json!({ "content": "done" })
+}
+
+/// The value of a `cyber stats` text row.
+fn stats_row(text: &str, label: &str) -> String {
+    text.lines()
+        .find_map(|line| line.strip_prefix(label))
+        .unwrap_or_else(|| panic!("no {label:?} row in\n{text}"))
+        .trim()
+        .to_owned()
+}
+
+/// Two answered Sessions through the shared server: one in project `a` that reads a
+/// file, one in project `b`.
+fn stats_sessions(service: &StartedService<'_>, root: &Path) -> (PathBuf, PathBuf) {
+    let (a, b) = (root.join("a"), root.join("b"));
+    for dir in [&a, &b] {
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+    }
+    std::fs::write(a.join("notes.txt"), "notes").unwrap();
+    for (dir, prompt) in [(&a, "read the notes"), (&b, "hello")] {
+        let ran = service.cyber(&[
+            "--cwd",
+            dir.to_str().unwrap(),
+            "exec",
+            "--model",
+            "test/main",
+            prompt,
+        ]);
+        exits(&ran, 0);
+    }
+    (a, b)
+}
+
+/// `--format json` is the route's answer unchanged.
+fn stats_json_is_the_route(service: &StartedService<'_>) {
+    let month = json(&exits_ok(
+        &service.cyber(&["stats", "--days", "30", "--format", "json"]),
+    ));
+    let route = json(&exits_ok(&service.cyber(&[
+        "api",
+        "v1.usage.stats",
+        "--param",
+        "period=30d",
+    ])));
+    assert_eq!(month, route["data"]);
+    assert_eq!(month["period"], "30d");
+    assert_eq!(month["days"].as_array().unwrap().len(), 30);
+    assert_eq!(month["totals"]["sessions"], 2, "{month}");
+    assert_eq!(month["current_streak"], 1);
+    assert_eq!(month["favorite_model"]["model"], "main");
+}
+
+/// The text shows the same numbers as the JSON.
+fn stats_text_matches_json(service: &StartedService<'_>) {
+    let week = exits_ok(&service.cyber(&["stats", "--days", "7", "--models"]));
+    let text = stdout(&week);
+    let json7 = json(&exits_ok(
+        &service.cyber(&["stats", "--days", "7", "--format", "json"]),
+    ));
+    assert!(text.starts_with("Last 7 days · all projects · "), "{text}");
+    assert_eq!(stats_row(&text, "Sessions"), "2");
+    assert_eq!(
+        stats_row(&text, "Total tokens"),
+        json7["totals"]["total_tokens"].to_string()
+    );
+    assert_eq!(
+        stats_row(&text, "Turns"),
+        json7["totals"]["turns"].to_string()
+    );
+    assert_eq!(stats_row(&text, "Active days"), "1/7");
+    assert_eq!(stats_row(&text, "Current streak"), "1 days");
+    assert!(stats_row(&text, "Total cost").starts_with('$'), "{text}");
+    let row = text
+        .lines()
+        .find(|l| l.starts_with("test/main "))
+        .unwrap_or_else(|| panic!("no model row in\n{text}"));
+    assert!(row.contains("100%"), "{row}");
+}
+
+/// Only the project of `a`, and tool calls by name.
+fn stats_scope_and_tools(service: &StartedService<'_>, a: &Path) {
+    let scoped = json(&exits_ok(&service.cyber(&[
+        "stats",
+        "--project",
+        a.to_str().unwrap(),
+        "--tools",
+        "--format",
+        "json",
+    ])));
+    assert_eq!(scoped["totals"]["sessions"], 1, "{scoped}");
+    assert_eq!(
+        scoped["tools"],
+        serde_json::json!([{ "name": "read", "calls": 1 }])
+    );
+    let all = json(&exits_ok(
+        &service.cyber(&["stats", "--tools", "--format", "json"]),
+    ));
+    assert_eq!(all["period"], "all");
+    assert_eq!(all["tools"][0]["name"], "read");
+}
+
+#[test]
+fn stats_render_the_usage_stats_route_for_days_projects_models_and_tools() {
+    let model = scripted_model::ScriptedModel::start(stats_reply);
+    let env = Env::new();
+    let catalog = env.root.join("models.json");
+    std::fs::write(&catalog, "{}").unwrap();
+    let mut config = model.config();
+    config["providers"]["test"]["models"]["main"] =
+        serde_json::json!({ "cost": { "input": 10.0, "output": 20.0 } });
+    config["permissions"] = serde_json::json!("allow");
+    let home = env.root.join("cyber-home/config");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("cyber.jsonc"), config.to_string()).unwrap();
+    let service = StartedService(&env, catalog);
+    let (a, _b) = stats_sessions(&service, &env.root);
+    stats_json_is_the_route(&service);
+    stats_text_matches_json(&service);
+    stats_scope_and_tools(&service, &a);
+    exits(&service.cyber(&["stats", "--days", "0"]), 2);
+    exits(&service.cyber(&["stats", "--project", "missing-dir"]), 2);
+}
+
+fn exits_ok(output: &Output) -> Output {
+    exits(output, 0);
+    output.clone()
+}

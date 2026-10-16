@@ -1,0 +1,28 @@
+---
+source: crates/cyber-tui/src/screens.rs
+expression: "render(&mut app, 80, 24, &opts)"
+---
+ cyber · Theme baseline                                                    idle
+› ┌ Theme ───────────────────────────────────────────────────────────────────┐
+  │  All  ·  Dark  ·  Light               │  Preview · cyber                 │
+  │ › type to search                      │                                  │
+  │                                       │  Colors are disabled (NO_COLOR   │
+  │ DARK                                  │  or tui.color none).             │
+  │ ❯ cyber            current            │  The chosen theme applies when   │
+  │   system                              │  colors are enabled again.       │
+  │   dracula                             │                                  │
+  │   tokyonight                          │                                  │
+  │   catppuccin                          │                                  │
+  │   gruvbox                             │                                  │
+  │   nord                                │                                  │
+  │   one-dark                            │                                  │
+  │   monokai                             │                                  │
+  │   everforest                          │                                  │
+  │   synthwave-84                        │                                  │
+  │   rose-pine                           │                                  │
+  │   kanagawa                            │                                  │
+┃ │   ayu-mirage                          │                                  │
+┃ │   matrix                              │                                  │
+┃ │↑↓ select · tab filter · type to search · enter keep · p project · esc re…│
+┃ └──────────────────────────────────────────────────────────────────────────┘
+ /Users/leo/work/app                                   100 · —  ctrl+p commands

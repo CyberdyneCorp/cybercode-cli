@@ -1,0 +1,36 @@
+---
+source: crates/cyber-tui/src/screens_settings.rs
+expression: shown
+---
+
+  Settings   Status    Config    Usage    Stats
+
+  TUI preferences
+
+  › theme                         cyber          default
+    theme_mode                    auto           default
+    sidebar                       auto           default
+    recap                         auto           default
+    reasoning                     collapsed      default
+    diff_style                    auto           default
+    timestamps                    off            default
+    color                         auto           default
+    accessibility.reduced_motion  off            default
+
+  Saved to kv.json; a later edit of tui.jsonc wins.
+
+  Core settings: use cyber config or edit cyber.jsonc
+
+
+
+
+  ↑↓ select · enter change · tab next tab · 1-4 jump · esc close
+ /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+row 1: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 1: 2-9 fg=#00e5ff bg=#0b0f14 bold
+row 1: 10-21 fg=#d6e4f0 bg=#0b0f14
+row 1: 22-29 fg=#00e5ff bg=#1f2a3a bold
+row 1: 30-79 fg=#d6e4f0 bg=#0b0f14
+row 5: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 5: 2-55 fg=#00e5ff bg=#1f2a3a bold
+row 5: 56-79 fg=#d6e4f0 bg=#0b0f14
