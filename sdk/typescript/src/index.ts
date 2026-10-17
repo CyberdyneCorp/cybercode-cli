@@ -28,6 +28,7 @@ export type { CyberHandle, StartOptions } from "./start.js";
 export {
   WorkflowRunError,
   type ResultOptions,
+  type WorkflowListFilter,
   type WorkflowRunHandle,
   type WorkflowRunInput,
 } from "./workflows.js";

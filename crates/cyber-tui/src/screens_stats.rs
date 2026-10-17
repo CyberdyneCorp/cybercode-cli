@@ -342,3 +342,58 @@ async fn a_failed_load_says_so_and_keeps_the_panel() {
     let bad = json!({ "days": [{ "date": "not a date", "total_tokens": 0, "turns": 0 }] });
     assert!(crate::settings::stats::Stats::parse(&bad).is_err());
 }
+
+#[tokio::test]
+async fn the_book_line_compares_input_and_output_with_a_book() {
+    let (server, mut app) = stats_app().await;
+    stabilize(&mut app);
+    let json = route(&server, "all").await;
+    let tokens = &json["totals"]["tokens"];
+    let total = tokens["input"].as_u64().unwrap() + tokens["output"].as_u64().unwrap();
+    let expected = crate::books::comparison(total).unwrap();
+    let opts = Opts {
+        legend: &["Your input and output"],
+        ..Opts::default()
+    };
+    let buf = buffer(&mut app, 120, 40, &opts);
+    let y = row_of(&buf, &expected);
+    assert_eq!(row(&buf, y).trim(), expected);
+    let x = row(&buf, y).find("Your").unwrap() as u16;
+    assert_eq!(buf[(x, y)].fg, app.theme.accent);
+    // Right under the token classes.
+    assert!(row(&buf, y - 1).contains("Input "), "{}", row(&buf, y - 1));
+    let shown = render(&mut app, 120, 40, &opts);
+    let book: String = shown
+        .lines()
+        .filter(|l| l.contains("Input ") || l.contains("Your input") || l.starts_with("row "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    insta::assert_snapshot!("stats_book_line_120x40", book);
+
+    // A period without usage has no line.
+    let stats = app.settings.stats.data.data.as_mut().unwrap();
+    stats.totals.tokens.input = 0;
+    stats.totals.tokens.output = 0;
+    let buf = buffer(&mut app, 120, 40, &Opts::default());
+    assert!(!(0..40).any(|y| row(&buf, y).contains("Your input and output")));
+}
+
+#[tokio::test]
+async fn one_day_is_singular_in_the_tab_and_the_sentence() {
+    let (_server, mut app) = stats_app().await;
+    stabilize(&mut app);
+    let stats = app.settings.stats.data.data.as_mut().unwrap();
+    (stats.current_streak, stats.longest_streak) = (1, 1);
+    (stats.active_days, stats.period_days) = (1, 1);
+    let buf = buffer(&mut app, 120, 40, &Opts::default());
+    assert_eq!(value(&buf, "Current streak:"), "1 day");
+    assert_eq!(value(&buf, "Longest streak:"), "1 day");
+    app.screen_reader = true;
+    let shown = render(&mut app, 120, 40, &Opts::default());
+    assert!(shown.contains("Active 1 of 1 day;"), "{shown}");
+    assert!(shown.contains("; current streak 1 day\n"), "{shown}");
+    let stats = app.settings.stats.data.data.as_mut().unwrap();
+    stats.current_streak = 2;
+    let shown = render(&mut app, 120, 40, &Opts::default());
+    assert!(shown.contains("; current streak 2 days"), "{shown}");
+}

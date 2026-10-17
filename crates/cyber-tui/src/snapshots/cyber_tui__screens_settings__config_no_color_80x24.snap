@@ -11,6 +11,8 @@ expression: "render(&mut app, 80, 24, &plain)"
     theme_mode                    auto           default
     sidebar                       auto           default
     recap                         auto           default
+    spinner                       nyan           default
+    workflow_notifications        own            default
     reasoning                     collapsed      default
     diff_style                    auto           default
     timestamps                    off            default
@@ -20,8 +22,6 @@ expression: "render(&mut app, 80, 24, &plain)"
   Saved to kv.json; a later edit of tui.jsonc wins.
 
   Core settings: use cyber config or edit cyber.jsonc
-
-
 
 
   ↑↓ select · enter change · tab next tab · 1-4 jump · esc close

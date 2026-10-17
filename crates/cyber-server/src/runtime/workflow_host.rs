@@ -4,8 +4,8 @@
 //!
 //! It lives on the run's engine thread. Each call is sequenced when the engine dispatches
 //! it and matched against the replay record; a recorded result is delivered in its
-//! recorded order without calling a model. Otherwise an agent call checks pause, acquires
-//! a permit from the server-wide FIFO limit, checks pause again and the run budget, is
+//! recorded order without calling a model. Otherwise an agent call checks pause, waits for
+//! a slot from the server-wide fair scheduler, checks pause again and the run budget, is
 //! recorded as started, and crosses to the tokio runtime to spawn (or resume) a child
 //! Session through [`ToolHost::spawn_workflow_agent`]. A call the host rejects (invalid
 //! options, an unknown tier, `ask()`) is sequenced and recorded like the others. The
@@ -26,12 +26,12 @@ use cyber_workflow::{AgentCall, Diagnostic, DiagnosticKind, HostFuture, Workflow
 use futures::future::Either;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::budget::RunSpend;
 use super::host::{RunWorktree, ToolHost, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest};
 use super::workflow_control::{Control, Signal};
 use super::workflow_replay::{Outcome, Plan, Replay};
+use super::workflow_scheduler::{Slot, WorkflowScheduler};
 use super::workflows::{
     AGENT_SETTLED, AGENT_STARTED, CALL_RECORDED, LOG, PHASE, RunLog, WorkflowAgent, WorkflowRun,
 };
@@ -68,7 +68,9 @@ pub(super) struct RunHost {
     results: Option<std::path::PathBuf>,
     tools: Arc<dyn ToolHost>,
     runtime: WeakRuntime,
-    slots: Arc<Semaphore>,
+    scheduler: WorkflowScheduler,
+    /// The run's share of the scheduler's slots (`max_concurrent`).
+    share: usize,
     handle: tokio::runtime::Handle,
     control: Arc<Control>,
     run_id: String,
@@ -89,7 +91,8 @@ pub(super) struct RunHost {
     exceeded: RefCell<Option<String>>,
     /// The attempt ended for pause, stop or shutdown; its status is already durable.
     halted: Cell<bool>,
-    /// Edit-capable agents without an `isolation` choice, issued and not yet settled.
+    /// Edit-capable agents without an `isolation` choice, issued and not yet settled, of
+    /// every run in the Location (shared through `Inner::workflow_writers`).
     writers: Arc<AtomicUsize>,
     /// What `ctx.budget` shows: the snapshot of the latest delivered result.
     budget_view: RefCell<Value>,
@@ -163,8 +166,9 @@ enum Isolation {
     InPlace,
     /// `isolation: "worktree"`: its own managed worktree.
     Worktree,
-    /// An edit-capable agent without a choice: a worktree when another such agent of the
-    /// run is in flight when it starts. The slot counts it until the call settles.
+    /// An edit-capable agent without a choice: a worktree when another such agent of any
+    /// run in the Location is in flight when it starts. The slot counts it until the call
+    /// settles.
     Auto { _slot: WriterSlot },
 }
 
@@ -185,6 +189,22 @@ impl Drop for WriterSlot {
     }
 }
 
+impl Runtime {
+    /// The writer count of a Location, shared by every run there; keyed by the canonical
+    /// directory so two spellings of one checkout count together.
+    pub(super) fn workflow_writers(&self, directory: &str) -> Arc<AtomicUsize> {
+        let key = super::workflow_recovery::location_key(directory);
+        let mut writers = self
+            .inner
+            .workflow_writers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A count no run holds is recreated on demand.
+        writers.retain(|_, count| Arc::strong_count(count) > 1);
+        Arc::clone(writers.entry(key).or_default())
+    }
+}
+
 impl RunHost {
     pub(super) fn new(
         runtime: &Runtime,
@@ -201,7 +221,8 @@ impl RunHost {
             results: runtime.workflow_dir(),
             tools: Arc::clone(&runtime.inner.tools),
             runtime: runtime.downgrade(),
-            slots: runtime.workflow_slots(),
+            scheduler: runtime.workflow_scheduler(),
+            share: run.share.map_or(usize::MAX, |share| share as usize),
             handle: tokio::runtime::Handle::current(),
             control,
             run_id: run.id.clone(),
@@ -217,7 +238,7 @@ impl RunHost {
             in_flight: Cell::new(0),
             exceeded: Default::default(),
             halted: Cell::new(false),
-            writers: Default::default(),
+            writers: runtime.workflow_writers(&run.directory),
             budget_view: RefCell::new(Value::Null),
             records: RecordCount::of(&runtime.inner.store, &run.id),
             wall_rejected: Cell::new(false),
@@ -253,6 +274,7 @@ impl RunHost {
 
     /// The attempt is over: cancel calls it abandoned.
     pub(super) fn end(&self) {
+        self.scheduler.remove(&self.run_id);
         if self.control.signal() == Signal::Running {
             self.control.cancel.cancel();
         }
@@ -341,6 +363,8 @@ impl RunHost {
                 error: None,
                 cost: 0.0,
                 tokens: 0,
+                started_ms: None,
+                ended_ms: None,
             },
             agent,
             prompt: call.prompt,
@@ -374,7 +398,7 @@ impl RunHost {
     }
 
     /// Whether a new agent gets its own worktree: chosen, or another edit-capable agent
-    /// without a choice is in flight in the same Location.
+    /// without a choice, of this run or another, is in flight in the same Location.
     fn isolates(&self, isolation: &Isolation) -> bool {
         match isolation {
             Isolation::InPlace => false,
@@ -462,7 +486,7 @@ impl RunHost {
             return self.record_call("agent", seq, &key, outcome);
         }
         let resumed = self.replay.unsettled(&key);
-        let permit = self.slot().await?;
+        let slot = self.slot().await?;
         if resumed.is_none()
             && let Err(error) = self.charge_agent()
         {
@@ -478,7 +502,7 @@ impl RunHost {
         self.record_agent(AGENT_STARTED, &prepared.record, seq, None)?;
         self.in_flight.set(self.in_flight.get() + 1);
         let outcome = self
-            .spawn(&prepared, resumed.is_some(), worktree, permit)
+            .spawn(&prepared, resumed.is_some(), worktree, slot)
             .await;
         self.in_flight.set(self.in_flight.get() - 1);
         self.control.changed.notify_waiters();
@@ -504,21 +528,22 @@ impl RunHost {
         }
     }
 
-    /// A permit from the server-wide FIFO limit, before the agent is recorded as started.
+    /// A slot from the server-wide fair scheduler, before the agent is recorded as started.
     /// A run paused or stopped while the call waited for it starts nothing: the call leaves
     /// the queue at once and stays unrecorded, so a resume serves it.
-    async fn slot(&self) -> Result<OwnedSemaphorePermit, Diagnostic> {
+    async fn slot(&self) -> Result<Slot, Diagnostic> {
         self.admit().await?;
-        let acquire = Arc::clone(&self.slots).acquire_owned();
+        let waiter = self.scheduler.enqueue(&self.run_id, self.share);
         let interrupted = futures::future::select(
             Box::pin(self.control.cancel.cancelled()),
             Box::pin(self.signalled()),
         );
-        futures::pin_mut!(acquire);
-        if let Either::Left((permit, _)) = futures::future::select(acquire, interrupted).await {
-            let permit = permit.map_err(|e| failed(e.to_string()))?;
-            if self.control.signal() == Signal::Running {
-                return Ok(permit);
+        if let Either::Left((granted, _)) = futures::future::select(waiter, interrupted).await {
+            let running = self.control.signal() == Signal::Running;
+            match granted {
+                Ok(slot) if running => return Ok(slot),
+                Err(_) if running => return Err(failed("the workflow agent queue closed")),
+                _ => {}
             }
         }
         // Paused, stopped or closing while queued: let the agents in flight of a paused run
@@ -588,7 +613,7 @@ impl RunHost {
         prepared: &Prepared,
         resume: bool,
         worktree: Option<RunWorktree>,
-        permit: OwnedSemaphorePermit,
+        slot: Slot,
     ) -> Result<WorkflowAgentOutput, Diagnostic> {
         let cancel = self.control.cancel.child_token();
         let _stop = cancel.clone().drop_guard();
@@ -628,7 +653,7 @@ impl RunHost {
                 label,
                 resume,
                 worktree,
-                permit,
+                slot,
             };
             tools.spawn_workflow_agent(request, cancel).await
         });

@@ -696,7 +696,17 @@ jobs:
         run: python3 ../../scripts/generate_sdk.py --check
       - run: npm ci
       - run: npm run typecheck
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sdk
+      # The end-to-end tests (`test/*.e2e.test.ts`) drive the real binary.
+      - name: Build the cyber binary
+        working-directory: .
+        run: cargo build --locked -p cyber-cli --bin cyber
       - run: npm test
+        env:
+          CYBER_BIN: ${{ github.workspace }}/target/debug/cyber
 
   specs:
     name: OpenSpec

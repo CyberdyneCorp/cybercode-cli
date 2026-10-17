@@ -2,6 +2,47 @@
 
 P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `p1-handoff.md` and `p1-acceptance-audit.md`). The plan, the requirement-to-task mapping and the scope exclusions are in [`openspec/changes/implement-m2-1-workflow-runtime`](../../openspec/changes/implement-m2-1-workflow-runtime/proposal.md).
 
+## Parallel workflow runs (`add-parallel-workflow-runs`, 2026-10-16)
+
+Uncommitted working tree. Sections 1–10 of [`add-parallel-workflow-runs`](../../openspec/changes/add-parallel-workflow-runs/tasks.md) are implemented and tested, with production-path tests per section (App over authenticated HTTP with the gated scripted provider, the real `cyber` binary, the SDK against the real binary, and the TUI through `TestBackend` against the production server):
+
+- **Fair agent scheduler** (`runtime/workflow_scheduler.rs`): the `min(workflows.max_concurrent, CPU cores)` agent slots go to the least recently granted run, FIFO within a run, work-conserving; per-run share from `max_concurrent` (CLI, HTTP, resume, `workflow` tool, `meta.max_concurrent`) or `workflows.max_concurrent_per_run`, recorded as `share`. Unit and property tests (300 seeded sequences, R ≤ 8: no idle slot while a run is eligible, each head waiter granted within R grants).
+- **Independent lifecycle:** per-run locks for pause, stop, resume, dispatch and end; a Location writer registry for worktree isolation across runs.
+- **Run queue** (`runtime/workflow_queue.rs`): `workflows.max_running_runs` (default 8), `queued` with `queue_position`, `workflow.run.dispatched.1`, oldest first; pause and stop of a queued run; wall budget not charged while queued.
+- **Recovery of several runs:** running runs become `paused` with `interrupted: true`, queued runs stay queued and are dispatched after recovery; `POST /workflows/runs/resume_interrupted`, `cyber workflows resume --interrupted`, `workflows.resume_after_restart`.
+- **Coalesced handback:** up to 8 consecutive workflow summaries share one Turn.
+- **Run summaries:** agent counts, tokens, cost, active elapsed time, share and queue position; `status`/`session_id`/`directory`/`limit`/`cursor` filters; `workflow.run.progress` live events (coalesced at 250 ms, only on change).
+- **CLI:** the `runs` table, `--all`, `--status`, `--watch` (TTY redraw, line or NDJSON otherwise), `run --max-concurrent`.
+- **SDK:** `client.workflows.list()` and `get()`, progress in `events()`, `examples/parallel-workflows.ts`; the e2e tests run against `target/debug/cyber` (`CYBER_BIN`; the CI `sdk` job now builds it).
+- **TUI:** the `/workflows` monitor (list, run tree, child transcripts, `p`/`r`/`x`/`R`/`s`/`l`/`a`, per-row nyan bars, TOKENS from 120 columns), the sidebar Workflows section, the `workflows` footer field, aggregate known progress on the Nyan progress line, and run-end notices (`tui.workflow_notifications`). The Nyan indicator itself (`tui.spinner`, `improve-tui-experience` 8.8) and the Stats book comparison line landed in the same tree.
+
+### End-to-end acceptance (manual, real binary and server)
+
+Driven with a gated scripted local provider (no network, no live model) against `cyber serve --register --port 0`, the `cyber` binary, HTTP, and the TUI in a pty read with pyte; `workflows.max_concurrent: 4`, `max_running_runs: 3`. The tooling and captures live in the session scratchpad (`acc-runs/`), not in the repository.
+
+| # | Scenario | Observed |
+|---|---|---|
+| 1 | Three runs at once: CLI (30 agents), HTTP (3), the `workflow` tool in Session S (3, `max_concurrent: 2`) | All running within 0.26 s, queued A=26, B=3, C=3 while A held the 4 slots. After B and C queued: B started at grants 1, 4, 7, C at 2, 5, 8, A at 3, 6, 9… (gap ≤ R=3; FIFO would have put B behind 26 grants of A). Peak 4 overall, 2 for C; 36 agents, one model call each; results correct; S got its handback |
+| 2 | `max_running_runs: 2`, four runs | q3 `#1 in queue`, q4 `#2` (`show`: `queued (#2 in queue)`), no model calls for either; q3 dispatched when q1 completed, q4 when q2 completed; all 2/2 |
+| 3 | Pause one, stop another, resume the first | Pause removed Y's 3 queued calls, X and Z unchanged; Y's in-flight agent finished and the freed slot went to Z. Stop cancelled Z's two agents with X's still in flight. Y resumed and completed (one model call per agent), X 4/4, Z stayed stopped |
+| 4 | SIGKILL with two runs mid-flight and one queued; restart; `resume --interrupted`; repeated with `resume_after_restart: true` | K1, K2 `paused` (`interrupted`, `the server restarted; resume to continue`), K3 dispatched; `resumed <K1>`, `resumed <K2>`; settled agents never called the model again; each interrupted child Session resumed once; all completed 3/3/2. The automatic variant matched |
+| 5 | `cyber workflows runs --watch` | Non-TTY: 53 change lines and 53 NDJSON objects, A from (0,4,26) to (30,0,0); SIGINT exit 0, no run changed. TTY (120×12 pty): redrawn in place, Ctrl-C exit 0 with the run still running |
+| 6 | TUI `/workflows` | Four runs with phase, nyan bar, d/r/q/f, tokens, cost, elapsed and `#1 in queue`; run tree (`▼ Fan out 0/30 · 1 running · 29 queued`), child transcript and Esc back; `p` paused only the selected run (`paused (1 settling)`), `p` while settling showed `⚠ Run has agents still exiting; retry shortly` on the row, `p` after it settled resumed; sidebar rows, `⚙ 4 workflows · 1 queued`, `✓ own completed · 6 agents · $0.03 · 28s` in the transcript and a toast for a CLI run; all indicators gone after the last run |
+| 7 | Nyan indicator | A held Turn drew the full-width `▀` trail with `~[,,_,,]:3  Thinking · 1.9s · esc interrupt`; a run at 2/6 drew a third of the width and `own 2/6 agents · 33%` |
+| 8 | Stats book line | `Your input and output are ~1.1x the tokens in Brave New World` in the Stats tab and in `cyber stats` |
+
+Bugs found and fixed, each with a regression test: Enter/`t` on an agent of a run another Session owns showed `no transcript yet` (`screens_workflows.rs` `the_transcript_of_an_agent_of_another_sessions_run_opens`, fails without the fix); a queued run printed `cost -0.0000 USD` and an agent-less handback carried `"cost_usd": -0.0` (`a_run_without_agents_costs_zero_not_negative_zero`, `handback_of_a_run_without_agents_costs_zero_not_negative_zero`, real-binary `cli.rs` `workflows_run_wait_keeps_waiting_while_the_run_is_queued`); the monitor lacked the TOKENS column the spec requires (added from 120 columns, snapshots updated).
+
+### Not done
+
+- `crates/cyber-app/tests/parallel_workflows.rs` (tasks 11.1–11.4) is not written: the acceptance above is manual and its fixtures are outside the repository. It also ran a different shape than 11.1 (30/3/3 agents rather than 12/2/6), did not assert 11.2's per-attempt summary counts, and drove the TUI in a pty rather than `TestBackend`, without exercising `x` or `r`.
+- Neither change is archived (12.2 and `improve-tui-experience` 10.2), so the ROADMAP inventory refresh is pending.
+- Cosmetic: wrapped long tool output and user messages lose the `    │ ` gutter; a queued run shows `······ 0/0` in the sidebar.
+
+### Verification (macOS, 2026-10-16)
+
+Whole working tree, after the doc updates: `cargo test --workspace --no-fail-fast` passed (3,144 passed, 0 failed, 4 ignored, 222 test binaries); `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo clippy --target x86_64-pc-windows-gnu --all-targets -p cyber-app -p cyber-cli -p cyber-core -p cyber-server -p cyber-tools -p cyber-tui -- -D warnings` clean (type-check only, with stub mingw tools; no native Windows run); `cargo fmt --all -- --check` clean; `python3 scripts/generate_sdk.py --check`, `npm run typecheck` and `npm test` with `CYBER_BIN=target/debug/cyber` (92 passed, none skipped) passed; `openspec validate --all --strict` passed (66 items); `python3 scripts/spec_lint.py` 0 errors, 21 warnings (the baseline). `screens_indicators::another_sessions_run_notifies_only_when_the_location_is_asked_for` failed once in four earlier full parallel `cyber-tui` runs during the acceptance and passed alone and in this workspace run; it is not confirmed whether it also flakes on `main`.
+
 ## Provider-reported usage limits (`improve-tui-experience` section 9, 2026-10-16)
 
 Uncommitted, part of the TUI overhaul working tree (see the P1 status entry of the same date for the whole-tree validation). `cyber-llm/src/limits.rs` reads plan and rate-limit windows from provider response headers (Anthropic unified and rate-limit headers, `x-codex-*`, `x-ratelimit-*`), never from local usage; `GET /api/v1/usage/limits` (`v1.usage.limits`, SDK `client.usage.limits()`) lists the latest reading per provider and window, and the TUI Usage tab draws one meter per window with `d`/`w`. A provider without such headers yields an empty list and no meters (tested through the App router in `crates/cyber-app/tests/usage_limits.rs`). Not driven against a live provider.

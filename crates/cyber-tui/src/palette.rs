@@ -115,6 +115,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         Some("sidebar_toggle"),
         false,
     ),
+    (
+        "workflows",
+        "monitor and control Workflow Runs",
+        None,
+        false,
+    ),
     ("exit", "quit", None, false),
 ];
 

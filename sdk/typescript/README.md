@@ -213,24 +213,37 @@ npm run build       # dist/
 `python3 scripts/generate_sdk.py --check` exits 1 when it is out of date. WebSocket operations
 (`x-websocket: true`, e.g. `GET /api/v1/ws`) get no typed method. Examples live in
 `examples/` (drive a session, stream events with resume, approve permissions, register an app
-tool, run a workflow).
+tool, run a workflow, run several workflows at once).
 
 ## Workflow runs
 
-`client.workflows.run({ name | script, args?, budget?, session_id? })` starts a Workflow Run in
-the server (`POST /api/v1/workflows/runs`) and returns a handle. Without `session_id` it first
-creates an owner Session in the client's Location. The handle offers:
+`client.workflows.run({ name | script, args?, budget?, max_concurrent?, session_id? })` starts a
+Workflow Run in the server (`POST /api/v1/workflows/runs`) and returns a handle. Without
+`session_id` it first creates an owner Session in the client's Location. `max_concurrent` is the
+run's share of the server-wide agent slots. The handle offers:
 
-- `status()`: the run with its agents (`v1.workflow.get`)
-- `events()`: this run's durable `workflow.*` events from the Location's event stream
+- `status()`: the run's summary with its agents (`v1.workflow.get`)
+- `events()`: this run's durable `workflow.*` events and its live `workflow.run.progress` events
+  from the Location's event stream
 - `pause()`, `resume({ revision? })` and `cancel()` (stop)
-- `result()`: polls until the run ends; resolves the script's return value when it completed
-  (`{ result_file, result_preview }` above 1 MiB) and rejects with `WorkflowRunError` (carrying
-  the run) when it failed, exceeded its budget, stopped or paused
+- `result()`: polls until the run ends; a `queued` run is still waiting, as a `running` one is. It
+  resolves the script's return value when the run completed (`{ result_file, result_preview }`
+  above 1 MiB) and rejects with `WorkflowRunError` (carrying the run) when it failed, exceeded its
+  budget, stopped or paused
+
+`client.workflows.list({ status?, session_id?, directory?, limit? })` yields a handle for each run
+`GET /api/v1/workflows/runs` lists (active runs first, then the newest; `directory: "all"` for every
+Location), each carrying its `summary` (agent counts, tokens, cost, active time). It reads further
+pages lazily as the iteration reaches them. `client.workflows.get(id)` returns the handle of an
+existing run, so a script can attach to a run another client started.
 
 ```ts
 const run = await client.workflows.run({ name: "audit", args: { base: "main" }, budget: { max_cost_usd: 10 } });
 console.log(await run.result());
+
+for await (const active of client.workflows.list({ status: ["running", "queued"] })) {
+  console.log(active.id, active.summary?.agents, await active.result());
+}
 ```
 
 

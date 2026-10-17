@@ -117,6 +117,6 @@ pub(super) async fn live(
     Ok(directory)
 }
 
-fn canonical(directory: String) -> String {
+pub(super) fn canonical(directory: String) -> String {
     std::fs::canonicalize(&directory).map_or(directory, |path| path.display().to_string())
 }

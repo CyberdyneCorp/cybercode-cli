@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Clone)]
 struct Seen {
     prompt: String,
+    run_id: String,
     agent_id: String,
     call_key: String,
     model: Option<String>,
@@ -51,6 +52,42 @@ struct Agents {
     runtime: OnceLock<WeakRuntime>,
     /// Every agent profile can edit files in the Location.
     writers: AtomicBool,
+    /// Prompts starting with `gate` each wait for one [`Gate::open`], in arrival order.
+    gate_permits: Gate,
+    /// Offer a `stall` tool that ignores cancellation for [`STALL`]; `realstall` children
+    /// call it, like a child that is slow to exit.
+    stall: AtomicBool,
+    /// `stall` calls entered.
+    stalled: AtomicUsize,
+}
+
+/// How long a `stall` tool call ignores cancellation: longer than a subtree stop waits.
+const STALL: Duration = Duration::from_millis(2500);
+
+/// Releases gated agents one at a time.
+struct Gate(tokio::sync::Semaphore);
+
+impl Default for Gate {
+    fn default() -> Self {
+        Self(tokio::sync::Semaphore::new(0))
+    }
+}
+
+impl Gate {
+    fn open(&self) {
+        self.0.add_permits(1);
+    }
+
+    /// Wait for one opening; false when cancelled first.
+    async fn pass(&self, cancel: &CancellationToken) -> bool {
+        tokio::select! {
+            permit = self.0.acquire() => {
+                permit.unwrap().forget();
+                true
+            }
+            _ = cancel.cancelled() => false,
+        }
+    }
 }
 
 impl Agents {
@@ -96,10 +133,15 @@ impl Agents {
         prompt: &str,
     ) -> Result<WorkflowAgentOutput, Diagnostic> {
         let runtime = self.runtime.get().and_then(WeakRuntime::upgrade).unwrap();
+        let model = if prompt.starts_with("realstall") {
+            "test/stall"
+        } else {
+            "test/main"
+        };
         let child = runtime
             .create_session(CreateSession {
                 directory: owner.directory.clone(),
-                model: "test/main".into(),
+                model: model.into(),
                 parent_id: Some(owner.session_id.clone()),
                 subagent_name: Some(agent_id.to_owned()),
                 workflow_run_id: Some(run_id.to_owned()),
@@ -155,11 +197,21 @@ impl Agents {
 
 impl ToolHost for Agents {
     fn definitions(&self, _turn: &TurnContext) -> Vec<ToolDef> {
+        if self.stall.load(Ordering::SeqCst) {
+            return vec![support::def("stall", RetrySafety::ReadOnly, true)];
+        }
         Vec::new()
     }
 
-    fn execute(&self, _call: Invocation, _cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
-        Box::pin(async { ToolOutcome::Failed("no tools".into()) })
+    fn execute(&self, call: Invocation, _cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
+        Box::pin(async move {
+            if call.name != "stall" {
+                return ToolOutcome::Failed("no tools".into());
+            }
+            self.stalled.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(STALL).await;
+            ToolOutcome::Ok("stalled".into())
+        })
     }
 
     fn spawn_workflow_agent(
@@ -169,10 +221,11 @@ impl ToolHost for Agents {
     ) -> BoxFuture<'_, Result<WorkflowAgentOutput, Diagnostic>> {
         Box::pin(async move {
             // Held until this agent settles, as a real host does.
-            let _permit = request.permit;
+            let _slot = request.slot;
             self.check_recorded(&request.run_id, &request.prompt);
             self.seen.lock().unwrap().push(Seen {
                 prompt: request.prompt.clone(),
+                run_id: request.run_id.clone(),
                 agent_id: request.agent_id.clone(),
                 call_key: request.call_key.clone(),
                 model: request.model.clone(),
@@ -200,6 +253,9 @@ impl ToolHost for Agents {
             // `flaky` holds on its first attempt and fails when resumed.
             if task.starts_with("flaky") && request.resume {
                 return Err(Diagnostic::new(DiagnosticKind::AgentFailed, "flaky failed"));
+            }
+            if task.starts_with("gate") && !self.gate_permits.pass(&cancel).await {
+                return Err(Diagnostic::new(DiagnosticKind::AgentFailed, "cancelled"));
             }
             if (task.starts_with("hold")
                 || task.starts_with("stubborn")
@@ -263,8 +319,16 @@ fn runtime_over(agents: &Arc<Agents>, store: &Arc<Store>, dir: &std::path::Path)
     let steps = (0..4)
         .map(|n| support::text(&format!("turn {n}")))
         .collect();
-    let models = support::models(vec![("test/main", steps)], 200_000, &[]);
-    Runtime::new(RuntimeOptions {
+    let stalls = (0..2)
+        .map(|n| support::tools(&[(&format!("call_stall_{n}"), "stall", "{}")]))
+        .chain((0..2).map(|n| support::text(&format!("stalled {n}"))))
+        .collect();
+    let models = support::models(
+        vec![("test/main", steps), ("test/stall", stalls)],
+        200_000,
+        &[],
+    );
+    let runtime = Runtime::new(RuntimeOptions {
         store: Arc::clone(store),
         resolver: models as Arc<dyn ModelResolver>,
         tools: Arc::clone(agents) as Arc<dyn ToolHost>,
@@ -277,7 +341,44 @@ fn runtime_over(agents: &Arc<Agents>, store: &Arc<Store>, dir: &std::path::Path)
         today: Some("2026-10-16".into()),
         interactive: false,
         snapshots: Arc::new(NoSnapshots),
-    })
+    });
+    runtime.configure_workflow_relaunch(Arc::new(StoredRelaunch));
+    runtime
+}
+
+/// A relaunch as the HTTP layer builds one after a restart: the run's script file as the
+/// user left it, else its stored source, with the fixture's limits and tiers.
+struct StoredRelaunch;
+
+impl WorkflowRelaunch for StoredRelaunch {
+    fn relaunch<'a>(
+        &'a self,
+        runtime: &'a Runtime,
+        run: &'a WorkflowRun,
+    ) -> BoxFuture<'a, Result<ResumeWorkflowRun, String>> {
+        Box::pin(async move {
+            let edited = run
+                .script_file
+                .as_ref()
+                .and_then(|file| std::fs::read_to_string(file).ok());
+            let source = match edited {
+                Some(source) => source,
+                None => runtime
+                    .workflow_run_source(&run.id)
+                    .map_err(|error| error.to_string())?
+                    .ok_or("no stored source")?,
+            };
+            Ok(ResumeWorkflowRun {
+                run_id: run.id.clone(),
+                module: WorkflowModule::inline(source).map_err(|error| error.to_string())?,
+                limits: Limits::default(),
+                tiers: BTreeMap::new(),
+                budget: None,
+                revision: false,
+                share: RunShare::requested(run.max_concurrent),
+            })
+        })
+    }
 }
 
 fn default_budget() -> RunBudget {
@@ -345,6 +446,7 @@ impl Fixture {
                 limits: Limits::default(),
                 tiers,
                 budget,
+                share: Default::default(),
                 starter: Default::default(),
             })
             .await
@@ -373,6 +475,7 @@ impl Fixture {
                 tiers: BTreeMap::new(),
                 budget: None,
                 revision,
+                share: Default::default(),
             })
             .await
     }
@@ -488,6 +591,14 @@ async fn settled_results_are_durable_before_the_script_observes_them() {
         assert_eq!(agent.phase.as_deref(), Some("Scan"));
         assert_eq!(seen.mode, "plan");
         assert_eq!(seen.owner, owner);
+        // The projection times each agent from its events, for the monitor's durations.
+        let (started, ended) = (agent.started_ms.unwrap(), agent.ended_ms.unwrap());
+        assert!(run.started_ms <= started && started <= ended, "{agent:?}");
+    }
+    assert!(recorded[0].ended_ms <= recorded[1].started_ms);
+    for kind in ["workflow.agent.started.1", "workflow.agent.settled.1"] {
+        let recorded = &f.events(&run.id, kind)[0];
+        assert!(recorded.get("started_ms").is_none() && recorded.get("ended_ms").is_none());
     }
     assert_eq!(recorded[1].label.as_deref(), Some("next"));
     let runs = f.runtime.workflow_runs(Some(&owner)).unwrap();
@@ -528,50 +639,67 @@ async fn repeated_calls_get_ordinals_and_failures_are_recorded() {
     assert_eq!(failed.session_id, None);
 }
 
+/// Fair agent scheduling: a run that queues behind a larger one is served on the next free
+/// slot, then the two alternate, whatever the larger run's queue length.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_global_limit_is_fifo_across_runs() {
-    let agents = Arc::new(Agents {
-        delay: Duration::from_millis(100),
-        slow: Some("a2"),
-        ..Agents::default()
-    });
+async fn the_global_limit_is_shared_fairly_across_runs() {
+    let agents = Arc::new(Agents::default());
     let f = fixture(&agents);
     assert!(f.runtime.configure_workflow_concurrency(2));
     assert!(!f.runtime.configure_workflow_concurrency(5));
+    let scheduler = f.runtime.workflow_scheduler();
     let owner = f.session("default").await;
-    let fan_out = |prefix: &str| {
+    let fan_out = |prefix: &str, count: usize| {
+        let calls: Vec<String> = (1..=count).map(|n| format!("'gate {prefix}{n}'")).collect();
         format!(
-            "export default () => parallel(['{prefix}1', '{prefix}2', '{prefix}3'].map((p) => () => agent(p)));\n"
+            "export default () => parallel([{}].map((p) => () => agent(p)));\n",
+            calls.join(", ")
         )
     };
-    let first = f.start(&owner, &fan_out("a")).await;
-    for _ in 0..500 {
-        if agents.seen().len() >= 2 {
-            break;
+    let started = |n: usize| {
+        let agents = Arc::clone(&agents);
+        async move { eventually("the next agent start", || agents.seen().len() >= n).await }
+    };
+    let a = f.start(&owner, &fan_out("a", 6)).await;
+    started(2).await;
+    eventually("a's calls queue", || scheduler.snapshot(&a.id).queued == 4).await;
+    let b = f.start(&owner, &fan_out("b", 2)).await;
+    eventually("b's calls queue", || scheduler.snapshot(&b.id).queued == 2).await;
+    assert_eq!(
+        scheduler.snapshot(&a.id),
+        RunSlots {
+            queued: 4,
+            running: 2
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+    );
+    // Gates open in arrival order: a1, a2, b1, a3, b2, a4, a5, a6.
+    for n in 3..=8 {
+        agents.gate_permits.open();
+        started(n).await;
+        let running = scheduler.snapshot(&a.id).running + scheduler.snapshot(&b.id).running;
+        assert!(running <= 2, "{running} agents hold slots");
     }
-    // Let a3 queue behind the two running agents before the second run queues its own.
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    let second = f.start(&owner, &fan_out("b")).await;
+    for _ in 0..2 {
+        agents.gate_permits.open();
+    }
+    for run in [&a, &b] {
+        assert_eq!(
+            f.settled(&run.id).await.status,
+            WorkflowRunStatus::Completed
+        );
+    }
+    let order: Vec<String> = agents.prompts();
     assert_eq!(
-        f.settled(&first.id).await.status,
-        WorkflowRunStatus::Completed
+        order,
+        [
+            "gate a1", "gate a2", "gate b1", "gate a3", "gate b2", "gate a4", "gate a5", "gate a6"
+        ],
+        "b's agents start on the first and third releases after b queues"
     );
-    assert_eq!(
-        f.settled(&second.id).await.status,
-        WorkflowRunStatus::Completed
-    );
-    assert_eq!(agents.peak.load(Ordering::SeqCst), 2);
-    let order: Vec<String> = agents.seen().into_iter().map(|s| s.prompt).collect();
-    let a3 = order.iter().position(|p| p == "a3").unwrap();
-    assert!(
-        order
-            .iter()
-            .filter(|p| p.starts_with('b'))
-            .all(|b| { order.iter().position(|p| p == b).unwrap() > a3 }),
-        "{order:?}"
-    );
+    for run in [&a, &b] {
+        f.quiet(&run.id).await;
+        assert_eq!(scheduler.snapshot(&run.id), RunSlots::default());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -650,6 +778,7 @@ async fn hosts_without_workflow_agents_fail_closed_and_missing_owners_are_refuse
             limits: Limits::default(),
             tiers: BTreeMap::new(),
             budget: default_budget(),
+            share: Default::default(),
             starter: Default::default(),
         })
         .await
@@ -676,6 +805,7 @@ async fn hosts_without_workflow_agents_fail_closed_and_missing_owners_are_refuse
             limits: Limits::default(),
             tiers: BTreeMap::new(),
             budget: default_budget(),
+            share: Default::default(),
             starter: Default::default(),
         })
         .await;
@@ -1022,7 +1152,7 @@ async fn shutdown_and_recovery_leave_running_runs_paused_for_resume() {
 
     // Another process opening the same store sees a run nobody executes and pauses it.
     let other = runtime_over(&agents, &f.store, f.dir.path());
-    other.recover_workflow_runs().await.unwrap();
+    other.recover_workflow_runs(false).await.unwrap();
     let recovered = f.runtime.workflow_run(&run.id).unwrap().unwrap();
     assert_eq!(recovered.status, WorkflowRunStatus::Paused);
     assert!(recovered.reason.unwrap().contains("restarted"));
@@ -1044,7 +1174,7 @@ async fn shutdown_and_recovery_leave_running_runs_paused_for_resume() {
         "the cancelled agent was not settled"
     );
     let restarted = runtime_over(&agents, &f.store, f.dir.path());
-    restarted.recover_workflow_runs().await.unwrap();
+    restarted.recover_workflow_runs(false).await.unwrap();
     agents.release();
     let module =
         WorkflowModule::inline(restarted.workflow_run_source(&run.id).unwrap().unwrap()).unwrap();
@@ -1056,6 +1186,7 @@ async fn shutdown_and_recovery_leave_running_runs_paused_for_resume() {
             tiers: BTreeMap::new(),
             budget: None,
             revision: false,
+            share: Default::default(),
         })
         .await
         .unwrap();
@@ -1074,6 +1205,319 @@ async fn shutdown_and_recovery_leave_running_runs_paused_for_resume() {
     assert_eq!(prompts.len(), 4, "{prompts:?}");
     assert!(agents.seen()[2].resume);
     assert_eq!(prompts[3], "c");
+    restarted.shutdown().await;
+}
+
+/// Shutdown dispatches nothing once it starts pausing runs (regression: a slot freed while
+/// it waited for one run's lock dispatched a queued run it then never paused). Run X's
+/// stop holds X's lock while its stalled agent exits, so shutdown waits there; run Z ends
+/// meanwhile and frees its slot. The queued run Q stays `queued`, undispatched, and a
+/// restart dispatches it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slot_freed_during_shutdown_dispatches_no_queued_run() {
+    let agents = Arc::new(Agents {
+        stall: AtomicBool::new(true),
+        ..Default::default()
+    });
+    let f = fixture(&agents);
+    f.runtime.configure_workflow_runs(2);
+    let owner = f.session("default").await;
+    let x = f
+        .start(
+            &owner,
+            "export default () => agent('realstall x');
+",
+        )
+        .await;
+    eventually("X's agent in its tool", || {
+        agents.stalled.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    let z = f
+        .start(
+            &owner,
+            "export default async () => (await agent('gate z')).text;
+",
+        )
+        .await;
+    gated(&agents, 1).await;
+    let q = f
+        .start(
+            &owner,
+            "export default async () => (await agent('q')).text;
+",
+        )
+        .await;
+    assert_eq!(q.status, WorkflowRunStatus::Queued, "{q:?}");
+
+    let stopping = {
+        let (runtime, id) = (f.runtime.clone(), x.id.clone());
+        tokio::spawn(async move { runtime.stop_workflow_run(&id).await })
+    };
+    let children = run_children(&f.store, &x.id);
+    eventually("X's stop sweeping its child", || {
+        children
+            .iter()
+            .all(|child| !f.events(child, "session.subtree.stopping.1").is_empty())
+    })
+    .await;
+    let shutdown = {
+        let runtime = f.runtime.clone();
+        tokio::spawn(async move { runtime.shutdown().await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!stopping.is_finished(), "X's agent is still exiting");
+    // Z ends (on its own, or paused by shutdown) and frees its slot while X's stop runs.
+    agents.gate_permits.open();
+    eventually("Z's end", || {
+        f.status(&z.id).0 != WorkflowRunStatus::Running
+    })
+    .await;
+    let freed = std::time::Instant::now();
+    while f.status(&q.id).0 == WorkflowRunStatus::Queued
+        && freed.elapsed() < Duration::from_millis(300)
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!stopping.is_finished(), "X's agent is still exiting");
+    stopping.await.unwrap().unwrap();
+    shutdown.await.unwrap();
+    assert_eq!(f.status(&q.id), (WorkflowRunStatus::Queued, Some(1)));
+    assert!(f.events(&q.id, "workflow.run.dispatched.1").is_empty());
+    assert!(
+        !agents.prompts().iter().any(|p| p == "q"),
+        "Q started no agent"
+    );
+
+    let restarted = runtime_over(&agents, &f.store, f.dir.path());
+    restarted.configure_workflow_runs(2);
+    restarted.recover_workflow_runs(false).await.unwrap();
+    let q = ended_on(&restarted, &q.id).await;
+    assert_eq!(q.status, WorkflowRunStatus::Completed, "{q:?}");
+    assert_eq!(f.events(&q.id, "workflow.run.dispatched.1").len(), 1);
+    restarted.shutdown().await;
+}
+
+/// Poll `runtime` until the run ended.
+async fn ended_on(runtime: &Runtime, id: &str) -> WorkflowRun {
+    for _ in 0..1000 {
+        let run = runtime.workflow_run(id).unwrap().unwrap();
+        if run.status.is_terminal() {
+            return run;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("run {id} did not end");
+}
+
+/// A script whose first agent holds until released, then a second one.
+fn held_pair(name: &str) -> String {
+    format!(
+        "export default async () => [(await agent('hold {name}')).text, (await agent('{name}2')).text];\n"
+    )
+}
+
+/// `(run, agent)` of the agents the host was asked to resume, sorted.
+fn resumed_agents(agents: &Agents) -> Vec<(String, String)> {
+    let mut resumed: Vec<(String, String)> = agents
+        .seen()
+        .into_iter()
+        .filter(|seen| seen.resume)
+        .map(|seen| (seen.run_id, seen.agent_id))
+        .collect();
+    resumed.sort();
+    resumed
+}
+
+/// `(run, agent)` of the first attempts of the `hold` agents, sorted.
+fn held_agents(agents: &Agents) -> Vec<(String, String)> {
+    let mut held: Vec<(String, String)> = agents
+        .seen()
+        .into_iter()
+        .filter(|seen| !seen.resume && seen.prompt.starts_with("hold"))
+        .map(|seen| (seen.run_id, seen.agent_id))
+        .collect();
+    held.sort();
+    held
+}
+
+/// Recovery of several runs, "Crash with two runs mid-flight": a second runtime over the
+/// store recovers while the first still executes, as after a crash. The two running runs
+/// come back paused with their in-flight agents interrupted, the queued run keeps its
+/// place and is dispatched, and resuming the interrupted runs continues each one's own
+/// interrupted agent only.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_crash_with_two_runs_mid_flight_pauses_both_and_dispatches_the_queued_one() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    f.runtime.configure_workflow_runs(2);
+    let owner = f.session("default").await;
+    let a = f.start(&owner, &held_pair("a")).await;
+    let b = f.start(&owner, &held_pair("b")).await;
+    eventually("a and b in flight", || {
+        agents.holding.load(Ordering::SeqCst) == 2
+    })
+    .await;
+    let c = f
+        .start(
+            &owner,
+            "export default async () => (await agent('c')).text;\n",
+        )
+        .await;
+    assert_eq!(c.status, WorkflowRunStatus::Queued, "{c:?}");
+
+    let restarted = runtime_over(&agents, &f.store, f.dir.path());
+    restarted.configure_workflow_runs(2);
+    restarted.recover_workflow_runs(false).await.unwrap();
+    for id in [&a.id, &b.id] {
+        let run = restarted.workflow_run(id).unwrap().unwrap();
+        assert_eq!(run.status, WorkflowRunStatus::Paused, "{run:?}");
+        assert!(run.reason.unwrap().contains("restarted"));
+        assert!(restarted.workflow_run_interrupted(id).unwrap());
+        let summary = restarted.workflow_run_summary(id).unwrap().unwrap();
+        assert!(summary.interrupted, "the summary says why the run paused");
+        let statuses: Vec<String> = restarted
+            .workflow_agents(id)
+            .unwrap()
+            .into_iter()
+            .map(|agent| agent.status)
+            .collect();
+        assert_eq!(statuses, ["interrupted"], "{id}");
+    }
+    let c = ended_on(&restarted, &c.id).await;
+    assert_eq!(c.status, WorkflowRunStatus::Completed, "{c:?}");
+    assert_eq!(c.result, Some(json!("c done")));
+    assert!(!restarted.workflow_run_interrupted(&c.id).unwrap());
+    assert!(
+        !restarted
+            .workflow_run_summary(&c.id)
+            .unwrap()
+            .unwrap()
+            .interrupted
+    );
+
+    // The crashed process's agents end without being recorded.
+    f.runtime.shutdown().await;
+    agents.release();
+    let report = restarted
+        .resume_interrupted_workflow_runs(None)
+        .await
+        .unwrap();
+    assert_eq!(report.resumed, [a.id.clone(), b.id.clone()], "{report:?}");
+    assert!(report.refused.is_empty(), "{report:?}");
+    for (run, name) in [(&a, "a"), (&b, "b")] {
+        let run = ended_on(&restarted, &run.id).await;
+        assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+        assert_eq!(
+            run.result,
+            Some(json!([
+                format!("hold {name} done"),
+                format!("{name}2 done")
+            ]))
+        );
+    }
+    // Each run resumed its own interrupted agent, once.
+    let held = held_agents(&agents);
+    assert_eq!(held.len(), 2, "{held:?}");
+    assert_eq!(resumed_agents(&agents), held);
+    let again = restarted
+        .resume_interrupted_workflow_runs(None)
+        .await
+        .unwrap();
+    assert_eq!(again, InterruptedResume::default());
+    restarted.shutdown().await;
+}
+
+/// "Automatic resume after restart": with `resume_after_restart`, the runs a shutdown
+/// interrupted are resumed by recovery; the one whose script was edited stays paused with
+/// the replay mismatch as its reason, and is still interrupted.
+#[tokio::test(flavor = "multi_thread")]
+async fn recovery_resumes_interrupted_runs_and_leaves_an_edited_one_paused() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    assert!(
+        f.runtime
+            .configure_workflow_dir(f.dir.path().join("state/workflows"))
+    );
+    let owner = f.session("default").await;
+    let kept = f.start(&owner, &held_pair("k")).await;
+    let edited = f.start(&owner, &held_pair("e")).await;
+    eventually("both in flight", || {
+        agents.holding.load(Ordering::SeqCst) == 2
+    })
+    .await;
+    let file = edited.script_file.clone().unwrap();
+    let source = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, format!("{source}// edited\n")).unwrap();
+
+    // A shutdown's pause counts as interrupted, like recovery's.
+    f.runtime.shutdown().await;
+    assert!(f.runtime.workflow_run_interrupted(&kept.id).unwrap());
+    agents.release();
+    let restarted = runtime_over(&agents, &f.store, f.dir.path());
+    restarted.recover_workflow_runs(true).await.unwrap();
+    let kept = ended_on(&restarted, &kept.id).await;
+    assert_eq!(kept.status, WorkflowRunStatus::Completed, "{kept:?}");
+    let edited = restarted.workflow_run(&edited.id).unwrap().unwrap();
+    assert_eq!(edited.status, WorkflowRunStatus::Paused, "{edited:?}");
+    let reason = edited.reason.clone().unwrap();
+    assert!(reason.starts_with("WorkflowReplayMismatch"), "{reason}");
+    assert!(restarted.workflow_run_interrupted(&edited.id).unwrap());
+    assert_eq!(edited.revision, 1);
+    let resumed = resumed_agents(&agents);
+    assert_eq!(resumed.len(), 1, "{resumed:?}");
+    assert_eq!(resumed[0].0, kept.id);
+    restarted.shutdown().await;
+}
+
+/// "Resume every interrupted run": three runs a crash interrupted are resumed, of the
+/// asked Location only, and a run the user paused stays paused.
+#[tokio::test(flavor = "multi_thread")]
+async fn resuming_interrupted_runs_leaves_a_user_paused_run_paused() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let mut interrupted = Vec::new();
+    for name in ["a", "b", "c"] {
+        interrupted.push(f.start(&owner, &held_pair(name)).await.id);
+    }
+    let paused = f.start(&owner, &held_pair("p")).await;
+    eventually("four in flight", || {
+        agents.holding.load(Ordering::SeqCst) == 4
+    })
+    .await;
+    f.runtime.pause_workflow_run(&paused.id).await.unwrap();
+
+    let restarted = runtime_over(&agents, &f.store, f.dir.path());
+    restarted.recover_workflow_runs(false).await.unwrap();
+    f.runtime.shutdown().await;
+    agents.release();
+    let elsewhere = restarted
+        .resume_interrupted_workflow_runs(Some(f.dir.path()))
+        .await
+        .unwrap();
+    assert_eq!(elsewhere, InterruptedResume::default());
+    let report = restarted
+        .resume_interrupted_workflow_runs(Some(&f.dir.path().join("repo")))
+        .await
+        .unwrap();
+    assert_eq!(report.resumed, interrupted, "{report:?}");
+    assert!(report.refused.is_empty(), "{report:?}");
+    for id in &interrupted {
+        let run = ended_on(&restarted, id).await;
+        assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+    }
+    let paused = restarted.workflow_run(&paused.id).unwrap().unwrap();
+    assert_eq!(paused.status, WorkflowRunStatus::Paused);
+    assert_eq!(paused.reason.as_deref(), Some("paused by the user"));
+    assert!(!restarted.workflow_run_interrupted(&paused.id).unwrap());
+    let summary = restarted.workflow_run_summary(&paused.id).unwrap().unwrap();
+    assert!(!summary.interrupted, "a user's pause is not a restart's");
+    assert!(
+        resumed_agents(&agents)
+            .iter()
+            .all(|(run, _)| interrupted.contains(run))
+    );
     restarted.shutdown().await;
 }
 
@@ -1224,7 +1668,7 @@ async fn ended_runs_queue_one_summary_and_large_results_go_to_a_file() {
         })
         .unwrap();
     let restarted = runtime_over(&fresh, &f.store, f.dir.path());
-    restarted.recover_workflow_runs().await.unwrap();
+    restarted.recover_workflow_runs(false).await.unwrap();
     assert!(restarted.workflow_run(&run.id).unwrap().unwrap().notified);
     assert_eq!(handbacks(&restarted, &owner).await, queued);
 }
@@ -1467,6 +1911,7 @@ async fn a_resumed_run_hands_back_again_and_drops_an_earlier_result_file() {
             tiers: BTreeMap::new(),
             budget: Some(json!({"max_agents": 3})),
             revision: false,
+            share: Default::default(),
         })
         .await
         .unwrap();
@@ -1759,6 +2204,7 @@ async fn a_workflow_agent_session_cannot_own_a_run() {
                 limits: Limits::default(),
                 tiers: BTreeMap::new(),
                 budget: default_budget(),
+                share: Default::default(),
                 starter: Default::default(),
             })
             .await;
@@ -1770,4 +2216,672 @@ async fn a_workflow_agent_session_cannot_own_a_run() {
         }
     }
     assert_eq!(f.runtime.workflow_runs(None).unwrap().len(), 1);
+}
+
+/// Child Sessions of a run's agents.
+fn run_children(store: &Store, run_id: &str) -> Vec<String> {
+    let run = run_id.to_owned();
+    store
+        .read(move |db| {
+            let mut statement =
+                db.prepare("SELECT id FROM session WHERE workflow_run_id = ?1 ORDER BY id")?;
+            let ids = statement
+                .query_map([run], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
+        .unwrap()
+}
+
+/// `workflows` → Concurrent runs, "Stop does not block another run": run A's stop waits
+/// for its agents' child Sessions, which ignore cancellation for 2.5 s; meanwhile run B
+/// is paused and its script ends, and both are recorded at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_run_whose_agents_are_slow_to_exit_does_not_block_another_run() {
+    let agents = Arc::new(Agents {
+        stall: AtomicBool::new(true),
+        ..Default::default()
+    });
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let a = f
+        .start(
+            &owner,
+            "export default () => parallel([() => agent('realstall 1'), () => agent('realstall 2')]);\n",
+        )
+        .await;
+    eventually("A's agents in their tool", || {
+        agents.stalled.load(Ordering::SeqCst) == 2
+    })
+    .await;
+    let b = f
+        .start(
+            &owner,
+            "export default async () => (await agent('gate b')).text;\n",
+        )
+        .await;
+    eventually("B's agent at its gate", || {
+        agents.prompts().iter().any(|p| p == "gate b")
+    })
+    .await;
+
+    let stopping = {
+        let (runtime, id) = (f.runtime.clone(), a.id.clone());
+        tokio::spawn(async move { runtime.stop_workflow_run(&id).await })
+    };
+    let children = run_children(&f.store, &a.id);
+    assert_eq!(children.len(), 2);
+    eventually("A's stop sweeping its children", || {
+        children
+            .iter()
+            .all(|child| !f.events(child, "session.subtree.stopping.1").is_empty())
+    })
+    .await;
+
+    let asked = std::time::Instant::now();
+    let paused = f.runtime.pause_workflow_run(&b.id).await.unwrap();
+    assert_eq!(paused.status, WorkflowRunStatus::Paused);
+    assert!(
+        asked.elapsed() < Duration::from_millis(100),
+        "B's pause waited {:?}",
+        asked.elapsed()
+    );
+    assert!(!stopping.is_finished(), "A's agents are still exiting");
+
+    // B's in-flight agent finishes and its script ends on its own while A still stops.
+    agents.gate_permits.open();
+    let opened = std::time::Instant::now();
+    eventually("B's end recorded", || {
+        f.runtime.workflow_run(&b.id).unwrap().unwrap().status == WorkflowRunStatus::Completed
+    })
+    .await;
+    assert!(
+        opened.elapsed() < Duration::from_millis(100),
+        "B's end waited {:?}",
+        opened.elapsed()
+    );
+    assert!(!stopping.is_finished(), "A's agents are still exiting");
+    let b = f.runtime.workflow_run(&b.id).unwrap().unwrap();
+    assert_eq!(b.result, Some(json!("gate b done")), "{b:?}");
+
+    let stopped = stopping.await.unwrap().unwrap();
+    assert_eq!(stopped.status, WorkflowRunStatus::Stopped);
+    f.quiet(&a.id).await;
+    assert_eq!(
+        f.runtime.workflow_run(&a.id).unwrap().unwrap().status,
+        WorkflowRunStatus::Stopped
+    );
+}
+
+/// `workflows` → Run isolation, "Budget halt stays in its run": run A's cost cap rejects
+/// its next agent while run B of the same owner keeps starting agents, and the owner's
+/// usage is the sum of both runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_budget_halt_stays_in_its_run_and_the_owner_sees_both_runs_spend() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let b = f
+        .start(
+            &owner,
+            "export default async () => {\n  await agent('gate b');\n  return (await agent('real b')).text;\n};\n",
+        )
+        .await;
+    eventually("B's first agent at its gate", || {
+        agents.prompts().iter().any(|p| p == "gate b")
+    })
+    .await;
+    // One Turn costs $0.00012; A's cap is reached after its first agent.
+    let capped = RunBudget::resolve(&json!({}), &[Some(&json!({"max_cost_usd": 0.0001}))]).unwrap();
+    let a = f
+        .start_budgeted(
+            &owner,
+            "export default async () => {\n  await agent('real a');\n  try { await agent('real never'); } catch (e) { return [e.kind, e.message]; }\n};\n",
+            BTreeMap::new(),
+            capped,
+        )
+        .await;
+    let a = f.settled(&a.id).await;
+    assert_eq!(a.status, WorkflowRunStatus::BudgetExceeded, "{a:?}");
+    assert_eq!(
+        a.result,
+        Some(json!(["BudgetExceeded", "BudgetExceeded: max_cost_usd"]))
+    );
+    assert_eq!(
+        f.runtime.workflow_run(&b.id).unwrap().unwrap().status,
+        WorkflowRunStatus::Running
+    );
+
+    agents.gate_permits.open();
+    let b = f.settled(&b.id).await;
+    assert_eq!(b.status, WorkflowRunStatus::Completed, "{b:?}");
+    assert_eq!(b.result, Some(json!("real done")));
+    assert!(!agents.prompts().iter().any(|p| p == "real never"));
+
+    let (spent_a, spent_b) = (
+        f.runtime.run_usage(&a.id).unwrap(),
+        f.runtime.run_usage(&b.id).unwrap(),
+    );
+    assert!(spent_a.cost > 0.0 && spent_b.cost > 0.0);
+    let sum = spent_a.cost + spent_b.cost;
+    eventually("the owner charged for both runs", || {
+        (f.runtime.children_usage(&owner).unwrap().children_cost - sum).abs() < 1e-9
+    })
+    .await;
+    assert_eq!(
+        f.runtime.children_usage(&owner).unwrap().children_tokens,
+        spent_a.total_tokens + spent_b.total_tokens
+    );
+}
+
+const REPLAYED: &str = "export default async () => {\n  const a = await agent('rep a');\n  const b = await agent('gate rep b');\n  const c = await agent('rep c');\n  return [a.text, b.text, c.text];\n};\n";
+
+/// `workflows` → Run isolation, "Same script, separate replay": two runs of one inline
+/// script share call keys but never results; the second run's resume replays only what
+/// it recorded and spawns its own agent for the rest.
+#[tokio::test(flavor = "multi_thread")]
+async fn runs_of_the_same_script_replay_only_their_own_results() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let first = f.start(&owner, REPLAYED).await;
+    agents.gate_permits.open();
+    let first = f.settled(&first.id).await;
+    assert_eq!(first.status, WorkflowRunStatus::Completed, "{first:?}");
+
+    let second = f.start(&owner, REPLAYED).await;
+    eventually("the second run's b at its gate", || {
+        agents
+            .prompts()
+            .iter()
+            .filter(|p| *p == "gate rep b")
+            .count()
+            == 2
+    })
+    .await;
+    f.runtime.pause_workflow_run(&second.id).await.unwrap();
+    agents.gate_permits.open();
+    f.quiet(&second.id).await;
+    assert_eq!(
+        f.runtime.workflow_run(&second.id).unwrap().unwrap().status,
+        WorkflowRunStatus::Paused
+    );
+    f.resume(&second.id, None, false).await.unwrap();
+    let second = f.settled(&second.id).await;
+    assert_eq!(second.status, WorkflowRunStatus::Completed, "{second:?}");
+    assert_eq!(second.result, first.result);
+
+    // The resume spawned only c; a and b replayed from the second run's own records.
+    assert_eq!(
+        agents.prompts(),
+        [
+            "rep a",
+            "gate rep b",
+            "rep c",
+            "rep a",
+            "gate rep b",
+            "rep c"
+        ]
+    );
+    assert!(!agents.seen()[5].resume);
+    let (mine, theirs) = (
+        f.runtime.workflow_agents(&second.id).unwrap(),
+        f.runtime.workflow_agents(&first.id).unwrap(),
+    );
+    assert_eq!(mine.len(), 3);
+    for (agent, other) in mine.iter().zip(&theirs) {
+        assert_eq!(agent.call_key, other.call_key, "same script, same keys");
+        assert_ne!(agent.id, other.id);
+        assert_eq!(agent.run_id, second.id);
+    }
+    let settled = f.events(&second.id, "workflow.agent.settled.1");
+    assert_eq!(settled.len(), 3, "{settled:?}");
+    let ids: Vec<&str> = mine.iter().map(|agent| agent.id.as_str()).collect();
+    assert!(
+        settled
+            .iter()
+            .all(|event| ids.contains(&event["id"].as_str().unwrap_or_default())),
+        "{settled:?}"
+    );
+}
+
+/// `workflows` → Run isolation, "Worktrees of two runs": isolated agents of two runs in
+/// one Location get six distinct worktrees and branches, each named with its run ID.
+#[tokio::test(flavor = "multi_thread")]
+async fn isolated_agents_of_two_runs_get_distinct_worktrees_named_by_run() {
+    let agents = Arc::new(Agents {
+        writers: AtomicBool::new(true),
+        ..Default::default()
+    });
+    let f = fixture(&agents);
+    let owner = f.session("default").await;
+    let script = "export default () => parallel([1, 2, 3].map((n) => () => agent('tree ' + n, { isolation: 'worktree' })));\n";
+    let (a, b) = (f.start(&owner, script).await, f.start(&owner, script).await);
+    for run in [&a, &b] {
+        assert_eq!(
+            f.settled(&run.id).await.status,
+            WorkflowRunStatus::Completed
+        );
+    }
+    let seen: Vec<RunWorktree> = agents
+        .seen()
+        .into_iter()
+        .map(|s| s.worktree.expect("isolated"))
+        .collect();
+    let expected: Vec<RunWorktree> = [&a, &b]
+        .iter()
+        .flat_map(|run| (1..=3).map(|n| RunWorktree::new(&run.id, n)))
+        .collect();
+    assert_eq!(seen.len(), 6);
+    for tree in &expected {
+        assert_eq!(seen.iter().filter(|s| *s == tree).count(), 1, "{tree:?}");
+    }
+    let mut names: Vec<&str> = seen.iter().map(|s| s.name.as_str()).collect();
+    let mut branches: Vec<&str> = seen.iter().map(|s| s.branch.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    branches.sort_unstable();
+    branches.dedup();
+    assert_eq!((names.len(), branches.len()), (6, 6));
+}
+
+impl Fixture {
+    /// Wait until the run ended (completed, failed, budget-exceeded or stopped).
+    async fn ended(&self, id: &str) -> WorkflowRun {
+        for _ in 0..1000 {
+            let run = self.runtime.workflow_run(id).unwrap().unwrap();
+            if run.status.is_terminal() {
+                return run;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("run {id} did not end");
+    }
+
+    fn status(&self, id: &str) -> (WorkflowRunStatus, Option<u32>) {
+        let run = self.runtime.workflow_run(id).unwrap().unwrap();
+        (run.status, run.queue_position)
+    }
+
+    /// The run budget's open interval start (`None` while its wall clock is stopped).
+    fn activated_ms(&self, id: &str) -> Option<i64> {
+        let id = id.to_owned();
+        self.store
+            .read(move |db| {
+                Ok(db.query_row(
+                    "SELECT activated_ms FROM workflow_run_budget WHERE run_id = ?1",
+                    [id],
+                    |row| row.get::<_, Option<i64>>(0),
+                )?)
+            })
+            .unwrap()
+    }
+}
+
+/// Wait until `n` gated agents wait for an opening.
+async fn gated(agents: &Agents, n: usize) {
+    eventually("gated agents", || {
+        agents
+            .prompts()
+            .iter()
+            .filter(|p| p.starts_with("gate"))
+            .count()
+            >= n
+    })
+    .await;
+}
+
+/// `workflows` → Run queue, "Ninth run queued" with a limit of 2: the third run is
+/// recorded `queued` at position 1, starts no agent and accrues no wall time until a
+/// running run ends, then is dispatched.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_started_while_every_run_slot_is_taken_is_queued_until_one_ends() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    assert!(f.runtime.configure_workflow_runs(2));
+    assert!(!f.runtime.configure_workflow_runs(5));
+    let owner = f.session("default").await;
+    let a = f
+        .start(&owner, "export default () => agent('gate a');\n")
+        .await;
+    let b = f
+        .start(&owner, "export default () => agent('gate b');\n")
+        .await;
+    gated(&agents, 2).await;
+    let c = f.start(&owner, "export default () => agent('c');\n").await;
+    assert_eq!(
+        (c.status, c.queue_position),
+        (WorkflowRunStatus::Queued, Some(1))
+    );
+    assert_eq!(
+        (a.status, a.queue_position),
+        (WorkflowRunStatus::Running, None)
+    );
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(f.status(&c.id), (WorkflowRunStatus::Queued, Some(1)));
+    assert!(f.runtime.workflow_agents(&c.id).unwrap().is_empty());
+    assert_eq!(
+        f.activated_ms(&c.id),
+        None,
+        "a queued run accrues no wall time"
+    );
+    assert!(f.activated_ms(&a.id).is_some());
+    // Listed with its position too.
+    let listed = f.runtime.workflow_runs(Some(&owner)).unwrap();
+    let positions: Vec<_> = listed.iter().map(|run| run.queue_position).collect();
+    assert_eq!(positions, [Some(1), None, None]);
+
+    agents.gate_permits.open();
+    assert_eq!(f.ended(&a.id).await.status, WorkflowRunStatus::Completed);
+    let c = f.ended(&c.id).await;
+    assert_eq!(c.status, WorkflowRunStatus::Completed, "{c:?}");
+    assert_eq!(c.queue_position, None);
+    assert_eq!(f.events(&c.id, "workflow.run.dispatched.1").len(), 1);
+    assert_eq!(
+        f.kinds(&c.id)[..2],
+        ["workflow.run.started.1", "workflow.run.dispatched.1"]
+    );
+    assert_eq!(f.status(&b.id).0, WorkflowRunStatus::Running);
+    agents.gate_permits.open();
+    assert_eq!(f.ended(&b.id).await.status, WorkflowRunStatus::Completed);
+}
+
+/// `workflows` → Run queue, "Dispatch order": Q1 queued before Q2 is dispatched first when
+/// a running run ends, and Q2 moves up to position 1.
+#[tokio::test(flavor = "multi_thread")]
+async fn queued_runs_are_dispatched_in_queue_order() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    f.runtime.configure_workflow_runs(2);
+    let owner = f.session("default").await;
+    let a = f
+        .start(&owner, "export default () => agent('gate a');\n")
+        .await;
+    let b = f
+        .start(&owner, "export default () => agent('gate b');\n")
+        .await;
+    gated(&agents, 2).await;
+    let q1 = f
+        .start(&owner, "export default () => agent('gate q1');\n")
+        .await;
+    let q2 = f.start(&owner, "export default () => agent('q2');\n").await;
+    assert_eq!((q1.queue_position, q2.queue_position), (Some(1), Some(2)));
+
+    agents.gate_permits.open();
+    assert_eq!(f.ended(&a.id).await.status, WorkflowRunStatus::Completed);
+    gated(&agents, 3).await;
+    assert_eq!(f.status(&q1.id), (WorkflowRunStatus::Running, None));
+    assert_eq!(f.status(&q2.id), (WorkflowRunStatus::Queued, Some(1)));
+    assert_eq!(f.events(&q2.id, "workflow.run.dispatched.1").len(), 0);
+    for _ in 0..2 {
+        agents.gate_permits.open();
+    }
+    for run in [&b, &q1, &q2] {
+        assert_eq!(f.ended(&run.id).await.status, WorkflowRunStatus::Completed);
+    }
+    assert_eq!(agents.prompts(), ["gate a", "gate b", "gate q1", "q2"]);
+}
+
+/// `workflows` → Run queue, "Stop a queued run": it ends `stopped` without starting an
+/// agent, the other queued runs keep their order, and its owner gets one summary.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_queued_run_starts_nothing_and_hands_back_one_summary() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    f.runtime.configure_workflow_runs(1);
+    let owner = f.session("default").await;
+    let other = f.session("default").await;
+    let a = f
+        .start(&owner, "export default () => agent('gate a');\n")
+        .await;
+    gated(&agents, 1).await;
+    let q1 = f.start(&owner, "export default () => agent('q1');\n").await;
+    let q2 = f.start(&other, "export default () => agent('q2');\n").await;
+    let q3 = f.start(&owner, "export default () => agent('q3');\n").await;
+    assert_eq!(q3.queue_position, Some(3));
+
+    let stopped = f.runtime.stop_workflow_run(&q2.id).await.unwrap();
+    assert_eq!(stopped.status, WorkflowRunStatus::Stopped);
+    assert_eq!(stopped.queue_position, None);
+    assert_eq!(f.status(&q1.id), (WorkflowRunStatus::Queued, Some(1)));
+    assert_eq!(f.status(&q3.id), (WorkflowRunStatus::Queued, Some(2)));
+    eventually("the summary admission", || {
+        f.runtime.workflow_run(&q2.id).unwrap().unwrap().notified
+    })
+    .await;
+    assert_eq!(handbacks(&f.runtime, &other).await.len(), 1);
+
+    agents.gate_permits.open();
+    for run in [&a, &q1, &q3] {
+        assert_eq!(f.ended(&run.id).await.status, WorkflowRunStatus::Completed);
+    }
+    assert_eq!(agents.prompts(), ["gate a", "q1", "q3"]);
+    assert_eq!(f.status(&q2.id).0, WorkflowRunStatus::Stopped);
+    assert!(f.events(&q2.id, "workflow.run.dispatched.1").is_empty());
+    assert_eq!(f.events(&q2.id, "workflow.run.notified.1").len(), 1);
+    assert!(f.runtime.workflow_agents(&q2.id).unwrap().is_empty());
+}
+
+/// `workflows` → Run lifecycle states, "Pause a queued run": it becomes `paused` without
+/// any agent having started and leaves the queue; a resume puts it at the end.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_paused_queued_run_leaves_the_queue_and_a_resume_requeues_it_last() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    f.runtime.configure_workflow_runs(1);
+    let owner = f.session("default").await;
+    let a = f
+        .start(&owner, "export default () => agent('gate a');\n")
+        .await;
+    gated(&agents, 1).await;
+    let q1 = f.start(&owner, "export default () => agent('q1');\n").await;
+    let q2 = f
+        .start(&owner, "export default () => agent('gate q2');\n")
+        .await;
+
+    let paused = f.runtime.pause_workflow_run(&q1.id).await.unwrap();
+    assert_eq!(
+        (paused.status, paused.queue_position),
+        (WorkflowRunStatus::Paused, None)
+    );
+    assert_eq!(f.status(&q2.id), (WorkflowRunStatus::Queued, Some(1)));
+    assert_eq!(f.activated_ms(&q1.id), None);
+    let resumed = f.resume(&q1.id, None, false).await.unwrap();
+    assert_eq!(
+        (resumed.status, resumed.queue_position),
+        (WorkflowRunStatus::Queued, Some(2))
+    );
+    assert_eq!(
+        f.activated_ms(&q1.id),
+        None,
+        "a requeued run's clock waits too"
+    );
+
+    agents.gate_permits.open();
+    assert_eq!(f.ended(&a.id).await.status, WorkflowRunStatus::Completed);
+    gated(&agents, 2).await;
+    assert_eq!(f.status(&q1.id), (WorkflowRunStatus::Queued, Some(1)));
+    agents.gate_permits.open();
+    for run in [&q2, &q1] {
+        assert_eq!(f.ended(&run.id).await.status, WorkflowRunStatus::Completed);
+    }
+    assert_eq!(agents.prompts(), ["gate a", "gate q2", "q1"]);
+    assert_eq!(
+        f.kinds(&q1.id),
+        [
+            "workflow.run.started.1",
+            "workflow.run.paused.1",
+            "workflow.run.resumed.1",
+            "workflow.run.dispatched.1",
+            "workflow.agent.started.1",
+            "workflow.agent.settled.1",
+            "workflow.run.completed.1",
+        ]
+    );
+
+    // A paused queued run is not dispatched when a slot frees.
+    let b = f
+        .start(&owner, "export default () => agent('gate b');\n")
+        .await;
+    gated(&agents, 3).await;
+    let q3 = f.start(&owner, "export default () => agent('q3');\n").await;
+    f.runtime.pause_workflow_run(&q3.id).await.unwrap();
+    agents.gate_permits.open();
+    assert_eq!(f.ended(&b.id).await.status, WorkflowRunStatus::Completed);
+    f.quiet(&b.id).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(f.status(&q3.id).0, WorkflowRunStatus::Paused);
+    assert!(f.runtime.workflow_agents(&q3.id).unwrap().is_empty());
+}
+
+/// A pause racing dispatch is serialized under the run's lock: a run paused before its
+/// dispatch was recorded never starts an engine.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pause_racing_dispatch_never_starts_the_paused_run() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    f.runtime.configure_workflow_runs(1);
+    let owner = f.session("default").await;
+    for _ in 0..10 {
+        let a = f.start(&owner, "export default () => agent('a');\n").await;
+        let q = f.start(&owner, "export default () => agent('q');\n").await;
+        let _ = f.runtime.pause_workflow_run(&q.id).await;
+        f.ended(&a.id).await;
+        f.quiet(&a.id).await;
+        let kinds = f.kinds(&q.id);
+        let paused = kinds.iter().position(|k| k == "workflow.run.paused.1");
+        let dispatched = kinds.iter().position(|k| k == "workflow.run.dispatched.1");
+        match (paused, dispatched) {
+            (Some(p), Some(d)) => assert!(d < p, "dispatched after its pause: {kinds:?}"),
+            (Some(_), None) => {
+                assert!(f.runtime.workflow_agents(&q.id).unwrap().is_empty());
+                f.runtime.stop_workflow_run(&q.id).await.unwrap();
+            }
+            other => panic!("{other:?}: {kinds:?}"),
+        }
+        let _ = f.runtime.stop_workflow_run(&q.id).await;
+        f.quiet(&q.id).await;
+    }
+}
+
+/// `workflows` → Run queue, "Wall budget waits in the queue": a 0.3 s wall budget survives
+/// a 1 s wait in the queue, and the script sees nearly all of it remaining.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_wall_budget_does_not_run_while_queued() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    f.runtime.configure_workflow_runs(1);
+    let owner = f.session("default").await;
+    let a = f
+        .start(&owner, "export default () => agent('gate a');\n")
+        .await;
+    gated(&agents, 1).await;
+    let budget =
+        RunBudget::resolve(&json!({}), &[Some(&json!({"max_wall_seconds": 0.3}))]).unwrap();
+    let q = f
+        .start_budgeted(
+            &owner,
+            "export default async () => {\n  await agent('q');\n  checkpoint('after', 1);\n  return ctx.budget.remaining.max_wall_seconds;\n};\n",
+            BTreeMap::new(),
+            budget,
+        )
+        .await;
+    assert_eq!(q.status, WorkflowRunStatus::Queued);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    agents.gate_permits.open();
+    f.ended(&a.id).await;
+    let q = f.ended(&q.id).await;
+    assert_eq!(q.status, WorkflowRunStatus::Completed, "{q:?}");
+    let remaining = q.result.unwrap().as_f64().unwrap();
+    assert!(remaining > 0.1 && remaining <= 0.3, "{remaining}");
+}
+
+/// The next `workflow.run.progress` of `run_id` that satisfies `wanted`, within `within`.
+async fn progress_until(
+    live: &mut tokio::sync::broadcast::Receiver<LiveEvent>,
+    run_id: &str,
+    within: Duration,
+    wanted: impl Fn(&WorkflowRunProgress) -> bool,
+) -> WorkflowRunProgress {
+    tokio::time::timeout(within, async {
+        loop {
+            match live.recv().await {
+                Ok(LiveEvent::WorkflowProgress { progress, .. })
+                    if progress.run_id == run_id && wanted(&progress) =>
+                {
+                    return progress;
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+    })
+    .await
+    .expect("a progress event")
+}
+
+/// `workflows` → Run monitor, "Queued agents counted": with a limit of 16 and 100 agents
+/// issued at once, the summary reads 16 running and 84 queued, and a progress event with
+/// the same counts follows each change.
+#[tokio::test(flavor = "multi_thread")]
+async fn queued_agents_are_counted_and_each_change_is_followed_by_a_progress_event() {
+    let agents = Arc::new(Agents::default());
+    let f = fixture(&agents);
+    assert!(f.runtime.configure_workflow_concurrency(16));
+    let owner = f.session("default").await;
+    let mut live = f.runtime.subscribe();
+    let calls: Vec<String> = (1..=100).map(|n| format!("'gate q{n}'")).collect();
+    let run = f
+        .start(
+            &owner,
+            &format!(
+                "export default () => parallel([{}].map((p) => () => agent(p)));\n",
+                calls.join(", ")
+            ),
+        )
+        .await;
+    gated(&agents, 16).await;
+    let summary = || f.runtime.workflow_run_summary(&run.id).unwrap().unwrap();
+    eventually("84 calls queue", || summary().agents.queued == 84).await;
+    let listed = summary().agents;
+    assert_eq!(
+        (
+            listed.total,
+            listed.running,
+            listed.queued,
+            listed.completed
+        ),
+        (100, 16, 84, 0),
+        "{listed:?}"
+    );
+    let counts = |p: &WorkflowRunProgress| (p.agents.running, p.agents.queued);
+    let progress = progress_until(&mut live, &run.id, Duration::from_secs(2), |p| {
+        counts(p) == (16, 84)
+    })
+    .await;
+    assert_eq!(progress.agents, listed);
+    assert_eq!(progress.status, WorkflowRunStatus::Running);
+
+    // One agent ends: the next queued call starts, and an event follows within the bound.
+    let opened = std::time::Instant::now();
+    agents.gate_permits.open();
+    let progress = progress_until(&mut live, &run.id, Duration::from_secs(2), |p| {
+        p.agents.completed == 1 && counts(p) == (16, 83)
+    })
+    .await;
+    assert!(
+        opened.elapsed() < Duration::from_millis(250 + 750),
+        "{:?}",
+        opened.elapsed()
+    );
+    assert_eq!(progress.agents, summary().agents);
+
+    f.runtime.stop_workflow_run(&run.id).await.unwrap();
+    let stopped = progress_until(&mut live, &run.id, Duration::from_secs(5), |p| {
+        p.status == WorkflowRunStatus::Stopped && p.agents.running == 0
+    })
+    .await;
+    f.quiet(&run.id).await;
+    assert_eq!(stopped.agents.queued, 0);
+    assert_eq!(stopped.agents, summary().agents);
 }

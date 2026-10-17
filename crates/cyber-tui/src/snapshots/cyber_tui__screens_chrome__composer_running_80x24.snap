@@ -18,19 +18,24 @@ expression: shown
 
 
 
-
+ [,,_,,]:3  Thinking · 0.0s · esc interrupt
 ┃
 ┃ one
 ┃ two
 ┃ three
 ┃
-┃ Build · Amini Coder test · default   … esc interrupt
+┃ Build · Amini Coder test · default
  /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands
+row 16: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 16: 1-9 fg=#ff9ad5 bg=#0b0f14 bold
+row 16: 10-11 fg=#d6e4f0 bg=#0b0f14
+row 16: 12-19 fg=#d6e4f0 bg=#0b0f14 bold
+row 16: 20-29 fg=#6b7a8f bg=#0b0f14
+row 16: 30-32 fg=#00e5ff bg=#0b0f14 bold
+row 16: 33-42 fg=#6b7a8f bg=#0b0f14
+row 16: 43-79 fg=#d6e4f0 bg=#0b0f14
 row 22: 0-6 fg=#00e5ff bg=#171c21
 row 22: 7-9 fg=#6b7a8f bg=#171c21
 row 22: 10-20 fg=#d6e4f0 bg=#171c21
 row 22: 21-35 fg=#6b7a8f bg=#171c21
-row 22: 36-40 fg=#00e5ff bg=#171c21
-row 22: 41-43 fg=#d6e4f0 bg=#171c21
-row 22: 44-53 fg=#6b7a8f bg=#171c21
-row 22: 54-79 fg=#d6e4f0 bg=#171c21
+row 22: 36-79 fg=#d6e4f0 bg=#171c21

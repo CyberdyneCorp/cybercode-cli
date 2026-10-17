@@ -658,10 +658,14 @@ export interface Operations {
   "v1.workflow.list": {
     path: Record<string, never>;
     query: {
+      status?: QueryValue;
       session_id?: QueryValue;
+      directory?: QueryValue;
+      limit?: QueryValue;
+      cursor?: QueryValue;
     };
     body: undefined;
-    response: S.Page_WorkflowRun;
+    response: S.Page_WorkflowRunSummary;
   };
   "v1.workflow.logs": {
     path: { id: string };
@@ -680,6 +684,14 @@ export interface Operations {
     query: Record<string, never>;
     body: S.ResumeBody;
     response: S.WorkflowRun;
+  };
+  "v1.workflow.resumeInterrupted": {
+    path: Record<string, never>;
+    query: {
+      directory?: QueryValue;
+    };
+    body: undefined;
+    response: S.InterruptedResume;
   };
   "v1.workflow.run": {
     path: Record<string, never>;
@@ -1794,9 +1806,9 @@ export const operations = {
     method: "GET",
     path: "/api/v1/workflows/runs",
     pathParams: [],
-    query: ["session_id"],
+    query: ["status", "session_id", "directory", "limit", "cursor"],
     body: "none",
-    located: false,
+    located: true,
     unwrap: false,
     stream: false,
   },
@@ -1833,6 +1845,18 @@ export const operations = {
     query: [],
     body: "optional",
     located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.workflow.resumeInterrupted": {
+    tag: "workflow",
+    name: "resumeInterrupted",
+    method: "POST",
+    path: "/api/v1/workflows/runs/resume_interrupted",
+    pathParams: [],
+    query: ["directory"],
+    body: "none",
+    located: true,
     unwrap: true,
     stream: false,
   },
@@ -2222,10 +2246,10 @@ export function createGroups(caller: Caller) {
         caller.call("v1.vcs.status", {}, options),
     },
     workflow: {
-      /** Read a Workflow Run with its agents (`GET /api/v1/workflows/runs/{id}`) */
+      /** Read a Workflow Run's summary with its agents (agents_detail) (`GET /api/v1/workflows/runs/{id}`) */
       get: (id: string, options?: RequestOptions): Promise<Operations["v1.workflow.get"]["response"]> =>
         caller.call("v1.workflow.get", { path: { id } }, options),
-      /** List Workflow Runs, newest first (`GET /api/v1/workflows/runs`) */
+      /** List Workflow Run summaries of the Location (directory=all for every Location), active runs first, then the newest (`GET /api/v1/workflows/runs`) */
       list: (query?: Operations["v1.workflow.list"]["query"], options?: RequestOptions): Promise<Operations["v1.workflow.list"]["response"]> =>
         caller.call("v1.workflow.list", { query }, options),
       /** Read a run's log() entries (`GET /api/v1/workflows/runs/{id}/logs`) */
@@ -2237,6 +2261,9 @@ export function createGroups(caller: Caller) {
       /** Relaunch a paused, failed, stopped or budget-exceeded run through replay (`POST /api/v1/workflows/runs/{id}/resume`) */
       resume: (id: string, body?: Operations["v1.workflow.resume"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.resume"]["response"]> =>
         caller.call("v1.workflow.resume", { path: { id }, body }, options),
+      /** Resume every run a server restart interrupted, of the Location or of all (directory=all) (`POST /api/v1/workflows/runs/resume_interrupted`) */
+      resumeInterrupted: (query?: Operations["v1.workflow.resumeInterrupted"]["query"], options?: RequestOptions): Promise<Operations["v1.workflow.resumeInterrupted"]["response"]> =>
+        caller.call("v1.workflow.resumeInterrupted", { query }, options),
       /** Start a Workflow Run from a saved name or an inline script; it executes in the server (`POST /api/v1/workflows/runs`) */
       run: (body: Operations["v1.workflow.run"]["body"], options?: RequestOptions): Promise<Operations["v1.workflow.run"]["response"]> =>
         caller.call("v1.workflow.run", { body }, options),

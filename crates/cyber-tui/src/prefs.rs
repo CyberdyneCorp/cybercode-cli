@@ -171,6 +171,11 @@ pub const EDITABLE: &[(&str, &[&str])] = &[
     ("theme_mode", &["auto", "dark", "light"]),
     ("sidebar", &["auto", "show", "hide"]),
     ("recap", &["auto", "off"]),
+    ("spinner", crate::progress::Spinner::VALUES),
+    (
+        "workflow_notifications",
+        crate::workflow_watch::Scope::VALUES,
+    ),
     ("reasoning", &["collapsed", "hidden", "expanded"]),
     ("diff_style", &["auto", "unified", "split"]),
     ("timestamps", &["off", "on"]),
@@ -338,6 +343,8 @@ pub struct Loaded {
     pub sidebar: crate::sidebar::Preference,
     /// `tui.welcome`.
     pub welcome: crate::view::welcome::Welcome,
+    /// `tui.notifications`.
+    pub notifications: crate::osc::Notifications,
     /// The Config tab's preferences with their sources.
     pub preferences: Preferences,
 }
@@ -365,8 +372,19 @@ fn statusline_fields(
     warnings: &mut Vec<String>,
 ) -> Option<Vec<String>> {
     const KNOWN: &[&str] = &[
-        "model", "variant", "agent", "mode", "context", "cost", "branch", "worktree", "goal",
-        "loops", "remote", "cwd",
+        "model",
+        "variant",
+        "agent",
+        "mode",
+        "context",
+        "cost",
+        "branch",
+        "worktree",
+        "goal",
+        "loops",
+        "remote",
+        "cwd",
+        "workflows",
     ];
     let list = settings.get("statusline")?.get("fields")?.as_array()?;
     let mut fields = Vec::new();
@@ -427,6 +445,12 @@ pub fn load(store: &LocalStore, dirs: &[PathBuf], env: &dyn Fn(&str) -> Option<S
         crate::view::welcome::Welcome::parse,
         &mut themes.warnings,
     );
+    let notifications = choice(
+        &settings,
+        "notifications",
+        crate::osc::Notifications::parse,
+        &mut themes.warnings,
+    );
     Loaded {
         theme: preferences.get("theme").to_owned(),
         themes,
@@ -438,6 +462,7 @@ pub fn load(store: &LocalStore, dirs: &[PathBuf], env: &dyn Fn(&str) -> Option<S
         sidebar: crate::sidebar::Preference::parse(Some(preferences.get("sidebar")))
             .unwrap_or_default(),
         welcome,
+        notifications,
         preferences,
     }
 }

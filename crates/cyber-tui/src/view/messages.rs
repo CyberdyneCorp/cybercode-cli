@@ -95,6 +95,7 @@ pub fn transcript(app: &App, width: usize) -> Rendered {
         )));
     }
     let markers = crate::turns::markers(&app.items, app.session.running);
+    notices(app, None, &mut out);
     for (i, item) in app.items.iter().enumerate() {
         item_lines(app, item, &mut out);
         out.push(Line::default());
@@ -102,6 +103,7 @@ pub fn transcript(app: &App, width: usize) -> Rendered {
             out.push(marker_line(app, marker));
             out.push(Line::default());
         }
+        notices(app, Some(item.id()), &mut out);
     }
     for (id, text) in &app.streaming {
         if !app.items.iter().any(|i| matches!(i, Item::Assistant { id: aid, text: done, .. } if aid == id && !done.is_empty())) {
@@ -111,6 +113,35 @@ pub fn transcript(app: &App, width: usize) -> Rendered {
         }
     }
     out.rendered
+}
+
+/// The Session's workflow run notices that came after the item `after` (`None`: before
+/// the first item, or after one no longer shown).
+fn notices(app: &App, after: Option<&str>, out: &mut Out) {
+    let t = &app.theme;
+    let shown = |id: &str| app.items.iter().any(|item| item.id() == id);
+    for notice in app
+        .watch
+        .notices
+        .iter()
+        .filter(|n| n.session_id == app.session.id)
+    {
+        let anchor = notice.after.as_deref().filter(|id| shown(id));
+        if anchor != after {
+            continue;
+        }
+        let color = match notice.text.chars().next() {
+            Some('✓') => t.success,
+            Some('✗') => t.error,
+            Some('$' | '⏸') => t.warning,
+            _ => t.text_muted,
+        };
+        out.push(Line::from(Span::styled(
+            format!("  {}", notice.text),
+            Style::default().fg(color),
+        )));
+        out.push(Line::default());
+    }
 }
 
 /// `▣ Build · amini-coder · 11.3s`, with the end time under `/timestamps` and the

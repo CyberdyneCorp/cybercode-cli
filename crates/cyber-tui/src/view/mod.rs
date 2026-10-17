@@ -6,10 +6,12 @@ pub(crate) mod footer;
 pub mod layout;
 mod messages;
 mod overlays;
+pub(crate) mod progress;
 mod settings;
 mod sidebar;
 mod themes;
 pub mod welcome;
+mod workflows;
 mod wrap;
 
 #[cfg(test)]
@@ -35,18 +37,24 @@ pub fn draw(f: &mut Frame, app: &App) {
             drawer: app.sidebar.drawer,
             screen_reader: app.screen_reader,
             queued: app.queued.len() as u16,
+            progress: progress::height(app, area.height),
             composer: composer::height(app),
         },
     );
     app.frame_width
         .store(area.width, std::sync::atomic::Ordering::Relaxed);
     if plan.too_small {
+        app.progress.set_on_screen(false);
         draw_too_small(f, app, area);
         return;
     }
-    if matches!(app.overlay, Overlay::Settings | Overlay::Files) {
+    if matches!(
+        app.overlay,
+        Overlay::Settings | Overlay::Files | Overlay::Workflows
+    ) {
         // Full screen over the transcript, composer and sidebar; the footer stays.
         app.set_screen_links(Vec::new());
+        app.progress.set_on_screen(false);
         let panel = recap(
             f,
             app,
@@ -57,6 +65,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         );
         if matches!(app.overlay, Overlay::Files) {
             explorer::draw(f, app, panel);
+        } else if matches!(app.overlay, Overlay::Workflows) {
+            workflows::draw(f, app, panel);
         } else {
             settings::draw(f, app, panel);
         }
@@ -74,6 +84,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         messages::draw(f, app, transcript);
     }
     draw_queued(f, app, plan.queued);
+    progress::draw(f, app, plan.progress);
     composer::draw(f, app, plan.composer);
     footer::draw(f, app, plan.footer, plan.compact_footer);
     if let Some(rect) = plan.sidebar {
@@ -83,7 +94,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         overlays::completion(f, app, c, plan.composer);
     }
     match &app.overlay {
-        Overlay::None | Overlay::Settings | Overlay::Files => {}
+        Overlay::None | Overlay::Settings | Overlay::Files | Overlay::Workflows => {}
         Overlay::Themes(s) => themes::draw(f, app, s, area),
         Overlay::Picker(p) => overlays::picker(f, app, p, area),
         Overlay::Palette(p) => overlays::palette(f, app, p, area),
@@ -154,14 +165,13 @@ fn base(app: &App) -> Style {
     Style::default().fg(app.theme.text).bg(app.theme.background)
 }
 
-/// A braille spinner frame every 250 ms (the redraw tick), or a static `…` under
-/// reduced motion.
+/// A braille spinner frame per progress frame, or a static `…` under reduced motion.
 fn spinner(app: &App) -> &'static str {
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     if app.reduced_motion {
         return "…";
     }
-    FRAMES[(app.uptime().as_millis() / 250) as usize % FRAMES.len()]
+    FRAMES[app.progress.frame as usize % FRAMES.len()]
 }
 
 /// ` cyber · <title>` and the run state when the sidebar is not docked; the model, Mode

@@ -25,9 +25,9 @@ fn module(body: &str) -> WorkflowModule {
     .unwrap()
 }
 
-async fn run(flow: &Flow, owner: &str, body: &str) -> WorkflowRun {
-    let started = flow
-        .runtime
+/// Start a run without waiting for it.
+async fn start(flow: &Flow, owner: &str, body: &str) -> String {
+    flow.runtime
         .start_workflow_run(StartWorkflowRun {
             module: module(body),
             args: json!({}),
@@ -35,18 +35,56 @@ async fn run(flow: &Flow, owner: &str, body: &str) -> WorkflowRun {
             limits: Limits::default(),
             tiers: BTreeMap::new(),
             budget: cyber_core::budget::RunBudget::resolve(&json!({}), &[]).unwrap(),
+            share: Default::default(),
             starter: Default::default(),
         })
         .await
-        .unwrap();
+        .unwrap()
+        .id
+}
+
+/// Poll a run until it leaves `running`.
+async fn settled(flow: &Flow, id: &str) -> WorkflowRun {
     for _ in 0..1000 {
-        let run = flow.runtime.workflow_run(&started.id).unwrap().unwrap();
+        let run = flow.runtime.workflow_run(id).unwrap().unwrap();
         if run.status != WorkflowRunStatus::Running {
             return run;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("run {} did not settle", started.id);
+    panic!("run {id} did not settle");
+}
+
+async fn run(flow: &Flow, owner: &str, body: &str) -> WorkflowRun {
+    let id = start(flow, owner, body).await;
+    settled(flow, &id).await
+}
+
+/// Poll until `done` holds.
+async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
+    for _ in 0..1000 {
+        if done() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("{what} did not happen");
+}
+
+/// A finished text answer, as a provider streams it.
+fn answer(text: &str) -> EventStream {
+    let events = vec![
+        Ok(LlmEvent::TextDelta { text: text.into() }),
+        Ok(LlmEvent::Usage(Usage {
+            input: 10,
+            output: 1,
+            ..Usage::default()
+        })),
+        Ok(LlmEvent::Finish {
+            reason: FinishReason::Stop,
+        }),
+    ];
+    stream::iter(events).boxed()
 }
 
 fn schema() -> Value {
@@ -195,17 +233,19 @@ impl Adapter for Rendezvous {
     }
 }
 
-struct WithRendezvous {
+/// Resolves `reference` to `adapter` and every other model reference to `test/main`.
+struct WithModel {
     inner: Arc<dyn ModelResolver>,
-    adapter: Arc<Rendezvous>,
+    reference: &'static str,
+    adapter: Arc<dyn Adapter>,
 }
 
-impl ModelResolver for WithRendezvous {
+impl ModelResolver for WithModel {
     fn resolve(&self, model_ref: &str) -> Result<ResolvedModel, String> {
         let mut resolved = self.inner.resolve("test/main")?;
-        if model_ref == "test/rendezvous" {
-            resolved.adapter = Arc::clone(&self.adapter) as Arc<dyn Adapter>;
-            resolved.model = "rendezvous".into();
+        if model_ref == self.reference {
+            resolved.adapter = Arc::clone(&self.adapter);
+            resolved.model = model_ref.rsplit('/').next().unwrap_or_default().into();
         }
         Ok(resolved)
     }
@@ -215,25 +255,40 @@ impl ModelResolver for WithRendezvous {
     }
 }
 
+/// A flow whose `reference` model is `adapter`, over `fixture`, with `script` on `test/main`.
+fn flow_with(
+    fixture: Fixture,
+    script: Vec<Vec<ScriptStep>>,
+    reference: &'static str,
+    adapter: Arc<dyn Adapter>,
+) -> Flow {
+    Flow::with_resolver_factory(
+        fixture,
+        script,
+        false,
+        Arc::new(NoSnapshots),
+        Vec::new(),
+        move |inner| {
+            Arc::new(WithModel {
+                inner,
+                reference,
+                adapter,
+            })
+        },
+    )
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn workflow_agents_are_not_limited_by_agents_max_concurrent() {
     let adapter = Arc::new(Rendezvous {
         expected: 3,
         arrived: AtomicUsize::new(0),
     });
-    let shared = Arc::clone(&adapter);
-    let flow = Flow::with_resolver_factory(
+    let flow = flow_with(
         Fixture::new(),
         Vec::new(),
-        false,
-        Arc::new(NoSnapshots),
-        Vec::new(),
-        move |inner| {
-            Arc::new(WithRendezvous {
-                inner,
-                adapter: shared,
-            })
-        },
+        "test/rendezvous",
+        Arc::clone(&adapter) as Arc<dyn Adapter>,
     );
     flow.f.set_config(json!({"agents":{"max_concurrent":1}}));
     assert!(flow.runtime.configure_workflow_concurrency(3));
@@ -269,6 +324,16 @@ fn git(path: &std::path::Path, arguments: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
+/// A native-git fixture whose repository has one commit.
+fn committed_checkout() -> Fixture {
+    let fixture = support::Fixture::native_git();
+    git(&fixture.repo, &["init", "--quiet", "-b", "main"]);
+    fixture.write("tracked.txt", "baseline\n");
+    git(&fixture.repo, &["add", "tracked.txt"]);
+    git(&fixture.repo, &["commit", "--quiet", "-m", "initial"]);
+    fixture
+}
+
 /// The child Session directory and branch of each settled agent, by label.
 async fn checkouts(flow: &Flow, run: &WorkflowRun) -> BTreeMap<String, (String, Option<String>)> {
     let mut found = BTreeMap::new();
@@ -295,11 +360,7 @@ async fn checkouts(flow: &Flow, run: &WorkflowRun) -> BTreeMap<String, (String, 
 // full access on Windows only, like the other native worktree fixtures.
 #[tokio::test(flavor = "multi_thread")]
 async fn concurrent_writers_get_numbered_run_worktrees_and_a_single_writer_stays_in_place() {
-    let fixture = support::Fixture::native_git();
-    git(&fixture.repo, &["init", "--quiet", "-b", "main"]);
-    fixture.write("tracked.txt", "baseline\n");
-    git(&fixture.repo, &["add", "tracked.txt"]);
-    git(&fixture.repo, &["commit", "--quiet", "-m", "initial"]);
+    let fixture = committed_checkout();
     let flow = Flow::with(
         fixture,
         (0..5).map(|n| text(&format!("answer {n}"))).collect(),
@@ -356,7 +417,7 @@ async fn the_workflow_tool_starts_an_owned_run_and_obeys_workflow_run_rules() {
     let mut invocation = flow.f.invocation(
         "bypass",
         "workflow",
-        json!({"script": script, "args": {}, "budget": {"max_agents": 2}}),
+        json!({"script": script, "args": {}, "budget": {"max_agents": 2}, "max_concurrent": 1}),
     );
     invocation.session_id = owner.clone();
     let output = support::ok(
@@ -416,5 +477,230 @@ async fn the_workflow_tool_starts_an_owned_run_and_obeys_workflow_run_rules() {
         "{nested:?}"
     );
     assert_eq!(flow.runtime.workflow_runs(None).unwrap().len(), 1);
+    flow.runtime.shutdown().await;
+}
+
+/// Answers in pairs: each stream waits until another one is open beside it, so the two
+/// agents of a pair overlap in time.
+#[derive(Default)]
+struct Pairs {
+    arrived: AtomicUsize,
+}
+
+impl Adapter for Pairs {
+    fn stream(&self, _request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
+        let pair = (self.arrived.fetch_add(1, Ordering::SeqCst) + 1).div_ceil(2) * 2;
+        Box::pin(async move {
+            for _ in 0..500 {
+                if self.arrived.load(Ordering::SeqCst) >= pair {
+                    return Ok(answer("paired"));
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(LlmError::new(
+                ErrorKind::InvalidRequest,
+                "no other agent overlapped",
+            ))
+        })
+    }
+}
+
+/// A script awaiting one agent on `test/pairs` with `options`.
+fn paired(label: &str, options: &str) -> String {
+    format!(
+        "export default () => agent('{label} writer', {{ label: '{label}', model: 'test/pairs'{options} }});\n"
+    )
+}
+
+/// `workflows` → Write isolation default across runs: "Writers of two runs isolated",
+/// `isolation: "none"` still opting out beside another run's writer, and "Single writer
+/// in place" once no other run has an edit-capable agent in the Location.
+#[tokio::test(flavor = "multi_thread")]
+async fn writers_of_two_runs_in_one_location_are_isolated_and_none_still_opts_out() {
+    let pairs = Arc::new(Pairs::default());
+    let flow = flow_with(
+        committed_checkout(),
+        vec![text("lone answer")],
+        "test/pairs",
+        Arc::clone(&pairs) as Arc<dyn Adapter>,
+    );
+    let owner = flow.session("default").await;
+    let repo = flow.f.repo.display().to_string();
+
+    let a = start(&flow, &owner, &paired("a", "")).await;
+    eventually("a in flight", || pairs.arrived.load(Ordering::SeqCst) == 1).await;
+    let b = start(&flow, &owner, &paired("b", "")).await;
+    let (a, b) = (settled(&flow, &a).await, settled(&flow, &b).await);
+    assert_eq!(a.status, WorkflowRunStatus::Completed, "{a:?}");
+    assert_eq!(b.status, WorkflowRunStatus::Completed, "{b:?}");
+    // The first writer stays in the owner's checkout; the one that starts beside it,
+    // in another run, gets its own worktree.
+    assert_eq!(checkouts(&flow, &a).await["a"], (repo.clone(), None));
+    let (directory, branch) = checkouts(&flow, &b).await["b"].clone();
+    let id = b.id.strip_prefix("run_").unwrap().to_ascii_lowercase();
+    assert_eq!(
+        branch.as_deref(),
+        Some(format!("cyber/run-{id}/1").as_str())
+    );
+    assert_ne!(directory, repo);
+    assert!(std::path::Path::new(&directory).is_dir(), "{directory}");
+    assert_eq!(b.result.unwrap()["branch"], json!(branch));
+
+    // `isolation: "none"` works in place even beside another run's writer.
+    let c = start(&flow, &owner, &paired("c", "")).await;
+    eventually("c in flight", || pairs.arrived.load(Ordering::SeqCst) == 3).await;
+    let d = start(&flow, &owner, &paired("d", ", isolation: 'none'")).await;
+    for (id, label) in [(c, "c"), (d, "d")] {
+        let run = settled(&flow, &id).await;
+        assert_eq!(run.status, WorkflowRunStatus::Completed, "{run:?}");
+        assert_eq!(checkouts(&flow, &run).await[label], (repo.clone(), None));
+    }
+
+    // With no other run's writer in flight, a lone writer stays in place.
+    let lone = run(
+        &flow,
+        &owner,
+        "export default () => agent('lone writer', { label: 'lone' });\n",
+    )
+    .await;
+    assert_eq!(lone.status, WorkflowRunStatus::Completed, "{lone:?}");
+    assert_eq!(checkouts(&flow, &lone).await["lone"], (repo, None));
+    flow.runtime.shutdown().await;
+}
+
+/// Each stream waits for one [`Gated::open`], oldest first; a dropped stream leaves the
+/// queue.
+struct Gated {
+    arrived: AtomicUsize,
+    gate: tokio::sync::Semaphore,
+}
+
+impl Default for Gated {
+    fn default() -> Self {
+        Self {
+            arrived: AtomicUsize::new(0),
+            gate: tokio::sync::Semaphore::new(0),
+        }
+    }
+}
+
+impl Adapter for Gated {
+    fn stream(&self, _request: LlmRequest) -> BoxFuture<'_, Result<EventStream, LlmError>> {
+        self.arrived.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            self.gate.acquire().await.unwrap().forget();
+            Ok(answer("gated answer"))
+        })
+    }
+}
+
+/// How many times each message ID is in `entries`.
+fn delivered(entries: &[Entry], ids: &[String]) -> Vec<usize> {
+    ids.iter()
+        .map(|id| entries.iter().filter(|entry| entry.id() == id).count())
+        .collect()
+}
+
+/// Start `name` through the owner's `workflow` tool; its one agent waits at the gate.
+async fn start_by_tool(flow: &Flow, owner: &str, name: &str) -> String {
+    let script = format!(
+        "export const meta = {{ name: '{name}', description: 'Gated' }};\nexport default async () => (await agent('{name} task', {{ model: 'test/gate' }})).text;\n"
+    );
+    let mut invocation =
+        flow.f
+            .invocation("bypass", "workflow", json!({"script": script, "args": {}}));
+    invocation.session_id = owner.into();
+    let output = support::ok(
+        flow.f
+            .host
+            .execute(invocation, tokio_util::sync::CancellationToken::new())
+            .await,
+    );
+    let handle: Value = serde_json::from_str(&output).unwrap();
+    handle["run_id"].as_str().unwrap().to_owned()
+}
+
+/// `workflows` → Concurrent runs, "Two runs from one Session": both run, the owner can be
+/// prompted meanwhile, and stopping one leaves the other running with its handback.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_runs_of_one_session_run_together_and_stop_independently() {
+    let gated = Arc::new(Gated::default());
+    let flow = flow_with(
+        Fixture::new(),
+        (0..6).map(|n| text(&format!("owner answer {n}"))).collect(),
+        "test/gate",
+        Arc::clone(&gated) as Arc<dyn Adapter>,
+    );
+    let owner = flow.session("bypass").await;
+    let review = start_by_tool(&flow, &owner, "review").await;
+    eventually("review's agent at the gate", || {
+        gated.arrived.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    let plan = start_by_tool(&flow, &owner, "plan").await;
+    eventually("plan's agent at the gate", || {
+        gated.arrived.load(Ordering::SeqCst) == 2
+    })
+    .await;
+
+    // The owner answers a prompt while both runs execute.
+    flow.runtime
+        .admit(
+            &owner,
+            Admission::text("how are the runs going?", Delivery::Queue),
+        )
+        .await
+        .unwrap();
+    flow.runtime.downgrade().wait_idle(&owner).await.unwrap();
+    let transcript = format!("{:?}", flow.runtime.state(&owner).await.unwrap().entries);
+    assert!(transcript.contains("text: \"owner answer"), "{transcript}");
+    for id in [&review, &plan] {
+        assert_eq!(
+            flow.runtime.workflow_run(id).unwrap().unwrap().status,
+            WorkflowRunStatus::Running
+        );
+    }
+
+    let stopped = flow.runtime.stop_workflow_run(&review).await.unwrap();
+    assert_eq!(stopped.status, WorkflowRunStatus::Stopped);
+    assert_eq!(
+        flow.runtime.workflow_run(&plan).unwrap().unwrap().status,
+        WorkflowRunStatus::Running
+    );
+    gated.gate.add_permits(1);
+    let plan_run = settled(&flow, &plan).await;
+    assert_eq!(
+        plan_run.status,
+        WorkflowRunStatus::Completed,
+        "{plan_run:?}"
+    );
+    assert_eq!(plan_run.result, Some(json!("gated answer")));
+    assert_eq!(gated.arrived.load(Ordering::SeqCst), 2);
+
+    // Each run hands its summary back to the owner exactly once.
+    let ids = [handback_message_id(&review), handback_message_id(&plan)];
+    for _ in 0..1000 {
+        let state = flow.runtime.state(&owner).await.unwrap();
+        if delivered(&state.entries, &ids) == [1, 1] && !flow.runtime.is_running(&owner) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let state = flow.runtime.state(&owner).await.unwrap();
+    assert_eq!(
+        delivered(&state.entries, &ids),
+        [1, 1],
+        "{:?}",
+        state.entries
+    );
+    let summary = state
+        .entries
+        .iter()
+        .find(|entry| entry.id() == ids[1])
+        .unwrap();
+    assert!(
+        format!("{summary:?}").contains("gated answer"),
+        "{summary:?}"
+    );
     flow.runtime.shutdown().await;
 }

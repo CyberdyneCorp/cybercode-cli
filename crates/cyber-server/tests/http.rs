@@ -58,6 +58,19 @@ impl Services for FakeServices {
     fn expand_command(&self, _location: &Path, name: &str, arguments: &str) -> Option<String> {
         (name == "greet").then(|| format!("Say hello to {arguments}"))
     }
+    fn workflow_location(
+        &self,
+        _location: &Path,
+    ) -> Result<http::WorkflowLocation, http::ApiError> {
+        Ok(http::WorkflowLocation::default())
+    }
+    fn authorize_workflow_run(
+        &self,
+        _owner: &TurnContext,
+        _module: &cyber_workflow::WorkflowModule,
+    ) -> Result<(), http::ApiError> {
+        Ok(())
+    }
     /// `review` validates its target like the bundled review, and every
     /// valid target is reported as an empty diff; `denied` is a permission denial.
     fn command_plan<'a>(
@@ -3708,4 +3721,161 @@ async fn context_meter_reports_last_request_prompt_tokens_window_and_compaction_
 
     let (_, session) = api.get(&format!("/sessions/{id}")).await;
     assert_eq!(session["data"]["context"], expected);
+}
+
+impl Api {
+    /// Start an inline run owned by `session` and wait until it ends.
+    async fn ended_run(&self, session: &str, script: &str) -> String {
+        let (status, started) = self
+            .post(
+                "/workflows/runs",
+                json!({"session_id": session, "script": script}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{started}");
+        let id = started["data"]["id"].as_str().unwrap().to_owned();
+        for _ in 0..500 {
+            let (_, shown) = self.get(&format!("/workflows/runs/{id}")).await;
+            if !matches!(shown["data"]["status"].as_str(), Some("running" | "queued")) {
+                return id;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("run {id} did not end");
+    }
+
+    /// Every run ID of a list, following its cursor, `limit` runs per page.
+    async fn all_pages(&self, query: &str, limit: u32) -> Vec<String> {
+        let (mut ids, mut cursor) = (Vec::new(), None::<String>);
+        loop {
+            let after = cursor.map(|c| format!("&cursor={c}")).unwrap_or_default();
+            let (status, page) = self
+                .get(&format!("/workflows/runs?{query}&limit={limit}{after}"))
+                .await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            let runs = page["data"].as_array().unwrap();
+            assert!(runs.len() <= limit as usize, "{page}");
+            ids.extend(
+                runs.iter()
+                    .map(|run| run["id"].as_str().unwrap().to_owned()),
+            );
+            match page["cursor"]["next"].as_str() {
+                Some(next) => cursor = Some(next.to_owned()),
+                None => return ids,
+            }
+        }
+    }
+}
+
+const DONE: &str =
+    "export const meta = { name: 'done', description: 'Ends at once' };\nexport default () => 1;\n";
+const BROKEN: &str = "export const meta = { name: 'broken', description: 'Throws' };\nexport default () => { throw new Error('broken'); };\n";
+
+/// `workflows` → Run monitor: the list returns summaries of the request Location by
+/// default, of one Location or of every one (`directory=all`), filtered by status and
+/// owner, newest first, in pages that follow their cursor; the detail keeps the agents as
+/// `agents_detail`. Bad statuses, cursors and limits are refused.
+#[tokio::test]
+async fn workflow_run_lists_filter_by_status_owner_and_location_and_paginate() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    // Sessions created over HTTP record their canonical Location, as runs do.
+    let (_, created) = api.post("/sessions", json!({})).await;
+    let here = created["data"]["id"].as_str().unwrap().to_owned();
+    let other_dir = h.dir.path().join("other");
+    std::fs::create_dir_all(&other_dir).unwrap();
+    let other_dir = std::fs::canonicalize(other_dir).unwrap();
+    let (status, created, _) = api
+        .call(
+            Method::POST,
+            "/sessions",
+            Some(json!({})),
+            &[("x-cyber-directory", &other_dir.display().to_string())],
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let there = created["data"]["id"].as_str().unwrap().to_owned();
+    let mut here_runs = Vec::new();
+    for script in [DONE, BROKEN, DONE] {
+        here_runs.push(api.ended_run(&here, script).await);
+    }
+    let there_run = api.ended_run(&there, DONE).await;
+    here_runs.reverse();
+
+    let (status, listed) = api.get("/workflows/runs").await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let ids = |page: &Value| -> Vec<String> {
+        page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|run| run["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        ids(&listed),
+        here_runs,
+        "the request Location, newest first"
+    );
+    let summary = &listed["data"][0];
+    assert_eq!(summary["status"], "completed", "{summary}");
+    assert_eq!(
+        summary["agents"],
+        json!({"total": 0, "completed": 0, "running": 0, "queued": 0, "failed": 0, "cancelled": 0, "interrupted": 0})
+    );
+    for field in ["tokens", "cost_usd", "elapsed_ms", "share"] {
+        assert!(summary[field].is_number(), "{field}: {summary}");
+    }
+    assert!(listed["cursor"]["next"].is_null(), "{listed}");
+
+    let (_, there_listed) = api
+        .get(&format!(
+            "/workflows/runs?directory={}",
+            other_dir.display().to_string().replace('\\', "%5C")
+        ))
+        .await;
+    assert_eq!(ids(&there_listed), std::slice::from_ref(&there_run));
+    let (_, everywhere) = api.get("/workflows/runs?directory=all").await;
+    assert_eq!(ids(&everywhere).len(), 4, "{everywhere}");
+    assert_eq!(
+        ids(&everywhere)[0],
+        there_run,
+        "newest first across Locations"
+    );
+    let (_, failed) = api.get("/workflows/runs?status=failed,stopped").await;
+    assert_eq!(ids(&failed), [here_runs[1].clone()]);
+    let (_, owned) = api
+        .get(&format!("/workflows/runs?session_id={there}&directory=all"))
+        .await;
+    assert_eq!(ids(&owned), std::slice::from_ref(&there_run));
+
+    // Pages of one, two and three runs list each run once, in the same order.
+    let mut all = vec![there_run.clone()];
+    all.extend(here_runs.iter().cloned());
+    for limit in [1, 2, 3] {
+        assert_eq!(
+            api.all_pages("directory=all", limit).await,
+            all,
+            "limit {limit}"
+        );
+    }
+
+    let (_, detail) = api.get(&format!("/workflows/runs/{}", here_runs[0])).await;
+    assert_eq!(detail["data"]["agents"]["total"], 0, "{detail}");
+    assert_eq!(detail["data"]["agents_detail"], json!([]), "{detail}");
+
+    for (query, tag) in [
+        ("status=sleeping", "InvalidRequestError"),
+        ("cursor=garbage", "InvalidCursorError"),
+        ("limit=0", "InvalidRequestError"),
+        ("limit=201", "InvalidRequestError"),
+        ("directory=/no/such/place", "InvalidRequestError"),
+    ] {
+        let (status, body) = api.get(&format!("/workflows/runs?{query}")).await;
+        assert_eq!(
+            (status, body["_tag"].as_str()),
+            (StatusCode::BAD_REQUEST, Some(tag)),
+            "{query}: {body}"
+        );
+    }
 }

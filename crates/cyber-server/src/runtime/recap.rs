@@ -45,7 +45,18 @@ pub(super) struct RecapGenerated {
     pub through_seq: i64,
 }
 
-/// Strip reasoning tags, collapse whitespace and cap at [`MAX_CHARS`].
+/// `text` without control characters or bidirectional overrides, so no client can be
+/// driven by escape sequences a model wrote.
+pub(crate) fn printable(text: &str) -> String {
+    text.chars()
+        .filter(|&c| {
+            !c.is_control() && !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
+        .collect()
+}
+
+/// Strip reasoning tags and control characters, collapse whitespace and cap at
+/// [`MAX_CHARS`].
 pub(crate) fn clean(raw: &str) -> String {
     let mut text = raw.to_string();
     while let (Some(start), Some(end)) = (text.find("<think>"), text.find("</think>")) {
@@ -54,7 +65,7 @@ pub(crate) fn clean(raw: &str) -> String {
         }
         text.replace_range(start..end + "</think>".len(), "");
     }
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = printable(&text.split_whitespace().collect::<Vec<_>>().join(" "));
     let text = text.trim_matches(|c| c == '"' || c == '\'').trim();
     if text.chars().count() <= MAX_CHARS {
         return text.to_owned();
@@ -203,5 +214,9 @@ mod tests {
         assert_eq!(long.chars().count(), MAX_CHARS);
         assert!(long.ends_with('…'));
         assert_eq!(clean("<think>only reasoning</think>"), "");
+        assert_eq!(
+            clean("I \u{1b}[2Jcleared\u{7}\nthe \u{9b}screen\u{202e}."),
+            "I [2Jcleared the screen."
+        );
     }
 }

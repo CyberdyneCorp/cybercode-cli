@@ -1,0 +1,24 @@
+---
+source: crates/cyber-tui/src/screens_workflows.rs
+expression: shown
+---
+╭ Workflows · ~/work/app ────────────────────────╮
+│   NAME           STATUS              d/r/q/f   │
+│   migrate        queued              -         │
+│   #1 in queue                          -       │
+│ › audit          running             2/2/4/0   │
+│   ▀▀▀▀▀▀▀~[,,_,,]:3··················· $0.82   │
+│   docs           paused (2 settling) 0/2/0/0   │
+│   ~[,,_,,]:3·························· $0.00   │
+│   plan           completed           2/0/0/0   │
+│   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀~[,,_,,]:3 $0.82   │
+│                                                │
+│                                                │
+│                                                │
+│                                                │
+│                                                │
+│                                                │
+│                                                │
+│ enter open · p pause/resume · r resume · x sto…│
+╰────────────────────────────────────────────────╯
+                                                —

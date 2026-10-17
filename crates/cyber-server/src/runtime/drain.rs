@@ -28,6 +28,9 @@ Reply with a text summary of the work completed and the work that remains.";
 const CONTINUE_TEXT: &str = "The conversation was compacted automatically. Continue the current task from where \
 you left off; do not ask the user to repeat anything.";
 const MAX_PARALLEL: usize = 8;
+/// The source of a workflow run summary, and how many consecutive ones share a Turn.
+const HANDBACK_SOURCE: &str = "workflow";
+const MAX_HANDBACKS: usize = 8;
 
 pub(crate) enum TurnEnd {
     Tools,
@@ -401,7 +404,8 @@ async fn boundary(
     Ok((prepared, promoted))
 }
 
-/// Promote every pending `steer` row; when the Session would otherwise go idle, the next `queue` row.
+/// Promote every pending `steer` row; when the Session would otherwise go idle, the next
+/// `queue` row, or the run summaries at the head of the queue together.
 async fn promote(
     inner: &Arc<Inner>,
     handle: &Arc<Handle>,
@@ -413,12 +417,7 @@ async fn promote(
         .map(|r| r.message_id.clone())
         .collect();
     if ids.is_empty() && !continue_tools {
-        ids.extend(
-            state
-                .pending(Delivery::Queue)
-                .next()
-                .map(|r| r.message_id.clone()),
-        );
+        ids.extend(queue_head(state.pending(Delivery::Queue)));
     }
     if ids.is_empty() {
         return Ok(false);
@@ -442,6 +441,24 @@ async fn promote(
         inner.spawn_title(Arc::clone(handle));
     }
     Ok(true)
+}
+
+/// The `queue` rows one Turn takes: the oldest, and when it is a workflow run summary,
+/// up to [`MAX_HANDBACKS`] consecutive summaries in admission order (`workflows` →
+/// Result handback), so runs that end together cost the owner one Turn.
+fn queue_head<'a>(mut rows: impl Iterator<Item = &'a super::model::InboxRow>) -> Vec<String> {
+    let Some(head) = rows.next() else {
+        return Vec::new();
+    };
+    let mut ids = vec![head.message_id.clone()];
+    if head.source == HANDBACK_SOURCE {
+        ids.extend(
+            rows.take_while(|row| row.source == HANDBACK_SOURCE)
+                .take(MAX_HANDBACKS - 1)
+                .map(|row| row.message_id.clone()),
+        );
+    }
+    ids
 }
 
 impl Inner {
@@ -2156,5 +2173,55 @@ mod skill_reminder_tests {
         assert!(payload.instruction_reminders.is_empty());
         assert!(seen.instructions.is_empty());
         assert!(loaded.is_none());
+    }
+}
+
+#[cfg(test)]
+mod queue_head_tests {
+    use super::super::model::{InboxRow, InputStatus};
+    use super::*;
+
+    fn row(id: &str, source: &str) -> InboxRow {
+        InboxRow {
+            forwarded_skill: false,
+            skill_command: None,
+            message_id: id.into(),
+            parts: Vec::new(),
+            delivery: Delivery::Queue,
+            source: source.into(),
+            status: InputStatus::Pending,
+            digest: String::new(),
+            admitted_seq: 0,
+            promoted_seq: None,
+        }
+    }
+
+    fn head(rows: &[InboxRow]) -> Vec<String> {
+        queue_head(rows.iter())
+    }
+
+    #[test]
+    fn consecutive_summaries_at_the_head_share_a_turn_in_admission_order() {
+        let rows = [
+            row("w1", "workflow"),
+            row("w2", "workflow"),
+            row("u1", "user"),
+            row("w3", "workflow"),
+        ];
+        assert_eq!(head(&rows), ["w1", "w2"]);
+        assert_eq!(head(&rows[2..]), ["u1"], "a user row is promoted alone");
+        assert_eq!(head(&rows[3..]), ["w3"]);
+        assert!(head(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_user_row_at_the_head_is_promoted_alone_and_summaries_cap_at_eight() {
+        let rows = [row("u1", "user"), row("w1", "workflow")];
+        assert_eq!(head(&rows), ["u1"]);
+        let many: Vec<InboxRow> = (0..10).map(|n| row(&format!("w{n}"), "workflow")).collect();
+        let taken = head(&many);
+        assert_eq!(taken.len(), MAX_HANDBACKS);
+        assert_eq!(taken.first().map(String::as_str), Some("w0"));
+        assert_eq!(taken.last().map(String::as_str), Some("w7"));
     }
 }

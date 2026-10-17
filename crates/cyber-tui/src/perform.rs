@@ -131,6 +131,8 @@ pub enum Msg {
         directory: String,
         loaded: crate::sidebar::Loaded,
     },
+    /// A Workflow monitor reply.
+    Workflow(crate::workflows::Reply),
     Toast(String),
     Done,
 }
@@ -687,11 +689,15 @@ pub async fn perform_owned(
         | Action::LoadCommands
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
+        Action::Workflow(request) => Ok(Msg::Workflow(
+            crate::workflows::perform(client, request).await,
+        )),
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
         | Action::Copy(_)
         | Action::Editor(_)
+        | Action::EditFile(_)
         | Action::Quit => Ok(Msg::Done),
         other => converse(client, session, other, context).await,
     }

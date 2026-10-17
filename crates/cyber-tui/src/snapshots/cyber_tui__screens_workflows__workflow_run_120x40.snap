@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_workflows.rs
+expression: shown
+---
+╭ audit · run_01JA2…K3 · running · revision 1 ──────────────────────────────────────────────── $0.82 / $10.00 · 12m04s ╮
+│ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀~[,,_,,]:3···································································  2/8 agents · 25%│
+│ ▼ Scan         2/2                                                                                                   │
+│   › ✓ agt_…01   scan 1             -         9.8K  $0.00     38s                                                     │
+│     ✓ agt_…02   scan 2             -          10K  $0.00     39s                                                     │
+│ ▼ Verify       0/6  · 2 running · 4 queued                                                                           │
+│     ● agt_…03   verify finding 1   -          12K  $0.00     40s                                                     │
+│     ● agt_…04   verify finding 2   -          13K  $0.00     41s                                                     │
+│     ◌ 4 queued                                                                                                       │
+│ ▶ Report       0/0                                                                                                   │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ enter/t transcript · p pause/resume · x stop · l log · s script · esc back                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ /Users/leo/work/app                  ⚙ 3 workflows · 1 queued · —  ctrl+p commands

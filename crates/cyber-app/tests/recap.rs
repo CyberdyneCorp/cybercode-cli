@@ -2,8 +2,8 @@
 //! production App's HTTP router with a scripted model: no recap before a finished Turn, a
 //! `small`-role call with no tools and at most 120 output tokens, the cached recap making
 //! no model call, the usage attributed as `recap`, and a failed call keeping the old one.
-//! A model-written Session title loses its control characters, since it reaches terminal
-//! window titles and stdout.
+//! A model-written Session title and recap lose their control characters, since they reach
+//! terminal window titles, the TUI and stdout of every client.
 
 #[path = "support/scripted_model.rs"]
 mod scripted_model;
@@ -28,6 +28,9 @@ fn reply(body: &Value) -> Value {
     }
     if text.contains("Write a short title") {
         return json!({ "content": "Recap" });
+    }
+    if is_recap(body) && text.contains("EVIL-RECAP") {
+        return json!({ "content": "I \u{1b}[31mfixed\u{1b}[0m it\u{7}.\u{1b}]52;c;SGFja2Vk\u{7} Next\u{9b}2J I\u{202e}'ll\u{0} ship\u{7f}." });
     }
     if is_recap(body) {
         if FAIL_RECAP.load(Ordering::SeqCst) {
@@ -265,4 +268,34 @@ async fn a_model_written_title_has_no_control_characters() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(title, "Evil]52;c;SGFja2Vk[2J2Jtitle");
+}
+
+/// Regression: the server kept escape sequences of a model-written recap, so a client
+/// that printed it unfiltered let the model drive the terminal.
+#[tokio::test]
+async fn a_model_written_recap_has_no_control_characters() {
+    let fx = Fixture::start().await;
+    let (_, created) = fx
+        .send(
+            reqwest::Method::POST,
+            "/sessions",
+            Some(json!({ "model": "test/main" })),
+        )
+        .await;
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    fx.turn(&id, "EVIL-RECAP").await;
+    let path = format!("/sessions/{id}/recap");
+    let (status, generated) = fx.send(reqwest::Method::POST, &path, None).await;
+    assert_eq!(status, 200, "{generated}");
+    let (_, stored) = fx.send(reqwest::Method::GET, &path, None).await;
+    for recap in [&generated["data"], &stored["data"]] {
+        let text = recap["text"].as_str().unwrap();
+        assert_eq!(text, "I [31mfixed[0m it.]52;c;SGFja2Vk Next2J I'll ship.");
+        assert!(
+            !text
+                .chars()
+                .any(|c| c.is_control() || ('\u{202a}'..='\u{202e}').contains(&c)),
+            "{text:?}"
+        );
+    }
 }

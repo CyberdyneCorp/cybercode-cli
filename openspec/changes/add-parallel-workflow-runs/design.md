@@ -113,9 +113,9 @@ The existing semantics are kept: issued calls of one fan-out count before the fi
 
 `recover_workflow_runs`, for each run in `started_ms` order:
 - **Running or waiting for input.** The run is durably `paused` with `interrupted: true`; its running agents are projected `interrupted`, as today.
-- **Queued.** The run stays queued and is dispatched as slots allow.
+- **Queued.** The run stays queued and is dispatched as slots allow. Its engine is rebuilt through `WorkflowRelaunch`, which the HTTP layer provides (the saved module or script file read again, the Location's limits and tiers, the owner's `workflow.run` rules); a changed script or configuration pauses it with `WorkflowReplayMismatch` instead. Queued runs are put back into the queue without dispatching; dispatch starts once, after the loop, so they leave it in `queued_ms` order (a resumed run's `queued_ms` is its resume time), not in the `started_ms` order they were visited in.
 
-Next, every unnotified ended run is handed back, as today. Then, when `workflows.resume_after_restart` is true, the runs this recovery paused are resumed in `started_ms` order through `resume_workflow_run`. That goes through the run queue, the saved module re-read and the replay check. A run whose saved script changed stays `paused`, with reason `WorkflowReplayMismatch: …`.
+Next, every unnotified ended run is handed back, as today. Then, when `workflows.resume_after_restart` is true, the interrupted runs (this recovery's, and those the previous server paused while shutting down) are resumed in `started_ms` order through `resume_workflow_run`. That goes through the run queue, the saved module re-read and the replay check. A run whose saved script changed stays `paused`, with reason `WorkflowReplayMismatch: …`.
 
 `POST /api/v1/workflows/runs/resume_interrupted` (`?directory=` defaults to the request Location) resumes the same set on demand. `cyber workflows resume --interrupted` and the monitor's `R` call it. A run is "interrupted" when its latest lifecycle event is `workflow.run.paused.1` with `interrupted: true`.
 

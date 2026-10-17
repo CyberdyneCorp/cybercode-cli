@@ -14,6 +14,8 @@ use cyber_llm::catalog::{ModelRole, tier_role_ref};
 use cyber_workflow::{Diagnostic, Limits, WorkflowModule};
 use serde_json::{Value, json};
 
+use super::workflows::RunShare;
+
 /// The Workflow settings of a Location that a run needs.
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowLocation {
@@ -22,6 +24,8 @@ pub struct WorkflowLocation {
     pub tiers: BTreeMap<String, Option<String>>,
     /// `budgets.run` of the Location's configuration (`null` when unset).
     pub run_budget: Value,
+    /// `workflows.max_concurrent_per_run`: the share of a run that sets none.
+    pub max_concurrent_per_run: Option<u32>,
 }
 
 /// Why a run cannot start.
@@ -63,6 +67,7 @@ pub fn location(config: &Value) -> Result<WorkflowLocation, String> {
             .pointer("/budgets/run")
             .cloned()
             .unwrap_or(Value::Null),
+        max_concurrent_per_run: settings.max_concurrent_per_run,
     })
 }
 
@@ -128,6 +133,47 @@ pub fn client_budget(
     }
 }
 
+/// A run's share of the agent slots (`workflows` → Fair agent scheduling): the
+/// invocation's `max_concurrent`, else `meta.max_concurrent`, else
+/// `workflows.max_concurrent_per_run`; `None` for the whole server-wide limit, which also
+/// caps it when the run starts. Each source must be a positive integer: a bad invocation
+/// value is an invalid request, a bad `meta` value an `ExecutionFailure`.
+pub fn share(
+    location: &WorkflowLocation,
+    module: &WorkflowModule,
+    invocation: Option<&Value>,
+) -> Result<RunShare, StartError> {
+    if let Some(value) = invocation.filter(|value| !value.is_null()) {
+        return positive(value)
+            .map(|n| RunShare::requested(Some(n)))
+            .ok_or_else(|| {
+                StartError::Invalid(format!(
+                    "max_concurrent must be a positive integer, got {value}"
+                ))
+            });
+    }
+    let max_concurrent = match module.meta.raw.get("max_concurrent") {
+        Some(value) => Some(positive(value).ok_or_else(|| {
+            StartError::Module(Diagnostic::execution(format!(
+                "meta.max_concurrent must be a positive integer, got {value}"
+            )))
+        })?),
+        None => location.max_concurrent_per_run,
+    };
+    Ok(RunShare {
+        requested: None,
+        max_concurrent,
+    })
+}
+
+/// A positive integer, saturated to `u32`.
+fn positive(value: &Value) -> Option<u32> {
+    value
+        .as_u64()
+        .filter(|n| *n > 0)
+        .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +227,62 @@ mod tests {
         // The authenticated client overrides explicitly.
         let client = client_budget(&location, &module, Some(&json!({"max_cost_usd": 100.0})));
         assert_eq!(client.unwrap().budget.max_cost_usd, Some(100.0));
+    }
+
+    #[test]
+    fn the_share_layers_invocation_meta_and_configuration() {
+        let plain = WorkflowModule::inline(
+            "export const meta = {name: \"s\", description: \"d\"};\nexport default async () => 1;"
+                .to_owned(),
+        )
+        .unwrap();
+        let declared = WorkflowModule::inline(
+            "export const meta = {name: \"s\", description: \"d\", max_concurrent: 4};\nexport default async () => 1;".to_owned(),
+        )
+        .unwrap();
+        let configured = WorkflowLocation {
+            max_concurrent_per_run: Some(6),
+            ..Default::default()
+        };
+        let resolved = |max_concurrent| {
+            Ok(RunShare {
+                requested: None,
+                max_concurrent,
+            })
+        };
+        assert_eq!(
+            share(&WorkflowLocation::default(), &plain, None),
+            resolved(None)
+        );
+        assert_eq!(share(&configured, &plain, None), resolved(Some(6)));
+        assert_eq!(share(&configured, &declared, None), resolved(Some(4)));
+        // Only the invocation's own value is kept for a later resume.
+        assert_eq!(
+            share(&configured, &declared, Some(&json!(2))),
+            Ok(RunShare::requested(Some(2)))
+        );
+        assert_eq!(
+            share(&configured, &declared, Some(&Value::Null)),
+            resolved(Some(4))
+        );
+        for bad in [json!(0), json!(-1), json!(1.5), json!("3")] {
+            assert!(
+                matches!(
+                    share(&configured, &plain, Some(&bad)),
+                    Err(StartError::Invalid(_))
+                ),
+                "{bad}"
+            );
+            let source = format!(
+                "export const meta = {{name: \"s\", description: \"d\", max_concurrent: {bad}}};\nexport default async () => 1;"
+            );
+            let module = WorkflowModule::inline(source).unwrap();
+            match share(&configured, &module, None) {
+                Err(StartError::Module(error)) => {
+                    assert_eq!(error.kind, cyber_workflow::DiagnosticKind::ExecutionFailure);
+                }
+                other => panic!("{bad}: {other:?}"),
+            }
+        }
     }
 }

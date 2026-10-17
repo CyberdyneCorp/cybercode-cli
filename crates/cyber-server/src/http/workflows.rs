@@ -14,18 +14,28 @@ use cyber_workflow::{Diagnostic, WorkflowModule};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::envelope::{Cursor, Data, Page};
-use super::{ApiError, AppState};
+use std::sync::Arc;
+
+use axum::http::request::Parts;
+use futures::future::BoxFuture;
+
+use super::envelope::{Cursor, Data, Page, location};
+use super::{ApiError, AppState, Services};
 pub use crate::runtime::workflow_start::WorkflowLocation;
 use crate::runtime::workflow_start::{self, StartError};
 use crate::runtime::{
-    ResumeWorkflowRun, RunStarter, RuntimeError, SessionInfo, StartWorkflowRun, TurnContext,
-    WorkflowAgent, WorkflowLogEntry, WorkflowRun,
+    InterruptedResume, ResumeWorkflowRun, RunFilter, RunStarter, Runtime, RuntimeError,
+    SessionInfo, StartWorkflowRun, TurnContext, WorkflowAgent, WorkflowLogEntry, WorkflowRelaunch,
+    WorkflowRun, WorkflowRunStatus, WorkflowRunSummary,
 };
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/workflows/runs", get(list).post(start))
+        .route(
+            "/workflows/runs/resume_interrupted",
+            post(resume_interrupted),
+        )
         .route("/workflows/runs/{id}", get(show))
         .route("/workflows/runs/{id}/pause", post(pause))
         .route("/workflows/runs/{id}/resume", post(resume))
@@ -57,6 +67,11 @@ pub(super) struct StartBody {
     /// the authenticated client may raise a limit, as on resume.
     #[serde(default)]
     budget: Option<Value>,
+    /// The run's share of the server-wide Workflow agent slots, a positive integer capped
+    /// at that limit; overrides `meta.max_concurrent` and `workflows.max_concurrent_per_run`.
+    #[serde(default)]
+    #[schemars(with = "Option<std::num::NonZeroU32>")]
+    max_concurrent: Option<Value>,
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -68,19 +83,31 @@ pub(super) struct ResumeBody {
     /// Run budget fields to override, such as a raised `max_cost_usd`.
     #[serde(default)]
     budget: Option<Value>,
+    /// The run's share of the agent slots for this attempt, as on start; a change needs
+    /// no revision. Absent, the run keeps the `max_concurrent` it was last given.
+    #[serde(default)]
+    #[schemars(with = "Option<std::num::NonZeroU32>")]
+    max_concurrent: Option<Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct Filter {
+    /// Comma-separated statuses; every status when absent.
+    status: Option<String>,
     session_id: Option<String>,
+    /// A Location's directory, or `all`; the request Location when absent.
+    directory: Option<String>,
+    limit: Option<u32>,
+    cursor: Option<String>,
 }
 
-/// A run with its agents.
+/// A run's summary with its agents.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct RunDetail {
     #[serde(flatten)]
-    run: WorkflowRun,
-    agents: Vec<WorkflowAgent>,
+    summary: WorkflowRunSummary,
+    /// Every agent of the run, in start or settlement order.
+    agents_detail: Vec<WorkflowAgent>,
 }
 
 fn diagnostic(error: Diagnostic) -> ApiError {
@@ -149,6 +176,8 @@ async fn start(
     let settings = state.services.workflow_location(&location)?;
     let budget = workflow_start::client_budget(&settings, &module, body.budget.as_ref())
         .map_err(start_error)?;
+    let share = workflow_start::share(&settings, &module, body.max_concurrent.as_ref())
+        .map_err(start_error)?;
     let run = state
         .runtime
         .start_workflow_run(StartWorkflowRun {
@@ -160,22 +189,72 @@ async fn start(
             limits: settings.limits,
             tiers: settings.tiers,
             budget,
+            share,
             starter: RunStarter::Api,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(Data { data: run })))
 }
 
+/// `status=running,queued`: each name a run status.
+fn statuses(list: Option<&str>) -> Result<Vec<WorkflowRunStatus>, ApiError> {
+    list.into_iter()
+        .flat_map(|list| list.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            serde_json::from_value(Value::String(name.to_owned()))
+                .map_err(|_| ApiError::invalid(format!("unknown Workflow Run status: {name}")))
+        })
+        .collect()
+}
+
+/// `directory=all` is every Location; a directory, that Location; none, the request's.
+fn run_directory(
+    state: &AppState,
+    parts: &Parts,
+    directory: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    let path = match directory {
+        Some("all") => return Ok(None),
+        Some(directory) => std::fs::canonicalize(directory)
+            .map_err(|_| ApiError::invalid(format!("no such directory: {directory}")))?,
+        None => location(parts, &state.options.default_directory)?,
+    };
+    Ok(Some(path.display().to_string()))
+}
+
+/// Run summaries, active runs first and then the newest (`workflows` → Run monitor).
 async fn list(
     State(state): State<AppState>,
     Query(filter): Query<Filter>,
-) -> Result<Json<Page<WorkflowRun>>, ApiError> {
+    parts: Parts,
+) -> Result<Json<Page<WorkflowRunSummary>>, ApiError> {
     if let Some(id) = &filter.session_id {
         state.runtime.state(id).await?;
     }
+    let filter = RunFilter {
+        statuses: statuses(filter.status.as_deref())?,
+        directory: run_directory(&state, &parts, filter.directory.as_deref())?,
+        session_id: filter.session_id,
+        limit: filter.limit,
+        cursor: filter.cursor,
+    };
+    let page = state
+        .runtime
+        .workflow_run_page(&filter)
+        .map_err(|error| match error {
+            RuntimeError::Invalid(message) if message.starts_with("InvalidCursorError") => {
+                ApiError::new(StatusCode::BAD_REQUEST, "InvalidCursorError", message)
+            }
+            error => error.into(),
+        })?;
     Ok(Json(Page {
-        data: state.runtime.workflow_runs(filter.session_id.as_deref())?,
-        cursor: Cursor::default(),
+        data: page.runs,
+        cursor: Cursor {
+            previous: None,
+            next: page.next,
+        },
     }))
 }
 
@@ -187,10 +266,16 @@ async fn show(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Data<RunDetail>>, ApiError> {
-    let run = existing(&state, &id)?;
-    let agents = state.runtime.workflow_agents(&id)?;
+    let summary = state
+        .runtime
+        .workflow_run_summary(&id)?
+        .ok_or_else(|| not_found(&id))?;
+    let agents_detail = state.runtime.workflow_agents(&id)?;
     Ok(Json(Data {
-        data: RunDetail { run, agents },
+        data: RunDetail {
+            summary,
+            agents_detail,
+        },
     }))
 }
 
@@ -230,34 +315,107 @@ async fn resume(
 ) -> Result<Json<Data<WorkflowRun>>, ApiError> {
     let body = body.map(|Json(body)| body).unwrap_or_default();
     let run = existing(&state, &id)?;
-    let location = std::path::PathBuf::from(&run.directory);
-    let module = match run.origin["kind"].as_str() {
-        Some("saved") => state.services.saved_workflow(&location, &run.name)?,
-        _ => WorkflowModule::inline(inline_source(&state, &run)?).map_err(diagnostic)?,
-    };
-    let owner = state.runtime.state(&run.session_id).await?.info;
-    state
-        .services
-        .authorize_workflow_run(&owner_context(&owner), &module)?;
-    let settings = state.services.workflow_location(&location)?;
+    // A resume that gives no share keeps the one the run was last given.
+    let requested = body
+        .max_concurrent
+        .filter(|value| !value.is_null())
+        .or_else(|| run.max_concurrent.map(Value::from));
+    let mut resume = relaunch(
+        state.services.as_ref(),
+        &state.runtime,
+        &run,
+        requested.as_ref(),
+    )
+    .await?;
+    resume.budget = body.budget;
+    resume.revision = body.revision;
     let run = state
         .runtime
-        .resume_workflow_run(ResumeWorkflowRun {
-            run_id: id,
-            module,
-            limits: settings.limits,
-            tiers: settings.tiers,
-            budget: body.budget,
-            revision: body.revision,
-        })
+        .resume_workflow_run(resume)
         .await
         .map_err(lifecycle)?;
     Ok(Json(Data { data: run }))
 }
 
+/// The next attempt of `run` as a resume runs it: the module read again, the owner's
+/// `workflow.run` rules, and the Location's limits, tiers and share. No budget override
+/// and no new revision.
+async fn relaunch(
+    services: &dyn Services,
+    runtime: &Runtime,
+    run: &WorkflowRun,
+    max_concurrent: Option<&Value>,
+) -> Result<ResumeWorkflowRun, ApiError> {
+    let location = std::path::PathBuf::from(&run.directory);
+    let module = match run.origin["kind"].as_str() {
+        Some("saved") => services.saved_workflow(&location, &run.name)?,
+        _ => WorkflowModule::inline(inline_source(runtime, run)?).map_err(diagnostic)?,
+    };
+    let owner = runtime.state(&run.session_id).await?.info;
+    services.authorize_workflow_run(&owner_context(&owner), &module)?;
+    let settings = services.workflow_location(&location)?;
+    let share = workflow_start::share(&settings, &module, max_concurrent).map_err(start_error)?;
+    Ok(ResumeWorkflowRun {
+        run_id: run.id.clone(),
+        module,
+        limits: settings.limits,
+        tiers: settings.tiers,
+        budget: None,
+        revision: false,
+        share,
+    })
+}
+
+/// How the runtime rebuilds runs after a restart (`workflows` → Recovery of several runs):
+/// as a [`resume`] that gives no share does.
+pub struct ServicesRelaunch(pub Arc<dyn Services>);
+
+impl WorkflowRelaunch for ServicesRelaunch {
+    fn relaunch<'a>(
+        &'a self,
+        runtime: &'a Runtime,
+        run: &'a WorkflowRun,
+    ) -> BoxFuture<'a, Result<ResumeWorkflowRun, String>> {
+        Box::pin(async move {
+            let requested = run.max_concurrent.map(Value::from);
+            relaunch(self.0.as_ref(), runtime, run, requested.as_ref())
+                .await
+                .map_err(|error| error.body.message)
+        })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct InterruptedFilter {
+    /// A Location's directory, or `all`; the request Location when absent.
+    directory: Option<String>,
+}
+
+/// Resume every run a restart interrupted, of the request Location or of every Location
+/// (`directory=all`). A run paused by a user stays paused.
+async fn resume_interrupted(
+    State(state): State<AppState>,
+    Query(filter): Query<InterruptedFilter>,
+    parts: Parts,
+) -> Result<Json<Data<InterruptedResume>>, ApiError> {
+    let directory = match filter.directory.as_deref() {
+        Some("all") => None,
+        Some(directory) => Some(
+            std::fs::canonicalize(directory)
+                .map_err(|_| ApiError::invalid(format!("no such directory: {directory}")))?,
+        ),
+        None => Some(location(&parts, &state.options.default_directory)?),
+    };
+    let report = state
+        .runtime
+        .resume_interrupted_workflow_runs(directory.as_deref())
+        .await?;
+    Ok(Json(Data { data: report }))
+}
+
 /// The script an inline run relaunches: its `script_file` as the user left it, else the
 /// source of its current revision.
-fn inline_source(state: &AppState, run: &WorkflowRun) -> Result<String, ApiError> {
+fn inline_source(runtime: &Runtime, run: &WorkflowRun) -> Result<String, ApiError> {
     if let Some(file) = &run.script_file {
         match std::fs::read_to_string(file) {
             Ok(source) => return Ok(source),
@@ -269,8 +427,7 @@ fn inline_source(state: &AppState, run: &WorkflowRun) -> Result<String, ApiError
             }
         }
     }
-    state
-        .runtime
+    runtime
         .workflow_run_source(&run.id)?
         .ok_or_else(|| ApiError::conflict("The run's script source is not stored"))
 }

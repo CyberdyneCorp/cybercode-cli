@@ -2,6 +2,7 @@
 
 mod admissions;
 mod app;
+pub mod books;
 mod children;
 mod composer;
 mod explorer;
@@ -17,6 +18,7 @@ mod osc;
 mod palette;
 mod perform;
 mod prefs;
+mod progress;
 mod recap;
 mod review;
 mod runner;
@@ -27,6 +29,8 @@ mod switcher;
 mod theme;
 mod turns;
 mod view;
+mod workflow_watch;
+mod workflows;
 
 #[cfg(test)]
 mod screens;
@@ -37,7 +41,11 @@ mod screens_chrome;
 #[cfg(test)]
 mod screens_explorer;
 #[cfg(test)]
+mod screens_indicators;
+#[cfg(test)]
 mod screens_markdown;
+#[cfg(test)]
+mod screens_progress;
 #[cfg(test)]
 mod screens_recap;
 #[cfg(test)]
@@ -50,6 +58,8 @@ mod screens_stats;
 mod screens_themes;
 #[cfg(test)]
 mod screens_usage;
+#[cfg(test)]
+mod screens_workflows;
 #[cfg(test)]
 mod tests;
 

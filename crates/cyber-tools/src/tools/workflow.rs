@@ -31,7 +31,8 @@ impl Tool for Workflow {
                 "name":{"type":"string", "description":"A saved Workflow's meta.name"},
                 "script":{"type":"string", "description":"An inline JavaScript Workflow module"},
                 "args":{"type":"object", "description":"The script's frozen args"},
-                "budget":{"type":"object", "description":"Run budget fields: max_cost_usd, max_tokens, max_turns, max_wall_seconds, max_agents"}
+                "budget":{"type":"object", "description":"Run budget fields: max_cost_usd, max_tokens, max_turns, max_wall_seconds, max_agents"},
+                "max_concurrent":{"type":"integer", "minimum":1, "description":"At most this many of the run's agents at once (capped at the server-wide workflows.max_concurrent)"}
             }}),
             RetrySafety::Never,
             false,
@@ -104,6 +105,8 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
     let settings = workflow_start::location(&config).map_err(failed)?;
     let budget =
         workflow_start::budget(&settings, &module, input.get("budget")).map_err(start_failed)?;
+    let share = workflow_start::share(&settings, &module, input.get("max_concurrent"))
+        .map_err(start_failed)?;
     let shown = serde_json::to_value(&budget).unwrap_or(Value::Null);
     let request = |resource: String| Request {
         action: WORKFLOW_RUN.into(),
@@ -131,20 +134,26 @@ async fn run(ctx: &Ctx<'_>) -> Result<String, ToolError> {
             limits: settings.limits,
             tiers: settings.tiers,
             budget,
+            share,
             starter: RunStarter::Session {
                 interactive: ctx.inv.asker.attended(),
             },
         })
         .await
         .map_err(|error| failed(error.to_string()))?;
-    Ok(json!({
+    let mut handle = json!({
         "run_id": run.id,
         "name": run.name,
         "status": run.status,
         "phases": run.phases,
         "budget": run.budget,
+        "share": run.share,
         "script_file": run.script_file.as_deref().map(Path::new),
         "message": "The run continues in the background. Its summary arrives as a queued message when it ends; do not wait or poll for it.",
-    })
-    .to_string())
+    });
+    // Every run slot was taken: the run waits `queued` and starts in turn.
+    if let Some(position) = run.queue_position {
+        handle["queue_position"] = position.into();
+    }
+    Ok(handle.to_string())
 }

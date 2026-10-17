@@ -227,25 +227,23 @@ impl App {
             snapshots,
         });
         host.attach(runtime.clone());
-        // One FIFO limit for every Workflow agent of this server (`workflows.max_concurrent`,
-        // reduced to the core count), fixed at startup like the listener settings.
+        // One fair scheduler of the slots of every Workflow agent of this server
+        // (`workflows.max_concurrent`, reduced to the core count), fixed at startup like the
+        // listener settings.
         let cores = std::thread::available_parallelism().map_or(1, usize::from);
-        let workflow_limit = config::WorkflowSettings::from_config(&global)
-            .unwrap_or_default()
-            .effective_max_concurrent(cores);
+        let workflow_settings = config::WorkflowSettings::from_config(&global).unwrap_or_default();
+        let workflow_limit = workflow_settings.effective_max_concurrent(cores);
         runtime.configure_workflow_concurrency(workflow_limit as usize);
+        // Runs holding an execution attempt at once (`workflows.max_running_runs`); later
+        // starts and resumes wait `queued`.
+        runtime.configure_workflow_runs(workflow_settings.max_running_runs as usize);
         // Inline scripts and return values larger than 1 MiB (`workflows` → Run results).
         runtime.configure_workflow_dir(opts.paths.state.join("workflows"));
         runtime.recover_jobs().await.map_err(|e| e.to_string())?;
         // Index usage stored before the usage ledger existed (resumable, in batches).
         runtime.spawn_usage_backfill();
-        // Runs a previous process left executing come back paused; resume continues them.
-        runtime
-            .recover_workflow_runs()
-            .await
-            .map_err(|e| e.to_string())?;
         let config_for_app = Arc::clone(&config);
-        let services = services::AppServices::new(
+        let services: Arc<dyn http::Services> = Arc::new(services::AppServices::new(
             resolver,
             Arc::clone(&host),
             Arc::clone(&remote_tools),
@@ -253,13 +251,22 @@ impl App {
             opts.paths.clone(),
             withheld_hook_loader(opts.paths.clone(), opts.home.clone()),
             global_config_loader(opts.paths.clone(), opts.home.clone()),
-        );
+        ));
+        // Runs a previous process left executing come back paused (and are resumed with
+        // `workflows.resume_after_restart`); queued runs are rebuilt as a resume would and
+        // keep their place in the run queue.
+        runtime
+            .configure_workflow_relaunch(Arc::new(http::ServicesRelaunch(Arc::clone(&services))));
+        runtime
+            .recover_workflow_runs(workflow_settings.resume_after_restart)
+            .await
+            .map_err(|e| e.to_string())?;
         let state = AppState {
             service: None,
             runtime: runtime.clone(),
             remote_tools,
             store: Arc::clone(&store),
-            services: Arc::new(services),
+            services,
             options: Arc::new(HttpOptions {
                 version: version().into(),
                 password: opts.password,

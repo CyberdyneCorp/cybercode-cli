@@ -19,6 +19,8 @@ use crate::context::Context;
 use crate::error::CliError;
 use crate::output;
 
+mod runs;
+
 /// `run --wait` when the run exceeded its budget.
 pub const EXIT_BUDGET: u8 = 4;
 /// Milestone that ships remote runners (`ROADMAP.md` → P3).
@@ -31,18 +33,37 @@ pub enum WorkflowsCmd {
     List,
     /// Start a Workflow Run from a saved name or a script file.
     Run(RunArgs),
-    /// List recent Workflow Runs of this Location.
-    Runs,
+    /// List recent Workflow Runs of this Location: active runs first, then the newest.
+    Runs {
+        /// Every Location's runs.
+        #[arg(long)]
+        all: bool,
+        /// Only runs of these statuses, e.g. `running,queued`.
+        #[arg(long, value_name = "S[,S...]")]
+        status: Option<String>,
+        /// Keep the list current until Ctrl-C, which changes no run.
+        #[arg(long)]
+        watch: bool,
+    },
     /// Show one Workflow Run and its agents.
     Show { run_id: String },
     /// Pause a Workflow Run: in-flight agents finish, no new agent starts.
     Pause { run_id: String },
-    /// Resume a paused, failed or stopped Workflow Run.
+    /// Resume a paused, failed or stopped Workflow Run, or with `--interrupted` every run a
+    /// server restart interrupted.
     Resume {
-        run_id: String,
+        #[arg(required_unless_present = "interrupted")]
+        run_id: Option<String>,
         /// Accept a changed script or configuration as a new revision.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "interrupted")]
         revision: bool,
+        /// Resume every run of this Location that a server restart interrupted; runs
+        /// paused by a user stay paused.
+        #[arg(long, conflicts_with = "run_id")]
+        interrupted: bool,
+        /// With `--interrupted`, every Location's interrupted runs.
+        #[arg(long, requires = "interrupted")]
+        all: bool,
     },
     /// Stop a Workflow Run and cancel its in-flight agents.
     Stop { run_id: String },
@@ -69,6 +90,9 @@ pub struct RunArgs {
     pub timeout: Option<String>,
     #[arg(long, value_name = "N")]
     pub max_agents: Option<u64>,
+    /// The run's share of the server's Workflow agent slots (at most N agents at once).
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_concurrent: Option<u32>,
     /// Run on a remote runner (not available yet).
     #[arg(long, value_name = "ID")]
     pub runner: Option<String>,
@@ -108,13 +132,20 @@ async fn remote(
     match cmd {
         WorkflowsCmd::List => unreachable!("listed locally"),
         WorkflowsCmd::Run(args) => start(client, ctx, global, args).await,
-        WorkflowsCmd::Runs => runs(client, ctx, global).await,
+        WorkflowsCmd::Runs { all, status, watch } => {
+            runs::runs(client, global, runs::RunsQuery { all, status }, watch).await
+        }
         WorkflowsCmd::Show { run_id } => show(client, global, &run_id).await,
         WorkflowsCmd::Pause { run_id } => control(client, global, &run_id, "pause", None).await,
-        WorkflowsCmd::Resume { run_id, revision } => {
+        WorkflowsCmd::Resume {
+            run_id: Some(run_id),
+            revision,
+            ..
+        } => {
             let body = json!({"revision": revision});
             control(client, global, &run_id, "resume", Some(body)).await
         }
+        WorkflowsCmd::Resume { all, .. } => resume_interrupted(client, global, all).await,
         WorkflowsCmd::Stop { run_id } => control(client, global, &run_id, "stop", None).await,
         WorkflowsCmd::Logs { run_id } => logs(client, global, &run_id).await,
     }
@@ -159,6 +190,9 @@ fn start_body(ctx: &Context, args: &RunArgs, session: &str) -> Result<Value, Cli
         },
     };
     let mut body = json!({"session_id": session, "args": script_args, "budget": budget(args)?});
+    if let Some(share) = args.max_concurrent {
+        body["max_concurrent"] = share.into();
+    }
     let path = ctx.location.join(&args.target);
     if looks_like_file(&args.target) || path.is_file() {
         let source = std::fs::read_to_string(&path).map_err(|error| {
@@ -271,6 +305,8 @@ fn ended(run: &Value) -> Option<u8> {
 #[derive(Default)]
 struct Progress {
     phase: Option<String>,
+    /// The last queue position printed while the run waits for a run slot.
+    queue_position: Option<u64>,
     /// Agents whose end was printed, by ID: agents can settle in any order.
     settled: HashSet<String>,
 }
@@ -285,8 +321,15 @@ impl Progress {
     /// New progress lines since the last poll. A phase change is printed after the agents
     /// of earlier phases that settled in the same poll and before those of the new phase.
     fn changes(&mut self, run: &Value) -> Vec<String> {
+        let position = queue_position(run);
+        if position.is_some() && position != self.queue_position {
+            self.queue_position = position;
+            return vec![format!("queued: {}", queue_text(position))];
+        }
         let phase = run["phase"].as_str().map(str::to_owned);
-        let agents = run["agents"].as_array().map_or(&[][..], Vec::as_slice);
+        let agents = run["agents_detail"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
         let (current, earlier): (Vec<&Value>, Vec<&Value>) = agents
             .iter()
             .filter(|agent| agent["status"] != "running")
@@ -302,6 +345,25 @@ impl Progress {
         }
         lines.extend(current.into_iter().map(settled_line));
         lines
+    }
+}
+
+/// A queued run's place in the run queue, 1 for the next to be dispatched.
+fn queue_position(run: &Value) -> Option<u64> {
+    (run["status"] == "queued")
+        .then(|| run["queue_position"].as_u64())
+        .flatten()
+}
+
+fn queue_text(position: Option<u64>) -> String {
+    position.map_or_else(|| "-".into(), |n| format!("#{n} in queue"))
+}
+
+/// The status, with the queue position of a queued run.
+fn status_text(run: &Value) -> String {
+    match queue_position(run) {
+        Some(n) => format!("{} (#{n} in queue)", text(&run["status"])),
+        None => text(&run["status"]),
     }
 }
 
@@ -345,37 +407,44 @@ fn report(global: &GlobalArgs, run: &Value) -> Result<(), CliError> {
     Ok(())
 }
 
-async fn runs(client: &Client, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
-    let listed = client.get("/workflows/runs").await.map_err(api)?;
-    let location = ctx.location.display().to_string();
-    let runs: Vec<&Value> = listed["data"]
-        .as_array()
-        .map_or(&[][..], Vec::as_slice)
-        .iter()
-        .filter(|run| same_location(run["directory"].as_str(), &location))
-        .collect();
+/// `resume --interrupted`: one line per resumed run on stdout, one per refusal on stderr;
+/// exits 1 when any run was refused.
+async fn resume_interrupted(
+    client: &Client,
+    global: &GlobalArgs,
+    all: bool,
+) -> Result<(), CliError> {
+    let path = if all {
+        "/workflows/runs/resume_interrupted?directory=all"
+    } else {
+        "/workflows/runs/resume_interrupted"
+    };
+    let answer = client.post(path, json!({})).await.map_err(api)?;
+    let report = &answer["data"];
+    let list = |key: &str| report[key].as_array().cloned().unwrap_or_default();
+    let (resumed, refused) = (list("resumed"), list("refused"));
     if output::is_json(global.format) {
-        return output::json(&runs);
+        output::json(report)?;
+    } else {
+        if resumed.is_empty() && refused.is_empty() {
+            println!("No interrupted Workflow Runs.");
+        }
+        for id in &resumed {
+            println!("resumed {}", id.as_str().unwrap_or("?"));
+        }
+        for refusal in &refused {
+            eprintln!(
+                "not resumed {}: {}",
+                refusal["run_id"].as_str().unwrap_or("?"),
+                refusal["reason"].as_str().unwrap_or("?")
+            );
+        }
     }
-    if runs.is_empty() {
-        println!("No Workflow Runs in this Location.");
+    if refused.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::silent(crate::error::EXIT_RUNTIME))
     }
-    for run in runs {
-        println!(
-            "{}  {:16}  {:15}  {}",
-            run["id"].as_str().unwrap_or("?"),
-            run["name"].as_str().unwrap_or("?"),
-            run["status"].as_str().unwrap_or("?"),
-            run["phase"].as_str().unwrap_or("-"),
-        );
-    }
-    Ok(())
-}
-
-/// Locations compare canonically, so `\\?\` and symlinked spellings match.
-fn same_location(directory: Option<&str>, location: &str) -> bool {
-    let canonical = |path: &str| std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
-    directory.is_some_and(|directory| canonical(directory) == canonical(location))
 }
 
 async fn show(client: &Client, global: &GlobalArgs, id: &str) -> Result<(), CliError> {
@@ -387,12 +456,14 @@ async fn show(client: &Client, global: &GlobalArgs, id: &str) -> Result<(), CliE
     if output::is_json(global.format) {
         return output::json(run);
     }
-    let agents = run["agents"].as_array().map_or(&[][..], Vec::as_slice);
+    let agents = run["agents_detail"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
     let count = |status: &str| agents.iter().filter(|a| a["status"] == status).count();
     output::rows(&[
         ("run", text(&run["id"])),
         ("name", text(&run["name"])),
-        ("status", text(&run["status"])),
+        ("status", status_text(run)),
         ("phase", text(&run["phase"])),
         ("session", text(&run["session_id"])),
         (
@@ -404,16 +475,7 @@ async fn show(client: &Client, global: &GlobalArgs, id: &str) -> Result<(), CliE
                 count("failed")
             ),
         ),
-        (
-            "cost",
-            format!(
-                "{:.4} USD",
-                agents
-                    .iter()
-                    .filter_map(|a| a["cost"].as_f64())
-                    .sum::<f64>()
-            ),
-        ),
+        ("cost", cost_text(agents)),
         ("script", text(&run["script_file"])),
     ]);
     for agent in agents {
@@ -428,6 +490,16 @@ async fn show(client: &Client, global: &GlobalArgs, id: &str) -> Result<(), CliE
         );
     }
     Ok(())
+}
+
+/// The agents' summed cost. A fold from +0.0: an empty f64 `sum` is -0.0, which a queued
+/// run (no agents yet) printed as `-0.0000 USD`.
+fn cost_text(agents: &[Value]) -> String {
+    let cost = agents
+        .iter()
+        .filter_map(|a| a["cost"].as_f64())
+        .fold(0.0, |sum, cost| sum + cost);
+    format!("{cost:.4} USD")
 }
 
 fn text(value: &Value) -> String {
@@ -452,7 +524,7 @@ async fn control(
     if output::is_json(global.format) {
         return output::json(run);
     }
-    println!("{} {}", text(&run["id"]), text(&run["status"]));
+    println!("{} {}", text(&run["id"]), status_text(run));
     Ok(())
 }
 
@@ -574,10 +646,23 @@ mod tests {
     }
 
     #[test]
+    fn a_queued_run_prints_its_queue_position_when_it_changes() {
+        let mut progress = Progress::default();
+        let queued = |n: u64| json!({"status": "queued", "queue_position": n, "agents_detail": []});
+        assert_eq!(progress.changes(&queued(2)), ["queued: #2 in queue"]);
+        assert!(progress.changes(&queued(2)).is_empty());
+        assert_eq!(progress.changes(&queued(1)), ["queued: #1 in queue"]);
+        let running = json!({"status": "running", "phase": "Scan", "agents_detail": []});
+        assert_eq!(progress.changes(&running), ["phase: Scan"]);
+        assert_eq!(status_text(&queued(3)), "queued (#3 in queue)");
+        assert_eq!(status_text(&running), "running");
+    }
+
+    #[test]
     fn progress_prints_each_settled_agent_once_in_phase_order() {
         let mut progress = Progress::default();
         let run = |phase: &str, a: &str, b: &str| {
-            json!({"phase": phase, "agents": [
+            json!({"phase": phase, "agents_detail": [
                 {"id": "agt_a", "label": "a", "phase": "Scan", "status": a},
                 {"id": "agt_b", "label": "b", "phase": "Scan", "status": b},
             ]})
@@ -612,6 +697,17 @@ mod tests {
             text("AgentFailed", "AgentFailedly: odd"),
             "AgentFailed: AgentFailedly: odd"
         );
+    }
+
+    #[test]
+    fn a_run_without_agents_costs_zero_not_negative_zero() {
+        assert_eq!(cost_text(&[]), "0.0000 USD");
+        let agents = [
+            json!({"cost": 0.25}),
+            json!({"cost": null}),
+            json!({"cost": 0.5}),
+        ];
+        assert_eq!(cost_text(&agents), "0.7500 USD");
     }
 
     #[test]

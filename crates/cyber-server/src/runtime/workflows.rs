@@ -19,17 +19,22 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::Semaphore;
 
 use super::bus::Bus;
 use super::workflow_control::{Control, Signal};
 use super::workflow_host::{RunHost, budget_snapshot};
+use super::workflow_queue::{
+    Admission, DEFAULT_MAX_RUNNING_RUNS, Pending, Reservation, RunSlot, WorkflowQueue,
+};
 use super::workflow_replay::Replay;
+use super::workflow_scheduler::WorkflowScheduler;
 use super::{LiveEvent, Runtime, RuntimeError};
 
 pub const RUN_STARTED: &str = "workflow.run.started.1";
 pub const RUN_PAUSED: &str = "workflow.run.paused.1";
 pub const RUN_RESUMED: &str = "workflow.run.resumed.1";
+/// A queued run got a run slot and its engine launches (`workflows` → Run queue).
+pub const RUN_DISPATCHED: &str = "workflow.run.dispatched.1";
 pub const RUN_REVISED: &str = "workflow.run.revised.1";
 pub const RUN_COMPLETED: &str = "workflow.run.completed.1";
 pub const RUN_FAILED: &str = "workflow.run.failed.1";
@@ -43,10 +48,11 @@ pub const PHASE: &str = "workflow.phase.1";
 pub const LOG: &str = "workflow.log.1";
 /// The run summary was admitted to the starting Session (`workflows` → Run results).
 pub const RUN_NOTIFIED: &str = "workflow.run.notified.1";
-const KINDS: [&str; 13] = [
+const KINDS: [&str; 14] = [
     RUN_STARTED,
     RUN_PAUSED,
     RUN_RESUMED,
+    RUN_DISPATCHED,
     RUN_REVISED,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -59,9 +65,10 @@ const KINDS: [&str; 13] = [
     RUN_NOTIFIED,
 ];
 /// Lifecycle events that carry the whole run.
-const LIFECYCLE: [&str; 6] = [
+pub(super) const LIFECYCLE: [&str; 7] = [
     RUN_PAUSED,
     RUN_RESUMED,
+    RUN_DISPATCHED,
     RUN_REVISED,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -147,6 +154,23 @@ pub struct WorkflowRun {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<RunBudget>,
+    /// Agents of this run that may hold a slot of the server-wide limit at once: its
+    /// `max_concurrent`, capped at that limit (`workflows` → Fair agent scheduling).
+    /// Absent on runs recorded before shares existed, which use the whole limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<u32>,
+    /// The `max_concurrent` the start or latest resume gave itself, before `meta` and the
+    /// configuration: a resume that gives none keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<u32>,
+    /// When a `queued` run entered the run queue: the time of the start or resume that
+    /// queued it. Dispatch goes by it, then by run ID (`workflows` → Run queue).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_ms: Option<i64>,
+    /// A `queued` run's place in the run queue, 1 for the next to be dispatched; computed
+    /// when the run is read, never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_position: Option<u32>,
     /// Declared phases followed by titles first seen in `phase()`.
     pub phases: Vec<String>,
     /// The current phase.
@@ -217,6 +241,13 @@ pub struct WorkflowAgent {
     pub error: Option<Diagnostic>,
     pub cost: f64,
     pub tokens: u64,
+    /// When the agent started, from its first `workflow.agent.started.1`; set by the
+    /// projection, never recorded in the event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_ms: Option<i64>,
+    /// When the agent settled; absent while it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_ms: Option<i64>,
 }
 
 /// One `log()` call.
@@ -238,7 +269,31 @@ pub struct StartWorkflowRun {
     pub tiers: BTreeMap<String, Option<String>>,
     /// Resolved from `budgets.run`, `meta.budget` and the invocation.
     pub budget: RunBudget,
+    /// The run's share of the agent slots ([`super::workflow_start::share`]).
+    pub share: RunShare,
     pub starter: RunStarter,
+}
+
+/// A run's share of the agent slots as a start or resume resolved it (`workflows` → Fair
+/// agent scheduling).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunShare {
+    /// The invocation's own `max_concurrent`, recorded on the run so that a resume giving
+    /// none keeps it.
+    pub requested: Option<u32>,
+    /// `requested`, else `meta.max_concurrent`, else `workflows.max_concurrent_per_run`;
+    /// `None` for the whole server-wide limit.
+    pub max_concurrent: Option<u32>,
+}
+
+impl RunShare {
+    /// The share an invocation asked for, with no `meta` or configuration below it.
+    pub fn requested(max_concurrent: Option<u32>) -> Self {
+        Self {
+            requested: max_concurrent,
+            max_concurrent,
+        }
+    }
 }
 
 /// The engine settings an execution attempt uses.
@@ -317,9 +372,11 @@ fn project_started(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Resul
         if let Some(map) = spec.as_object_mut() {
             map.remove("max_agents");
         }
+        // A queued run's wall clock starts when it is dispatched.
+        let activated = (data["status"] != "queued").then_some(event.time_ms);
         tx.execute(
             "INSERT INTO workflow_run_budget (run_id, spec, activated_ms) VALUES (?1, ?2, ?3)",
-            params![event.aggregate_id, spec.to_string(), event.time_ms],
+            params![event.aggregate_id, spec.to_string(), activated],
         )?;
     }
     Ok(())
@@ -348,11 +405,14 @@ fn project_lifecycle(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Res
     )?;
     match event.kind.as_str() {
         RUN_REVISED => project_revision(tx, event)?,
-        RUN_RESUMED => {
-            tx.execute(
-                "UPDATE workflow_run_budget SET activated_ms = ?2 WHERE run_id = ?1",
-                params![id, event.time_ms],
-            )?;
+        RUN_RESUMED | RUN_DISPATCHED => {
+            // A resume that queued the run starts its clock at dispatch.
+            if data["status"] == "running" {
+                tx.execute(
+                    "UPDATE workflow_run_budget SET activated_ms = ?2 WHERE run_id = ?1",
+                    params![id, event.time_ms],
+                )?;
+            }
             if let Some(order) = data["replay_from_order"].as_i64() {
                 // Results delivered after the replay prefix are not replayed in order again.
                 tx.execute(
@@ -383,14 +443,24 @@ fn project_lifecycle(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Res
     Ok(())
 }
 
+/// An agent's row; `started_ms` comes from its first start (a resumed agent keeps it) and
+/// `ended_ms` from its settlement, both from the event time.
 fn project_agent(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Result<()> {
     let data = &event.data;
+    let time = if event.kind == AGENT_STARTED {
+        "$.started_ms"
+    } else {
+        "$.ended_ms"
+    };
     tx.execute(
         "INSERT INTO workflow_agent (id, run_id, call_key, session_id, status, settled_seq, data)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, json_remove(?7, '$.revision', '$.seq', '$.order', '$.outcome', '$.budget_snapshot'))
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, json_set(json_remove(?7, '$.revision', '$.seq', '$.order', '$.outcome', '$.budget_snapshot', '$.started_ms', '$.ended_ms'), ?8, ?9))
          ON CONFLICT(id) DO UPDATE SET call_key = excluded.call_key,
             session_id = COALESCE(excluded.session_id, workflow_agent.session_id),
-            status = excluded.status, settled_seq = excluded.settled_seq, data = excluded.data",
+            status = excluded.status, settled_seq = excluded.settled_seq,
+            data = json_set(excluded.data, '$.started_ms', COALESCE(
+                json_extract(workflow_agent.data, '$.started_ms'),
+                json_extract(excluded.data, '$.started_ms')))",
         params![
             data["id"].as_str(),
             event.aggregate_id,
@@ -398,7 +468,9 @@ fn project_agent(tx: &Transaction<'_>, event: &StoredEvent) -> rusqlite::Result<
             data["session_id"].as_str(),
             data["status"].as_str(),
             event.seq,
-            data.to_string()
+            data.to_string(),
+            time,
+            event.time_ms
         ],
     )?;
     project_call(tx, event, data["id"].as_str())
@@ -459,7 +531,7 @@ impl RunLog {
         kind: &str,
         extra: Value,
     ) -> Result<(), RuntimeError> {
-        let mut data = serde_json::to_value(run).expect("runs serialize");
+        let mut data = stored_run(run);
         if let (Some(data), Value::Object(extra)) = (data.as_object_mut(), extra) {
             data.extend(extra);
         }
@@ -477,6 +549,15 @@ impl RunLog {
         }
         Ok(())
     }
+}
+
+/// A run as its events carry it: without the queue position, which is computed on read.
+fn stored_run(run: &WorkflowRun) -> Value {
+    let mut data = serde_json::to_value(run).expect("runs serialize");
+    if let Some(map) = data.as_object_mut() {
+        map.remove("queue_position");
+    }
+    data
 }
 
 fn rows<T: serde::de::DeserializeOwned + Send + 'static>(
@@ -520,20 +601,121 @@ impl Runtime {
     /// (`workflows.max_concurrent`, reduced to the core count). False when already set.
     pub fn configure_workflow_concurrency(&self, limit: usize) -> bool {
         self.inner
-            .workflow_slots
-            .set(Arc::new(Semaphore::new(
-                limit.clamp(1, Semaphore::MAX_PERMITS),
-            )))
+            .workflow_scheduler
+            .set(WorkflowScheduler::new(limit.max(1)))
             .is_ok()
     }
 
-    /// The FIFO limit shared by every Workflow agent of this server. It is separate from
-    /// `agents.max_concurrent`, which bounds ordinary subagents per root Session.
-    pub fn workflow_slots(&self) -> Arc<Semaphore> {
-        Arc::clone(self.inner.workflow_slots.get_or_init(|| {
-            let cores = std::thread::available_parallelism().map_or(1, usize::from);
-            Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT.min(cores)))
-        }))
+    /// The fair scheduler of the slots shared by every Workflow agent of this server. It
+    /// is separate from `agents.max_concurrent`, which bounds ordinary subagents per root
+    /// Session.
+    pub fn workflow_scheduler(&self) -> WorkflowScheduler {
+        self.inner
+            .workflow_scheduler
+            .get_or_init(|| {
+                let cores = std::thread::available_parallelism().map_or(1, usize::from);
+                WorkflowScheduler::new(DEFAULT_MAX_CONCURRENT.min(cores))
+            })
+            .clone()
+    }
+
+    /// Set the run queue's limit once, before any run starts (`workflows.max_running_runs`).
+    /// False when already set.
+    pub fn configure_workflow_runs(&self, limit: usize) -> bool {
+        self.inner
+            .workflow_queue
+            .set(WorkflowQueue::new(limit))
+            .is_ok()
+    }
+
+    /// The run queue shared by every Workflow Run of this server.
+    pub(super) fn workflow_queue(&self) -> WorkflowQueue {
+        self.inner
+            .workflow_queue
+            .get_or_init(|| WorkflowQueue::new(DEFAULT_MAX_RUNNING_RUNS))
+            .clone()
+    }
+
+    /// A free run slot for run `run_id` starting or resuming now, its release dispatching
+    /// the next queued run; else its place in the run queue, entered at `queued_ms` and
+    /// held from now on, so no later start or resume takes a slot ahead of it.
+    pub(super) fn admit_workflow_run(&self, run_id: &str, queued_ms: i64) -> Admission {
+        match self.workflow_queue().admit_or_reserve(run_id, queued_ms) {
+            Admission::Slot(slot) => Admission::Slot(self.dispatching_on_release(slot)),
+            Admission::Queued(place) => Admission::Queued(place.on_cancel(self.dispatch_later())),
+        }
+    }
+
+    pub(super) fn dispatching_on_release(&self, slot: RunSlot) -> RunSlot {
+        slot.on_release(self.dispatch_later())
+    }
+
+    /// Dispatch queued runs in the background, when called.
+    fn dispatch_later(&self) -> impl FnOnce() + Send + 'static {
+        let (inner, handle) = (
+            Arc::downgrade(&self.inner),
+            tokio::runtime::Handle::current(),
+        );
+        move || {
+            if let Some(inner) = inner.upgrade() {
+                let runtime = Runtime { inner };
+                handle.spawn(async move { runtime.dispatch_workflow_runs().await });
+            }
+        }
+    }
+
+    /// Wait for a run slot at the place reserved for the run: it is recorded `queued` and
+    /// dispatched in turn.
+    pub(super) fn enqueue_workflow_run(&self, place: Reservation, pending: Pending) {
+        place.fill(pending);
+        // A slot may have been released since the run was refused one.
+        let runtime = self.clone();
+        tokio::spawn(async move { runtime.dispatch_workflow_runs().await });
+    }
+
+    /// Queued runs' IDs in dispatch order, from the durable queue times.
+    fn queue_order(&self) -> Result<Vec<String>, RuntimeError> {
+        Ok(self.inner.store.read(|db| {
+            let mut statement = db.prepare(
+                "SELECT id FROM workflow_run WHERE status = 'queued'
+                 ORDER BY COALESCE(json_extract(data, '$.queued_ms'), started_ms), id",
+            )?;
+            let ids = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })?)
+    }
+
+    /// Set `queue_position` on the queued runs among `runs`.
+    pub(super) fn with_queue_positions(
+        &self,
+        mut runs: Vec<WorkflowRun>,
+    ) -> Result<Vec<WorkflowRun>, RuntimeError> {
+        if !runs
+            .iter()
+            .any(|run| run.status == WorkflowRunStatus::Queued)
+        {
+            return Ok(runs);
+        }
+        let order = self.queue_order()?;
+        for run in runs
+            .iter_mut()
+            .filter(|run| run.status == WorkflowRunStatus::Queued)
+        {
+            run.queue_position = order
+                .iter()
+                .position(|id| *id == run.id)
+                .and_then(|index| u32::try_from(index + 1).ok());
+        }
+        Ok(runs)
+    }
+
+    /// A run's share of the agent slots: `max_concurrent` capped at the server-wide limit,
+    /// the whole limit when unset.
+    pub(super) fn workflow_share(&self, max_concurrent: Option<u32>) -> u32 {
+        let capacity = u32::try_from(self.workflow_scheduler().capacity()).unwrap_or(u32::MAX);
+        max_concurrent.map_or(capacity, |share| share.clamp(1, capacity))
     }
 
     /// Runs, newest first, optionally of one owner Session.
@@ -541,11 +723,12 @@ impl Runtime {
         &self,
         session_id: Option<&str>,
     ) -> Result<Vec<WorkflowRun>, RuntimeError> {
-        rows(
+        let runs = rows(
             &self.inner.store,
             "SELECT data FROM workflow_run WHERE ?1 IS NULL OR session_id = ?1 ORDER BY started_ms DESC, id DESC",
             session_id.map(str::to_owned),
-        )
+        )?;
+        self.with_queue_positions(runs)
     }
 
     pub fn workflow_run(&self, id: &str) -> Result<Option<WorkflowRun>, RuntimeError> {
@@ -557,10 +740,11 @@ impl Runtime {
                 })
                 .optional()?)
         })?;
-        text.map(|text| {
-            serde_json::from_str(&text).map_err(|e| RuntimeError::Corrupt(e.to_string()))
-        })
-        .transpose()
+        let Some(text) = text else {
+            return Ok(None);
+        };
+        let run = serde_json::from_str(&text).map_err(|e| RuntimeError::Corrupt(e.to_string()))?;
+        Ok(self.with_queue_positions(vec![run])?.pop())
     }
 
     pub(super) fn existing_workflow_run(&self, id: &str) -> Result<WorkflowRun, RuntimeError> {
@@ -626,9 +810,10 @@ impl Runtime {
         &self,
         start: StartWorkflowRun,
     ) -> Result<WorkflowRun, RuntimeError> {
-        if self.is_shutting_down() {
+        if self.workflow_closing() {
             return Err(RuntimeError::ShuttingDown);
         }
+        self.ensure_workflow_progress();
         let owner = self.state(&start.session_id).await?.info;
         if self.workflow_run_of(&owner.id).await?.is_some() {
             return Err(RuntimeError::Conflict(WORKFLOW_AGENT_STARTS_RUN.into()));
@@ -637,7 +822,8 @@ impl Runtime {
             id: cyber_core::ids::new_id("run"),
             name: start.module.meta.name.clone(),
             session_id: owner.id.clone(),
-            directory: owner.directory.clone(),
+            // Canonical, as runs are listed and their events routed by Location.
+            directory: super::workflow_recovery::location_key(&owner.directory),
             mode: owner.mode.clone(),
             origin: serde_json::to_value(&start.module.origin).unwrap_or(Value::Null),
             script_file: None,
@@ -648,6 +834,10 @@ impl Runtime {
             status: WorkflowRunStatus::Running,
             reason: None,
             budget: Some(start.budget),
+            share: Some(self.workflow_share(start.share.max_concurrent)),
+            max_concurrent: start.share.requested,
+            queued_ms: None,
+            queue_position: None,
             phases: start
                 .module
                 .meta
@@ -668,12 +858,22 @@ impl Runtime {
         };
         let mut run = run;
         run.script_file = self.persist_inline_script(&run.id, &start.module)?;
+        // Every run slot taken: the run waits `queued`, its wall clock not yet running.
+        let admission = self.admit_workflow_run(&run.id, run.started_ms);
+        if let Admission::Queued(place) = &admission {
+            run.status = WorkflowRunStatus::Queued;
+            run.queued_ms = Some(place.queued_ms());
+        }
         // Nothing is spent and no agent started yet.
         let budget = budget_snapshot(
             run.budget.as_ref().expect("a new run has a budget"),
             &Default::default(),
             0,
         );
+        // Held until the attempt is launched or queued, through the start hook: a pause,
+        // stop or resume of the run, possible once it is recorded, waits for it.
+        let lock = self.workflow_lock(&run.id);
+        let lifecycle = lock.lock().await;
         self.record_start(&run, &start.module.source, &budget)?;
         self.workflow_hook(&run, "WorkflowRunStart").await;
         let engine = Engine {
@@ -682,8 +882,20 @@ impl Runtime {
             tiers: start.tiers,
         };
         let replay = Replay::fresh(1).starting_with(budget);
-        self.launch(run.clone(), engine, replay).await?;
-        Ok(run)
+        match admission {
+            Admission::Slot(slot) => {
+                if let Err(error) = self.launch(run.clone(), engine, replay, slot).await {
+                    self.fail_launch(run, &error)?;
+                    return Err(error);
+                }
+            }
+            Admission::Queued(place) => {
+                self.enqueue_workflow_run(place, Pending { engine, replay })
+            }
+        }
+        drop(lifecycle);
+        // Positions are read back: a run queued now may already be dispatched.
+        Ok(self.workflow_run(&run.id)?.unwrap_or(run))
     }
 
     /// Keep an inline script at `<state>/workflows/<run_id>.js` (`workflows` →
@@ -715,7 +927,7 @@ impl Runtime {
         source: &str,
         budget: &Value,
     ) -> Result<(), RuntimeError> {
-        let mut data = serde_json::to_value(run).expect("runs serialize");
+        let mut data = stored_run(run);
         data["source"] = source.into();
         data["budget_snapshot"] = budget.clone();
         let stored = self.inner.store.append(
@@ -727,7 +939,8 @@ impl Runtime {
         Ok(())
     }
 
-    /// Execute one attempt of `run` on its own engine thread. The run's Mode stays a
+    /// Execute one attempt of `run` on its own engine thread, holding `slot` until the
+    /// attempt's engine and agent tasks have all returned. The run's Mode stays a
     /// ceiling: an owner Session whose Mode was widened since the run started does not
     /// widen its agents.
     pub(super) async fn launch(
@@ -735,9 +948,12 @@ impl Runtime {
         run: WorkflowRun,
         engine: Engine,
         replay: Replay,
+        slot: RunSlot,
     ) -> Result<(), RuntimeError> {
         let owner = self.state(&run.session_id).await?.info;
         let control = self.claim_workflow_control(&run.id)?;
+        // A pause or stop of an earlier attempt suspended the run's agent queue.
+        self.workflow_scheduler().unsuspend(&run.id);
         let started = self.workflow_agents(&run.id)?.len() as u64;
         let mut context = super::drain::turn_context_for_info(&owner, false);
         context.mode = stricter_mode(&run.mode, &context.mode);
@@ -754,7 +970,15 @@ impl Runtime {
             args: run.args.clone(),
             ctx: json!({"run_id": run.id, "name": run.name, "session_id": run.session_id, "directory": run.directory}),
         };
-        spawn_engine(run, engine.module, input, engine.limits, host, control)
+        spawn_engine(
+            run,
+            engine.module,
+            input,
+            engine.limits,
+            host,
+            control,
+            slot,
+        )
     }
 }
 
@@ -776,8 +1000,11 @@ fn spawn_engine(
     limits: Limits,
     host: RunHost,
     control: Arc<Control>,
+    slot: RunSlot,
 ) -> Result<(), RuntimeError> {
     let engine = control.engine_lease();
+    // Released with the attempt's last lease, or here if the thread does not start.
+    control.hold(slot);
     std::thread::Builder::new()
         .name(format!("workflow-{}", run.id))
         .spawn(move || {
@@ -847,11 +1074,13 @@ fn finish(
         _ => WorkflowRunStatus::Failed,
     };
     run.reason = exceeded.map(|limit| format!("BudgetExceeded: {limit}"));
-    // Serialized with pause, stop and resume, which record under the same lock.
+    // Serialized with this run's pause, stop and resume, which record under its lock;
+    // another run's lifecycle never delays it.
     let runtime = host.runtime();
-    let _lifecycle = runtime
+    let lock = runtime
         .as_ref()
-        .map(|runtime| runtime.inner.workflow_lifecycle.blocking_lock());
+        .map(|runtime| runtime.workflow_lock(&run.id));
+    let _lifecycle = lock.as_ref().map(|lock| lock.blocking_lock());
     if superseded(runtime.as_ref(), control, &run.id) {
         return;
     }

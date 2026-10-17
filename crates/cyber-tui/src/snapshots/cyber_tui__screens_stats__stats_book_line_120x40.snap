@@ -1,0 +1,9 @@
+---
+source: crates/cyber-tui/src/screens_stats.rs
+expression: book
+---
+  Input 3.3m · Output 329.2k · Reasoning 0 · Cache read 0 · Cache write 0
+  Your input and output are ~4.6x the tokens in War and Peace
+row 25: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 25: 2-60 fg=#00e5ff bg=#0b0f14
+row 25: 61-119 fg=#d6e4f0 bg=#0b0f14

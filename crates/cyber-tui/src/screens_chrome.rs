@@ -262,12 +262,17 @@ async fn composer_modes_recolor_the_bar_and_the_info_line() {
     app.composer.set_text("one\ntwo\nthree");
     app.session.running = true;
     let opts = Opts {
-        legend: &["esc interrupt"],
+        legend: &["esc interrupt", "┃ Build"],
         ..Opts::default()
     };
     let shown = render(&mut app, 80, 24, &opts);
+    // The progress line above the composer carries the hint, not the info line.
     assert!(
-        shown.contains("┃ Build · Amini Coder test · default   … esc interrupt"),
+        shown.contains("\n [,,_,,]:3  Thinking · 0.0s · esc interrupt\n┃\n"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("┃ Build · Amini Coder test · default\n"),
         "{shown}"
     );
     insta::assert_snapshot!("composer_running_80x24", shown);

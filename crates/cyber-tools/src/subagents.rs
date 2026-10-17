@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
-use cyber_server::runtime::Runtime;
+use cyber_server::runtime::{Runtime, WorkflowSlot};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -31,6 +31,23 @@ impl Slots {
     }
 }
 
+/// The slot a child holds until it has settled: an `agents.max_concurrent` permit of its
+/// root Session, or a slot of the server-wide Workflow agent scheduler.
+pub(crate) enum Permit {
+    Subagent(OwnedSemaphorePermit),
+    Workflow(WorkflowSlot),
+}
+
+impl Permit {
+    /// Release the slot.
+    fn release(self) {
+        match self {
+            Self::Subagent(permit) => drop(permit),
+            Self::Workflow(slot) => drop(slot),
+        }
+    }
+}
+
 /// A dropped tool future cancels its child without releasing the permit early.
 pub(crate) struct ChildGuard {
     stop: CancellationToken,
@@ -43,7 +60,7 @@ impl ChildGuard {
     pub fn new(
         runtime: Runtime,
         id: String,
-        permit: OwnedSemaphorePermit,
+        permit: Permit,
         execution: cyber_server::runtime::ChildExecution,
     ) -> Self {
         let execution = Arc::new(execution);
@@ -59,7 +76,7 @@ impl ChildGuard {
                 _ = done.cancelled() => {}
             }
             drop(held);
-            drop(permit);
+            permit.release();
         });
         Self {
             stop,

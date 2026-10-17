@@ -263,15 +263,25 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/workflows/runs",
             "v1.workflow.list",
-            "List Workflow Runs, newest first",
+            "List Workflow Run summaries of the Location (directory=all for every Location), active runs first, then the newest",
         )
-        .query(&["session_id"])
-        .ok::<Page<crate::runtime::WorkflowRun>>(g),
+        .located()
+        .query(&["status", "session_id", "directory", "limit", "cursor"])
+        .ok::<Page<crate::runtime::WorkflowRunSummary>>(g),
+        op(
+            "post",
+            "/workflows/runs/resume_interrupted",
+            "v1.workflow.resumeInterrupted",
+            "Resume every run a server restart interrupted, of the Location or of all (directory=all)",
+        )
+        .located()
+        .query(&["directory"])
+        .ok::<Data<crate::runtime::InterruptedResume>>(g),
         op(
             "get",
             "/workflows/runs/{id}",
             "v1.workflow.get",
-            "Read a Workflow Run with its agents",
+            "Read a Workflow Run's summary with its agents (agents_detail)",
         )
         .ok::<Data<super::workflows::RunDetail>>(g),
         op(
@@ -893,6 +903,7 @@ pub fn document(version: &str) -> Value {
     let _ = g.subschema_for::<crate::runtime::McpStatusUpdate>();
     let _ = g.subschema_for::<crate::runtime::McpToolsChanged>();
     let _ = g.subschema_for::<crate::runtime::MemoryChange>();
+    let _ = g.subschema_for::<crate::runtime::WorkflowRunProgress>();
     let mut paths = Map::new();
     for o in &ops {
         let entry = paths

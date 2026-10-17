@@ -105,16 +105,28 @@ mod worktree_output;
 pub use worktree_output::{SessionSetupSink, SetupChannel, SetupUpdate};
 mod workflow_control;
 mod workflow_host;
+mod workflow_progress;
+mod workflow_queue;
+mod workflow_recovery;
 mod workflow_replay;
 mod workflow_results;
+mod workflow_scheduler;
 pub mod workflow_start;
+mod workflow_summary;
 mod workflows;
 pub use workflow_control::{AGENTS_EXITING, ResumeWorkflowRun};
 pub use workflow_host::{MAX_CHECKPOINT_BYTES, MAX_RUN_RECORD_BYTES, MAX_RUN_RECORDS};
+pub use workflow_progress::PROGRESS_INTERVAL_MS;
+pub use workflow_recovery::{InterruptedResume, RefusedResume, WorkflowRelaunch};
 pub use workflow_results::{INLINE_RESULT_BYTES, attempt_handback_message_id, handback_message_id};
+pub use workflow_scheduler::{Closed, RunSlots, Slot as WorkflowSlot, Waiter, WorkflowScheduler};
+pub use workflow_summary::{
+    AgentCounts, DEFAULT_RUN_PAGE, MAX_RUN_PAGE, RunFilter, RunPage, WorkflowRunProgress,
+    WorkflowRunSummary,
+};
 pub use workflows::{
-    RunStarter, StartWorkflowRun, WORKFLOW_AGENT_STARTS_RUN, WorkflowAgent, WorkflowLogEntry,
-    WorkflowRun, WorkflowRunStatus, config_digest,
+    RunShare, RunStarter, StartWorkflowRun, WORKFLOW_AGENT_STARTS_RUN, WorkflowAgent,
+    WorkflowLogEntry, WorkflowRun, WorkflowRunStatus, config_digest,
 };
 
 use std::collections::HashMap;
@@ -580,14 +592,29 @@ pub(crate) struct Inner {
     activities: StdMutex<HashMap<String, Arc<activity::Control>>>,
     subtree_stops: StdMutex<HashMap<String, Arc<subtree_stop::Control>>>,
     subtree_stop_lock: Mutex<()>,
-    /// The server-wide FIFO limit of Workflow agents (`workflows` → Concurrency limit).
-    workflow_slots: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
+    /// The server-wide fair scheduler of Workflow agent slots (`workflows` → Fair agent
+    /// scheduling, Concurrency limit).
+    workflow_scheduler: std::sync::OnceLock<workflow_scheduler::WorkflowScheduler>,
+    /// The server-wide run queue (`workflows` → Run queue).
+    workflow_queue: std::sync::OnceLock<workflow_queue::WorkflowQueue>,
     /// Executing Workflow Run attempts (`workflows` → Run lifecycle states).
     workflow_controls: StdMutex<HashMap<String, Arc<workflow_control::Control>>>,
-    /// Serializes run lifecycle transitions (pause, stop, resume, recovery, shutdown).
-    workflow_lifecycle: Mutex<()>,
+    /// Set, under `workflow_controls`, when shutdown starts pausing runs: no attempt
+    /// launches or is dispatched after it, so every executing attempt is paused.
+    workflow_closing: std::sync::atomic::AtomicBool,
+    /// One lifecycle lock per run (`workflows` → Concurrent runs): pause, stop, resume and
+    /// the record of a script's own end serialize per run, never across runs.
+    workflow_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Issued, unsettled edit-capable workflow agents per canonical Location, across runs
+    /// (`workflows` → Write isolation default).
+    workflow_writers: StdMutex<HashMap<String, Arc<std::sync::atomic::AtomicUsize>>>,
     /// `<state>/workflows`: inline scripts and results larger than 1 MiB.
     workflow_dir: std::sync::OnceLock<PathBuf>,
+    /// Rebuilds a run's next attempt after a restart (`workflows` → Recovery of several
+    /// runs).
+    workflow_relaunch: std::sync::OnceLock<Arc<dyn workflow_recovery::WorkflowRelaunch>>,
+    /// Set once the `workflow.run.progress` publisher runs.
+    workflow_progress: std::sync::OnceLock<()>,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
@@ -656,10 +683,15 @@ impl Runtime {
             activities: StdMutex::default(),
             subtree_stops: StdMutex::default(),
             subtree_stop_lock: Mutex::new(()),
-            workflow_slots: std::sync::OnceLock::new(),
+            workflow_scheduler: std::sync::OnceLock::new(),
+            workflow_queue: std::sync::OnceLock::new(),
             workflow_controls: StdMutex::default(),
-            workflow_lifecycle: Mutex::new(()),
+            workflow_closing: std::sync::atomic::AtomicBool::new(false),
+            workflow_locks: StdMutex::default(),
+            workflow_writers: StdMutex::default(),
             workflow_dir: std::sync::OnceLock::new(),
+            workflow_relaunch: std::sync::OnceLock::new(),
+            workflow_progress: std::sync::OnceLock::new(),
             waiters: StdMutex::default(),
             me: me.clone(),
         });

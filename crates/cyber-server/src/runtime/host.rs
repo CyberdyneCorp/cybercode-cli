@@ -393,8 +393,8 @@ impl HookEffects {
 }
 
 /// One Workflow `agent()` call, spawned as a child Session of the run's owner Session
-/// (`workflows` → agent() call). The runtime acquires `permit` from the server-wide
-/// Workflow agent limit; the host keeps it until the child has settled.
+/// (`workflows` → agent() call). The runtime is granted `slot` by the server-wide fair
+/// scheduler of Workflow agents; the host keeps it until the child has settled.
 pub struct WorkflowAgentRequest {
     pub run_id: String,
     /// The `agt_` ID of this call; also the child's subagent name.
@@ -416,7 +416,7 @@ pub struct WorkflowAgentRequest {
     pub resume: bool,
     /// Run the child in its own managed worktree (`worktrees` → Workflow agent isolation).
     pub worktree: Option<RunWorktree>,
-    pub permit: tokio::sync::OwnedSemaphorePermit,
+    pub slot: super::workflow_scheduler::Slot,
 }
 
 /// The managed worktree of an isolated Workflow agent: `run-<ulid>-<index>` on branch

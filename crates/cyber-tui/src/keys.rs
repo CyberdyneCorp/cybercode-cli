@@ -10,7 +10,13 @@ use serde_json::Value;
 
 /// Contexts `tui.keybinds` may scope bindings to. `global` bindings sit at the top level.
 pub const CONTEXTS: &[&str] = &[
-    "global", "composer", "palette", "sidebar", "settings", "explorer",
+    "global",
+    "composer",
+    "palette",
+    "sidebar",
+    "settings",
+    "explorer",
+    "workflows",
 ];
 
 /// `(context, action, default, what it does)`.
@@ -108,7 +114,26 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         "r",
         "reconnect a failed MCP server",
     ),
+    ("workflows", "workflows_open", "enter", "open"),
+    ("workflows", "workflows_pause", "p", "pause/resume"),
+    ("workflows", "workflows_resume", "r", "resume"),
+    ("workflows", "workflows_stop", "x", "stop"),
+    (
+        "workflows",
+        "workflows_resume_interrupted",
+        "R",
+        "resume interrupted",
+    ),
+    ("workflows", "workflows_script", "s", "script"),
+    ("workflows", "workflows_log", "l", "log"),
+    ("workflows", "workflows_scope", "a", "all"),
 ];
+
+/// The key was typed with shift: an uppercase letter or the shift modifier.
+fn shifted(key: &KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::SHIFT)
+        || matches!(key.code, KeyCode::Char(c) if c.is_ascii_uppercase())
+}
 
 /// One key with its modifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +150,24 @@ impl Key {
             (KeyCode::Char(a), KeyCode::Char(b)) => a.eq_ignore_ascii_case(&b),
             (a, b) => a == b,
         };
-        code && wanted == got
+        code && wanted == got && (!self.shifted_letter() || shifted(key))
+    }
+
+    /// `shift+r` (written `R`): only the shifted letter triggers it.
+    fn shifted_letter(&self) -> bool {
+        self.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(self.code, KeyCode::Char(c) if c.is_ascii_alphabetic())
+    }
+
+    /// The key matches with its shift state too, so `r` and `R` bound side by side each
+    /// get their own key.
+    fn exact(&self, key: &KeyEvent) -> bool {
+        match self.code {
+            KeyCode::Char(c) if c.is_ascii_alphabetic() => {
+                self.matches(key) && self.shifted_letter() == shifted(key)
+            }
+            _ => self.matches(key),
+        }
     }
 
     fn label(&self) -> String {
@@ -139,7 +181,11 @@ impl Key {
                 out.push_str(name);
             }
         }
+        if self.shifted_letter() {
+            out = out.replace("shift+", "");
+        }
         out.push_str(&match self.code {
+            KeyCode::Char(c) if self.shifted_letter() => c.to_ascii_uppercase().to_string(),
             KeyCode::Char(' ') => "space".into(),
             KeyCode::Char(c) => c.to_string(),
             KeyCode::F(n) => format!("f{n}"),
@@ -173,9 +219,18 @@ pub enum Chord {
     Disabled,
 }
 
-/// Parse `ctrl+p`, `alt+enter`, `f2`, `<leader>b` or `none`.
+/// Parse `ctrl+p`, `alt+enter`, `f2`, `R` (`shift+r`), `<leader>b` or `none`.
 pub fn parse(value: &str) -> Option<Chord> {
-    let value = value.trim().to_ascii_lowercase();
+    let value = value.trim();
+    let upper = value
+        .rsplit('+')
+        .next()
+        .is_some_and(|last| last.len() == 1 && last.bytes().all(|b| b.is_ascii_uppercase()));
+    let value = if upper && !value.to_ascii_lowercase().contains("shift+") {
+        format!("shift+{}", value.to_ascii_lowercase())
+    } else {
+        value.to_ascii_lowercase()
+    };
     if value == "none" {
         return Some(Chord::Disabled);
     }
@@ -330,15 +385,21 @@ impl Keymap {
         key: &KeyEvent,
         after_leader: bool,
     ) -> Option<&'static str> {
-        self.bindings
-            .iter()
-            .filter(|b| b.context == context && b.action != "leader")
-            .find(|b| match b.chord {
-                Chord::Key(k) => !after_leader && k.matches(key),
-                Chord::Leader(k) => after_leader && k.matches(key),
-                Chord::Disabled => false,
-            })
-            .map(|b| b.action)
+        let bound = |exact: bool| {
+            self.bindings
+                .iter()
+                .filter(|b| b.context == context && b.action != "leader")
+                .find(|b| {
+                    let hit = |k: Key| if exact { k.exact(key) } else { k.matches(key) };
+                    match b.chord {
+                        Chord::Key(k) => !after_leader && hit(k),
+                        Chord::Leader(k) => after_leader && hit(k),
+                        Chord::Disabled => false,
+                    }
+                })
+                .map(|b| b.action)
+        };
+        bound(true).or_else(|| bound(false))
     }
 
     /// The key a hint shows for an action (`ctrl+p`, `ctrl+x b`); `None` when disabled.
@@ -469,6 +530,34 @@ mod tests {
         );
         assert_eq!(map.label("explorer", "explorer_copy").as_deref(), Some("c"));
         assert_eq!(warnings, ["tui.keybinds: unknown context messages"]);
+    }
+
+    /// `r` and `R` bound in one context each get their own key, and `R` is shown as such.
+    #[test]
+    fn a_shifted_letter_binding_is_its_own_key() {
+        let map = Keymap::default();
+        let r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
+        let upper = KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT);
+        let caps = KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE);
+        assert_eq!(map.action("workflows", &r, false), Some("workflows_resume"));
+        for key in [upper, caps] {
+            assert_eq!(
+                map.action("workflows", &key, false),
+                Some("workflows_resume_interrupted")
+            );
+        }
+        assert_eq!(
+            map.label("workflows", "workflows_resume_interrupted")
+                .as_deref(),
+            Some("R")
+        );
+        // A plain letter binding still takes its shifted key when nothing else does.
+        assert_eq!(
+            map.action("settings", &upper, false),
+            Some("settings_refresh")
+        );
+        assert_eq!(parse("shift+r"), parse("R"));
+        assert_eq!(parse("ctrl+R"), parse("ctrl+shift+r"));
     }
 
     #[test]

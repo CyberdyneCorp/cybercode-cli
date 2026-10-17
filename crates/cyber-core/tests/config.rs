@@ -1429,11 +1429,24 @@ fn invalid_mcp_serve_values_name_the_key() {
 }
 
 #[test]
+fn workflow_resume_after_restart_is_a_boolean_that_defaults_to_false() {
+    let read = |value: Value| config::WorkflowSettings::from_config(&json!({"workflows": value}));
+    assert!(!read(json!({})).unwrap().resume_after_restart);
+    assert!(
+        read(json!({"resume_after_restart": true}))
+            .unwrap()
+            .resume_after_restart
+    );
+    let error = read(json!({"resume_after_restart": "yes"})).unwrap_err();
+    assert!(error.contains("workflows.resume_after_restart"), "{error}");
+}
+
+#[test]
 fn workflow_settings_have_defaults_and_validate_ranges_and_tiers() {
     let f = Fixture::new();
     f.write(
         "global:cyber.jsonc",
-        &json!({"workflows":{"max_concurrent":4,"script_cpu_seconds":5,
+        &json!({"workflows":{"max_concurrent":4,"script_cpu_seconds":5,"max_concurrent_per_run":3,"max_running_runs":2,
             "tiers":{"strong":"anthropic/claude-opus","fast":"role:small"}}})
         .to_string(),
     );
@@ -1443,6 +1456,8 @@ fn workflow_settings_have_defaults_and_validate_ranges_and_tiers() {
     assert_eq!(settings.effective_max_concurrent(2), 2);
     assert_eq!(settings.max_memory_mb, 256);
     assert_eq!(settings.script_cpu_seconds, 5);
+    assert_eq!(settings.max_concurrent_per_run, Some(3));
+    assert_eq!(settings.max_running_runs, 2);
     assert_eq!(
         settings.tiers["strong"],
         config::TierTarget::Model("anthropic/claude-opus".into())
@@ -1464,11 +1479,23 @@ fn workflow_settings_have_defaults_and_validate_ranges_and_tiers() {
         ),
         (16, 256, 60)
     );
+    assert_eq!(defaults.max_concurrent_per_run, None);
+    assert_eq!(defaults.max_running_runs, 8);
 
     for (value, key) in [
         (json!({"max_concurrent":0}), "workflows.max_concurrent"),
         (json!({"max_concurrent":257}), "workflows.max_concurrent"),
         (json!({"max_memory_mb":8}), "workflows.max_memory_mb"),
+        (
+            json!({"max_concurrent_per_run":0}),
+            "workflows.max_concurrent_per_run",
+        ),
+        (
+            json!({"max_concurrent_per_run":257}),
+            "workflows.max_concurrent_per_run",
+        ),
+        (json!({"max_running_runs":0}), "workflows.max_running_runs"),
+        (json!({"max_running_runs":65}), "workflows.max_running_runs"),
         (
             json!({"script_cpu_seconds":"60"}),
             "workflows.script_cpu_seconds",

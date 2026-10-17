@@ -4,22 +4,69 @@
 //! [`ScriptedModel::release`], so a test can stop a server mid-Turn, and `{"fail": 400}`
 //! answers with that HTTP error status. A `"headers"` object in a reply is sent as
 //! response headers (provider usage windows) instead of being part of the `delta`.
-//! It never reaches the internet.
+//! A reply of `{"gate": "<label>"}` logs `(label, start time)` and waits for one
+//! [`ScriptedModel::open_gate`]; gated requests pass one per opening, oldest first, and
+//! answer `<label> done`. It never reaches the internet.
 #![allow(dead_code)]
 
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 /// The streamed `delta` for a request body.
 pub type Reply = fn(&Value) -> Value;
 
+/// Gated requests: the labels waiting, oldest first, openings not yet used, and every
+/// gated request's start.
+#[derive(Default)]
+struct Gates {
+    state: Mutex<GateState>,
+}
+
+#[derive(Default)]
+struct GateState {
+    waiting: VecDeque<u64>,
+    held: Vec<(u64, String)>,
+    open: usize,
+    next: u64,
+    starts: Vec<(String, Instant)>,
+}
+
+impl Gates {
+    /// Wait until this request is the oldest gated one and an opening is available.
+    fn pass(&self, label: &str, done: &AtomicBool) {
+        let id = {
+            let mut state = self.state.lock().unwrap();
+            state.next += 1;
+            let id = state.next;
+            state.waiting.push_back(id);
+            state.held.push((id, label.to_owned()));
+            state.starts.push((label.to_owned(), Instant::now()));
+            id
+        };
+        while !done.load(Ordering::SeqCst) {
+            {
+                let mut state = self.state.lock().unwrap();
+                if state.open > 0 && state.waiting.front() == Some(&id) {
+                    state.open -= 1;
+                    state.waiting.pop_front();
+                    state.held.retain(|(held, _)| *held != id);
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
 pub struct ScriptedModel {
     pub url: String,
     requests: Arc<Mutex<Vec<Value>>>,
+    gates: Arc<Gates>,
     released: Arc<AtomicBool>,
     done: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -33,17 +80,22 @@ impl ScriptedModel {
         let done = Arc::new(AtomicBool::new(false));
         let released = Arc::new(AtomicBool::new(false));
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let (stop, seen, gate) = (
+        let gates = Arc::new(Gates::default());
+        let (stop, seen, gate, gated) = (
             Arc::clone(&done),
             Arc::clone(&requests),
             Arc::clone(&released),
+            Arc::clone(&gates),
         );
         let thread = std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let (seen, gate) = (Arc::clone(&seen), Arc::clone(&gate));
-                        std::thread::spawn(move || answer(stream, reply, &seen, &gate));
+                        let (gated, stop) = (Arc::clone(&gated), Arc::clone(&stop));
+                        std::thread::spawn(move || {
+                            answer(stream, reply, &seen, &gate, (&gated, &stop));
+                        });
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(5));
@@ -55,6 +107,7 @@ impl ScriptedModel {
         Self {
             url,
             requests,
+            gates,
             released,
             done,
             thread: Some(thread),
@@ -64,6 +117,22 @@ impl ScriptedModel {
     /// Answer held requests (and every later one) normally.
     pub fn release(&self) {
         self.released.store(true, Ordering::SeqCst);
+    }
+
+    /// Let the oldest gated request answer.
+    pub fn open_gate(&self) {
+        self.gates.state.lock().unwrap().open += 1;
+    }
+
+    /// Labels of gated requests still waiting, oldest first.
+    pub fn held(&self) -> Vec<String> {
+        let state = self.gates.state.lock().unwrap();
+        state.held.iter().map(|(_, label)| label.clone()).collect()
+    }
+
+    /// Every gated request's label and arrival, in arrival order.
+    pub fn starts(&self) -> Vec<(String, Instant)> {
+        self.gates.state.lock().unwrap().starts.clone()
     }
 
     /// Request bodies received so far.
@@ -86,6 +155,7 @@ fn answer(
     reply: Reply,
     seen: &Mutex<Vec<Value>>,
     released: &AtomicBool,
+    (gates, done): (&Gates, &AtomicBool),
 ) {
     stream.set_nonblocking(false).unwrap();
     stream
@@ -96,6 +166,10 @@ fn answer(
     };
     let mut delta = reply(&body);
     seen.lock().unwrap().push(body.clone());
+    if let Some(label) = delta.get("gate").and_then(Value::as_str).map(str::to_owned) {
+        gates.pass(&label, done);
+        delta = json!({"content": format!("{label} done")});
+    }
     if delta.get("hold").is_some() {
         while !released.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(5));

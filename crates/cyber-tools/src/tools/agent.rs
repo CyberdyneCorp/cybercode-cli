@@ -12,7 +12,7 @@ use super::{Tool, ToolError, def, failed, text};
 use crate::host::Ctx;
 use crate::lifecycle_hooks::SubagentStop;
 use crate::permissions::{Decision, Request};
-use crate::subagents::ChildGuard;
+use crate::subagents::{ChildGuard, Permit};
 
 pub(crate) struct Agent;
 
@@ -280,20 +280,20 @@ pub(crate) async fn run(ctx: &Ctx<'_>, user_requested: bool) -> Result<String, T
     run_with_skill(ctx, source, None, None).await
 }
 
-/// A Workflow agent: a foreground child of the run's owner Session, holding `permit` from
-/// the server-wide Workflow limit instead of an `agents.max_concurrent` slot.
+/// A Workflow agent: a foreground child of the run's owner Session, holding `slot` from
+/// the server-wide Workflow agent scheduler instead of an `agents.max_concurrent` slot.
 pub(crate) async fn run_workflow(
     ctx: &Ctx<'_>,
     run_id: String,
     worktree: Option<cyber_server::runtime::RunWorktree>,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    slot: cyber_server::runtime::WorkflowSlot,
 ) -> Result<String, ToolError> {
     Box::pin(spawn_child(
         ctx,
         SpawnSource::Workflow { run_id, worktree },
         None,
         None,
-        Some(permit),
+        Some(Permit::Workflow(slot)),
     ))
     .await
 }
@@ -362,7 +362,7 @@ async fn spawn_child(
     source: SpawnSource,
     skill_command: Option<cyber_server::runtime::SkillCommand>,
     hook_context: Option<String>,
-    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    permit: Option<Permit>,
 ) -> Result<String, ToolError> {
     let runtime = ctx
         .host
@@ -448,7 +448,7 @@ async fn spawn_child(
     };
     let permit = match permit {
         Some(permit) => permit,
-        None => subagent_slot(ctx, &root.id, spawn.max_concurrent).await?,
+        None => Permit::Subagent(subagent_slot(ctx, &root.id, spawn.max_concurrent).await?),
     };
     prepare_child_admission(ctx, &runtime, &mut spawn).await?;
     let authority = spawn
@@ -634,7 +634,7 @@ async fn execute_child(
     runtime: Runtime,
     parent: SessionInfo,
     spawn: Spawn,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: Permit,
     execution: Option<cyber_server::runtime::ChildExecution>,
 ) -> Result<String, ToolError> {
     let mut spawn = spawn;

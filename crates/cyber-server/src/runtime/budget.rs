@@ -233,7 +233,7 @@ pub(super) struct RunSpend {
 }
 
 impl RunSpend {
-    fn of(scope: &Scope, now: i64) -> Self {
+    pub(super) fn of(scope: &Scope, now: i64) -> Self {
         Self {
             cost: scope.cost,
             tokens: scope.tokens,

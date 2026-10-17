@@ -20,7 +20,7 @@
 
 A run started or resumed while every run slot is taken SHALL be recorded with status `queued`, and the start or resume SHALL return at once with that status and the run's `queue_position` (1 for the next to be dispatched). Queued runs SHALL be dispatched FIFO by the time they entered the queue (ties by run ID), each with a durable `workflow.run.dispatched.1` that moves it to `running`.
 
-A queued run SHALL start no engine, spawn no agent, and accrue no `max_wall_seconds` time. A queued run MAY be paused, which leaves the queue and moves it to `paused`, or stopped, which moves it to `stopped` and hands its summary back. A resume puts a run back at the end of the queue.
+A queued run SHALL start no engine, spawn no agent, and accrue no `max_wall_seconds` time. A queued run MAY be paused, which leaves the queue and moves it to `paused`, or stopped, which moves it to `stopped` and hands its summary back. A resume puts a run back at the end of the queue. A run SHALL be queued at most once, with what its latest start or resume validated: a pause, stop or resume of a run whose start is still being recorded (its `WorkflowRunStart` hooks included) SHALL wait for that start to launch or queue it.
 
 #### Scenario: Ninth run queued
 - **WHEN** 8 runs are running and a ninth is started with the default limit
@@ -29,6 +29,10 @@ A queued run SHALL start no engine, spawn no agent, and accrue no `max_wall_seco
 #### Scenario: Dispatch order
 - **WHEN** runs Q1 and then Q2 are queued and one running run ends
 - **THEN** Q1 is dispatched with `workflow.run.dispatched.1`, and Q2 moves to `queue_position: 1`
+
+#### Scenario: Shutdown with a queued run
+- **WHEN** every run slot is taken, run Q is queued, and the server stops while a running run's slot is freed
+- **THEN** Q is still `queued` with no `workflow.run.dispatched.1`, the running runs are `paused` with `interrupted: true`, and after a restart Q is dispatched
 
 #### Scenario: Stop a queued run
 - **WHEN** the user stops a queued run
@@ -45,7 +49,7 @@ A run SHALL be eligible while it is `running`, its queue is not empty, and its r
 
 With R eligible runs, each run's oldest queued call SHALL therefore be granted within R grants. A slot SHALL never be idle while some run is eligible, and a running agent SHALL never be cancelled to rebalance slots.
 
-A run's share SHALL be its `max_concurrent`: the invocation option (API `max_concurrent`, `cyber workflows run --max-concurrent`, the `workflow` tool's `max_concurrent`), else `meta.max_concurrent`, else `workflows.max_concurrent_per_run` (default unset). Each source SHALL be a positive integer, and the share SHALL be capped at the global limit. A share may be changed by a resume. It SHALL NOT be part of the configuration digest, so changing it SHALL NOT require a revision.
+A run's share SHALL be its `max_concurrent`: the invocation option (API `max_concurrent`, `cyber workflows run --max-concurrent`, the `workflow` tool's `max_concurrent`), else `meta.max_concurrent`, else `workflows.max_concurrent_per_run` (default unset). Each source SHALL be a positive integer, and the share SHALL be capped at the global limit. A share may be changed by a resume that gives `max_concurrent`; a resume that gives none, including resuming interrupted runs, SHALL keep the invocation value the run was last given, else resolve `meta` and configuration again. It SHALL NOT be part of the configuration digest, so changing it SHALL NOT require a revision.
 
 Pausing, stopping or shutting down a run SHALL remove its queued calls from the scheduler at once, and they stay unrecorded so that a resume serves them.
 
@@ -64,6 +68,10 @@ Pausing, stopping or shutting down a run SHALL remove its queued calls from the 
 #### Scenario: Per-run share
 - **WHEN** the limit is 16 and run A is started with `max_concurrent: 4` and 20 queued calls, and run B queues 20
 - **THEN** A never has more than 4 agents running, and B uses the remaining 12 slots
+
+#### Scenario: Plain resume keeps the share
+- **WHEN** a run started with `max_concurrent: 2` is paused and resumed with no `max_concurrent`
+- **THEN** its share is still 2
 
 #### Scenario: FIFO within a run
 - **WHEN** a run issues calls c1, c2 and c3, in that order, that all wait for a slot
@@ -92,9 +100,9 @@ Two runs with the same script and arguments SHALL NOT reuse each other's recorde
 - **THEN** six distinct worktrees and branches are created, each named with its own run ID
 
 ### Requirement: Recovery of several runs
-(P2) On startup, recovery SHALL process every active run in `started_ms` order. A `running` or `waiting_input` run SHALL become `paused` with `interrupted: true`, and its unsettled agents SHALL be marked `interrupted`. A `queued` run SHALL stay queued in its order and SHALL be dispatched as run slots allow. Then the summary of every ended run that was not handed back SHALL be admitted.
+(P2) On startup, recovery SHALL process every active run in `started_ms` order. A `running` or `waiting_input` run SHALL become `paused` with `interrupted: true`, and its unsettled agents SHALL be marked `interrupted`. A `queued` run SHALL stay queued in its order and SHALL be dispatched as run slots allow; its script SHALL be read again as a resume reads it, and a run whose script or configuration changed SHALL instead become `paused` (`interrupted: true`) with a `WorkflowReplayMismatch` reason. A server that stops SHALL pause its running runs with `interrupted: true` too; once it starts doing so it SHALL launch and dispatch no run, so a queued run stays `queued` (never dispatched) for the next start's recovery, and an attempt that could no longer launch SHALL be paused with `interrupted: true` rather than failed. Then the summary of every ended run that was not handed back SHALL be admitted.
 
-When `workflows.resume_after_restart` is `true` (default `false`), the runs this recovery paused SHALL then be resumed in `started_ms` order through the run queue, as if the user had resumed each one. A run whose saved module changed SHALL stay `paused` with a `WorkflowReplayMismatch` reason. `POST /api/v1/workflows/runs/resume_interrupted` (for the request Location, or `directory=all`) and `cyber workflows resume --interrupted` SHALL resume the same set on demand: runs whose latest lifecycle event is a pause with `interrupted: true`. Each resumed run SHALL continue its own unsettled agents' child Sessions.
+When `workflows.resume_after_restart` is `true` (default `false`), the interrupted runs (paused by this recovery or by the previous server's shutdown) SHALL then be resumed in `started_ms` order through the run queue, as if the user had resumed each one. A run whose saved module changed SHALL stay `paused` with a `WorkflowReplayMismatch` reason. `POST /api/v1/workflows/runs/resume_interrupted` (for the request Location, or `directory=all`) and `cyber workflows resume --interrupted` SHALL resume the same set on demand: runs whose latest lifecycle event is a pause with `interrupted: true`. Each resumed run SHALL continue its own unsettled agents' child Sessions.
 
 #### Scenario: Crash with two runs mid-flight
 - **WHEN** the server is killed while runs A and B each have agents in flight and run C is queued
@@ -212,9 +220,10 @@ Each listed run SHALL carry:
 - `tokens` and `cost_usd` of the run's agents;
 - `elapsed_ms` of active time (time spent `queued` or `paused` excluded);
 - `share`;
-- `queue_position` while `queued`.
+- `queue_position` while `queued`;
+- `interrupted: true` while the run is paused by a server restart (its latest lifecycle event is a pause with `interrupted: true`), so a client that reconnects after a restart can tell that pause from a user's.
 
-The list SHALL accept `status` (comma-separated), `session_id`, `directory` (default the request Location, `all` for every Location), `limit` (default 50, max 200) and `cursor`. It SHALL return active runs first, then the newest. `GET /api/v1/workflows/runs/{id}` SHALL return the same summary with the run's agents.
+The list SHALL accept `status` (comma-separated), `session_id`, `directory` (default the request Location, `all` for every Location), `limit` (default 50, max 200) and `cursor`. It SHALL return active runs first, then the newest. `GET /api/v1/workflows/runs/{id}` SHALL return the same summary with the run's agents (`agents_detail`), each with `started_ms` from its first start and, once settled, `ended_ms`, so a monitor can show its duration.
 
 Besides the durable `workflow.*` events, the server SHALL emit the non-durable live event `workflow.run.progress` (`{ run_id, status, phase, agents, tokens, cost_usd }`) on the instance stream of the run's Location. It SHALL be emitted only when one of these values changed, at most every 250 ms per run. It SHALL carry nothing that the list does not return, so a client that reconnects or lags resynchronizes with the list.
 

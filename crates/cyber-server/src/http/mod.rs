@@ -29,7 +29,7 @@ mod usage;
 mod vcs;
 mod workflows;
 pub mod worktrees;
-pub use workflows::WorkflowLocation;
+pub use workflows::{ServicesRelaunch, WorkflowLocation};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -162,6 +162,7 @@ async fn random_sizes_never_panic_or_overlap() {
             drawer: next(2) == 0,
             screen_reader: false,
             queued: next(6) as u16,
+            progress: [0, 1, 4][next(3) as usize],
             composer: 4 + next(9) as u16,
         };
         let area = Rect::new(0, 0, width, height);
@@ -170,6 +171,7 @@ async fn random_sizes_never_panic_or_overlap() {
             plan.header,
             plan.transcript,
             plan.queued,
+            plan.progress,
             plan.composer,
             plan.footer,
         ];

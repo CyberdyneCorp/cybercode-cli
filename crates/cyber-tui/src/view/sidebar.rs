@@ -1,5 +1,5 @@
-//! The Session sidebar (`tui` → Session sidebar): title, Context, MCP, LSP and Modified
-//! files from the top, `cwd:branch` and the connection dot with the version at the
+//! The Session sidebar (`tui` → Session sidebar): title, Context, Workflows, MCP, LSP
+//! and Modified files from the top, `cwd:branch` and the connection dot with the version at the
 //! bottom, on `surface_alt`.
 
 use ratatui::Frame;
@@ -79,6 +79,7 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
         ));
     }
     context(app, &mut out);
+    workflows(app, width, &mut out);
     mcp(app, width, &mut out);
     lsp(app, width, &mut out);
     files(app, width, &mut out);
@@ -135,6 +136,44 @@ fn context(app: &App, out: &mut Vec<Line<'static>>) {
     }
     let cost = super::footer::cost(&app.session);
     out.push(muted_line(app, &format!("{cost} spent")));
+}
+
+/// Cells of a Workflows row's bar.
+const WORKFLOW_BAR: usize = 6;
+
+/// `audit  ▀▀····  31/100` per active run, the current Session's first, then `+N more`;
+/// omitted when no run is active.
+fn workflows(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+    let rows = &app.sidebar.workflows;
+    if rows.is_empty() {
+        return;
+    }
+    let t = &app.theme;
+    out.push(Line::default());
+    out.push(header(app, None, "Workflows".into()));
+    for (i, run) in rows.iter().enumerate() {
+        let count = format!(" {}/{}", run.done.min(run.total), run.total);
+        let name_room = width.saturating_sub(WORKFLOW_BAR + count.len() + 1);
+        let mut spans = vec![Span::styled(
+            format!("{:<name_room$} ", truncate_end(&run.name, name_room)),
+            Style::default().fg(t.text),
+        )];
+        spans.extend(super::progress::bar(
+            app,
+            run.done,
+            run.total,
+            WORKFLOW_BAR,
+            0,
+        ));
+        spans.push(Span::styled(count, Style::default().fg(t.text_muted)));
+        out.push(focusable(app, Some(Row::Workflow(i)), spans));
+    }
+    if app.sidebar.workflows_more > 0 {
+        out.push(muted_line(
+            app,
+            &format!("+{} more", app.sidebar.workflows_more),
+        ));
+    }
 }
 
 /// The dot color of an MCP status word.

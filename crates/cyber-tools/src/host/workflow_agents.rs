@@ -36,7 +36,7 @@ impl BuiltinHost {
             label: _,
             resume,
             worktree,
-            permit,
+            slot,
         } = request;
         let mut input = json!({"prompt": prompt, "background": false, "name": agent_id, "description": DESCRIPTION});
         // A resumed child keeps its agent profile and model; the shared path refuses changes.
@@ -87,7 +87,7 @@ impl BuiltinHost {
             inv: &inv,
             cancel,
         };
-        let output = tools::agent::run_workflow(&ctx, run_id, worktree, permit)
+        let output = tools::agent::run_workflow(&ctx, run_id, worktree, slot)
             .await
             .map_err(failure)?;
         self.workflow_output(&output)

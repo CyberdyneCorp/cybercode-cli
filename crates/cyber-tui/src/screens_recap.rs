@@ -35,7 +35,12 @@ async fn reopen(server: &Server, app: &mut App, hours: i64) -> Vec<Action> {
     let msg = crate::perform::snapshot(&server.client, &app.session.id).await;
     crate::runner::apply(app, msg, &mut Default::default())
         .into_iter()
-        .filter(|a| !matches!(a, Action::LoadSidebar(_)))
+        .filter(|a| {
+            !matches!(
+                a,
+                Action::LoadSidebar(_) | Action::Workflow(crate::workflows::Request::Watch { .. })
+            )
+        })
         .collect()
 }
 

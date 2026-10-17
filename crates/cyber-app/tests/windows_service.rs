@@ -223,12 +223,11 @@ async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_
     let paths = app.paths.clone();
     let running = app.runtime.clone();
     // Hold every Workflow agent slot so the run's agent waits, started but unsettled.
-    let slots = running.workflow_slots();
-    let _held = slots
-        .clone()
-        .acquire_many_owned(slots.available_permits() as u32)
-        .await
-        .unwrap();
+    let scheduler = running.workflow_scheduler();
+    let mut held = Vec::new();
+    for _ in 0..scheduler.capacity() {
+        held.push(scheduler.enqueue("run_held", usize::MAX).await.unwrap());
+    }
     let stop = Arc::new(Notify::new());
     let mut server = Server {
         stop: stop.clone(),
@@ -263,6 +262,7 @@ async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_
             limits: cyber_workflow::Limits::default(),
             tiers: Default::default(),
             budget: cyber_core::budget::RunBudget::resolve(&serde_json::json!({}), &[]).unwrap(),
+            share: Default::default(),
             starter: Default::default(),
         })
         .await

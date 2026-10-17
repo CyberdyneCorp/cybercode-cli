@@ -4,7 +4,7 @@
 //! chosen rows.
 
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]
-mod scripted_model;
+pub(crate) mod scripted_model;
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -63,6 +63,7 @@ pub fn buffer(app: &mut App, width: u16, height: u16, opts: &Opts) -> Buffer {
     app.set_theme(opts.theme);
     app.reduced_motion = opts.reduced_motion;
     app.clock = Some(app.started() + Duration::from_millis(opts.clock_ms));
+    app.progress_sync();
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|f| crate::view::draw(f, app)).unwrap();
     terminal.backend().buffer().clone()
@@ -228,6 +229,16 @@ impl Server {
 
     /// [`Server::start_config`] with every model of provider `test` (`main`, `small`).
     pub async fn start_models(models: Value, extra: Value, snapshots: bool) -> Self {
+        Self::start_reply(reply, models, extra, snapshots).await
+    }
+
+    /// [`Server::start_models`] whose scripted model answers with `answer`.
+    pub async fn start_reply(
+        answer: scripted_model::Reply,
+        models: Value,
+        extra: Value,
+        snapshots: bool,
+    ) -> Self {
         use cyber_core::paths::{DatabaseLocation, Paths};
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -239,7 +250,7 @@ impl Server {
             tmp: root.join("tmp"),
         };
         paths.ensure().unwrap();
-        let model = scripted_model::ScriptedModel::start(reply);
+        let model = scripted_model::ScriptedModel::start(answer);
         let mut config = model.config();
         config["providers"]["test"]["models"] = models;
         if let (Some(config), Value::Object(extra)) = (config.as_object_mut(), extra) {
@@ -366,7 +377,9 @@ impl Server {
             assert!(
                 matches!(
                     action,
-                    crate::app::Action::LoadSidebar(_) | crate::app::Action::ReconnectMcp(_)
+                    crate::app::Action::LoadSidebar(_)
+                        | crate::app::Action::ReconnectMcp(_)
+                        | crate::app::Action::Workflow(crate::workflows::Request::Watch { .. })
                 ),
                 "{action:?}"
             );
@@ -579,21 +592,24 @@ async fn the_running_spinner_animates_unless_motion_is_reduced() {
     let mut app = server.app(&id).await;
     app.session.running = true;
     let still = Opts::default();
-    let frame = |app: &mut App, opts: &Opts| {
+    let header = |app: &mut App, opts: &Opts| {
         let buf = buffer(app, 100, 30, opts);
-        let y = row_of(&buf, "esc interrupt");
+        let y = row_of(&buf, " running");
         (0..100)
             .map(|x| buf[(x, y)].symbol().to_string())
             .collect::<String>()
     };
-    assert!(frame(&mut app, &still).contains(" … esc interrupt"));
+    assert!(header(&mut app, &still).ends_with("… running "));
     let moving = |clock_ms| Opts {
         reduced_motion: false,
         clock_ms,
         ..Opts::default()
     };
-    assert!(frame(&mut app, &moving(0)).contains(" ⠋ esc interrupt"));
-    assert!(frame(&mut app, &moving(250)).contains(" ⠙ esc interrupt"));
+    assert!(header(&mut app, &moving(0)).ends_with("⠋ running "));
+    // The header follows the progress line's frames.
+    app.clock = Some(app.started() + Duration::from_millis(84));
+    assert!(app.advance_frame());
+    assert!(header(&mut app, &moving(84)).ends_with("⠙ running "));
 }
 
 /// Load `id` the way the runner does and draw it as it is, without `Opts`.

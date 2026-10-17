@@ -90,7 +90,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// `<Agent> · <model> <provider> · <Mode>`, or the input mode for `!` and `/`; while a
-/// Drain runs it ends with a spinner and `esc interrupt`.
+/// Drain runs without the progress line (`tui.spinner` `off`) it ends with
+/// `esc interrupt`.
 fn info_line(app: &App) -> Vec<Span<'static>> {
     let t = &app.theme;
     let muted = Style::default().fg(t.text_muted);
@@ -124,11 +125,8 @@ fn info_line(app: &App) -> Vec<Span<'static>> {
             format!("   delegation {} · esc cancels request", entry.status),
             muted,
         ));
-    } else if s.running {
-        spans.push(Span::styled(
-            format!("   {} ", super::spinner(app)),
-            Style::default().fg(t.accent),
-        ));
+    } else if s.running && !super::progress::shown(app) {
+        spans.push(Span::raw("   "));
         spans.push(Span::styled("esc", Style::default().fg(t.text)));
         spans.push(Span::styled(" interrupt", muted));
     }

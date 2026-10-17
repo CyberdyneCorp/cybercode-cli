@@ -11,6 +11,8 @@ expression: shown
     theme_mode                    auto           default
     sidebar                       auto           default
     recap                         auto           default
+    spinner                       nyan           default
+    workflow_notifications        own            default
     reasoning                     collapsed      default
     diff_style                    auto           default
     timestamps                    off            default
@@ -20,8 +22,6 @@ expression: shown
   Saved to kv.json; a later edit of tui.jsonc wins.
 
   Core settings: use cyber config or edit cyber.jsonc
-
-
 
 
 

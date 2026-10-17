@@ -18,6 +18,72 @@ use crate::markdown::osc8_safe;
 /// The largest copy sent through OSC 52; terminals drop longer ones.
 pub const OSC52_MAX: usize = 100_000;
 
+/// `tui.notifications`: how an attention notification reaches the user (`tui` →
+/// Attention notifications).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Notifications {
+    /// The bell and an OSC 9 desktop notification.
+    #[default]
+    Auto,
+    Bell,
+    Osc9,
+    Osc777,
+    Off,
+}
+
+impl Notifications {
+    pub fn parse(value: Option<&str>) -> Option<Self> {
+        match value? {
+            "auto" => Some(Self::Auto),
+            "bell" => Some(Self::Bell),
+            "osc9" => Some(Self::Osc9),
+            "osc777" => Some(Self::Osc777),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    /// The bytes that notify with `text`, which may come from a server: control
+    /// characters and `;` (OSC 777's separator) are removed so it cannot end the
+    /// sequence or start another.
+    pub fn sequence(self, text: &str) -> Option<String> {
+        let text: String = text
+            .chars()
+            .filter(|c| {
+                !c.is_control() && !matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+            })
+            .collect();
+        match self {
+            Self::Auto => Some(format!("\x07\x1b]9;{text}\x07")),
+            Self::Bell => Some("\x07".into()),
+            Self::Osc9 => Some(format!("\x1b]9;{text}\x07")),
+            Self::Osc777 => Some(format!(
+                "\x1b]777;notify;Cyber Code;{}\x07",
+                text.replace(';', ",")
+            )),
+            Self::Off => None,
+        }
+    }
+}
+
+impl crate::app::App {
+    /// Notify the user through `tui.notifications`.
+    pub(crate) fn attention(&mut self, text: &str) {
+        let Some(sequence) = self.notifications.sequence(text) else {
+            return;
+        };
+        #[cfg(test)]
+        self.attention_log.push(sequence);
+        #[cfg(not(test))]
+        {
+            let mut out = io::stdout();
+            let _ = out
+                .write_all(sequence.as_bytes())
+                .and_then(|()| out.flush());
+        }
+    }
+}
+
 /// Link text drawn at `x`, `y` in the last frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreenLink {
@@ -226,6 +292,27 @@ mod tests {
                 .find(|(k, _)| *k == name)
                 .map(|(_, v)| v.to_string())
         }
+    }
+
+    /// Run names come from servers: none can end the notification's sequence early.
+    #[test]
+    fn notifications_follow_the_setting_and_carry_no_controls() {
+        let text = "✓ au\x07dit\x1b]9;x\u{202E} completed";
+        assert_eq!(
+            Notifications::Auto.sequence(text).unwrap(),
+            "\x07\x1b]9;✓ audit]9;x completed\x07"
+        );
+        assert_eq!(Notifications::Bell.sequence(text).unwrap(), "\x07");
+        assert_eq!(
+            Notifications::Osc777.sequence("a;b").unwrap(),
+            "\x1b]777;notify;Cyber Code;a,b\x07"
+        );
+        assert_eq!(Notifications::Off.sequence(text), None);
+        assert_eq!(
+            Notifications::parse(Some("osc9")),
+            Some(Notifications::Osc9)
+        );
+        assert_eq!(Notifications::parse(Some("native")), None);
     }
 
     #[test]

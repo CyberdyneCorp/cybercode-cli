@@ -137,6 +137,7 @@ fn field_span(app: &App, field: &str) -> Option<Span<'static>> {
         "variant" => s.model.split_once('#')?.1.to_owned(),
         "branch" => app.sidebar.vcs.ready()?.as_ref()?.branch.clone()?,
         "worktree" => app.sidebar.vcs.ready()?.as_ref()?.worktree.clone()?,
+        "workflows" => app.workflows_field()?,
         // `goal`, `loops` and `remote` have no source yet.
         _ => return None,
     };

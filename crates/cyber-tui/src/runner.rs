@@ -65,6 +65,7 @@ pub(crate) async fn start(
     app.show_reasoning = prefs.preferences.get("reasoning") == "expanded";
     app.prefs = prefs.preferences;
     app.welcome = prefs.welcome;
+    app.notifications = prefs.notifications;
     app.home = env("HOME").or_else(|| env("USERPROFILE"));
     app.hyperlinks = crate::osc::hyperlinks(env);
     let warnings = prefs.themes.warnings.clone();
@@ -216,6 +217,7 @@ async fn event_loop(
     query_background(app);
     while !app.quit {
         set_title(app);
+        app.progress_sync();
         let frame = terminal
             .draw(|f| crate::view::draw(f, app))
             .map_err(|e| e.to_string())?;
@@ -233,6 +235,10 @@ async fn event_loop(
                 }
             },
             Some(msg) = rx.recv() => received(app, store, msg, &mut refresh),
+            () = frame_due(app.next_frame()) => {
+                app.advance_frame();
+                Vec::new()
+            },
             _ = tick.tick() => {
                 server.tick(app, client).await;
                 let actions = app.admissions.poll();
@@ -244,6 +250,14 @@ async fn event_loop(
         dispatch(app, client, store, &tx, &mut refresh, terminal, actions);
     }
     Ok(())
+}
+
+/// Wakes when the activity indicator's next frame is due; never without one.
+async fn frame_due(at: Option<std::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at.into()).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// The first refresh, stored admissions to reconcile, the picker and the `--prompt`.
@@ -346,7 +360,10 @@ async fn reopen_events(
     }
 }
 
-fn server_event(app: &mut App, event: &cyber_client::Event) -> Vec<Action> {
+pub(crate) fn server_event(app: &mut App, event: &cyber_client::Event) -> Vec<Action> {
+    if event.kind.starts_with("workflow.") {
+        return app.workflow_event(event);
+    }
     if commands_changed(event) {
         return vec![
             Action::LoadCommands,
@@ -578,6 +595,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
                 app.sidebar.apply(loaded);
             }
         }
+        Msg::Workflow(reply) => return app.workflow_reply(reply),
         Msg::Toast(text) => app.toast(text),
         Msg::Done => {}
     }
@@ -643,6 +661,7 @@ fn settings_reply(app: &mut App, msg: Msg) {
 fn reload_sidebar(app: &mut App, mut actions: Vec<Action>) -> Vec<Action> {
     if std::mem::take(&mut app.sidebar_stale) {
         actions.extend(crate::sidebar::Part::ALL.map(Action::LoadSidebar));
+        actions.extend(app.watch_reload());
     }
     actions
 }
@@ -742,6 +761,7 @@ fn dispatch(
                 let edited = edit_externally(terminal, &text);
                 app.composer.set_text(&edited);
             }
+            Action::EditFile(path) => edit_file(app, terminal, &path),
             Action::Refresh if refresh.in_flight => refresh.again = true,
             action => {
                 if let Action::SwitchMode(mode) = &action {
@@ -787,30 +807,50 @@ fn dispatch(
     }
 }
 
-/// Open the draft in `$VISUAL`/`$EDITOR`, suspending the UI.
-fn edit_externally(terminal: &mut Term, text: &str) -> String {
+/// Run `$VISUAL`/`$EDITOR` on `path`, suspending the UI; true when it exited cleanly.
+/// The path is passed as an argument, never as shell text.
+fn run_editor(terminal: &mut Term, path: &std::path::Path) -> bool {
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".into());
-    let path = std::env::temp_dir().join(format!("cyber-prompt-{}.md", std::process::id()));
-    if std::fs::write(&path, text).is_err() {
-        return text.to_string();
-    }
     teardown(terminal);
     let status = std::process::Command::new("sh")
         .arg("-c")
         .arg(format!("{editor} \"$1\""))
         .arg("sh")
-        .arg(&path)
+        .arg(path)
         .status();
     if let Ok(t) = setup() {
         *terminal = t;
     }
     let _ = terminal.clear();
-    let edited = status
-        .ok()
-        .filter(|s| s.success())
-        .and_then(|_| std::fs::read_to_string(&path).ok());
+    status.is_ok_and(|s| s.success())
+}
+
+/// `s` on a Workflow Run: its script in the editor, when this machine has the file.
+fn edit_file(app: &mut App, terminal: &mut Term, path: &str) {
+    let path = std::path::Path::new(path);
+    if !path.is_file() {
+        app.toast(format!(
+            "Script not found here: {}",
+            crate::sidebar::display_path(&path.display().to_string())
+        ));
+        return;
+    }
+    if !run_editor(terminal, path) {
+        app.toast("The editor did not exit cleanly");
+    }
+}
+
+/// Open the draft in `$VISUAL`/`$EDITOR`, suspending the UI.
+fn edit_externally(terminal: &mut Term, text: &str) -> String {
+    let path = std::env::temp_dir().join(format!("cyber-prompt-{}.md", std::process::id()));
+    if std::fs::write(&path, text).is_err() {
+        return text.to_string();
+    }
+    let edited = run_editor(terminal, &path)
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten();
     let _ = std::fs::remove_file(&path);
     edited
         .map(|e| e.trim_end_matches('\n').to_string())
@@ -1170,9 +1210,10 @@ mod mode_tests {
         let actions = apply(&mut app, Ok(snapshot), &mut Refresh::default());
         assert_eq!(actions[0], Action::Refresh);
         assert!(
-            actions[1..]
-                .iter()
-                .all(|a| matches!(a, Action::LoadSidebar(_))),
+            actions[1..].iter().all(|a| matches!(
+                a,
+                Action::LoadSidebar(_) | Action::Workflow(crate::workflows::Request::Watch { .. })
+            )),
             "the rebound directory reloads the sidebar: {actions:?}"
         );
         assert_eq!(app.session.directory, "/repo/new");

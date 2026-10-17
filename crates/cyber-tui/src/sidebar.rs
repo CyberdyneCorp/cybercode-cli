@@ -176,8 +176,20 @@ pub enum Section {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row {
     Header(Section),
+    /// A run of the Workflows section; Enter opens it in the monitor.
+    Workflow(usize),
     Mcp(usize),
     File(usize),
+}
+
+/// One run of the Workflows section: its name and agents done of total.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowRow {
+    pub id: String,
+    /// Untrusted; cleaned when the run was read.
+    pub name: String,
+    pub done: u64,
+    pub total: u64,
 }
 
 /// Modified files shown before `+N more`.
@@ -200,6 +212,10 @@ pub struct Sidebar {
     pub version: Option<String>,
     pub parent_title: Option<String>,
     pub connection: Connection,
+    /// The Workflows section's runs, the current Session's first; set before every frame.
+    pub workflows: Vec<WorkflowRow>,
+    /// Active runs beyond those rows (`+N more`).
+    pub workflows_more: usize,
 }
 
 impl Sidebar {
@@ -248,7 +264,7 @@ impl Sidebar {
 
     /// Focusable rows, top to bottom, as the view draws them.
     pub fn rows(&self) -> Vec<Row> {
-        let mut rows = Vec::new();
+        let mut rows: Vec<Row> = (0..self.workflows.len()).map(Row::Workflow).collect();
         if !self.servers().is_empty() {
             rows.push(Row::Header(Section::Mcp));
             if !self.collapsed.contains(&Section::Mcp) {
@@ -462,22 +478,32 @@ impl crate::app::App {
             (Some("sidebar_close"), _) => self.leave_sidebar(),
             (Some("sidebar_next"), _) | (None, KeyCode::Char('j')) => self.sidebar.step(true),
             (Some("sidebar_previous"), _) | (None, KeyCode::Char('k')) => self.sidebar.step(false),
-            (Some("sidebar_select"), _) | (None, KeyCode::Char(' ')) => self.select_row(),
+            (Some("sidebar_select"), _) | (None, KeyCode::Char(' ')) => return self.select_row(),
             (Some("sidebar_reconnect"), _) => return self.reconnect_row(),
             _ => {}
         }
         Vec::new()
     }
 
-    /// Enter or Space: collapse or expand a section, or open a file's diff.
-    fn select_row(&mut self) {
+    /// Enter or Space: collapse or expand a section, open a file's diff, or open a
+    /// run in the Workflow monitor.
+    fn select_row(&mut self) -> Vec<Action> {
         match self.sidebar.focused() {
             Some(Row::Header(section)) => self.sidebar.toggle(section),
             Some(Row::File(index)) => {
                 self.overlay = crate::app::Overlay::FileDiff { index, scroll: 0 }
             }
+            Some(Row::Workflow(index)) => {
+                let Some(run) = self.sidebar.workflows.get(index) else {
+                    return Vec::new();
+                };
+                let run_id = run.id.clone();
+                self.leave_sidebar();
+                return self.open_workflow_run(run_id);
+            }
             Some(Row::Mcp(_)) | None => {}
         }
+        Vec::new()
     }
 
     /// `r` on a failed (or waiting) MCP server.

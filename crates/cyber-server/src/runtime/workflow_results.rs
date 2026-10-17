@@ -96,7 +96,8 @@ fn handback_text(run: &WorkflowRun, agents: &[WorkflowAgent]) -> String {
             "cancelled": count("cancelled"),
             "interrupted": count("interrupted"),
         },
-        "cost_usd": agents.iter().map(|a| a.cost).sum::<f64>(),
+        // A fold from +0.0: an empty f64 `sum` is -0.0, which would print as `-0.0`.
+        "cost_usd": agents.iter().fold(0.0, |sum, a| sum + a.cost),
         "tokens": agents.iter().map(|a| a.tokens).sum::<u64>(),
         "duration_ms": run.ended_ms.unwrap_or(run.started_ms).saturating_sub(run.started_ms),
     });
@@ -257,6 +258,8 @@ mod tests {
             error: None,
             cost,
             tokens: 5,
+            started_ms: None,
+            ended_ms: None,
         };
         let text = handback_text(&run, &[agent("completed", 0.5), agent("failed", 0.25)]);
         let summary: Value =
@@ -271,5 +274,16 @@ mod tests {
             summary["result_preview"].as_str().unwrap().len(),
             HANDBACK_PREVIEW_BYTES
         );
+    }
+
+    /// Regression: a run stopped while queued has no agents, and its summary said
+    /// `"cost_usd":-0.0` (the empty f64 sum).
+    #[test]
+    fn handback_of_a_run_without_agents_costs_zero_not_negative_zero() {
+        let mut run = run();
+        run.status = WorkflowRunStatus::Stopped;
+        let text = handback_text(&run, &[]);
+        assert!(text.contains(r#""cost_usd":0.0"#), "{text}");
+        assert!(!text.contains("-0.0"), "{text}");
     }
 }

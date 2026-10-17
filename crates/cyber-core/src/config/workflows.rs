@@ -32,6 +32,14 @@ pub enum TierTarget {
 pub struct WorkflowSettings {
     /// Workflow agents running at once across all runs of a server.
     pub max_concurrent: u32,
+    /// The default share of one run (`Fair agent scheduling`); unset for the whole limit.
+    pub max_concurrent_per_run: Option<u32>,
+    /// Runs holding an execution attempt at once on a server (`Run queue`); later starts
+    /// and resumes wait `queued`.
+    pub max_running_runs: u32,
+    /// Resume the runs a restart interrupted once recovery ends (`Recovery of several
+    /// runs`); otherwise they stay `paused` until resumed.
+    pub resume_after_restart: bool,
     /// QuickJS heap limit per run.
     pub max_memory_mb: u32,
     /// Synchronous script CPU per run, excluding time awaiting host calls.
@@ -56,6 +64,9 @@ impl Default for WorkflowSettings {
         .collect();
         Self {
             max_concurrent: 16,
+            max_concurrent_per_run: None,
+            max_running_runs: 8,
+            resume_after_restart: false,
             max_memory_mb: 256,
             script_cpu_seconds: 60,
             tiers,
@@ -67,8 +78,10 @@ impl Default for WorkflowSettings {
 }
 
 /// `(key, minimum, maximum)` of every integer setting.
-const RANGES: [(&str, u32, u32); 5] = [
+const RANGES: [(&str, u32, u32); 7] = [
     ("max_concurrent", 1, 256),
+    ("max_concurrent_per_run", 1, 256),
+    ("max_running_runs", 1, 64),
     ("max_memory_mb", 16, 4096),
     ("script_cpu_seconds", 1, 3600),
     ("auto_threshold_files", 1, 100_000),
@@ -89,6 +102,16 @@ impl WorkflowSettings {
             match key.as_str() {
                 "tiers" => tiers(value, &mut settings.tiers)?,
                 "auto" => settings.auto = auto(value)?,
+                "resume_after_restart" => {
+                    settings.resume_after_restart = value.as_bool().ok_or_else(|| {
+                        format!("{KEY}.resume_after_restart: expected true or false, got {value}")
+                    })?;
+                }
+                "max_concurrent_per_run" => {
+                    settings.max_concurrent_per_run = (!value.is_null())
+                        .then(|| integer(key, value))
+                        .transpose()?;
+                }
                 _ => *settings.slot(key)? = integer(key, value)?,
             }
         }
@@ -104,6 +127,7 @@ impl WorkflowSettings {
     fn slot(&mut self, key: &str) -> Result<&mut u32, String> {
         Ok(match key {
             "max_concurrent" => &mut self.max_concurrent,
+            "max_running_runs" => &mut self.max_running_runs,
             "max_memory_mb" => &mut self.max_memory_mb,
             "script_cpu_seconds" => &mut self.script_cpu_seconds,
             "auto_threshold_files" => &mut self.auto_threshold_files,

@@ -5,6 +5,20 @@ export type AgentBody = {
   agent: string;
 };
 
+/**
+ * The agents of a run by status. `queued` counts issued `agent()` calls waiting for a
+ * slot of the server-wide limit; `total` is every recorded agent plus those calls.
+ */
+export type AgentCounts = {
+  total: number;
+  completed: number;
+  running: number;
+  queued: number;
+  failed: number;
+  cancelled: number;
+  interrupted: number;
+};
+
 /** An agent clients can select. */
 export type AgentInfo = {
   name: string;
@@ -282,6 +296,10 @@ export type Data_CreatedWorktree = {
 
 export type Data_Delegation = {
   data: Delegation;
+};
+
+export type Data_InterruptedResume = {
+  data: InterruptedResume;
 };
 
 export type Data_Job = {
@@ -679,6 +697,14 @@ export type InsightFactor = {
 
 /** A contributing factor. */
 export type InsightFactorKind = "subagent_heavy" | "long_running" | "large_context" | "workflow";
+
+/** What resuming the interrupted runs did. */
+export type InterruptedResume = {
+  /** Resumed runs, in `started_ms` order; each is `running` or `queued`. */
+  resumed: string[];
+  /** Interrupted runs left paused, with the refusal. */
+  refused: RefusedResume[];
+};
 
 export type InvalidMemory = {
   filename: string;
@@ -1157,8 +1183,8 @@ export type Page_WorkflowLogEntry = {
   cursor: Cursor;
 };
 
-export type Page_WorkflowRun = {
-  data: WorkflowRun[];
+export type Page_WorkflowRunSummary = {
+  data: WorkflowRunSummary[];
   cursor: Cursor;
 };
 
@@ -1269,6 +1295,13 @@ export type RecoverMemory = {
   admission_fingerprint: string;
 };
 
+/** An interrupted run that could not be resumed. */
+export type RefusedResume = {
+  run_id: string;
+  /** For example `WorkflowReplayMismatch: the script changed …`. */
+  reason: string;
+};
+
 export type ReleaseBody = {
   /** `steer` (default) or `queue`. */
   delivery?: Delivery | null;
@@ -1298,6 +1331,11 @@ export type ResumeBody = {
   revision?: boolean;
   /** Run budget fields to override, such as a raised `max_cost_usd`. */
   budget?: unknown;
+  /**
+   * The run's share of the agent slots for this attempt, as on start; a change needs
+   * no revision. Absent, the run keeps the `max_concurrent` it was last given.
+   */
+  max_concurrent?: number | null;
 };
 
 export type RetrySafety = "read_only" | "idempotent" | "reconcile" | "never";
@@ -1377,7 +1415,7 @@ export type RunBudget = {
   max_agents: number;
 };
 
-/** A run with its agents. */
+/** A run's summary with its agents. */
 export type RunDetail = {
   id: string;
   /** `meta.name` of the script. */
@@ -1408,6 +1446,27 @@ export type RunDetail = {
   /** Why the run is paused, stopped or ended early. */
   reason?: string | null;
   budget?: RunBudget | null;
+  /**
+   * Agents of this run that may hold a slot of the server-wide limit at once: its
+   * `max_concurrent`, capped at that limit (`workflows` → Fair agent scheduling).
+   * Absent on runs recorded before shares existed, which use the whole limit.
+   */
+  share?: number | null;
+  /**
+   * The `max_concurrent` the start or latest resume gave itself, before `meta` and the
+   * configuration: a resume that gives none keeps it.
+   */
+  max_concurrent?: number | null;
+  /**
+   * When a `queued` run entered the run queue: the time of the start or resume that
+   * queued it. Dispatch goes by it, then by run ID (`workflows` → Run queue).
+   */
+  queued_ms?: number | null;
+  /**
+   * A `queued` run's place in the run queue, 1 for the next to be dispatched; computed
+   * when the run is read, never stored.
+   */
+  queue_position?: number | null;
   /** Declared phases followed by titles first seen in `phase()`. */
   phases: string[];
   /** The current phase. */
@@ -1433,7 +1492,20 @@ export type RunDetail = {
   error?: Diagnostic | null;
   started_ms: number;
   ended_ms?: number | null;
-  agents: WorkflowAgent[];
+  agents: AgentCounts;
+  /** Tokens of the run's agents. */
+  tokens: number;
+  /** Cost of the run's agents. */
+  cost_usd: number;
+  /** Active time: time spent `queued` or `paused` is excluded. */
+  elapsed_ms: number;
+  /**
+   * A paused run whose pause a server restart recorded (`workflows` → Resume after
+   * restart); absent otherwise.
+   */
+  interrupted?: boolean;
+  /** Every agent of the run, in start or settlement order. */
+  agents_detail: WorkflowAgent[];
 };
 
 /** The `scope` of a Workflow Run usage report. */
@@ -1698,6 +1770,11 @@ export type StartBody = {
    * the authenticated client may raise a limit, as on resume.
    */
   budget?: unknown;
+  /**
+   * The run's share of the server-wide Workflow agent slots, a positive integer capped
+   * at that limit; overrides `meta.max_concurrent` and `workflows.max_concurrent_per_run`.
+   */
+  max_concurrent?: number | null;
 };
 
 /** One local day of the period. */
@@ -1950,6 +2027,13 @@ export type WorkflowAgent = {
   error?: Diagnostic | null;
   cost: number;
   tokens: number;
+  /**
+   * When the agent started, from its first `workflow.agent.started.1`; set by the
+   * projection, never recorded in the event.
+   */
+  started_ms?: number | null;
+  /** When the agent settled; absent while it runs. */
+  ended_ms?: number | null;
 };
 
 /** One `log()` call. */
@@ -1990,6 +2074,27 @@ export type WorkflowRun = {
   /** Why the run is paused, stopped or ended early. */
   reason?: string | null;
   budget?: RunBudget | null;
+  /**
+   * Agents of this run that may hold a slot of the server-wide limit at once: its
+   * `max_concurrent`, capped at that limit (`workflows` → Fair agent scheduling).
+   * Absent on runs recorded before shares existed, which use the whole limit.
+   */
+  share?: number | null;
+  /**
+   * The `max_concurrent` the start or latest resume gave itself, before `meta` and the
+   * configuration: a resume that gives none keeps it.
+   */
+  max_concurrent?: number | null;
+  /**
+   * When a `queued` run entered the run queue: the time of the start or resume that
+   * queued it. Dispatch goes by it, then by run ID (`workflows` → Run queue).
+   */
+  queued_ms?: number | null;
+  /**
+   * A `queued` run's place in the run queue, 1 for the next to be dispatched; computed
+   * when the run is read, never stored.
+   */
+  queue_position?: number | null;
   /** Declared phases followed by titles first seen in `phase()`. */
   phases: string[];
   /** The current phase. */
@@ -2017,7 +2122,108 @@ export type WorkflowRun = {
   ended_ms?: number | null;
 };
 
+/** The data of a `workflow.run.progress` live event: nothing a list does not return. */
+export type WorkflowRunProgress = {
+  run_id: string;
+  status: WorkflowRunStatus;
+  phase?: string | null;
+  agents: AgentCounts;
+  tokens: number;
+  cost_usd: number;
+};
+
 export type WorkflowRunStatus = "queued" | "running" | "paused" | "completed" | "failed" | "budget_exceeded" | "stopped" | "waiting_input";
+
+/** A run as the monitor lists it: the run, plus its agent counts, spend and active time. */
+export type WorkflowRunSummary = {
+  id: string;
+  /** `meta.name` of the script. */
+  name: string;
+  /** The owner Session: agents are its children and run under its Mode. */
+  session_id: string;
+  directory: string;
+  /** The run Mode, a ceiling for every agent. */
+  mode: string;
+  /** `inline`, or the saved module's path. */
+  origin: unknown;
+  /**
+   * An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch
+   * or save into `.cyber/workflows/`.
+   */
+  script_file?: string | null;
+  /** `sha256:` digest of the current revision's script source. */
+  digest: string;
+  /** Digest of the engine limits and model tiers the current revision runs with. */
+  config_digest?: string;
+  /**
+   * Script revision, starting at 1; a relaunch with a changed script or configuration
+   * needs a new revision.
+   */
+  revision?: number;
+  args: unknown;
+  status: WorkflowRunStatus;
+  /** Why the run is paused, stopped or ended early. */
+  reason?: string | null;
+  budget?: RunBudget | null;
+  /**
+   * Agents of this run that may hold a slot of the server-wide limit at once: its
+   * `max_concurrent`, capped at that limit (`workflows` → Fair agent scheduling).
+   * Absent on runs recorded before shares existed, which use the whole limit.
+   */
+  share?: number | null;
+  /**
+   * The `max_concurrent` the start or latest resume gave itself, before `meta` and the
+   * configuration: a resume that gives none keeps it.
+   */
+  max_concurrent?: number | null;
+  /**
+   * When a `queued` run entered the run queue: the time of the start or resume that
+   * queued it. Dispatch goes by it, then by run ID (`workflows` → Run queue).
+   */
+  queued_ms?: number | null;
+  /**
+   * A `queued` run's place in the run queue, 1 for the next to be dispatched; computed
+   * when the run is read, never stored.
+   */
+  queue_position?: number | null;
+  /** Declared phases followed by titles first seen in `phase()`. */
+  phases: string[];
+  /** The current phase. */
+  phase?: string | null;
+  /** The script's return value once completed, when its JSON is at most 1 MiB. */
+  result?: unknown;
+  /** A larger return value's file (`<state>/workflows/<run_id>.result.json`). */
+  result_file?: string | null;
+  /** The start of a larger return value's JSON. */
+  result_preview?: string | null;
+  /**
+   * Agents may ask the owner's attached clients; otherwise every `ask` is rejected
+   * with `No interactive approver for workflow run`.
+   */
+  interactive?: boolean;
+  /**
+   * The owner continues when the summary is admitted (runs started by its `workflow`
+   * tool); otherwise the summary waits in its queue.
+   */
+  continue_owner?: boolean;
+  /** The summary was admitted to the owner as `msg_workflow_<run_id>`. */
+  notified?: boolean;
+  error?: Diagnostic | null;
+  started_ms: number;
+  ended_ms?: number | null;
+  agents: AgentCounts;
+  /** Tokens of the run's agents. */
+  tokens: number;
+  /** Cost of the run's agents. */
+  cost_usd: number;
+  /** Active time: time spent `queued` or `paused` is excluded. */
+  elapsed_ms: number;
+  /**
+   * A paused run whose pause a server restart recorded (`workflows` → Resume after
+   * restart); absent otherwise.
+   */
+  interrupted?: boolean;
+};
 
 export type WorktreeEntry = {
   worktree: WorktreeInfo;

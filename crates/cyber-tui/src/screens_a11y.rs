@@ -113,7 +113,7 @@ async fn screen_reader_mode_states_the_marker_drops_the_sidebar_and_describes_th
         .map(ToString::to_string)
         .collect();
     assert!(
-        lines.iter().any(|l| l.starts_with("Active 1 of 1 days")),
+        lines.iter().any(|l| l.starts_with("Active 1 of 1 day;")),
         "{lines:#?}"
     );
     assert!(

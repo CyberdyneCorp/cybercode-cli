@@ -154,6 +154,10 @@ pub enum Action {
     Delete(String),
     ForkSession(String),
     Editor(String),
+    /// A Workflow monitor read or run operation.
+    Workflow(crate::workflows::Request),
+    /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
+    EditFile(String),
     Quit,
 }
 
@@ -258,6 +262,8 @@ pub enum Overlay {
     Files,
     /// The theme switcher.
     Themes(Box<crate::switcher::Switcher>),
+    /// The Workflow monitor; its state is `App::workflows`.
+    Workflows,
 }
 
 /// What the composer's first character makes of the input.
@@ -275,7 +281,7 @@ pub enum InputMode {
 pub const UNAVAILABLE: &[&str] = &[];
 
 /// Status line fields shown by default (`tui.statusline.fields`).
-pub const DEFAULT_FIELDS: [&str; 3] = ["cwd", "context", "cost"];
+pub const DEFAULT_FIELDS: [&str; 4] = ["cwd", "workflows", "context", "cost"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Completion {
@@ -321,6 +327,8 @@ pub struct App {
     pub reduced_motion: bool,
     /// A fixed time for every frame (snapshot tests); `None` reads the real clock.
     pub clock: Option<Instant>,
+    /// When the UI started, the origin of test clocks.
+    #[cfg(test)]
     started: Instant,
     /// An OSC 11 background query waiting for its reply in the key stream.
     pub(crate) background_probe: Option<crate::theme::detect::Osc11Reply>,
@@ -371,6 +379,17 @@ pub struct App {
     pub theme_filter: crate::switcher::Filter,
     /// `Theme: <name>` from `theme_cycle`, shown in the status footer.
     pub announcement: Option<(String, Instant)>,
+    /// The activity indicator's sources and frames.
+    pub progress: crate::progress::Progress,
+    /// The Workflow monitor's runs, views and the transcript opened from it.
+    pub workflows: crate::workflows::WorkflowsState,
+    /// The runs the indicators show and the notices of their ends.
+    pub watch: crate::workflow_watch::Watch,
+    /// `tui.notifications`.
+    pub notifications: crate::osc::Notifications,
+    /// Attention notifications written, instead of the terminal.
+    #[cfg(test)]
+    pub(crate) attention_log: Vec<String>,
 }
 
 impl App {
@@ -411,6 +430,7 @@ impl App {
             appearance,
             reduced_motion: false,
             clock: None,
+            #[cfg(test)]
             started: Instant::now(),
             background_probe: None,
             markdown: Default::default(),
@@ -438,6 +458,12 @@ impl App {
             recap: Default::default(),
             theme_filter: Default::default(),
             announcement: None,
+            progress: Default::default(),
+            workflows: Default::default(),
+            watch: Default::default(),
+            notifications: Default::default(),
+            #[cfg(test)]
+            attention_log: Vec::new(),
         }
     }
 
@@ -531,6 +557,7 @@ impl App {
         }
         if session.id != self.session.id {
             self.forget_session_views();
+            self.thread_session(&session.id);
         }
         if session.id != self.session.id || self.mode_selection.as_deref() == Some(&session.mode) {
             self.mode_selection = None;
@@ -562,6 +589,8 @@ impl App {
     /// Another Session is shown: views of the previous one close and forget it.
     fn forget_session_views(&mut self) {
         self.forget_settings();
+        self.progress.forget_session();
+        self.watch.fed = None;
         self.cost.invalidate();
         self.hooks.invalidate();
         self.hook_definitions.invalidate();
@@ -602,11 +631,6 @@ impl App {
     #[cfg(test)]
     pub fn started(&self) -> Instant {
         self.started
-    }
-
-    /// Time since the UI started, for animation frames.
-    pub fn uptime(&self) -> std::time::Duration {
-        self.now().saturating_duration_since(self.started)
     }
 
     /// Resolve the named theme for the current appearance.
@@ -733,7 +757,10 @@ impl App {
             return vec![Action::Quit];
         }
         match &self.overlay {
-            Overlay::None => self.composer_key(key),
+            Overlay::None => match self.thread_key(key) {
+                Some(actions) => actions,
+                None => self.composer_key(key),
+            },
             Overlay::Picker(_) => self.picker_key(key),
             Overlay::Permission(_) => self.permission_key(key),
             Overlay::Question(_) => self.question_key(key),
@@ -775,6 +802,7 @@ impl App {
             Overlay::Settings => self.settings_key(key),
             Overlay::Files => self.explorer_key(key),
             Overlay::Themes(_) => self.switcher_key(key),
+            Overlay::Workflows => self.workflows_key(key),
             Overlay::FileDiff { .. } => {
                 self.file_diff_key(key);
                 Vec::new()
@@ -1393,6 +1421,7 @@ impl App {
                 Vec::new()
             }
             "files" => self.open_explorer(),
+            "workflows" => self.open_workflows(),
             "help" => {
                 self.overlay = Overlay::Help;
                 Vec::new()
@@ -1724,6 +1753,7 @@ impl App {
 
     /// Apply a server event; returns actions such as a refresh.
     pub fn on_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
+        self.progress.observe(kind, self.now());
         let mut actions = if kind == "job.ended.1" {
             self.job_ended(data)
         } else if kind.starts_with("session.prompt.admitted") {
@@ -1743,6 +1773,8 @@ impl App {
                 self.sidebar.connection = crate::sidebar::Connection::Connected;
                 let mut actions = vec![Action::Refresh];
                 actions.extend(crate::sidebar::Part::ALL.map(Action::LoadSidebar));
+                actions.extend(self.workflows_connected());
+                actions.extend(self.watch_reload());
                 actions
             }
             "session.diff.1" => {
@@ -1772,7 +1804,7 @@ impl App {
             "session.idle" => {
                 self.session.running = false;
                 if !self.focused {
-                    notify("cyber: the session is idle");
+                    self.attention("cyber: the session is idle");
                 }
                 // Language servers start as files are read, and the Turn may have changed
                 // the working tree.
@@ -1937,12 +1969,4 @@ fn answers(questions: &[crate::model::QuestionSpec], form: &QuestionForm) -> Vec
             picked
         })
         .collect()
-}
-
-/// Terminal bell plus an OSC 9 desktop notification.
-fn notify(text: &str) {
-    use std::io::Write;
-    let mut out = std::io::stdout();
-    let _ = write!(out, "\x07\x1b]9;{text}\x07");
-    let _ = out.flush();
 }

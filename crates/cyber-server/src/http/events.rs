@@ -128,6 +128,19 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
     {
         return durable(session_id, *seq, kind, data.clone());
     }
+    if let LiveEvent::WorkflowProgress {
+        directory,
+        progress,
+    } = event
+    {
+        return EventEnvelope {
+            id: format!("live:{counter}"),
+            kind: "workflow.run.progress".into(),
+            data: serde_json::to_value(progress).unwrap_or_default(),
+            location: Some(directory.clone()),
+            durable: None,
+        };
+    }
     if let LiveEvent::RequestRouted { kind, data, .. } = event {
         return EventEnvelope {
             id: format!("live:{counter}"),
@@ -156,7 +169,8 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
     match event {
         LiveEvent::McpStatusChanged { .. }
         | LiveEvent::McpToolsChanged { .. }
-        | LiveEvent::MemoryUpdated { .. } => None,
+        | LiveEvent::MemoryUpdated { .. }
+        | LiveEvent::WorkflowProgress { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }
         | LiveEvent::RequestRouted { session_id, .. }
@@ -262,6 +276,10 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
                     update.directory.display().to_string()
                 }
                 LiveEvent::McpToolsChanged { update } => update.directory.display().to_string(),
+                // A run's progress streams on the Location the run started in.
+                LiveEvent::WorkflowProgress { directory, .. } => {
+                    event_location::canonical(directory.clone())
+                }
                 _ => {
                     let Some(session) = session_of(&event) else {
                         continue;

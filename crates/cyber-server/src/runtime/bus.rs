@@ -91,6 +91,12 @@ pub enum LiveEvent {
     Deleted {
         session_id: String,
     },
+    /// `workflow.run.progress`: a run's counts, spend, status or phase changed; never
+    /// durable, at most every 250 ms per run, on the instance stream of `directory`.
+    WorkflowProgress {
+        directory: String,
+        progress: super::WorkflowRunProgress,
+    },
 }
 
 #[derive(Clone)]

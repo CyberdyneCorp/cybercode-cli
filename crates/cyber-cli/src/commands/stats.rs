@@ -167,10 +167,19 @@ fn clean(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).collect()
 }
 
+/// `1 day`, `7 days`.
+fn days(n: u64) -> String {
+    if n == 1 {
+        "1 day".to_owned()
+    } else {
+        format!("{n} days")
+    }
+}
+
 fn print_text(s: &Value, args: &StatsArgs) {
     let totals = &s["totals"];
     let period = match args.days {
-        Some(n) => format!("Last {n} days"),
+        Some(n) => format!("Last {}", days(n.into())),
         None => "All time".into(),
     };
     let scope = if args.project.is_some() {
@@ -209,18 +218,17 @@ fn print_text(s: &Value, args: &StatsArgs) {
             "Active days",
             format!("{}/{}", n(&s["active_days"]), n(&s["period_days"])),
         ),
-        (
-            "Current streak",
-            format!("{} days", n(&s["current_streak"])),
-        ),
-        (
-            "Longest streak",
-            format!("{} days", n(&s["longest_streak"])),
-        ),
+        ("Current streak", days(n(&s["current_streak"]))),
+        ("Longest streak", days(n(&s["longest_streak"]))),
         ("Most active day", text(&s["most_active_day"])),
         ("Favorite model", favorite),
         ("Longest session", longest),
     ]);
+    let tokens = &totals["tokens"];
+    let spoken = n(&tokens["input"]).saturating_add(n(&tokens["output"]));
+    if let Some(line) = cyber_tui::books::comparison(spoken) {
+        println!("{line}");
+    }
     if s["approximate_days"] == true {
         println!("Older days are UTC days from daily aggregates.");
     }
@@ -273,5 +281,15 @@ fn duration(ms: u64) -> String {
         60..3600 => format!("{m}m {sec}s"),
         3600..86_400 => format!("{h}h {m}m {sec}s"),
         _ => format!("{d}d {h}h {m}m"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn one_day_is_singular() {
+        assert_eq!(super::days(0), "0 days");
+        assert_eq!(super::days(1), "1 day");
+        assert_eq!(super::days(2), "2 days");
     }
 }

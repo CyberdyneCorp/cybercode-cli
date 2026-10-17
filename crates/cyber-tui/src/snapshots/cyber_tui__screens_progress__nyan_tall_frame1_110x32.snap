@@ -1,0 +1,184 @@
+---
+source: crates/cyber-tui/src/screens_progress.rs
+expression: "render(&mut app, 110, 32, &opts)"
+---
+ cyber · Theme baseline                                                                             ⠙ running
+› How do I speed up fib?
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+› HOLD on
+
+
+
+
+
+
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ,------,
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ | /\_/\    Thinking · 12.4s · esc interrupt
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀~|_( ^ .^)
+  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀   ""  ""
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                                                 100 · —  ctrl+p commands
+row 23: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 23: 1-1 fg=#ff3b3b bg=#ff9a1f
+row 23: 2-3 fg=#0b0f14 bg=#ff3b3b
+row 23: 4-5 fg=#ff3b3b bg=#ff9a1f
+row 23: 6-7 fg=#0b0f14 bg=#ff3b3b
+row 23: 8-9 fg=#ff3b3b bg=#ff9a1f
+row 23: 10-11 fg=#0b0f14 bg=#ff3b3b
+row 23: 12-13 fg=#ff3b3b bg=#ff9a1f
+row 23: 14-15 fg=#0b0f14 bg=#ff3b3b
+row 23: 16-17 fg=#ff3b3b bg=#ff9a1f
+row 23: 18-19 fg=#0b0f14 bg=#ff3b3b
+row 23: 20-21 fg=#ff3b3b bg=#ff9a1f
+row 23: 22-23 fg=#0b0f14 bg=#ff3b3b
+row 23: 24-25 fg=#ff3b3b bg=#ff9a1f
+row 23: 26-27 fg=#0b0f14 bg=#ff3b3b
+row 23: 28-29 fg=#ff3b3b bg=#ff9a1f
+row 23: 30-31 fg=#0b0f14 bg=#ff3b3b
+row 23: 32-33 fg=#ff3b3b bg=#ff9a1f
+row 23: 34-35 fg=#0b0f14 bg=#ff3b3b
+row 23: 36-37 fg=#ff3b3b bg=#ff9a1f
+row 23: 38-39 fg=#0b0f14 bg=#ff3b3b
+row 23: 40-41 fg=#ff3b3b bg=#ff9a1f
+row 23: 42-43 fg=#0b0f14 bg=#ff3b3b
+row 23: 44-45 fg=#ff3b3b bg=#ff9a1f
+row 23: 46-47 fg=#0b0f14 bg=#ff3b3b
+row 23: 48-49 fg=#ff3b3b bg=#ff9a1f
+row 23: 50-51 fg=#0b0f14 bg=#ff3b3b
+row 23: 52-53 fg=#ff3b3b bg=#ff9a1f
+row 23: 54-55 fg=#0b0f14 bg=#ff3b3b
+row 23: 56-57 fg=#ff3b3b bg=#ff9a1f
+row 23: 58-59 fg=#0b0f14 bg=#ff3b3b
+row 23: 60-61 fg=#ff3b3b bg=#ff9a1f
+row 23: 62-63 fg=#0b0f14 bg=#ff3b3b
+row 23: 64-64 fg=#ff3b3b bg=#ff9a1f
+row 23: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
+row 23: 75-109 fg=#d6e4f0 bg=#0b0f14
+row 24: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 24: 1-1 fg=#ffe14d bg=#4ddb6b
+row 24: 2-3 fg=#ff9a1f bg=#ffe14d
+row 24: 4-5 fg=#ffe14d bg=#4ddb6b
+row 24: 6-7 fg=#ff9a1f bg=#ffe14d
+row 24: 8-9 fg=#ffe14d bg=#4ddb6b
+row 24: 10-11 fg=#ff9a1f bg=#ffe14d
+row 24: 12-13 fg=#ffe14d bg=#4ddb6b
+row 24: 14-15 fg=#ff9a1f bg=#ffe14d
+row 24: 16-17 fg=#ffe14d bg=#4ddb6b
+row 24: 18-19 fg=#ff9a1f bg=#ffe14d
+row 24: 20-21 fg=#ffe14d bg=#4ddb6b
+row 24: 22-23 fg=#ff9a1f bg=#ffe14d
+row 24: 24-25 fg=#ffe14d bg=#4ddb6b
+row 24: 26-27 fg=#ff9a1f bg=#ffe14d
+row 24: 28-29 fg=#ffe14d bg=#4ddb6b
+row 24: 30-31 fg=#ff9a1f bg=#ffe14d
+row 24: 32-33 fg=#ffe14d bg=#4ddb6b
+row 24: 34-35 fg=#ff9a1f bg=#ffe14d
+row 24: 36-37 fg=#ffe14d bg=#4ddb6b
+row 24: 38-39 fg=#ff9a1f bg=#ffe14d
+row 24: 40-41 fg=#ffe14d bg=#4ddb6b
+row 24: 42-43 fg=#ff9a1f bg=#ffe14d
+row 24: 44-45 fg=#ffe14d bg=#4ddb6b
+row 24: 46-47 fg=#ff9a1f bg=#ffe14d
+row 24: 48-49 fg=#ffe14d bg=#4ddb6b
+row 24: 50-51 fg=#ff9a1f bg=#ffe14d
+row 24: 52-53 fg=#ffe14d bg=#4ddb6b
+row 24: 54-55 fg=#ff9a1f bg=#ffe14d
+row 24: 56-57 fg=#ffe14d bg=#4ddb6b
+row 24: 58-59 fg=#ff9a1f bg=#ffe14d
+row 24: 60-61 fg=#ffe14d bg=#4ddb6b
+row 24: 62-63 fg=#ff9a1f bg=#ffe14d
+row 24: 64-64 fg=#ffe14d bg=#4ddb6b
+row 24: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
+row 24: 75-76 fg=#d6e4f0 bg=#0b0f14
+row 24: 77-84 fg=#d6e4f0 bg=#0b0f14 bold
+row 24: 85-95 fg=#6b7a8f bg=#0b0f14
+row 24: 96-98 fg=#00e5ff bg=#0b0f14 bold
+row 24: 99-108 fg=#6b7a8f bg=#0b0f14
+row 24: 109-109 fg=#d6e4f0 bg=#0b0f14
+row 25: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 25: 1-1 fg=#3aa0ff bg=#9b5cff
+row 25: 2-3 fg=#4ddb6b bg=#3aa0ff
+row 25: 4-5 fg=#3aa0ff bg=#9b5cff
+row 25: 6-7 fg=#4ddb6b bg=#3aa0ff
+row 25: 8-9 fg=#3aa0ff bg=#9b5cff
+row 25: 10-11 fg=#4ddb6b bg=#3aa0ff
+row 25: 12-13 fg=#3aa0ff bg=#9b5cff
+row 25: 14-15 fg=#4ddb6b bg=#3aa0ff
+row 25: 16-17 fg=#3aa0ff bg=#9b5cff
+row 25: 18-19 fg=#4ddb6b bg=#3aa0ff
+row 25: 20-21 fg=#3aa0ff bg=#9b5cff
+row 25: 22-23 fg=#4ddb6b bg=#3aa0ff
+row 25: 24-25 fg=#3aa0ff bg=#9b5cff
+row 25: 26-27 fg=#4ddb6b bg=#3aa0ff
+row 25: 28-29 fg=#3aa0ff bg=#9b5cff
+row 25: 30-31 fg=#4ddb6b bg=#3aa0ff
+row 25: 32-33 fg=#3aa0ff bg=#9b5cff
+row 25: 34-35 fg=#4ddb6b bg=#3aa0ff
+row 25: 36-37 fg=#3aa0ff bg=#9b5cff
+row 25: 38-39 fg=#4ddb6b bg=#3aa0ff
+row 25: 40-41 fg=#3aa0ff bg=#9b5cff
+row 25: 42-43 fg=#4ddb6b bg=#3aa0ff
+row 25: 44-45 fg=#3aa0ff bg=#9b5cff
+row 25: 46-47 fg=#4ddb6b bg=#3aa0ff
+row 25: 48-49 fg=#3aa0ff bg=#9b5cff
+row 25: 50-51 fg=#4ddb6b bg=#3aa0ff
+row 25: 52-53 fg=#3aa0ff bg=#9b5cff
+row 25: 54-55 fg=#4ddb6b bg=#3aa0ff
+row 25: 56-57 fg=#3aa0ff bg=#9b5cff
+row 25: 58-59 fg=#4ddb6b bg=#3aa0ff
+row 25: 60-61 fg=#3aa0ff bg=#9b5cff
+row 25: 62-63 fg=#4ddb6b bg=#3aa0ff
+row 25: 64-64 fg=#3aa0ff bg=#9b5cff
+row 25: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
+row 25: 75-109 fg=#d6e4f0 bg=#0b0f14
+row 26: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 26: 2-3 fg=#9b5cff bg=#0b0f14
+row 26: 4-5 fg=#d6e4f0 bg=#0b0f14
+row 26: 6-7 fg=#9b5cff bg=#0b0f14
+row 26: 8-9 fg=#d6e4f0 bg=#0b0f14
+row 26: 10-11 fg=#9b5cff bg=#0b0f14
+row 26: 12-13 fg=#d6e4f0 bg=#0b0f14
+row 26: 14-15 fg=#9b5cff bg=#0b0f14
+row 26: 16-17 fg=#d6e4f0 bg=#0b0f14
+row 26: 18-19 fg=#9b5cff bg=#0b0f14
+row 26: 20-21 fg=#d6e4f0 bg=#0b0f14
+row 26: 22-23 fg=#9b5cff bg=#0b0f14
+row 26: 24-25 fg=#d6e4f0 bg=#0b0f14
+row 26: 26-27 fg=#9b5cff bg=#0b0f14
+row 26: 28-29 fg=#d6e4f0 bg=#0b0f14
+row 26: 30-31 fg=#9b5cff bg=#0b0f14
+row 26: 32-33 fg=#d6e4f0 bg=#0b0f14
+row 26: 34-35 fg=#9b5cff bg=#0b0f14
+row 26: 36-37 fg=#d6e4f0 bg=#0b0f14
+row 26: 38-39 fg=#9b5cff bg=#0b0f14
+row 26: 40-41 fg=#d6e4f0 bg=#0b0f14
+row 26: 42-43 fg=#9b5cff bg=#0b0f14
+row 26: 44-45 fg=#d6e4f0 bg=#0b0f14
+row 26: 46-47 fg=#9b5cff bg=#0b0f14
+row 26: 48-49 fg=#d6e4f0 bg=#0b0f14
+row 26: 50-51 fg=#9b5cff bg=#0b0f14
+row 26: 52-53 fg=#d6e4f0 bg=#0b0f14
+row 26: 54-55 fg=#9b5cff bg=#0b0f14
+row 26: 56-57 fg=#d6e4f0 bg=#0b0f14
+row 26: 58-59 fg=#9b5cff bg=#0b0f14
+row 26: 60-61 fg=#d6e4f0 bg=#0b0f14
+row 26: 62-63 fg=#9b5cff bg=#0b0f14
+row 26: 64-64 fg=#d6e4f0 bg=#0b0f14
+row 26: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
+row 26: 75-109 fg=#d6e4f0 bg=#0b0f14

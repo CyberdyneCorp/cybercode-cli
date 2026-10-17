@@ -335,10 +335,15 @@ impl Metric {
     }
 }
 
+/// ` day` for one, ` days` otherwise.
+fn day_unit(n: u32) -> &'static str {
+    if n == 1 { " day" } else { " days" }
+}
+
 fn streak(label: &'static str, days: u32) -> Metric {
     Metric {
         label,
-        parts: vec![(days.to_string(), true), (" days".into(), false)],
+        parts: vec![(days.to_string(), true), (day_unit(days).into(), false)],
     }
 }
 
@@ -423,13 +428,19 @@ fn token_line(app: &App, t: &Tokens) -> Line<'static> {
 /// `Active 265 of 340 days; most active May 20; current streak 14 days`.
 pub fn sentence(s: &Stats) -> String {
     let mut parts = vec![format!(
-        "Active {} of {} days",
-        s.active_days, s.period_days
+        "Active {} of {}{}",
+        s.active_days,
+        s.period_days,
+        day_unit(s.period_days)
     )];
     if let Some(day) = &s.most_active_day {
         parts.push(format!("most active {}", short_date(day)));
     }
-    parts.push(format!("current streak {} days", s.current_streak));
+    parts.push(format!(
+        "current streak {}{}",
+        s.current_streak,
+        day_unit(s.current_streak)
+    ));
     parts.join("; ")
 }
 
@@ -445,6 +456,10 @@ fn overview(app: &App, s: &Stats, width: usize, out: &mut Vec<Line<'static>>) {
     out.push(Line::default());
     out.extend(metric_lines(app, s, width));
     out.push(token_line(app, &s.totals.tokens));
+    let tokens = &s.totals.tokens;
+    if let Some(line) = crate::books::comparison(tokens.input.saturating_add(tokens.output)) {
+        out.push(Line::from(styled(line, Style::default().fg(t.accent))));
+    }
 }
 
 /// The model name, with its provider when another provider has a model of that name.

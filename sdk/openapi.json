@@ -1850,6 +1850,16 @@
           "budget": {
             "description": "Run budget fields, plus `max_agents`, overriding `budgets.run` and `meta.budget`:\nthe authenticated client may raise a limit, as on resume.",
             "default": null
+          },
+          "max_concurrent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 1,
+            "description": "The run's share of the server-wide Workflow agent slots, a positive integer capped\nat that limit; overrides `meta.max_concurrent` and `workflows.max_concurrent_per_run`.",
+            "default": null
           }
         },
         "required": [
@@ -1934,6 +1944,41 @@
                 "type": "null"
               }
             ]
+          },
+          "share": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Agents of this run that may hold a slot of the server-wide limit at once: its\n`max_concurrent`, capped at that limit (`workflows` → Fair agent scheduling).\nAbsent on runs recorded before shares existed, which use the whole limit."
+          },
+          "max_concurrent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The `max_concurrent` the start or latest resume gave itself, before `meta` and the\nconfiguration: a resume that gives none keeps it."
+          },
+          "queued_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When a `queued` run entered the run queue: the time of the start or resume that\nqueued it. Dispatch goes by it, then by run ID (`workflows` → Run queue)."
+          },
+          "queue_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A `queued` run's place in the run queue, 1 for the next to be dispatched; computed\nwhen the run is read, never stored."
           },
           "phases": {
             "type": "array",
@@ -2157,13 +2202,13 @@
         ],
         "description": "A 1-based source position in the Workflow script."
       },
-      "Page_WorkflowRun": {
+      "Page_WorkflowRunSummary": {
         "type": "object",
         "properties": {
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/WorkflowRun"
+              "$ref": "#/components/schemas/WorkflowRunSummary"
             }
           },
           "cursor": {
@@ -2174,6 +2219,322 @@
           "data",
           "cursor"
         ]
+      },
+      "WorkflowRunSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "`meta.name` of the script."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "The owner Session: agents are its children and run under its Mode."
+          },
+          "directory": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "The run Mode, a ceiling for every agent."
+          },
+          "origin": {
+            "description": "`inline`, or the saved module's path."
+          },
+          "script_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An inline script's copy at `<state>/workflows/<run_id>.js`, to read, edit, relaunch\nor save into `.cyber/workflows/`."
+          },
+          "digest": {
+            "type": "string",
+            "description": "`sha256:` digest of the current revision's script source."
+          },
+          "config_digest": {
+            "type": "string",
+            "description": "Digest of the engine limits and model tiers the current revision runs with.",
+            "default": ""
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Script revision, starting at 1; a relaunch with a changed script or configuration\nneeds a new revision.",
+            "default": 1
+          },
+          "args": true,
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the run is paused, stopped or ended early."
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "share": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Agents of this run that may hold a slot of the server-wide limit at once: its\n`max_concurrent`, capped at that limit (`workflows` → Fair agent scheduling).\nAbsent on runs recorded before shares existed, which use the whole limit."
+          },
+          "max_concurrent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The `max_concurrent` the start or latest resume gave itself, before `meta` and the\nconfiguration: a resume that gives none keeps it."
+          },
+          "queued_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When a `queued` run entered the run queue: the time of the start or resume that\nqueued it. Dispatch goes by it, then by run ID (`workflows` → Run queue)."
+          },
+          "queue_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A `queued` run's place in the run queue, 1 for the next to be dispatched; computed\nwhen the run is read, never stored."
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared phases followed by titles first seen in `phase()`."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The current phase."
+          },
+          "result": {
+            "description": "The script's return value once completed, when its JSON is at most 1 MiB."
+          },
+          "result_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A larger return value's file (`<state>/workflows/<run_id>.result.json`)."
+          },
+          "result_preview": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start of a larger return value's JSON."
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "Agents may ask the owner's attached clients; otherwise every `ask` is rejected\nwith `No interactive approver for workflow run`.",
+            "default": false
+          },
+          "continue_owner": {
+            "type": "boolean",
+            "description": "The owner continues when the summary is admitted (runs started by its `workflow`\ntool); otherwise the summary waits in its queue.",
+            "default": false
+          },
+          "notified": {
+            "type": "boolean",
+            "description": "The summary was admitted to the owner as `msg_workflow_<run_id>`.",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Diagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "agents": {
+            "$ref": "#/components/schemas/AgentCounts"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Tokens of the run's agents."
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double",
+            "description": "Cost of the run's agents."
+          },
+          "elapsed_ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Active time: time spent `queued` or `paused` is excluded."
+          },
+          "interrupted": {
+            "type": "boolean",
+            "description": "A paused run whose pause a server restart recorded (`workflows` → Resume after\nrestart); absent otherwise."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "session_id",
+          "directory",
+          "mode",
+          "origin",
+          "digest",
+          "args",
+          "status",
+          "phases",
+          "started_ms",
+          "agents",
+          "tokens",
+          "cost_usd",
+          "elapsed_ms"
+        ],
+        "description": "A run as the monitor lists it: the run, plus its agent counts, spend and active time."
+      },
+      "AgentCounts": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "completed": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "queued": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "interrupted": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "total",
+          "completed",
+          "running",
+          "queued",
+          "failed",
+          "cancelled",
+          "interrupted"
+        ],
+        "description": "The agents of a run by status. `queued` counts issued `agent()` calls waiting for a\nslot of the server-wide limit; `total` is every recorded agent plus those calls."
+      },
+      "Data_InterruptedResume": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InterruptedResume"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InterruptedResume": {
+        "type": "object",
+        "properties": {
+          "resumed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Resumed runs, in `started_ms` order; each is `running` or `queued`."
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefusedResume"
+            },
+            "description": "Interrupted runs left paused, with the refusal."
+          }
+        },
+        "required": [
+          "resumed",
+          "refused"
+        ],
+        "description": "What resuming the interrupted runs did."
+      },
+      "RefusedResume": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "For example `WorkflowReplayMismatch: the script changed …`."
+          }
+        },
+        "required": [
+          "run_id",
+          "reason"
+        ],
+        "description": "An interrupted run that could not be resumed."
       },
       "Data_RunDetail": {
         "type": "object",
@@ -2254,6 +2615,41 @@
               }
             ]
           },
+          "share": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Agents of this run that may hold a slot of the server-wide limit at once: its\n`max_concurrent`, capped at that limit (`workflows` → Fair agent scheduling).\nAbsent on runs recorded before shares existed, which use the whole limit."
+          },
+          "max_concurrent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The `max_concurrent` the start or latest resume gave itself, before `meta` and the\nconfiguration: a resume that gives none keeps it."
+          },
+          "queued_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When a `queued` run entered the run queue: the time of the start or resume that\nqueued it. Dispatch goes by it, then by run ID (`workflows` → Run queue)."
+          },
+          "queue_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A `queued` run's place in the run queue, 1 for the next to be dispatched; computed\nwhen the run is read, never stored."
+          },
           "phases": {
             "type": "array",
             "items": {
@@ -2322,10 +2718,35 @@
             "format": "int64"
           },
           "agents": {
+            "$ref": "#/components/schemas/AgentCounts"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Tokens of the run's agents."
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double",
+            "description": "Cost of the run's agents."
+          },
+          "elapsed_ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Active time: time spent `queued` or `paused` is excluded."
+          },
+          "interrupted": {
+            "type": "boolean",
+            "description": "A paused run whose pause a server restart recorded (`workflows` → Resume after\nrestart); absent otherwise."
+          },
+          "agents_detail": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/WorkflowAgent"
-            }
+            },
+            "description": "Every agent of the run, in start or settlement order."
           }
         },
         "required": [
@@ -2340,9 +2761,13 @@
           "status",
           "phases",
           "started_ms",
-          "agents"
+          "agents",
+          "tokens",
+          "cost_usd",
+          "elapsed_ms",
+          "agents_detail"
         ],
-        "description": "A run with its agents."
+        "description": "A run's summary with its agents."
       },
       "WorkflowAgent": {
         "type": "object",
@@ -2423,6 +2848,22 @@
             "type": "integer",
             "format": "uint64",
             "minimum": 0
+          },
+          "started_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the agent started, from its first `workflow.agent.started.1`; set by the\nprojection, never recorded in the event."
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the agent settled; absent while it runs."
           }
         },
         "required": [
@@ -2446,6 +2887,16 @@
           },
           "budget": {
             "description": "Run budget fields to override, such as a raised `max_cost_usd`.",
+            "default": null
+          },
+          "max_concurrent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 1,
+            "description": "The run's share of the agent slots for this attempt, as on start; a change needs\nno revision. Absent, the run keeps the `max_concurrent` it was last given.",
             "default": null
           }
         }
@@ -7038,6 +7489,43 @@
           "prompts"
         ],
         "description": "`mcp.tools.changed.1`: a server's tools and prompts were published on (re)connect or\nre-listed after its `list_changed` notification. A live observation of the published names, never durable;\ninvoking them still requires ordinary authorization."
+      },
+      "WorkflowRunProgress": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus"
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agents": {
+            "$ref": "#/components/schemas/AgentCounts"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "agents",
+          "tokens",
+          "cost_usd"
+        ],
+        "description": "The data of a `workflow.run.progress` live event: nothing a list does not return."
       }
     }
   },
@@ -8120,14 +8608,62 @@
       },
       "get": {
         "operationId": "v1.workflow.list",
-        "summary": "List Workflow Runs, newest first",
+        "summary": "List Workflow Run summaries of the Location (directory=all for every Location), active runs first, then the newest",
         "tags": [
           "workflow"
         ],
         "parameters": [
           {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "session_id",
             "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
             "required": false,
             "schema": {
               "type": "string"
@@ -8140,7 +8676,72 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_WorkflowRun"
+                  "$ref": "#/components/schemas/Page_WorkflowRunSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/runs/resume_interrupted": {
+      "post": {
+        "operationId": "v1.workflow.resumeInterrupted",
+        "summary": "Resume every run a server restart interrupted, of the Location or of all (directory=all)",
+        "tags": [
+          "workflow"
+        ],
+        "parameters": [
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InterruptedResume"
                 }
               }
             }
@@ -8161,7 +8762,7 @@
     "/api/v1/workflows/runs/{id}": {
       "get": {
         "operationId": "v1.workflow.get",
-        "summary": "Read a Workflow Run with its agents",
+        "summary": "Read a Workflow Run's summary with its agents (agents_detail)",
         "tags": [
           "workflow"
         ],

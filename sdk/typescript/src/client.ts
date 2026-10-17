@@ -24,7 +24,14 @@ import {
 import { eventStream } from "./stream.js";
 import type { AppTool } from "./tools.js";
 import { HttpTransport, type Transport } from "./transport.js";
-import { startWorkflowRun, type WorkflowRunHandle, type WorkflowRunInput } from "./workflows.js";
+import {
+  getWorkflowRun,
+  listWorkflowRuns,
+  startWorkflowRun,
+  type WorkflowListFilter,
+  type WorkflowRunHandle,
+  type WorkflowRunInput,
+} from "./workflows.js";
 
 /** Typed parameters of `client.request(id, params)`. */
 export type RequestParams<K extends OperationId> = {
@@ -78,10 +85,18 @@ export class CyberClient implements Caller {
 
   readonly workflows = {
     /**
-     * Start a Workflow Run (a saved `name` or an inline `script`, with `args` and `budget`)
-     * and return its handle: `events()`, `status()`, `pause()`, `resume()`, `cancel()`, `result()`.
+     * Start a Workflow Run (a saved `name` or an inline `script`, with `args`, `budget` and
+     * `max_concurrent`) and return its handle: `events()`, `status()`, `pause()`, `resume()`,
+     * `cancel()`, `result()`.
      */
     run: (input: WorkflowRunInput): Promise<WorkflowRunHandle> => startWorkflowRun(this, input),
+    /**
+     * Handles of the runs `GET /api/v1/workflows/runs` lists (active first, then the newest),
+     * each carrying its summary; further pages are read lazily as the iteration reaches them.
+     */
+    list: (filter?: WorkflowListFilter): AsyncIterableIterator<WorkflowRunHandle> => listWorkflowRuns(this, filter),
+    /** The handle of an existing run, such as one another client started. */
+    get: (id: string): Promise<WorkflowRunHandle> => getWorkflowRun(this, id),
   };
 
   readonly questions = {

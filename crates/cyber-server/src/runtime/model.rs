@@ -704,8 +704,9 @@ impl SessionState {
             "session.reverted" => self.on_reverted(decode(e)?),
             "session.recap.generated" => {
                 let recap: super::recap::RecapGenerated = decode(e)?;
+                // Recaps stored before control characters were stripped stay safe.
                 self.recap = Some(super::recap::Recap {
-                    text: recap.text,
+                    text: super::recap::printable(&recap.text),
                     model: recap.model,
                     through_seq: recap.through_seq,
                     generated_ms: e.time_ms,
