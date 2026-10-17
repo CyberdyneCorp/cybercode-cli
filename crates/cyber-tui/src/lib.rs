@@ -20,6 +20,7 @@ mod perform;
 mod prefs;
 mod progress;
 mod recap;
+mod rename;
 mod review;
 mod runner;
 mod settings;
@@ -52,6 +53,8 @@ mod screens_parallel;
 mod screens_progress;
 #[cfg(test)]
 mod screens_recap;
+#[cfg(test)]
+mod screens_rename;
 #[cfg(test)]
 mod screens_settings;
 #[cfg(test)]

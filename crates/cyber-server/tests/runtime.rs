@@ -789,6 +789,46 @@ async fn titles_are_generated_from_the_first_prompt() {
 }
 
 #[tokio::test]
+async fn a_user_title_is_never_replaced_by_a_generated_one() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            ("test/main", vec![text("ok"), text("ok")]),
+            (
+                "test/title",
+                vec![text("Generated title"), text("Generated title")],
+            ),
+        ],
+        roles: vec![("title", "test/title")],
+        ..Setup::default()
+    });
+    // Renamed before the first prompt: no title is generated at all.
+    let before = h.session().await;
+    h.runtime.rename(&before, "  My\nname ").await.unwrap();
+    // Renamed while the title request may still be in flight: the result is discarded.
+    let during = h.session().await;
+    for id in [&before, &during] {
+        h.runtime
+            .admit(
+                id,
+                admit("the login test is flaky, fix it", Delivery::Steer),
+            )
+            .await
+            .unwrap();
+    }
+    h.runtime.rename(&during, "Mine").await.unwrap();
+    h.settle(&before).await;
+    h.settle(&during).await;
+    for _ in 0..25 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(h.state(&before).await.info.title, "My name");
+    assert_eq!(h.state(&during).await.info.title, "Mine");
+    let err = h.runtime.rename(&during, " \t\x07 ").await.unwrap_err();
+    assert!(err.to_string().contains("InvalidRequestError"), "{err}");
+    assert_eq!(h.state(&during).await.info.title, "Mine");
+}
+
+#[tokio::test]
 async fn wakes_coalesce_into_one_drain() {
     let h = Harness::new(Setup {
         scripts: vec![("test/main", vec![text("one"), text("two")])],

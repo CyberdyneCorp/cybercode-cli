@@ -131,6 +131,11 @@ pub enum Command {
     },
     /// Review and edit durable project/global memory.
     Memory(MemoryArgs),
+    /// List, show, rename and delete the Location's Sessions.
+    Sessions {
+        #[command(subcommand)]
+        cmd: crate::commands::sessions::SessionsCmd,
+    },
     /// Inspect skills: source, scope, permission effect and diagnostics.
     Skills {
         #[command(subcommand)]

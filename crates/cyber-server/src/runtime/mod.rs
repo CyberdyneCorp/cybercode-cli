@@ -1596,7 +1596,11 @@ impl Runtime {
         Ok(())
     }
 
+    /// A user-set title is trimmed, stripped of control characters and capped at 100
+    /// characters; once set, generated titles never replace it.
     pub async fn rename(&self, session_id: &str, title: &str) -> Result<(), RuntimeError> {
+        let title = title::user_title(title)
+            .ok_or_else(|| RuntimeError::Invalid("title must not be empty".into()))?;
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
         self.inner.commit_locked(
@@ -1604,7 +1608,7 @@ impl Runtime {
             vec![event(
                 RENAMED,
                 &Titled {
-                    title: title.into(),
+                    title,
                     usage: None,
                     cost: None,
                     model: None,

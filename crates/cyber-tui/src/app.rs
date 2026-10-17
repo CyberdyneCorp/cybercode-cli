@@ -127,6 +127,11 @@ pub enum Action {
     StopTask(String),
     StopTasks,
     LoadSessions,
+    /// Rename the current Session (`/rename`); the new title arrives as an event.
+    RenameSession {
+        id: String,
+        title: String,
+    },
     Open(String),
     NewSession,
     LoadModels,
@@ -264,6 +269,8 @@ pub enum Overlay {
     Themes(Box<crate::switcher::Switcher>),
     /// The Workflow monitor; its state is `App::workflows`.
     Workflows,
+    /// `/rename`: the title being edited.
+    Rename(String),
 }
 
 /// What the composer's first character makes of the input.
@@ -820,6 +827,7 @@ impl App {
             Overlay::Files => self.explorer_key(key),
             Overlay::Themes(_) => self.switcher_key(key),
             Overlay::Workflows => self.workflows_key(key),
+            Overlay::Rename(_) => self.rename_key(key),
             Overlay::FileDiff { .. } => {
                 self.file_diff_key(key);
                 Vec::new()
@@ -892,6 +900,7 @@ impl App {
             Ui::ToggleToolDetails => self.expand_tools = !self.expand_tools,
             Ui::ToggleTimestamps => self.timestamps = !self.timestamps,
             Ui::ToggleSidebar => self.toggle_sidebar(),
+            Ui::RenameSession => return self.rename_command(""),
         }
         Vec::new()
     }
@@ -911,6 +920,7 @@ impl App {
             "file_explorer" => return self.open_explorer(),
             "model_list" => return vec![Action::LoadModels],
             "session_list" => return vec![Action::LoadSessions],
+            "session_rename" => return self.rename_command(""),
             "session_new" => return vec![Action::NewSession],
             "theme_list" => self.open_theme_switcher(false),
             "theme_cycle" => return self.cycle_theme(),
@@ -1056,6 +1066,9 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
+        if self.rename_paste(text) {
+            return;
+        }
         if let Overlay::Memory = self.overlay {
             self.memory.paste(text);
             return;
@@ -1401,6 +1414,7 @@ impl App {
             "model" | "models" => vec![Action::LoadModels],
             "skills" => vec![Action::LoadSkills],
             "resume" | "sessions" => vec![Action::LoadSessions],
+            "rename" => self.rename_command(args),
             "new" | "clear" => vec![Action::NewSession],
             "fork" => vec![Action::Fork],
             "subtask" if !args.is_empty() => vec![Action::Subtask(args.into())],
@@ -1771,6 +1785,7 @@ impl App {
     /// Apply a server event; returns actions such as a refresh.
     pub fn on_event(&mut self, kind: &str, data: &Value) -> Vec<Action> {
         self.progress.observe(kind, self.now());
+        self.title_event(kind, data);
         let mut actions = if kind == "job.ended.1" {
             self.job_ended(data)
         } else if kind.starts_with("session.prompt.admitted") {

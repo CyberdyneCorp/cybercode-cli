@@ -7,6 +7,7 @@ pub mod layout;
 mod messages;
 mod overlays;
 pub(crate) mod progress;
+mod rename;
 mod settings;
 pub(crate) mod sidebar;
 mod themes;
@@ -104,6 +105,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::HookHistory => overlays::hook_history(f, app, area),
         Overlay::Memory => overlays::memory(f, app, area),
         Overlay::Help => overlays::help(f, app, area),
+        Overlay::Rename(title) => rename::draw(f, app, title, area),
         Overlay::Findings => overlays::findings(f, app, area),
         Overlay::FileDiff { index, scroll } => overlays::file_diff(f, app, *index, *scroll, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),

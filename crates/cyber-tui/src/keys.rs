@@ -40,6 +40,7 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
     ("global", "model_list", "<leader>m", "switch model"),
     ("global", "session_list", "<leader>l", "sessions"),
     ("global", "session_new", "<leader>n", "new session"),
+    ("global", "session_rename", "none", "rename session"),
     ("global", "theme_list", "<leader>s", "switch theme"),
     (
         "global",

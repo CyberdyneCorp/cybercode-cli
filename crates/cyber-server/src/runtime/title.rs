@@ -119,9 +119,33 @@ pub(crate) fn clean(raw: &str) -> String {
         .collect()
 }
 
+/// A title the user typed: whitespace runs (including newlines) become one space,
+/// control characters are dropped, and the result is capped at 100 characters. `None`
+/// when nothing printable is left.
+pub(crate) fn user_title(raw: &str) -> Option<String> {
+    let words: Vec<String> = raw
+        .split(|c: char| c.is_whitespace())
+        .map(|w| w.chars().filter(|c| !c.is_control()).collect::<String>())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let title: String = words.join(" ").chars().take(100).collect();
+    let title = title.trim_end().to_string();
+    (!title.is_empty()).then_some(title)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::clean;
+    use super::{clean, user_title};
+
+    #[test]
+    fn user_titles_are_single_line_printable_and_bounded() {
+        assert_eq!(
+            user_title("  Auth\nrefactor\t\x1b]0;x\x07 ").as_deref(),
+            Some("Auth refactor ]0;x")
+        );
+        assert_eq!(user_title(&"y".repeat(150)).map(|t| t.len()), Some(100));
+        assert_eq!(user_title(" \n\t\x07 "), None);
+    }
 
     #[test]
     fn cleans_model_output() {

@@ -239,22 +239,9 @@ async fn reuse(client: &Client, args: &ExecArgs) -> Result<Option<Value>, CliErr
     let Some(wanted) = &args.session else {
         return Ok(None);
     };
-    if let Ok(s) = client.get(&format!("/sessions/{wanted}")).await {
-        return Ok(Some(s["data"].clone()));
-    }
-    let list = client
-        .get(&format!("/sessions?limit=200&search={}", urlencode(wanted)))
+    crate::commands::sessions::resolve(client, wanted)
         .await
-        .map_err(api)?;
-    let found = list["data"]["data"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|s| s["title"] == wanted.as_str())
-        .cloned();
-    found
         .map(Some)
-        .ok_or_else(|| CliError::runtime("Session not found"))
 }
 
 /// The admission request: the prompt, or `--command` with the prompt as its

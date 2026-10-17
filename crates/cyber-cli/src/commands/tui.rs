@@ -39,6 +39,11 @@ pub fn run(
     }
     let summary = super::serve::runtime()?.block_on(async {
         let (client, _app) = connect(&ctx, launch).await?;
+        if let Start::Resume(wanted) = &start {
+            let at = client.at(&ctx.location.display().to_string());
+            let found = super::sessions::resolve(&at, wanted).await?;
+            start = Start::Resume(found["id"].as_str().unwrap_or_default().to_owned());
+        }
         let directory = if let Some(name) = &launch.worktree {
             let session = super::worktrees::start(&client.at(&ctx.location.display().to_string()), name, serde_json::json!({"model": global.model, "agent": launch.agent, "mode": global.mode}), false).await?;
             start = Start::Resume(session["id"].as_str().ok_or_else(|| CliError::runtime("Worktree Session has no ID"))?.into());

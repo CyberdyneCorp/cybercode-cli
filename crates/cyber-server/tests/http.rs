@@ -271,6 +271,37 @@ async fn errors_are_tagged() {
 }
 
 #[tokio::test]
+async fn renaming_cleans_bounds_and_requires_a_title() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let (_, created) = api.post("/sessions", json!({})).await;
+    let id = created["data"]["id"].as_str().unwrap().to_string();
+    let path = format!("/sessions/{id}");
+    let patch = |title: String| {
+        let api = &api;
+        let path = path.clone();
+        async move {
+            let (s, v, _) = api
+                .call(Method::PATCH, &path, Some(json!({ "title": title })), &[])
+                .await;
+            (s, v)
+        }
+    };
+    let (status, body) = patch("  Auth\n refactor\u{1b}]0;x\u{7} ".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["title"], "Auth refactor]0;x");
+    let (_, body) = patch("z".repeat(300)).await;
+    assert_eq!(body["data"]["title"].as_str().unwrap().len(), 100);
+    let (status, body) = patch(" \t ".into()).await;
+    assert_eq!(
+        (status, body["_tag"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("InvalidRequestError"))
+    );
+    let (_, shown) = api.get(&path).await;
+    assert_eq!(shown["data"]["title"].as_str().unwrap().len(), 100);
+}
+
+#[tokio::test]
 async fn idempotency_keys_replay_and_reject_mismatches() {
     let h = Harness::new(Setup::default());
     let api = Api::new(&h);

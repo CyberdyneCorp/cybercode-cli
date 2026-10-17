@@ -53,6 +53,16 @@ cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix 
 
 ## Sessions and subagents
 
+### Naming and resuming Sessions
+
+A Session gets a generated title after its first prompt. Give it your own to find it later:
+
+- TUI: `/rename Auth refactor` renames the current Session at once; a bare `/rename` (or **Rename session** in the `Ctrl+P` palette, or the unbound `session_rename` key) opens a dialog prefilled with the title (Enter saves, Esc cancels, Ctrl+U clears). In the Session picker (`/resume`, Ctrl+X L) Ctrl+R renames the selected Session. The header, sidebar and terminal window title change as soon as the server publishes `session.renamed.1`, in every attached client.
+- CLI: `cyber sessions list` (`ls`, `--limit`, `--format json` with `id`, `title`, `directory`, `updated_at` and `status`), `cyber sessions show <session>`, `cyber sessions rename <session> <title…>` and `cyber sessions delete <session> --yes` (`rm`; it removes child Sessions too and cannot be undone). `export`, `import`, `fork`, `rewind`, `repair-context`, `share` and `unshare` are not available yet.
+- Resume: `cyber -r "Auth refactor"` opens the TUI on it and `cyber exec --session "Auth refactor" "go on"` prompts it.
+
+`<session>` is an ID, an exact title, or a unique ID prefix, among the Location's Sessions. A title or prefix that matches several Sessions exits 2 and lists their IDs. A title you set is kept: trimmed, with whitespace runs (newlines included) joined into one space, control characters dropped and at most 100 characters; an empty title is refused with `InvalidRequestError`. Generated titles never replace it, even when the title request was already in flight.
+
 Worktree startup runs trusted `worktrees.setup` commands inside the sandbox and reports output on stderr. Setup failure keeps the Session and files.
 
 In the TUI, `/subtask <prompt>` forks a background child with the current context and keeps the parent open. API clients use POST `/sessions/{id}/subtask` with `{ "prompt": "try another approach" }`; TypeScript clients use `client.session.subtask(id, { prompt })`. `/tasks` (alias `/ps`) lists background subagents with status, elapsed time and final output. Enter opens the child thread; Ctrl+S stops the selected task. `/stop` asks for confirmation before stopping all running tasks of the Session. Interrupting the parent Turn leaves background tasks running. Server restart records unfinished tasks as interrupted and queues their handback without redispatch. The model can stop its own tasks with `task_stop`; API/SDK clients can list, read and stop jobs through `/jobs`. Bash, monitor, PTY and workflow Jobs remain unimplemented.

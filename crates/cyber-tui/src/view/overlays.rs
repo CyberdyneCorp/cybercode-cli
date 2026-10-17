@@ -439,6 +439,7 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         ("Shift+Tab", "cycle mode"),
         ("Ctrl+G", "edit in $EDITOR"),
         ("/model /resume /new /mode /compact /theme", "commands"),
+        ("/rename [title]", "rename this session to resume it later"),
         ("/subtask <prompt> · /tasks · /stop", "background tasks"),
         ("/agent · /subagents", "browse child and parent threads"),
         ("@path  !cmd", "mention a file · run a shell command"),

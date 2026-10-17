@@ -15,8 +15,9 @@ expression: shown
           │  Settings: Config  edit TUI preferences                                      │
     rust  │  Settings: Usage  session usage and cost                                     │
     fn fib│  Settings: Stats  activity, streaks and per-model totals                     │
-          │  Toggle sidebar  show or hide the session sidebar                    ctrl+x b│
-  ▣ Build │  Theme…  preview and pick a theme                                    ctrl+x s│
+          │  Rename session  change this session's title to resume it later              │
+  ▣ Build │  Toggle sidebar  show or hide the session sidebar                    ctrl+x b│
+          │  Theme…  preview and pick a theme                                    ctrl+x s│
           │  Copy last code block  put the newest code block on the clipboard    ctrl+x y│
           │  Toggle reasoning  show or hide model reasoning                        ctrl+t│
           │  Toggle tool output  expand or collapse long tool output               ctrl+o│
@@ -24,7 +25,6 @@ expression: shown
           │  /help  keys and commands                                            ctrl+x h│
           │  /model  switch model                                                ctrl+x m│
           │  /sessions  open another session                                     ctrl+x l│
-          │  /new  start a new session                                           ctrl+x n│
           │                                                                              │
           └──────────────────────────────────────────────────────────────────────────────┘
 ┃

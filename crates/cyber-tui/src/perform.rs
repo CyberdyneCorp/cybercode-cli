@@ -695,6 +695,7 @@ pub async fn perform_owned(
         }),
         Action::LoadSessions
         | Action::Rename { .. }
+        | Action::RenameSession { .. }
         | Action::Archive(_)
         | Action::Delete(_)
         | Action::ForkSession(_) => manage(client, action).await,
@@ -912,6 +913,15 @@ async fn fork_session(client: &Client, id: &str) -> Result<Msg, String> {
 
 async fn manage(client: &Client, action: Action) -> Result<Msg, String> {
     match action {
+        // The current Session's new title arrives as `session.renamed.1`.
+        Action::RenameSession { id, title } => {
+            let path = format!("/sessions/{}", encode(&id));
+            client
+                .patch(&path, json!({ "title": title }))
+                .await
+                .map_err(err)?;
+            return Ok(Msg::Done);
+        }
         Action::Rename { id, title } => client
             .patch(&format!("/sessions/{id}"), json!({ "title": title }))
             .await

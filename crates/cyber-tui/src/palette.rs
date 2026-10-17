@@ -36,6 +36,7 @@ pub enum Ui {
     ToggleToolDetails,
     ToggleTimestamps,
     ToggleSidebar,
+    RenameSession,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +59,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         false,
     ),
     ("new", "start a new session", Some("session_new"), false),
+    (
+        "rename",
+        "rename this session",
+        Some("session_rename"),
+        true,
+    ),
     ("fork", "fork this session", Some("session_fork"), false),
     ("mode", "choose the permission mode", None, false),
     ("theme", "switch theme", Some("theme_list"), false),
@@ -155,6 +162,12 @@ const ACTIONS: &[(&str, &str, Option<&str>, Ui)] = &[
         "activity, streaks and per-model totals",
         None,
         Ui::Settings(Some(crate::settings::Tab::Stats)),
+    ),
+    (
+        "Rename session",
+        "change this session's title to resume it later",
+        Some("session_rename"),
+        Ui::RenameSession,
     ),
     (
         "Toggle sidebar",
