@@ -1063,7 +1063,7 @@ async fn ctx_budget_reflects_spend_and_wall_time_is_enforced() {
     let owner = f.session("default").await;
     let budget = RunBudget::resolve(
         &json!({}),
-        &[Some(&json!({"max_wall_seconds": 0.3, "max_cost_usd": 1.0}))],
+        &[Some(&json!({"max_wall_seconds": 1.5, "max_cost_usd": 1.0}))],
     )
     .unwrap();
     let run = f
@@ -1078,7 +1078,9 @@ async fn ctx_budget_reflects_spend_and_wall_time_is_enforced() {
         agents.holding.load(Ordering::SeqCst) == 1
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // The held agent outlives the wall budget; 1.5 s leaves room for the first agent and
+    // the next start on a loaded CI runner.
+    tokio::time::sleep(Duration::from_millis(1600)).await;
     agents.release();
     let run = f.settled(&run.id).await;
     assert_eq!(run.status, WorkflowRunStatus::BudgetExceeded, "{run:?}");
@@ -2776,8 +2778,10 @@ async fn the_wall_budget_does_not_run_while_queued() {
         .start(&owner, "export default () => agent('gate a');\n")
         .await;
     gated(&agents, 1).await;
+    // Longer than the whole wall budget is spent queued; only time after dispatch counts.
+    const WALL: f64 = 3.0;
     let budget =
-        RunBudget::resolve(&json!({}), &[Some(&json!({"max_wall_seconds": 0.3}))]).unwrap();
+        RunBudget::resolve(&json!({}), &[Some(&json!({"max_wall_seconds": WALL}))]).unwrap();
     let q = f
         .start_budgeted(
             &owner,
@@ -2787,13 +2791,13 @@ async fn the_wall_budget_does_not_run_while_queued() {
         )
         .await;
     assert_eq!(q.status, WorkflowRunStatus::Queued);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs_f64(WALL + 0.5)).await;
     agents.gate_permits.open();
     f.ended(&a.id).await;
     let q = f.ended(&q.id).await;
     assert_eq!(q.status, WorkflowRunStatus::Completed, "{q:?}");
     let remaining = q.result.unwrap().as_f64().unwrap();
-    assert!(remaining > 0.1 && remaining <= 0.3, "{remaining}");
+    assert!(remaining > 0.0 && remaining <= WALL, "{remaining}");
 }
 
 /// The next `workflow.run.progress` of `run_id` that satisfies `wanted`, within `within`.

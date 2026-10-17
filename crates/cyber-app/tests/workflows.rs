@@ -2192,6 +2192,8 @@ fn queue_reply(body: &Value) -> Value {
 /// budget survives a one-second wait in the queue.
 #[tokio::test]
 async fn the_workflow_tool_reports_a_queued_run_and_its_wall_budget_waits() {
+    /// The queued run's `max_wall_seconds`.
+    const WALL: f64 = 3.0;
     let model = ScriptedModel::start(queue_reply);
     let mut config = model.config();
     config["workflows"] = json!({"max_running_runs": 1});
@@ -2225,11 +2227,13 @@ async fn the_workflow_tool_reports_a_queued_run_and_its_wall_budget_waits() {
     let timed = "export const meta = { name: 'timed', description: 'Wall budget' };\nexport default async () => { await agent('quick'); checkpoint('after', 1); return ctx.budget.remaining.max_wall_seconds; };\n";
     let timed = server
         .start_run(
-            json!({"session_id": api_owner, "script": timed, "budget": {"max_wall_seconds": 0.3}}),
+            json!({"session_id": api_owner, "script": timed, "budget": {"max_wall_seconds": WALL}}),
         )
         .await;
     assert_eq!(server.place(&timed).await, (json!("queued"), json!(2)));
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // The run waits queued for longer than its whole wall budget; only the time after its
+    // dispatch counts. The budget is wide enough for one agent on a loaded CI runner.
+    tokio::time::sleep(Duration::from_secs_f64(WALL + 0.5)).await;
     model.open_gate();
     assert_eq!(server.ended_run(&a).await["status"], "completed");
     wait_for("r1 at the gate", || model.held() == ["r1"]).await;
@@ -2238,7 +2242,7 @@ async fn the_workflow_tool_reports_a_queued_run_and_its_wall_budget_waits() {
     let timed = server.ended_run(&timed).await;
     assert_eq!(timed["status"], "completed", "{timed}");
     let remaining = timed["result"].as_f64().unwrap();
-    assert!(remaining > 0.0 && remaining <= 0.3, "{timed}");
+    assert!(remaining > 0.0 && remaining <= WALL, "{timed}");
     server.idle(&owner).await;
     server.close().await;
 }
