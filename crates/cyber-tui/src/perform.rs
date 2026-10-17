@@ -1112,11 +1112,15 @@ pub fn parts(text: &str, directory: &str) -> Vec<Value> {
     parts
 }
 
-/// A server-name-like prefix followed by `:` (this also keeps `@C:\x` from being read
-/// as a Windows path or alternate data stream).
+/// A server-name-like prefix followed by `:` (this also keeps `@name:stream` from being
+/// read as an alternate data stream). A drive letter followed by a separator (`C:/x`,
+/// `C:\x`) is an absolute Windows path, as the file explorer mentions files outside the
+/// Location.
 fn resource_mention(token: &str) -> bool {
-    token.split_once(':').is_some_and(|(server, _)| {
-        (1..=48).contains(&server.len())
+    token.split_once(':').is_some_and(|(server, rest)| {
+        let drive = cfg!(windows) && server.len() == 1 && rest.starts_with(['/', '\\']);
+        !drive
+            && (1..=48).contains(&server.len())
             && server
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
@@ -1298,6 +1302,23 @@ mod tests {
 
     /// `@server:uri` is an MCP resource mention the server resolves, never a file, even
     /// when a path of that spelling exists (it also covers `@C:\x` on Windows).
+    /// Regression: the explorer mentions a file outside the Location by its absolute path,
+    /// and on Windows `@C:/...` was taken for a resource of a server named `C`.
+    #[cfg(windows)]
+    #[test]
+    fn absolute_windows_paths_are_file_mentions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("README.md");
+        std::fs::write(&file, "# Work").unwrap();
+        let plain = crate::sidebar::display_path(&file.display().to_string());
+        for mention in [plain.clone(), plain.replace('\\', "/")] {
+            let parts = parts(&format!("@{mention} please"), "C:\\");
+            assert_eq!(parts.len(), 2, "{mention}: {parts:?}");
+            assert!(parts[1]["text"].as_str().unwrap().contains("# Work"));
+        }
+        assert!(resource_mention("docs:guide"));
+    }
+
     #[test]
     fn resource_mentions_are_not_read_as_files() {
         let tmp = tempfile::tempdir().unwrap();
