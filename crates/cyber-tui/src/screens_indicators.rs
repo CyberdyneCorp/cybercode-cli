@@ -109,10 +109,11 @@ async fn two_runs_in_the_sidebar_and_the_section_goes_with_the_last_run() {
         lines[at + 1].contains("audit") && lines[at + 1].contains(" 31/100"),
         "{shown}"
     );
-    assert!(
-        lines[at + 1].contains("▀▀····"),
-        "a 6-cell bar at 31%: {shown}"
-    );
+    let bar: String = lines[at + 1]
+        .chars()
+        .map(|c| if c == '▄' { '▀' } else { c })
+        .collect();
+    assert!(bar.contains("▀▀····"), "a 6-cell bar at 31%: {shown}");
     assert!(
         lines[at + 2].contains("review") && lines[at + 2].contains(" 0/2"),
         "{shown}"
@@ -192,11 +193,20 @@ async fn the_progress_line_shows_the_sessions_runs_together() {
         .find(|l| l.contains("agents ·"))
         .unwrap_or_else(|| panic!("no progress line:\n{shown}"));
     assert!(line.ends_with("2 workflows 42/130 agents · 32%"), "{line}");
-    // The trail covers 32% of the bar: the cells between the leading space and the cat.
+    // The trail covers 32% of the bar: the half blocks between the leading space and the
+    // cat, which is followed by its sparkle cell.
     let label = "  2 workflows 42/130 agents · 32%".chars().count();
-    let room = width as usize - 1 - crate::view::progress::CAT_WIDTH - label - 1;
-    let trail = line.chars().skip(1).take_while(|&c| c == '▀').count();
-    assert_eq!(trail, (0.32_f64 * room as f64).round() as usize, "{line}");
+    let room = width as usize - 1 - crate::view::progress::CAT_WIDTH - 1 - label - 1;
+    let trail = line
+        .chars()
+        .skip(1)
+        .take_while(|&c| matches!(c, '▀' | '▄'))
+        .count();
+    assert_eq!(
+        trail,
+        (42.0 / 130.0 * room as f64).round() as usize,
+        "{line}"
+    );
 }
 
 /// "Queued count in the footer": 8 runs running and 2 queued.

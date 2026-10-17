@@ -2,7 +2,7 @@
 source: crates/cyber-tui/src/screens_progress.rs
 expression: "render(&mut app, 110, 32, &opts)"
 ---
- cyber · Theme baseline                                                                             ⠋ running
+ cyber · Theme baseline                                                                             ⠦ running
 › How do I speed up fib?
 
   Plan
@@ -25,156 +25,115 @@ expression: "render(&mut app, 110, 32, &opts)"
 
 
 
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ,------,
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ | /\_/\    Thinking · 12.4s · esc interrupt
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀~|_( ^ .^)
-   ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ▀▀  ""  ""
+    ▄▄▄▄▄▄      ▄▄▄▄▄▄    ,------,
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ | /\_/\                                            Thinking · 12.4s · esc interrupt
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀~|_( ^ .^)
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  ""  ""
 ┃
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · main test · default
  /Users/leo/work/app                                                                 100 · —  ctrl+p commands
-row 23: 0-0 fg=#d6e4f0 bg=#0b0f14
-row 23: 1-2 fg=#ff3b3b bg=#ff9a1f
-row 23: 3-4 fg=#0b0f14 bg=#ff3b3b
-row 23: 5-6 fg=#ff3b3b bg=#ff9a1f
-row 23: 7-8 fg=#0b0f14 bg=#ff3b3b
-row 23: 9-10 fg=#ff3b3b bg=#ff9a1f
-row 23: 11-12 fg=#0b0f14 bg=#ff3b3b
-row 23: 13-14 fg=#ff3b3b bg=#ff9a1f
-row 23: 15-16 fg=#0b0f14 bg=#ff3b3b
-row 23: 17-18 fg=#ff3b3b bg=#ff9a1f
-row 23: 19-20 fg=#0b0f14 bg=#ff3b3b
-row 23: 21-22 fg=#ff3b3b bg=#ff9a1f
-row 23: 23-24 fg=#0b0f14 bg=#ff3b3b
-row 23: 25-26 fg=#ff3b3b bg=#ff9a1f
-row 23: 27-28 fg=#0b0f14 bg=#ff3b3b
-row 23: 29-30 fg=#ff3b3b bg=#ff9a1f
-row 23: 31-32 fg=#0b0f14 bg=#ff3b3b
-row 23: 33-34 fg=#ff3b3b bg=#ff9a1f
-row 23: 35-36 fg=#0b0f14 bg=#ff3b3b
-row 23: 37-38 fg=#ff3b3b bg=#ff9a1f
-row 23: 39-40 fg=#0b0f14 bg=#ff3b3b
-row 23: 41-42 fg=#ff3b3b bg=#ff9a1f
-row 23: 43-44 fg=#0b0f14 bg=#ff3b3b
-row 23: 45-46 fg=#ff3b3b bg=#ff9a1f
-row 23: 47-48 fg=#0b0f14 bg=#ff3b3b
-row 23: 49-50 fg=#ff3b3b bg=#ff9a1f
-row 23: 51-52 fg=#0b0f14 bg=#ff3b3b
-row 23: 53-54 fg=#ff3b3b bg=#ff9a1f
-row 23: 55-56 fg=#0b0f14 bg=#ff3b3b
-row 23: 57-58 fg=#ff3b3b bg=#ff9a1f
-row 23: 59-60 fg=#0b0f14 bg=#ff3b3b
-row 23: 61-62 fg=#ff3b3b bg=#ff9a1f
-row 23: 63-64 fg=#0b0f14 bg=#ff3b3b
-row 23: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
-row 23: 75-109 fg=#d6e4f0 bg=#0b0f14
+row 23: 0-3 fg=#d6e4f0 bg=#0b0f14
+row 23: 4-4 fg=#60591a bg=#0b0f14
+row 23: 5-5 fg=#616a1b bg=#0b0f14
+row 23: 6-6 fg=#56721b bg=#0b0f14
+row 23: 7-7 fg=#487a1c bg=#0b0f14
+row 23: 8-8 fg=#36821d bg=#0b0f14
+row 23: 9-9 fg=#228a1d bg=#0b0f14
+row 23: 10-15 fg=#d6e4f0 bg=#0b0f14
+row 23: 16-16 fg=#1f82c2 bg=#0b0f14
+row 23: 17-17 fg=#2064c9 bg=#0b0f14
+row 23: 18-18 fg=#2142d1 bg=#0b0f14
+row 23: 19-19 fg=#2622d9 bg=#0b0f14
+row 23: 20-20 fg=#4e23e0 bg=#0b0f14
+row 23: 21-21 fg=#7a24e8 bg=#0b0f14
+row 23: 22-24 fg=#d6e4f0 bg=#0b0f14
+row 23: 25-34 fg=#ff9ad5 bg=#0b0f14 bold
+row 23: 35-109 fg=#d6e4f0 bg=#0b0f14
 row 24: 0-0 fg=#d6e4f0 bg=#0b0f14
-row 24: 1-2 fg=#ffe14d bg=#4ddb6b
-row 24: 3-4 fg=#ff9a1f bg=#ffe14d
-row 24: 5-6 fg=#ffe14d bg=#4ddb6b
-row 24: 7-8 fg=#ff9a1f bg=#ffe14d
-row 24: 9-10 fg=#ffe14d bg=#4ddb6b
-row 24: 11-12 fg=#ff9a1f bg=#ffe14d
-row 24: 13-14 fg=#ffe14d bg=#4ddb6b
-row 24: 15-16 fg=#ff9a1f bg=#ffe14d
-row 24: 17-18 fg=#ffe14d bg=#4ddb6b
-row 24: 19-20 fg=#ff9a1f bg=#ffe14d
-row 24: 21-22 fg=#ffe14d bg=#4ddb6b
-row 24: 23-24 fg=#ff9a1f bg=#ffe14d
-row 24: 25-26 fg=#ffe14d bg=#4ddb6b
-row 24: 27-28 fg=#ff9a1f bg=#ffe14d
-row 24: 29-30 fg=#ffe14d bg=#4ddb6b
-row 24: 31-32 fg=#ff9a1f bg=#ffe14d
-row 24: 33-34 fg=#ffe14d bg=#4ddb6b
-row 24: 35-36 fg=#ff9a1f bg=#ffe14d
-row 24: 37-38 fg=#ffe14d bg=#4ddb6b
-row 24: 39-40 fg=#ff9a1f bg=#ffe14d
-row 24: 41-42 fg=#ffe14d bg=#4ddb6b
-row 24: 43-44 fg=#ff9a1f bg=#ffe14d
-row 24: 45-46 fg=#ffe14d bg=#4ddb6b
-row 24: 47-48 fg=#ff9a1f bg=#ffe14d
-row 24: 49-50 fg=#ffe14d bg=#4ddb6b
-row 24: 51-52 fg=#ff9a1f bg=#ffe14d
-row 24: 53-54 fg=#ffe14d bg=#4ddb6b
-row 24: 55-56 fg=#ff9a1f bg=#ffe14d
-row 24: 57-58 fg=#ffe14d bg=#4ddb6b
-row 24: 59-60 fg=#ff9a1f bg=#ffe14d
-row 24: 61-62 fg=#ffe14d bg=#4ddb6b
-row 24: 63-64 fg=#ff9a1f bg=#ffe14d
-row 24: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
-row 24: 75-76 fg=#d6e4f0 bg=#0b0f14
+row 24: 1-1 fg=#482219 bg=#484919
+row 24: 2-2 fg=#503119 bg=#465319
+row 24: 3-3 fg=#58431a bg=#3e5b1a
+row 24: 4-4 fg=#33621a bg=#146232
+row 24: 5-5 fg=#266a1b bg=#156a46
+row 24: 6-6 fg=#16721c bg=#16725d
+row 24: 7-7 fg=#177a31 bg=#177a77
+row 24: 8-8 fg=#188249 bg=#187284
+row 24: 9-9 fg=#198a64 bg=#19628c
+row 24: 10-10 fg=#1a912d bg=#1a9182
+row 24: 11-11 fg=#1b9949 bg=#1b929b
+row 24: 12-12 fg=#1ba167 bg=#1b7da3
+row 24: 13-13 fg=#1ca989 bg=#1c66ab
+row 24: 14-14 fg=#1db1ae bg=#1d4cb2
+row 24: 15-15 fg=#1e9dba bg=#1e2fba
+row 24: 16-16 fg=#3120c2 bg=#a420c2
+row 24: 17-17 fg=#5621c9 bg=#c721c2
+row 24: 18-18 fg=#7d22d1 bg=#cf22a6
+row 24: 19-19 fg=#a822d9 bg=#d72285
+row 24: 20-20 fg=#d623e0 bg=#df2362
+row 24: 21-21 fg=#e724c8 bg=#e7243c
+row 24: 22-22 fg=#a825f0 bg=#ef25a5
+row 24: 23-23 fg=#da25f7 bg=#f7257d
+row 24: 24-24 fg=#ff26f0 bg=#ff2654
+row 24: 25-34 fg=#ff9ad5 bg=#0b0f14 bold
+row 24: 35-76 fg=#d6e4f0 bg=#0b0f14
 row 24: 77-84 fg=#d6e4f0 bg=#0b0f14 bold
 row 24: 85-95 fg=#6b7a8f bg=#0b0f14
 row 24: 96-98 fg=#00e5ff bg=#0b0f14 bold
 row 24: 99-108 fg=#6b7a8f bg=#0b0f14
 row 24: 109-109 fg=#d6e4f0 bg=#0b0f14
 row 25: 0-0 fg=#d6e4f0 bg=#0b0f14
-row 25: 1-2 fg=#3aa0ff bg=#9b5cff
-row 25: 3-4 fg=#4ddb6b bg=#3aa0ff
-row 25: 5-6 fg=#3aa0ff bg=#9b5cff
-row 25: 7-8 fg=#4ddb6b bg=#3aa0ff
-row 25: 9-10 fg=#3aa0ff bg=#9b5cff
-row 25: 11-12 fg=#4ddb6b bg=#3aa0ff
-row 25: 13-14 fg=#3aa0ff bg=#9b5cff
-row 25: 15-16 fg=#4ddb6b bg=#3aa0ff
-row 25: 17-18 fg=#3aa0ff bg=#9b5cff
-row 25: 19-20 fg=#4ddb6b bg=#3aa0ff
-row 25: 21-22 fg=#3aa0ff bg=#9b5cff
-row 25: 23-24 fg=#4ddb6b bg=#3aa0ff
-row 25: 25-26 fg=#3aa0ff bg=#9b5cff
-row 25: 27-28 fg=#4ddb6b bg=#3aa0ff
-row 25: 29-30 fg=#3aa0ff bg=#9b5cff
-row 25: 31-32 fg=#4ddb6b bg=#3aa0ff
-row 25: 33-34 fg=#3aa0ff bg=#9b5cff
-row 25: 35-36 fg=#4ddb6b bg=#3aa0ff
-row 25: 37-38 fg=#3aa0ff bg=#9b5cff
-row 25: 39-40 fg=#4ddb6b bg=#3aa0ff
-row 25: 41-42 fg=#3aa0ff bg=#9b5cff
-row 25: 43-44 fg=#4ddb6b bg=#3aa0ff
-row 25: 45-46 fg=#3aa0ff bg=#9b5cff
-row 25: 47-48 fg=#4ddb6b bg=#3aa0ff
-row 25: 49-50 fg=#3aa0ff bg=#9b5cff
-row 25: 51-52 fg=#4ddb6b bg=#3aa0ff
-row 25: 53-54 fg=#3aa0ff bg=#9b5cff
-row 25: 55-56 fg=#4ddb6b bg=#3aa0ff
-row 25: 57-58 fg=#3aa0ff bg=#9b5cff
-row 25: 59-60 fg=#4ddb6b bg=#3aa0ff
-row 25: 61-62 fg=#3aa0ff bg=#9b5cff
-row 25: 63-64 fg=#4ddb6b bg=#3aa0ff
-row 25: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
-row 25: 75-109 fg=#d6e4f0 bg=#0b0f14
-row 26: 0-2 fg=#d6e4f0 bg=#0b0f14
-row 26: 3-4 fg=#9b5cff bg=#0b0f14
-row 26: 5-6 fg=#d6e4f0 bg=#0b0f14
-row 26: 7-8 fg=#9b5cff bg=#0b0f14
-row 26: 9-10 fg=#d6e4f0 bg=#0b0f14
-row 26: 11-12 fg=#9b5cff bg=#0b0f14
-row 26: 13-14 fg=#d6e4f0 bg=#0b0f14
-row 26: 15-16 fg=#9b5cff bg=#0b0f14
-row 26: 17-18 fg=#d6e4f0 bg=#0b0f14
-row 26: 19-20 fg=#9b5cff bg=#0b0f14
-row 26: 21-22 fg=#d6e4f0 bg=#0b0f14
-row 26: 23-24 fg=#9b5cff bg=#0b0f14
-row 26: 25-26 fg=#d6e4f0 bg=#0b0f14
-row 26: 27-28 fg=#9b5cff bg=#0b0f14
-row 26: 29-30 fg=#d6e4f0 bg=#0b0f14
-row 26: 31-32 fg=#9b5cff bg=#0b0f14
-row 26: 33-34 fg=#d6e4f0 bg=#0b0f14
-row 26: 35-36 fg=#9b5cff bg=#0b0f14
-row 26: 37-38 fg=#d6e4f0 bg=#0b0f14
-row 26: 39-40 fg=#9b5cff bg=#0b0f14
-row 26: 41-42 fg=#d6e4f0 bg=#0b0f14
-row 26: 43-44 fg=#9b5cff bg=#0b0f14
-row 26: 45-46 fg=#d6e4f0 bg=#0b0f14
-row 26: 47-48 fg=#9b5cff bg=#0b0f14
-row 26: 49-50 fg=#d6e4f0 bg=#0b0f14
-row 26: 51-52 fg=#9b5cff bg=#0b0f14
-row 26: 53-54 fg=#d6e4f0 bg=#0b0f14
-row 26: 55-56 fg=#9b5cff bg=#0b0f14
-row 26: 57-58 fg=#d6e4f0 bg=#0b0f14
-row 26: 59-60 fg=#9b5cff bg=#0b0f14
-row 26: 61-62 fg=#d6e4f0 bg=#0b0f14
-row 26: 63-64 fg=#9b5cff bg=#0b0f14
-row 26: 65-74 fg=#ff9ad5 bg=#0b0f14 bold
-row 26: 75-109 fg=#d6e4f0 bg=#0b0f14
+row 25: 1-1 fg=#234b19 bg=#124b2e
+row 25: 2-2 fg=#195319 bg=#13533e
+row 25: 3-3 fg=#145b21 bg=#145b52
+row 25: 4-4 fg=#146066 bg=#142a66
+row 25: 5-5 fg=#15576d bg=#151b6d
+row 25: 6-6 fg=#164a75 bg=#251975
+row 25: 7-7 fg=#173a7d bg=#3c197d
+row 25: 8-8 fg=#182784 bg=#551a84
+row 25: 9-9 fg=#221b8c bg=#721b8c
+row 25: 10-10 fg=#1a4e94 bg=#3c1c94
+row 25: 11-11 fg=#1b389b bg=#591c9b
+row 25: 12-12 fg=#1b1ea3 bg=#791da3
+row 25: 13-13 fg=#391eab bg=#9d1eab
+row 25: 14-14 fg=#591fb2 bg=#af1fa0
+row 25: 15-15 fg=#7d1fba bg=#b71f86
+row 25: 16-16 fg=#bf206a bg=#bf4c21
+row 25: 17-17 fg=#c7214a bg=#c77122
+row 25: 18-18 fg=#cf2228 bg=#cf9a22
+row 25: 19-19 fg=#d74323 bg=#d7c523
+row 25: 20-20 fg=#df6d24 bg=#cae024
+row 25: 21-21 fg=#e79924 bg=#a9e824
+row 25: 22-22 fg=#ef3725 bg=#efc925
+row 25: 23-23 fg=#f76425 bg=#f3f725
+row 25: 24-24 fg=#ff9526 bg=#cdff26
+row 25: 25-34 fg=#ff9ad5 bg=#0b0f14 bold
+row 25: 35-109 fg=#d6e4f0 bg=#0b0f14
+row 26: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 26: 1-1 fg=#12454f bg=#121e4f
+row 26: 2-2 fg=#133e56 bg=#161656
+row 26: 3-3 fg=#14365e bg=#25165e
+row 26: 4-4 fg=#381766 bg=#0b0f14
+row 26: 5-5 fg=#4e186d bg=#0b0f14
+row 26: 6-6 fg=#661975 bg=#0b0f14
+row 26: 7-7 fg=#781973 bg=#0b0f14
+row 26: 8-8 fg=#801a64 bg=#0b0f14
+row 26: 9-9 fg=#881b52 bg=#0b0f14
+row 26: 10-10 fg=#901c93 bg=#901c3e
+row 26: 11-11 fg=#981c80 bg=#981c26
+row 26: 12-12 fg=#a01d6a bg=#a0311f
+row 26: 13-13 fg=#a71e52 bg=#a75020
+row 26: 14-14 fg=#af1f36 bg=#af7220
+row 26: 15-15 fg=#b72821 bg=#b79721
+row 26: 16-16 fg=#bfbf21 bg=#0b0f14
+row 26: 17-17 fg=#a6c822 bg=#0b0f14
+row 26: 18-18 fg=#88d022 bg=#0b0f14
+row 26: 19-19 fg=#67d823 bg=#0b0f14
+row 26: 20-20 fg=#43e024 bg=#0b0f14
+row 26: 21-21 fg=#23e82c bg=#0b0f14
+row 26: 22-22 fg=#84ef25 bg=#24ef57
+row 26: 23-23 fg=#5cf725 bg=#25f786
+row 26: 24-24 fg=#31ff26 bg=#26ffb7
+row 26: 25-34 fg=#ff9ad5 bg=#0b0f14 bold
+row 26: 35-109 fg=#d6e4f0 bg=#0b0f14

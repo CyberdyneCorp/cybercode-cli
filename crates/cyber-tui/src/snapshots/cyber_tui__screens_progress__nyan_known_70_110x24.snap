@@ -20,65 +20,66 @@ expression: "render(&mut app, 110, 24, &opts)"
 › HOLD on
 
 
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀~[,,_,,]:3······················  fanout 7/10 agents · 70%
+ ▄▀▀▀▀▀▄▄▄▄▄▄▀▀▀▀▀▀▄▄▄▄▄▀▀▀▀▀▀▄▄▄▄▄▄▀▀▀▀▀▄▄▄▄▄▄▀▀▀▀~[,,_,,]:3✦·····················  fanout 7/10 agents · 70%
 ┃
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · main test · default
  /Users/leo/work/app                                                                 100 · —  ctrl+p commands
 row 18: 0-0 fg=#d6e4f0 bg=#0b0f14
-row 18: 1-1 fg=#ff3b3b bg=#ff9a1f
-row 18: 2-2 fg=#ff9a1f bg=#ffe14d
-row 18: 3-3 fg=#ffe14d bg=#4ddb6b
-row 18: 4-4 fg=#4ddb6b bg=#3aa0ff
-row 18: 5-5 fg=#3aa0ff bg=#9b5cff
-row 18: 6-6 fg=#9b5cff bg=#ff3b3b
-row 18: 7-7 fg=#ff3b3b bg=#ff9a1f
-row 18: 8-8 fg=#ff9a1f bg=#ffe14d
-row 18: 9-9 fg=#ffe14d bg=#4ddb6b
-row 18: 10-10 fg=#4ddb6b bg=#3aa0ff
-row 18: 11-11 fg=#3aa0ff bg=#9b5cff
-row 18: 12-12 fg=#9b5cff bg=#ff3b3b
-row 18: 13-13 fg=#ff3b3b bg=#ff9a1f
-row 18: 14-14 fg=#ff9a1f bg=#ffe14d
-row 18: 15-15 fg=#ffe14d bg=#4ddb6b
-row 18: 16-16 fg=#4ddb6b bg=#3aa0ff
-row 18: 17-17 fg=#3aa0ff bg=#9b5cff
-row 18: 18-18 fg=#9b5cff bg=#ff3b3b
-row 18: 19-19 fg=#ff3b3b bg=#ff9a1f
-row 18: 20-20 fg=#ff9a1f bg=#ffe14d
-row 18: 21-21 fg=#ffe14d bg=#4ddb6b
-row 18: 22-22 fg=#4ddb6b bg=#3aa0ff
-row 18: 23-23 fg=#3aa0ff bg=#9b5cff
-row 18: 24-24 fg=#9b5cff bg=#ff3b3b
-row 18: 25-25 fg=#ff3b3b bg=#ff9a1f
-row 18: 26-26 fg=#ff9a1f bg=#ffe14d
-row 18: 27-27 fg=#ffe14d bg=#4ddb6b
-row 18: 28-28 fg=#4ddb6b bg=#3aa0ff
-row 18: 29-29 fg=#3aa0ff bg=#9b5cff
-row 18: 30-30 fg=#9b5cff bg=#ff3b3b
-row 18: 31-31 fg=#ff3b3b bg=#ff9a1f
-row 18: 32-32 fg=#ff9a1f bg=#ffe14d
-row 18: 33-33 fg=#ffe14d bg=#4ddb6b
-row 18: 34-34 fg=#4ddb6b bg=#3aa0ff
-row 18: 35-35 fg=#3aa0ff bg=#9b5cff
-row 18: 36-36 fg=#9b5cff bg=#ff3b3b
-row 18: 37-37 fg=#ff3b3b bg=#ff9a1f
-row 18: 38-38 fg=#ff9a1f bg=#ffe14d
-row 18: 39-39 fg=#ffe14d bg=#4ddb6b
-row 18: 40-40 fg=#4ddb6b bg=#3aa0ff
-row 18: 41-41 fg=#3aa0ff bg=#9b5cff
-row 18: 42-42 fg=#9b5cff bg=#ff3b3b
-row 18: 43-43 fg=#ff3b3b bg=#ff9a1f
-row 18: 44-44 fg=#ff9a1f bg=#ffe14d
-row 18: 45-45 fg=#ffe14d bg=#4ddb6b
-row 18: 46-46 fg=#4ddb6b bg=#3aa0ff
-row 18: 47-47 fg=#3aa0ff bg=#9b5cff
-row 18: 48-48 fg=#9b5cff bg=#ff3b3b
-row 18: 49-49 fg=#ff3b3b bg=#ff9a1f
-row 18: 50-50 fg=#ff9a1f bg=#ffe14d
+row 18: 1-1 fg=#481519 bg=#0b0f14
+row 18: 2-2 fg=#4c2119 bg=#0b0f14
+row 18: 3-3 fg=#4f2f19 bg=#0b0f14
+row 18: 4-4 fg=#533e19 bg=#0b0f14
+row 18: 5-5 fg=#574f1a bg=#0b0f14
+row 18: 6-6 fg=#575d1a bg=#0b0f14
+row 18: 7-7 fg=#4b611a bg=#0b0f14
+row 18: 8-8 fg=#3e651a bg=#0b0f14
+row 18: 9-9 fg=#2f681b bg=#0b0f14
+row 18: 10-10 fg=#1f6c1b bg=#0b0f14
+row 18: 11-11 fg=#167024 bg=#0b0f14
+row 18: 12-12 fg=#167338 bg=#0b0f14
+row 18: 13-13 fg=#17774d bg=#0b0f14
+row 18: 14-14 fg=#177b63 bg=#0b0f14
+row 18: 15-15 fg=#187e7b bg=#0b0f14
+row 18: 16-16 fg=#187285 bg=#0b0f14
+row 18: 17-17 fg=#185f88 bg=#0b0f14
+row 18: 18-18 fg=#194a8c bg=#0b0f14
+row 18: 19-19 fg=#19348f bg=#0b0f14
+row 18: 20-20 fg=#1a1d93 bg=#0b0f14
+row 18: 21-21 fg=#321c97 bg=#0b0f14
+row 18: 22-22 fg=#4d1c9a bg=#0b0f14
+row 18: 23-23 fg=#6a1c9e bg=#0b0f14
+row 18: 24-24 fg=#881da1 bg=#0b0f14
+row 18: 25-25 fg=#a21da0 bg=#0b0f14
+row 18: 26-26 fg=#a51e87 bg=#0b0f14
+row 18: 27-27 fg=#a91e6b bg=#0b0f14
+row 18: 28-28 fg=#ad1e50 bg=#0b0f14
+row 18: 29-29 fg=#b11f32 bg=#0b0f14
+row 18: 30-30 fg=#b42d20 bg=#0b0f14
+row 18: 31-31 fg=#b84d21 bg=#0b0f14
+row 18: 32-32 fg=#bc7021 bg=#0b0f14
+row 18: 33-33 fg=#c09321 bg=#0b0f14
+row 18: 34-34 fg=#c3b922 bg=#0b0f14
+row 18: 35-35 fg=#b0c822 bg=#0b0f14
+row 18: 36-36 fg=#8fcc22 bg=#0b0f14
+row 18: 37-37 fg=#6ecf22 bg=#0b0f14
+row 18: 38-38 fg=#4ad323 bg=#0b0f14
+row 18: 39-39 fg=#26d723 bg=#0b0f14
+row 18: 40-40 fg=#22da46 bg=#0b0f14
+row 18: 41-41 fg=#22de6f bg=#0b0f14
+row 18: 42-42 fg=#23e298 bg=#0b0f14
+row 18: 43-43 fg=#23e5c3 bg=#0b0f14
+row 18: 44-44 fg=#24e3e9 bg=#0b0f14
+row 18: 45-45 fg=#24bded bg=#0b0f14
+row 18: 46-46 fg=#2494f1 bg=#0b0f14
+row 18: 47-47 fg=#256cf4 bg=#0b0f14
+row 18: 48-48 fg=#2540f8 bg=#0b0f14
+row 18: 49-49 fg=#3726fb bg=#0b0f14
+row 18: 50-50 fg=#6526ff bg=#0b0f14
 row 18: 51-60 fg=#ff9ad5 bg=#0b0f14 bold
-row 18: 61-82 fg=#666f77 bg=#0b0f14
+row 18: 61-61 fg=#ff6666 bg=#0b0f14 bold
+row 18: 62-82 fg=#666f77 bg=#0b0f14
 row 18: 83-84 fg=#d6e4f0 bg=#0b0f14
 row 18: 85-90 fg=#d6e4f0 bg=#0b0f14 bold
 row 18: 91-102 fg=#7ee787 bg=#0b0f14

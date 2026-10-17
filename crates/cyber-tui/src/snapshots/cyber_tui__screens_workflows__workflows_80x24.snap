@@ -5,9 +5,9 @@ expression: shown
 ╭ Workflows · ~/work/app ───────────────────── 1 running · 1 queued · 1 paused ╮
 │   NAME        STATUS              PROGRESS     d/r/q/f        COST           │
 │   migrate     queued              #1 in queue  -              -              │
-│ › audit       running             ▀▀▀········  2/2/4/0        $0.82 / $10.00 │
+│ › audit       running             ▄▀▀········  2/2/4/0        $0.82 / $10.00 │
 │   docs        paused (2 settling) ···········  0/2/0/0        $0.00          │
-│   plan        completed           ▀▀▀▀▀▀▀▀▀▀▀  2/0/0/0        $0.82          │
+│   plan        completed           ▄▀▀▀▀▀▄▄▄▄▄  2/0/0/0        $0.82          │
 │                                                                              │
 │                                                                              │
 │                                                                              │

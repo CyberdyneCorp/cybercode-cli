@@ -2,7 +2,7 @@
 source: crates/cyber-tui/src/screens_progress.rs
 expression: "render(&mut app, 110, 24, &plain)"
 ---
- cyber · Theme baseline                                                                             ⠋ running
+ cyber · Theme baseline                                                                             ⠦ running
 
   Plan
 
@@ -20,12 +20,12 @@ expression: "render(&mut app, 110, 24, &plain)"
 › HOLD on
 
 
- =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-~[,,_,,]:3  Thinking · 12.4s · esc interrupt
+ =-=-=-=-=-=-=-=-=-=-=-=-~[,,_,,]:3                                          Thinking · 12.4s · esc interrupt
 ┃
 ┃ Ask anything… "/" commands · "@" files · "!" shell
 ┃
 ┃ Build · main test · default
  /Users/leo/work/app                                                                 100 · —  ctrl+p commands
-row 18: 65-74 bold
+row 18: 25-34 bold
 row 18: 77-84 bold
 row 18: 96-98 bold

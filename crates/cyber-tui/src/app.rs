@@ -330,6 +330,12 @@ pub struct App {
     /// When the UI started, the origin of test clocks.
     #[cfg(test)]
     started: Instant,
+    /// With [`App::clock`], every clock read moves on by this much: a real clock's later
+    /// reads are later, which code reading the clock twice must tolerate.
+    #[cfg(test)]
+    pub clock_step: Option<std::time::Duration>,
+    #[cfg(test)]
+    clock_reads: std::cell::Cell<u32>,
     /// An OSC 11 background query waiting for its reply in the key stream.
     pub(crate) background_probe: Option<crate::theme::detect::Osc11Reply>,
     /// Rendered Markdown blocks and the streaming split of each message.
@@ -432,6 +438,10 @@ impl App {
             clock: None,
             #[cfg(test)]
             started: Instant::now(),
+            #[cfg(test)]
+            clock_step: None,
+            #[cfg(test)]
+            clock_reads: std::cell::Cell::new(0),
             background_probe: None,
             markdown: Default::default(),
             hyperlinks: false,
@@ -624,7 +634,14 @@ impl App {
 
     /// The time a frame is drawn at.
     pub fn now(&self) -> Instant {
-        self.clock.unwrap_or_else(Instant::now)
+        let now = self.clock.unwrap_or_else(Instant::now);
+        #[cfg(test)]
+        if let Some(step) = self.clock_step {
+            let reads = self.clock_reads.get();
+            self.clock_reads.set(reads + 1);
+            return now + step * reads;
+        }
+        now
     }
 
     /// When the UI started.

@@ -323,15 +323,25 @@ The built-in themes SHALL include the existing set plus `cyber-light`, `synthwav
 ### Requirement: Nyan progress indicator
 (P1) While the Session is working (a Turn, compaction, a running workflow the user started, or a long tool call), the progress line above the composer SHALL show the activity indicator selected by `tui.spinner`: `nyan` (default), `nyan-tall`, `braille`, `dots` or `off`.
 
-`nyan` SHALL be one row: a rainbow trail of `▀` cells, each with two adjacent bands of the six-band rainbow (red, orange, yellow, green, blue, purple) as foreground and background, followed by the cat `~[,,_,,]:3` in a pink accent, then the activity label, the elapsed time and the interrupt hint. `nyan-tall` SHALL use 4 rows: 3 rows (6 half-rows, one band each) with every other pair of columns offset by half a row into the fourth to form the wave, and the 4-row cat art, and SHALL fall back to `nyan` when the terminal has fewer than 30 rows.
+`nyan` SHALL be one row: a rainbow trail, then the cat `[,,_,,]:3` in a pink accent with a tail glyph that alternates `~ - ~ =` per frame and a sparkle `✦` in the cell ahead of it on half of the frames, then the activity label and elapsed time. The trail SHALL be a smooth continuous rainbow: each cell's hue SHALL step a fixed amount along the trail and SHALL move with the frame so the colors flow toward the cat. Each cell SHALL be a `▀` or `▄` half block on the background, chosen by a sine wave of the cell position minus the frame, so the trail ripples. The tail SHALL fade toward the background, the cell next to the cat being the brightest. `nyan-tall` SHALL use 4 rows: six band half-rows, each a hue step from the column's flowing hue, lowered by half a row on the wave's troughs, and the 4-row cat art. It SHALL fall back to `nyan` when the terminal has fewer than 30 rows.
 
-When the progress is unknown, the trail SHALL fill the available width and its colors SHALL scroll by one cell per frame. Compaction SHALL show the label `compacting` in `warning` with its elapsed time, as unknown progress while the server reports no fraction. When progress is known (workflow agents done over total, or byte progress of a download or upload), the trail length SHALL be proportional to the fraction, the remainder SHALL be drawn as `·` in `text_subtle`, and the label SHALL show the count and percent.
+When the progress is unknown, the cat SHALL run across the bar like a comet, about one and a half cells per frame, its trail growing behind it up to two thirds of the bar, and SHALL wrap back to the start. The label SHALL say what the Turn is doing: `Thinking` while the model streams or reasons, and `Running <tool> <summary>` while a tool runs, followed by the elapsed time and the interrupt hint. Compaction SHALL show the label `compacting` in `warning` with its elapsed time, as unknown progress while the server reports no fraction. When progress is known (workflow agents done over total, or byte progress of a download or upload), the trail length SHALL be proportional to the fraction and keep flowing and rippling, the remainder SHALL be drawn as `·` in `text_subtle`, and the label SHALL show the count and percent.
 
-Frames SHALL advance at no more than 12 per second, only while working. Rendering SHALL be skipped when the terminal is unfocused or the indicator is off screen. With 16 colors the bands SHALL map to the nearest ANSI colors. Under `NO_COLOR` the trail SHALL be `=-` text, and with reduced motion the indicator SHALL be the static `[,,_,,]:3` with no animation. Screen readers SHALL receive `Working, <n> seconds` at most every 10 seconds and the label changes, never the trail glyphs.
+While a permission request or question waits on the user, nothing SHALL animate. The indicator SHALL show the napping cat `[,,_,,]:3 zZ`, then `Waiting for approval` (or `Waiting for your answer`) in `warning`, what is asked about, the Turn's elapsed time, and for a permission the `y allow · n reject` hints.
+
+Frames SHALL advance at no more than 12 per second, only while working, with nothing waiting on the user. The schedule and its check SHALL use one clock reading, so a frame is never due later than the moment it is checked. Rendering SHALL be skipped when the terminal reports that it lost focus (it counts as focused until it says otherwise) or when the indicator is off screen. With 16 colors the trail SHALL map to the nearest ANSI colors. Under `NO_COLOR` the trail SHALL be `=-` text and the cat SHALL still move, and with reduced motion the indicator SHALL be the static `[,,_,,]:3` with no animation. Screen readers SHALL receive `Working, <n> seconds` at most every 10 seconds and the label changes, never the trail glyphs.
 
 #### Scenario: Unknown progress
 - **WHEN** a Turn has been running for 12 seconds with `tui.spinner` at the default
-- **THEN** the progress line shows the scrolling rainbow trail, the cat, `Thinking · 12.4s` and the interrupt hint
+- **THEN** the progress line shows the cat running with a flowing, rippling rainbow trail, `Thinking · 12.4s` and the interrupt hint, and the trail's cells change from one frame to the next
+
+#### Scenario: A tool runs
+- **WHEN** the Turn runs `bash cargo test`
+- **THEN** the label reads `Running bash cargo test · <elapsed> · esc interrupt`
+
+#### Scenario: Waiting for approval
+- **WHEN** a bash permission request waits on the user during a Turn
+- **THEN** the indicator shows `[,,_,,]:3 zZ  Waiting for approval · bash <command> · <elapsed> · y allow · n reject` and no animation frame is scheduled until it is answered
 
 #### Scenario: Workflow progress
 - **WHEN** a workflow run started from this Session has 7 of 10 agents done

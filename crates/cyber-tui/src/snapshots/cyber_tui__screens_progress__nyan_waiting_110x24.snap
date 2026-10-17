@@ -1,0 +1,28 @@
+---
+source: crates/cyber-tui/src/screens_progress.rs
+expression: "render(&mut app, 110, 24, &opts)"
+---
+ cyber · Theme baseline                                                                             ⠦ running
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+› HOLD on
+
+
+ [,,_,,]:3 zZ  Waiting for approval · bash ps -axo pid,ppid,comm · 12.4s · y allow · n reject
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                                                 100 · —  ctrl+p commands
