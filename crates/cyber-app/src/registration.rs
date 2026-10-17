@@ -97,6 +97,14 @@ pub async fn start_service(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: no console and no console signals,
+        // like the Unix process group above.
+        cmd.creation_flags(0x0000_0008 | 0x0000_0200);
+        windows_std::disinherit_std_handles();
+    }
     cmd.spawn()
         .map_err(|e| format!("cannot start the server: {e}"))?;
     if let Some(registration) = poll_ready(|| async {
@@ -211,5 +219,34 @@ mod tests {
         .await;
         assert_eq!(result, None);
         assert_eq!(start.elapsed(), Duration::from_secs(5));
+    }
+}
+
+/// Windows `CreateProcess` gives a child every inheritable handle of its parent, so a
+/// long-lived server started from a CLI whose stdout is a pipe would keep that pipe open,
+/// and the CLI's caller (`$(cyber ...)`, a test's `output()`) would never see EOF. The CLI's
+/// own standard handles are made non-inheritable before spawning the server; a later
+/// `Stdio::inherit` child still works, because std duplicates an inheritable copy for it.
+#[cfg(windows)]
+mod windows_std {
+    use windows_sys::Win32::Foundation::{
+        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+
+    #[allow(unsafe_code)]
+    pub(super) fn disinherit_std_handles() {
+        for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: GetStdHandle has no preconditions; SetHandleInformation only changes
+            // the inherit flag of a handle this process owns and fails harmlessly otherwise.
+            unsafe {
+                let handle = GetStdHandle(id);
+                if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
     }
 }
