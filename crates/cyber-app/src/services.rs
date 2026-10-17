@@ -67,6 +67,8 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
         "Confirm and replay the last classifier-blocked call once",
     ),
     ("resume", "Open another Session"),
+    ("rename", "Rename this Session"),
+    ("fork", "Fork this Session into a new one"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),
     (
@@ -84,6 +86,21 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
         "List skills with source, scope, permission and diagnostics",
     ),
     ("stop", "Confirm stopping this Session's background tasks"),
+    ("agent", "List this Session's subagents"),
+    ("admissions", "Show queued and admitted prompts"),
+    ("memory", "Open project memory (global with /memory global)"),
+    ("workflows", "Monitor workflow runs"),
+    ("files", "Browse project files"),
+    ("settings", "Open settings"),
+    ("status", "Show Session, server and machine status"),
+    ("config", "Edit TUI preferences"),
+    ("usage", "Show this Session's usage and cost"),
+    ("cost", "Show this Session's usage and cost"),
+    ("stats", "Show usage statistics"),
+    ("theme", "Switch the color theme"),
+    ("sidebar", "Show or hide the sidebar"),
+    ("timestamps", "Show or hide message times"),
+    ("recap", "Summarize this Session so far"),
     ("help", "Show commands and keys"),
     ("exit", "Quit"),
 ];
@@ -700,5 +717,48 @@ fn worktree_error(error: std::io::Error) -> cyber_server::http::ApiError {
         ApiError::invalid(error.to_string())
     } else {
         ApiError::conflict(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BUILTIN_COMMANDS;
+
+    /// Aliases the TUI accepts that are deliberately not suggested on their own.
+    const ALIASES: &[&str] = &["subagents", "models", "sessions", "clear", "quit"];
+
+    /// Every slash command the TUI dispatches itself must be in the catalog that feeds
+    /// `/` completion and `GET /commands`, or users can't discover it (`/rename` was missing).
+    #[test]
+    fn every_tui_slash_command_is_in_the_builtin_catalog() {
+        let source = include_str!("../../cyber-tui/src/app.rs");
+        let start = source.find("match name {").expect("slash dispatch");
+        let body = &source[start..];
+        let end = body
+            .find("_ => vec![Action::Command")
+            .expect("dispatch fallback");
+        let mut missing = Vec::new();
+        for line in body[..end].lines() {
+            let arm = line.trim_start();
+            if !arm.starts_with('"') || !arm.contains("=>") {
+                continue;
+            }
+            let pattern = arm.split("=>").next().unwrap_or_default();
+            let pattern = pattern.split(" if ").next().unwrap_or_default();
+            for name in pattern
+                .split('|')
+                .filter_map(|p| p.trim().split('"').nth(1))
+            {
+                let known = BUILTIN_COMMANDS.iter().any(|(n, _)| *n == name);
+                if !known && !ALIASES.contains(&name) && name != "review" {
+                    missing.push(name.to_owned());
+                }
+            }
+        }
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "missing from BUILTIN_COMMANDS: {missing:?}"
+        );
     }
 }
