@@ -52,6 +52,7 @@ async fn build_app(
         password: Some("mcp-test-password".into()),
         mcp_credentials: credentials,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap()

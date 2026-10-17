@@ -30,6 +30,7 @@ async fn app(root: &std::path::Path) -> (App, String) {
         password: Some(PASSWORD.into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap();

@@ -86,6 +86,7 @@ impl Fixture {
             password: Some(PASSWORD.into()),
             mcp_credentials: None,
             remote_skill_fetcher: None,
+            workflow_cores: None,
         })
         .await
         .unwrap();

@@ -136,6 +136,7 @@ fn options(root: &Path) -> AppOptions {
         password: Some("test-password-123456".into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     }
 }
 

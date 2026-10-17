@@ -58,6 +58,10 @@ pub struct AppOptions {
     /// Fetches remote skill sources. `None` (every production caller) is the policy-checked
     /// HTTPS client; tests inject an in-process fetcher.
     pub remote_skill_fetcher: Option<Arc<dyn cyber_tools::RemoteSkillFetcher>>,
+    /// The core count that caps `workflows.max_concurrent`. `None` (every production
+    /// caller) is this machine's; tests pin it so their slot counts do not depend on the
+    /// runner.
+    pub workflow_cores: Option<usize>,
 }
 
 pub struct App {
@@ -230,7 +234,9 @@ impl App {
         // One fair scheduler of the slots of every Workflow agent of this server
         // (`workflows.max_concurrent`, reduced to the core count), fixed at startup like the
         // listener settings.
-        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        let cores = opts
+            .workflow_cores
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from));
         let workflow_settings = config::WorkflowSettings::from_config(&global).unwrap_or_default();
         let workflow_limit = workflow_settings.effective_max_concurrent(cores);
         runtime.configure_workflow_concurrency(workflow_limit as usize);

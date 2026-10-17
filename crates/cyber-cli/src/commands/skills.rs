@@ -60,6 +60,7 @@ impl Inspector {
             password: None,
             mcp_credentials: None,
             remote_skill_fetcher: None,
+            workflow_cores: None,
         })
         .await
         .map_err(CliError::runtime)?;

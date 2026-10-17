@@ -132,6 +132,7 @@ async fn connect(ctx: &Context, launch: &LaunchArgs) -> Result<(Client, Option<A
             password: None,
             mcp_credentials: None,
             remote_skill_fetcher: None,
+            workflow_cores: None,
         })
         .await
         .map_err(CliError::runtime)?;

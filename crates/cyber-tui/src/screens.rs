@@ -268,6 +268,8 @@ impl Server {
             password: Some("tui-screens".into()),
             mcp_credentials: None,
             remote_skill_fetcher: None,
+            // Slot counts in snapshots must not depend on the runner's cores.
+            workflow_cores: Some(16),
         })
         .await
         .unwrap();

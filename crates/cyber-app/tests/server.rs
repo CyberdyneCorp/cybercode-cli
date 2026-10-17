@@ -31,6 +31,7 @@ async fn app(root: &std::path::Path) -> App {
         password: Some("test-password-123456".into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap()
@@ -1108,6 +1109,7 @@ async fn child_setup_recovery_api_preserves_steps_and_idempotent_retry() {
         password: Some("test-password-123456".into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap();
@@ -3971,6 +3973,7 @@ async fn remote_skill_source_fetches_caches_and_serves_stale_offline() {
         password: Some("test-password-123456".into()),
         mcp_credentials: None,
         remote_skill_fetcher: Some(Arc::clone(&site) as Arc<dyn cyber_tools::RemoteSkillFetcher>),
+        workflow_cores: None,
     })
     .await
     .unwrap();

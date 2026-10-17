@@ -91,6 +91,7 @@ async fn session_usage_breaks_down_two_models_a_subagent_lines_and_budgets() {
         password: Some("usage-password".into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap();
@@ -267,6 +268,7 @@ async fn session_usage_is_served_when_the_daily_budget_cannot_be_read() {
         password: Some("usage-password".into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap();

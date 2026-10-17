@@ -58,6 +58,8 @@ impl Server {
             password: Some(PASSWORD.into()),
             mcp_credentials: None,
             remote_skill_fetcher: None,
+            // Slot counts must not depend on the runner's cores (CI has 3-4).
+            workflow_cores: Some(16),
         })
         .await
         .unwrap();
@@ -2764,7 +2766,8 @@ async fn queued_agents_are_counted_and_progress_streams_on_the_runs_location() {
         &format!("?location[directory]={}", elsewhere.display()),
     )
     .await;
-    let limit = 16.min(std::thread::available_parallelism().map_or(1, usize::from)) as u64;
+    // The server's core count is pinned to 16 (`workflow_cores`), so the limit is exact.
+    let limit = 16_u64;
     let owner = server.session().await;
     let run = server
         .start_run(json!({"session_id": owner, "script": gated_fan_out("counted", "q", 100)}))

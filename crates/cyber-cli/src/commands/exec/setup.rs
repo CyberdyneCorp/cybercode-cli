@@ -103,6 +103,7 @@ pub async fn backend(args: &ExecArgs, ctx: &Context) -> Result<Backend, CliError
             password: None,
             mcp_credentials: None,
             remote_skill_fetcher: None,
+            workflow_cores: None,
         })
         .await
         .map_err(CliError::runtime)?;

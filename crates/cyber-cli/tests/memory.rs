@@ -577,6 +577,7 @@ async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_l
         password: Some("cli-memory-existing-password".into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap();

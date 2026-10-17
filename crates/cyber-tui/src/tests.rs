@@ -1975,6 +1975,7 @@ async fn memory_panel_recovery_and_deletion_use_real_api_ownership_and_retained_
         password: Some("tui-memory-password".into()),
         mcp_credentials: None,
         remote_skill_fetcher: None,
+        workflow_cores: None,
     })
     .await
     .unwrap();
