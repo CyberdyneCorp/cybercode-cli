@@ -132,7 +132,7 @@ impl Fixture {
         id: &str,
         done: impl Fn(&Value) -> bool,
     ) -> Value {
-        for _ in 0..1000 {
+        for _ in 0..6000 {
             let run = self.run(id).await;
             if done(&run) {
                 return run;
@@ -143,7 +143,7 @@ impl Fixture {
     }
 
     pub(crate) async fn held(&self, what: &str, n: usize) {
-        for _ in 0..1000 {
+        for _ in 0..6000 {
             if self.server.model.held().len() == n {
                 return;
             }
@@ -179,8 +179,10 @@ impl Fixture {
     }
 
     /// Feed instance events to the App through the runner until `done` holds.
+    /// The deadline only bounds a failure: some tests settle 40 sequential agents, each a
+    /// full provider round trip, which takes well over 10 s on Windows runners.
     pub(crate) async fn pump(&mut self, app: &mut App, what: &str, done: impl Fn(&App) -> bool) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
         while !done(app) {
             let left = deadline.saturating_duration_since(tokio::time::Instant::now());
             assert!(
