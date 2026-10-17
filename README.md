@@ -110,7 +110,7 @@ Checked **2026-10-17** against each product's official docs. This compares docum
 
 - **P0 (local core):** implemented; release gates remain open, including the full local-model baseline and the long coding task ([evidence](docs/measurements/p0-exit-evidence.md)).
 - **P1 (table stakes):** in progress; no P1 milestone is fully accepted. Windows confinement, native MCP OAuth keyring acceptance, plugins, complete client controls, browser verification and migration remain ([status](docs/implementation/p1-status.md)).
-- **P2 (autonomy):** the Workflow runtime (M2.1) and parallel runs are implemented and accepted end to end with the real binary; `ask()`, direct read-only tools, `exec --workflow` and Job integration remain ([evidence](docs/implementation/p2-status.md)). Next: cross-session messaging (which also completes `cyber mcp serve` and is the basis for agent teams), then bundled workflows and goals; loops later.
+- **P2 (autonomy):** the Workflow runtime (M2.1) and parallel runs are implemented and accepted end to end with the real binary; `ask()`, direct read-only tools, `exec --workflow` and Job integration remain ([evidence](docs/implementation/p2-status.md)). Next: cross-session messaging (which also completes `cyber mcp serve` and is the basis for agent teams), then agent teams, bundled workflows and goals; loops later.
 
 See the [roadmap](ROADMAP.md) for P3 (connectivity, IDE clients) and P4.
 
