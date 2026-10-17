@@ -7,15 +7,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "support/scripted_model.rs"]
+mod scripted_model;
+
 use cyber_app::{App, AppOptions, ServeOptions};
 use cyber_core::paths::{DatabaseLocation, Paths};
-use cyber_llm::adapters::{ScriptStep, ScriptedAdapter};
-use cyber_llm::{FinishReason, LlmEvent, LlmRequest, ToolCall};
+use cyber_llm::LlmRequest;
+use cyber_llm::adapters::ScriptedAdapter;
 use cyber_server::runtime::{
     Admission, CallStatus, CompactionConfig, CreateSession, Delivery, ModelResolver, NoSnapshots,
     PendingKind, PermissionReply, ResolvedModel, Runtime, RuntimeOptions, StartWorkflowRun,
     WorkflowRunStatus,
 };
+use scripted_model::ScriptedModel;
+use serde_json::{Value, json};
 use tokio::sync::Notify;
 use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
 use windows_sys::Win32::System::Threading::{
@@ -74,24 +79,42 @@ fn bash() -> PathBuf {
     path
 }
 
-fn model(tool: &str) -> Arc<Model> {
-    let command = if tool == "powershell" {
-        "& './service child.exe' --exact native_service_worker --nocapture"
+/// A resolver for the runtime that only reads durable state back; it is never asked for a
+/// Turn, so its script is empty.
+fn reader() -> Arc<Model> {
+    Arc::new(Model(Arc::new(ScriptedAdapter::new(vec![]))))
+}
+
+/// The provider answer: a native shell call that starts the worker, with the tool named
+/// in the prompt (`run the worker with <tool>`); a title request is answered plainly.
+fn reply(body: &Value) -> Value {
+    let text = body.to_string();
+    if text.contains("Write a short title") {
+        return json!({"content": "Native service shutdown"});
+    }
+    let (tool, command) = if text.contains("worker with powershell") {
+        (
+            "powershell",
+            "& './service child.exe' --exact native_service_worker --nocapture",
+        )
     } else {
-        "./'service child.exe' --exact native_service_worker --nocapture"
+        (
+            "bash",
+            "./'service child.exe' --exact native_service_worker --nocapture",
+        )
     };
-    let input = serde_json::json!({"command": command, "timeout_ms": 60000});
-    Arc::new(Model(Arc::new(ScriptedAdapter::new(vec![vec![
-        ScriptStep::Event(LlmEvent::ToolCallDone(ToolCall {
-            id: "service_call".into(),
-            name: tool.into(),
-            arguments: input.to_string(),
-            input: Some(input),
-        })),
-        ScriptStep::Event(LlmEvent::Finish {
-            reason: FinishReason::ToolCalls,
-        }),
-    ]]))))
+    let arguments = json!({"command": command, "timeout_ms": 60000}).to_string();
+    json!({"tool_calls":[{"index":0,"id":"service_call","type":"function",
+        "function":{"name":tool,"arguments":arguments}}]})
+}
+
+/// Turn requests the provider received, excluding Session title requests.
+fn turn_requests(model: &ScriptedModel) -> usize {
+    model
+        .requests()
+        .iter()
+        .filter(|body| !body.to_string().contains("Write a short title"))
+        .count()
 }
 
 fn options(root: &Path) -> AppOptions {
@@ -116,7 +139,10 @@ fn options(root: &Path) -> AppOptions {
     }
 }
 
-async fn application(root: &Path, model: Arc<Model>) -> App {
+/// The production App over the scripted provider. The runtime is the one `App::build` made:
+/// replacing it would mean shutting it down, which closes the shared tool host (language
+/// services, MCP) that a replacement would reuse.
+async fn application(root: &Path, model: &ScriptedModel) -> App {
     let paths = Paths {
         data: root.join("data"),
         config: root.join("config"),
@@ -126,33 +152,13 @@ async fn application(root: &Path, model: Arc<Model>) -> App {
     };
     paths.ensure().unwrap();
     std::fs::create_dir(root.join(".git")).unwrap();
-    std::fs::write(
-        paths.config.join("cyber.json"),
-        serde_json::json!({
-            "shell": bash(), "permissions": {"bash": "allow"}, "compat": {"claude": false}
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let mut config = model.config();
+    config["shell"] = json!(bash());
+    config["permissions"] = json!({"bash": "allow"});
+    config["compat"] = json!({"claude": false});
+    std::fs::write(paths.config.join("cyber.json"), config.to_string()).unwrap();
     std::fs::write(paths.state.join("password"), "test-password-123456").unwrap();
-    let mut app = App::build(AppOptions {
-        database: DatabaseLocation::File(paths.data.join("cyber.db")),
-        paths,
-        home: root.join("home"),
-        default_directory: root.to_path_buf(),
-        sandbox_policy: Some("full-access".into()),
-        snapshots: false,
-        interactive: true,
-        password: Some("test-password-123456".into()),
-        mcp_credentials: None,
-        remote_skill_fetcher: None,
-    })
-    .await
-    .unwrap();
-    app.runtime.shutdown().await;
-    app.runtime = runtime(&app, model);
-    app.state.runtime = app.runtime.clone();
-    app
+    App::build(options(root)).await.unwrap()
 }
 
 struct Server {
@@ -219,7 +225,8 @@ async fn worker(root: &Path, name: &str, server: &Server) -> Worker {
 async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_paused() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    let app = application(root, model("bash")).await;
+    let model = ScriptedModel::start(reply);
+    let app = application(root, &model).await;
     let paths = app.paths.clone();
     let running = app.runtime.clone();
     // Hold every Workflow agent slot so the run's agent waits, started but unsettled.
@@ -246,7 +253,7 @@ async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_
     let owner = running
         .create_session(CreateSession {
             directory: root.display().to_string(),
-            model: "test/scripted".into(),
+            model: "test/main".into(),
             title: Some("Workflow service shutdown".into()),
             ..Default::default()
         })
@@ -310,11 +317,11 @@ async fn service_shutdown_case(tool: &str) {
     for name in ["service child.exe", "service grandchild.exe"] {
         std::fs::copy(std::env::current_exe().unwrap(), root.join(name)).unwrap();
     }
-    let model = model(tool);
-    let app = application(root, model.clone()).await;
+    let model = ScriptedModel::start(reply);
+    let app = application(root, &model).await;
     let paths = app.paths.clone();
     let running = app.runtime.clone();
-    let reloaded = runtime(&app, model.clone());
+    let reloaded = runtime(&app, reader());
     let stop = Arc::new(Notify::new());
     let mut server = Server {
         stop: stop.clone(),
@@ -333,7 +340,7 @@ async fn service_shutdown_case(tool: &str) {
     let id = running
         .create_session(CreateSession {
             directory: root.display().to_string(),
-            model: "test/scripted".into(),
+            model: "test/main".into(),
             title: Some("Active native service shutdown".into()),
             ..Default::default()
         })
@@ -341,7 +348,10 @@ async fn service_shutdown_case(tool: &str) {
         .unwrap()
         .id;
     running
-        .admit(&id, Admission::text("run the worker", Delivery::Queue))
+        .admit(
+            &id,
+            Admission::text(format!("run the worker with {tool}"), Delivery::Queue),
+        )
         .await
         .unwrap();
     if tool == "powershell" {
@@ -362,7 +372,7 @@ async fn verify_settlement(
     reloaded: &Runtime,
     paths: &Paths,
     id: &str,
-    model: &Model,
+    model: &ScriptedModel,
 ) {
     assert!(!running.is_running(id));
     assert_eq!(
@@ -371,7 +381,7 @@ async fn verify_settlement(
     );
     assert!(cyber_app::read_registration(paths).is_none());
     assert_eq!(
-        model.0.requests().len(),
+        turn_requests(model),
         1,
         "shutdown started another provider turn"
     );
