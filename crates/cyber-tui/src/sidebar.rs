@@ -110,6 +110,126 @@ pub struct Git {
     pub dirty: bool,
 }
 
+/// `GET /system`: the server machine's CPU, memory and the Location's disk.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Machine {
+    /// The OS name and version; untrusted, cleaned when read.
+    pub label: Option<String>,
+    pub cores: u64,
+    /// `None` until the server has two CPU readings.
+    pub cpu_idle: Option<f64>,
+    pub load: Option<[f64; 3]>,
+    pub memory_total: u64,
+    pub memory_available: u64,
+    /// `(total, available)` bytes of the Location's volume.
+    pub disk: Option<(u64, u64)>,
+}
+
+impl Machine {
+    /// Percent of CPU busy.
+    pub fn cpu_busy(&self) -> Option<f64> {
+        self.cpu_idle.map(|idle| (100.0 - idle).clamp(0.0, 100.0))
+    }
+
+    /// Percent of memory in use.
+    pub fn memory_used(&self) -> Option<f64> {
+        used_percent(self.memory_total, self.memory_available)
+    }
+
+    /// Percent of the Location's disk in use.
+    pub fn disk_used(&self) -> Option<f64> {
+        self.disk
+            .and_then(|(total, available)| used_percent(total, available))
+    }
+}
+
+fn used_percent(total: u64, available: u64) -> Option<f64> {
+    (total > 0).then(|| total.saturating_sub(available) as f64 / total as f64 * 100.0)
+}
+
+/// `GET /system` data.
+pub fn parse_machine(data: &Value) -> Machine {
+    let bytes = |v: &Value| v.as_u64().unwrap_or(0);
+    let load = data["load_avg"].as_array().and_then(|values| {
+        let numbers: Vec<f64> = values.iter().filter_map(Value::as_f64).collect();
+        <[f64; 3]>::try_from(numbers).ok()
+    });
+    let disk = &data["disk"];
+    Machine {
+        label: data["hostname_label"]
+            .as_str()
+            .map(clean)
+            .filter(|s| !s.is_empty()),
+        cores: data["cores_logical"].as_u64().unwrap_or(0),
+        cpu_idle: data["cpu_idle_percent"].as_f64(),
+        load,
+        memory_total: bytes(&data["memory_total"]),
+        memory_available: bytes(&data["memory_available"]),
+        disk: disk
+            .is_object()
+            .then(|| (bytes(&disk["total"]), bytes(&disk["available"]))),
+    }
+}
+
+/// Seconds between `GET /system` reads while the sidebar shows.
+pub const MACHINE_POLL: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// `11.4` (GB, binary): one decimal below 100, none above.
+pub fn gigabytes(bytes: u64) -> String {
+    let gb = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    if gb < 100.0 {
+        format!("{gb:.1}")
+    } else {
+        format!("{gb:.0}")
+    }
+}
+
+/// One sentence for screen readers and the Status tab.
+pub fn machine_sentence(m: &Machine) -> String {
+    let cpu = match m.cpu_busy() {
+        Some(busy) => format!("CPU {busy:.0} percent busy, {} cores", m.cores),
+        None => format!("CPU measuring, {} cores", m.cores),
+    };
+    let mut parts = vec![cpu];
+    if let Some(used) = m.memory_used() {
+        parts.push(format!(
+            "memory {used:.0} percent used, {} GB free",
+            gigabytes(m.memory_available)
+        ));
+    }
+    if let (Some(used), Some((_, available))) = (m.disk_used(), m.disk) {
+        parts.push(format!(
+            "disk {used:.0} percent used, {} GB free",
+            gigabytes(available)
+        ));
+    }
+    parts.join("; ")
+}
+
+/// A `width`-cell bar filled to `percent` in eighths: full blocks, one partial block,
+/// then spaces for the track.
+pub fn bar_cells(percent: f64, width: usize) -> String {
+    const PARTIAL: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+    let eighths = ((percent.clamp(0.0, 100.0) / 100.0) * (width * 8) as f64).round() as usize;
+    let mut out = "█".repeat(eighths / 8);
+    if !eighths.is_multiple_of(8) {
+        out.push(PARTIAL[eighths % 8 - 1]);
+    }
+    let used = out.chars().count();
+    out.push_str(&" ".repeat(width.saturating_sub(used)));
+    out
+}
+
+/// `[#####.....]` for `NO_COLOR`: `width` cells inside the brackets.
+pub fn bar_text(percent: f64, width: usize) -> String {
+    let filled = ((percent.clamp(0.0, 100.0) / 100.0) * width as f64).round() as usize;
+    format!(
+        "[{}{}]",
+        "#".repeat(filled),
+        ".".repeat(width - filled.min(width))
+    )
+}
+
 /// The instance event stream.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Connection {
@@ -138,6 +258,9 @@ pub enum Part {
     Vcs,
     Health,
     Parent,
+    /// `GET /system`; polled while the sidebar shows (see [`MACHINE_POLL`]), not in
+    /// [`Part::ALL`].
+    Machine,
 }
 
 impl Part {
@@ -161,6 +284,9 @@ pub enum Loaded {
     Vcs(Source<Option<Git>>),
     Version(Option<String>),
     Parent(Option<String>),
+    Machine(Source<Machine>),
+    /// `GET /system` failed: the last sample stays, or `—` before the first.
+    MachineFailed,
     /// A transport error or another status: the last value stays.
     Failed,
 }
@@ -170,6 +296,7 @@ pub enum Loaded {
 pub enum Section {
     Mcp,
     Files,
+    Machine,
 }
 
 /// A row focus can rest on (`<leader>e`).
@@ -218,6 +345,12 @@ pub struct Sidebar {
     pub workflows: Vec<WorkflowRow>,
     /// Active runs beyond those rows (`+N more`).
     pub workflows_more: usize,
+    /// The server machine's last sample.
+    pub machine: Source<Machine>,
+    /// The last `GET /system` failed.
+    pub machine_failed: bool,
+    /// When the next `GET /system` is due; `None` asks at the next tick.
+    pub machine_due: Option<std::time::Instant>,
 }
 
 impl Sidebar {
@@ -235,6 +368,11 @@ impl Sidebar {
             Loaded::Vcs(source) => self.vcs = source,
             Loaded::Version(version) => self.version = version,
             Loaded::Parent(title) => self.parent_title = title,
+            Loaded::Machine(source) => {
+                self.machine = source;
+                self.machine_failed = false;
+            }
+            Loaded::MachineFailed => self.machine_failed = true,
             Loaded::Failed => {}
         }
         if let Some(focus) = self.focus {
@@ -254,6 +392,10 @@ impl Sidebar {
         self.mcp = Source::Pending;
         self.lsp = Source::Pending;
         self.vcs = Source::Pending;
+        // The disk is the Location's volume.
+        self.machine = Source::Pending;
+        self.machine_failed = false;
+        self.machine_due = None;
     }
 
     pub fn servers(&self) -> &[McpServer] {
@@ -273,6 +415,9 @@ impl Sidebar {
                 rows.extend((0..self.servers().len()).map(Row::Mcp));
             }
         }
+        if self.machine_shown() {
+            rows.push(Row::Header(Section::Machine));
+        }
         if !self.changes().is_empty() {
             rows.push(Row::Header(Section::Files));
             if !self.collapsed.contains(&Section::Files) {
@@ -280,6 +425,11 @@ impl Sidebar {
             }
         }
         rows
+    }
+
+    /// The Machine section is drawn: a sample, or a failure before the first one.
+    pub fn machine_shown(&self) -> bool {
+        self.machine.ready().is_some() || self.machine_failed && self.machine == Source::Pending
     }
 
     pub fn focused(&self) -> Option<Row> {
@@ -430,6 +580,25 @@ impl crate::app::App {
     /// Drawn at the current width, docked or as the drawer.
     pub fn sidebar_visible(&self) -> bool {
         !self.screen_reader && (self.sidebar.docked(self.width()) || self.sidebar.drawer)
+    }
+
+    /// `tui.machine_stats` is on.
+    pub fn machine_stats(&self) -> bool {
+        self.prefs.get("machine_stats") != "off"
+    }
+
+    /// `GET /system` when due: only while the sidebar is drawn, the terminal focused
+    /// and `tui.machine_stats` on, at most every [`MACHINE_POLL`].
+    pub fn machine_poll(&mut self) -> Vec<Action> {
+        if !self.machine_stats() || !self.focused || !self.sidebar_visible() {
+            return Vec::new();
+        }
+        let now = self.now();
+        if self.sidebar.machine_due.is_some_and(|due| now < due) {
+            return Vec::new();
+        }
+        self.sidebar.machine_due = Some(now + MACHINE_POLL);
+        vec![Action::LoadSidebar(Part::Machine)]
     }
 
     /// Docked at 120 columns and more; the drawer below, which takes focus so Esc
@@ -602,6 +771,52 @@ mod tests {
         assert_eq!(servers[0].error.as_deref(), Some("boom"));
         assert_eq!(servers[0].word(), "Failed");
         assert_eq!(clean_patch("+x\x1b[2J\ty"), "+x[2J y");
+    }
+
+    #[test]
+    fn bars_fill_in_eighths_and_keep_their_width() {
+        assert_eq!(bar_cells(0.0, 4), "    ");
+        assert_eq!(bar_cells(100.0, 4), "████");
+        assert_eq!(bar_cells(50.0, 4), "██  ");
+        // 18% of 14 cells is 20.16 eighths, rounded to 20: two full cells and a half.
+        assert_eq!(bar_cells(18.0, 14), format!("██▌{}", " ".repeat(11)));
+        assert_eq!(bar_cells(20.0, 5), "█    ");
+        assert_eq!(bar_cells(22.5, 5), "█▏   ");
+        assert_eq!(bar_cells(1.0, 14).chars().next(), Some('▏'));
+        assert_eq!(bar_cells(150.0, 3), "███");
+        assert_eq!(bar_cells(-5.0, 3), "   ");
+        for p in [0.0, 3.3, 18.0, 71.0, 93.0, 100.0] {
+            assert_eq!(bar_cells(p, 14).chars().count(), 14, "{p}");
+        }
+        assert_eq!(bar_text(50.0, 10), "[#####.....]");
+        assert_eq!(bar_text(100.0, 4), "[####]");
+    }
+
+    #[test]
+    fn machine_replies_parse_and_read_as_one_sentence() {
+        let gb = 1u64 << 30;
+        let m = parse_machine(&json!({
+            "hostname_label": "macOS\u{1b}[2J 15.0",
+            "cores_logical": 12,
+            "cpu_idle_percent": 82.0,
+            "load_avg": [2.1, 1.8, 1.6],
+            "memory_total": 16 * gb,
+            "memory_available": 4 * gb,
+            "disk": { "mount": "/", "total": 926 * gb, "available": 15 * gb },
+        }));
+        assert!(!m.label.as_deref().unwrap().contains('\u{1b}'));
+        assert_eq!(m.load, Some([2.1, 1.8, 1.6]));
+        assert_eq!(
+            machine_sentence(&m),
+            "CPU 18 percent busy, 12 cores; memory 75 percent used, 4.0 GB free; disk 98 percent used, 15.0 GB free"
+        );
+        let first = parse_machine(&json!({
+            "cores_logical": 4, "cpu_idle_percent": null, "load_avg": null,
+            "memory_total": 0, "memory_available": 0, "disk": null,
+        }));
+        assert_eq!(first.cpu_busy(), None);
+        assert_eq!(first.disk, None);
+        assert_eq!(machine_sentence(&first), "CPU measuring, 4 cores");
     }
 
     #[test]

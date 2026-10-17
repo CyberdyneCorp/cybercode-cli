@@ -6633,6 +6633,129 @@
         ],
         "description": "Branch, upstream and working-tree state of the repository a Location is in."
       },
+      "Located_Machine": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Machine"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "Machine": {
+        "type": "object",
+        "properties": {
+          "hostname_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The OS name and version, such as `macOS 15.0`; never the host or user name."
+          },
+          "cores_logical": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "cores_physical": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0
+          },
+          "cpu_idle_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`null` until a second CPU sample exists: usage needs two readings."
+          },
+          "load_avg": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "1, 5 and 15 minute load; `null` where the OS has none (Windows)."
+          },
+          "memory_total": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes."
+          },
+          "memory_available": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes."
+          },
+          "disk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiskUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The volume holding the Location; `null` when no mount contains it."
+          },
+          "sampled_at": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Unix milliseconds of this sample."
+          }
+        },
+        "required": [
+          "cores_logical",
+          "memory_total",
+          "memory_available",
+          "sampled_at"
+        ],
+        "description": "One machine sample."
+      },
+      "DiskUsage": {
+        "type": "object",
+        "properties": {
+          "mount": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes."
+          },
+          "available": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes."
+          }
+        },
+        "required": [
+          "mount",
+          "total",
+          "available"
+        ]
+      },
       "Located_Array_of_McpServerStatus": {
         "type": "object",
         "properties": {
@@ -12329,6 +12452,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Vcs"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system": {
+      "get": {
+        "operationId": "v1.system.stats",
+        "summary": "CPU idle, cores, load, memory and the Location's disk on the server's machine",
+        "tags": [
+          "system"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Machine"
                 }
               }
             }

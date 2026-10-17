@@ -796,6 +796,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Located<super::vcs::Vcs>>(g),
         op(
             "get",
+            "/system",
+            "v1.system.stats",
+            "CPU idle, cores, load, memory and the Location's disk on the server's machine",
+        )
+        .located()
+        .ok::<Located<super::system::Machine>>(g),
+        op(
+            "get",
             "/mcp",
             "v1.mcp.status",
             "Inspect configured MCP state and retained ownership observations without startup",

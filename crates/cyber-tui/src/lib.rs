@@ -43,6 +43,8 @@ mod screens_explorer;
 #[cfg(test)]
 mod screens_indicators;
 #[cfg(test)]
+mod screens_machine;
+#[cfg(test)]
 mod screens_markdown;
 #[cfg(test)]
 mod screens_parallel;

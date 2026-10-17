@@ -10,6 +10,7 @@ expression: shown
   › theme                         cyber          default
     theme_mode                    auto           default
     sidebar                       auto           default
+    machine_stats                 on             default
     recap                         auto           default
     spinner                       nyan           default
     workflow_notifications        own            default
@@ -22,7 +23,6 @@ expression: shown
   Saved to kv.json; a later edit of tui.jsonc wins.
 
   Core settings: use cyber config or edit cyber.jsonc
-
 
   ↑↓ select · enter change · tab next tab · 1-4 jump · esc close
  /Users/leo/work/app                         100 (86%) · $0.00  ctrl+p commands

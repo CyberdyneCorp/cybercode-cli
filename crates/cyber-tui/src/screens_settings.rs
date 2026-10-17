@@ -49,6 +49,21 @@ fn stabilize_status(app: &mut App) {
         session.id = "ses_settings".into();
         session.directory = "/Users/leo/work/app".into();
     }
+    // The machine's numbers change from run to run; the route did answer.
+    assert!(
+        matches!(status.machine, Section::Ready(_)),
+        "{:?}",
+        status.machine
+    );
+    status.machine = Section::Ready(Box::new(crate::sidebar::Machine {
+        label: Some("macOS 15.0".into()),
+        cores: 12,
+        cpu_idle: Some(82.0),
+        load: Some([2.1, 1.8, 1.6]),
+        memory_total: 16 << 30,
+        memory_available: 4 << 30,
+        disk: Some((926 << 30, 15 << 30)),
+    }));
 }
 
 /// `test/main` with a display name, a price and a 116-token window.

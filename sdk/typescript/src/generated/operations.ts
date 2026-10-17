@@ -594,6 +594,12 @@ export interface Operations {
     body: undefined;
     response: S.Located_SkillCatalog;
   };
+  "v1.system.stats": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_Machine;
+  };
   "v1.tool.list": {
     path: Record<string, never>;
     query: {
@@ -1704,6 +1710,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.system.stats": {
+    tag: "system",
+    name: "stats",
+    method: "GET",
+    path: "/api/v1/system",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.tool.list": {
     tag: "tool",
     name: "list",
@@ -2217,6 +2235,11 @@ export function createGroups(caller: Caller) {
       /** Skills with source, scope, the agent's permission effect and diagnostics (`GET /api/v1/skills`) */
       list: (query?: Operations["v1.skill.list"]["query"], options?: RequestOptions): Promise<Operations["v1.skill.list"]["response"]> =>
         caller.call("v1.skill.list", { query }, options),
+    },
+    system: {
+      /** CPU idle, cores, load, memory and the Location's disk on the server's machine (`GET /api/v1/system`) */
+      stats: (options?: RequestOptions): Promise<Operations["v1.system.stats"]["response"]> =>
+        caller.call("v1.system.stats", {}, options),
     },
     tool: {
       /** Tools offered for an agent and mode (`GET /api/v1/tools`) */

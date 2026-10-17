@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::app::App;
 use crate::model::{ContextMeter, Session};
-use crate::sidebar::{Git, LspServer, McpServer, clean};
+use crate::sidebar::{Git, LspServer, Machine, McpServer, clean};
 use crate::view::footer::compact;
 
 /// The width of the context meter.
@@ -57,6 +57,8 @@ pub struct Status {
     pub vcs: Section<Option<Git>>,
     pub mcp: Section<Vec<McpServer>>,
     pub lsp: Section<Vec<LspServer>>,
+    /// `GET /system`: the server machine, boxed to keep the message small.
+    pub machine: Section<Box<Machine>>,
 }
 
 /// The tab's rows. `width` is the text width.
@@ -293,6 +295,13 @@ impl Rows<'_> {
             Section::Ready(servers) => out.push(self.text("LSP", lsp_summary(servers))),
             Section::Missing => {}
             Section::Failed(error) => out.push(failed(self.app, "language servers", error)),
+        }
+        match &status.machine {
+            Section::Ready(machine) => {
+                out.push(self.text("Machine", crate::sidebar::machine_sentence(machine)));
+            }
+            Section::Missing => {}
+            Section::Failed(error) => out.push(failed(self.app, "machine stats", error)),
         }
         if let Section::Ready(health) = &status.health {
             if let Some(sandbox) = &health.sandbox {

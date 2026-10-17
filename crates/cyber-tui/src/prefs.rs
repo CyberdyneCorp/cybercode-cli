@@ -170,6 +170,7 @@ pub const EDITABLE: &[(&str, &[&str])] = &[
     ("theme", &["cyber"]),
     ("theme_mode", &["auto", "dark", "light"]),
     ("sidebar", &["auto", "show", "hide"]),
+    ("machine_stats", &["on", "off"]),
     ("recap", &["auto", "off"]),
     ("spinner", crate::progress::Spinner::VALUES),
     (
@@ -185,7 +186,10 @@ pub const EDITABLE: &[(&str, &[&str])] = &[
 
 /// Values written as JSON booleans.
 fn boolean(key: &str) -> bool {
-    matches!(key, "timestamps" | "accessibility.reduced_motion")
+    matches!(
+        key,
+        "timestamps" | "accessibility.reduced_motion" | "machine_stats"
+    )
 }
 
 /// One editable preference.

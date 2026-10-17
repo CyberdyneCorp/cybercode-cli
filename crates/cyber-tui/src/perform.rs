@@ -206,6 +206,16 @@ pub async fn sidebar(client: &Client, session: &Session, part: crate::sidebar::P
         Part::Lsp => source(&at, "/lsp", |s| Loaded::Lsp(s.map(parse_lsp))).await,
         Part::Vcs => source(&at, "/vcs", |s| Loaded::Vcs(s.map(parse_vcs))).await,
         Part::Health => health(&at).await,
+        Part::Machine => {
+            match source(&at, "/system", |s| {
+                Loaded::Machine(s.map(crate::sidebar::parse_machine))
+            })
+            .await
+            {
+                Loaded::Failed => Loaded::MachineFailed,
+                loaded => loaded,
+            }
+        }
         Part::Files => {
             let path = format!("/sessions/{}/diff", encode(&session.id));
             source(&at, &path, |s| Loaded::Files(s.map(parse_files))).await
@@ -373,12 +383,15 @@ pub async fn status(client: &Client, session: &Session) -> crate::settings::stat
     use crate::sidebar::{parse_lsp, parse_mcp, parse_vcs};
     let at = client.at(&session.directory);
     let session_path = format!("/sessions/{}", encode(&session.id));
-    let (health, current, vcs, mcp, lsp) = futures::join!(
+    let (health, current, vcs, mcp, lsp, machine) = futures::join!(
         section(&at, "/health", Health::parse),
         section(&at, &session_path, |v| Session::parse(&v["data"])),
         section(&at, "/vcs", |v| parse_vcs(&v["data"])),
         section(&at, "/mcp", |v| parse_mcp(&v["data"])),
         section(&at, "/lsp", |v| parse_lsp(&v["data"])),
+        section(&at, "/system", |v| Box::new(crate::sidebar::parse_machine(
+            &v["data"]
+        ))),
     );
     Status {
         health,
@@ -386,6 +399,7 @@ pub async fn status(client: &Client, session: &Session) -> crate::settings::stat
         vcs,
         mcp,
         lsp,
+        machine,
     }
 }
 

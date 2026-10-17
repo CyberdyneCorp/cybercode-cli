@@ -25,6 +25,7 @@ pub mod rpc;
 mod serve;
 mod service;
 mod sessions;
+mod system;
 mod usage;
 mod vcs;
 mod workflows;
@@ -512,6 +513,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(memory::routes())
         .merge(usage::routes())
         .merge(vcs::routes())
+        .merge(system::routes())
         .merge(files::routes())
         .merge(worktrees::routes())
         .merge(workflows::routes())

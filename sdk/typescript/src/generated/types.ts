@@ -399,6 +399,14 @@ export type Diagnostic = {
 /** The single kind every Workflow failure is reported with. */
 export type DiagnosticKind = "ParseError" | "UnsupportedSyntax" | "ExecutionFailure" | "AgentFailed" | "SchemaMismatch" | "BudgetExceeded" | "ModelUnavailable" | "NoInteractiveUser" | "Timeout" | "PermissionDenied" | "WorkflowReplayMismatch";
 
+export type DiskUsage = {
+  mount: string;
+  /** Bytes. */
+  total: number;
+  /** Bytes. */
+  available: number;
+};
+
 /** Where a durable event sits in its aggregate's history. */
 export type DurableRef = {
   aggregateID: string;
@@ -855,6 +863,12 @@ export type Located_LspTransition = {
 };
 
 /** A Location-scoped response. */
+export type Located_Machine = {
+  location: LocationInfo;
+  data: Machine;
+};
+
+/** A Location-scoped response. */
 export type Located_McpClosed = {
   location: LocationInfo;
   data: McpClosed;
@@ -958,6 +972,26 @@ export type LspTransition = {
   closed: boolean;
   /** Admission is reopened lazily; this operation starts no language server. */
   reloaded: boolean;
+};
+
+/** One machine sample. */
+export type Machine = {
+  /** The OS name and version, such as `macOS 15.0`; never the host or user name. */
+  hostname_label?: string | null;
+  cores_logical: number;
+  cores_physical?: number | null;
+  /** `null` until a second CPU sample exists: usage needs two readings. */
+  cpu_idle_percent?: number | null;
+  /** 1, 5 and 15 minute load; `null` where the OS has none (Windows). */
+  load_avg?: number[] | null;
+  /** Bytes. */
+  memory_total: number;
+  /** Bytes. */
+  memory_available: number;
+  /** The volume holding the Location; `null` when no mount contains it. */
+  disk?: DiskUsage | null;
+  /** Unix milliseconds of this sample. */
+  sampled_at: number;
 };
 
 /** The hook-related state of the managed policy for one configuration load. */

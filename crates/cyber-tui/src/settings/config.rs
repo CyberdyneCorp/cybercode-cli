@@ -145,6 +145,12 @@ impl App {
                     crate::sidebar::Preference::parse(Some(value)).unwrap_or_default();
                 self.sidebar.toggled = false;
             }
+            "machine_stats" => {
+                // Off hides the section at once; on asks at the next tick.
+                self.sidebar.machine = crate::sidebar::Source::Pending;
+                self.sidebar.machine_failed = false;
+                self.sidebar.machine_due = None;
+            }
             "reasoning" => self.show_reasoning = value == "expanded",
             "timestamps" => self.timestamps = value == "on",
             "accessibility.reduced_motion" => {

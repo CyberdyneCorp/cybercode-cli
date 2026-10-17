@@ -1,0 +1,90 @@
+---
+source: crates/cyber-tui/src/screens_machine.rs
+expression: screen
+---
+› How do I speed up fib?
+                                                                                                                  Theme baseline
+  Plan
+                                                                                                                  Context
+  This keeps the cache warm:                                                                                      100 tokens
+                                                                                                                  — spent
+  1. Memoization: results are cached
+                                                                                                                  LSP
+  • avoids recomputation                                                                                          LSPs will activate as files are read
+
+    rust                                                                                                          ▼ Machine                         macOS 15.0
+    fn fib(n: u64) -> u64 { n }                                                                                   CPU  ██▌             18%
+                                                                                                                       12 cores · 82% idle
+  ▣ Build · main · 11.3s                                                                                          Mem  ██████████      71%
+                                                                                                                       11.4 / 16.0 GB · 4.6 free
+                                                                                                                  Disk █████████████   93%
+                                                                                                                       861 / 926 GB · 64.8 free
+                                                                                                                  load 2.1 1.8 1.6
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                                 ~/work/app
+┃ Build · main test · default
+ /Users/leo/work/app                                                                   100 · —  ctrl+p commands   ● Cyber Code 1.0.0
+row 6: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 6: 2-4 fg=#6b7a8f bg=#0b0f14
+row 6: 5-16 fg=#d6e4f0 bg=#0b0f14 bold
+row 6: 17-111 fg=#d6e4f0 bg=#0b0f14
+row 6: 112-159 fg=#d6e4f0 bg=#13181d
+row 11: 0-1 fg=#d6e4f0 bg=#0b0f14
+row 11: 2-3 fg=#d6e4f0 bg=#171c21
+row 11: 4-6 fg=#c792ea bg=#171c21
+row 11: 7-9 fg=#00e5ff bg=#171c21
+row 11: 10-10 fg=#6b7a8f bg=#171c21
+row 11: 11-11 fg=#d6e4f0 bg=#171c21
+row 11: 12-12 fg=#6b7a8f bg=#171c21
+row 11: 13-16 fg=#c792ea bg=#171c21
+row 11: 17-17 fg=#6b7a8f bg=#171c21
+row 11: 18-18 fg=#c792ea bg=#171c21
+row 11: 19-20 fg=#6b7a8f bg=#171c21
+row 11: 21-25 fg=#c792ea bg=#171c21
+row 11: 26-26 fg=#6b7a8f bg=#171c21
+row 11: 27-29 fg=#c792ea bg=#171c21
+row 11: 30-30 fg=#6b7a8f bg=#171c21
+row 11: 31-110 fg=#d6e4f0 bg=#171c21
+row 11: 111-111 fg=#d6e4f0 bg=#0b0f14
+row 11: 112-113 fg=#d6e4f0 bg=#13181d
+row 11: 114-118 fg=#6b7a8f bg=#13181d
+row 11: 119-132 fg=#7ee787 bg=#2b3445
+row 11: 133-159 fg=#d6e4f0 bg=#13181d
+row 13: 0-8 fg=#00e5ff bg=#0b0f14
+row 13: 9-23 fg=#6b7a8f bg=#0b0f14
+row 13: 24-111 fg=#d6e4f0 bg=#0b0f14
+row 13: 112-113 fg=#d6e4f0 bg=#13181d
+row 13: 114-118 fg=#6b7a8f bg=#13181d
+row 13: 119-132 fg=#ffcc66 bg=#2b3445
+row 13: 133-159 fg=#d6e4f0 bg=#13181d
+row 15: 0-111 fg=#d6e4f0 bg=#0b0f14
+row 15: 112-113 fg=#d6e4f0 bg=#13181d
+row 15: 114-118 fg=#6b7a8f bg=#13181d
+row 15: 119-132 fg=#ff6b6b bg=#2b3445
+row 15: 133-159 fg=#d6e4f0 bg=#13181d

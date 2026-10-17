@@ -242,8 +242,9 @@ async fn event_loop(
             },
             _ = tick.tick() => {
                 server.tick(app, client).await;
-                let actions = app.admissions.poll();
+                let mut actions = app.admissions.poll();
                 app.refresh_admissions();
+                actions.extend(app.machine_poll());
                 actions
             },
         };

@@ -8,7 +8,7 @@ mod messages;
 mod overlays;
 pub(crate) mod progress;
 mod settings;
-mod sidebar;
+pub(crate) mod sidebar;
 mod themes;
 pub mod welcome;
 mod workflows;

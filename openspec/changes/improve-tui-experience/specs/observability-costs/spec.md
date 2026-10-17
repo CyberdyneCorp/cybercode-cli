@@ -77,6 +77,17 @@ It SHALL also return `subagents`: the share of the window total per subagent gro
 - **WHEN** one response reported the 5-hour window at 25% and a later one at 50%
 - **THEN** `GET /api/v1/usage/limits` lists that window once, at 50%, with the later observation time
 
+### Requirement: Machine stats API
+(P1) `GET /api/v1/system` SHALL report the machine the server runs on for the request's Location: `hostname_label` (the OS name and version, never the host or user name), `cores_logical`, `cores_physical` (or `null`), `cpu_idle_percent` (`null` until two CPU readings exist), `load_avg` (1, 5 and 15 minutes; `null` where the OS has none), `memory_total` and `memory_available` in bytes, `disk` (`{mount, total, available}` in bytes for the mount that holds the Location, or `null`) and `sampled_at` in Unix milliseconds. The server SHALL keep one sampler and SHALL refresh only CPU usage, memory and the matched disk, at most every 2 seconds, serving the cached sample in between. It SHALL never enumerate processes. The route SHALL use the same authentication as the other routes.
+
+#### Scenario: Cached sample
+- **WHEN** two requests arrive less than 2 seconds apart
+- **THEN** both return the same `sampled_at`, and a request after 2 seconds returns a new sample with `cpu_idle_percent` between 0 and 100
+
+#### Scenario: First reading
+- **WHEN** the first request after the server starts arrives
+- **THEN** `cpu_idle_percent` is `null`
+
 ## MODIFIED Requirements
 
 ### Requirement: Context window meter

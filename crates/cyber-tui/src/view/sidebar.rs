@@ -82,6 +82,7 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
     workflows(app, width, &mut out);
     mcp(app, width, &mut out);
     lsp(app, width, &mut out);
+    machine(app, width, &mut out);
     files(app, width, &mut out);
     out
 }
@@ -270,6 +271,129 @@ fn lsp(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
             ),
         ]));
     }
+}
+
+/// Cells of a Machine bar at most; narrower sidebars shrink it.
+const MACHINE_BAR: usize = 14;
+/// Below this percent a Machine bar is `success`, then `warning` up to [`MACHINE_HIGH`].
+const MACHINE_WARN: f64 = 70.0;
+/// From this percent a Machine bar is `error`.
+const MACHINE_HIGH: f64 = 90.0;
+
+/// The Machine bar's color for `percent` in use.
+pub fn machine_color(t: &Tokens, percent: f64) -> Color {
+    if percent >= MACHINE_HIGH {
+        t.error
+    } else if percent >= MACHINE_WARN {
+        t.warning
+    } else {
+        t.success
+    }
+}
+
+/// `▼ Machine  macOS 15.0`, then CPU, Mem and Disk bars with their details and the load
+/// line; `—` when `GET /system` failed before any sample.
+fn machine(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
+    if !app.machine_stats() || !app.sidebar.machine_shown() {
+        return;
+    }
+    let t = &app.theme;
+    let collapsed = app.sidebar.collapsed.contains(&Section::Machine);
+    let arrow = if collapsed { "▶" } else { "▼" };
+    let title = format!("{arrow} Machine");
+    let label = app
+        .sidebar
+        .machine
+        .ready()
+        .and_then(|m| m.label.clone())
+        .unwrap_or_default();
+    out.push(Line::default());
+    let room = width.saturating_sub(title.chars().count() + 1);
+    let mut line = header(app, Some(Row::Header(Section::Machine)), title);
+    if !label.is_empty() && room > 3 {
+        let label = truncate_end(&label, room);
+        let pad = room - label.chars().count();
+        line.spans.push(Span::styled(
+            format!(" {}{label}", " ".repeat(pad)),
+            Style::default().fg(t.text_muted),
+        ));
+    }
+    out.push(line);
+    if collapsed {
+        return;
+    }
+    let Some(m) = app.sidebar.machine.ready() else {
+        out.push(muted_line(app, "—"));
+        return;
+    };
+    let bar = MACHINE_BAR.min(width.saturating_sub(11)).max(4);
+    let cpu_detail = match m.cpu_idle {
+        Some(idle) => format!("{} cores · {idle:.0}% idle", m.cores),
+        None => format!("{} cores · measuring", m.cores),
+    };
+    machine_row(app, "CPU", m.cpu_busy(), bar, &cpu_detail, width, out);
+    let memory = format!(
+        "{} / {} GB · {} free",
+        crate::sidebar::gigabytes(m.memory_total.saturating_sub(m.memory_available)),
+        crate::sidebar::gigabytes(m.memory_total),
+        crate::sidebar::gigabytes(m.memory_available)
+    );
+    machine_row(app, "Mem", m.memory_used(), bar, &memory, width, out);
+    if let Some((total, available)) = m.disk {
+        let disk = format!(
+            "{} / {} GB · {} free",
+            crate::sidebar::gigabytes(total.saturating_sub(available)),
+            crate::sidebar::gigabytes(total),
+            crate::sidebar::gigabytes(available)
+        );
+        machine_row(app, "Disk", m.disk_used(), bar, &disk, width, out);
+    }
+    if let Some([one, five, fifteen]) = m.load {
+        out.push(muted_line(
+            app,
+            &truncate_end(&format!("load {one:.1} {five:.1} {fifteen:.1}"), width),
+        ));
+    }
+}
+
+/// `CPU  ███▍          18%` and, indented under the bar, the detail line.
+fn machine_row(
+    app: &App,
+    name: &str,
+    percent: Option<f64>,
+    bar: usize,
+    detail: &str,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let t = &app.theme;
+    let mut spans = vec![Span::styled(
+        format!("{name:<5}"),
+        Style::default().fg(t.text_muted),
+    )];
+    match percent {
+        Some(p) if t.monochrome => {
+            spans.push(Span::raw(crate::sidebar::bar_text(
+                p,
+                bar.saturating_sub(2),
+            )));
+        }
+        Some(p) => spans.push(Span::styled(
+            crate::sidebar::bar_cells(p, bar),
+            Style::default().fg(machine_color(t, p)).bg(t.border),
+        )),
+        None => spans.push(Span::styled(" ".repeat(bar), Style::default().bg(t.border))),
+    }
+    let shown = percent.map_or_else(|| "  —".to_owned(), |p| format!("{:>3.0}%", p));
+    spans.push(Span::styled(
+        format!(" {shown}"),
+        Style::default().fg(t.text),
+    ));
+    out.push(Line::from(spans));
+    out.push(muted_line(
+        app,
+        &format!("     {}", truncate_end(detail, width.saturating_sub(5))),
+    ));
 }
 
 fn files(app: &App, width: usize, out: &mut Vec<Line<'static>>) {

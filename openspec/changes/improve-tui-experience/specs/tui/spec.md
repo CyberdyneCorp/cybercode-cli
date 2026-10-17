@@ -145,6 +145,27 @@ MCP rows SHALL update from `mcp.status.changed.1` and `mcp.tools.changed.1`, Mod
 - **WHEN** no language server has started in the Location
 - **THEN** the LSP section reads `LSPs will activate as files are read`
 
+### Requirement: Machine stats
+(P1) Below LSP, the sidebar SHALL show a collapsible `▼ Machine` section about the machine the server runs on, from `GET /api/v1/system`, with the OS label right-aligned in the header. It SHALL have:
+- `CPU`: a busy-percent bar and `N cores · X% idle`. Before the server has two CPU readings, the bar is empty and the text reads `N cores · measuring`.
+- `Mem`: a used-percent bar and `used / total GB · free`.
+- `Disk`: a used-percent bar for the Location's volume and `used / total GB · free`.
+- `load a b c` where the server reports a load average.
+
+Each bar SHALL be one row of eighth-block glyphs (`▏▎▍▌▋▊▉█`) on the `border` track, colored `success` below 70%, `warning` from 70% to 90% and `error` from 90%. Under `NO_COLOR` the bars SHALL be `[#####.....]` text. The TUI SHALL read the route every 3 seconds, and only while the sidebar is drawn (docked or as the drawer), the terminal is focused and `tui.machine_stats` is `on` (default; editable in the Config tab). A failed read SHALL keep the last sample, show `—` before the first one and raise no toast; a 404 or 503 SHALL omit the section. The Status tab SHALL show the same data as one `Machine:` sentence, which is also the screen-reader text, for example `CPU 18 percent busy, 12 cores; memory 71 percent used, 4.6 GB free; disk 93 percent used, 15 GB free`.
+
+#### Scenario: Machine bars
+- **WHEN** the sidebar is docked and the server reports 82% CPU idle on 12 cores, 71% of memory and 93% of the Location's disk in use
+- **THEN** the Machine section shows a green CPU bar at 18% with `12 cores · 82% idle`, an amber memory bar at 71% and a red disk bar at 93%
+
+#### Scenario: No polling while hidden
+- **WHEN** the sidebar is hidden, the terminal loses focus or `tui.machine_stats` is `off`
+- **THEN** the TUI makes no `GET /system` request until the sidebar is drawn again on a focused terminal
+
+#### Scenario: First sample
+- **WHEN** the server has only one CPU reading
+- **THEN** the CPU row shows an empty bar and `measuring`, never an invented percentage
+
 ### Requirement: Responsive layout
 (P1) The layout SHALL adapt to the terminal size, recomputed on every resize:
 - 120 columns or more: transcript, plus the sidebar when it is enabled
