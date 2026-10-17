@@ -10,17 +10,23 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 - **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: 7 of the 10 tools ship, and messaging is not implemented yet.
 - **Recovery and confinement.** Shadow-git snapshots restore files without overwriting your own edits. Commands run in an OS sandbox on macOS and Linux (Windows is incomplete).
 - **Open contracts.** Behavior is specified as [OpenSpec requirements](openspec/specs) tagged by phase and validated in CI, and implementation evidence is published ([P1](docs/implementation/p1-status.md), [P2](docs/implementation/p2-status.md)).
-- **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar, the `Ctrl+P` palette, a file explorer, a workflows monitor, and Usage/Stats tabs (also as `cyber stats`).
+- **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar with machine stats (CPU, memory, disk), the `Ctrl+P` palette, a file explorer, a workflows monitor, Usage/Stats tabs (also as `cyber stats`), and `/rename` to name a Session and resume it later by title.
 
 ## Screenshots
 
-Real captures of the TUI in a pseudo-terminal at 160×48, against a scripted local model (not live inference). [How they were made](docs/screenshots/README.md).
+Real captures of the TUI in a 160×48 pseudo-terminal against a scripted local model (not live inference); the Machine bars are live readings of the capturing machine. Regenerate them with `just screenshots` ([how](docs/screenshots/README.md)).
 
-| Welcome screen | Transcript with docked sidebar |
+| Welcome screen with the Machine sidebar | Transcript: Markdown, highlighted code, turn marker |
 |---|---|
-| ![Welcome screen with the ASCII logo, session details and tips](docs/screenshots/welcome.png) | ![Rendered Markdown and highlighted Python next to the Context, MCP and LSP sidebar](docs/screenshots/transcript-sidebar.png) |
-| **`/workflows` monitor: three runs and one queued** | **Settings › Stats** |
-| ![Workflows monitor with three running runs, one queued run and per-run progress](docs/screenshots/workflows-monitor.png) | ![Stats tab with the activity heatmap, streaks, tokens and cost](docs/screenshots/stats.png) |
+| ![Welcome screen with the ASCII logo, session details, tips and the sidebar with Context, MCP, LSP and Machine stats](docs/screenshots/welcome.png) | ![Rendered Markdown and a highlighted Python block next to the sidebar](docs/screenshots/transcript-sidebar.png) |
+| **Thinking: the Nyan progress indicator** | **`/workflows`: three runs and one queued** |
+| ![Animated Nyan comet trail with Thinking, elapsed time and the interrupt hint](docs/screenshots/thinking.gif) | ![Workflows monitor with three running runs, one queued run and per-run progress](docs/screenshots/workflows-monitor.png) |
+| **File explorer with a rendered Markdown preview** | **`/theme` switcher with live preview** |
+| ![File explorer tree with git status and sizes next to a rendered docs/README.md](docs/screenshots/explorer.png) | ![Theme switcher previewing synthwave-84](docs/screenshots/themes.png) |
+| **Settings › Stats** | **Light theme** |
+| ![Stats tab with the activity heatmap, streaks, tokens, cost and the book comparison line](docs/screenshots/stats.png) | ![The transcript and sidebar in the cyber-light theme](docs/screenshots/light.png) |
+
+More: [Settings › Usage](docs/screenshots/usage.png), [the `/rename` dialog](docs/screenshots/rename.png) and [a Turn in progress](docs/screenshots/thinking.png).
 
 ## Start here
 
@@ -61,7 +67,7 @@ Use `--model provider/model` to select a model. Remote MCP servers that need OAu
 | Hooks | Command, HTTP, prompt and MCP-tool handlers; managed-only org policy | Plugin hooks pending |
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review`, `/customize-cyber`; remote sources; `cyber review` | Plugin skills pending |
 | Instructions | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`; confined `@path` imports | [Guide](docs/local-core-guide.md#project-instructions-and-cybermd) |
-| TUI | Themes, Markdown, sidebar, palette, explorer, Settings/Usage/Stats, recaps | Some Settings extras pending |
+| TUI | Themes, Markdown, sidebar with machine stats, palette, explorer, Settings/Usage/Stats, recaps, `/rename` | Some Settings extras pending |
 | Clients | TUI, `exec`, background service, HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
 | Partial P1 | Subagents/worktrees, cancellation, budgets, memory, LSP, formatting, migration previews | [P1 status](docs/implementation/p1-status.md) |
 

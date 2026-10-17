@@ -125,3 +125,11 @@ api *args: build
 [positional-arguments]
 sandboxed *args: build
     CYBER_HOME="$(mktemp -d)" {{ cyber }} "$@"
+
+# --- Docs ---------------------------------------------------------------------
+
+# Recapture docs/screenshots from the real TUI (needs pyte and pillow, and Chrome).
+# PY selects the interpreter, e.g. `PY=/tmp/cyber-shots/bin/python just screenshots`.
+screenshots:
+    cargo build -p cyber-cli
+    "${PY:-python3}" scripts/capture_tui_screens.py --binary {{ cyber }}

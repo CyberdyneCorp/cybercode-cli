@@ -1,32 +1,37 @@
 # Screenshots
 
-These are real captures of the Cyber Code TUI, not mockups or generated product screens. They were taken on **2026-10-16** on macOS arm64 with the local debug binary, during the acceptance runs for the TUI overhaul (`improve-tui-experience`) and parallel workflow runs (`add-parallel-workflow-runs`).
+These are real captures of the Cyber Code TUI, not mockups. `scripts/capture_tui_screens.py` runs the local `cyber` binary in a 160×48 pseudo-terminal (Python `pty`, with [pyte](https://github.com/selectel/pyte) as the terminal emulator), writes each screen as HTML with inline colors, and turns it into a PNG with headless Chrome.
 
-The model is a **scripted local OpenAI-compatible provider**: it returns fixed answers, so no live inference happened. Session names, token counts and costs come from those scripted turns.
+The model is a **scripted local OpenAI-compatible provider** (`scripts/screens/provider.py`): it returns fixed answers and holds chosen requests until released, so no live inference happens and nothing leaves the machine. A local stdio MCP test server stands in for an MCP connection. Everything runs in a temporary HOME/CYBER_HOME with a small copy of this repository as the project.
 
-## How they were made
+Two things are not scripted:
 
-1. A real local `cyber` server ran in a temporary home with a demo project and the scripted provider configured.
-2. `./target/debug/cyber` ran in a 160×48 pseudo-terminal (Python `pty`), with [pyte](https://github.com/selectel/pyte) as the terminal emulator.
-3. Each pyte screen was written to HTML with inline colors and saved as a PNG. The HTML title band was then cropped off with Pillow.
+- **Machine stats** in the sidebar (CPU, memory, disk, load) are live readings of the machine that took the captures.
+- **Stats history** (the heatmap, streaks and totals) is seeded fixture usage for earlier days, written into the temporary database before the TUI starts. Today's usage comes from the scripted Turns.
+
+## Regenerating
+
+```bash
+python3 -m venv /tmp/cyber-shots
+/tmp/cyber-shots/bin/pip install pyte pillow
+PY=/tmp/cyber-shots/bin/python just screenshots
+```
+
+`--chrome` (or `CYBER_SHOTS_CHROME`) points at another Chrome or Chromium binary; without one the script stops with a message. `--out` writes elsewhere. It takes about two minutes.
 
 ## Images
 
 | File | Screen |
 |---|---|
-| [`welcome.png`](welcome.png) | Welcome screen: ASCII logo, agent/model/mode/path/MCP/LSP details, tips, and the docked sidebar |
-| [`transcript-sidebar.png`](transcript-sidebar.png) | A turn with rendered Markdown (bold, lists, highlighted Python block), the `▣ Build · model · duration` marker, and the sidebar with Context, MCP and LSP |
-| [`stats.png`](stats.png) | Settings › Stats › Overview: activity heatmap, period and project filters, sessions, streaks, tokens and cost |
-| [`workflows-monitor.png`](workflows-monitor.png) | `/workflows` monitor with three running runs and one queued (`#1 in queue`), agent counts `done/running/queued/failed`, and the `⚙ 4 workflows · 1 queued` footer |
+| [`welcome.png`](welcome.png) | Welcome screen: the ASCII logo, session details, tips, and the docked sidebar with Context, MCP, LSP and Machine |
+| [`transcript-sidebar.png`](transcript-sidebar.png) | A finished Turn: rendered Markdown, a highlighted Python block and the `▣ Build · model · duration` marker |
+| [`thinking.png`](thinking.png), [`thinking.gif`](thinking.gif) | A Turn in progress with the Nyan comet trail, `Thinking`, the elapsed time and the interrupt hint (the GIF is 24 consecutive captures) |
+| [`rename.png`](rename.png) | The `/rename` dialog, prefilled with the Session's current title |
+| [`themes.png`](themes.png) | The `/theme` switcher previewing `synthwave-84` |
+| [`explorer.png`](explorer.png) | The file explorer with `docs/` expanded and `docs/README.md` rendered |
+| [`usage.png`](usage.png) | Settings › Usage: cost, durations, usage by model, tokens and contributing factors |
+| [`stats.png`](stats.png) | Settings › Stats: activity heatmap, streaks, totals and the book comparison line |
+| [`workflows-monitor.png`](workflows-monitor.png) | `/workflows` with three running runs and one queued (`#1 in queue`) |
+| [`light.png`](light.png) | The transcript and sidebar in the `cyber-light` theme |
 
-## Older captures
-
-`tui.png` (offline startup at 112×30) and `cli.png` (the commands section of `cyber --help`) were captured on 2026-10-10 by `scripts/capture_docs.py`, which renders terminal output with Monaco:
-
-```bash
-python3 -m venv /tmp/cyber-docs-render-env
-/tmp/cyber-docs-render-env/bin/pip install pillow pyte
-/tmp/cyber-docs-render-env/bin/python scripts/capture_docs.py
-```
-
-That script creates and removes its own temporary home and demo repository and runs a private embedded server. On other systems, pass `--font /path/to/monospace.ttf`; use `--binary` to select another built CLI. It does not produce the four TUI captures above.
+`scripts/capture_docs.py` is the older renderer for plain terminal output; its images are no longer used here.
