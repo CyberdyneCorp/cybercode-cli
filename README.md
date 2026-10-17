@@ -40,6 +40,8 @@ export OPENAI_API_KEY="your-key"
 ./target/debug/cyber exec "fix the failing test"  # one task
 ./target/debug/cyber review main..HEAD            # read-only review with sorted findings
 ./target/debug/cyber --continue                   # resume the latest session
+./target/debug/cyber -r "auth refactor"           # resume a Session by title (name it with /rename)
+./target/debug/cyber sessions list                # list, show, rename or delete Sessions
 ./target/debug/cyber workflows run fanout --wait  # run a saved Workflow; progress on stderr
 ./target/debug/cyber stats --models               # local usage stats
 ./target/debug/cyber doctor                       # check your setup
@@ -58,7 +60,7 @@ Use `--model provider/model` to select a model. Remote MCP servers that need OAu
 | Area | Today | Details |
 |---|---|---|
 | Coding | Read/search, edit files and notebook cells, run commands, web tools | [Features](docs/features.md) |
-| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction | [Features](docs/features.md) |
+| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions) |
 | Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
 | Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
 | Workflows (P2) | QuickJS sandbox, `agent()`/`parallel()`/`pipeline()`, determinism guards, durable replay, budgets, model tiers, parallel runs with fair scheduling and a queue | [Guide](docs/local-core-guide.md#workflows-p2-m21); `ask()`, `exec --workflow` not yet |
@@ -68,7 +70,7 @@ Use `--model provider/model` to select a model. Remote MCP servers that need OAu
 | Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review`, `/customize-cyber`; remote sources; `cyber review` | Plugin skills pending |
 | Instructions | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`; confined `@path` imports | [Guide](docs/local-core-guide.md#project-instructions-and-cybermd) |
 | TUI | Themes, Markdown, sidebar with machine stats, palette, explorer, Settings/Usage/Stats, recaps, `/rename` | Some Settings extras pending |
-| Clients | TUI, `exec`, background service, HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
+| Clients | TUI, `exec`, background service (an idle server from an older build is replaced automatically), HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
 | Partial P1 | Subagents/worktrees, cancellation, budgets, memory, LSP, formatting, migration previews | [P1 status](docs/implementation/p1-status.md) |
 
 ## How it compares
