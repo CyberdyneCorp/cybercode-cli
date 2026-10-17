@@ -153,7 +153,7 @@ impl Fixture {
     }
 
     /// The owner's TUI with `/workflows` open and its first reads applied.
-    async fn monitor(&self) -> App {
+    pub(crate) async fn monitor(&self) -> App {
         let mut app = self.server.load(&self.owner).await;
         app.utc_offset_minutes = Some(0);
         app.home = Some("/Users/leo".into());
@@ -208,11 +208,11 @@ fn type_line(app: &mut App, line: &str) {
     app.completion = None;
 }
 
-fn press(app: &mut App, code: KeyCode) -> Vec<Action> {
+pub(crate) fn press(app: &mut App, code: KeyCode) -> Vec<Action> {
     app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
-fn key(app: &mut App, c: char) -> Vec<Action> {
+pub(crate) fn key(app: &mut App, c: char) -> Vec<Action> {
     press(app, KeyCode::Char(c))
 }
 
@@ -230,7 +230,7 @@ pub(crate) fn text(buf: &Buffer) -> String {
 }
 
 /// The screen row naming `name` in the run list.
-fn row(buf: &Buffer, name: &str) -> String {
+pub(crate) fn row(buf: &Buffer, name: &str) -> String {
     text(buf)
         .lines()
         .find(|line| line.contains(&format!(" {name} ")))
@@ -238,7 +238,7 @@ fn row(buf: &Buffer, name: &str) -> String {
         .to_owned()
 }
 
-fn select(app: &mut App, name: &str) {
+pub(crate) fn select(app: &mut App, name: &str) {
     let index = app
         .workflows
         .summaries()
@@ -249,7 +249,7 @@ fn select(app: &mut App, name: &str) {
 }
 
 /// What differs between runs: the temporary directory, times, spend and IDs.
-fn stabilized(app: &mut App, render_it: impl FnOnce(&mut App) -> String) -> String {
+pub(crate) fn stabilized(app: &mut App, render_it: impl FnOnce(&mut App) -> String) -> String {
     let saved = (
         app.session.directory.clone(),
         app.workflows.directory.clone(),

@@ -301,3 +301,40 @@ async fn read_and_write_tool_cards_highlight_by_file_extension() {
     assert_eq!(cell(&buf, "Created src/lib.rs").fg, t.text_muted);
     assert_eq!(cell(&buf, "fn main").fg, t.syntax_keyword);
 }
+
+/// A long user message and a long tool output line wrap under their own indent and
+/// gutter instead of column 0, and a `read` row's wrapped rows continue under its code
+/// rather than under its line number, where they would read as another numbered line.
+#[tokio::test]
+async fn wrapped_user_messages_and_tool_output_keep_their_gutter() {
+    let server = Server::start().await;
+    let long = "# a comment that is much longer than the card is wide, so it has to wrap twice over the rows below it before the code that it explains starts";
+    std::fs::write(
+        server.root().join("fib.py"),
+        format!("{long}\ndef fib(n):\n"),
+    )
+    .unwrap();
+    let id = server
+        .answered("READ fib.py and tell me why the comment at its top is so long that it wraps over more than one row")
+        .await;
+    let mut app = server.app(&id).await;
+    let opts = Opts {
+        legend: &["› READ", "  ver more", "│ 1 # a", "│   p twice"],
+        ..Opts::default()
+    };
+    insta::assert_snapshot!("wrapped_gutter_80x24", render(&mut app, 80, 24, &opts));
+    let buf = buffer(&mut app, 80, 24, &Opts::default());
+    let shown = screen_text(&buf);
+    let rows: Vec<&str> = shown.lines().collect();
+    let user = rows.iter().position(|r| r.starts_with("› READ")).unwrap();
+    assert!(
+        rows[user + 1].starts_with("  ") && !rows[user + 1].starts_with("   "),
+        "{shown}"
+    );
+    let first = rows
+        .iter()
+        .position(|r| r.contains("│ 1 # a comment"))
+        .unwrap();
+    assert!(rows[first + 1].starts_with("    │   p twice"), "{shown}");
+    assert!(rows[first + 2].starts_with("    │ 2 def fib"), "{shown}");
+}

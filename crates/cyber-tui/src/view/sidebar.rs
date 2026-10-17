@@ -141,8 +141,8 @@ fn context(app: &App, out: &mut Vec<Line<'static>>) {
 /// Cells of a Workflows row's bar.
 const WORKFLOW_BAR: usize = 6;
 
-/// `audit  ▀▀····  31/100` per active run, the current Session's first, then `+N more`;
-/// omitted when no run is active.
+/// `audit  ▀▀····  31/100` per active run (`#2 in queue` for a queued one), the current
+/// Session's first, then `+N more`; omitted when no run is active.
 fn workflows(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     let rows = &app.sidebar.workflows;
     if rows.is_empty() {
@@ -152,20 +152,14 @@ fn workflows(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     out.push(Line::default());
     out.push(header(app, None, "Workflows".into()));
     for (i, run) in rows.iter().enumerate() {
-        let count = format!(" {}/{}", run.done.min(run.total), run.total);
-        let name_room = width.saturating_sub(WORKFLOW_BAR + count.len() + 1);
+        let tail = workflow_tail(app, run);
+        let tail_width: usize = tail.iter().map(Span::width).sum();
+        let name_room = width.saturating_sub(tail_width + 1);
         let mut spans = vec![Span::styled(
             format!("{:<name_room$} ", truncate_end(&run.name, name_room)),
             Style::default().fg(t.text),
         )];
-        spans.extend(super::progress::bar(
-            app,
-            run.done,
-            run.total,
-            WORKFLOW_BAR,
-            0,
-        ));
-        spans.push(Span::styled(count, Style::default().fg(t.text_muted)));
+        spans.extend(tail);
         out.push(focusable(app, Some(Row::Workflow(i)), spans));
     }
     if app.sidebar.workflows_more > 0 {
@@ -174,6 +168,21 @@ fn workflows(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
             &format!("+{} more", app.sidebar.workflows_more),
         ));
     }
+}
+
+/// A Workflows row after the name: the bar and `done/total`, or the queue position.
+fn workflow_tail(app: &App, run: &crate::sidebar::WorkflowRow) -> Vec<Span<'static>> {
+    let t = &app.theme;
+    if let Some(n) = run.queue_position {
+        return vec![Span::styled(
+            format!("#{n} in queue"),
+            Style::default().fg(t.info),
+        )];
+    }
+    let count = format!(" {}/{}", run.done.min(run.total), run.total);
+    let mut spans = super::progress::bar(app, run.done, run.total, WORKFLOW_BAR, 0);
+    spans.push(Span::styled(count, Style::default().fg(t.text_muted)));
+    spans
 }
 
 /// The dot color of an MCP status word.

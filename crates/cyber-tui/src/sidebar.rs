@@ -190,6 +190,8 @@ pub struct WorkflowRow {
     pub name: String,
     pub done: u64,
     pub total: u64,
+    /// Queued: its place in the queue, shown instead of the bar.
+    pub queue_position: Option<u64>,
 }
 
 /// Modified files shown before `+N more`.

@@ -9,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::wrap::wrap;
+use super::wrap::{wrap, wrap_hanging};
 use crate::app::App;
 use crate::markdown::{Ctx, Rendered};
 use crate::model::{Item, Tool};
@@ -71,6 +71,12 @@ struct Out<'a> {
 impl Out<'_> {
     fn push(&mut self, line: Line<'static>) {
         self.rendered.lines.extend(wrap(line, self.ctx.width));
+    }
+
+    /// [`Out::push`], with the wrapped rows continuing after `hang`.
+    fn push_hanging(&mut self, line: Line<'static>, hang: Span<'static>) {
+        let rows = wrap_hanging(line, self.ctx.width, &[hang]);
+        self.rendered.lines.extend(rows);
     }
 
     fn markdown(&mut self, rendered: &Rendered) {
@@ -190,15 +196,16 @@ fn item_lines(app: &App, item: &Item, out: &mut Out) {
     let t = &app.theme;
     match item {
         Item::User { text, .. } => {
+            let bold = Style::default().fg(t.user).add_modifier(Modifier::BOLD);
             for (i, line) in text.lines().enumerate() {
                 let prefix = if i == 0 { "› " } else { "  " };
-                out.push(Line::from(vec![
-                    Span::styled(
-                        prefix,
-                        Style::default().fg(t.user).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(line.to_string(), Style::default().fg(t.user)),
-                ]));
+                out.push_hanging(
+                    Line::from(vec![
+                        Span::styled(prefix, bold),
+                        Span::styled(line.to_string(), Style::default().fg(t.user)),
+                    ]),
+                    Span::styled("  ", bold),
+                );
             }
         }
         Item::System { text, .. } => {
@@ -314,11 +321,26 @@ fn tool_card(app: &App, tool: &Tool, out: &mut Out) {
             Style::default().fg(t.text_muted),
         )));
     }
+    let gutter = Span::styled("    │ ", Style::default().fg(t.border));
     for line in shown {
-        let mut spans = vec![Span::styled("    │ ", Style::default().fg(t.border))];
+        let mut spans = vec![gutter.clone()];
         spans.extend(line.spans.iter().cloned());
-        out.push(Line::from(spans));
+        let hang = format!("    │ {:1$}", "", number_width(tool, line));
+        out.push_hanging(Line::from(spans), Span::styled(hang, gutter.style));
     }
+}
+
+/// Columns of a highlighted `read` row's line number (`12 `), so that its wrapped rows
+/// continue under the code instead of reading as another line number; 0 otherwise.
+fn number_width(tool: &Tool, line: &Line) -> usize {
+    if tool.name != "read" {
+        return 0;
+    }
+    let number = |s: &&Span| {
+        let n = s.content.trim_start();
+        n.len() > 1 && n.ends_with(' ') && n.trim_end().bytes().all(|b| b.is_ascii_digit())
+    };
+    line.spans.first().filter(number).map_or(0, Span::width)
 }
 
 /// A tool's output rows; `read` and `write` code highlighted by the file's syntax once

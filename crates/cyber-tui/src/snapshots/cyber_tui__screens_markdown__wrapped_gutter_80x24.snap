@@ -1,0 +1,41 @@
+---
+source: crates/cyber-tui/src/screens_markdown.rs
+expression: "render(&mut app, 80, 24, &opts)"
+---
+ cyber · Theme baseline                                                    idle
+› READ fib.py and tell me why the comment at its top is so long that it wraps o
+  ver more than one row
+
+  ⏺ read fib.py  completed
+    │ 1 # a comment that is much longer than the card is wide, so it has to wra
+    │   p twice over the rows below it before the code that it explains starts
+    │ 2 def fib(n):
+
+  Read it.
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ /Users/leo/work/app                                   100 · —  ctrl+p commands
+row 1: 0-1 fg=#7aa2f7 bg=#0b0f14 bold
+row 1: 2-78 fg=#7aa2f7 bg=#0b0f14
+row 1: 79-79 fg=#d6e4f0 bg=#0b0f14
+row 2: 0-1 fg=#7aa2f7 bg=#0b0f14 bold
+row 2: 2-22 fg=#7aa2f7 bg=#0b0f14
+row 2: 23-79 fg=#d6e4f0 bg=#0b0f14
+row 5: 0-5 fg=#2b3445 bg=#0b0f14
+row 5: 6-7 fg=#666f77 bg=#0b0f14
+row 5: 8-78 fg=#6b7a8f bg=#0b0f14 italic
+row 5: 79-79 fg=#d6e4f0 bg=#0b0f14
+row 6: 0-7 fg=#2b3445 bg=#0b0f14
+row 6: 8-77 fg=#6b7a8f bg=#0b0f14 italic
+row 6: 78-79 fg=#d6e4f0 bg=#0b0f14

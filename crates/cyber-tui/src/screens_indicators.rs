@@ -34,6 +34,22 @@ impl Fixture {
         }
     }
 
+    /// Feed instance events until `run_id`'s `kind` event was fed.
+    async fn fed(&mut self, app: &mut App, kind: &str, run_id: &str) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let Ok(Some(event)) = tokio::time::timeout(left, self.events.next()).await else {
+                panic!("no {kind} of {run_id}");
+            };
+            let actions = crate::runner::server_event(app, &event);
+            self.drive(app, actions).await;
+            if event.kind == kind && event.session_id.as_deref() == Some(run_id) {
+                return;
+            }
+        }
+    }
+
     /// The stream dropped and reopened: its `server.connected` resyncs.
     async fn reconnect(&mut self, app: &mut App) {
         self.events = self.server.client.events(true).await.unwrap().boxed();
@@ -210,6 +226,60 @@ async fn the_footer_counts_the_queued_runs() {
     );
 }
 
+/// The sidebar's Workflows rows, from the section header to the blank row after them.
+fn sidebar_runs(buf: &ratatui::buffer::Buffer) -> String {
+    let shown = text(buf);
+    let lines: Vec<&str> = shown.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("Workflows"))
+        .unwrap_or_else(|| panic!("no Workflows section:\n{shown}"));
+    let byte = lines[at].find("Workflows").unwrap();
+    let col = lines[at][..byte].chars().count();
+    lines[at..]
+        .iter()
+        .map(|l| {
+            l.chars()
+                .skip(col)
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .take_while(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A queued run's sidebar row shows its place in the queue, as the monitor does, not
+/// an empty bar and `0/0`.
+#[tokio::test]
+async fn a_queued_run_shows_its_queue_position_in_the_sidebar() {
+    let mut f = Fixture::new(json!({ "max_running_runs": 1 })).await;
+    let mut app = f.attach().await;
+    let body = fan("Work", "w", &gates("lead", 1));
+    f.start(&script("review", &["Work"], &body), json!({}))
+        .await;
+    f.held("review's agent at its gate", 1).await;
+    for name in ["audit", "deploy"] {
+        let body = fan("Work", "w", &gates(name, 1));
+        f.start(&script(name, &["Work"], &body), json!({})).await;
+    }
+    f.pump(&mut app, "two queued runs", |app| {
+        let queued: Vec<Option<u64>> = app
+            .watch
+            .indicated()
+            .filter(|r| r.status == "queued")
+            .map(|r| r.queue_position)
+            .collect();
+        queued.len() == 2 && queued.iter().all(Option::is_some)
+    })
+    .await;
+    f.counted(&mut app, "review", 0, 1).await;
+    let rows = sidebar_runs(&f.show(&mut app, 160, 48));
+    assert!(!rows.contains("0/0"), "{rows}");
+    insta::assert_snapshot!("sidebar_queued_runs_160x48", rows);
+}
+
 /// Children answer at once; the owner starts `audit` with its `workflow` tool.
 fn tool_reply(body: &Value) -> Value {
     let last = body["messages"]
@@ -368,9 +438,7 @@ async fn another_sessions_run_notifies_only_when_the_location_is_asked_for() {
         .await
         .unwrap();
     let review = started["data"]["id"].as_str().unwrap().to_owned();
-    f.wait_run("review fails", &review, |r| r["status"] == "failed")
-        .await;
-    f.settle(&mut app, Duration::from_millis(400)).await;
+    f.fed(&mut app, "workflow.run.failed.1", &review).await;
     assert!(app.watch.notices.is_empty() && app.toast.is_none() && app.attention_log.is_empty());
     let actions = app.open_workflows();
     f.drive(&mut app, actions).await;
@@ -415,11 +483,41 @@ async fn another_sessions_run_notifies_only_when_the_location_is_asked_for() {
         .await
         .unwrap();
     let plan = started["data"]["id"].as_str().unwrap().to_owned();
-    f.wait_run("plan fails", &plan, |r| r["status"] == "failed")
-        .await;
-    f.settle(&mut app, Duration::from_millis(400)).await;
+    f.fed(&mut app, "workflow.run.failed.1", &plan).await;
     assert!(app.toast.is_none(), "{:?}", app.toast);
     assert_eq!(app.attention_log.len(), 1);
+}
+
+/// A run of another Session that ends before the TUI's first read of it still belongs to
+/// the Location: the read lists only active runs, so the run's own directory decides.
+#[tokio::test]
+async fn another_sessions_run_that_ends_before_it_is_read_notifies_the_location() {
+    let mut f = Fixture::new(json!({})).await;
+    let mut app = f.attach().await;
+    app.prefs.set(
+        "workflow_notifications",
+        "location",
+        crate::prefs::Origin::Saved,
+    );
+    let other = f.server.session().await;
+    let started = f
+        .server
+        .client
+        .post(
+            "/workflows/runs",
+            json!({ "session_id": other, "script": failing("lint") }),
+        )
+        .await
+        .unwrap();
+    let lint = started["data"]["id"].as_str().unwrap().to_owned();
+    // Nothing is fed before the run has failed: the started event's read misses it.
+    f.wait_run("lint fails", &lint, |r| r["status"] == "failed")
+        .await;
+    f.pump(&mut app, "the toast", |app| app.toast.is_some())
+        .await;
+    let toast = &app.toast.as_ref().unwrap().0;
+    assert!(toast.starts_with("✗ lint failed: "), "{toast}");
+    assert!(app.watch.notices.is_empty(), "{:?}", app.watch.notices);
 }
 
 /// The server pauses its running runs as it shuts down: the pause's event is the

@@ -1,0 +1,44 @@
+---
+source: crates/cyber-tui/src/screens_parallel.rs
+expression: snapshot(&mut app)
+---
+╭ Workflows · ~/work/app ──────────────────────────────────────────────────────────────────────── 1 running · 1 paused ╮
+│   NAME         STATUS              PHASE      PROGRESS                 AGENTS d/r/q/f TOKENS  COST            ELAPSED│
+│   ra           running             -          ~[,,_,,]:3·············  0/3/9/0        0       $0.00           1m05s  │
+│ › rc           stopped             -          ~[,,_,,]:3·············  0/0/0/0        0       $0.00           2m06s  │
+│   rb           paused              -          ~[,,_,,]:3·············  0/0/0/0        0       $0.00           3m07s  │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ enter open · p pause/resume · r resume · x stop · R resume interrupted · s script · l log · a all · esc              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ /Users/leo/work/app                        ⚙ 1 workflow · 100 · —  ctrl+p commands

@@ -5,7 +5,10 @@
 //!
 //! The list is patched by `workflow.run.progress` and read again on a run's lifecycle
 //! events and when the event stream reconnects. Runs whose events asked for a read but
-//! that the read does not list belong to another Location, as in the monitor.
+//! that the read does not list belong to another Location, as in the monitor, and their
+//! progress asks for no further read. Whether an end notifies the Location goes by the
+//! run's own directory: the read lists only active runs, so a run that ended before it
+//! is not listed either.
 //!
 //! An attempt's end is noticed from its durable event, or, for a run that was active at
 //! the previous read and is no longer, from that read (a run that ended or was paused by
@@ -274,7 +277,7 @@ impl App {
             Scope::Location => {
                 w.seen.contains(&run.id)
                     || run.session_id == self.session.id
-                    || (!w.foreign.contains(&run.id) && run.directory == w.directory)
+                    || (!run.directory.is_empty() && run.directory == w.directory)
             }
         }
     }
@@ -413,6 +416,7 @@ impl App {
                 name: run.name.clone(),
                 done: run.agents.completed,
                 total: run.agents.total,
+                queue_position: run.queue_position,
             })
             .collect();
         self.sidebar.workflows_more = ordered.len().saturating_sub(SIDEBAR_RUNS);

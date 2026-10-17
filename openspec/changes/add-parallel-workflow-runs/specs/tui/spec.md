@@ -2,7 +2,7 @@
 
 ### Requirement: Workflow run indicators
 (P2) While any Workflow Run of the attached Location is `running`, `queued` or `paused` with agents still settling, the TUI SHALL show three indicators.
-- **Sidebar.** When the sidebar is shown, a Workflows section after Context SHALL list runs owned by the current Session first, then the other active runs of the Location, at most 5 rows and then `+N more`. Each row SHALL show the name, a known-progress nyan bar of 6 cells and `completed/total`. Enter on a row SHALL open that run in the Workflow monitor.
+- **Sidebar.** When the sidebar is shown, a Workflows section after Context SHALL list runs owned by the current Session first, then the other active runs of the Location, at most 5 rows and then `+N more`. Each row SHALL show the name, a known-progress nyan bar of 6 cells and `completed/total`, or `#<n> in queue` instead of the bar and count while the run is queued. Enter on a row SHALL open that run in the Workflow monitor.
 - **Status line.** A `workflows` status line field SHALL show `⚙ <n> workflows` (`⚙ 1 workflow` for one), followed by `· <q> queued` when runs are queued, and SHALL be omitted when no run is active.
 - **Progress line.** The Nyan progress indicator's known-progress mode SHALL be fed by the current Session's running runs. With one, it SHALL show that run's completed over total agents. With several, it SHALL show the sum of completed over the sum of totals with the label `<n> workflows <done>/<total> agents · <pct>%`.
 
@@ -11,6 +11,10 @@ All values SHALL come from `GET /api/v1/workflows/runs` and the `workflow.*` eve
 #### Scenario: Two runs in the sidebar
 - **WHEN** the current Session owns running runs `audit` (31/100) and `review` (0/2) and the sidebar is docked
 - **THEN** the Workflows section shows `audit` and then `review`, each with its bar and count, and the footer shows `⚙ 2 workflows`
+
+#### Scenario: Queued run in the sidebar
+- **WHEN** `max_running_runs` is 1, `review` is running and `audit` and `deploy` are queued behind it
+- **THEN** the Workflows section shows `deploy` with `#2 in queue`, `audit` with `#1 in queue` and `review` with its bar and `0/1`
 
 #### Scenario: Aggregate progress
 - **WHEN** the current Session's two running runs have 30 of 100 and 12 of 30 agents done
@@ -32,6 +36,10 @@ While the terminal is unfocused, the same text SHALL be delivered through `tui.n
 #### Scenario: Run of another Session
 - **WHEN** a run started by `cyber workflows run` in another terminal fails and `tui.workflow_notifications` is `own`
 - **THEN** no notice is shown, and the run's status is visible in `/workflows`
+
+#### Scenario: Short run of another Session with location
+- **WHEN** `tui.workflow_notifications` is `location` and another Session's run in this Location fails before the TUI's first read of it
+- **THEN** the TUI still shows its `✗ <name> failed: …` toast, once
 
 #### Scenario: No duplicate after reconnect
 - **WHEN** the event stream drops and reconnects after a run completed and was notified

@@ -4,7 +4,7 @@ P2 evidence lives here and is kept separate from the P1 files (`p1-status.md`, `
 
 ## Parallel workflow runs (`add-parallel-workflow-runs`, 2026-10-16)
 
-Uncommitted working tree. Sections 1–10 of [`add-parallel-workflow-runs`](../../openspec/changes/add-parallel-workflow-runs/tasks.md) are implemented and tested, with production-path tests per section (App over authenticated HTTP with the gated scripted provider, the real `cyber` binary, the SDK against the real binary, and the TUI through `TestBackend` against the production server):
+Sections 1–10 of [`add-parallel-workflow-runs`](../../openspec/changes/add-parallel-workflow-runs/tasks.md) are implemented and tested, with production-path tests per section (App over authenticated HTTP with the gated scripted provider, the real `cyber` binary, the SDK against the real binary, and the TUI through `TestBackend` against the production server):
 
 - **Fair agent scheduler** (`runtime/workflow_scheduler.rs`): the `min(workflows.max_concurrent, CPU cores)` agent slots go to the least recently granted run, FIFO within a run, work-conserving; per-run share from `max_concurrent` (CLI, HTTP, resume, `workflow` tool, `meta.max_concurrent`) or `workflows.max_concurrent_per_run`, recorded as `share`. Unit and property tests (300 seeded sequences, R ≤ 8: no idle slot while a run is eligible, each head waiter granted within R grants).
 - **Independent lifecycle:** per-run locks for pause, stop, resume, dispatch and end; a Location writer registry for worktree isolation across runs.
@@ -33,15 +33,36 @@ Driven with a gated scripted local provider (no network, no live model) against 
 
 Bugs found and fixed, each with a regression test: Enter/`t` on an agent of a run another Session owns showed `no transcript yet` (`screens_workflows.rs` `the_transcript_of_an_agent_of_another_sessions_run_opens`, fails without the fix); a queued run printed `cost -0.0000 USD` and an agent-less handback carried `"cost_usd": -0.0` (`a_run_without_agents_costs_zero_not_negative_zero`, `handback_of_a_run_without_agents_costs_zero_not_negative_zero`, real-binary `cli.rs` `workflows_run_wait_keeps_waiting_while_the_run_is_queued`); the monitor lacked the TOKENS column the spec requires (added from 120 columns, snapshots updated).
 
+### Automated acceptance (section 11)
+
+Sections 1–10 were committed in `0b784c0`; section 11 and its follow-ups are uncommitted in the working tree.
+
+- **11.1–11.3, real binary and server:** `crates/cyber-cli/tests/parallel_workflows.rs` (in `cyber-cli`, not `cyber-app`, because only `cyber-cli` tests can run the real binary through `CARGO_BIN_EXE_cyber`). It drives the background `cyber serve` the CLI starts, with `workflows.max_concurrent: 4`, `max_running_runs: 3` and the gated scripted local model. `three_runs_share_the_slots_fairly_and_are_controlled_independently` starts A (12 agents, `cyber workflows run`), B (2, HTTP) and C (6, Session S's `workflow` tool, `max_concurrent: 2`) within 1 s, checks the listed `running` status, `queued` counts and shares, and compares every gate opening with a step-by-step model of least-recently-granted scheduling. C never exceeds 2. It then pauses B, stops C, resumes both, queues a fourth run D that is dispatched when A ends, and counts each owner's summaries per attempt. `a_killed_server_recovers_its_runs_and_resume_interrupted_completes_them` and `a_killed_server_resumes_its_runs_after_restart_when_configured` SIGKILL the registered service (`taskkill /F` on Windows) with A and B mid-flight and Q queued. After the restart A and B are `paused` with `interrupted` agents and Q is dispatched. Both runs are resumed, by `cyber workflows resume --interrupted` or automatically with `resume_after_restart: true`, and they complete 3/2/1. Each interrupted child continues once.
+- **11.4, TUI:** `crates/cyber-tui/src/screens_parallel.rs` `the_monitor_controls_the_selected_run_of_three_and_notices_their_ends` (`TestBackend` against the production server; `max_concurrent: 3` so the counts match on every runner, since the server caps slots at the core count). `p`, `x` and `r` change only the selected run, which is checked over HTTP and in snapshots `cyber_tui__screens_parallel__*.snap`. The run-end notices appear.
+- **Stability:** 5 runs in a row before the last fix and 5 after it, and 3 more during this validation: `parallel_workflows` 3 passed (about 4 s), `screens_parallel` 1 passed (about 2.5 s).
+- **Follow-ups (tasks 11.5), each with a regression test:**
+  - A notification race in `workflow_watch.rs`: a run that failed before the watch read it notified nobody under `location`. Test: `another_sessions_run_that_ends_before_it_is_read_notifies_the_location`.
+  - A queued run's sidebar row read `······ 0/0` and now shows `#<n> in queue`. Test: `a_queued_run_shows_its_queue_position_in_the_sidebar`.
+  - Wrapped tool output and user messages lost their gutter (`view/wrap.rs` `wrap_hanging`). In a highlighted `read` card, wrapped rows also continued under the line-number column, so `│ 12 word013…` looked like numbered line 12. They now hang under the code (`view/messages.rs` `number_width`). Test: `screens_markdown::wrapped_user_messages_and_tool_output_keep_their_gutter`, snapshot `wrapped_gutter_80x24`; it fails without the fix.
+  - Windows CI runs `cyber-cli --test parallel_workflows` and `cyber-server --test http workflow_run_lists`.
+- **Real binary, second manual pass:** three runs (12/2/6 agents, C with `--max-concurrent 2`) started within 0.05 s, and a fourth was queued. `cyber workflows runs` matched `GET /workflows/runs` (alpha 1/1/10/0, beta 0/2/0/0, gamma 2/1/3/0, delta `#1 in queue`). All four completed 12/2/6/2. In a 160×48 pty, the TUI `/workflows` monitor, the sidebar (`delta  #1 in queue`), the `⚙ 4 workflows · 1 queued` footer and a wrapped long `read` showed the fixed layout. The captures are in the session scratchpad (`acc-runs2/`), not in the repository.
+
 ### Not done
 
-- `crates/cyber-app/tests/parallel_workflows.rs` (tasks 11.1–11.4) is not written: the acceptance above is manual and its fixtures are outside the repository. It also ran a different shape than 11.1 (30/3/3 agents rather than 12/2/6), did not assert 11.2's per-attempt summary counts, and drove the TUI in a pty rather than `TestBackend`, without exercising `x` or `r`.
 - Neither change is archived (12.2 and `improve-tui-experience` 10.2), so the ROADMAP inventory refresh is pending.
-- Cosmetic: wrapped long tool output and user messages lose the `    │ ` gutter; a queued run shows `······ 0/0` in the sidebar.
+- Long lines still wrap by character, not by word.
+- The Windows paths of the new tests (`taskkill /F`, the Windows CI steps) are type-checked only (windows-gnu clippy with stub mingw tools). They have not run natively.
 
 ### Verification (macOS, 2026-10-16)
 
-Whole working tree, after the doc updates: `cargo test --workspace --no-fail-fast` passed (3,144 passed, 0 failed, 4 ignored, 222 test binaries); `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo clippy --target x86_64-pc-windows-gnu --all-targets -p cyber-app -p cyber-cli -p cyber-core -p cyber-server -p cyber-tools -p cyber-tui -- -D warnings` clean (type-check only, with stub mingw tools; no native Windows run); `cargo fmt --all -- --check` clean; `python3 scripts/generate_sdk.py --check`, `npm run typecheck` and `npm test` with `CYBER_BIN=target/debug/cyber` (92 passed, none skipped) passed; `openspec validate --all --strict` passed (66 items); `python3 scripts/spec_lint.py` 0 errors, 21 warnings (the baseline). `screens_indicators::another_sessions_run_notifies_only_when_the_location_is_asked_for` failed once in four earlier full parallel `cyber-tui` runs during the acceptance and passed alone and in this workspace run; it is not confirmed whether it also flakes on `main`.
+Whole working tree, after the section 11 tests and doc updates:
+- `cargo test --workspace --no-fail-fast`: 3,152 passed, 0 failed, 4 ignored (223 test binaries).
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo clippy --target x86_64-pc-windows-gnu --all-targets -p cyber-tui -p cyber-cli -- -D warnings`: clean (type-check only).
+- `cargo fmt --all -- --check`: clean.
+- `python3 scripts/generate_sdk.py --check`, `npm run typecheck` and `npm test`: passed (92 tests, 90 passed and 2 skipped without `CYBER_BIN`).
+- `openspec validate --all --strict`: passed (66 items).
+- `python3 scripts/spec_lint.py`: 0 errors and 21 warnings (the baseline).
 
 ## Provider-reported usage limits (`improve-tui-experience` section 9, 2026-10-16)
 
