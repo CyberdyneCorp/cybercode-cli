@@ -10,6 +10,7 @@ A model-independent, local-first coding agent: a durable server owns your sessio
 - **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: 7 of the 10 tools ship, and messaging is not implemented yet.
 - **Recovery and confinement.** Shadow-git snapshots restore files without overwriting your own edits. Commands run in an OS sandbox on macOS and Linux (Windows is incomplete).
 - **Open contracts.** Behavior is specified as [OpenSpec requirements](openspec/specs) tagged by phase and validated in CI, and implementation evidence is published ([P1](docs/implementation/p1-status.md), [P2](docs/implementation/p2-status.md)).
+- **Many agents, one server.** Subagents run as real child Sessions (in the background or in their own worktree), workflows fan out dozens of agents with fair scheduling across runs, and every agent's transcript stays inspectable. Agent teams and agent-to-agent messaging are not built yet.
 - **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar with machine stats (CPU, memory, disk), the `Ctrl+P` palette, a file explorer, a workflows monitor, Usage/Stats tabs (also as `cyber stats`), and `/rename` to name a Session and resume it later by title.
 
 ## Screenshots
@@ -63,6 +64,7 @@ Use `--model provider/model` to select a model. Remote MCP servers that need OAu
 | Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction; named Sessions (`/rename`, `cyber sessions rename`) resumed by title | [Naming and resuming](docs/local-core-guide.md#naming-and-resuming-sessions) |
 | Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
 | Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
+| Multiple agents | Subagents as child Sessions (`agent` tool, `/subtask`, background, isolated worktrees, `/agent`, `/tasks`); custom agent profiles with their own model, tools and skills; workflows fanning out many agents; several workflow runs at once; other agents driving Sessions over `cyber mcp serve` | Subagents partial; agent-to-agent messaging and agent teams not yet |
 | Workflows (P2) | QuickJS sandbox, `agent()`/`parallel()`/`pipeline()`, determinism guards, durable replay, budgets, model tiers, parallel runs with fair scheduling and a queue | [Guide](docs/local-core-guide.md#workflows-p2-m21); `ask()`, `exec --workflow` not yet |
 | MCP client | stdio and remote servers, OAuth, resources, prompts, elicitation, roots | WebSocket not implemented |
 | MCP serve | Other agents create, read, prompt and interrupt Sessions (7 of 10 tools) | Messaging not yet |
@@ -108,7 +110,7 @@ Checked **2026-10-17** against each product's official docs. This compares docum
 
 - **P0 (local core):** implemented; release gates remain open, including the full local-model baseline and the long coding task ([evidence](docs/measurements/p0-exit-evidence.md)).
 - **P1 (table stakes):** in progress; no P1 milestone is fully accepted. Windows confinement, native MCP OAuth keyring acceptance, plugins, complete client controls, browser verification and migration remain ([status](docs/implementation/p1-status.md)).
-- **P2 (autonomy):** the Workflow runtime (M2.1) and parallel runs are implemented and accepted end to end with the real binary; `ask()`, direct read-only tools, `exec --workflow` and Job integration remain ([evidence](docs/implementation/p2-status.md)). Goals, loops and teams come later.
+- **P2 (autonomy):** the Workflow runtime (M2.1) and parallel runs are implemented and accepted end to end with the real binary; `ask()`, direct read-only tools, `exec --workflow` and Job integration remain ([evidence](docs/implementation/p2-status.md)). Next: cross-session messaging (which also completes `cyber mcp serve` and is the basis for agent teams), then bundled workflows and goals; loops later.
 
 See the [roadmap](ROADMAP.md) for P3 (connectivity, IDE clients) and P4.
 
