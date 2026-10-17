@@ -456,7 +456,8 @@ impl HookCommandRunner<'_> {
         );
         #[cfg(not(windows))]
         let (program, args) = (
-            crate::tools::bash::shell(self.shell),
+            crate::tools::bash::shell(self.shell, &event.identity().location.directory)
+                .map_err(|e| format!("{e:?}"))?,
             vec!["-c".into(), command.clone()],
         );
         let wrapped =

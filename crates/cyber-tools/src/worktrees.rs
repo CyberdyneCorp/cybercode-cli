@@ -936,7 +936,8 @@ impl Execution<'_> {
         #[cfg(not(windows))]
         let prepared = crate::sandboxing::prepare_worktree_command(
             self.ctx,
-            &crate::tools::bash::shell(&self.ctx.host.opts.shell),
+            &crate::tools::bash::shell(&self.ctx.host.opts.shell, &self.ctx.location)
+                .map_err(|e| io::Error::other(format!("{e:?}")))?,
             &["-c".into(), command.into()],
             &self.credentials,
         )

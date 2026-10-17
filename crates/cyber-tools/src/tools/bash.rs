@@ -82,7 +82,9 @@ pub(crate) async fn run_injected(
     timeout_ms: u64,
     max_bytes: usize,
 ) -> Result<String, ToolError> {
-    let prepared = crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell), command).await?;
+    let prepared =
+        crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell, &ctx.location)?, command)
+            .await?;
     let output = Output::Stdout { max_bytes };
     let (capture, ended) = run_process(ctx, prepared, &ctx.location, timeout_ms, output).await?;
     // Like shell command substitution, trailing newlines are dropped.
@@ -168,31 +170,41 @@ pub(super) async fn authorize_facts(
     }
 }
 
-pub(crate) fn shell(configured: &str) -> String {
-    let name = Path::new(configured)
+/// The shell program for `bash` and injections. Outside Windows: the configured shell when it
+/// is an existing bash/zsh/sh/dash, else `/bin/sh`. On Windows: an existing absolute path to a
+/// supported shell as configured, else that shell's name (or `bash`) resolved by
+/// [`shell_resolve`](super::shell_resolve), never the WSL launcher; no shell is an error.
+#[cfg(not(windows))]
+pub(crate) fn shell(configured: &str, _location: &Path) -> Result<String, ToolError> {
+    let supported = Path::new(configured)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or_default();
-    #[cfg(windows)]
-    let lower = name.to_ascii_lowercase();
-    #[cfg(windows)]
+        .is_some_and(|name| SHELLS.contains(&name));
+    Ok(if supported && Path::new(configured).exists() {
+        configured.to_string()
+    } else {
+        "/bin/sh".into()
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn shell(configured: &str, location: &Path) -> Result<String, ToolError> {
+    use super::shell_resolve::{NOT_FOUND, Search, resolve};
+    let lower = Path::new(configured)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let name = lower.strip_suffix(".exe").unwrap_or(&lower);
-    #[cfg(windows)]
-    {
-        if SHELLS.contains(&name) {
-            configured.to_string()
-        } else {
-            "bash".into()
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        if SHELLS.contains(&name) && Path::new(configured).exists() {
-            configured.to_string()
-        } else {
-            "/bin/sh".into()
-        }
-    }
+    let (given, name) = if SHELLS.contains(&name) {
+        (Some(Path::new(configured)), name)
+    } else {
+        (None, "bash")
+    };
+    let checkout = crate::host::canonical(&cyber_core::config::project_root(location));
+    resolve(given, name, &Search::from_env(), &checkout)
+        .map(|p| p.display().to_string())
+        .ok_or_else(|| failed(NOT_FOUND))
 }
 
 /// Merged output: the last 1 MiB in memory, everything in a managed file once that overflows.
@@ -250,7 +262,9 @@ async fn execute(
     workdir: &Path,
     timeout_ms: u64,
 ) -> Result<String, ToolError> {
-    let prepared = crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell), command).await?;
+    let prepared =
+        crate::sandboxing::prepare(ctx, &shell(&ctx.host.opts.shell, &ctx.location)?, command)
+            .await?;
     execute_prepared(ctx, prepared, workdir, timeout_ms).await
 }
 
@@ -423,11 +437,24 @@ fn render(capture: &Capture, ended: Ended, timeout_ms: u64) -> String {
 
 #[cfg(all(test, windows))]
 mod shell_tests {
+    use std::path::Path;
+
+    /// Native: the Windows CI runner has Git for Windows and the WSL launcher in System32.
     #[test]
-    fn windows_supported_shells_remain_path_resolvable_without_posix_fallback() {
-        for name in ["bash", "bash.exe", "BASH.EXE", "sh", "zsh.exe", "dash"] {
-            assert_eq!(super::shell(name), name);
+    fn bare_and_posix_defaults_resolve_to_a_real_shell_not_the_wsl_launcher() {
+        let here = std::env::current_dir().unwrap();
+        for configured in [
+            "bash",
+            "bash.exe",
+            "BASH.EXE",
+            "/bin/sh",
+            "unrecognized-shell",
+        ] {
+            let found = super::shell(configured, &here).unwrap();
+            let lower = found.to_ascii_lowercase();
+            assert!(Path::new(&found).is_absolute(), "{configured} -> {found}");
+            assert!(!lower.contains("\\system32\\"), "{configured} -> {found}");
+            assert!(!lower.contains("windowsapps"), "{configured} -> {found}");
         }
-        assert_eq!(super::shell("unrecognized-shell"), "bash");
     }
 }

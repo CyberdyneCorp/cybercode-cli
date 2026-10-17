@@ -14,6 +14,8 @@ pub(crate) mod powershell;
 pub(crate) mod process;
 mod search;
 mod session;
+#[cfg(any(windows, test))]
+pub(crate) mod shell_resolve;
 mod skill;
 mod task;
 mod tool_search;
