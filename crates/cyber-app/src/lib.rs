@@ -30,8 +30,8 @@ use serde_json::{Value, json};
 
 pub use registered_status::registered_lsp_status;
 pub use registration::{
-    Registration, ServerClientInfo, health, read_registration, registration_path, start_service,
-    stop_service,
+    ClientBuild, Probe, Registration, ServerClientInfo, ServiceNotice, health, probe,
+    read_registration, registration_path, start_service, stop_service,
 };
 pub use server::{
     ServeOptions, password, replace_password, run_server, run_server_until, serve_stdio,

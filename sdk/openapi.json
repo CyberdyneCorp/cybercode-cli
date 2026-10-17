@@ -1636,6 +1636,10 @@
           "version": {
             "type": "string"
           },
+          "build": {
+            "type": "string",
+            "description": "The build identity of the server binary (`cyber_core::version::BuildInfo::build`);\na client of another build restarts an idle server it started."
+          },
           "apiVersion": {
             "type": "string"
           },
@@ -1649,6 +1653,7 @@
         "required": [
           "healthy",
           "version",
+          "build",
           "apiVersion",
           "features"
         ]
@@ -1679,6 +1684,53 @@
           "id",
           "stopping"
         ]
+      },
+      "ServiceInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "build": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "binary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Canonical path of the server executable, when the process could read it."
+          },
+          "running_sessions": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Sessions with a running Drain (a Turn in progress)."
+          },
+          "active_workflow_runs": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Workflow runs queued, running or waiting for input."
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "build",
+          "pid",
+          "running_sessions",
+          "active_workflow_runs"
+        ],
+        "description": "The listening server and its running work, so a client of another build can decide\nwhether restarting it interrupts anything."
       },
       "Page_Job": {
         "type": "object",
@@ -8526,6 +8578,38 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StopService"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/service": {
+      "get": {
+        "operationId": "v1.service.get",
+        "summary": "The listening server's identity, build and running work",
+        "tags": [
+          "service"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

@@ -11,7 +11,7 @@ use super::catalog::{Health, ToolInfo};
 use super::envelope::{Data, Located, LocationInfo, Page};
 use super::error::ErrorBody;
 use super::events::{EventEnvelope, HistoryPage};
-use super::service::{StopAccepted, StopService};
+use super::service::{ServiceInfo, StopAccepted, StopService};
 use super::sessions::*;
 use super::{AgentInfo, CommandInfo, ModelInfo, SkillCatalog};
 use crate::runtime::{FileDiff, InboxRow, PendingRequest, Receipt, RevertState, SessionRow};
@@ -233,6 +233,13 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .body::<StopService>(g)
         .ok::<StopAccepted>(g),
+        op(
+            "get",
+            "/service",
+            "v1.service.get",
+            "The listening server's identity, build and running work",
+        )
+        .ok::<ServiceInfo>(g),
         op(
             "get",
             "/jobs",

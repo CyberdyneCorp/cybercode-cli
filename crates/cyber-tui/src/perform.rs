@@ -54,7 +54,7 @@ pub enum Msg {
     Status {
         session_id: String,
         generation: u64,
-        status: crate::settings::status::Status,
+        status: Box<crate::settings::status::Status>,
     },
     /// A Stats tab reply; it is not tied to a Session.
     Stats {
@@ -252,15 +252,18 @@ async fn source(
     }
 }
 
-/// The server version from `/health`.
+/// The server version and build identity from `/health`.
 async fn health(at: &Client) -> crate::sidebar::Loaded {
+    let text = |value: &Value| {
+        value
+            .as_str()
+            .map(crate::sidebar::clean)
+            .filter(|v| !v.is_empty())
+    };
     match at.get("/health").await {
-        Ok(value) => crate::sidebar::Loaded::Version(
-            value["version"]
-                .as_str()
-                .map(crate::sidebar::clean)
-                .filter(|v| !v.is_empty()),
-        ),
+        Ok(value) => {
+            crate::sidebar::Loaded::Version(text(&value["version"]), text(&value["build"]))
+        }
         Err(_) => crate::sidebar::Loaded::Failed,
     }
 }
@@ -310,7 +313,7 @@ async fn panel(client: &Client, session: &Session, action: Action) -> Msg {
         Action::LoadStatus { generation } => Msg::Status {
             session_id: session.id.clone(),
             generation,
-            status: status(client, session).await,
+            status: Box::new(status(client, session).await),
         },
         action => explore(client, session, action).await,
     }
@@ -501,8 +504,14 @@ async fn reconnect_mcp(client: &Client, session: &Session, name: &str) -> Result
 }
 
 pub(crate) fn err(e: cyber_client::ClientError) -> String {
+    if e.route_missing() {
+        return NEWER_SERVER.into();
+    }
     e.to_string()
 }
+
+/// What a panel shows when the server lacks its route: it runs an older build.
+pub(crate) const NEWER_SERVER: &str = "needs a newer server · cyber service restart";
 
 async fn hook_definitions(
     client: &Client,

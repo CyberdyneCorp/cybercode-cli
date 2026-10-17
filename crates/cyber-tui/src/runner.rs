@@ -644,7 +644,7 @@ fn settings_reply(app: &mut App, msg: Msg) {
             session_id,
             generation,
             status,
-        } if session_id == app.session.id => app.settings.status.apply(generation, Ok(status)),
+        } if session_id == app.session.id => app.settings.status.apply(generation, Ok(*status)),
         Msg::Stats { generation, result } => app.settings.stats.data.apply(generation, result),
         Msg::Insights { generation, result } => {
             app.settings.insights.data.apply(generation, result)

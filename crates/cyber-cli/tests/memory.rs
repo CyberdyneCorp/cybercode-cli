@@ -614,6 +614,9 @@ async fn server_cli_reconciles_paired_reviews_and_retains_receipts_after_cache_l
         url: format!("http://{}", listener.local_addr().unwrap()),
         socket: None,
         pid: std::process::id(),
+        build: None,
+        binary: None,
+        binary_stamp: None,
     };
     std::fs::write(
         paths.state.join("server.json"),

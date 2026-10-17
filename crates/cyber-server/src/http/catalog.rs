@@ -18,6 +18,9 @@ type Result<T> = std::result::Result<T, ApiError>;
 pub struct Health {
     pub healthy: bool,
     pub version: String,
+    /// The build identity of the server binary (`cyber_core::version::BuildInfo::build`);
+    /// a client of another build restarts an idle server it started.
+    pub build: String,
     #[serde(rename = "apiVersion")]
     pub api_version: String,
     pub features: Vec<String>,
@@ -75,6 +78,7 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
     Json(Health {
         healthy: true,
         version: state.options.version.clone(),
+        build: cyber_core::version::build_info().build.into(),
         api_version: "v1".into(),
         features: state.options.features.clone(),
     })

@@ -107,13 +107,11 @@ pub async fn run_server_until(
         .as_ref()
         .and_then(|l| l.local_addr().ok())
         .map(|a: SocketAddr| format!("http://{a}"));
-    let registration = Registration {
-        id: server_id,
-        version: crate::version().into(),
-        url: url.clone().unwrap_or_default(),
-        socket: socket.as_ref().map(|p| p.display().to_string()),
-        pid: std::process::id(),
-    };
+    let registration = Registration::current(
+        server_id,
+        url.clone().unwrap_or_default(),
+        socket.as_ref().map(|p| p.display().to_string()),
+    );
     let mut state = app.state.clone();
     state.service = Some(http::ServiceControl {
         id: registration.id.clone(),

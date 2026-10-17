@@ -174,3 +174,43 @@ async fn a_failed_read_before_any_sample_shows_a_dash() {
     app.sidebar.apply(Loaded::MachineFailed);
     assert!(render(&mut app, 160, 48, &Opts::default()).contains("82% idle"));
 }
+
+/// A server of another build lacks `GET /system`: the section says to restart it, the
+/// sidebar warns once, and the same server's own build shows nothing of the kind.
+#[tokio::test]
+async fn an_older_server_without_the_route_asks_for_a_restart() {
+    let server = Server::start().await;
+    let id = server.answered_session().await;
+    let mut app = server.app(&id).await;
+    server
+        .perform(&mut app, vec![Action::LoadSidebar(Part::Health)])
+        .await;
+    assert!(!app.sidebar.server_stale(), "the test server is this build");
+    app.sidebar.apply(Loaded::Machine(Source::Missing));
+    let current = render(&mut app, 160, 48, &Opts::default());
+    assert!(!current.contains("▼ Machine"), "{current}");
+    assert!(!current.contains("older server build"), "{current}");
+
+    app.sidebar.apply(Loaded::Version(
+        Some("0.1.0".into()),
+        Some("older-build".into()),
+    ));
+    assert!(app.sidebar.server_stale());
+    let screen = render(&mut app, 160, 48, &Opts::default());
+    assert!(screen.contains("▼ Machine"), "{screen}");
+    assert!(screen.contains(crate::perform::NEWER_SERVER), "{screen}");
+    assert!(
+        screen.contains("⚠ older server build · cyber service restart"),
+        "{screen}"
+    );
+    // A server that predates build identities is older too.
+    app.sidebar
+        .apply(Loaded::Version(Some("0.1.0".into()), None));
+    assert!(app.sidebar.server_stale());
+    let buf = buffer(&mut app, 160, 48, &Opts::default());
+    let y = row_of(&buf, crate::perform::NEWER_SERVER);
+    let line: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+    let column = line.find("needs").expect("hint on the row");
+    let x = line[..column].chars().count() as u16;
+    assert_eq!(buf[(x, y)].fg, app.theme.warning);
+}

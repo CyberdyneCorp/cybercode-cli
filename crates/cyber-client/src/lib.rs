@@ -26,12 +26,21 @@ pub enum ClientError {
     Malformed(String),
 }
 
+/// The tag of a `404` without a declared error body: the server has no such route,
+/// usually because it runs an older build.
+pub const ROUTE_NOT_FOUND: &str = "RouteNotFoundError";
+
 impl ClientError {
     pub fn tag(&self) -> Option<&str> {
         match self {
             Self::Api { tag, .. } => Some(tag),
             _ => None,
         }
+    }
+
+    /// The server has no such route (an undeclared `404`).
+    pub fn route_missing(&self) -> bool {
+        self.tag() == Some(ROUTE_NOT_FOUND)
     }
 }
 
@@ -541,6 +550,12 @@ fn decode(status: u16, bytes: &[u8]) -> Result<Value, ClientError> {
             message: value["message"].as_str().unwrap_or_default().into(),
             body: value,
         }),
+        None if status == 404 => Err(ClientError::Api {
+            status,
+            tag: ROUTE_NOT_FOUND.into(),
+            message: "the server has no such route; it may run an older build".into(),
+            body: value,
+        }),
         None => Err(ClientError::Malformed(format!(
             "unexpected status {status}"
         ))),
@@ -574,6 +589,14 @@ mod tests {
             Err(ClientError::Malformed(_))
         ));
         assert!(matches!(decode(500, b""), Err(ClientError::Malformed(_))));
+    }
+
+    #[test]
+    fn an_undeclared_404_is_a_missing_route_and_a_declared_one_is_not() {
+        let missing = decode(404, b"").unwrap_err();
+        assert!(missing.route_missing(), "{missing}");
+        let declared = decode(404, br#"{"_tag":"NotFoundError","message":"no"}"#).unwrap_err();
+        assert!(!declared.route_missing());
     }
 
     #[tokio::test]

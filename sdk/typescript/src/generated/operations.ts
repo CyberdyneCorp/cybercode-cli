@@ -327,6 +327,12 @@ export interface Operations {
     body: S.QuestionReplyBody;
     response: void;
   };
+  "v1.service.get": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ServiceInfo;
+  };
   "v1.service.stop": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -1214,6 +1220,18 @@ export const operations = {
     pathParams: ["sessionID", "requestID"],
     query: [],
     body: "required",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.service.get": {
+    tag: "service",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/service",
+    pathParams: [],
+    query: [],
+    body: "none",
     located: false,
     unwrap: false,
     stream: false,
@@ -2108,6 +2126,9 @@ export function createGroups(caller: Caller) {
         caller.call("v1.question.reply", { path: { sessionID, requestID }, body }, options),
     },
     service: {
+      /** The listening server's identity, build and running work (`GET /api/v1/service`) */
+      get: (options?: RequestOptions): Promise<Operations["v1.service.get"]["response"]> =>
+        caller.call("v1.service.get", {}, options),
       /** Stop the server matching this registration identity (`POST /api/v1/service/stop`) */
       stop: (body: Operations["v1.service.stop"]["body"], options?: RequestOptions): Promise<Operations["v1.service.stop"]["response"]> =>
         caller.call("v1.service.stop", { body }, options),

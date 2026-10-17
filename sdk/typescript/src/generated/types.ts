@@ -541,6 +541,11 @@ export type GitState = {
 export type Health = {
   healthy: boolean;
   version: string;
+  /**
+   * The build identity of the server binary (`cyber_core::version::BuildInfo::build`);
+   * a client of another build restarts an idle server it started.
+   */
+  build: string;
   apiVersion: string;
   features: string[];
 };
@@ -1575,6 +1580,23 @@ export type RunUsageReport = {
 
 /** One of the usage reports a scope returns, discriminated by `scope`. */
 export type ScopeUsage = SessionUsage | RunUsageReport;
+
+/**
+ * The listening server and its running work, so a client of another build can decide
+ * whether restarting it interrupts anything.
+ */
+export type ServiceInfo = {
+  id: string;
+  version: string;
+  build: string;
+  pid: number;
+  /** Canonical path of the server executable, when the process could read it. */
+  binary?: string | null;
+  /** Sessions with a running Drain (a Turn in progress). */
+  running_sessions: number;
+  /** Workflow runs queued, running or waiting for input. */
+  active_workflow_runs: number;
+};
 
 /** A Session with its live status. */
 export type Session = {

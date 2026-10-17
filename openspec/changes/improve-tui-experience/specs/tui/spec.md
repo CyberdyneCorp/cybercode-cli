@@ -152,7 +152,7 @@ MCP rows SHALL update from `mcp.status.changed.1` and `mcp.tools.changed.1`, Mod
 - `Disk`: a used-percent bar for the Location's volume and `used / total GB · free`.
 - `load a b c` where the server reports a load average.
 
-Each bar SHALL be one row of eighth-block glyphs (`▏▎▍▌▋▊▉█`) on the `border` track, colored `success` below 70%, `warning` from 70% to 90% and `error` from 90%. Under `NO_COLOR` the bars SHALL be `[#####.....]` text. The TUI SHALL read the route every 3 seconds, and only while the sidebar is drawn (docked or as the drawer), the terminal is focused and `tui.machine_stats` is `on` (default; editable in the Config tab). A failed read SHALL keep the last sample, show `—` before the first one and raise no toast; a 404 or 503 SHALL omit the section. The Status tab SHALL show the same data as one `Machine:` sentence, which is also the screen-reader text, for example `CPU 18 percent busy, 12 cores; memory 71 percent used, 4.6 GB free; disk 93 percent used, 15 GB free`.
+Each bar SHALL be one row of eighth-block glyphs (`▏▎▍▌▋▊▉█`) on the `border` track, colored `success` below 70%, `warning` from 70% to 90% and `error` from 90%. Under `NO_COLOR` the bars SHALL be `[#####.....]` text. The TUI SHALL read the route every 3 seconds, and only while the sidebar is drawn (docked or as the drawer), the terminal is focused and `tui.machine_stats` is `on` (default; editable in the Config tab). A failed read SHALL keep the last sample, show `—` before the first one and raise no toast; a 404 or 503 SHALL omit the section, except that when `/health` reports another build than the TUI's (or none), the section SHALL show `needs a newer server · cyber service restart` in `warning`. In that case the sidebar SHALL also show `⚠ older server build · cyber service restart` under the Session title, and panels that read newer routes (the file explorer, the Usage and Stats tabs) SHALL show the same `needs a newer server` text for an undeclared 404. The Status tab SHALL show the same data as one `Machine:` sentence, which is also the screen-reader text, for example `CPU 18 percent busy, 12 cores; memory 71 percent used, 4.6 GB free; disk 93 percent used, 15 GB free`.
 
 #### Scenario: Machine bars
 - **WHEN** the sidebar is docked and the server reports 82% CPU idle on 12 cores, 71% of memory and 93% of the Location's disk in use
@@ -165,6 +165,10 @@ Each bar SHALL be one row of eighth-block glyphs (`▏▎▍▌▋▊▉█`) on
 #### Scenario: First sample
 - **WHEN** the server has only one CPU reading
 - **THEN** the CPU row shows an empty bar and `measuring`, never an invented percentage
+
+#### Scenario: Older server without the route
+- **WHEN** the TUI was rebuilt and still talks to a server of the previous build that has no `GET /system`
+- **THEN** the Machine section shows `needs a newer server · cyber service restart` instead of `—`, and the sidebar shows the older-build warning
 
 ### Requirement: Responsive layout
 (P1) The layout SHALL adapt to the terminal size, recomputed on every resize:
@@ -203,7 +207,7 @@ No region SHALL draw outside its area at any size from 40×10 to 300×100. Trunc
 
 ### Requirement: Settings Status tab
 (P1) The Status tab SHALL show, one `label: value` row each:
-- client version and server version, in `warning` with `restart the service` when they differ
+- client version and server version, in `warning` with `restart the service` when the versions or the build identities from `/health` differ (the server version then reads `<version> (older build)`)
 - Session title and ID, Location directory, and git branch with a dirty marker
 - agent, model with provider and variant, Mode, and context window use as a 30-column meter with tokens and percent
 - the auto-compaction threshold
@@ -214,6 +218,10 @@ It SHALL include sandbox state and Cyber Account state only when the server repo
 #### Scenario: Version mismatch
 - **WHEN** the TUI is 0.9.1 and the server reports 0.9.0
 - **THEN** the version row shows both versions in the warning color with `restart the service`
+
+#### Scenario: Same version, older build
+- **WHEN** the TUI and the server both report 0.1.0 but `/health` reports another build, or no build
+- **THEN** the server version reads `0.1.0 (older build)` in the warning color with `restart the service`
 
 ### Requirement: Settings Config tab
 (P1) The Config tab SHALL list TUI preferences that can be edited in place: `theme`, `theme_mode`, `sidebar`, `recap`, `spinner`, `reasoning`, `diff_style`, `timestamps`, `color` and `accessibility.reduced_motion`. Each row SHALL show the current value and its source (`default`, `global`, `project`, `saved` for `kv.json`, or `session` for a toggle made in this run only, such as Ctrl+T or `/timestamps`). Enter or Space SHALL cycle a value or open its picker. A change SHALL apply immediately and be saved to `~/.local/state/cyber/kv.json` with the time it was saved, and a `tui.jsonc` written after that time SHALL win over it. Below the preferences, the tab SHALL show effective core settings (`model`, `small_model`, `mode`, `default_agent`, `budgets`) read-only with their source file, when the server's `config` route is available. Otherwise it SHALL show `Core settings: use cyber config or edit cyber.jsonc`.

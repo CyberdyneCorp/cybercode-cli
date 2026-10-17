@@ -16,6 +16,32 @@ pub struct Registration {
     pub url: String,
     pub socket: Option<String>,
     pub pid: u32,
+    /// The server binary's build identity; absent in registrations of older builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
+    /// Canonical path of the server executable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
+    /// Length and modification time of that executable when the server started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_stamp: Option<String>,
+}
+
+impl Registration {
+    /// This process as a registered server.
+    pub fn current(id: String, url: String, socket: Option<String>) -> Self {
+        let binary = cyber_core::version::binary();
+        Self {
+            id,
+            version: crate::version().into(),
+            url,
+            socket,
+            pid: std::process::id(),
+            build: Some(cyber_core::version::build_info().build.into()),
+            binary: binary.path.clone(),
+            binary_stamp: binary.stamp.clone(),
+        }
+    }
 }
 
 /// What a client needs to talk to the registered server.
@@ -23,6 +49,79 @@ pub struct Registration {
 pub struct ServerClientInfo {
     pub registration: Registration,
     pub password: String,
+    /// What starting did about a registered server of another build, for the client to
+    /// tell the user.
+    pub notice: Option<ServiceNotice>,
+}
+
+/// A registered server of another build, found while starting the service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceNotice {
+    /// It was idle and ran this install's executable, so it was replaced.
+    Restarted,
+    /// It runs work, belongs to another install, or cannot report its work: it is kept.
+    StaleKept,
+}
+
+impl ServiceNotice {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Restarted => "restarted the Cyber server: it was running an older build",
+            Self::StaleKept => {
+                "The Cyber server runs an older build; restart it with `cyber service restart` when idle"
+            }
+        }
+    }
+}
+
+/// This process's build, as compared with a registered server's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientBuild {
+    pub version: String,
+    pub build: String,
+    pub binary: Option<String>,
+    pub binary_stamp: Option<String>,
+}
+
+impl ClientBuild {
+    pub fn current(version: &str) -> Self {
+        let binary = cyber_core::version::binary();
+        Self {
+            version: version.into(),
+            build: cyber_core::version::build_info().build.into(),
+            binary: binary.path.clone(),
+            binary_stamp: binary.stamp.clone(),
+        }
+    }
+
+    /// Whether `reg`, answering `/health` with `health_version` and `health_build`, runs
+    /// another build than this client: another version or build identity, or this same
+    /// executable path rebuilt since the server started.
+    pub fn is_stale(
+        &self,
+        reg: &Registration,
+        health_version: &str,
+        health_build: Option<&str>,
+    ) -> bool {
+        let rebuilt = reg.binary.is_some()
+            && reg.binary == self.binary
+            && reg.binary_stamp.is_some()
+            && reg.binary_stamp != self.binary_stamp;
+        health_version != self.version || health_build != Some(self.build.as_str()) || rebuilt
+    }
+
+    /// Whether `reg` runs this install's executable, so restarting it changes nothing
+    /// another install relies on.
+    pub fn same_install(&self, reg: &Registration) -> bool {
+        reg.binary.is_some() && reg.binary == self.binary
+    }
+}
+
+/// What `/health` reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probe {
+    pub version: String,
+    pub build: Option<String>,
 }
 
 pub fn registration_path(paths: &Paths) -> PathBuf {
@@ -49,36 +148,61 @@ pub(crate) fn write_private(path: &Path, text: &str) -> Result<(), String> {
 
 /// Whether the server at `url` answers `/health` within 2 seconds with `version`.
 pub async fn health(url: &str, version: &str) -> bool {
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-    else {
-        return false;
-    };
-    let Ok(res) = client.get(format!("{url}/api/v1/health")).send().await else {
-        return false;
-    };
-    let Ok(body) = res.json::<serde_json::Value>().await else {
-        return false;
-    };
-    body["healthy"] == true && body["version"] == version
+    probe(url).await.is_some_and(|p| p.version == version)
 }
 
-/// Reuse a healthy registered server, or spawn `<exe> serve --register` detached and wait
-/// for its registration, checking promptly within a five-second deadline.
+/// The version and build a healthy server at `url` reports within 2 seconds.
+pub async fn probe(url: &str) -> Option<Probe> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .ok()?;
+    let res = client
+        .get(format!("{url}/api/v1/health"))
+        .send()
+        .await
+        .ok()?;
+    let body = res.json::<serde_json::Value>().await.ok()?;
+    if body["healthy"] != true {
+        return None;
+    }
+    Some(Probe {
+        version: body["version"].as_str()?.to_string(),
+        build: body["build"].as_str().map(str::to_string),
+    })
+}
+
+/// Reuse a healthy registered server of this build, or spawn `<exe> serve --register`
+/// detached and wait for its registration, checking promptly within a five-second
+/// deadline. A registered server of another build is replaced when it is idle and runs
+/// this install's executable; otherwise it is kept and the notice says so.
 pub async fn start_service(
     paths: &Paths,
     exe: &Path,
     version: &str,
 ) -> Result<ServerClientInfo, String> {
     let password = crate::password(paths)?;
+    let me = ClientBuild::current(version);
+    let mut notice = None;
     if let Some(reg) = read_registration(paths)
-        && health(&reg.url, version).await
+        && let Some(probe) = probe(&reg.url).await
     {
-        return Ok(ServerClientInfo {
-            registration: reg,
-            password,
-        });
+        if !me.is_stale(&reg, &probe.version, probe.build.as_deref()) {
+            return Ok(ServerClientInfo {
+                registration: reg,
+                password,
+                notice: None,
+            });
+        }
+        if !replaceable(&me, &reg, &password).await {
+            return Ok(ServerClientInfo {
+                registration: reg,
+                password,
+                notice: Some(ServiceNotice::StaleKept),
+            });
+        }
+        stop_service(paths).await?;
+        notice = Some(ServiceNotice::Restarted);
     }
     let log_dir = paths.state.join("log");
     let _ = std::fs::create_dir_all(&log_dir);
@@ -118,12 +242,64 @@ pub async fn start_service(
         return Ok(ServerClientInfo {
             registration,
             password,
+            notice,
         });
     }
     Err(format!(
         "the server did not become healthy; see {}",
         log_dir.join("server.log").display()
     ))
+}
+
+/// Whether a stale registered server may be stopped: it runs this install's executable
+/// and `GET /service` reports its identity and no running Turns or workflow runs. A
+/// server that cannot answer (an older build without the route) is kept.
+async fn replaceable(me: &ClientBuild, reg: &Registration, password: &str) -> bool {
+    if !me.same_install(reg) {
+        return false;
+    }
+    let Ok((client, url)) = server_client(reg) else {
+        return false;
+    };
+    let Ok(res) = client
+        .get(format!("{url}/api/v1/service"))
+        .basic_auth("cyber", Some(password.trim()))
+        .send()
+        .await
+    else {
+        return false;
+    };
+    if !res.status().is_success() {
+        return false;
+    }
+    let Ok(info) = res.json::<serde_json::Value>().await else {
+        return false;
+    };
+    info["id"] == reg.id.as_str()
+        && info["running_sessions"] == 0
+        && info["active_workflow_runs"] == 0
+}
+
+/// A client for the registered server's TCP listener, or its Unix socket when it has no
+/// TCP URL, with the URL to address it by.
+fn server_client(reg: &Registration) -> Result<(reqwest::Client, String), String> {
+    #[allow(unused_mut)]
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy();
+    #[allow(unused_mut)]
+    let mut url = reg.url.clone();
+    #[cfg(unix)]
+    if url.is_empty() {
+        let socket = reg
+            .socket
+            .as_ref()
+            .ok_or("registration has no server listener")?;
+        builder = builder.unix_socket(socket.as_str());
+        url = "http://localhost".into();
+    }
+    Ok((builder.build().map_err(|e| e.to_string())?, url))
 }
 
 async fn poll_ready<T, F, Fut>(mut check: F) -> Option<T>
@@ -148,27 +324,10 @@ pub async fn stop_service(paths: &Paths) -> Result<Option<Registration>, String>
     let Some(reg) = read_registration(paths) else {
         return Ok(None);
     };
-    #[allow(unused_mut)]
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy();
-    #[allow(unused_mut)]
-    let mut url = reg.url.clone();
-    #[cfg(unix)]
-    if url.is_empty() {
-        let socket = reg
-            .socket
-            .as_ref()
-            .ok_or("registration has no server listener")?;
-        builder = builder.unix_socket(socket.as_str());
-        url = "http://localhost".into();
-    }
+    let (client, url) = server_client(&reg)?;
     let password = std::fs::read_to_string(paths.state.join("password"))
         .map_err(|e| format!("cannot read server credentials: {e}"))?;
-    let response = builder
-        .build()
-        .map_err(|e| e.to_string())?
+    let response = client
         .post(format!("{url}/api/v1/service/stop"))
         .basic_auth("cyber", Some(password.trim()))
         .json(&serde_json::json!({"id": reg.id}))

@@ -282,7 +282,8 @@ pub enum Loaded {
     Files(Source<Vec<FileChange>>),
     /// `None` inside: outside git.
     Vcs(Source<Option<Git>>),
-    Version(Option<String>),
+    /// `/health`: the server's version and build identity.
+    Version(Option<String>, Option<String>),
     Parent(Option<String>),
     Machine(Source<Machine>),
     /// `GET /system` failed: the last sample stays, or `—` before the first.
@@ -339,6 +340,9 @@ pub struct Sidebar {
     pub files: Source<Vec<FileChange>>,
     pub vcs: Source<Option<Git>>,
     pub version: Option<String>,
+    /// The server's build identity from `/health`; `None` until it answered, `Some(None)`
+    /// for an older server that reports none.
+    pub server_build: Option<Option<String>>,
     pub parent_title: Option<String>,
     pub connection: Connection,
     /// The Workflows section's runs, the current Session's first; set before every frame.
@@ -366,7 +370,10 @@ impl Sidebar {
             Loaded::Lsp(source) => self.lsp = source,
             Loaded::Files(source) => self.files = source,
             Loaded::Vcs(source) => self.vcs = source,
-            Loaded::Version(version) => self.version = version,
+            Loaded::Version(version, build) => {
+                self.version = version;
+                self.server_build = Some(build);
+            }
             Loaded::Parent(title) => self.parent_title = title,
             Loaded::Machine(source) => {
                 self.machine = source;
@@ -427,9 +434,20 @@ impl Sidebar {
         rows
     }
 
-    /// The Machine section is drawn: a sample, or a failure before the first one.
+    /// The Machine section is drawn: a sample, a failure before the first one, or an
+    /// older server without the route.
     pub fn machine_shown(&self) -> bool {
-        self.machine.ready().is_some() || self.machine_failed && self.machine == Source::Pending
+        self.machine.ready().is_some()
+            || self.machine_failed && self.machine == Source::Pending
+            || self.server_stale() && self.machine == Source::Missing
+    }
+
+    /// The server answered `/health` with another build than this client's, so routes
+    /// this client uses may be missing until it restarts.
+    pub fn server_stale(&self) -> bool {
+        self.server_build
+            .as_ref()
+            .is_some_and(|build| build.as_deref() != Some(cyber_core::version::build_info().build))
     }
 
     pub fn focused(&self) -> Option<Row> {

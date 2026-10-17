@@ -151,11 +151,22 @@ pub fn service(cmd: ServiceCmd, ctx: &Context, global: &GlobalArgs) -> Result<()
         }
         ServiceCmd::Status => {
             let reg = cyber_app::read_registration(&ctx.paths);
-            let healthy = match &reg {
-                Some(r) => rt.block_on(cyber_app::health(&r.url, version)),
-                None => false,
+            let probe = reg
+                .as_ref()
+                .and_then(|r| rt.block_on(cyber_app::probe(&r.url)));
+            let healthy = probe.as_ref().is_some_and(|p| p.version == version);
+            let stale = match (&reg, &probe) {
+                (Some(r), Some(p)) => cyber_app::ClientBuild::current(version).is_stale(
+                    r,
+                    &p.version,
+                    p.build.as_deref(),
+                ),
+                _ => false,
             };
-            report(global, &json!({ "registered": reg, "healthy": healthy }))
+            report(
+                global,
+                &json!({ "registered": reg, "healthy": healthy, "stale": stale }),
+            )
         }
         ServiceCmd::Password { value } => password(ctx, value, &rt),
     }
@@ -163,9 +174,13 @@ pub fn service(cmd: ServiceCmd, ctx: &Context, global: &GlobalArgs) -> Result<()
 
 pub async fn start(ctx: &Context) -> Result<cyber_app::ServerClientInfo, CliError> {
     let exe = std::env::current_exe()?;
-    cyber_app::start_service(&ctx.paths, &exe, cyber_app::version())
+    let info = cyber_app::start_service(&ctx.paths, &exe, cyber_app::version())
         .await
-        .map_err(CliError::runtime)
+        .map_err(CliError::runtime)?;
+    if let Some(notice) = info.notice {
+        eprintln!("{}", notice.message());
+    }
+    Ok(info)
 }
 
 fn password(

@@ -29,6 +29,8 @@ pub enum Section<T> {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Health {
     pub version: Option<String>,
+    /// The server binary's build identity; `None` from servers that predate it.
+    pub build: Option<String>,
     pub sandbox: Option<String>,
     pub account: Option<String>,
 }
@@ -43,6 +45,7 @@ impl Health {
         };
         Self {
             version: text(&v["version"]),
+            build: text(&v["build"]),
             sandbox: text(&v["sandbox"]),
             account: text(&v["account"]),
         }
@@ -133,12 +136,20 @@ impl Rows<'_> {
         self.row(label, vec![Span::styled(value, style)])
     }
 
-    /// `Client` and `Server` versions; both in `warning` when they differ.
+    /// `Client` and `Server` versions; both in `warning` when the versions or the builds
+    /// differ.
     fn versions(&self, status: &Status, out: &mut Vec<Line<'static>>) {
         let t = &self.app.theme;
         let client = self.app.client_version.clone();
         let server = match &status.health {
-            Section::Ready(health) => health.version.clone(),
+            Section::Ready(health) => health.version.clone().map(|version| {
+                let same_build = health.build.as_deref() == Some(self.app.client_build.as_str());
+                if version == client && !same_build {
+                    format!("{version} (older build)")
+                } else {
+                    version
+                }
+            }),
             Section::Missing => None,
             Section::Failed(error) => {
                 out.push(self.text("Client", client));

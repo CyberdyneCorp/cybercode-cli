@@ -382,6 +382,8 @@ pub struct App {
     pub prefs: crate::prefs::Preferences,
     /// This TUI's version, compared with the server's.
     pub client_version: String,
+    /// This client's build identity, compared with the server's in the Status tab.
+    pub client_build: String,
     /// The file explorer's tree, filter and preview.
     pub explorer: crate::explorer::Explorer,
     pub quit: bool,
@@ -469,6 +471,7 @@ impl App {
             settings: Default::default(),
             prefs: Default::default(),
             client_version: env!("CARGO_PKG_VERSION").to_owned(),
+            client_build: cyber_core::version::build_info().build.to_owned(),
             explorer: Default::default(),
             quit: false,
             focused: true,

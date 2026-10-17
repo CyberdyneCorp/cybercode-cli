@@ -51,6 +51,17 @@ cargo run -p cyber-server --example session -- openai/gpt-6-luna
 cargo run -p cyber-tools --example agent -- openai/gpt-6-luna path/to/repo "Fix the failing test" accept-edits
 ```
 
+## Background server and rebuilds
+
+The TUI, `cyber exec`, `cyber api`, `cyber mcp serve` and the resource commands all share one background server per user, started the same way as `cyber service start`. `~/.local/state/cyber/server.json` (mode 0600) names it with its version, build identity and executable. Each binary carries a build identity: the commit, `.dirty` when tracked files differed, `CYBER_BUILD_ID` when set, or the build time (`SOURCE_DATE_EPOCH` for reproducible builds). It also stamps its executable (path, length and modification time) when it starts.
+
+When you rebuild or upgrade `cyber`, the next client sees that the registered server runs another build:
+
+- If the server runs this install's executable and `GET /api/v1/service` reports no running Turn or workflow run, the client stops it, starts the new build, and prints `restarted the Cyber server: it was running an older build`.
+- If the server is busy, belongs to another install, or is too old to report its work, the client keeps using it and prints `The Cyber server runs an older build; restart it with `cyber service restart` when idle`. The TUI sidebar then shows `⚠ older server build · cyber service restart`, panels that need newer routes (such as the Machine section) show `needs a newer server · cyber service restart`, and the Settings › Status tab marks the server version `(older build)`.
+
+`cyber service status` reports `stale: true` in that case. A server started before build identities existed is always kept with the warning. One `cyber service restart` moves you to the build that detects later rebuilds by itself.
+
 ## Sessions and subagents
 
 ### Naming and resuming Sessions

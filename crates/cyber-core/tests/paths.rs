@@ -158,3 +158,29 @@ fn build_info_reports_the_current_commit() {
     let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
     assert_eq!(cyber_core::version::build_info().git_sha, head);
 }
+
+#[test]
+fn build_identity_is_embedded_from_the_commit_or_an_override() {
+    let info = cyber_core::version::build_info();
+    assert!(!info.build.is_empty());
+    match cyber_core::version::build_id_source() {
+        "git" => {
+            let rest = info
+                .build
+                .strip_prefix(info.git_sha)
+                .expect("commit prefix");
+            assert!(rest.is_empty() || rest == ".dirty", "{}", info.build);
+        }
+        "env" => {}
+        "time" => assert!(info.build.starts_with('t'), "{}", info.build),
+        other => panic!("unknown build id source {other}"),
+    }
+}
+
+#[test]
+fn the_running_binary_has_a_stable_path_and_stamp() {
+    let first = cyber_core::version::binary();
+    assert!(first.path.as_deref().is_some_and(|p| !p.is_empty()));
+    assert!(first.stamp.as_deref().is_some_and(|s| s.contains('-')));
+    assert_eq!(first, cyber_core::version::binary());
+}

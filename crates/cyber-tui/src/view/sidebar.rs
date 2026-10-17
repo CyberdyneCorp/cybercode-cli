@@ -72,6 +72,16 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
         crate::sidebar::clean(&app.session.title)
     };
     out.extend(wrap(Line::from(Span::styled(title, bold)), width));
+    if app.sidebar.server_stale() {
+        let warning = Style::default().fg(app.theme.warning);
+        out.extend(wrap(
+            Line::from(Span::styled(
+                "⚠ older server build · cyber service restart".to_owned(),
+                warning,
+            )),
+            width,
+        ));
+    }
     if let Some(parent) = &app.sidebar.parent_title {
         out.push(muted_line(
             app,
@@ -323,7 +333,18 @@ fn machine(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
         return;
     }
     let Some(m) = app.sidebar.machine.ready() else {
-        out.push(muted_line(app, "—"));
+        if app.sidebar.server_stale() {
+            let warning = Style::default().fg(app.theme.warning);
+            out.extend(wrap(
+                Line::from(Span::styled(
+                    crate::perform::NEWER_SERVER.to_owned(),
+                    warning,
+                )),
+                width,
+            ));
+        } else {
+            out.push(muted_line(app, "—"));
+        }
         return;
     };
     let bar = MACHINE_BAR.min(width.saturating_sub(11)).max(4);
