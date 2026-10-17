@@ -1,19 +1,26 @@
 # Cyber Code (`cyber`)
 
-A model-independent coding agent with durable local sessions, repository tools and a terminal UI.
+A model-independent, local-first coding agent: a durable server owns your sessions and multi-agent workflows, and a terminal UI, `exec`, an SDK or another agent over MCP can drive it.
 
-Inspect code, edit files, run tests and resume interrupted work. Sessions stay on your machine in SQLite. Use OpenAI, Anthropic or an OpenAI-compatible endpoint, including a local model server. No Cyber account is required; hosted models require provider credentials.
+## Why Cyber Code
 
-![Cyber Code terminal UI, captured from an isolated offline startup](docs/screenshots/tui.png)
+- **Any model, no account.** OpenAI, Anthropic or any OpenAI-compatible endpoint, including a local model server. No Cyber account; hosted models need their own provider credentials. The full local-model baseline is still open ([evaluation guide](eval/README.md)).
+- **A server that survives a crash.** Prompts are persisted before they run, and execution state lives in SQLite. A restarted server recovers interrupted Sessions, and the TUI, SDK and MCP clients share the same Sessions.
+- **Workflows that resume after `kill -9`.** Claude Code also has [script-driven workflows][C7] with `agent()`/`parallel()`/`pipeline()`. Cyber's differences: runs execute in the background server rather than inside a CLI process; after a server crash they replay durably (`cyber workflows resume --interrupted`); several runs share agent slots fairly with a run queue; and each run has budgets and model tiers that can point at any provider ([details](docs/local-core-guide.md#workflows-p2-m21)).
+- **Other agents can drive whole Sessions.** `cyber mcp serve` lets Claude Code, Codex or another MCP client create, prompt, wait on and interrupt Cyber Sessions, with idempotent receipts and a Mode ceiling. `claude mcp serve` [exposes Claude Code's tools][C4], and Codex [removed its MCP server][X5]. Partial: 7 of the 10 tools ship, and messaging is not implemented yet.
+- **Recovery and confinement.** Shadow-git snapshots restore files without overwriting your own edits. Commands run in an OS sandbox on macOS and Linux (Windows is incomplete).
+- **Open contracts.** Behavior is specified as [OpenSpec requirements](openspec/specs) tagged by phase and validated in CI, and implementation evidence is published ([P1](docs/implementation/p1-status.md), [P2](docs/implementation/p2-status.md)).
+- **A full terminal UI.** 18 themes with a live switcher, Markdown with highlighted code, a responsive sidebar, the `Ctrl+P` palette, a file explorer, a workflows monitor, and Usage/Stats tabs (also as `cyber stats`).
 
-Actual TUI capture, with no model inference. [Screenshots and reproduction](docs/screenshots/README.md).
+## Screenshots
 
-<details>
-<summary>See the CLI command reference</summary>
+Real captures of the TUI in a pseudo-terminal at 160×48, against a scripted local model (not live inference). [How they were made](docs/screenshots/README.md).
 
-![Cyber Code command list from cyber --help](docs/screenshots/cli.png)
-
-</details>
+| Welcome screen | Transcript with docked sidebar |
+|---|---|
+| ![Welcome screen with the ASCII logo, session details and tips](docs/screenshots/welcome.png) | ![Rendered Markdown and highlighted Python next to the Context, MCP and LSP sidebar](docs/screenshots/transcript-sidebar.png) |
+| **`/workflows` monitor: three runs and one queued** | **Settings › Stats** |
+| ![Workflows monitor with three running runs, one queued run and per-run progress](docs/screenshots/workflows-monitor.png) | ![Stats tab with the activity heatmap, streaks, tokens and cost](docs/screenshots/stats.png) |
 
 ## Start here
 
@@ -23,64 +30,79 @@ Requires **Rust 1.89+**. SQLite is bundled. On Linux, install **bubblewrap** for
 cargo build --locked -p cyber-cli
 export OPENAI_API_KEY="your-key"
 
-./target/debug/cyber                            # terminal UI
-./target/debug/cyber exec "fix the failing test" # one task
+./target/debug/cyber                              # terminal UI
+./target/debug/cyber exec "fix the failing test"  # one task
 ./target/debug/cyber review main..HEAD            # read-only review with sorted findings
-./target/debug/cyber --continue                 # resume the latest session
-./target/debug/cyber doctor                     # check your setup
+./target/debug/cyber --continue                   # resume the latest session
+./target/debug/cyber workflows run fanout --wait  # run a saved Workflow; progress on stderr
+./target/debug/cyber stats --models               # local usage stats
+./target/debug/cyber doctor                       # check your setup
 ```
 
-Use `--model provider/model` to select a model. See the [local core guide](docs/local-core-guide.md) for configuration and [evaluation guide](eval/README.md) for local-model setup.
-
-Remote MCP servers that require OAuth are signed in explicitly. `cyber` never opens a browser or starts a sign-in on its own; a refused server reports `needs_auth`:
+Let another agent drive Cyber Sessions over MCP:
 
 ```bash
-./target/debug/cyber mcp auth github   # prints the authorization URL, waits for the 127.0.0.1 callback
-./target/debug/cyber mcp logout github # forgets the stored tokens
+claude mcp add cyber -- cyber mcp serve --client claude-code
 ```
 
-See [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth) for the `oauth` settings and token storage.
-
-MCP servers that advertise resources or prompts add three surfaces. Server content is always wrapped as untrusted data, never as instructions:
-
-- Resource tools: the model can call `mcp_list_resources`, `mcp_list_resource_templates` and `mcp_read_resource`. These tools are read-only (also offered in plan mode), checked as `read` on `mcp:<server>:<uri>` and capped at 512 KiB per read.
-- `@<server>:<uri>` in a prompt, for example `@docs:file:///guide.md`, attaches that resource. If it cannot be attached, a visible `[resource not attached: ...]` notice appears instead.
-- `/<server>:<prompt> [args]` runs a server prompt as a slash command, checked as `mcp_prompt` on `mcp:<server>:<prompt>`.
-
-See [MCP resources](docs/local-core-guide.md#mcp-resources) and [MCP prompts as commands](docs/local-core-guide.md#mcp-prompts-as-commands).
-
-During a tool call, a local or remote server can ask you a question through [form elicitation](docs/local-core-guide.md#mcp-form-elicitation). You answer Accept, Decline or Cancel; `cyber exec` and other unattended runs decline, and Cyber Code never opens a link for a server. Local servers see the Location and writable roots as [MCP roots](docs/local-core-guide.md#mcp-workspace-roots), and a sandbox change restarts them with the new roots.
-
-Other agents can drive Cyber Code over MCP. `cyber mcp serve` is a stdio MCP server bridged to the local Cyber server, so the Sessions it creates show up in the TUI like any other:
-
-```bash
-claude mcp add cyber -- cyber mcp serve --client claude-code   # Claude Code
-./target/debug/cyber mcp serve --transport http                  # prints the loopback endpoint for HTTP clients
-```
-
-The calling agent creates and reads Sessions, sends prompts (`cyber_prompt`, with a wait or a receipt) and interrupts runs. Approvals stay with a human in a Cyber client, and new Sessions are bounded by a Mode ceiling and limits from the global configuration. See [MCP serve](docs/local-core-guide.md#mcp-serve-partial-p1) for Codex and HTTP setup, the trust model and the limits.
+Use `--model provider/model` to select a model. Remote MCP servers that need OAuth are signed in explicitly with `cyber mcp auth <server>`; `cyber` never opens a browser on its own. See the [local core guide](docs/local-core-guide.md) for configuration, [MCP serve](docs/local-core-guide.md#mcp-serve-partial-p1) for Codex and HTTP setup, and [remote MCP OAuth](docs/local-core-guide.md#remote-mcp-oauth).
 
 ## What it does
 
-| Area | Current behavior |
-|---|---|
-| Coding | Read/search repositories, edit files and notebook cells, run commands and use web tools |
-| Sessions | Durable prompt admission, streaming, interrupt/resume, crash recovery and compaction |
-| Safety | Checkout trust, tool permissions, protected paths, credential masking and macOS/Linux sandboxing |
-| Recovery | Shadow-git snapshots, restore preserving user edits, database-plus-artifact backup and retention |
-| Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review` and `/customize-cyber`; replaceable templates and forked reviewer tasks; `cyber review [target]` and TUI `/review` resolve uncommitted changes, ranges, commits or `pr <number>` and report validated findings most severe first; remote `https://` skill sources cached for offline use. Partial: real-model review quality, plugin skills and native acceptance |
-| Clients | TUI, `exec`, background service, public API and generated TypeScript SDK |
-| TUI | Themes (18 built-in, custom JSON, `NO_COLOR`), Markdown with highlighted code, a status footer and per-run marker, the `Ctrl+P` palette, a responsive sidebar (context, MCP, LSP, modified files, branch), a file explorer, and a Settings panel with Status, Config, Usage and a Stats heatmap with a book comparison line (also `cyber stats`); the Nyan progress indicator; Session recaps after time away. Partial: some Settings extras |
-| MCP client | Local (stdio) and remote (Streamable HTTP, legacy SSE) servers with OAuth sign-in, resource tools, `@server:uri` mentions, `/<server>:<prompt>` commands, form elicitation (declined when unattended, never opens links), workspace roots with reconnect on sandbox change, opt-in sampling (local servers), `list_changed` refresh and cancellation notices. Partial: native Windows acceptance; WebSocket is not implemented |
-| MCP serve | `cyber mcp serve` (stdio bridge, or loopback Streamable HTTP) lets other agents create, read, prompt and interrupt Sessions, with receipts, waits with progress, idempotent retries, a Mode ceiling and limits. Nested calls through Sessions are bounded by a recursion guard. Partial: messaging tools, usage attribution and unattended approval handling |
-| Hooks | Command, HTTP, prompt and MCP-tool handlers on tool and lifecycle events, with exact handler trust, managed-only org policy, async handlers and durable receipts. Partial: plugin hooks, sandboxed hook scopes on Windows and events without a producer |
-| Workflows (P2 M2.1) | JavaScript Workflows in a QuickJS sandbox fan out real child-Session agents with `agent()`, `parallel()` and `pipeline()`; `cyber workflows run <name\|file> --wait` (exit 0/1/4/130), `runs`, `show`, `pause`, `resume`, `stop` and `logs`; the model's `workflow` tool behind the `workflow.run` permission; durable replay across restarts, run budgets, model tiers, worktree isolation for concurrent writers, one queued summary per run (summaries that end together share one Turn), the TUI's `/workflows` monitor with sidebar, footer and progress-line indicators and run-end notices, and the SDK's `client.workflows.run()`, `list()` and `get()`. Several runs at once: up to `workflows.max_running_runs` execute (the rest queue and are dispatched oldest first), their agents share the `workflows.max_concurrent` slots fairly (least recently granted run first) with an optional per-run `max_concurrent` share, each run pauses, stops and resumes on its own, a restart pauses interrupted runs for `cyber workflows resume --interrupted` (or `resume_after_restart`), and `cyber workflows runs --watch` follows live counts. Verified end to end with the real binary against a scripted local provider (fan-out under the concurrency cap, HTTP background runs, determinism guards, resume after `kill -9`, budget exit 4, stop, permission and Mode ceilings; for parallel runs: three runs from the CLI, HTTP and the `workflow` tool with fair grants, the run queue, independent pause/stop/resume, `kill -9` with two runs mid-flight and one queued, `runs --watch`, and the TUI monitor in a pty). The parallel-runs acceptance (`add-parallel-workflow-runs` section 11) is also automated: `cyber-cli` `parallel_workflows` drives the real binary and server (fair grants, independent control, `kill -9` recovery) and `cyber-tui` `screens_parallel` drives the monitor through `TestBackend`. Not yet: `ask()`, direct read-only `tools`, prompt-cache warm-up, `exec --workflow`, Job/`/tasks` integration, saved-Workflow listing over HTTP |
-| Project instructions | `AGENTS.md` (shared with other agents), `CLAUDE.md` (Claude Code compatibility, only where a directory has no `AGENTS.md`), `CONTEXT.md` and `CYBER.md` (Cyber Code's own file), loaded from the global config directory and from each directory between the project root and the Location; `@path` imports (depth 5); project files and their imports confined to the project, regular files only, bounded reads, `AGENTS.override.md`, truncation at 32 KiB, `CYBER_DISABLE_CLAUDE_MD` and `CYBER_DISABLE_PROJECT_CONFIG`, nested files attached on `read` once per Context Epoch, and a `cyber doctor` `instructions` check. Not yet: `.cyber/rules`, `.claude/CLAUDE.md`, the `~/.claude/CLAUDE.md` fallback and a configurable `instructions.max_bytes` |
-| Partial P1 | Subagents/worktrees, cancellation controls, usage/budgets, memory, LSP navigation and edit feedback, automatic formatting, migration detection and read-only previews |
+| Area | Today | Details |
+|---|---|---|
+| Coding | Read/search, edit files and notebook cells, run commands, web tools | [Features](docs/features.md) |
+| Sessions | Durable admission, streaming, interrupt/resume, crash recovery, compaction | [Features](docs/features.md) |
+| Safety | Workspace trust, permission rules, protected paths, credential masking, macOS/Linux sandbox | Windows enforcement partial |
+| Recovery | Shadow-git snapshots, restore preserving user edits, backup and retention | Broader rewind UI pending |
+| Workflows (P2) | QuickJS sandbox, `agent()`/`parallel()`/`pipeline()`, determinism guards, durable replay, budgets, model tiers, parallel runs with fair scheduling and a queue | [Guide](docs/local-core-guide.md#workflows-p2-m21); `ask()`, `exec --workflow` not yet |
+| MCP client | stdio and remote servers, OAuth, resources, prompts, elicitation, roots | WebSocket not implemented |
+| MCP serve | Other agents create, read, prompt and interrupt Sessions (7 of 10 tools) | Messaging not yet |
+| Hooks | Command, HTTP, prompt and MCP-tool handlers; managed-only org policy | Plugin hooks pending |
+| Skills | Bundled `/review`, `/batch`, `/simplify`, `/security-review`, `/customize-cyber`; remote sources; `cyber review` | Plugin skills pending |
+| Instructions | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`; confined `@path` imports | [Guide](docs/local-core-guide.md#project-instructions-and-cybermd) |
+| TUI | Themes, Markdown, sidebar, palette, explorer, Settings/Usage/Stats, recaps | Some Settings extras pending |
+| Clients | TUI, `exec`, background service, HTTP/SSE/WebSocket/stdio API, TypeScript SDK | [SDK](sdk/typescript/README.md) |
+| Partial P1 | Subagents/worktrees, cancellation, budgets, memory, LSP, formatting, migration previews | [P1 status](docs/implementation/p1-status.md) |
 
-**P0 is implemented, with release gates still open:** the full local-model baseline, including the long coding task, remains incomplete. **P1 is in progress; no P1 milestone is fully accepted.** Windows confinement, native MCP OAuth keyring acceptance, plugins, complete client controls, browser verification and migration still need work or acceptance. Later phases cover goals, remote control, cloud runners and IDE clients (editor integration moved to P3); the P2 Workflow runtime (M2.1) is implemented and accepted end to end, except `ask()`, direct read-only tools, `exec --workflow` and Job integration ([P2 evidence](docs/implementation/p2-status.md)). `CYBER.md`, Cyber Code's own instruction file, loads next to `AGENTS.md`, `CLAUDE.md` and `CONTEXT.md` ([how to write one](docs/local-core-guide.md#project-instructions-and-cybermd)).
+## How it compares
 
-See the [complete feature reference](docs/features.md), [P0 evidence](docs/measurements/p0-exit-evidence.md), [P1 status](docs/implementation/p1-status.md) and [roadmap](ROADMAP.md).
+Checked **2026-10-17** against each product's official docs. This compares documented capabilities, not coding quality or speed. "Partial" means Cyber Code has working pieces with contracts or acceptance gates still open.
+
+| Feature | Cyber Code | Claude Code | Codex CLI | OpenCode |
+|---|---|---|---|---|
+| Edit files and run commands | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
+| Model providers | OpenAI, Anthropic, OpenAI-compatible | Claude via Anthropic, Bedrock, Vertex, Foundry [C2] | OpenAI and custom providers [X2] | 75+ providers [O2] |
+| Local models | Compatible endpoint; full baseline pending | Not established | Ollama / LM Studio via `--oss` [X2] | Ollama, LM Studio, llama.cpp [O2] |
+| Terminal UI | Yes | Yes [C1] | Yes [X1] | Yes [O1] |
+| Headless / exec | `cyber exec` | `claude -p` [C3] | `codex exec` [X3] | `opencode run` [O3] |
+| Editor / desktop / web | Planned: web P1, IDE P3, desktop P4 | VS Code, JetBrains, desktop, web [C1] | IDE, app, web, cloud [X1] | Desktop, IDE [O1], web [O13] |
+| Tool permissions | Yes; full auto mode partial | Yes [C5] | Yes [X4] | Yes [O4] |
+| OS sandbox | macOS/Linux; Windows incomplete | macOS/Linux/WSL2; native Windows unsandboxed [C6] | macOS, Linux/WSL2, native Windows [X4] | Not established (permission rules only) [O4] |
+| Subagents | Partial | Yes [C8] | Yes [X6] | Yes [O5] |
+| Multi-agent workflows | JS scripts in a QuickJS sandbox, durable replay | JS dynamic workflows, `/workflows` view [C7] | Not established | Not established |
+| Parallel runs | Run queue, fair slot sharing, independent pause/stop/resume | Background agents, agent view, several workflow runs [C9] | Parallel subagents [X6], cloud tasks [X1] | Parallel subagents [O5] |
+| Durable resume after crash | Server recovers Sessions; workflows replay after `kill -9` | `--resume`; workflows resumable in-session or relaunched after `--resume` [C7] | `codex resume` [X3]; crash recovery not established | Not established |
+| MCP client | stdio + remote, OAuth, resources, prompts, elicitation, roots | Local and remote, OAuth [C4] | stdio + HTTP, OAuth [X7] | Local and remote, OAuth [O6] |
+| Acting as an MCP server | `cyber mcp serve`: drives Sessions (partial) | `claude mcp serve`: exposes tools over stdio [C4] | Removed; app server (JSON-RPC) instead [X5] | Not established; ACP server [O3] |
+| Hooks | Command, HTTP, prompt, MCP tool; managed policy | Command, HTTP, MCP tool, prompt, agent; managed policy [C10] | Command, MCP tool; managed policy [X8] | Plugin event hooks [O7] |
+| Skills / custom commands | Bundled skills, remote sources, user commands (partial) | Skills and plugins [C11] | Skills and plugins [X9] | Skills and commands [O8] |
+| Project instruction files | `CYBER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` | `CLAUDE.md`; reads `AGENTS.md` [C12] | `AGENTS.md` [X10] | `AGENTS.md`, `CLAUDE.md` fallback [O9] |
+| Undo / checkpoints | Shadow-git snapshots preserving user edits | `/rewind` checkpoints [C13] | Git checkpoints recommended [X1] | `/undo`, `/redo` [O1] |
+| Programmatic API / SDK | HTTP/SSE/WebSocket/stdio API, TS SDK | Agent SDK [C14] | Codex SDK, app server [X11][X12] | HTTP server and SDK [O10] |
+| LSP | Navigation and edit feedback (partial) | Via plugins [C15] | Not established | Built in [O11] |
+| Themes | 18 built-in, custom JSON, `NO_COLOR` | `/theme`, custom themes [C16] | `/theme` syntax themes [X13] | Built-in and custom JSON [O12] |
+| Usage stats | Usage/Stats tabs, `cyber stats` | `/usage` with Stats tab [C16] | `/status` context and rate limits [X14] | `opencode stats` [O3] |
+
+"Not established" means the cited docs do not establish support; it does not mean the feature is absent. These products have different defaults, platform limits and release channels. Our implementation limits are in the [feature reference](docs/features.md).
+
+## Status
+
+- **P0 (local core):** implemented; release gates remain open, including the full local-model baseline and the long coding task ([evidence](docs/measurements/p0-exit-evidence.md)).
+- **P1 (table stakes):** in progress; no P1 milestone is fully accepted. Windows confinement, native MCP OAuth keyring acceptance, plugins, complete client controls, browser verification and migration remain ([status](docs/implementation/p1-status.md)).
+- **P2 (autonomy):** the Workflow runtime (M2.1) and parallel runs are implemented and accepted end to end with the real binary; `ask()`, direct read-only tools, `exec --workflow` and Job integration remain ([evidence](docs/implementation/p2-status.md)). Goals, loops and teams come later.
+
+See the [roadmap](ROADMAP.md) for P3 (connectivity, IDE clients) and P4.
 
 ## Architecture
 
@@ -113,47 +135,52 @@ flowchart LR
     Model --> Done["Finish turn"]
 ```
 
-## How it compares
-
-Scope: **Cyber Code, Claude Code, Codex and OpenCode coding tools**, checked **2026-10-10**. This compares documented capabilities, not coding quality or speed. Partial means our implementation has working pieces and remaining contracts or acceptance gates.
-
-| Feature | Cyber Code | Claude Code | Codex | OpenCode |
-|---|---|---|---|---|
-| Edit files and run commands | Yes | Yes [docs][C1] | Yes [docs][X1] | Yes [docs][O1] |
-| Model providers | OpenAI, Anthropic, compatible endpoints | Claude through supported providers [docs][C1] | OpenAI and custom providers [docs][X2] | Multiple providers [docs][O2] |
-| Local models | Compatible adapter; full baseline pending | Not established by cited docs | Ollama / LM Studio [docs][X2] | Ollama / LM Studio [docs][O2] |
-| Terminal and automation | TUI and `exec` | CLI and SDK [docs][C1] | CLI and `exec` [docs][X1] | TUI and CLI [docs][O1] |
-| Editor / desktop / web clients | IDE clients (ACP, VS Code) planned for P3; local web UI P1, desktop app P4 | Available [docs][C1] | IDE and cloud surfaces [docs][X1] | Desktop and IDE [docs][O1] |
-| Tool permissions | Yes; full auto mode partial | Yes [docs][C2] | Yes [docs][X3] | Yes [docs][O3] |
-| OS sandbox | macOS/Linux; Windows incomplete | macOS/Linux/WSL2; native Windows unsandboxed [docs][C2] | Documented sandbox controls [docs][X3] | Permission rules documented [docs][O3]; OS isolation not established here |
-| Subagents | Partial P1 | Yes [docs][C3] | Yes [docs][X1] | Yes [docs][O4] |
-| MCP integration | Client for local (stdio) and remote (Streamable HTTP, SSE) servers: OAuth via `cyber mcp auth` (OS keyring; 0600 file on Linux), resources, `@server:uri` mentions, prompt commands, form elicitation, roots, opt-in local sampling, `list_changed` refresh and cancellation. `cyber mcp serve` for other agents (partial). Partial: WebSocket, native Windows acceptance | Local and remote [docs][C4] | stdio and HTTP [docs][X2] | Local and remote [docs][O5] |
-| File undo / recovery | Snapshots preserving user edits | Edit checkpoints and rewind [docs][C5] | Git checkpoints recommended [docs][X1] | Undo/redo [docs][O1] |
-| Programmatic server | HTTP/events, stdio API, TS SDK | Agent SDK [docs][C1] | App Server [docs][X4] | HTTP/OpenAPI and SDK [docs][O6] |
-| LSP integration | Navigation/feedback partial P1 | Language-server plugins [docs][C6] | Not established by cited docs | Built-in LSP support [docs][O7] |
-
-“Not established” means the linked sources do not establish support; it does not mean the feature is absent. These products have different defaults, platform limits and release channels. Cyber's [feature reference](docs/features.md) records our implementation limits.
-
 ## Documentation and development
 
-[Documentation index](docs/README.md) · [Commands and configuration](docs/local-core-guide.md) · [Roadmap](ROADMAP.md) · [SDK](sdk/typescript/README.md) · [OpenAPI](sdk/openapi.json) · [Evaluations](eval/README.md) · [OpenSpec contracts](openspec/specs)
+[Documentation index](docs/README.md) · [Feature reference](docs/features.md) · [Commands and configuration](docs/local-core-guide.md) · [Roadmap](ROADMAP.md) · [SDK](sdk/typescript/README.md) · [OpenAPI](sdk/openapi.json) · [Evaluations](eval/README.md) · [OpenSpec contracts](openspec/specs)
 
 Run `just` to list tasks, `just build` to build and `just ci` for local checks. Platform builds run in [CI](.github/workflows/ci.yml). See the [development guide](docs/local-core-guide.md#build-and-development) for raw commands and the pinned specification validator.
 
 [C1]: https://code.claude.com/docs/en/overview
-[C2]: https://code.claude.com/docs/en/sandboxing
-[C3]: https://code.claude.com/docs/en/sub-agents
+[C2]: https://code.claude.com/docs/en/third-party-integrations
+[C3]: https://code.claude.com/docs/en/headless
 [C4]: https://code.claude.com/docs/en/mcp
-[C5]: https://code.claude.com/docs/en/checkpointing
-[C6]: https://code.claude.com/docs/en/discover-plugins
+[C5]: https://code.claude.com/docs/en/permissions
+[C6]: https://code.claude.com/docs/en/sandboxing
+[C7]: https://code.claude.com/docs/en/workflows
+[C8]: https://code.claude.com/docs/en/sub-agents
+[C9]: https://code.claude.com/docs/en/agents
+[C10]: https://code.claude.com/docs/en/hooks
+[C11]: https://code.claude.com/docs/en/skills
+[C12]: https://code.claude.com/docs/en/memory
+[C13]: https://code.claude.com/docs/en/checkpointing
+[C14]: https://code.claude.com/docs/en/agent-sdk/overview
+[C15]: https://code.claude.com/docs/en/discover-plugins
+[C16]: https://code.claude.com/docs/en/commands
 [X1]: https://learn.chatgpt.com/docs/codex/cli
 [X2]: https://learn.chatgpt.com/docs/config-file/config-reference
-[X3]: https://learn.chatgpt.com/docs/security
-[X4]: https://learn.chatgpt.com/docs/app-server
+[X3]: https://learn.chatgpt.com/docs/non-interactive-mode
+[X4]: https://learn.chatgpt.com/docs/sandboxing
+[X5]: https://learn.chatgpt.com/docs/mcp-server
+[X6]: https://learn.chatgpt.com/docs/agent-configuration/subagents
+[X7]: https://learn.chatgpt.com/docs/extend/mcp
+[X8]: https://learn.chatgpt.com/docs/hooks
+[X9]: https://learn.chatgpt.com/docs/skills-and-plugins
+[X10]: https://learn.chatgpt.com/docs/agent-configuration/agents-md
+[X11]: https://learn.chatgpt.com/docs/codex-sdk
+[X12]: https://learn.chatgpt.com/docs/app-server
+[X13]: https://learn.chatgpt.com/docs/cli-customization
+[X14]: https://learn.chatgpt.com/docs/reference/slash-commands
 [O1]: https://opencode.ai/docs/
 [O2]: https://opencode.ai/docs/providers/
-[O3]: https://opencode.ai/docs/permissions/
-[O4]: https://opencode.ai/docs/agents/
-[O5]: https://opencode.ai/docs/mcp-servers/
-[O6]: https://opencode.ai/docs/server/
-[O7]: https://opencode.ai/docs/lsp/
+[O3]: https://opencode.ai/docs/cli/
+[O4]: https://opencode.ai/docs/permissions/
+[O5]: https://opencode.ai/docs/agents/
+[O6]: https://opencode.ai/docs/mcp-servers/
+[O7]: https://opencode.ai/docs/plugins/
+[O8]: https://opencode.ai/docs/skills/
+[O9]: https://opencode.ai/docs/rules/
+[O10]: https://opencode.ai/docs/server/
+[O11]: https://opencode.ai/docs/lsp/
+[O12]: https://opencode.ai/docs/themes/
+[O13]: https://opencode.ai/docs/web/
