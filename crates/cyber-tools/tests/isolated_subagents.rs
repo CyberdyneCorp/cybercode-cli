@@ -58,14 +58,17 @@ async fn invoke(flow: &Flow, parent: &str, input: Value) -> Result<Value, String
         other => panic!("unexpected {other:?}"),
     }
 }
+/// Wait for the job's completion notice. The deadline only bounds a failure: on Windows
+/// the child's worktree setup and removal (git plus file deletion) can take seconds, and a
+/// spin with `yield_now` would starve the blocking threads doing that work.
 async fn done(flow: &Flow, job: &str) -> cyber_server::runtime::Job {
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
         while !flow.runtime.job(job).unwrap().notified {
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
     .await
-    .unwrap();
+    .unwrap_or_else(|_| panic!("job {job} was not notified: {:?}", flow.runtime.job(job)));
     flow.runtime.job(job).unwrap()
 }
 
@@ -2663,7 +2666,9 @@ async fn structured_foreground_result_is_collected_before_automatic_queued_attem
         assert_eq!(result["result"], 1);
         assert_eq!(result["worktree"]["kept"], cleanup == "keep");
         let child = result["id"].as_str().unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        // Woken by the child's live events; the bound only limits a failure (on Windows CI
+        // the queued attempts were still progressing after 3 s).
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 if flow.runtime.state(child).await.unwrap().structured_result() == Some(&json!(3)) {
                     break;
