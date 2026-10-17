@@ -534,7 +534,8 @@ impl Harness {
     }
 
     pub async fn settle(&self, id: &str) {
-        tokio::time::timeout(Duration::from_secs(10), self.runtime.wait_idle(id))
+        // Bounds a failure only; Windows runners can take longer than 10 s.
+        tokio::time::timeout(Duration::from_secs(60), self.runtime.wait_idle(id))
             .await
             .expect("drain did not settle");
     }

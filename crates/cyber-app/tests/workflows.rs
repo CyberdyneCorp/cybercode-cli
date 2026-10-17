@@ -449,8 +449,9 @@ fn children(server: &Server, owner: &str) -> Vec<(String, Option<String>)> {
         .unwrap()
 }
 
+/// Poll `done`; the bound (60 s) only limits a failure on a slow runner.
 async fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
-    for _ in 0..600 {
+    for _ in 0..3000 {
         if done() {
             return;
         }

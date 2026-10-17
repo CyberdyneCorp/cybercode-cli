@@ -491,12 +491,19 @@ async fn pausing_one_of_several_runs_leaves_the_other_rows_unchanged() {
         text(&after)
     );
     // Rows compare without the selection marker and the elapsed time, which counts on.
+    // The panel's right border goes first, so the last token is the elapsed time.
     let strip = |line: String| {
         let line = line.replace('›', " ");
-        line.trim_end().rsplit_once(' ').unwrap().0.to_owned()
+        let line = line.trim_end().trim_end_matches('│').trim_end();
+        line.rsplit_once(' ').unwrap().0.to_owned()
     };
     for name in ["runa", "runc", "rund"] {
-        assert_eq!(strip(row(&after, name)), strip(row(&live, name)), "{name}");
+        let stripped = strip(row(&after, name));
+        assert!(
+            !stripped.ends_with('s'),
+            "elapsed time left in {stripped:?}"
+        );
+        assert_eq!(stripped, strip(row(&live, name)), "{name}");
     }
 }
 
