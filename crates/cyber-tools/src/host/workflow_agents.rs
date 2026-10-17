@@ -38,6 +38,9 @@ impl BuiltinHost {
             worktree,
             slot,
         } = request;
+        // An unsettled agent is resumed, but when the server stopped between recording its
+        // start and creating its child Session there is no child to continue: spawn one.
+        let resume = resume && self.child_exists(&owner.session_id, &agent_id).await;
         let mut input = json!({"prompt": prompt, "background": false, "name": agent_id, "description": DESCRIPTION});
         // A resumed child keeps its agent profile and model; the shared path refuses changes.
         let choices = if resume {
@@ -91,6 +94,15 @@ impl BuiltinHost {
             .await
             .map_err(failure)?;
         self.workflow_output(&output)
+    }
+
+    /// Whether `owner` has the child Session named `agent_id`.
+    async fn child_exists(&self, owner: &str, agent_id: &str) -> bool {
+        match self.runtime() {
+            Some(runtime) => runtime.resolve_subagent(owner, agent_id).await.is_ok(),
+            // Without a runtime the shared path reports the failure itself.
+            None => true,
+        }
     }
 
     /// The child's answer plus the usage of its subtree.

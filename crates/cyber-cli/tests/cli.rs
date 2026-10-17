@@ -317,6 +317,17 @@ fn workflows_run_against_the_shared_server_and_wait_maps_exit_codes() {
     );
 }
 
+/// Request bodies of provider Turns, as text. Session title requests carry the first
+/// prompt too and arrive concurrently, so they are left out of any count.
+fn turn_requests(model: &scripted_model::ScriptedModel) -> Vec<String> {
+    model
+        .requests()
+        .iter()
+        .map(Value::to_string)
+        .filter(|text| !text.contains("Write a short title"))
+        .collect()
+}
+
 /// Poll `done` for up to 30 seconds.
 fn poll_until(what: &str, mut done: impl FnMut() -> bool) {
     for _ in 0..600 {
@@ -435,13 +446,15 @@ fn workflows_resume_interrupted_resumes_runs_a_restart_paused_and_not_a_user_pau
         );
         ids.push(id.trim().to_owned());
     }
-    poll_until("four agents at the model", || {
-        model
-            .requests()
-            .iter()
-            .filter(|r| r.to_string().contains("HOLD-"))
-            .count()
-            == 4
+    // The server caps agents at the core count (3 on CI's macOS runners), so only the runs
+    // started first are guaranteed an agent at the model; `rp` may still wait for a slot.
+    poll_until("the first three runs' agents at the model", || {
+        let turns = turn_requests(&model);
+        ["ra", "rb", "rc"].iter().all(|name| {
+            turns
+                .iter()
+                .any(|text| text.contains(&format!("HOLD-{name}")))
+        })
     });
     let paused = ids.pop().unwrap();
     exits(&service.cyber(&["workflows", "pause", &paused]), 0);
@@ -460,10 +473,8 @@ fn workflows_resume_interrupted_resumes_runs_a_restart_paused_and_not_a_user_pau
     assert_eq!(shown["status"], "paused", "{shown}");
     assert_eq!(shown["reason"], "paused by the user", "{shown}");
     for name in ["ra", "rb", "rc", "rp"] {
-        let continued = model
-            .requests()
+        let continued = turn_requests(&model)
             .iter()
-            .map(Value::to_string)
             .filter(|text| {
                 text.contains("was interrupted") && text.contains(&format!("HOLD-{name}"))
             })
@@ -583,10 +594,9 @@ fn first_then_held(body: &Value) -> Value {
 
 #[cfg(unix)]
 fn requests_with(model: &scripted_model::ScriptedModel, needle: &str) -> usize {
-    let requests = model.requests();
-    requests
+    turn_requests(model)
         .iter()
-        .filter(|r| r.to_string().contains(needle))
+        .filter(|text| text.contains(needle))
         .count()
 }
 
