@@ -84,7 +84,7 @@ Archive after `implement-m2-1-workflow-runtime`. Sections 9 and 10 build on `imp
 
 ## 11. End-to-end acceptance
 
-- [x] 11.1 `crates/cyber-app/tests/parallel_workflows.rs`, on the production App with `workflows.max_concurrent: 4` and `max_running_runs: 3`, and the scripted provider with gated responses. Start three runs within one second:
+- [x] 11.1 `crates/cyber-app/tests/parallel_workflows.rs`, on the production App with `workflows.max_concurrent: 4` and `max_running_runs: 3`, and the scripted provider with gated responses. Start three runs together (checked by events: all three listed running with nothing settled before any gate opens, since starting the real binary and a model Turn takes seconds on Windows runners):
   - A, `cyber workflows run` with the real binary, 12 agents;
   - B, `POST /api/v1/workflows/runs`, 2 agents;
   - C, the `workflow` tool in Session S, 6 agents with `max_concurrent: 2`.

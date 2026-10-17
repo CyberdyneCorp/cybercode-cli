@@ -92,6 +92,9 @@ fn reply(body: &Value) -> Value {
     if text.contains("Write a short title") {
         return json!({"content": "Native service shutdown"});
     }
+    if text.contains("wait at the model") {
+        return json!({"gate": "workflow agent"});
+    }
     let (tool, command) = if text.contains("worker with powershell") {
         (
             "powershell",
@@ -230,12 +233,6 @@ async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_
     let app = application(root, &model).await;
     let paths = app.paths.clone();
     let running = app.runtime.clone();
-    // Hold every Workflow agent slot so the run's agent waits, started but unsettled.
-    let scheduler = running.workflow_scheduler();
-    let mut held = Vec::new();
-    for _ in 0..scheduler.capacity() {
-        held.push(scheduler.enqueue("run_held", usize::MAX).await.unwrap());
-    }
     let stop = Arc::new(Notify::new());
     let mut server = Server {
         stop: stop.clone(),
@@ -261,7 +258,7 @@ async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_
         .await
         .unwrap()
         .id;
-    let script = "export const meta = { name: 'service', description: 'Service shutdown' };\nexport default async () => (await agent('wait for a slot')).text;\n";
+    let script = "export const meta = { name: 'service', description: 'Service shutdown' };\nexport default async () => (await agent('wait at the model')).text;\n";
     let run = running
         .start_workflow_run(StartWorkflowRun {
             module: cyber_workflow::WorkflowModule::inline(script).unwrap(),
@@ -275,13 +272,14 @@ async fn service_stop_pauses_running_workflow_runs_and_a_rebuilt_app_keeps_them_
         })
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while running.workflow_agents(&run.id).unwrap().is_empty() {
+    // The agent started and its child's request waits at the provider: unsettled.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while model.held().is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the agent did not start");
+    .expect("the agent did not reach the model");
     assert_eq!(
         cyber_app::stop_service(&paths).await.unwrap(),
         Some(registration)

@@ -1478,6 +1478,8 @@ async fn recovery_resumes_interrupted_runs_and_leaves_an_edited_one_paused() {
 async fn resuming_interrupted_runs_leaves_a_user_paused_run_paused() {
     let agents = Arc::new(Agents::default());
     let f = fixture(&agents);
+    // Four agents in flight at once, whatever the runner's core count (the default cap).
+    assert!(f.runtime.configure_workflow_concurrency(16));
     let owner = f.session("default").await;
     let mut interrupted = Vec::new();
     for name in ["a", "b", "c"] {
