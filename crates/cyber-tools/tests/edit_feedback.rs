@@ -272,8 +272,11 @@ async fn diagnostic_timeout_preserves_success_and_zero_wait_retains_notification
             .await);
         assert!(!output.contains("<diagnostics"));
         assert_eq!(fixture.read("file.txt"), "saved");
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while !fixture.repo.join("save-events").exists() {
+        // The fixture server creates the file before it writes the line, so wait for a
+        // complete line rather than for the file.
+        let events = fixture.repo.join("save-events");
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !std::fs::read_to_string(&events).is_ok_and(|text| text.ends_with('\n')) {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
         })
