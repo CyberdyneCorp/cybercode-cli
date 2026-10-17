@@ -136,14 +136,19 @@ async fn browse_and_preview_at_150x36_and_80x30_and_without_color() {
         ..Opts::default()
     };
     let shown = render(&mut app, 150, 36, &opts);
+    // Root rows have no guide; nested rows get one `│ ` per level before the marker.
+    assert!(shown.contains("│ ▾ cyber-tui/ 1"), "{shown}");
+    assert!(shown.contains("│ │ ▾ src/ 2"), "{shown}");
+    let crates = shown
+        .lines()
+        .find(|l| l.contains("▾ crates/"))
+        .unwrap_or_else(|| panic!("{shown}"));
     assert!(
-        shown.contains("├── ▾ cyber-tui") || shown.contains("└── ▾ cyber-tui"),
-        "{shown}"
+        !crates.contains("├") && crates.trim_end().ends_with('M'),
+        "{crates}"
     );
-    assert!(
-        shown.contains(" M └── ▾ crates") || shown.contains(" M ├── ▾ crates"),
-        "{shown}"
-    );
+    assert!(shown.contains("EXPLORER"), "{shown}");
+    assert!(shown.contains("⌕ filter files…"), "{shown}");
     assert!(
         !shown.contains("⊘ ask to read"),
         "dot files are hidden by default"
@@ -154,10 +159,28 @@ async fn browse_and_preview_at_150x36_and_80x30_and_without_color() {
     let actions = press(&mut app, KeyCode::Enter);
     assert_eq!(actions, vec![Action::LoadPreview("notes.md".into())]);
     f.run(&mut app, actions).await;
+    // Markdown is rendered by default; `m` shows the source with the gutter.
     let buf = buffer(&mut app, 150, 36, &Opts::default());
-    let y = row_of(&buf, "notes.md · markdown · 3 lines · +3 −0");
-    let gutter = row_of(&buf, "1 ▎# Notes");
-    assert!(gutter > y);
+    let header = row_of(&buf, "notes.md   Markdown · 3 lines");
+    assert!(text(&buf).contains("+3 −0"), "{}", text(&buf));
+    assert!(text(&buf).contains(" rendered  m raw"), "{}", text(&buf));
+    assert!(!text(&buf).contains("# Notes"), "{}", text(&buf));
+    assert!(row_of(&buf, "Notes") > header);
+    insta::assert_snapshot!("explorer_rendered_150x36", render(&mut app, 150, 36, &opts));
+    press(&mut app, KeyCode::Char('m'));
+    let buf = buffer(&mut app, 150, 36, &Opts::default());
+    let gutter = row_of(&buf, "1▎│ # Notes");
+    assert!(gutter > header);
+    let x = text(&buf)
+        .lines()
+        .nth(gutter as usize)
+        .unwrap()
+        .find("Notes")
+        .unwrap();
+    let x = text(&buf).lines().nth(gutter as usize).unwrap()[..x]
+        .chars()
+        .count() as u16;
+    assert_eq!(buf[(x, gutter)].fg, app.theme.md_heading);
     insta::assert_snapshot!("explorer_150x36", render(&mut app, 150, 36, &opts));
     let plain = Opts {
         no_color: true,
@@ -180,7 +203,7 @@ async fn browse_and_preview_at_150x36_and_80x30_and_without_color() {
         ..Opts::default()
     };
     let shown = render(&mut app, 80, 30, &opts);
-    assert!(shown.contains("rust · 6 lines"), "{shown}");
+    assert!(shown.contains("Rust · 6 lines"), "{shown}");
     assert!(!shown.contains("README.md"), "{shown}");
     insta::assert_snapshot!("explorer_preview_80x30", shown);
     let buf = buffer(&mut app, 80, 30, &Opts::default());

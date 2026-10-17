@@ -1,0 +1,57 @@
+---
+source: crates/cyber-tui/src/screens_explorer.rs
+expression: "render(&mut app, 150, 36, &opts)"
+---
+ EXPLORER work:main                               3 changed │ notes.md   Markdown · 3 lines · 16B  +3 −0                              rendered  m raw
+ ⌕ filter files…                                            │
+                                                            │   Notes
+  ▾ crates/ 1                                             M │
+  │ ▾ cyber-tui/ 1                                        M │   one two
+  │ │ ▾ src/ 2                                            M │
+  │ │ │   app.rs                                        16B │
+  │ │ │   markdown.rs                               M  102B │
+    README.md                                            7B │
+▌   notes.md                                        ?   16B │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+ 7 shown · 4 hidden · .gitignore                            │
+  ↑↓  move  ←→  fold  enter  open  /  filter  g  changed  .  hidden  m  raw/rendered  @  mention  y  copy path  r  refresh  esc  close
+                                                                                100 · —  ctrl+p commands
+row 3: 0-1 fg=#d6e4f0 bg=#13181d
+row 3: 2-3 fg=#6b7a8f bg=#13181d
+row 3: 4-10 fg=#91b3f5 bg=#13181d bold
+row 3: 11-12 fg=#6b7a8f bg=#13181d
+row 3: 13-57 fg=#d6e4f0 bg=#13181d
+row 3: 58-59 fg=#ffcc66 bg=#13181d bold
+row 3: 60-60 fg=#2b3445 bg=#0b0f14
+row 3: 61-149 fg=#d6e4f0 bg=#0b0f14
+row 7: 0-1 fg=#d6e4f0 bg=#13181d
+row 7: 2-7 fg=#666f77 bg=#13181d
+row 7: 8-9 fg=#6b7a8f bg=#13181d
+row 7: 10-20 fg=#cba7ec bg=#13181d
+row 7: 21-51 fg=#d6e4f0 bg=#13181d
+row 7: 52-53 fg=#ffcc66 bg=#13181d bold
+row 7: 54-59 fg=#6b7a8f bg=#13181d
+row 7: 60-60 fg=#2b3445 bg=#0b0f14
+row 7: 61-149 fg=#d6e4f0 bg=#0b0f14

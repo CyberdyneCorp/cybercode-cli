@@ -2,39 +2,39 @@
 source: crates/cyber-tui/src/screens_explorer.rs
 expression: "render(&mut app, 150, 36, &plain)"
 ---
- work:main · 3 changed
- / filter
- M ├── ▾ crates                                               notes.md · markdown · 3 lines · +3 −0
- M │   └── ▾ cyber-tui                                       1 ▎# Notes
- M │       └── ▾ src                                         2 ▎one
-   │           ├── app.rs                                    3 ▎two
- M │           └── markdown.rs
-   ├── README.md
- ? └── notes.md
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- enter open · / filter · g changed only · . hidden files · @ mention · y copy path · r refresh · esc close · 4 hidden
+ EXPLORER work:main                               3 changed │ notes.md   Markdown · 3 lines · 16B  +3 −0                              raw  m rendered
+ ⌕ filter files…                                            │
+                                                            │ 1▎│ # Notes
+  ▾ crates/ 1                                             M │ 2▎│ one
+  │ ▾ cyber-tui/ 1                                        M │ 3▎│ two
+  │ │ ▾ src/ 2                                            M │
+  │ │ │   app.rs                                        16B │
+  │ │ │   markdown.rs                               M  102B │
+    README.md                                            7B │
+▌   notes.md                                        ?   16B │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+ 7 shown · 4 hidden · .gitignore                            │
+  ↑↓  move  ←→  fold  enter  open  /  filter  g  changed  .  hidden  m  raw/rendered  @  mention  y  copy path  r  refresh  esc  close
                                                                                 100 · —  ctrl+p commands

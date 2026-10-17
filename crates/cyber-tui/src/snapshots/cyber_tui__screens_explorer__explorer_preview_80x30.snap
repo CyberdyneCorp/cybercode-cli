@@ -2,15 +2,14 @@
 source: crates/cyber-tui/src/screens_explorer.rs
 expression: shown
 ---
- work:main · 3 changed
- / filter
- crates/cyber-tui/src/markdown.rs · rust · 6 lines
-1  //! Markdown.
-2
-3  pub fn render(text: &str) -> usize {
-4      // count the lines
-5      text.lines().count()
-6  }
+ crates › cyber-tui › src › markdown.rs   Rust · 6 lines · 102B
+
+ 1 │ //! Markdown.
+ 2 │
+ 3 │ pub fn render(text: &str) -> usize {
+ 4 │     // count the lines
+ 5 │     text.lines().count()
+ 6 │ }
 
 
 
@@ -30,21 +29,24 @@ expression: shown
 
 
 
- enter open · / filter · g changed only · . hidden files · @ mention · y copy p…
+
+  ↑↓  move  ←→  fold  enter  open  /  filter  g  changed  .  hidden
                                                        100 · —  ctrl+p commands
-row 5: 0-1 fg=#666f77 bg=#0b0f14
-row 5: 2-2 fg=#d6e4f0 bg=#0b0f14
-row 5: 3-9 fg=#c792ea bg=#0b0f14
-row 5: 10-15 fg=#00e5ff bg=#0b0f14
-row 5: 16-16 fg=#6b7a8f bg=#0b0f14
-row 5: 17-20 fg=#d6e4f0 bg=#0b0f14
-row 5: 21-21 fg=#6b7a8f bg=#0b0f14
-row 5: 22-22 fg=#c792ea bg=#0b0f14
-row 5: 23-23 fg=#d6e4f0 bg=#0b0f14
-row 5: 24-26 fg=#c792ea bg=#0b0f14
-row 5: 27-27 fg=#6b7a8f bg=#0b0f14
-row 5: 28-28 fg=#c792ea bg=#0b0f14
-row 5: 29-30 fg=#6b7a8f bg=#0b0f14
-row 5: 31-37 fg=#c792ea bg=#0b0f14
-row 5: 38-38 fg=#6b7a8f bg=#0b0f14
-row 5: 39-79 fg=#d6e4f0 bg=#0b0f14
+row 4: 0-0 fg=#d6e4f0 bg=#0b0f14
+row 4: 1-1 fg=#666f77 bg=#0b0f14
+row 4: 2-2 fg=#d6e4f0 bg=#0b0f14
+row 4: 3-4 fg=#2b3445 bg=#0b0f14
+row 4: 5-11 fg=#c792ea bg=#0b0f14
+row 4: 12-17 fg=#00e5ff bg=#0b0f14
+row 4: 18-18 fg=#6b7a8f bg=#0b0f14
+row 4: 19-22 fg=#d6e4f0 bg=#0b0f14
+row 4: 23-23 fg=#6b7a8f bg=#0b0f14
+row 4: 24-24 fg=#c792ea bg=#0b0f14
+row 4: 25-25 fg=#d6e4f0 bg=#0b0f14
+row 4: 26-28 fg=#c792ea bg=#0b0f14
+row 4: 29-29 fg=#6b7a8f bg=#0b0f14
+row 4: 30-30 fg=#c792ea bg=#0b0f14
+row 4: 31-32 fg=#6b7a8f bg=#0b0f14
+row 4: 33-39 fg=#c792ea bg=#0b0f14
+row 4: 40-40 fg=#6b7a8f bg=#0b0f14
+row 4: 41-79 fg=#d6e4f0 bg=#0b0f14

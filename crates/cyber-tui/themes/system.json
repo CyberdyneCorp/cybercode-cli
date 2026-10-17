@@ -24,6 +24,11 @@
     "heat_3": "green",
     "heat_4": "lightgreen",
     "meter_fill": "cyan",
-    "meter_empty": "darkgray"
+    "meter_empty": "darkgray",
+    "file_dir": "blue",
+    "file_doc": "yellow",
+    "file_config": "green",
+    "file_code": "magenta",
+    "file_dim": "darkgray"
   }
 }

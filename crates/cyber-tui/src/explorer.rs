@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::Value;
@@ -35,6 +36,112 @@ impl Read {
             _ => Self::Deny,
         }
     }
+}
+
+/// How a tree row's name is colored (`tui` → File explorer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Dir,
+    Doc,
+    Config,
+    Code,
+    /// Hidden, ignored, lock and generated files.
+    Dim,
+    Plain,
+}
+
+const DOC: &[&str] = &["md", "mdx", "markdown", "txt", "rst", "adoc", "org"];
+const CONFIG: &[&str] = &[
+    "toml",
+    "json",
+    "jsonc",
+    "json5",
+    "yaml",
+    "yml",
+    "ini",
+    "cfg",
+    "conf",
+    "xml",
+    "plist",
+    "properties",
+    "editorconfig",
+];
+const CONFIG_NAMES: &[&str] = &[
+    "justfile",
+    "makefile",
+    "dockerfile",
+    "rakefile",
+    "gemfile",
+    "procfile",
+    "brewfile",
+];
+const CODE: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "c", "h", "cc", "cpp", "hpp", "java",
+    "kt", "swift", "rb", "php", "cs", "sh", "bash", "zsh", "fish", "ps1", "sql", "lua", "sol",
+    "sv", "v", "vhd", "zig", "html", "css", "scss", "vue", "svelte", "dart", "ex", "exs", "hs",
+    "ml", "scala", "r", "jl", "nix",
+];
+const LOCK_NAMES: &[&str] = &[
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "go.sum",
+    "composer.lock",
+    "poetry.lock",
+    "gemfile.lock",
+    "flake.lock",
+];
+const GENERATED: &[&str] = &["lock", "snap", "map", "min.js", "min.css", "pyc", "o", "a"];
+
+/// The kind of a row from its name, for the tree's colors.
+pub fn kind(node: &Node) -> Kind {
+    if node.ignored || node.name.starts_with('.') {
+        return Kind::Dim;
+    }
+    if node.dir {
+        return Kind::Dir;
+    }
+    let name = node.name.to_ascii_lowercase();
+    let ext = name.split_once('.').map_or("", |(_, rest)| rest);
+    let last = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+    let is = |list: &[&str], e: &str| !e.is_empty() && list.contains(&e);
+    if LOCK_NAMES.contains(&name.as_str()) || is(GENERATED, last) || is(GENERATED, ext) {
+        Kind::Dim
+    } else if is(DOC, last) || matches!(name.as_str(), "license" | "readme" | "changelog") {
+        Kind::Doc
+    } else if is(CONFIG, last) || CONFIG_NAMES.contains(&name.as_str()) {
+        Kind::Config
+    } else if is(CODE, last) {
+        Kind::Code
+    } else {
+        Kind::Plain
+    }
+}
+
+/// `tui.explorer.icons`: plain names, or Nerd Font glyphs before them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Icons {
+    #[default]
+    None,
+    Nerd,
+}
+
+impl Icons {
+    pub fn parse(value: Option<&str>) -> Option<Self> {
+        match value {
+            Some("none") => Some(Self::None),
+            Some("nerd") => Some(Self::Nerd),
+            _ => None,
+        }
+    }
+}
+
+/// Whether `path` is Markdown, which the preview renders unless `m` asks for raw text.
+pub fn is_markdown(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [".md", ".mdx", ".markdown"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,6 +271,18 @@ pub struct Preview {
     pub scroll: u16,
     /// Highlighted lines and the theme they were colored for.
     pub(crate) highlighted: Mutex<Option<(String, Vec<crate::highlight::Styled>)>>,
+    /// Rows the last frame drew the whole preview in (wrapping or rendering changes the
+    /// count), so scrolling stops at the end.
+    pub(crate) rows: AtomicUsize,
+}
+
+impl Preview {
+    /// The last row scrolling may reach.
+    fn max_scroll(&self) -> u16 {
+        let lines = self.lines.as_ref().map_or(0, Vec::len);
+        let rows = self.rows.load(Ordering::Relaxed).max(lines);
+        u16::try_from(rows.saturating_sub(1)).unwrap_or(u16::MAX)
+    }
 }
 
 impl Clone for Preview {
@@ -177,6 +296,7 @@ impl Clone for Preview {
             truncated: self.truncated,
             scroll: self.scroll,
             highlighted: Mutex::new(None),
+            rows: AtomicUsize::new(self.rows.load(Ordering::Relaxed)),
         }
     }
 }
@@ -228,6 +348,7 @@ pub fn parse_preview(path: &str, data: &Value) -> Preview {
         total_lines,
         scroll: 0,
         highlighted: Mutex::new(None),
+        rows: AtomicUsize::new(0),
     }
 }
 
@@ -236,7 +357,7 @@ pub fn parse_preview(path: &str, data: &Value) -> Preview {
 pub struct Row {
     pub node: Node,
     pub depth: usize,
-    /// `│   ├── ` and the like, before the fold marker.
+    /// One `│ ` indent guide per level below the root, before the fold marker.
     pub guides: String,
 }
 
@@ -264,6 +385,9 @@ pub struct Explorer {
     pub changed: Option<usize>,
     /// The canonical project root, from the last level loaded.
     pub root: Option<String>,
+    /// `m`: Markdown previews show their source instead of the rendered document.
+    pub raw: bool,
+    pub icons: Icons,
 }
 
 impl Explorer {
@@ -273,11 +397,19 @@ impl Explorer {
             return self.matches();
         }
         let mut out = Vec::new();
-        self.walk("", 0, "", &mut out);
+        self.walk("", 0, &mut out);
         out
     }
 
-    fn walk(&self, dir: &str, depth: usize, prefix: &str, out: &mut Vec<Row>) {
+    /// Entries loaded for an expanded directory, shown beside its name.
+    pub fn child_count(&self, path: &str) -> Option<usize> {
+        self.expanded
+            .contains(path)
+            .then(|| self.levels.get(path).map(|l| l.nodes.len()))
+            .flatten()
+    }
+
+    fn walk(&self, dir: &str, depth: usize, out: &mut Vec<Row>) {
         let Some(level) = self.levels.get(dir) else {
             return;
         };
@@ -286,17 +418,14 @@ impl Explorer {
             .iter()
             .filter(|n| !self.changed_only || n.git.is_some())
             .collect();
-        for (i, node) in nodes.iter().enumerate() {
-            let last = i + 1 == nodes.len();
-            let branch = if last { "└── " } else { "├── " };
+        for node in nodes {
             out.push(Row {
-                node: (*node).clone(),
+                node: node.clone(),
                 depth,
-                guides: format!("{prefix}{branch}"),
+                guides: "│ ".repeat(depth),
             });
             if node.dir && self.expanded.contains(&node.path) {
-                let next = format!("{prefix}{}", if last { "    " } else { "│   " });
-                self.walk(&node.path, depth + 1, &next, out);
+                self.walk(&node.path, depth + 1, out);
             }
         }
     }
@@ -355,7 +484,10 @@ impl Explorer {
 
     /// Everything the explorer knew about another Location.
     pub fn forget(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            icons: self.icons,
+            ..Self::default()
+        };
     }
 
     /// Reads of every loaded level, for `r` and live refresh.
@@ -433,9 +565,40 @@ impl App {
             }
             "explorer_next" => self.move_key(KeyCode::Down),
             "explorer_previous" => self.move_key(KeyCode::Up),
+            "explorer_markdown" => e.raw = !e.raw,
+            "explorer_collapse" => self.collapse_row(),
+            "explorer_expand" => return self.expand_row(),
             _ => {}
         }
         Vec::new()
+    }
+
+    /// `←`: fold an expanded directory, or move to the row's parent directory.
+    fn collapse_row(&mut self) {
+        let Some(row) = self.explorer.current() else {
+            return;
+        };
+        let e = &mut self.explorer;
+        if row.node.dir && e.expanded.remove(&row.node.path) {
+            e.clamp();
+            return;
+        }
+        let Some((parent, _)) = row.node.path.rsplit_once('/') else {
+            return;
+        };
+        if let Some(index) = e.rows().iter().position(|r| r.node.path == parent) {
+            e.selected = index;
+        }
+    }
+
+    /// `→`: unfold a collapsed directory.
+    fn expand_row(&mut self) -> Vec<Action> {
+        match self.explorer.current() {
+            Some(row) if row.node.dir && !self.explorer.expanded.contains(&row.node.path) => {
+                self.open_row()
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn move_key(&mut self, code: KeyCode) {
@@ -455,7 +618,7 @@ impl App {
         let Some(preview) = self.explorer.preview.as_mut() else {
             return;
         };
-        let max = preview.lines.as_ref().map_or(0, Vec::len).saturating_sub(1) as u16;
+        let max = preview.max_scroll();
         preview.scroll = match code {
             KeyCode::Up => preview.scroll.saturating_sub(1),
             KeyCode::Down => preview.scroll.saturating_add(1),
@@ -471,6 +634,7 @@ impl App {
     fn preview_key(&mut self, key: KeyEvent) -> Vec<Action> {
         match self.keymap.action("explorer", &key, false) {
             Some("explorer_close") => self.explorer.preview_focused = false,
+            Some("explorer_markdown") => self.explorer.raw = !self.explorer.raw,
             Some("explorer_mention") => self.mention_row(),
             Some("explorer_copy") => return self.copy_row(),
             _ => self.scroll_preview(key.code),
@@ -657,15 +821,9 @@ mod tests {
             .iter()
             .map(|r| format!("{}{}", r.guides, r.node.name))
             .collect();
-        assert_eq!(
-            guides,
-            [
-                "├── crates",
-                "│   ├── a.rs",
-                "│   └── b.rs",
-                "└── README.md"
-            ]
-        );
+        assert_eq!(guides, ["crates", "│ a.rs", "│ b.rs", "README.md"]);
+        assert_eq!(e.child_count("crates"), Some(2));
+        assert_eq!(e.child_count("README.md"), None);
         e.selected = 2;
         // A refresh of the root keeps `crates` expanded and the selection on b.rs.
         e.apply_level(String::new(), parse_level(&root).0, Some(1));
@@ -678,6 +836,46 @@ mod tests {
         e.changed_only = false;
         e.filter = "rdme".into();
         assert_eq!(e.rows()[0].node.path, "README.md");
+    }
+
+    #[test]
+    fn rows_are_classified_by_name_for_their_colors() {
+        let file = |name: &str| Node {
+            name: name.into(),
+            path: name.into(),
+            dir: false,
+            target: None,
+            size: 0,
+            git: None,
+            ignored: false,
+            read: Read::Allow,
+        };
+        for (name, want) in [
+            ("README.md", Kind::Doc),
+            ("notes.TXT", Kind::Doc),
+            ("LICENSE", Kind::Doc),
+            ("Cargo.toml", Kind::Config),
+            ("tsconfig.json", Kind::Config),
+            ("justfile", Kind::Config),
+            ("Dockerfile", Kind::Config),
+            ("main.rs", Kind::Code),
+            ("app.tsx", Kind::Code),
+            ("build.sh", Kind::Code),
+            ("Cargo.lock", Kind::Dim),
+            ("package-lock.json", Kind::Dim),
+            ("bundle.min.js", Kind::Dim),
+            ("view__a.snap", Kind::Dim),
+            (".env", Kind::Dim),
+            ("data.bin", Kind::Plain),
+        ] {
+            assert_eq!(kind(&file(name)), want, "{name}");
+        }
+        let mut dir = file("src");
+        dir.dir = true;
+        assert_eq!(kind(&dir), Kind::Dir);
+        dir.ignored = true;
+        assert_eq!(kind(&dir), Kind::Dim);
+        assert!(is_markdown("docs/README.md") && !is_markdown("src/md.rs"));
     }
 
     #[test]

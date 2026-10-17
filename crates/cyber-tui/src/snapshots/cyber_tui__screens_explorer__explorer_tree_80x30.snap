@@ -2,15 +2,16 @@
 source: crates/cyber-tui/src/screens_explorer.rs
 expression: "render(&mut app, 80, 30, &Opts::default())"
 ---
- work:main · 3 changed
- / filter
- M ├── ▾ crates
- M │   └── ▾ cyber-tui
- M │       └── ▾ src
-   │           ├── app.rs
- M │           └── markdown.rs
-   ├── README.md
- ? └── notes.md
+ EXPLORER work:main                                                   3 changed
+ ⌕ filter files…
+
+  ▾ crates/ 1                                                                 M
+  │ ▾ cyber-tui/ 1                                                            M
+  │ │ ▾ src/ 2                                                                M
+  │ │ │   app.rs                                                            16B
+▌ │ │ │   markdown.rs                                                   M  102B
+    README.md                                                                7B
+    notes.md                                                            ?   16B
 
 
 
@@ -28,7 +29,6 @@ expression: "render(&mut app, 80, 30, &Opts::default())"
 
 
 
-
-
- enter open · / filter · g changed only · . hidden files · @ mention · y copy p…
+ 7 shown · 4 hidden · .gitignore
+  ↑↓  move  ←→  fold  enter  open  /  filter  g  changed  .  hidden
                                                        100 · —  ctrl+p commands

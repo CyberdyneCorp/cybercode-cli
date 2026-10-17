@@ -343,6 +343,8 @@ pub struct Loaded {
     pub sidebar: crate::sidebar::Preference,
     /// `tui.welcome`.
     pub welcome: crate::view::welcome::Welcome,
+    /// `tui.explorer.icons`.
+    pub explorer_icons: crate::explorer::Icons,
     /// `tui.notifications`.
     pub notifications: crate::osc::Notifications,
     /// The Config tab's preferences with their sources.
@@ -357,7 +359,7 @@ fn choice<T: Default>(
     parse: fn(Option<&str>) -> Option<T>,
     warnings: &mut Vec<String>,
 ) -> T {
-    let Some(value) = settings.get(key) else {
+    let Some(value) = lookup(settings, key) else {
         return T::default();
     };
     parse(value.as_str()).unwrap_or_else(|| {
@@ -445,6 +447,12 @@ pub fn load(store: &LocalStore, dirs: &[PathBuf], env: &dyn Fn(&str) -> Option<S
         crate::view::welcome::Welcome::parse,
         &mut themes.warnings,
     );
+    let explorer_icons = choice(
+        &settings,
+        "explorer.icons",
+        crate::explorer::Icons::parse,
+        &mut themes.warnings,
+    );
     let notifications = choice(
         &settings,
         "notifications",
@@ -462,6 +470,7 @@ pub fn load(store: &LocalStore, dirs: &[PathBuf], env: &dyn Fn(&str) -> Option<S
         sidebar: crate::sidebar::Preference::parse(Some(preferences.get("sidebar")))
             .unwrap_or_default(),
         welcome,
+        explorer_icons,
         notifications,
         preferences,
     }
@@ -484,7 +493,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             project.join(".cyber/tui.jsonc"),
-            "{\"color\": \"16\", \"accessibility\": {\"reduced_motion\": true}, \"sidebar\": \"hide\", \"welcome\": \"off\"}",
+            "{\"color\": \"16\", \"accessibility\": {\"reduced_motion\": true}, \"sidebar\": \"hide\", \"welcome\": \"off\", \"explorer\": {\"icons\": \"nerd\"}}",
         )
         .unwrap();
         std::fs::write(
@@ -504,6 +513,7 @@ mod tests {
         assert!(loaded.themes.names().any(|n| n == "corp"));
         assert_eq!(loaded.sidebar, crate::sidebar::Preference::Hide);
         assert_eq!(loaded.welcome, crate::view::welcome::Welcome::Off);
+        assert_eq!(loaded.explorer_icons, crate::explorer::Icons::Nerd);
 
         store.set("theme", Value::String("dracula".into()));
         let no_color = |name: &str| (name == "NO_COLOR").then(|| "1".to_owned());

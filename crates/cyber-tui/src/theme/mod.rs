@@ -56,6 +56,7 @@ tokens! {
     syntax_comment, syntax_keyword, syntax_function, syntax_variable, syntax_string,
     syntax_number, syntax_type, syntax_operator, syntax_punctuation,
     heat_0, heat_1, heat_2, heat_3, heat_4, meter_fill, meter_empty,
+    file_dir, file_doc, file_config, file_code, file_dim,
 }
 
 impl Tokens {
@@ -130,6 +131,11 @@ const RULES: &[(&str, Rule)] = &[
     ("heat_4", Rule::Same("accent")),
     ("meter_fill", Rule::Same("accent")),
     ("meter_empty", Rule::Same("border")),
+    ("file_dir", Rule::Blend("user", "text", 0.25)),
+    ("file_doc", Rule::Blend("warning", "text", 0.25)),
+    ("file_config", Rule::Blend("success", "text", 0.25)),
+    ("file_code", Rule::Blend("secondary", "text", 0.25)),
+    ("file_dim", Rule::Same("text_subtle")),
 ];
 
 fn index(name: &str) -> usize {
@@ -429,6 +435,7 @@ mod tests {
     #[test]
     fn every_builtin_theme_and_variant_meets_the_contrast_minimums() {
         let mut checked = 0;
+        let mut low = Vec::new();
         for t in variants() {
             if color::luminance(t.background).is_none() {
                 // `system` uses the terminal's own palette, which cannot be measured.
@@ -449,8 +456,24 @@ mod tests {
             ] {
                 assert!(ratio(c) >= 3.0, "{} {variant} {token} {}", t.name, ratio(c));
             }
+            // File kinds sit on the explorer's `surface_alt` tree pane.
+            let pane = |c| color::contrast(c, t.surface_alt).unwrap();
+            for (token, c) in [
+                ("file_dir", t.file_dir),
+                ("file_doc", t.file_doc),
+                ("file_config", t.file_config),
+                ("file_code", t.file_code),
+            ] {
+                if pane(c) < 3.0 {
+                    low.push(format!("{} {variant} {token} {:.2}", t.name, pane(c)));
+                }
+            }
             checked += 1;
         }
+        assert!(
+            low.is_empty(),
+            "file kinds below 3:1 on the tree pane: {low:?}"
+        );
         assert_eq!(checked, 18, "17 RGB themes, cyber in two variants");
     }
 

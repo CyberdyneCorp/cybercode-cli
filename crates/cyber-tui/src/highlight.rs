@@ -170,6 +170,21 @@ type Pick = fn(&Tokens) -> Color;
 
 /// Scope prefixes to tokens, most specific first; the innermost scope that matches wins.
 const SCOPES: &[(&str, Pick, bool)] = &[
+    // Markdown (and other markup) source, before the generic `string` rules.
+    ("markup.heading", |t| t.md_heading, false),
+    ("punctuation.definition.heading", |t| t.md_heading, false),
+    ("string.other.link", |t| t.md_link, false),
+    ("markup.underline.link", |t| t.md_link, false),
+    ("meta.link", |t| t.md_link, false),
+    ("markup.raw", |t| t.md_code, false),
+    ("markup.quote", |t| t.md_quote, true),
+    ("markup.italic", |t| t.syntax_variable, true),
+    ("markup.bold", |t| t.syntax_variable, false),
+    (
+        "punctuation.definition.list",
+        |t| t.syntax_punctuation,
+        false,
+    ),
     ("comment", |t| t.syntax_comment, true),
     ("punctuation.definition.comment", |t| t.syntax_comment, true),
     ("string", |t| t.syntax_string, false),
@@ -204,8 +219,9 @@ const SCOPES: &[(&str, Pick, bool)] = &[
     ("entity.name", |t| t.syntax_function, false),
     ("support", |t| t.syntax_function, false),
     ("variable", |t| t.syntax_variable, false),
-    ("markup.heading", |t| t.syntax_keyword, false),
     ("punctuation", |t| t.syntax_punctuation, false),
+    // Prose in markup documents (`text.html.markdown`, `text.plain`) is plain text.
+    ("text", |t| t.syntax_variable, false),
 ];
 
 fn table() -> &'static [(Scope, Pick, bool)] {
@@ -251,6 +267,24 @@ mod tests {
             .find(|(_, s)| s.contains(text))
             .unwrap_or_else(|| panic!("{text:?} not in {:?}", lines[row]))
             .0
+    }
+
+    #[test]
+    fn markdown_source_is_colored_by_markup_scope() {
+        let set = preload();
+        let t = tokens();
+        let syntax = for_path(set, "README.md").expect("markdown");
+        let lines = highlight(
+            set,
+            syntax,
+            "# Title\n\nSee the [guide](g.md) and `code`.\n",
+            &t,
+        )
+        .unwrap();
+        assert_eq!(style_at(&lines, 0, "Title").fg, Some(t.md_heading));
+        assert_eq!(style_at(&lines, 2, "See the").fg, Some(t.syntax_variable));
+        assert_eq!(style_at(&lines, 2, "guide").fg, Some(t.md_link));
+        assert_eq!(style_at(&lines, 2, "code").fg, Some(t.md_code));
     }
 
     #[test]

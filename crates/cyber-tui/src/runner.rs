@@ -65,6 +65,7 @@ pub(crate) async fn start(
     app.show_reasoning = prefs.preferences.get("reasoning") == "expanded";
     app.prefs = prefs.preferences;
     app.welcome = prefs.welcome;
+    app.explorer.icons = prefs.explorer_icons;
     app.notifications = prefs.notifications;
     app.home = env("HOME").or_else(|| env("USERPROFILE"));
     app.hyperlinks = crate::osc::hyperlinks(env);
