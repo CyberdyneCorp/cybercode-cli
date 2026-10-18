@@ -14,6 +14,7 @@ async fn turn(flow: &Flow, parent: &str) -> TurnContext {
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     }
 }
 

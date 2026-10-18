@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { HookExecutionRecord } from "../src/generated/types.js";
+import { Cyber, type HookInput } from "../src/index.js";
+import { startScriptedProvider } from "./scripted-provider.js";
 import { json, mockClient } from "./support.js";
+
+const binary = process.env.CYBER_BIN;
+const skip = binary ? false : "set CYBER_BIN to the cyber binary to run the end-to-end tests";
 
 test("session hook receipts preserve pagination, unresolved status and IO omission", async () => {
   const record: HookExecutionRecord = {
@@ -79,4 +87,72 @@ test("hook catalog last-run summaries retain unknown status without IO", async (
   assert.equal(last?.must_stop,true);
   assert.equal(last?.acknowledged,false);
   assert.equal("io" in (last ?? {}),false);
+});
+
+/** A `write` of `path` with id `id`, as the scripted model's streamed delta. */
+function write(id: string, path: string): Record<string, unknown> {
+  const args = JSON.stringify({ path, content: "edited\n" });
+  return { tool_calls: [{ index: 0, id, type: "function", function: { name: "write", arguments: args } }] };
+}
+
+// `client-sdk` → Hook callbacks ("Approve edits programmatically") against the real binary: a
+// `PreToolUse` handler that allows edits under `docs/` lets a `write` there run without a
+// prompt (`edit` asks), and the execution is recorded with scope `client`.
+test("pre_tool_use_client_handler_allows_docs_edits_and_records_client_scope", { skip, timeout: 120_000 }, async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cyber-sdk-hooks-")));
+  const model = await startScriptedProvider((body) => {
+    if (!body.includes("EDIT-DOCS")) return undefined;
+    return body.includes("call_docs") ? { content: "edited the guide" } : write("call_docs", "docs/guide.md");
+  });
+  const config = join(root, "cyber-home", "config");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "cyber.jsonc"), JSON.stringify({ ...model.config(), permissions: { edit: "ask" } }));
+  writeFileSync(join(root, "models.json"), "{}");
+  const repo = join(root, "repo");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  for (const name of Object.keys(process.env)) {
+    if (name.startsWith("CYBER_") || name.startsWith("XDG_")) delete process.env[name];
+  }
+  Object.assign(process.env, { HOME: join(root, "home"), CYBER_HOME: join(root, "cyber-home"), CYBER_MODELS_PATH: join(root, "models.json") });
+  const server = await Cyber.start({ mode: "embedded", binary, directory: repo });
+  t.after(async () => {
+    await server.close();
+    await model.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const { client } = server;
+  const seen: HookInput[] = [];
+  const off = await client.hooks.on(
+    "PreToolUse",
+    (input) => {
+      seen.push(input);
+      const path = (input.tool_input as { path?: string } | undefined)?.path ?? "";
+      return path.startsWith("docs/") ? { decision: "allow", reason: "docs edits are pre-approved" } : undefined;
+    },
+    { matcher: "write" },
+  );
+  const asked: unknown[] = [];
+  const stop = client.permissions.onRequest((request) => {
+    asked.push(request);
+    return "reject";
+  });
+  const created = await client.session.create({ model: "test/main" });
+  const id = created.data.id;
+  await client.sessions.prompt(id, "EDIT-DOCS", { wait: true });
+  assert.equal(readFileSync(join(repo, "docs", "guide.md"), "utf8"), "edited\n");
+  assert.deepEqual(asked, []);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.event, "PreToolUse");
+  assert.equal(seen[0]?.session_id, id);
+  assert.equal(seen[0]?.tool_name, "write");
+  const receipts = await client.session.hooks(id);
+  const recorded = receipts.data.filter((record) => record.scope === "client");
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0]?.event, "PreToolUse");
+  assert.equal(recorded[0]?.status, "completed");
+  assert.equal(recorded[0]?.decision?.decision, "allow");
+  assert.ok(recorded[0]?.hook_id.startsWith("client:hkr_"));
+  stop();
+  await off();
+  assert.ok(!existsSync(join(repo, "src")));
 });

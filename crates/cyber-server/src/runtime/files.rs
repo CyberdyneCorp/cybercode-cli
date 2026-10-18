@@ -25,6 +25,7 @@ impl Runtime {
                 mode: "default".into(),
                 prefers_apply_patch: false,
                 rules: serde_json::Value::Null,
+                worktree: Default::default(),
             }),
         }
     }

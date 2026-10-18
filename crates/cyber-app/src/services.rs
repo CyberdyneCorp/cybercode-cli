@@ -88,7 +88,10 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
     ("stop", "Confirm stopping this Session's background tasks"),
     ("agent", "List this Session's subagents"),
     ("admissions", "Show queued and admitted prompts"),
-    ("memory", "Open project memory (global with /memory global)"),
+    (
+        "memory",
+        "Open project memory (/memory global); /memory on|off|readonly toggles it",
+    ),
     ("workflows", "Monitor workflow runs"),
     ("files", "Browse project files"),
     ("settings", "Open settings"),
@@ -101,6 +104,14 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
     ("sidebar", "Show or hide the sidebar"),
     ("timestamps", "Show or hide message times"),
     ("recap", "Summarize this Session so far"),
+    (
+        "commit",
+        "Draft a commit message for the staged changes with the small model",
+    ),
+    (
+        "pr-description",
+        "Draft a PR title and body for base..HEAD with the small model",
+    ),
     ("help", "Show commands and keys"),
     ("exit", "Quit"),
 ];
@@ -226,6 +237,26 @@ impl Services for AppServices {
             self.config.clone(),
             runtime,
             edit,
+        ))
+    }
+    fn memory_settings(
+        &self,
+        directory: PathBuf,
+    ) -> BoxFuture<'_, Result<cyber_server::http::MemorySettingsView, cyber_server::http::ApiError>>
+    {
+        Box::pin(memory::settings(self.config.clone(), directory))
+    }
+    fn set_memory_settings(
+        &self,
+        directory: PathBuf,
+        state: cyber_core::memory::MemoryState,
+    ) -> BoxFuture<'_, Result<cyber_server::http::MemorySettingsView, cyber_server::http::ApiError>>
+    {
+        Box::pin(memory::set_settings(
+            self.config.clone(),
+            self.global_config_dir.clone(),
+            directory,
+            state,
         ))
     }
     fn memory_list(
@@ -418,6 +449,7 @@ impl Services for AppServices {
                             dirty: status.dirty,
                             ahead: status.ahead,
                             behind: status.behind,
+                            created_ms: entry.created_ms,
                             sessions: Vec::new(),
                         })
                     }
@@ -430,6 +462,53 @@ impl Services for AppServices {
                     }),
                 })
                 .collect()
+        })
+    }
+    fn remove_worktree(
+        &self,
+        directory: PathBuf,
+        name: cyber_core::worktrees::Name,
+        force: bool,
+    ) -> BoxFuture<
+        '_,
+        Result<cyber_server::http::worktrees::WorktreeInfo, cyber_server::http::ApiError>,
+    > {
+        Box::pin(async move {
+            self.host
+                .remove_worktree(
+                    &directory,
+                    &name,
+                    force,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+                .map(Into::into)
+                .map_err(worktree_error)
+        })
+    }
+    fn cleanup_session_worktree(
+        &self,
+        directory: PathBuf,
+        session_id: String,
+    ) -> BoxFuture<
+        '_,
+        Result<cyber_server::http::worktrees::WorktreeCleanup, cyber_server::http::ApiError>,
+    > {
+        Box::pin(async move {
+            let outcome = self
+                .host
+                .cleanup_session_worktree(
+                    &directory,
+                    &session_id,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+                .map_err(worktree_error)?;
+            Ok(cyber_server::http::worktrees::WorktreeCleanup {
+                worktree: outcome.managed.into(),
+                kept: outcome.kept,
+                reason: outcome.reason,
+            })
         })
     }
     fn create_worktree(
@@ -705,6 +784,57 @@ impl Services for AppServices {
     fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String> {
         self.host.expand_command(location, name, arguments)
     }
+
+    fn commit_message<'a>(
+        &'a self,
+        location: &'a Path,
+    ) -> BoxFuture<'a, Result<cyber_server::http::vcs::CommitMessage, cyber_server::http::ApiError>>
+    {
+        Box::pin(async move {
+            let (config, _) =
+                (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
+            let message = crate::git_text::commit_message(&*self.resolver, &config, location)
+                .await
+                .map_err(git_text_error)?;
+            Ok(cyber_server::http::vcs::CommitMessage { message })
+        })
+    }
+
+    fn pr_description<'a>(
+        &'a self,
+        location: &'a Path,
+        base: Option<String>,
+    ) -> BoxFuture<'a, Result<cyber_server::http::vcs::PrDescription, cyber_server::http::ApiError>>
+    {
+        Box::pin(async move {
+            let (config, _) =
+                (self.config)(location).map_err(cyber_server::http::ApiError::invalid)?;
+            let pr = crate::git_text::pr_description(
+                &*self.resolver,
+                &config,
+                location,
+                base.as_deref(),
+            )
+            .await
+            .map_err(git_text_error)?;
+            Ok(cyber_server::http::vcs::PrDescription {
+                base: pr.base,
+                title: pr.title,
+                body: pr.body,
+            })
+        })
+    }
+}
+
+fn git_text_error(error: crate::git_text::GitTextError) -> cyber_server::http::ApiError {
+    use crate::git_text::GitTextError;
+    use cyber_server::http::ApiError;
+    match error {
+        GitTextError::Invalid(message) => ApiError::invalid(message),
+        GitTextError::Failed(message) => {
+            ApiError::new(axum::http::StatusCode::BAD_GATEWAY, "GitTextError", message)
+        }
+    }
 }
 
 fn worktree_error(error: std::io::Error) -> cyber_server::http::ApiError {
@@ -715,6 +845,8 @@ fn worktree_error(error: std::io::Error) -> cyber_server::http::ApiError {
         ApiError::forbidden(error.to_string())
     } else if error.kind() == std::io::ErrorKind::InvalidInput {
         ApiError::invalid(error.to_string())
+    } else if error.kind() == std::io::ErrorKind::NotFound {
+        ApiError::not_found("WorktreeNotFoundError", error.to_string())
     } else {
         ApiError::conflict(error.to_string())
     }

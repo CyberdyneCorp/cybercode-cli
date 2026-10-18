@@ -40,6 +40,9 @@ const DISTINCT_UNAVAILABLE: &[&str] = &[
     "InstructionsLoaded",
     "WorkflowRunStart",
     "WorkflowRunEnd",
+    "WorktreeRemove",
+    "Setup",
+    "ConfigChange",
 ];
 
 /// Lifecycle events the runtime dispatches through its narrow host port.
@@ -61,6 +64,8 @@ const RUNTIME_EVENTS: &[&str] = &[
     "InstructionsLoaded",
     "WorkflowRunStart",
     "WorkflowRunEnd",
+    "Setup",
+    "ConfigChange",
 ];
 
 /// Events whose additional_context the runtime applies: lifecycle context with its
@@ -83,6 +88,7 @@ const CONTEXT_EVENTS: &[&str] = &[
 const CONTINUE_EVENTS: &[&str] = &[
     "Stop",
     "SessionStart",
+    "UserPromptSubmit",
     "PreToolUse",
     "PermissionRequest",
     "PermissionDenied",
@@ -245,6 +251,52 @@ impl BuiltinHost {
                 decision.reason.as_deref().unwrap_or("policy")
             ))),
             _ => Ok(()),
+        }
+    }
+
+    /// Observational WorktreeRemove after a managed checkout and its branch are gone.
+    /// Decisions are ignored and an unavailable handler is only logged: the removal
+    /// already happened and its report stays accurate. The event runs as `inv`'s
+    /// Session at its current Location, which hook admission requires; a Session whose
+    /// Location was the removed checkout has none left to run it in.
+    pub(crate) async fn worktree_remove_hooks(
+        &self,
+        inv: &cyber_server::runtime::Invocation,
+        managed: &cyber_core::worktrees::Managed,
+        cancel: CancellationToken,
+    ) {
+        let mut inv = inv.clone();
+        if let Some(runtime) = self.runtime()
+            && let Ok(state) = runtime.state(&inv.session_id).await
+        {
+            inv.directory = state.info.directory;
+        }
+        if !std::path::Path::new(&inv.directory).is_dir() {
+            cyber_core::log::debug(
+                "hooks",
+                "WorktreeRemove skipped: the Session's Location was the removed worktree",
+                json!({"session_id": inv.session_id, "name": managed.name}),
+            );
+            return;
+        }
+        let inv = &inv;
+        let fields = json!({
+            "id": managed.id,
+            "name": managed.name,
+            "path": managed.path,
+            "branch": managed.branch,
+        });
+        let fields = fields.as_object().cloned().unwrap_or_default();
+        let owner = HookOwner::of(inv);
+        if let Err(error) = self
+            .dispatch_owned("WorktreeRemove", &owner, fields, &managed.name, cancel)
+            .await
+        {
+            cyber_core::log::warn(
+                "hooks",
+                "WorktreeRemove hook unavailable",
+                json!({"session_id": inv.session_id, "error": failure(error)}),
+            );
         }
     }
 }

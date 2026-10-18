@@ -62,6 +62,14 @@ pub enum LiveEvent {
         call_id: String,
         arguments: String,
     },
+    /// `session.tool.progress`: a dispatched call's live status, never durable. The
+    /// `agent` tool reports `queued` while waiting for an `agents.max_concurrent` slot
+    /// and `running` once it holds one.
+    ToolProgress {
+        session_id: String,
+        call_id: String,
+        status: String,
+    },
     /// `session.retry`: the attempt number and delay before it.
     Retry {
         session_id: String,
@@ -96,6 +104,13 @@ pub enum LiveEvent {
     WorkflowProgress {
         directory: String,
         progress: super::WorkflowRunProgress,
+    },
+    /// `worktree.created.1`, `worktree.removed.1` or `worktree.kept.1`; never durable,
+    /// on the instance stream of `directory`, the Location that asked.
+    Worktree {
+        directory: String,
+        kind: String,
+        worktree: super::WorktreeNotice,
     },
 }
 

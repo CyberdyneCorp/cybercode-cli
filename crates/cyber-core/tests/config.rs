@@ -1296,6 +1296,141 @@ fn hook_policy_cannot_be_set_by_user_project_or_cli_layers() {
     assert!(config::load(&f.request(&f.repo, &overrides)).is_err());
 }
 
+/// `mcp` → Organization MCP controls: `policy.mcp` denies and allowlists servers by name,
+/// command line or URL pattern, and a managed server replaces any user definition of the
+/// same name whole and is never blocked by the lists.
+#[test]
+fn mcp_policy_matches_name_command_and_url_and_managed_servers_replace_user_definitions() {
+    use cyber_core::config::McpSettings;
+    let mut f = Fixture::new();
+    f.write(
+        "global:cyber.jsonc",
+        &json!({"mcp":{
+            "github":{"type":"local","command":"npx","args":["github-mcp"]},
+            "evil":{"type":"remote","url":"https://api.untrusted.dev/mcp"},
+            "notes":{"type":"local","command":"notes-server"},
+            "corp":{"type":"remote","url":"https://user-override.example/mcp","headers":{"x-user":"1"}},
+        }})
+        .to_string(),
+    );
+    f.managed(
+        &json!({
+            "policy":{"mcp":{
+                "deny":[{"url":"https://*.untrusted.dev/*"}],
+                "allow":[{"name":"git*"},{"command":"notes-*"},{"url":"https://corp.example/*"}],
+            }},
+            "mcp":{"corp":{"type":"remote","url":"https://corp.example/mcp"}},
+        })
+        .to_string(),
+    );
+    let resolved = f.load().unwrap();
+    assert!(resolved.managed.error.is_none());
+    let settings = McpSettings::from_config(&resolved.value).unwrap();
+    let blocked = |name: &str| resolved.managed.blocks_mcp(name, &settings.servers[name]);
+    assert!(!blocked("github"), "allowed by name");
+    assert!(!blocked("notes"), "allowed by command line");
+    assert!(blocked("evil"), "denied by URL");
+    // The managed definition replaced the user's, leaving none of its fields.
+    assert_eq!(
+        resolved.value["mcp"]["corp"],
+        json!({"type":"remote","url":"https://corp.example/mcp"})
+    );
+    assert!(
+        resolved
+            .sources
+            .iter()
+            .filter(|(key, _)| key.starts_with("/mcp/corp"))
+            .all(|(_, source)| source.starts_with("managed:"))
+    );
+}
+
+/// Regression: URL patterns match the parsed, normalized server URL, so case, an explicit
+/// default port, a missing path, a trailing dot or a path that spells an allowed host do not
+/// slip past the organization lists.
+#[test]
+fn mcp_policy_url_patterns_match_normalized_urls() {
+    use cyber_core::config::McpSettings;
+    let denied = [
+        "https://API.untrusted.dev/mcp",
+        "HTTPS://x.untrusted.dev/mcp",
+        "https://x.untrusted.dev:443/mcp",
+        "https://x.untrusted.dev",
+        "https://x.untrusted.dev:8443/mcp",
+        "https://x.UNTRUSTED.dev./mcp",
+    ];
+    let allowed = ["https://corp.example/mcp", "https://CORP.example:443/mcp"];
+    let outside_allowlist = [
+        "https://evil.dev/corp.example/mcp",
+        "http://corp.example/mcp",
+    ];
+    let mut servers = serde_json::Map::new();
+    for (index, url) in denied
+        .iter()
+        .chain(&allowed)
+        .chain(&outside_allowlist)
+        .enumerate()
+    {
+        servers.insert(format!("s{index}"), json!({"type":"remote","url":url}));
+    }
+    let mut f = Fixture::new();
+    f.write("global:cyber.jsonc", &json!({"mcp":servers}).to_string());
+    f.managed(
+        &json!({"policy":{"mcp":{
+            "deny":[{"url":"https://*.untrusted.dev/*"}],
+            "allow":[{"url":"https://corp.example/*"},{"url":"https://*.untrusted.dev/*"}],
+        }}})
+        .to_string(),
+    );
+    let resolved = f.load().unwrap();
+    assert!(resolved.managed.error.is_none());
+    let settings = McpSettings::from_config(&resolved.value).unwrap();
+    let blocked = |index: usize| {
+        let name = format!("s{index}");
+        resolved.managed.blocks_mcp(&name, &settings.servers[&name])
+    };
+    for (index, url) in denied.iter().enumerate() {
+        assert!(blocked(index), "{url} must be denied");
+    }
+    for (offset, url) in allowed.iter().enumerate() {
+        assert!(!blocked(denied.len() + offset), "{url} must be allowed");
+    }
+    for (offset, url) in outside_allowlist.iter().enumerate() {
+        assert!(
+            blocked(denied.len() + allowed.len() + offset),
+            "{url} is not allowlisted"
+        );
+    }
+}
+
+#[test]
+fn malformed_mcp_policy_fails_closed_for_every_configured_server() {
+    use cyber_core::config::McpSettings;
+    for policy in [
+        json!({"policy":{"mcp":{"deny":[{"url":"https://*","name":"x"}]}}}),
+        json!({"policy":{"mcp":{"deny":[{"host":"example.com"}]}}}),
+        json!({"policy":{"mcp":{"block":[]}}}),
+        json!({"policy":{"mcp":{"allow":"github"}}}),
+        json!({"mcp":{"corp":{"url":"https://corp.example/mcp"}}}),
+        json!({"mcp":{"sampling":{"enabled":true}}}),
+    ] {
+        let mut f = Fixture::new();
+        f.write(
+            "global:cyber.jsonc",
+            &json!({"mcp":{"github":{"type":"local","command":"npx"}}}).to_string(),
+        );
+        f.managed(&policy.to_string());
+        let resolved = f.load().unwrap();
+        assert!(resolved.managed.error.is_some(), "{policy}");
+        let settings = McpSettings::from_config(&resolved.value).unwrap();
+        assert!(
+            resolved
+                .managed
+                .blocks_mcp("github", &settings.servers["github"]),
+            "{policy}"
+        );
+    }
+}
+
 const MCP_SERVE_IGNORED: &str = "mcp_serve is ignored outside the global config";
 
 #[test]

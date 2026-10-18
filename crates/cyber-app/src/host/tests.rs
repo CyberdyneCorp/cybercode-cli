@@ -64,6 +64,7 @@ async fn agent_tool_restrictions_refuse_client_dispatch_without_sending_a_reques
         mode: "bypass".into(),
         prefers_apply_patch: false,
         rules: json!(null),
+        worktree: Default::default(),
     };
     let (out, mut frames) = mpsc::channel(4);
     host.remote
@@ -133,6 +134,7 @@ async fn app_host_preserves_typed_agent_context_observations() {
         mode: "default".into(),
         prefers_apply_patch: false,
         rules: json!(null),
+        worktree: Default::default(),
     };
     let path = app.paths.config.join("cyber.json");
     std::fs::write(
@@ -171,6 +173,7 @@ async fn app_host_delegates_validated_agent_request_options() {
         mode: "default".into(),
         prefers_apply_patch: false,
         rules: json!(null),
+        worktree: Default::default(),
     };
     let path = app.paths.config.join("cyber.json");
     std::fs::write(&path, r#"{"agents":{"build":{"request":{"headers":{"X-Agent":"build"},"body":{"temperature":0.2}}}}}"#).unwrap();
@@ -271,6 +274,7 @@ impl ClientFixture {
             mode: info.mode,
             prefers_apply_patch: false,
             rules: info.rules,
+            worktree: Default::default(),
         };
         Self {
             _root: root,
@@ -735,6 +739,7 @@ fn app_host_forwards_every_tool_host_method() {
     let forwarded = methods(include_str!("../host.rs"), "impl ToolHost for AppHost");
     for method in [
         "claude_compat",
+        "config_digest",
         "instruction_read_gate",
         "lifecycle_hooks",
         "resolve_prompt_resources",

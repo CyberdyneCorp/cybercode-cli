@@ -57,10 +57,17 @@ impl Inner {
                 "Managed checkout identity changed".into(),
             ));
         }
+        // The outermost owner keeps its lease in the Handle, where `enter_worktree`
+        // and `exit_worktree` can replace it; a nested setup keeps its own.
+        let mut lease = Some(lease);
+        let slot = (!handle.holds_lease()).then(|| LeaseSlot::fill(handle, &mut lease));
         let result = match self.ensure_admission_open(&info.id) {
             Ok(()) => operation.await,
             Err(error) => Err(error),
         };
+        if let Some(slot) = slot {
+            lease = slot.empty();
+        }
         let unsettled = handle.location_uncertain.load(Ordering::SeqCst)
             || handle.state.lock().await.calls.values().any(|call| {
                 matches!(
@@ -68,7 +75,10 @@ impl Inner {
                     CallStatus::Dispatched | CallStatus::OutcomeUnknown
                 )
             });
-        if !unsettled && let Err(error) = lease.settle() {
+        if !unsettled
+            && let Some(lease) = lease
+            && let Err(error) = lease.settle()
+        {
             handle.location_uncertain.store(true, Ordering::SeqCst);
             return Err(RuntimeError::Invalid(error));
         }
@@ -123,5 +133,30 @@ impl Inner {
             scope.settle()?;
         }
         result
+    }
+}
+
+/// The outermost Location owner's lease in the Handle. Disposing the owner drops the
+/// lease unsettled, as a local lease would be, so its activity stays unknown.
+struct LeaseSlot<'a>(Option<&'a Handle>);
+
+impl<'a> LeaseSlot<'a> {
+    fn fill(handle: &'a Handle, lease: &mut Option<LocationLease>) -> Self {
+        if let Some(lease) = lease.take() {
+            drop(handle.replace_lease(lease));
+        }
+        Self(Some(handle))
+    }
+
+    fn empty(mut self) -> Option<LocationLease> {
+        self.0.take().and_then(Handle::take_lease)
+    }
+}
+
+impl Drop for LeaseSlot<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            drop(handle.take_lease());
+        }
     }
 }

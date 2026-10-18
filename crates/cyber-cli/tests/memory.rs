@@ -15,9 +15,12 @@ impl Env {
         Self { _temp: temp, root }
     }
     fn command(&self, args: &[&str]) -> Command {
+        self.command_as("json", args)
+    }
+    fn command_as(&self, format: &str, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
         command
-            .args(["--format", "json"])
+            .args(["--format", format])
             .args(args)
             .env_clear()
             .env("HOME", self.root.join("home"))
@@ -270,6 +273,76 @@ fn unchanged_editor_does_not_create_placeholder_note_and_debug_lists_invalid_met
         body(env.run(&["memory", "show", "coding-policy", "--global"]))["body"],
         "Repaired fact"
     );
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn debug_memory_lists_note_missing_type_as_invalid() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.data()).unwrap();
+    let store = cyber_core::memory::MemoryStore::open(&env.data(), "global").unwrap();
+    store.claim().unwrap().write(&note("Fact")).unwrap();
+    std::fs::write(
+        env.note_path(),
+        "---\nname: coding-policy\ndescription: Coding policy\n---\nFact\n",
+    )
+    .unwrap();
+    let debug = body(env.run(&["debug", "memory", "--global"]));
+    assert_eq!(debug["memories"], json!([]));
+    assert_eq!(
+        debug["invalid"],
+        json!([{"filename":"coding-policy.md","diagnostic":"Invalid memory: invalid YAML frontmatter"}])
+    );
+    let listed = body(env.run(&["memory", "list", "--global"]));
+    assert_eq!(listed, debug);
+    env.no_database();
+}
+
+#[test]
+fn project_path_prints_repository_memory_directory() {
+    let env = Env::new();
+    let repo = env.root.join("repo");
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    git(&["init", "-q"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.com/acme/widgets.git",
+    ]);
+    let id = cyber_core::project::identify(&repo).id;
+    assert!(id.starts_with("prj_"), "{id}");
+    let expected = env.data().join("memory").join(&id);
+
+    let json = body(
+        env.command(&["memory", "path"])
+            .current_dir(repo.join("src"))
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(json["project_id"], id.as_str());
+    assert_eq!(PathBuf::from(json["path"].as_str().unwrap()), expected);
+
+    let output = env
+        .command_as("text", &["memory", "path"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim_end(),
+        expected.display().to_string()
+    );
+    assert!(!expected.exists());
+    env.no_database();
 }
 
 #[test]

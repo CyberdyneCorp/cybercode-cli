@@ -10,6 +10,57 @@ fn project(directory: &Path, scope: MemoryScope) -> String {
     }
 }
 
+/// The Location's effective toggle; `requested` is the state just persisted, if any.
+fn effective(
+    config: &cyber_tools::ConfigFn,
+    directory: &Path,
+    requested: Option<cyber_core::memory::MemoryState>,
+) -> Result<cyber_server::http::MemorySettingsView, ApiError> {
+    let (resolved, _) =
+        config(directory).map_err(|_| ApiError::invalid("Memory configuration is unavailable"))?;
+    let settings =
+        cyber_core::memory::MemorySettings::from_config(&resolved, &cyber_core::env::ProcessEnv)
+            .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let state = cyber_core::memory::MemoryState::of(settings);
+    Ok(cyber_server::http::MemorySettingsView {
+        state,
+        enabled: settings.enabled,
+        generate: settings.generate,
+        requested,
+        overridden: requested.is_some_and(|requested| requested != state),
+    })
+}
+
+pub(super) async fn settings(
+    config: std::sync::Arc<cyber_tools::ConfigFn>,
+    directory: PathBuf,
+) -> Result<cyber_server::http::MemorySettingsView, ApiError> {
+    tokio::task::spawn_blocking(move || effective(config.as_ref(), &directory, None))
+        .await
+        .map_err(ApiError::unknown)?
+}
+
+/// Persist the user's global toggle; running Sessions read it at their next Safe Boundary.
+pub(super) async fn set_settings(
+    config: std::sync::Arc<cyber_tools::ConfigFn>,
+    global_config_dir: PathBuf,
+    directory: PathBuf,
+    state: cyber_core::memory::MemoryState,
+) -> Result<cyber_server::http::MemorySettingsView, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        state.persist(&global_config_dir).map_err(|error| {
+            ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "ConflictError",
+                format!("Memory setting was not saved: {error}"),
+            )
+        })?;
+        effective(config.as_ref(), &directory, Some(state))
+    })
+    .await
+    .map_err(ApiError::unknown)?
+}
+
 pub(super) async fn list(
     data: PathBuf,
     directory: PathBuf,

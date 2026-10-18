@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub(super) fn changed(kind: &str, data: &Value) -> Option<String> {
     match kind {
         "session.created.1" => data["info"]["directory"].as_str(),
-        "session.worktree.rebound.1" => data["to"]["path"].as_str(),
+        kind if crate::runtime::relocates(kind) => data["to"]["path"].as_str(),
         "workflow.run.started.1" => data["directory"].as_str(),
         _ => None,
     }
@@ -19,7 +19,7 @@ pub(super) fn changed(kind: &str, data: &Value) -> Option<String> {
 
 pub(super) fn previous(event: &LiveEvent) -> Option<&str> {
     match event {
-        LiveEvent::Durable { kind, data, .. } if kind == "session.worktree.rebound.1" => {
+        LiveEvent::Durable { kind, data, .. } if crate::runtime::relocates(kind) => {
             data["from"]["path"].as_str()
         }
         _ => None,
@@ -34,7 +34,8 @@ pub(super) async fn at(state: &AppState, id: &str, seq: i64) -> Result<Option<St
             Ok(db
                 .query_row(
                     "SELECT type, data FROM event WHERE aggregate_id=?1 AND seq<=?2
-             AND type IN ('session.created.1', 'session.worktree.rebound.1', 'workflow.run.started.1')
+             AND type IN ('session.created.1', 'session.worktree.rebound.1',
+               'session.worktree.entered.1', 'session.worktree.exited.1', 'workflow.run.started.1')
              ORDER BY seq DESC LIMIT 1",
                     rusqlite::params![id, seq.max(0)],
                     |row| Ok((row.get(0)?, row.get(1)?)),

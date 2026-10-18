@@ -89,7 +89,9 @@ impl Tool for PowerShell {
             let timeout = number(input, "timeout_ms")
                 .unwrap_or(bash::DEFAULT_TIMEOUT_MS)
                 .clamp(1, bash::MAX_TIMEOUT_MS);
-            bash::execute_prepared(ctx, prepared, &workdir, timeout).await
+            let output = bash::execute_prepared(ctx, prepared, &workdir, timeout).await?;
+            super::pr_links::observe(ctx, command, &workdir, &output).await;
+            Ok(output)
         })
     }
 }

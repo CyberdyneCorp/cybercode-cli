@@ -141,6 +141,20 @@ pub fn envelope(event: &LiveEvent, counter: u64) -> EventEnvelope {
             durable: None,
         };
     }
+    if let LiveEvent::Worktree {
+        directory,
+        kind,
+        worktree,
+    } = event
+    {
+        return EventEnvelope {
+            id: format!("live:{counter}"),
+            kind: kind.clone(),
+            data: serde_json::to_value(worktree).unwrap_or_default(),
+            location: Some(directory.clone()),
+            durable: None,
+        };
+    }
     if let LiveEvent::RequestRouted { kind, data, .. } = event {
         return EventEnvelope {
             id: format!("live:{counter}"),
@@ -170,7 +184,8 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         LiveEvent::McpStatusChanged { .. }
         | LiveEvent::McpToolsChanged { .. }
         | LiveEvent::MemoryUpdated { .. }
-        | LiveEvent::WorkflowProgress { .. } => None,
+        | LiveEvent::WorkflowProgress { .. }
+        | LiveEvent::Worktree { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }
         | LiveEvent::RequestRouted { session_id, .. }
@@ -178,6 +193,7 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         | LiveEvent::TextDelta { session_id, .. }
         | LiveEvent::ReasoningDelta { session_id, .. }
         | LiveEvent::ToolInputDelta { session_id, .. }
+        | LiveEvent::ToolProgress { session_id, .. }
         | LiveEvent::Retry { session_id, .. }
         | LiveEvent::Usage { session_id, .. }
         | LiveEvent::Error { session_id, .. }
@@ -277,7 +293,8 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
                 }
                 LiveEvent::McpToolsChanged { update } => update.directory.display().to_string(),
                 // A run's progress streams on the Location the run started in.
-                LiveEvent::WorkflowProgress { directory, .. } => {
+                LiveEvent::WorkflowProgress { directory, .. }
+                | LiveEvent::Worktree { directory, .. } => {
                     event_location::canonical(directory.clone())
                 }
                 _ => {
@@ -387,6 +404,7 @@ async fn follow(
             Ok(event @ LiveEvent::HookNotice { .. })
             | Ok(event @ LiveEvent::RequestRouted { .. })
             | Ok(event @ LiveEvent::WorktreeSetup { .. })
+            | Ok(event @ LiveEvent::ToolProgress { .. })
                 if session_of(&event) == Some(id.as_str()) =>
             {
                 counter += 1;

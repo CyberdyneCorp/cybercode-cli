@@ -30,6 +30,10 @@ pub enum Action {
     /// Put code on the clipboard (native tool, else OSC 52).
     Copy(String),
     Memory(crate::memory::Request),
+    /// `/memory on|off|readonly`: `PUT /memory/settings`.
+    SetMemory(cyber_core::memory::MemoryState),
+    /// `/commit` and `/pr-description`: generated text, prefilled as a shell command.
+    GitText(GitText),
     ReconcileAdmission(crate::admissions::Request),
     Admission {
         request: crate::admissions::Request,
@@ -127,6 +131,8 @@ pub enum Action {
     StopTask(String),
     StopTasks,
     LoadSessions,
+    /// The picker over the Sessions linked to a pull request (`--from-pr`).
+    LoadPrSessions(u64),
     /// Rename the current Session (`/rename`); the new title arrives as an event.
     RenameSession {
         id: String,
@@ -271,6 +277,16 @@ pub enum Overlay {
     Workflows,
     /// `/rename`: the title being edited.
     Rename(String),
+}
+
+/// Text the small model drafts for the user (`vcs-integration` → Commit and PR text
+/// generation); the result is prefilled as a reviewable shell command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitText {
+    /// A commit message for the staged diff: `git commit -m …`.
+    Commit,
+    /// A PR for `base..HEAD` (empty: the default base): `gh pr create …`.
+    PullRequest { base: String },
 }
 
 /// What the composer's first character makes of the input.
@@ -1356,25 +1372,32 @@ impl App {
         vec![Action::Prompt { text, delivery }]
     }
 
+    /// `/memory [global]` opens the review panel; `/memory on|off|readonly` saves the
+    /// toggle, which Sessions apply at their next Safe Boundary.
+    fn memory_command(&mut self, args: &str) -> Vec<Action> {
+        use cyber_core::memory::MemoryState;
+        let scope = match args {
+            "" => crate::memory::Scope::Project,
+            "global" => crate::memory::Scope::Global,
+            "on" => return vec![Action::SetMemory(MemoryState::On)],
+            "off" => return vec![Action::SetMemory(MemoryState::Off)],
+            "readonly" => return vec![Action::SetMemory(MemoryState::Readonly)],
+            _ => {
+                self.toast("Use /memory, /memory global or /memory on|off|readonly");
+                return Vec::new();
+            }
+        };
+        self.overlay = Overlay::Memory;
+        vec![Action::Memory(self.memory.open(scope, &self.session))]
+    }
+
     /// Built-in slash commands; anything else runs as a skill or custom command.
     fn slash(&mut self, line: &str) -> Vec<Action> {
         let (name, args) = line
             .split_once(' ')
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
-            "memory" if args.is_empty() || args == "global" => {
-                self.overlay = Overlay::Memory;
-                let scope = if args == "global" {
-                    crate::memory::Scope::Global
-                } else {
-                    crate::memory::Scope::Project
-                };
-                vec![Action::Memory(self.memory.open(scope, &self.session))]
-            }
-            "memory" => {
-                self.toast("Use /memory or /memory global");
-                Vec::new()
-            }
+            "memory" => self.memory_command(args),
             "hooks" if args == "history" => {
                 self.overlay = Overlay::HookHistory;
                 self.load_hook_history(None)
@@ -1450,6 +1473,8 @@ impl App {
                 Vec::new()
             }
             "recap" => self.recap_command(),
+            "commit" => vec![Action::GitText(GitText::Commit)],
+            "pr-description" => vec![Action::GitText(GitText::PullRequest { base: args.into() })],
             "sidebar" => {
                 self.toggle_sidebar();
                 Vec::new()
@@ -1765,7 +1790,7 @@ impl App {
     }
 
     pub fn on_server_event(&mut self, event: &cyber_client::Event) -> Vec<Action> {
-        if event.kind == "session.worktree.rebound.1" {
+        if relocates(&event.kind) {
             if event.seq.is_none() {
                 return vec![Action::Refresh];
             }
@@ -1820,7 +1845,7 @@ impl App {
                 actions.extend(self.refresh_explorer());
                 actions
             }
-            "session.worktree.rebound.1" => {
+            kind if relocates(kind) => {
                 if let Some(path) = data["to"]["path"].as_str().filter(|path| !path.is_empty()) {
                     let mut session = self.session.clone();
                     session.directory = path.into();
@@ -2004,4 +2029,13 @@ fn answers(questions: &[crate::model::QuestionSpec], form: &QuestionForm) -> Vec
             picked
         })
         .collect()
+}
+
+/// Durable events that move the Session to another Location (a rebound isolated
+/// child, `enter_worktree`, `exit_worktree`); each carries `to.path`.
+fn relocates(kind: &str) -> bool {
+    matches!(
+        kind,
+        "session.worktree.rebound.1" | "session.worktree.entered.1" | "session.worktree.exited.1"
+    )
 }

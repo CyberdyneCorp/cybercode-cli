@@ -47,7 +47,8 @@ for line in lines():
         result={'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'real','version':'1'}}
         if pathlib.Path('instructions').exists(): result['instructions']=pathlib.Path('instructions').read_text()
     elif method=='tools/list':
-        result={'tools':[{'name':name,'inputSchema':{'type':'object'},'annotations':{'readOnlyHint':name!='write'}} for name in ['read','write','structured','error']]}
+        hints=json.loads(pathlib.Path('annotations.json').read_text()) if pathlib.Path('annotations.json').exists() else {}
+        result={'tools':[{'name':name,'inputSchema':{'type':'object'},'annotations':{'readOnlyHint':name!='write',**hints.get(name,{})}} for name in ['read','write','structured','error']]}
     else:
         name=request['params']['name']
         with open('calls','a') as f: f.write(name+'\n')
@@ -113,6 +114,7 @@ fn turn(flow: &Flow, id: &str) -> TurnContext {
         mode: "default".into(),
         prefers_apply_patch: false,
         rules: Value::Null,
+        worktree: Default::default(),
     }
 }
 async fn ready(flow: &Flow, id: &str) -> Vec<ToolDef> {
@@ -516,6 +518,7 @@ async fn shared_runtime_pins_actual_managed_checkout_until_native_shutdown() {
         mode: info.mode.clone(),
         prefers_apply_patch: false,
         rules: info.rules.clone(),
+        worktree: Default::default(),
     };
     tokio::time::timeout(Duration::from_secs(5), async {
         while !flow
@@ -786,8 +789,9 @@ async fn configured_snapshot_tracks_startup_and_fresh_definition_changes() {
     );
     assert!(changed[0].tools.is_empty());
     flow.f.host.close_mcp_location(&flow.f.repo).await.unwrap();
+    // A closed Location retains no owner, so the server reads `idle` until reopened.
     let closed = flow.f.host.mcp_status(&flow.f.repo).unwrap();
-    assert_eq!(closed[0].status, McpConnectionStatus::Failed);
+    assert_eq!(closed[0].status, McpConnectionStatus::Idle);
     assert!(closed[0].connection.is_none());
     assert_eq!(
         std::fs::read_to_string(flow.f.repo.join("spawned"))
@@ -2803,6 +2807,7 @@ for line in sys.stdin:
             result={'content':[{'type':'text','text':json.dumps(reply)}]}
         else:
             pathlib.Path('hook-input').write_text(json.dumps(request['params']['arguments']))
+            with open('hook-inputs','a') as f: f.write(json.dumps(request['params']['arguments'])+'\n')
             while pathlib.Path('hook-block').exists(): time.sleep(.01)
             result=json.loads(pathlib.Path('hook-answer').read_text())
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
@@ -2875,6 +2880,88 @@ async fn mcp_hook_blocks_builtin_effects_through_a_dedicated_recorded_connection
     assert!(
         pids.len() >= 2,
         "hook borrowed the shared native connection"
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn post_tool_use_mcp_tool_records_payload_after_each_call() {
+    let flow = Flow::new(
+        vec![
+            call("c1", "read", json!({"path":"a.txt"})),
+            call("c2", "write", json!({"path":"b.txt","content":"two"})),
+            text("done"),
+        ],
+        false,
+    );
+    flow.f.write("a.txt", "one");
+    configure_mcp_hook(
+        &flow,
+        json!({"PostToolUse":[{"hooks":[{"type":"mcp_tool","server":"shared","tool":"record","id":"audit"}]}]}),
+    );
+    flow.f.write(
+        "hook-answer",
+        &json!({"content":[{"type":"text","text":"{}"}]}).to_string(),
+    );
+    let id = flow.session("bypass").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "read then write").await;
+    flow.settle(&id).await;
+    assert_eq!(flow.f.read("b.txt"), "two");
+    let recorded: Vec<Value> = flow
+        .f
+        .read("hook-inputs")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let calls: Vec<_> = recorded
+        .iter()
+        .map(|input| (input["tool_name"].clone(), input["call_id"].clone()))
+        .collect();
+    assert_eq!(
+        calls,
+        [(json!("read"), json!("c1")), (json!("write"), json!("c2"))],
+        "one record call after each tool call"
+    );
+    for input in &recorded {
+        assert_eq!(input["event"], "PostToolUse");
+        assert_eq!(input["session_id"], id.as_str());
+        assert!(input["tool_output"].is_string(), "{input}");
+        assert!(input["duration_ms"].is_u64(), "{input}");
+    }
+    assert_eq!(recorded[0]["tool_input"]["path"], "a.txt");
+    assert_eq!(recorded[1]["tool_input"]["content"], "two");
+    let receipts = flow.runtime.hook_executions(&id, 20).unwrap();
+    assert_eq!(receipts.len(), 2);
+    assert!(receipts.iter().all(|receipt| receipt.event == "PostToolUse"
+        && receipt.outcome == Some(cyber_core::hooks::HookOutcome::Ok)));
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn regex_matcher_runs_for_mcp_tool_and_not_for_bash() {
+    let flow = Flow::new(
+        vec![
+            call("c1", "mcp__shared__read", json!({})),
+            call("c2", "bash", json!({"command":"printf ran > bash.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    configure(
+        &flow,
+        json!({"PreToolUse":[{"matcher":"/^mcp__shared__.*/","hooks":[{"type":"command","id":"mcp-only","command":"python3 -c \"import json,sys; print(json.load(sys.stdin)['tool_name'])\" >> matched"}]}]}),
+    );
+    let id = flow.session("bypass").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "call both").await;
+    flow.settle(&id).await;
+    assert_eq!(flow.f.read("calls"), "read\n", "the MCP call ran");
+    assert_eq!(flow.f.read("bash.txt"), "ran", "the bash call ran");
+    assert_eq!(
+        flow.f.read("matched"),
+        "mcp__shared__read\n",
+        "the regex group ran for the MCP tool only"
     );
     flow.runtime.shutdown().await;
 }
@@ -3248,5 +3335,125 @@ async fn mcp_hook_permission_callback_uses_dedicated_connection_without_reentran
             .len()
             >= 2
     );
+    flow.runtime.shutdown().await;
+}
+
+/// Rewrite the configured server's settings: `permissions`, `sandbox` and annotation
+/// overrides the fixture server applies to `tools/list`.
+fn reconfigure(flow: &Flow, path: &PathBuf, permissions: Value, sandbox: Value) {
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    config["permissions"] = permissions;
+    config["sandbox"] = sandbox;
+    std::fs::write(path, config.to_string()).unwrap();
+    flow.f.set_config(config);
+}
+
+/// `tool-registry` → Annotations drive modes and hooks ("Open-world tool under offline
+/// sandbox"): with the sandbox network off, an open-world MCP tool raises a `network`
+/// permission request before it runs, a tool declaring `openWorldHint: false` does not,
+/// and PreToolUse envelopes carry each call's annotations.
+#[tokio::test]
+async fn open_world_tool_asks_network_when_sandbox_network_off() {
+    use cyber_server::runtime::{PendingKind, PermissionReply};
+    let flow = Flow::new(
+        vec![
+            call("c1", "mcp__shared__read", json!({})),
+            call("c2", "mcp__shared__structured", json!({})),
+            text("done"),
+        ],
+        true,
+    );
+    let hook = json!({"PreToolUse":[{"matcher":"/^mcp__shared__/","hooks":[{"type":"command","command":"cat >> envelopes; echo >> envelopes"}]}]});
+    let path = configure(&flow, hook);
+    reconfigure(
+        &flow,
+        &path,
+        json!({}),
+        json!({"policy":"workspace-write","network":"off"}),
+    );
+    flow.f.write(
+        "annotations.json",
+        &json!({"read":{"openWorldHint":false}}).to_string(),
+    );
+    let id = flow.session("default").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "use the server").await;
+    let pending = flow.pending(&id).await;
+    let PendingKind::Permission(ask) = &pending.kind else {
+        panic!("expected a permission request: {pending:?}")
+    };
+    assert_eq!(ask.action, "network");
+    assert_eq!(ask.resources, ["mcp:shared"]);
+    assert_eq!(ask.metadata["tool"], "mcp__shared__structured");
+    // The closed-world call ran without asking; the open-world one waits for approval.
+    wait_for_file(&flow, "calls", "read\n").await;
+    flow.runtime
+        .reply_permission(&pending.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+    assert_eq!(flow.f.read("calls"), "read\nstructured\n");
+    let envelopes: Vec<Value> = flow
+        .f
+        .read("envelopes")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let read = envelopes
+        .iter()
+        .find(|e| e["tool_name"] == "mcp__shared__read")
+        .unwrap();
+    assert_eq!(
+        read["tool_annotations"],
+        json!({"readOnlyHint":true,"openWorldHint":false})
+    );
+    let structured = envelopes
+        .iter()
+        .find(|e| e["tool_name"] == "mcp__shared__structured")
+        .unwrap();
+    assert_eq!(structured["tool_annotations"], json!({"readOnlyHint":true}));
+    flow.runtime.shutdown().await;
+}
+
+/// `tool-registry` → Annotations drive modes and hooks: in `auto` mode a destructive MCP
+/// tool is always evaluated by the classifier even when an allow rule covers it, while an
+/// allowed non-destructive tool runs without classification.
+#[tokio::test]
+async fn destructive_tool_is_always_classified_in_auto_mode() {
+    use cyber_server::runtime::NoSnapshots;
+    let verdict = json!({"decision":"block","reason":"Deletes remote data"}).to_string();
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        vec![
+            call("c1", "mcp__shared__write", json!({})),
+            call("c2", "mcp__shared__structured", json!({})),
+            text("done"),
+        ],
+        false,
+        Arc::new(NoSnapshots),
+        vec![("test/summary", vec![text(&verdict)])],
+    );
+    let path = configure(&flow, json!({}));
+    reconfigure(
+        &flow,
+        &path,
+        json!({"mcp__shared__write":"allow","mcp__shared__structured":"allow"}),
+        json!({"policy":"full-access"}),
+    );
+    flow.f.write(
+        "annotations.json",
+        &json!({"write":{"destructiveHint":true},"structured":{"readOnlyHint":false,"destructiveHint":false}}).to_string(),
+    );
+    let id = flow.session("auto").await;
+    ready(&flow, &id).await;
+    flow.prompt(&id, "use the server").await;
+    flow.settle(&id).await;
+    let blocked = flow.output(&id, "c1").await;
+    assert!(blocked.contains("Blocked by auto mode"), "{blocked}");
+    assert!(blocked.contains("Deletes remote data"), "{blocked}");
+    assert!(flow.output(&id, "c2").await.contains("remote structured"));
+    assert_eq!(flow.f.read("calls"), "structured\n");
+    assert_eq!(flow.requests("test/summary").len(), 1);
     flow.runtime.shutdown().await;
 }

@@ -22,25 +22,19 @@
       }
     },
     "schemas": {
-      "Located_Nullable_MemoryRequestStatus": {
+      "Located_CommitMessage": {
         "type": "object",
         "properties": {
           "location": {
             "$ref": "#/components/schemas/LocationInfo"
           },
           "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/MemoryRequestStatus"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/CommitMessage"
           }
         },
         "required": [
-          "location"
+          "location",
+          "data"
         ],
         "description": "A Location-scoped response."
       },
@@ -79,6 +73,91 @@
           "id",
           "directory"
         ]
+      },
+      "CommitMessage": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Ends with a `Co-authored-by` trailer only when `git.co_author` is configured."
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "description": "A conventional commit message for the staged diff."
+      },
+      "PrDescriptionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "base": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The base branch or commit (default: `origin/HEAD`, else `main`, else `master`).",
+            "default": null
+          }
+        }
+      },
+      "Located_PrDescription": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PrDescription"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "PrDescription": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "base",
+          "title",
+          "body"
+        ],
+        "description": "A drafted pull request for `base..HEAD`."
+      },
+      "Located_Nullable_MemoryRequestStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryRequestStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "description": "A Location-scoped response."
       },
       "MemoryRequestStatus": {
         "type": "object",
@@ -191,6 +270,81 @@
           "receipt"
         ],
         "description": "Public acknowledged change, without note content or execution capabilities."
+      },
+      "Located_MemorySettingsView": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MemorySettingsView"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "MemorySettingsView": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/MemoryState",
+            "description": "What Sessions in this Location get from their next Safe Boundary."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "generate": {
+            "type": "boolean"
+          },
+          "requested": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The state just saved; absent on reads."
+          },
+          "overridden": {
+            "type": "boolean",
+            "description": "A project layer, override or `CYBER_DISABLE_MEMORY` keeps `state` different from\n`requested`.",
+            "default": false
+          }
+        },
+        "required": [
+          "state",
+          "enabled",
+          "generate"
+        ],
+        "description": "The effective memory toggle of a Location (`memory` → Memory toggles)."
+      },
+      "MemoryState": {
+        "type": "string",
+        "enum": [
+          "on",
+          "off",
+          "readonly"
+        ],
+        "description": "The `/memory on|off|readonly` toggle over `memory.enabled` and `memory.generate`."
+      },
+      "SetMemorySettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/MemoryState",
+            "description": "`on` loads and writes memory, `readonly` only loads it, `off` neither."
+          }
+        },
+        "required": [
+          "state"
+        ]
       },
       "Located_MemoryEditReview": {
         "type": "object",
@@ -1640,6 +1794,13 @@
             "type": "string",
             "description": "The build identity of the server binary (`cyber_core::version::BuildInfo::build`);\na client of another build restarts an idle server it started."
           },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The server instance id recorded in `server.json`, so a client can tell that the\nregistered server, and not another one on a reused port, is answering."
+          },
           "apiVersion": {
             "type": "string"
           },
@@ -1648,13 +1809,6 @@
             "items": {
               "type": "string"
             }
-          },
-          "id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The server instance id recorded in `server.json`, so a client can tell that the\nregistered server, and not another one on a reused port, is answering."
           }
         },
         "required": [
@@ -3171,7 +3325,8 @@
           "project",
           "local",
           "plugin",
-          "invocation"
+          "invocation",
+          "client"
         ]
       },
       "HookExecutionStatus": {
@@ -3485,6 +3640,13 @@
             ],
             "description": "Exact managed checkout incarnation admitted at creation."
           },
+          "worktree_origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The unmanaged Location `exit_worktree` returns to, while the Session runs in\na worktree it entered with `enter_worktree`."
+          },
           "parent_id": {
             "type": [
               "string",
@@ -3774,6 +3936,13 @@
               "null"
             ],
             "description": "Exact managed checkout incarnation admitted at creation."
+          },
+          "worktree_origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The unmanaged Location `exit_worktree` returns to, while the Session runs in\na worktree it entered with `enter_worktree`."
           },
           "parent_id": {
             "type": [
@@ -4147,6 +4316,14 @@
                 "format": "uint64",
                 "minimum": 0
               },
+              "created_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "When the ownership record became ready; null when unknown."
+              },
               "sessions": {
                 "type": "array",
                 "items": {
@@ -4204,6 +4381,73 @@
             ]
           }
         ]
+      },
+      "Located_RemovedWorktree": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RemovedWorktree"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "RemovedWorktree": {
+        "type": "object",
+        "properties": {
+          "worktree": {
+            "$ref": "#/components/schemas/WorktreeInfo"
+          }
+        },
+        "required": [
+          "worktree"
+        ]
+      },
+      "Located_WorktreeCleanup": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WorktreeCleanup"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "WorktreeCleanup": {
+        "type": "object",
+        "properties": {
+          "worktree": {
+            "$ref": "#/components/schemas/WorktreeInfo"
+          },
+          "kept": {
+            "type": "boolean",
+            "description": "False once the worktree and its branch are removed."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a clean worktree was kept, or why cleanup failed."
+          }
+        },
+        "required": [
+          "worktree",
+          "kept"
+        ],
+        "description": "The outcome of a Session's exit cleanup (`worktrees` → Cleanup on exit)."
       },
       "Data_ChildSetupInspection": {
         "type": "object",
@@ -7720,6 +7964,130 @@
     }
   },
   "paths": {
+    "/api/v1/git/commit-message": {
+      "post": {
+        "operationId": "v1.git.commitMessage",
+        "summary": "Generate a conventional commit message for the staged diff",
+        "tags": [
+          "git"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_CommitMessage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/git/pr-description": {
+      "post": {
+        "operationId": "v1.git.prDescription",
+        "summary": "Draft a pull request title and body for base..HEAD",
+        "tags": [
+          "git"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_PrDescription"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrDescriptionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/memory/requests": {
       "get": {
         "operationId": "v1.memory.requestStatus",
@@ -7779,6 +8147,120 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memory/settings": {
+      "get": {
+        "operationId": "v1.memory.settings",
+        "summary": "Read the Location's effective memory toggle",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_MemorySettingsView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "v1.memory.setSettings",
+        "summary": "Persist /memory on, off or readonly for the next Safe Boundary",
+        "tags": [
+          "memory"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_MemorySettingsView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetMemorySettings"
               }
             }
           }
@@ -9483,6 +9965,14 @@
             }
           },
           {
+            "name": "pr",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "location[directory]",
             "in": "query",
             "required": false,
@@ -9742,6 +10232,144 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_Array_of_WorktreeEntry"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/worktrees/{name}": {
+      "delete": {
+        "operationId": "v1.worktree.remove",
+        "summary": "Remove a managed worktree and its branch; dirty ones need force",
+        "tags": [
+          "worktree"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_RemovedWorktree"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/worktree/cleanup": {
+      "post": {
+        "operationId": "v1.worktree.cleanup",
+        "summary": "Remove a Session's clean worktree on exit, or keep it and say why",
+        "tags": [
+          "worktree"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_WorktreeCleanup"
                 }
               }
             }

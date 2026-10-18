@@ -893,3 +893,93 @@ fn exec_applies_managed_only_policy_and_invocation_trust() {
         .unwrap();
     assert_eq!(refused.status.code(), Some(2), "{refused:?}");
 }
+
+#[test]
+fn exec_runs_a_command_defined_in_global_and_trusted_project_once() {
+    let provider = Provider::start(read_then_answer);
+    let (_dir, root) = root_with(&provider, json!({}));
+    // One command string in both scopes. The marker lives in the workspace, where
+    // the sandboxed project scope may also write it.
+    let marker = root.join("repo/dedup-ran");
+    let shared = marking("shared", &marker);
+    let path = root.join("cyber/config/cyber.jsonc");
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["hooks"] = json!({"PreToolUse":[shared.clone()]});
+    std::fs::write(&path, config.to_string()).unwrap();
+    std::fs::write(
+        root.join("repo/cyber.jsonc"),
+        json!({"hooks":{"PreToolUse":[shared]},"sandbox":{"network":"off"}}).to_string(),
+    )
+    .unwrap();
+    let inspected = cyber_json(&root, &["trust", "inspect"], &[]);
+    cyber_ok(
+        &root,
+        &[
+            "trust",
+            "approve",
+            "--digest",
+            inspected["digest"].as_str().unwrap(),
+        ],
+    );
+    let listed = cyber_json(&root, &["hooks", "list"], &[]);
+    let hooks = listed["hooks"].as_array().unwrap();
+    let scopes: Vec<_> = hooks.iter().map(|hook| hook["scope"].clone()).collect();
+    assert_eq!(scopes, [json!("global"), json!("project")], "{listed:#}");
+    let project = hooks[1]["digest"].as_str().unwrap();
+    cyber_ok(&root, &["hooks", "trust", "--digest", project]);
+
+    let output = exec(&root);
+    let detail = explain(&output, &conversation(&provider));
+    assert!(output.status.success(), "{detail}");
+    assert_eq!(runs(&marker), 1, "one execution for the event\n{detail}");
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("untrusted"),
+        "the project definition is trusted\n{detail}"
+    );
+}
+
+#[test]
+fn exec_applies_prompt_stop_and_records_input_rewrites_through_the_app_host() {
+    let provider = Provider::start(read_then_answer);
+    let stop = json!({"type":"command","id":"guard","command":format!(
+        "cat >/dev/null; printf '%s' '{}'",
+        json!({"continue":false,"stop_reason":"ticket closed"})
+    )});
+    let (_dir, root) = root_with(&provider, json!({"UserPromptSubmit":[{"hooks":[stop]}]}));
+    let output = exec(&root);
+    let requests = conversation(&provider);
+    let detail = explain(&output, &requests);
+    assert_eq!(
+        requests.len(),
+        1,
+        "the Drain ends after the prompt's Turn\n{detail}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("hook guard: ticket closed"),
+        "{detail}"
+    );
+    assert!(output.status.success(), "{detail}");
+    drop(provider);
+
+    let provider = Provider::start(read_then_answer);
+    let rewrite = json!({"type":"command","id":"redirect","command":format!(
+        "cat >/dev/null; printf '%s' '{}'",
+        json!({"updated_input":{"path":"b.txt"}})
+    )});
+    let (_dir, root) = root_with(
+        &provider,
+        json!({"PreToolUse":[{"matcher":"read","hooks":[rewrite]}]}),
+    );
+    std::fs::write(root.join("repo/b.txt"), "rewritten body").unwrap();
+    let output = exec(&root);
+    let requests = conversation(&provider);
+    let detail = explain(&output, &requests);
+    assert!(output.status.success(), "{detail}");
+    assert_eq!(requests.len(), 2, "{detail}");
+    let second = requests[1]["messages"].to_string();
+    assert!(second.contains("rewritten body"), "{detail}");
+    assert!(
+        second.contains(r#"rewrote the read call input to: {\"path\":\"b.txt\"}"#),
+        "{detail}"
+    );
+}

@@ -66,6 +66,8 @@ const ALL: &[&str] = &[
     super::subtree_stop::STARTED,
     super::subtree_reopen::REOPENED,
     WORKTREE_REBOUND,
+    super::worktree_events::ENTERED,
+    super::worktree_events::EXITED,
     WORKTREE_SETUP_READY,
     INBOX_UPDATED,
     PROMOTED,
@@ -103,6 +105,7 @@ const ALL: &[&str] = &[
     DIFF_COMPUTED,
     REVERTED,
     RECAP_GENERATED,
+    super::pr_links::PR_LINKED,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +151,11 @@ pub struct Admitted {
     /// UserPromptSubmit context, committed as a system message when the row is promoted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook_context: Option<String>,
+    /// A UserPromptSubmit `continue: false` with its tagged reason: committed as a
+    /// `hook_stop` record when the row is promoted, it ends the Drain after the Turn
+    /// that consumes the row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_stop: Option<String>,
     /// Attached `@server:uri` resources and notices, prepended to the user row as
     /// untrusted user-turn data when it is promoted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -172,6 +180,9 @@ pub struct InboxUpdated {
     /// UserPromptSubmit context for edited parts; replaces any earlier context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook_context: Option<String>,
+    /// UserPromptSubmit stop request for edited parts; replaces any earlier one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_stop: Option<String>,
     /// Resource mentions resolved for edited parts; replace any earlier attachments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<String>,
@@ -467,7 +478,7 @@ fn project_event(tx: &Transaction<'_>, e: &StoredEvent) -> rusqlite::Result<()> 
     }
     match e.kind.as_str() {
         CREATED => insert_session(tx, e)?,
-        WORKTREE_REBOUND => {
+        WORKTREE_REBOUND | super::worktree_events::ENTERED | super::worktree_events::EXITED => {
             tx.execute(
                 "UPDATE session SET directory=?2 WHERE id=?1",
                 params![id, d["to"]["path"].as_str()],

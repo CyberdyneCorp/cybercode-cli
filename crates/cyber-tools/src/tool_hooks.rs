@@ -39,6 +39,17 @@ impl BuiltinHost {
             .map_err(|_| "Hook configuration resolver is already attached".into())
     }
 
+    /// Merge connected clients' hook handlers after every configured handler
+    /// (`client-sdk` → Hook callbacks).
+    pub fn attach_client_hooks(
+        &self,
+        hooks: Arc<dyn cyber_server::runtime::ClientHooks>,
+    ) -> Result<(), String> {
+        self.client_hooks
+            .set(hooks)
+            .map_err(|_| "Client hooks are already attached".into())
+    }
+
     /// Approve exactly these inspected project/local handler digests for this host's
     /// lifetime (`cyber exec --trust-project-hooks`). Nothing is persisted, and a
     /// changed definition has a different digest and stays unapproved.
@@ -130,8 +141,36 @@ impl BuiltinHost {
                 .validate_auto_override(&inv.name, &input)
                 .map_err(|error| ToolError::Failed(error.to_string()))?;
             inv.input = input;
+            self.record_rewrite(inv);
         }
         Ok(decision.decision)
+    }
+
+    /// Whether `PreToolUse` hooks let a host-issued `bash` `command` run unchanged on
+    /// the Session's behalf. Any block, ask, rewrite or hook failure refuses it (fail
+    /// closed); the hook's effects are not recorded on the Session's own call.
+    pub(crate) async fn hooks_admit_host_bash(
+        &self,
+        inv: &Invocation,
+        command: &str,
+        cancel: CancellationToken,
+    ) -> bool {
+        if self.hook_config.get().is_none() {
+            return true;
+        }
+        let mut probe = inv.clone();
+        probe.name = "bash".into();
+        probe.input = json!({"command": command});
+        match self
+            .dispatch_tool_event("PreToolUse", &probe, Value::Null, cancel)
+            .await
+        {
+            Ok(decision) => {
+                decision.updated_input.is_none()
+                    && matches!(decision.decision, None | Some(HookAction::Allow))
+            }
+            Err(_) => false,
+        }
     }
 
     pub(crate) async fn permission_request_hooks(
@@ -261,17 +300,48 @@ impl BuiltinHost {
             .absorb(decision);
     }
 
-    /// Reload configuration and definitions for a Location.
-    fn hook_catalog_at(
+    /// Keep an accepted PreToolUse rewrite for the call's settlement, so the
+    /// transcript records the input that actually ran.
+    fn record_rewrite(&self, inv: &Invocation) {
+        self.hook_effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry((inv.session_id.clone(), inv.call_id.clone()))
+            .or_default()
+            .record_rewrite(rewrite_notice(&inv.name, &inv.input));
+    }
+
+    /// Reload configuration and definitions for the owner's Location, with the hook
+    /// handlers of the clients that own its Session.
+    async fn hook_catalog_at(
         &self,
-        directory: &Path,
+        owner: &HookOwner,
     ) -> Result<Option<(Resolved, HookCatalog)>, ToolError> {
         let Some(config) = self.hook_config.get() else {
             return Ok(None);
         };
-        let resolved = (config.resolve)(directory).map_err(ToolError::Failed)?;
+        let resolved = (config.resolve)(Path::new(&owner.directory)).map_err(ToolError::Failed)?;
         let catalog = HookCatalog::from_config(&resolved).map_err(ToolError::Failed)?;
-        Ok(Some((resolved, catalog)))
+        let client = self.client_definitions(&owner.session_id).await;
+        Ok(Some((resolved, catalog.with_client(client))))
+    }
+
+    /// Definitions of the live client registrations that apply to `session_id`: those of
+    /// the clients owning it or an ancestor, in registration order.
+    async fn client_definitions(&self, session_id: &str) -> Vec<HookDefinition> {
+        let (Some(hooks), Some(runtime)) = (self.client_hooks.get(), self.runtime()) else {
+            return Vec::new();
+        };
+        let Ok(lineage) = runtime.lineage(session_id).await else {
+            return Vec::new();
+        };
+        hooks
+            .client_hooks(&lineage)
+            .into_iter()
+            .filter_map(|hook| {
+                HookDefinition::client(&hook.event, &hook.id, hook.matcher, hook.timeout).ok()
+            })
+            .collect()
     }
 
     /// Dispatch an owner's event. Configuration reloads for its Location, and only
@@ -290,8 +360,7 @@ impl BuiltinHost {
         cancel: CancellationToken,
     ) -> futures::future::BoxFuture<'a, Result<Option<(HookDecision, usize)>, ToolError>> {
         Box::pin(async move {
-            let Some((resolved, catalog)) = self.hook_catalog_at(Path::new(&owner.directory))?
-            else {
+            let Some((resolved, catalog)) = self.hook_catalog_at(owner).await? else {
                 return Ok(None);
             };
             if !catalog
@@ -571,6 +640,14 @@ impl BuiltinHost {
                 .await
             }
             HookKind::Command => runner.run_recorded(runtime, pointer, event, cancel).await,
+            HookKind::Client => {
+                let hooks = self
+                    .client_hooks
+                    .get()
+                    .ok_or("client hooks are unavailable")?;
+                crate::hook_client::run_recorded(hooks.as_ref(), runtime, definition, event, cancel)
+                    .await
+            }
         }
     }
 
@@ -630,6 +707,24 @@ impl BuiltinHost {
         }
         Ok(())
     }
+}
+
+/// Longest rewritten input a transcript notice repeats; the call record keeps all of it.
+const REWRITE_NOTICE_LIMIT: usize = 2048;
+
+/// The model-visible rewrite notice: credentials a hook injected (a common reason to
+/// rewrite) are redacted before the input is shown or truncated.
+fn rewrite_notice(tool: &str, input: &Value) -> String {
+    let mut shown = cyber_core::memory::redact_credentials(&input.to_string());
+    if shown.len() > REWRITE_NOTICE_LIMIT {
+        let mut end = REWRITE_NOTICE_LIMIT;
+        while !shown.is_char_boundary(end) {
+            end -= 1;
+        }
+        shown.truncate(end);
+        shown.push('…');
+    }
+    format!("A PreToolUse hook rewrote the {tool} call input to: {shown}")
 }
 
 pub(crate) fn merge_decision(
@@ -724,6 +819,9 @@ impl BuiltinHost {
             .clone();
         if let Some(extra) = extra.as_object() {
             fields.extend(extra.clone());
+        }
+        if let Some(annotations) = self.annotations_of(inv) {
+            fields.insert("tool_annotations".into(), annotations);
         }
         let dispatched = self
             .dispatch_owned(kind, &HookOwner::of(inv), fields, &inv.name, cancel)

@@ -1,0 +1,1 @@
+{"name":"spike","path":"<worktree>","branch":"cyber/spike","created":true,"returned_to_on_exit":"<repo>","setup_output":""}

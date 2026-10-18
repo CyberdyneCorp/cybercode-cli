@@ -1850,3 +1850,158 @@ async fn required_gate_keeps_input_pending_and_is_not_repeated_after_replay() {
         InputStatus::Promoted
     );
 }
+
+/// Streams a complete `read` call, then holds the stream open until `release` before
+/// finishing; later requests answer with text.
+struct HeldStreamModel {
+    release: Arc<tokio::sync::Notify>,
+    requests: Arc<std::sync::Mutex<Vec<cyber_llm::LlmRequest>>>,
+}
+impl cyber_llm::Adapter for HeldStreamModel {
+    fn stream(
+        &self,
+        request: cyber_llm::LlmRequest,
+    ) -> futures::future::BoxFuture<'_, Result<cyber_llm::adapters::EventStream, cyber_llm::LlmError>>
+    {
+        use cyber_llm::{FinishReason, LlmEvent, ToolCall};
+        use futures::StreamExt;
+        let first = {
+            let mut requests = self.requests.lock().unwrap();
+            requests.push(request);
+            requests.len() == 1
+        };
+        let release = Arc::clone(&self.release);
+        Box::pin(async move {
+            if !first {
+                let events = [
+                    LlmEvent::TextDelta {
+                        text: "after".into(),
+                    },
+                    LlmEvent::Finish {
+                        reason: FinishReason::Stop,
+                    },
+                ];
+                return Ok(futures::stream::iter(events.map(Ok)).boxed());
+            }
+            let call = LlmEvent::ToolCallDone(ToolCall {
+                id: "call_eager".into(),
+                name: "read".into(),
+                arguments: "{}".into(),
+                input: Some(serde_json::json!({})),
+            });
+            let held = futures::stream::once(async move {
+                release.notified().await;
+                Ok(LlmEvent::TextDelta {
+                    text: "trailing text".into(),
+                })
+            });
+            let finish = futures::stream::iter([Ok(LlmEvent::Finish {
+                reason: FinishReason::ToolCalls,
+            })]);
+            Ok(futures::stream::iter([Ok(call)])
+                .chain(held)
+                .chain(finish)
+                .boxed())
+        })
+    }
+}
+
+/// `tool-registry` → Eager execution during streaming: a complete tool call is durable
+/// as soon as its input finishes streaming, while the provider stream is still open, and
+/// its result is present before the next Turn.
+#[tokio::test]
+async fn complete_tool_call_is_durable_before_the_stream_finishes() {
+    use cyber_server::runtime::*;
+    let h = Harness::new(Setup::default());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let runtime = Runtime::new(RuntimeOptions {
+        store: h.store.clone(),
+        resolver: Arc::new(HeldModels {
+            models: h.models.clone(),
+            adapter: Arc::new(HeldStreamModel {
+                release: Arc::clone(&release),
+                requests: Arc::clone(&requests),
+            }),
+        }),
+        tools: h.tools.clone(),
+        global_config_dir: h.repo.join("global"),
+        shell: "bash".into(),
+        claude_compat: false,
+        compaction: CompactionConfig::default(),
+        retry: cyber_llm::RetryPolicy::default(),
+        max_steps: None,
+        today: None,
+        interactive: true,
+        snapshots: Arc::new(NoSnapshots),
+    });
+    let id = runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    runtime
+        .admit(&id, admit("read eagerly", Delivery::Queue))
+        .await
+        .unwrap();
+    let called = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let events = h.store.read_events(&id, -1, 500).unwrap().events;
+            if let Some(event) = events
+                .into_iter()
+                .find(|e| e.kind == "session.tool.called.1")
+            {
+                break event;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the complete call was not recorded while the stream was open");
+    assert_eq!(called.data["call_id"], "call_eager");
+    // The stream is still held open: only one request, and the step is not finished.
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert!(runtime.is_running(&id));
+    // A second store handle (as after a crash) already sees the committed call.
+    let reopened = open_store(&h.dir.path().join("cyber.db"));
+    assert!(
+        reopened
+            .read_events(&id, -1, 500)
+            .unwrap()
+            .events
+            .iter()
+            .any(|e| e.kind == "session.tool.called.1" && e.data["call_id"] == "call_eager")
+    );
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(30), runtime.wait_idle(&id))
+        .await
+        .expect("drain did not settle");
+    let requests = requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2);
+    let next = transcript(&requests[1]);
+    assert!(next.contains("contents"), "{next}");
+    assert!(next.contains("call_eager"), "{next}");
+    runtime.shutdown().await;
+}
+
+struct HeldModels {
+    models: Arc<Models>,
+    adapter: Arc<HeldStreamModel>,
+}
+impl cyber_server::runtime::ModelResolver for HeldModels {
+    fn resolve(&self, model: &str) -> Result<cyber_server::runtime::ResolvedModel, String> {
+        let mut resolved =
+            cyber_server::runtime::ModelResolver::resolve(self.models.as_ref(), model)?;
+        if model == "test/main" {
+            resolved.adapter = self.adapter.clone();
+        }
+        Ok(resolved)
+    }
+    fn role(&self, role: cyber_llm::catalog::ModelRole) -> Option<String> {
+        cyber_server::runtime::ModelResolver::role(self.models.as_ref(), role)
+    }
+}

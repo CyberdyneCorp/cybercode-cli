@@ -11,7 +11,14 @@ export * from "./generated/operations.js";
 export type * from "./generated/types.js";
 export { uuidv7 } from "./ids.js";
 export { RpcChannel, RpcTransport, rpcError, type RpcIo } from "./rpc.js";
-export type { AppTool, ToolContext } from "./tools.js";
+export type {
+  AppTool,
+  ClientHookHandler,
+  ClientHookOptions,
+  ClientHookResult,
+  HookInput,
+  ToolContext,
+} from "./tools.js";
 export { HttpTransport, type Transport } from "./transport.js";
 export { readRegistration, readPassword, stateDir, type Registration } from "./local.js";
 export type { PromptInput, PromptOptions, PromptResult, StopReason } from "./prompt.js";

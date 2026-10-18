@@ -1,8 +1,8 @@
 //! Explicit user creation of a fresh managed worktree Session.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, request::Parts};
-use axum::routing::get;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use cyber_core::worktrees::{Managed, Name};
 use schemars::JsonSchema;
@@ -65,6 +65,29 @@ pub struct CreatedWorktree {
     pub setup: SetupStatus,
 }
 
+/// The outcome of a Session's exit cleanup (`worktrees` → Cleanup on exit).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorktreeCleanup {
+    pub worktree: WorktreeInfo,
+    /// False once the worktree and its branch are removed.
+    pub kept: bool,
+    /// Why a clean worktree was kept, or why cleanup failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct RemoveQuery {
+    /// Remove even with uncommitted changes or commits beyond the base.
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RemovedWorktree {
+    pub worktree: WorktreeInfo,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum WorktreeEntry {
@@ -73,6 +96,8 @@ pub enum WorktreeEntry {
         dirty: bool,
         ahead: u64,
         behind: u64,
+        /// When the ownership record became ready; null when unknown.
+        created_ms: Option<i64>,
         sessions: Vec<crate::runtime::SessionRow>,
     },
     Pending {
@@ -87,6 +112,8 @@ pub enum WorktreeEntry {
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/worktrees", get(list).post(create))
+        .route("/worktrees/{name}", delete(remove))
+        .route("/sessions/{id}/worktree/cleanup", post(cleanup))
         .route(
             "/sessions/{id}/children/{child}/setup",
             get(inspect_setup).post(recover_setup),
@@ -212,6 +239,41 @@ async fn create(
             data,
         }),
     ))
+}
+
+async fn remove(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(query): Query<RemoveQuery>,
+    parts: Parts,
+) -> Result<Json<Located<RemovedWorktree>>, ApiError> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    let name = Name::parse(&name).map_err(ApiError::invalid)?;
+    let worktree = state
+        .services
+        .remove_worktree(directory.clone(), name, query.force)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data: RemovedWorktree { worktree },
+    }))
+}
+
+/// Run a top-level Session's exit cleanup for the worktree it was started in.
+async fn cleanup(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    parts: Parts,
+) -> Result<Json<Located<WorktreeCleanup>>, ApiError> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state
+        .services
+        .cleanup_session_worktree(directory.clone(), id)
+        .await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
 }
 
 async fn inspect_setup(

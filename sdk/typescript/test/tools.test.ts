@@ -48,9 +48,16 @@ class FakePeer {
     const reply =
       frame.params?.name === "bash"
         ? { error: { code: -32602, message: "bash is a built-in tool" } }
-        : { result: frame.method === "v1.tool.register" ? { registered: frame.params?.name, registration_id: registration } : { unregistered: true } };
+        : { result: result(frame, registration) };
     queueMicrotask(() => this.lines.push(JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...reply })));
   }
+}
+
+function result(frame: Frame, registration: string): unknown {
+  if (frame.method === "v1.tool.register") return { registered: frame.params?.name, registration_id: registration };
+  if (frame.method === "v1.hook.register") return { registration_id: registration.replace("reg_", "hkr_"), event: frame.params?.event };
+  if (frame.method === "v1.hook.attach") return { attached: frame.params?.session_id };
+  return { unregistered: true };
 }
 
 function setup() {
@@ -160,5 +167,21 @@ test("old and missing registration identities cannot reach a replacement executo
   const fresh = await peer.execute("fresh_registration", { name: lookup.name });
   assert.equal(fresh.result, "replacement");
   assert.equal(executions, 1);
+  closeHandle();
+});
+
+test("hook handlers apply to attached Sessions, which are re-attached after a reconnect", async () => {
+  const { registry, peers, closeHandle } = setup();
+  await registry.attachSession("ses_before"); // No channel yet: remembered only.
+  await registry.on("PreToolUse", () => undefined);
+  const attached = (peer: FakePeer) =>
+    peer.received.filter((f) => f.method === "v1.hook.attach").map((f) => f.params?.session_id);
+  assert.deepEqual(attached(peers[0]!), ["ses_before"]);
+  await registry.attachSession("ses_after");
+  assert.deepEqual(attached(peers[0]!), ["ses_before", "ses_after"]);
+  peers[0]!.lines.end(); // The server went away.
+  while (peers.length < 2 || attached(peers[1]!).length < 2) await new Promise((r) => setTimeout(r, 1));
+  assert.deepEqual(attached(peers[1]!), ["ses_before", "ses_after"]);
+  assert.ok(peers[1]!.received.some((f) => f.method === "v1.hook.register"));
   closeHandle();
 });

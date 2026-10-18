@@ -320,6 +320,9 @@ fn server_report(
         json!({"name":name,"digest":server.digest,"call_timeout_seconds":call_timeout,"definition":definition,
             "origins":origins,"requires_individual_approval":server.requires_approval,"sandbox_required":server.requires_sandbox,
             "individually_approved":store.is_mcp_approved(&resolved.trust.checkout_root,&server.digest)?,
+            "managed":server.managed,
+            "blocked":(!server.managed && resolved.managed.blocks_mcp(name, &server.definition))
+                .then_some(cyber_core::config::MCP_BLOCKED),
             "authorized":authorize_server(resolved,store,&ctx.location,name).is_ok()}),
     )
 }

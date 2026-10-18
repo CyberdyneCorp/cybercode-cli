@@ -27,6 +27,9 @@ pub enum HookScope {
     Local,
     Plugin,
     Invocation,
+    // A connected SDK client's handler; it always runs after every configured scope. (A
+    // plain comment keeps the schema a string enum.)
+    Client,
 }
 
 impl HookScope {
@@ -85,6 +88,52 @@ impl HookDefinition {
 
     pub fn kind(&self) -> HookKind {
         self.handler.kind
+    }
+
+    /// A connected client's handler for `event` (`client-sdk` → Hook callbacks), named by
+    /// its server-issued registration. The matcher follows the configured syntax.
+    pub fn client(
+        event: &str,
+        registration: &str,
+        matcher: Option<String>,
+        timeout: u32,
+    ) -> Result<Self, String> {
+        if !crate::config::is_event_name(event) {
+            return Err(format!("unknown hook event: {event}"));
+        }
+        if !(1..=600).contains(&timeout) {
+            return Err("timeout: expected 1 through 600 seconds".into());
+        }
+        let handler = HookHandler {
+            kind: HookKind::Client,
+            command: None,
+            url: None,
+            prompt: None,
+            server: None,
+            tool: None,
+            headers: Default::default(),
+            arguments: None,
+            timeout,
+            asynchronous: false,
+            id: Some(format!("client:{registration}")),
+            description: None,
+            fail_closed: false,
+            condition: None,
+            once: false,
+            status_message: None,
+            system_message: None,
+        };
+        Ok(Self {
+            event: event.into(),
+            scope: HookScope::Client,
+            source: format!("client:{registration}"),
+            pointer: format!("/client/{registration}"),
+            selector: selectors::Selector::new(matcher.as_deref(), &[], &handler)?,
+            matcher,
+            paths: Vec::new(),
+            digest: handler.digest().map_err(|error| error.to_string())?,
+            handler,
+        })
     }
 }
 
@@ -148,6 +197,17 @@ impl HookCatalog {
             skipped,
             policy,
         })
+    }
+
+    /// Append connected clients' handlers after every configured definition; a policy
+    /// that restricts hooks to managed scope refuses them too.
+    pub fn with_client(mut self, definitions: Vec<HookDefinition>) -> Self {
+        if self.policy.restricts_hooks() {
+            self.skipped.extend(definitions);
+        } else {
+            self.definitions.extend(definitions);
+        }
+        self
     }
 
     /// The policy-skipped definitions declared for `event`.

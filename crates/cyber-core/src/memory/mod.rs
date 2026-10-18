@@ -252,6 +252,41 @@ impl MemorySettings {
     }
 }
 
+/// The `/memory on|off|readonly` toggle over `memory.enabled` and `memory.generate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryState {
+    On,
+    Off,
+    Readonly,
+}
+impl MemoryState {
+    pub fn of(settings: MemorySettings) -> Self {
+        match (settings.enabled, settings.generate) {
+            (false, _) => Self::Off,
+            (true, false) => Self::Readonly,
+            (true, true) => Self::On,
+        }
+    }
+
+    /// Persist as the user's global `memory` settings in `config_dir`, keeping the rest
+    /// of that document. Sessions read it at their next Safe Boundary. `off` keeps the
+    /// stored `generate` choice.
+    pub fn persist(self, config_dir: &Path) -> Result<PathBuf, String> {
+        crate::config::set_global_key(config_dir, "memory", |current| {
+            let mut value = match current {
+                Some(Value::Object(map)) => Value::Object(map.clone()),
+                _ => Value::Object(Default::default()),
+            };
+            value["enabled"] = Value::Bool(self != Self::Off);
+            if self != Self::Off {
+                value["generate"] = Value::Bool(self == Self::On);
+            }
+            value
+        })
+    }
+}
+
 pub fn directory(data: &Path, project_id: &str) -> Result<PathBuf, MemoryError> {
     let valid = project_id == "global"
         || project_id.strip_prefix("prj_").is_some_and(|id| {

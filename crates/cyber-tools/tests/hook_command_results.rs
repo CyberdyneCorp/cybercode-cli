@@ -113,6 +113,32 @@ fn exit_two_blocks_and_other_codes_report_nonblocking_stderr_errors() {
 }
 
 #[test]
+fn nonblocking_exit_diagnostics_name_the_hook_and_plain_exit_code() {
+    let directory = tempfile::tempdir().unwrap();
+    let event = event("PostToolUse", directory.path());
+    for (end, status) in [
+        (Some(1), "exited with code 1"),
+        (None, "ended without an exit code"),
+    ] {
+        let report = interpret_hook_command(
+            &event,
+            "audit",
+            false,
+            Ok(capture(
+                HookCommandEnd::Exited(end),
+                b"",
+                b"audit log offline\n",
+            )),
+        );
+        assert_eq!(report.outcome, HookOutcome::Error);
+        assert_eq!(
+            report.diagnostic.as_deref(),
+            Some(format!("hook audit {status}: audit log offline").as_str())
+        );
+    }
+}
+
+#[test]
 fn truncated_or_malformed_decisions_cannot_produce_allow() {
     let directory = tempfile::tempdir().unwrap();
     let event = event("PreToolUse", directory.path());

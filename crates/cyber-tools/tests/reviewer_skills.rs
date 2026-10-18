@@ -167,6 +167,7 @@ async fn user_fork_keeps_its_captured_reviewer_after_the_source_agent_changes() 
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f
@@ -363,6 +364,7 @@ async fn admit_user_fork(flow: &Flow, parent: &str) {
         mode: source.info.mode.clone(),
         prefers_apply_patch: false,
         rules: source.info.rules.clone(),
+        worktree: Default::default(),
     };
     let plan = flow
         .f

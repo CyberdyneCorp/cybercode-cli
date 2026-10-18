@@ -7,6 +7,7 @@ mod auto_mode;
 mod deferred_tools;
 mod edit;
 mod gate;
+mod git;
 mod hooks;
 mod intelligence;
 mod jsonc;
@@ -35,6 +36,7 @@ pub use auto_mode::{AutoFallback, AutoModeSettings, AutoPattern};
 pub use deferred_tools::DeferredToolSettings;
 pub use edit::{set_document_member, set_global_key};
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};
+pub use git::GitSettings;
 pub use hooks::{HookCondition, HookGroup, HookHandler, HookKind, HookSettings};
 pub use intelligence::{FormatterConfig, FormatterSettings, LspServerConfig, LspSettings};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
@@ -42,7 +44,9 @@ pub use load::{
     LoadRequest, RawHookSection, ensure_global_config, load, load_global, project_root,
     trust_report, withheld_hook_sections,
 };
-pub use managed::{MANAGED_POLICY_DIR_ENV, ManagedPolicy, os_managed_dir};
+pub use managed::{
+    MANAGED_POLICY_DIR_ENV, MCP_BLOCKED, ManagedPolicy, McpPattern, McpPolicy, os_managed_dir,
+};
 pub use mcp::{
     McpOAuth, McpOAuthSetting, McpServer, McpSettings, McpToolFilter, OAUTH_REDIRECT_PORT_MIN,
     transport_owned_header,

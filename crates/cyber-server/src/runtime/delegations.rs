@@ -286,6 +286,7 @@ impl Runtime {
             mode: state.effective_mode(running).into(),
             prefers_apply_patch: false,
             rules: state.info.rules,
+            worktree: Default::default(),
         };
         let host = self.inner.tools.clone();
         let weak = self.downgrade();
@@ -363,7 +364,10 @@ impl Runtime {
             text: request.prompt.clone(),
         }];
         parts.extend(request.attachments.iter().cloned());
-        self.inner.user_prompt_hooks(&handle, &parts, "user").await
+        self.inner
+            .user_prompt_hooks(&handle, &parts, "user")
+            .await?
+            .without_turn()
     }
 
     fn existing_delegation(

@@ -129,6 +129,7 @@ fn owner_context(owner: &SessionInfo) -> TurnContext {
         mode: owner.mode.clone(),
         prefers_apply_patch: false,
         rules: owner.rules.clone(),
+        worktree: Default::default(),
     }
 }
 

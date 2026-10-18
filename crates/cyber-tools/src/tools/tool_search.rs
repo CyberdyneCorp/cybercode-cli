@@ -94,6 +94,7 @@ impl Tool for ToolSearch {
                 mode: ctx.inv.mode.clone(),
                 prefers_apply_patch: false,
                 rules: ctx.inv.rules.clone(),
+                worktree: Default::default(),
             };
             let runtime = ctx.host.runtime();
             let catalog = match &runtime {

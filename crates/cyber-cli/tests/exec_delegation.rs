@@ -642,3 +642,170 @@ fn incomplete_billing_cancels_owned_job_and_reports_error() {
             .any(|(path, _)| path == "/api/v1/jobs/job_named/stop")
     );
 }
+
+/// A fake OpenAI-compatible provider that answers every request with `answer` and
+/// records each request body.
+struct Provider {
+    url: String,
+    bodies: Arc<Mutex<Vec<Value>>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Provider {
+    fn start(answer: &'static str) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (log, stopping) = (bodies.clone(), stop.clone());
+        let thread = thread::spawn(move || {
+            while !stopping.load(Ordering::Relaxed) {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let Some((_, _, body)) = read_request(&mut stream) else {
+                    continue;
+                };
+                log.lock().unwrap().push(body);
+                let chunk = json!({"choices":[{"index":0,"delta":{"content":answer},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+                let body = format!("data: {chunk}\n\ndata: [DONE]\n\n");
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        Self {
+            url,
+            bodies,
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for Provider {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Runs `cyber exec --embedded`, killing it after 60 s so a hang fails the test.
+fn embedded_exec(root: &std::path::Path, prompt: &str) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cyber"))
+        .args(["--cwd", root.join("repo").to_str().unwrap(), "exec"])
+        .args([
+            "--embedded",
+            "--model",
+            "corp/main",
+            "--format",
+            "json",
+            prompt,
+        ])
+        .env_clear()
+        .env("HOME", root.join("home"))
+        .env("CYBER_HOME", root.join("cyber"))
+        .env("CYBER_DB", "test.db")
+        .env("CYBER_MODELS_PATH", root.join("models.json"))
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .envs(std::env::var_os("SystemRoot").map(|root| ("SystemRoot", root)))
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() && started.elapsed() < Duration::from_secs(60) {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    child.wait_with_output().unwrap()
+}
+
+/// Child Sessions of the embedded database as `(id, agent, parent_id)`.
+fn embedded_children(root: &std::path::Path) -> Vec<(String, String, String)> {
+    let mut children = Vec::new();
+    for entry in std::fs::read_dir(root.join("cyber").join("data").join("embedded")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|ext| ext != "db") {
+            continue;
+        }
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let mut query = db
+            .prepare("SELECT id, agent, parent_id FROM session WHERE parent_id IS NOT NULL")
+            .unwrap();
+        let rows = query
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap();
+        children.extend(rows.map(Result::unwrap));
+    }
+    children
+}
+
+#[test]
+fn exec_agent_mention_spawns_explore_child_on_embedded_server() {
+    let provider = Provider::start("Retry logic lives in src/retry.rs");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let config = root.join("cyber").join("config");
+    for path in [root.join("home"), root.join("repo"), config.clone()] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    // No `agent` permission is configured: a user mention needs none, and a
+    // non-interactive ask would fail the run.
+    std::fs::write(
+        config.join("cyber.jsonc"),
+        json!({"providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}})
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(root.join("models.json"), "{}").unwrap();
+    let output = embedded_exec(&root, "@explore where is retry logic implemented?");
+    let bodies = provider.bodies.lock().unwrap().clone();
+    let detail = format!(
+        "status={:?}\nstdout={}\nstderr={}\nrequests={bodies:?}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(output.status.success(), "{detail}");
+    let result: Value = serde_json::from_slice(&output.stdout).expect(&detail);
+    assert_eq!(
+        result["result"], "Retry logic lives in src/retry.rs",
+        "{detail}"
+    );
+    let children = embedded_children(&root);
+    assert_eq!(children.len(), 1, "{detail}");
+    let (child_id, agent, parent_id) = &children[0];
+    assert_eq!(agent, "explore", "{detail}");
+    assert_eq!(result["session_id"], child_id.as_str(), "{detail}");
+    assert_eq!(result["parent_session_id"], parent_id.as_str(), "{detail}");
+    let child = bodies
+        .iter()
+        .find(|body| {
+            body["messages"]
+                .to_string()
+                .contains("where is retry logic implemented?")
+        })
+        .unwrap_or_else(|| panic!("the explore child never reached the provider\n{detail}"));
+    assert!(
+        !child["messages"].to_string().contains("@explore"),
+        "{detail}"
+    );
+}

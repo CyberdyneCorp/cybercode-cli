@@ -54,6 +54,10 @@ pub struct SessionInfo {
     /// Exact managed checkout incarnation admitted at creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_id: Option<String>,
+    /// The unmanaged Location `exit_worktree` returns to, while the Session runs in
+    /// a worktree it entered with `enter_worktree`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_origin: Option<String>,
     pub parent_id: Option<String>,
     /// Durable child identity within its parent, independent of title and agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -296,12 +300,16 @@ pub struct StepSnapshot {
 pub struct SessionState {
     #[serde(skip)]
     pub(crate) loaded_tools: BTreeSet<String>,
+    /// Pull requests this Session is linked to (`session.pr.linked.1`).
+    #[serde(skip)]
+    pub(crate) pull_requests: BTreeSet<u64>,
     #[serde(skip)]
     pub(crate) first_turn_started: bool,
     /// SessionStart's durable marker was replayed; it never runs again.
     #[serde(skip)]
     pub(crate) session_started: bool,
-    /// The step count after which a SessionStart `continue: false` ends the Drain.
+    /// The step count after which a SessionStart or UserPromptSubmit `continue: false`
+    /// ends the Drain.
     #[serde(skip)]
     pub(crate) hook_stop_step: Option<u32>,
     #[serde(skip)]
@@ -309,6 +317,9 @@ pub struct SessionState {
     /// UserPromptSubmit context of unpromoted rows, admitted just before each row.
     #[serde(skip)]
     pub(crate) hook_contexts: BTreeMap<String, String>,
+    /// UserPromptSubmit stop requests of unpromoted rows, recorded with each row.
+    #[serde(skip)]
+    pub(crate) hook_stops: BTreeMap<String, String>,
     /// Resolved resource mentions of unpromoted rows, prepended to each row's parts.
     #[serde(skip)]
     pub(crate) resource_contexts: BTreeMap<String, Vec<String>>,
@@ -322,6 +333,13 @@ pub struct SessionState {
     pub(super) child_worktree_setup_pending: bool,
     #[serde(skip)]
     pub(super) child_worktree: Option<cyber_core::worktrees::Managed>,
+    /// The Session created the worktree it entered with `enter_worktree`.
+    #[serde(skip)]
+    pub(super) entered_created: bool,
+    /// The checkout the Session entered with `enter_worktree` and has not exited; boxed,
+    /// as the state is held across many awaits.
+    #[serde(skip)]
+    pub(super) entered_worktree: Option<Box<cyber_core::worktrees::Managed>>,
     #[serde(skip)]
     pub(crate) result: super::structured::ResultState,
     pub info: SessionInfo,
@@ -501,17 +519,21 @@ impl SessionState {
     pub fn new(info: SessionInfo) -> Self {
         Self {
             loaded_tools: BTreeSet::new(),
+            pull_requests: BTreeSet::new(),
             first_turn_started: false,
             session_started: false,
             hook_stop_step: None,
             child_requested_inputs: BTreeSet::new(),
             hook_contexts: BTreeMap::new(),
+            hook_stops: BTreeMap::new(),
             resource_contexts: BTreeMap::new(),
             child_pause_seq: -1,
             child_continuation_error: None,
             child_continuation_unknown: false,
             child_worktree_setup_pending: false,
             child_worktree: None,
+            entered_created: false,
+            entered_worktree: None,
             result: super::structured::ResultState::default(),
             model_selection: super::selection::ModelSelection::explicit(info.model.clone()),
             selection_revision: -1,
@@ -619,6 +641,7 @@ impl SessionState {
                 let promoted: Promoted = decode(e)?;
                 self.child_requested_inputs.remove(&promoted.message_id);
                 self.hook_contexts.remove(&promoted.message_id);
+                self.hook_stops.remove(&promoted.message_id);
                 self.resource_contexts.remove(&promoted.message_id);
                 if let Some(row) = self
                     .inbox
@@ -646,6 +669,30 @@ impl SessionState {
                 self.info.worktree_id = Some(binding.to.id.clone());
                 self.child_worktree = Some(binding.to);
                 self.child_worktree_setup_pending = true;
+            }
+            "session.worktree.entered" => {
+                let entered: super::worktree_events::Entered = decode(e)?;
+                if self.info.worktree_id.is_some() || self.info.worktree_origin.is_some() {
+                    return Err("Worktree entered from a managed checkout".into());
+                }
+                self.info.directory = entered.to.path.display().to_string();
+                self.info.worktree_id = Some(entered.to.id.clone());
+                self.info.worktree_origin = Some(entered.from.path);
+                self.entered_created = entered.created;
+                self.entered_worktree = Some(Box::new(entered.to));
+            }
+            "session.worktree.exited" => {
+                let exited: super::worktree_events::Exited = decode(e)?;
+                if self.info.worktree_id.as_deref() != Some(&exited.from.id)
+                    || self.info.worktree_origin.as_deref() != Some(&exited.to.path)
+                {
+                    return Err("Worktree exit differs from the entered checkout".into());
+                }
+                self.info.directory = exited.to.path;
+                self.info.worktree_id = None;
+                self.info.worktree_origin = None;
+                self.entered_created = false;
+                self.entered_worktree = None;
             }
             "session.worktree.setup_ready" => {
                 let ready: super::names::SetupReady = decode(e)?;
@@ -702,6 +749,11 @@ impl SessionState {
                 self.diffs.insert(d.message_id, d.diffs);
             }
             "session.reverted" => self.on_reverted(decode(e)?),
+            "session.pr.linked" => {
+                if let Some(number) = e.data["number"].as_u64() {
+                    self.pull_requests.insert(number);
+                }
+            }
             "session.recap.generated" => {
                 let recap: super::recap::RecapGenerated = decode(e)?;
                 // Recaps stored before control characters were stripped stay safe.
@@ -881,6 +933,9 @@ impl SessionState {
         if let Some(context) = a.hook_context {
             self.hook_contexts.insert(a.message_id.clone(), context);
         }
+        if let Some(stop) = a.hook_stop {
+            self.hook_stops.insert(a.message_id.clone(), stop);
+        }
         if !a.resources.is_empty() {
             self.resource_contexts
                 .insert(a.message_id.clone(), a.resources);
@@ -907,12 +962,14 @@ impl SessionState {
             InboxAction::Removed => {
                 self.child_requested_inputs.remove(&u.message_id);
                 self.hook_contexts.remove(&u.message_id);
+                self.hook_stops.remove(&u.message_id);
                 self.resource_contexts.remove(&u.message_id);
                 self.inbox.remove(index);
             }
             InboxAction::Refused => {
                 self.child_requested_inputs.remove(&u.message_id);
                 self.hook_contexts.remove(&u.message_id);
+                self.hook_stops.remove(&u.message_id);
                 self.resource_contexts.remove(&u.message_id);
                 self.inbox[index].status = InputStatus::Refused;
             }
@@ -926,6 +983,10 @@ impl SessionState {
                     match u.hook_context {
                         Some(context) => self.hook_contexts.insert(u.message_id.clone(), context),
                         None => self.hook_contexts.remove(&u.message_id),
+                    };
+                    match u.hook_stop {
+                        Some(stop) => self.hook_stops.insert(u.message_id.clone(), stop),
+                        None => self.hook_stops.remove(&u.message_id),
                     };
                     self.resource_contexts.remove(&u.message_id);
                     if !u.resources.is_empty() {
@@ -949,6 +1010,10 @@ impl SessionState {
     fn on_promoted(&mut self, p: Promoted, seq: i64, time_ms: i64) {
         self.child_requested_inputs.remove(&p.message_id);
         self.hook_contexts.remove(&p.message_id);
+        // The Turn that consumes this row is the last one of the Drain.
+        if self.hook_stops.remove(&p.message_id).is_some() {
+            self.hook_stop_step = Some(self.totals.steps + 1);
+        }
         let resources = self
             .resource_contexts
             .remove(&p.message_id)

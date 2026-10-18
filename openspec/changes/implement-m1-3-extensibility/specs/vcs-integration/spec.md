@@ -138,3 +138,49 @@ In the TUI, `/review [target]` SHALL validate the target with the same grammar b
 #### Scenario: Unverified findings dropped
 - **WHEN** (P2) the review workflow's verification agent rejects a reviewer finding
 - **THEN** the finding is excluded from the final list and counted in `dropped`
+
+### Requirement: Commit and PR text generation
+(P1) The system SHALL provide `cyber git commit-msg` and a `/commit` command that generate a conventional commit message from the staged diff using the small model. It SHALL provide `/pr-description` to draft a PR title and body from `base..HEAD`. A co-author trailer SHALL be appended only when `git.co_author` is configured (default: none, so commits are attributed to the user alone).
+
+The small model is `model_roles.small`, else `small_model`, else the default model; it receives the `--stat` summary and the diff (bounded to 48 KiB) and no tools. Like the bundled reviewer's input, a changed file whose `read` (and, outside the Location, `external_directory`) would not be allowed without asking under the Plan ceiling, such as a `*.env` file (`ask` by default) or a path a rule denies, is listed by name with its diff withheld, and credentials in the remaining log, stat and diff are redacted. Git runs with fsmonitor, textconv, external diff drivers and signature display disabled and `diff.relative` off, so withheld paths are matched and excluded repository-relative from any Location, with bounded output and a deadline. Any `Co-authored-by` or `Signed-off-by` line the model writes is removed. `git.co_author` must be one line of the form `Name <email>`; anything else is a configuration error. `POST /api/v1/git/commit-message` and `POST /api/v1/git/pr-description` (`{base?}`; default `origin/HEAD`, else `main`, else `master`) serve the TUI. `/commit` prefills `!git commit -m '<message>'` and `/pr-description [base]` prefills `!gh pr create --base … --title … --body …` in the composer: nothing runs until the user submits it. `cyber git pr-description [--base B]` prints the same draft. Nothing staged, or no commits in the range, is refused before any model request.
+
+#### Scenario: No co-author by default
+- **WHEN** the agent commits with default config
+- **THEN** the commit message contains no `Co-authored-by` trailer
+
+#### Scenario: Configured co-author
+- **WHEN** `git.co_author` is `"Cyber Code <bot@cyber.dev>"` and the agent commits
+- **THEN** the message ends with `Co-authored-by: Cyber Code <bot@cyber.dev>`
+
+#### Scenario: Nothing staged
+- **WHEN** `cyber git commit-msg` runs with no staged changes
+- **THEN** it exits with a usage error and no model request is made
+
+### Requirement: PR checkout and linked sessions
+(P1) The system SHALL record the PR a Session is linked to whenever the Session creates or pushes to a PR branch. `cyber pr <number>` SHALL check out the PR with `gh pr checkout` (adding a fork remote when needed) and resume the most recent Session linked to that PR, or start a new one. `cyber --from-pr <number|url>` SHALL open the Session picker filtered to Sessions linked to that PR.
+
+A `bash` or `powershell` call, or a user's `!` shell command, with a simple command starting `gh pr create` or `git push` links its Session (`session.pr.linked.1` `{number, url}`, recorded once per PR): the PR comes from a `https://…/pull/<number>` URL in the command's output, else, when the command succeeded, from `gh pr view --json number,url` in the command's working directory. That lookup runs only when the Session's `bash` rules and Mode allow `gh pr view --json number,url` outright and its `PreToolUse` hooks admit it unchanged (it never asks; anything else skips it), with `gh` found on, and run with, the trusted `PATH` in the command sandbox, as for review. Under `sandbox.network: proxy` the lookup reaches only allowlisted or already approved domains: any other is refused without a prompt and without adding a Session network approval, whatever the triggering call's hooks decided. Linking is best effort and never changes the call's result. `GET /sessions?pr=<number>` lists the Location's linked Sessions (with `children=true`, linked child Sessions too), most recently updated first. `gh` adds the fork remote itself. With `--format json`, `cyber pr` prints `{pr, checked_out, session_id, resumed}` and `cyber --from-pr` prints `{pr, sessions}` instead of opening the TUI. A failed checkout resumes nothing.
+
+#### Scenario: Resume the linked session
+- **WHEN** a Session opened PR #42 and the user later runs `cyber pr 42`
+- **THEN** the branch is checked out and the TUI resumes that Session
+
+#### Scenario: Pushed branch links its PR
+- **WHEN** a Session runs `git push` on a branch whose PR `gh pr view` reports as #43
+- **THEN** `cyber pr 43` resumes that Session
+
+#### Scenario: Lookup denied by a rule
+- **WHEN** a rule denies `bash` `gh *` and the Session runs an allowed `git push`
+- **THEN** no `gh` process runs and the Session is not linked from a lookup
+
+#### Scenario: User shell links its PR
+- **WHEN** the user submits the `!gh pr create …` command that `/pr-description` prefilled and its output carries the PR URL
+- **THEN** the Session is linked to that PR
+
+#### Scenario: Lookup never grants network
+- **WHEN** a `PreToolUse` hook allows a `git push` and the `gh pr view` lookup that follows contacts a domain that is neither allowlisted nor approved
+- **THEN** that request is refused with no permission prompt, and a later command to that domain still asks
+
+#### Scenario: No linked Session
+- **WHEN** no Session is linked to PR #7
+- **THEN** `cyber pr 7` checks it out and starts a new Session

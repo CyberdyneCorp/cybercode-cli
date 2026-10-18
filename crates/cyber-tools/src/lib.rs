@@ -6,6 +6,7 @@ pub mod bash_analysis;
 mod budget;
 mod hook_async;
 mod hook_authority;
+mod hook_client;
 pub mod hook_commands;
 pub mod hook_http;
 pub mod hook_mcp;
@@ -39,4 +40,4 @@ pub use tools::process::Process as HookCommandProcess;
 #[cfg(windows)]
 pub use tools::process::Process as AppContainerProcess;
 
-pub use worktrees::{WorktreeListing, WorktreeSession, WorktreeSessionRequest};
+pub use worktrees::{SessionCleanup, WorktreeListing, WorktreeSession, WorktreeSessionRequest};

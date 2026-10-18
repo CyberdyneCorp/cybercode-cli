@@ -359,6 +359,18 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-app --test mcp
+      - name: Native M1.3 increment 4 acceptance (forked injection, client hooks, eager calls, git text)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          cargo test --locked -p cyber-app --test server -- forked_skill_shell_injection_expands_once_before_the_child client_pre_tool_use_handler_approves_docs_edits_through_the_app client_hook_handlers_do_not_reach_other_clients_sessions openai_compatible_call_is_durable_while_its_stream_is_still_open
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --test runtime complete_tool_call_is_durable_before_the_stream_finishes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-server --test http client_hook_registration_drops_on_disconnect
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test git_commit_msg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native MCP definition review and trust CLI
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -505,7 +517,11 @@ jobs:
       - name: Native HTTP lifecycle hooks through the app host
         if: ${{ !cancelled() }}
         timeout-minutes: 20
-        run: cargo test --locked -p cyber-app --test server application_emits_runtime_lifecycle_hooks_with_session_identity
+        run: |
+          cargo test --locked -p cyber-app --test server application_emits_runtime_lifecycle_hooks_with_session_identity
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-app --test server application_emits_setup_and_config_change_hooks
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Unsupported Unix bridge refuses execution
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -582,10 +598,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test agent_limits
-      - name: Native final no-tools wire choices
+      - name: Native final no-tools wire choices and eager OpenAI Chat calls
         if: ${{ !cancelled() }}
         timeout-minutes: 20
-        run: cargo test --locked -p cyber-llm --test adapters runtime_no_tools_choice
+        run: cargo test --locked -p cyber-llm --test adapters -- runtime_no_tools_choice openai_chat_completes_each_call_when_the_next_one_or_text_starts
       - name: Native structured child results and durable projection
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -746,6 +762,14 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: cargo test --locked -p cyber-tools --test worktree_setup
+      - name: Native worktree lifecycle events, exit cleanup and removal through the app
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          cargo test --locked -p cyber-app --test server -- worktree_lifecycle_publishes_created_removed_and_kept_events enter_and_exit_worktree_through_the_app entered_worktree_ user_shell_pr_creation_links_the_session
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p cyber-cli --test exec_entered_worktree
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native durable worktree setup recovery
         if: ${{ !cancelled() }}
         timeout-minutes: 20

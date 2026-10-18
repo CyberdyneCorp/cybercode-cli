@@ -72,3 +72,24 @@
 #### Scenario: Threshold and loaded selection
 - **WHEN** an already effective catalog exceeds the configured threshold and a Session has loaded one MCP name
 - **THEN** that name SHALL retain its full definition while other unloaded MCP/plugin schemas remain deferred
+
+### Requirement: Annotations drive modes and hooks
+(P1) The system SHALL expose tool annotations to permission modes, hooks and the auto-mode classifier. `read_only` tools SHALL be auto-allowed in `plan` mode subject to path rules. `destructive` tools SHALL always be evaluated by the classifier in `auto` mode. `open_world` tools SHALL trigger a `network` permission check when the sandbox network is off.
+
+MCP annotations take their protocol defaults when absent: a tool that is not `readOnlyHint: true` is destructive unless it says `destructiveHint: false`, and every tool is open-world unless it says `openWorldHint: false`. Application-registered tools declare no annotations. In `auto` mode a destructive tool reaches the classifier even when a rule, saved approval or hook allows it; a classifier fallback asks. With an enforcing sandbox whose `network` is `off`, an open-world tool needs `network` permission on resource `mcp:<server>` after its own permission and before it runs. Hook envelopes of a registered call carry its annotations as `tool_annotations`.
+
+#### Scenario: Open-world tool under offline sandbox
+- **WHEN** the sandbox has network disabled and the model calls an `open_world` MCP tool
+- **THEN** a `network` permission request is raised before execution
+
+#### Scenario: Closed-world tool under offline sandbox
+- **WHEN** the tool declares `openWorldHint: false`
+- **THEN** no `network` request is raised
+
+#### Scenario: Destructive tool in auto mode
+- **WHEN** an allow rule covers a `destructiveHint: true` MCP tool and the Session is in `auto` mode
+- **THEN** the classifier evaluates the call and its block is a denial, while an allowed non-destructive tool runs without classification
+
+#### Scenario: Annotations in hook envelopes
+- **WHEN** a `PreToolUse` hook matches an MCP tool call
+- **THEN** its envelope carries the tool's annotations as `tool_annotations`

@@ -2242,3 +2242,233 @@ async fn shutdown_during_a_held_worktree_create_hook_settles_without_git_effects
         "{receipts:?}"
     );
 }
+
+/// A committed repository whose Sessions may use worktrees and edit. Full-access
+/// selects process availability; these cases do not claim sandbox confinement.
+fn worktree_flow(script: Vec<Vec<cyber_llm::adapters::ScriptStep>>) -> support::flow::Flow {
+    let fixture = support::Fixture::with_policy(
+        "bash",
+        cyber_sandbox::find_helper(),
+        Some("full-access".into()),
+    );
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["config", "user.name", "Worktree test"],
+        vec!["config", "user.email", "test@example.invalid"],
+    ] {
+        let args: Vec<OsString> = args.into_iter().map(OsString::from).collect();
+        assert!(invoke(&fixture.repo, &args).unwrap().status.success());
+    }
+    fixture.write("tracked.txt", "base");
+    for args in [
+        vec!["add", "tracked.txt"],
+        vec!["commit", "--quiet", "-m", "initial"],
+    ] {
+        let args: Vec<OsString> = args.into_iter().map(OsString::from).collect();
+        assert!(invoke(&fixture.repo, &args).unwrap().status.success());
+    }
+    let flow = support::flow::Flow::with(
+        fixture,
+        script,
+        false,
+        Arc::new(cyber_server::runtime::NoSnapshots),
+    );
+    flow.f
+        .set_config(json!({"permissions":{"worktree":"allow","edit":"allow","agent":"allow"}}));
+    flow
+}
+
+fn offered(request: &cyber_llm::LlmRequest) -> Vec<String> {
+    request
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .filter(|name| name.ends_with("_worktree"))
+        .collect()
+}
+
+fn branch_exists(repo: &Path, branch: &str) -> bool {
+    let args: Vec<OsString> = ["rev-parse", "--verify", "--quiet"]
+        .into_iter()
+        .map(OsString::from)
+        .chain([OsString::from(format!("refs/heads/{branch}"))])
+        .collect();
+    invoke(repo, &args).unwrap().status.success()
+}
+
+#[tokio::test]
+async fn model_enter_worktree_resolves_later_paths_in_spike_and_exit_returns() {
+    use support::flow::{call, text};
+    let flow = worktree_flow(vec![
+        call("enter", "enter_worktree", json!({"name": "spike"})),
+        call(
+            "probe",
+            "write",
+            json!({"path": "probe.txt", "content": "in spike\n"}),
+        ),
+        call("leave", "exit_worktree", json!({})),
+        call("again", "enter_worktree", json!({"name": "tidy"})),
+        call("drop", "exit_worktree", json!({})),
+        text("done"),
+    ]);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "work in a worktree").await;
+    flow.settle_within(&id, std::time::Duration::from_secs(60))
+        .await;
+    let entered: serde_json::Value = serde_json::from_str(&flow.output(&id, "enter").await)
+        .unwrap_or_else(|error| {
+            panic!(
+                "{error}: {}",
+                futures::executor::block_on(flow.output(&id, "enter"))
+            )
+        });
+    let mut stable = entered.clone();
+    stable["path"] = json!("<worktree>");
+    assert!(
+        Path::new(entered["returned_to_on_exit"].as_str().unwrap())
+            .canonicalize()
+            .unwrap()
+            == flow.f.repo.canonicalize().unwrap()
+    );
+    stable["returned_to_on_exit"] = json!("<repo>");
+    support::golden(&flow.f, "enter_worktree", &stable.to_string());
+    assert_eq!(entered["created"], true, "{entered}");
+    assert_eq!(entered["branch"], "cyber/spike");
+    let spike = std::path::PathBuf::from(entered["path"].as_str().unwrap());
+    // The write after entering resolved its relative path in the worktree.
+    assert_eq!(
+        std::fs::read_to_string(spike.join("probe.txt")).unwrap(),
+        "in spike\n"
+    );
+    assert!(!flow.f.repo.join("probe.txt").exists());
+    // Exit returns; the changed worktree is kept with its branch.
+    let left: serde_json::Value = serde_json::from_str(&flow.output(&id, "leave").await).unwrap();
+    assert_eq!(left["kept"], true, "{left}");
+    assert!(
+        Path::new(left["returned_to"].as_str().unwrap())
+            .canonicalize()
+            .unwrap()
+            == flow.f.repo.canonicalize().unwrap()
+    );
+    assert!(branch_exists(&flow.f.repo, "cyber/spike"));
+    // A worktree left without changes is removed with its branch.
+    let dropped: serde_json::Value = serde_json::from_str(&flow.output(&id, "drop").await).unwrap();
+    assert_eq!(dropped["kept"], false, "{dropped}");
+    assert!(!Path::new(dropped["path"].as_str().unwrap()).exists());
+    assert!(!branch_exists(&flow.f.repo, "cyber/tidy"));
+    let info = flow.runtime.state(&id).await.unwrap().info;
+    assert!(
+        Path::new(&info.directory).canonicalize().unwrap() == flow.f.repo.canonicalize().unwrap()
+    );
+    assert_eq!(info.worktree_id, None);
+    assert_eq!(info.worktree_origin, None);
+    // Only the tool that fits the Session's checkout is offered.
+    let requests = flow.requests("test/main");
+    assert_eq!(offered(&requests[0]), ["enter_worktree"]);
+    assert_eq!(offered(&requests[1]), ["exit_worktree"]);
+    assert_eq!(offered(&requests[2]), ["exit_worktree"]);
+    assert_eq!(offered(&requests[3]), ["enter_worktree"]);
+    // Both Drain leases on the worktree were settled: the user can remove it.
+    flow.f
+        .host
+        .remove_worktree(
+            &flow.f.repo,
+            &Name::parse("spike").unwrap(),
+            true,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(!spike.exists());
+}
+
+/// Regression: `exit_worktree` removes only a checkout its Session created. Entering
+/// another Session's existing worktree and exiting keeps the checkout and its branch.
+#[tokio::test]
+async fn exiting_an_entered_existing_worktree_keeps_it() {
+    use support::flow::{call, text};
+    let flow = worktree_flow(vec![
+        text("owner done"),
+        call("enter", "enter_worktree", json!({"name": "spike"})),
+        call("leave", "exit_worktree", json!({})),
+        text("done"),
+    ]);
+    let owner = flow
+        .f
+        .host
+        .start_worktree_session(
+            &flow.f.repo,
+            "call_start".into(),
+            CancellationToken::new(),
+            creation_request(&flow.f, "spike"),
+        )
+        .await
+        .unwrap();
+    flow.prompt(&owner.session.id, "go").await;
+    flow.settle(&owner.session.id).await;
+    let spike = std::path::PathBuf::from(&owner.session.directory);
+    let id = flow.session("default").await;
+    flow.prompt(&id, "visit spike").await;
+    flow.settle_within(&id, std::time::Duration::from_secs(60))
+        .await;
+    let entered: serde_json::Value =
+        serde_json::from_str(&flow.output(&id, "enter").await).unwrap();
+    assert_eq!(entered["created"], false, "{entered}");
+    let left: serde_json::Value = serde_json::from_str(&flow.output(&id, "leave").await).unwrap();
+    assert_eq!(left["kept"], true, "{left}");
+    assert_eq!(left["cleanup_reason"], "entered an existing worktree");
+    assert!(spike.exists());
+    assert!(branch_exists(&flow.f.repo, "cyber/spike"));
+    let info = flow.runtime.state(&id).await.unwrap().info;
+    assert_eq!(info.worktree_origin, None);
+}
+
+#[tokio::test]
+async fn exit_worktree_is_not_offered_to_isolated_children() {
+    use cyber_server::runtime::ToolHost;
+    use support::flow::text;
+    let flow = worktree_flow(vec![text("child done"), text("isolated root done")]);
+    let parent = flow.session("default").await;
+    let mut inv = flow.f.invocation(
+        "default",
+        "agent",
+        json!({"prompt": "look", "isolation": "worktree", "model": "test/main"}),
+    );
+    inv.session_id = parent.clone();
+    let info = flow.runtime.state(&parent).await.unwrap().info;
+    inv.agent = info.agent;
+    inv.rules = info.rules;
+    let outcome = flow.f.host.execute(inv, CancellationToken::new()).await;
+    assert!(
+        matches!(outcome, cyber_server::runtime::ToolOutcome::Ok(_)),
+        "{outcome:?}"
+    );
+    // A top-level Session started in a managed checkout is isolated too.
+    let started = flow
+        .f
+        .host
+        .start_worktree_session(
+            &flow.f.repo,
+            "call_start".into(),
+            CancellationToken::new(),
+            creation_request(&flow.f, "started"),
+        )
+        .await
+        .unwrap();
+    flow.prompt(&started.session.id, "go").await;
+    flow.settle(&started.session.id).await;
+    let requests = flow.requests("test/main");
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(offered(request), Vec::<String>::new());
+    }
+    // A model that calls it anyway is refused before the Session moves.
+    let mut call = flow.f.invocation("default", "exit_worktree", json!({}));
+    call.session_id = started.session.id.clone();
+    call.directory = started.session.directory.clone();
+    let outcome = flow.f.host.execute(call, CancellationToken::new()).await;
+    assert!(
+        matches!(&outcome, cyber_server::runtime::ToolOutcome::Failed(error) if error.contains("did not enter")),
+        "{outcome:?}"
+    );
+}

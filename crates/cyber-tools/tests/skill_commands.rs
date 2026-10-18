@@ -30,6 +30,7 @@ async fn skill_command_model_applies_without_replacing_the_session_model() {
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f
@@ -72,6 +73,7 @@ async fn turn(flow: &Flow, id: &str) -> cyber_server::runtime::TurnContext {
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     }
 }
 

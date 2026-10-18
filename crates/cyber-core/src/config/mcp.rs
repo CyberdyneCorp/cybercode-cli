@@ -227,6 +227,25 @@ impl McpServer {
             } => *output_token_limit,
         }
     }
+    /// A local server's command line: the command and its arguments joined by spaces.
+    pub fn command_line(&self) -> Option<String> {
+        match self {
+            Self::Local { command, args, .. } => Some(
+                std::iter::once(command.as_str())
+                    .chain(args.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            Self::Remote { .. } => None,
+        }
+    }
+    /// A remote server's URL.
+    pub fn url(&self) -> Option<&str> {
+        match self {
+            Self::Remote { url, .. } => Some(url),
+            Self::Local { .. } => None,
+        }
+    }
     /// The configured remote header command, if any.
     pub fn headers_command(&self) -> Option<&str> {
         match self {

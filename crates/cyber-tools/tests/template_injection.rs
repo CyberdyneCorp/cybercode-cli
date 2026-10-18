@@ -17,6 +17,7 @@ fn turn(f: &support::Fixture, mode: &str) -> TurnContext {
         mode: mode.into(),
         prefers_apply_patch: false,
         rules: Value::Null,
+        worktree: Default::default(),
     }
 }
 

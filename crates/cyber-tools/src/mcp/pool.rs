@@ -668,7 +668,7 @@ impl BuiltinHost {
                     entry,
                     &connection,
                     pool.closed || pool.closing.contains(&directory),
-                    || authorize_server(&resolved, &config.trust, &directory, &name).is_ok(),
+                    || authorize_server(&resolved, &config.trust, &directory, &name).map(|_| ()),
                 )
                 .or_else(|| {
                     // A published connection under a stale roots or sandbox grant serves
@@ -1137,6 +1137,10 @@ impl BuiltinHost {
                 read_only: tool.read_only_hint(),
                 metadata,
                 output_token_limit: token_limit,
+                annotations: match &tool.definition["annotations"] {
+                    serde_json::Value::Null => json!({}),
+                    annotations => annotations.clone(),
+                },
             },
             cancel,
             move |inv, cancel| {
@@ -1608,7 +1612,7 @@ fn status_problem(
     entry: Option<&Arc<Entry>>,
     connection: &Option<McpStatusUpdate>,
     closing: bool,
-    authorized: impl FnOnce() -> bool,
+    authorized: impl FnOnce() -> Result<(), String>,
 ) -> Option<(McpConnectionStatus, std::borrow::Cow<'static, str>)> {
     let failed = |message: &'static str| Some((McpConnectionStatus::Failed, message.into()));
     let Some(definition) = definition else {
@@ -1620,8 +1624,12 @@ fn status_problem(
             "MCP server is disabled".into(),
         ));
     }
-    if !authorized() {
-        return failed("MCP server definition is not authorized");
+    if let Err(error) = authorized() {
+        return failed(if error == cyber_core::config::MCP_BLOCKED {
+            cyber_core::config::MCP_BLOCKED
+        } else {
+            "MCP server definition is not authorized"
+        });
     }
     if closing {
         return failed("MCP Location is closing or requires recovery");

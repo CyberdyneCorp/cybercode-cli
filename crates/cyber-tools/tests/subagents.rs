@@ -453,3 +453,143 @@ async fn queued_child_launch_is_refused_after_source_interrupt() {
         .unwrap();
     assert_eq!(count, 1);
 }
+
+/// The `agent` description each Turn sends to the model.
+fn agent_description(request: &cyber_llm::LlmRequest) -> String {
+    request
+        .tools
+        .iter()
+        .find(|tool| tool.name == "agent")
+        .map(|tool| tool.description.clone())
+        .expect("agent tool offered")
+}
+
+#[tokio::test]
+async fn agent_tool_description_lists_permitted_subagents_per_turn() {
+    let flow = Flow::new(vec![text("first"), text("second")], false);
+    flow.f.set_config(json!({
+        "permissions":{"agent":{"general":"deny"}},
+        "agents":{
+            "zeta":{"description":"Zeta   helper\nfor tests","mode":"subagent"},
+            "quiet":{"description":"Hidden helper","mode":"subagent","hidden":true},
+            "lead":{"description":"Primary only","mode":"primary"}
+        }
+    }));
+    let parent = flow.session("default").await;
+    flow.prompt(&parent, "first").await;
+    flow.settle(&parent).await;
+    flow.f.set_config(json!({
+        "permissions":{"agent":{"general":"deny"}},
+        "agents":{"alpha":{"description":"Loaded later","mode":"all"}}
+    }));
+    flow.prompt(&parent, "second").await;
+    flow.settle(&parent).await;
+    let requests = flow.main.requests();
+    let first = agent_description(&requests[0]);
+    let catalogue = first.split_once("\n\n").unwrap().1;
+    assert_eq!(
+        catalogue,
+        "Available agents:\n\
+         - explore: Explore code and answer questions without changing files\n\
+         - reviewer: Review changes and report structured findings without modifying files\n\
+         - zeta: Zeta helper for tests"
+    );
+    let second = agent_description(&requests[1]);
+    assert!(
+        second.contains("Available agents:\n- alpha: Loaded later\n- explore:"),
+        "{second}"
+    );
+    assert!(!second.contains("- zeta:") && !second.contains("- general:"));
+}
+
+/// Every `session.tool.progress` the runtime publishes, as `<call>:<status>`.
+fn record_progress(flow: &Flow) -> std::sync::Arc<std::sync::Mutex<Vec<String>>> {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut live = flow.runtime.subscribe();
+    let sink = seen.clone();
+    tokio::spawn(async move {
+        while let Ok(event) = live.recv().await {
+            if let cyber_server::runtime::LiveEvent::ToolProgress {
+                session_id,
+                call_id,
+                status,
+            } = event
+            {
+                sink.lock()
+                    .unwrap()
+                    .push(format!("{session_id}/{call_id}:{status}"));
+            }
+        }
+    });
+    seen
+}
+
+async fn wait_for(seen: &std::sync::Mutex<Vec<String>>, entry: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !seen.lock().unwrap().iter().any(|seen| seen == entry) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no {entry} progress"));
+}
+
+#[tokio::test]
+async fn queued_foreground_spawn_reports_queued_progress() {
+    use cyber_server::runtime::{PermissionReply, ToolHost};
+    use tokio_util::sync::CancellationToken;
+    let flow = Flow::new(
+        vec![
+            call("read", "read", json!({"path":".env"})),
+            text("first"),
+            call("read", "read", json!({"path":".env"})),
+            text("second"),
+        ],
+        true,
+    );
+    flow.f.write(".env", "private");
+    flow.f
+        .set_config(json!({"permissions":{"agent":"allow"},"agents":{"max_concurrent":1}}));
+    let parent = flow.session("default").await;
+    let invocation = |call_id: &str| {
+        let mut inv = flow.f.invocation(
+            "default",
+            "agent",
+            json!({"prompt":"inspect", "description":"Inspect one private file"}),
+        );
+        inv.session_id = parent.clone();
+        inv.call_id = call_id.into();
+        inv
+    };
+    let seen = record_progress(&flow);
+    let host = flow.f.host.clone();
+    let first_inv = invocation("first");
+    let first =
+        tokio::spawn(async move { host.execute(first_inv, CancellationToken::new()).await });
+    let request = flow.pending(&parent).await;
+    let host = flow.f.host.clone();
+    let second_inv = invocation("second");
+    let second =
+        tokio::spawn(async move { host.execute(second_inv, CancellationToken::new()).await });
+    wait_for(&seen, &format!("{parent}/second:queued")).await;
+    assert_eq!(*seen.lock().unwrap(), [format!("{parent}/second:queued")]);
+    flow.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    support::ok(first.await.unwrap());
+    wait_for(&seen, &format!("{parent}/second:running")).await;
+    let request = flow.pending(&parent).await;
+    flow.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    support::ok(second.await.unwrap());
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            format!("{parent}/second:queued"),
+            format!("{parent}/second:running")
+        ]
+    );
+}

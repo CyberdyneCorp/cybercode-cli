@@ -152,13 +152,22 @@ fn launch(
             client
         };
         let mut out = Out::new(format, &args, &session);
-        match review {
+        let code = match review {
             Some(target) => {
                 out.review(target);
                 execute_session(&client, &session, &args, prompt, timeout, out).await
             }
             None => execute(&client, &session, &args, prompt, timeout, out).await,
+        };
+        if let Some(id) = session["id"].as_str() {
+            let source = backend.client.at(&ctx.location.display().to_string());
+            if args.worktree.is_some() {
+                crate::commands::worktrees::cleanup(&source, id).await;
+            } else {
+                crate::commands::worktrees::cleanup_entered(&source, id).await;
+            }
         }
+        code
     })?;
     if code == 0 {
         Ok(())
@@ -231,7 +240,7 @@ async fn execute_session(
             }
         }
     }
-    if let Err(error) = refresh_usage(client, id, &mut run).await {
+    if let Err(error) = refresh_usage(client, id, &mut run, FINAL_REFRESH).await {
         run.error.get_or_insert(error.message);
     } else if run.over_budget() {
         run.stop_reason
@@ -337,7 +346,11 @@ async fn monitor_billing(client: &Client, id: &str, run: &mut Run, owned: &mut O
         });
         return true;
     }
-    if let Err(error) = refresh_usage(client, id, run).await {
+    // The refresh only enforces a budget; without one, a slow server must not end the run.
+    if !run.has_budget() {
+        return false;
+    }
+    if let Err(error) = refresh_usage(client, id, run, MONITOR_REFRESH).await {
         run.error = Some(error.message);
         stop(client, id, run, owned, "error").await;
     } else if run.over_budget() {
@@ -346,14 +359,21 @@ async fn monitor_billing(client: &Client, id: &str, run: &mut Run, owned: &mut O
     false
 }
 
-async fn refresh_usage(client: &Client, id: &str, run: &mut Run) -> Result<(), CliError> {
-    let snapshot = tokio::time::timeout(
-        Duration::from_secs(2),
-        client.get(&format!("/sessions/{id}")),
-    )
-    .await
-    .map_err(|_| CliError::runtime("Exec billing refresh timed out"))?
-    .map_err(api)?;
+/// A periodic budget refresh that takes longer stops the run: the budget is unverifiable.
+const MONITOR_REFRESH: Duration = Duration::from_secs(2);
+/// The one final usage read after the run, bounded but tolerant of a loaded server.
+const FINAL_REFRESH: Duration = Duration::from_secs(15);
+
+async fn refresh_usage(
+    client: &Client,
+    id: &str,
+    run: &mut Run,
+    timeout: Duration,
+) -> Result<(), CliError> {
+    let snapshot = tokio::time::timeout(timeout, client.get(&format!("/sessions/{id}")))
+        .await
+        .map_err(|_| CliError::runtime("Exec billing refresh timed out"))?
+        .map_err(api)?;
     run.session_snapshot(&snapshot["data"])
 }
 
@@ -470,5 +490,47 @@ mod tests {
         assert_eq!(parse_duration("500ms").unwrap(), Duration::from_millis(500));
         assert_eq!(parse_duration("2").unwrap(), Duration::from_secs(2));
         assert!(parse_duration("3 weeks").is_err());
+    }
+
+    /// Regression: with no `--max-tokens` or `--max-cost`, one billing refresh slower
+    /// than its timeout on a loaded server interrupted a healthy run with
+    /// "Exec billing refresh timed out".
+    #[tokio::test]
+    async fn an_unbudgeted_run_is_not_stopped_by_a_slow_billing_refresh() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrapper {
+            #[command(flatten)]
+            args: ExecArgs,
+        }
+        // Accepts and never answers: every request times out.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+            }
+        });
+        let client = Client::http(&url, None);
+        let mut owned = Owned::empty("ses_1");
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut run = Run::new(&args, Instant::now());
+        let monitored = tokio::time::timeout(
+            Duration::from_secs(5),
+            monitor_billing(&client, "ses_1", &mut run, &mut owned),
+        );
+        assert!(!monitored.await.expect("the monitor waited on the server"));
+        assert!(run.error.is_none(), "{:?}", run.error);
+        assert!(run.stop_requested.is_none());
+
+        let budgeted = Wrapper::parse_from(["exec", "--max-tokens", "10", "hi"]).args;
+        let mut run = Run::new(&budgeted, Instant::now());
+        let refresh = refresh_usage(&client, "ses_1", &mut run, Duration::from_millis(200));
+        assert_eq!(
+            refresh.await.unwrap_err().message,
+            "Exec billing refresh timed out"
+        );
+        server.abort();
     }
 }

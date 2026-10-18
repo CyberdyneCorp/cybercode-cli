@@ -38,13 +38,42 @@ fn selected(ctx: &Ctx<'_>, path: &Path) -> Result<Vec<DetectedFormatter>, ToolEr
         .collect())
 }
 
+/// Why a formatter run did not complete; never carries the formatter's own output.
+struct Failure {
+    reason: String,
+    exit_code: Option<i32>,
+}
+
+impl From<&str> for Failure {
+    fn from(reason: &str) -> Self {
+        Self {
+            reason: reason.into(),
+            exit_code: None,
+        }
+    }
+}
+
+impl From<String> for Failure {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            exit_code: None,
+        }
+    }
+}
+
 fn log(ctx: &Ctx<'_>, path: &Path, id: &str, reason: &str) {
+    log_failure(ctx, path, id, &Failure::from(reason));
+}
+
+fn log_failure(ctx: &Ctx<'_>, path: &Path, id: &str, failure: &Failure) {
     cyber_core::log::warn(
         "formatter",
         "Formatter failed after file edit",
         json!({
             "session_id":ctx.inv.session_id,"call_id":ctx.inv.call_id,
-            "path":ctx.resource(path),"formatter":id,"reason":reason
+            "path":ctx.resource(path),"formatter":id,"reason":failure.reason,
+            "exit_code":failure.exit_code
         }),
     );
 }
@@ -89,8 +118,8 @@ pub(super) async fn apply(ctx: &Ctx<'_>, path: &Path, edited: &[u8]) -> (Vec<u8>
         {
             break;
         }
-        if let Err(reason) = execute(ctx, path, &current, &formatter, TIMEOUT).await {
-            log(ctx, path, &formatter.definition.id, &reason);
+        if let Err(failure) = execute(ctx, path, &current, &formatter, TIMEOUT).await {
+            log_failure(ctx, path, &formatter.definition.id, &failure);
         }
         match read_regular(path).await {
             Some(bytes) => current = bytes,
@@ -127,7 +156,7 @@ async fn execute(
     expected: &[u8],
     formatter: &DetectedFormatter,
     timeout: Duration,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let authority =
         (ctx.host.opts.config)(&ctx.location).map_err(|_| "formatter configuration unavailable")?;
     let executable = formatter
@@ -196,7 +225,7 @@ async fn execute(
     capture(ctx, &mut process, timeout).await
 }
 
-async fn capture(ctx: &Ctx<'_>, process: &mut Process, timeout: Duration) -> Result<(), String> {
+async fn capture(ctx: &Ctx<'_>, process: &mut Process, timeout: Duration) -> Result<(), Failure> {
     let stdout = process.stdout().ok_or("formatter stdout unavailable")?;
     let stderr = process.stderr().ok_or("formatter stderr unavailable")?;
     let result = {
@@ -217,7 +246,13 @@ async fn capture(ctx: &Ctx<'_>, process: &mut Process, timeout: Duration) -> Res
     };
     match result {
         Some(Ok(status)) if status.success() => Ok(()),
-        Some(Ok(status)) => Err(format!("formatter exited with code {:?}", status.code())),
+        Some(Ok(status)) => Err(Failure {
+            reason: status.code().map_or_else(
+                || "formatter terminated by a signal".into(),
+                |code| format!("formatter exited with code {code}"),
+            ),
+            exit_code: status.code(),
+        }),
         stopped => {
             process.terminate();
             // Retain native ownership and sandbox resources until termination is observed.
@@ -225,10 +260,12 @@ async fn capture(ctx: &Ctx<'_>, process: &mut Process, timeout: Duration) -> Res
                 process.terminate();
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            Err(stopped.map_or_else(
-                || "formatter timed out or cancelled".into(),
-                |error| error.unwrap_err().into(),
-            ))
+            Err(stopped
+                .map_or_else(
+                    || "formatter timed out or cancelled",
+                    |error| error.unwrap_err(),
+                )
+                .into())
         }
     }
 }

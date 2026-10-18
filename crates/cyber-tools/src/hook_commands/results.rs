@@ -70,8 +70,12 @@ pub fn interpret_hook_command(
         HookCommandEnd::Exited(code) => {
             // The command contract makes other exit codes non-blocking errors.
             let mut report = empty(HookOutcome::Error, true);
+            let status = code.map_or_else(
+                || "ended without an exit code".to_string(),
+                |code| format!("exited with code {code}"),
+            );
             report.diagnostic = Some(format!(
-                "hook {hook_id} exited with {code:?}: {}",
+                "hook {hook_id} {status}: {}",
                 String::from_utf8_lossy(&capture.stderr.bytes).trim()
             ));
             report

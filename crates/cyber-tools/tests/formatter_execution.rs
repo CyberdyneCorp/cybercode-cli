@@ -269,3 +269,52 @@ async fn cancellation_settles_descendants_and_starts_no_later_formatter() {
     assert!(!fixture.repo.join("should-not-run").exists());
     assert_child_stopped(pid);
 }
+
+/// The process-wide log directory; the logger is initialised once per test binary.
+fn log_dir() -> &'static std::path::Path {
+    static LOG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    LOG.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        cyber_core::log::init(dir.path(), cyber_core::log::Level::Warn, false);
+        dir
+    })
+    .path()
+}
+
+#[tokio::test]
+async fn formatter_failure_is_logged_with_id_and_exit_code() {
+    let logs = log_dir();
+    let fixture = configured(json!({
+        "syntax-check":formatter("printf 'private formatter output' >&2; exit 2", &[".py"])
+    }));
+    let output = ok(fixture
+        .call(
+            "bypass",
+            "write",
+            json!({"path":"broken.py","content":"def broken(:\n"}),
+        )
+        .await);
+    assert!(output.contains("broken.py"), "{output}");
+    assert!(!output.contains("Formatting result:"));
+    assert_eq!(fixture.read("broken.py"), "def broken(:\n");
+    let lines: Vec<Value> = std::fs::read_dir(logs)
+        .unwrap()
+        .flat_map(|entry| {
+            std::fs::read_to_string(entry.unwrap().path())
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .collect::<Vec<_>>()
+        })
+        .filter(|line| line["formatter"] == "syntax-check")
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    assert_eq!(line["level"], "warn");
+    assert_eq!(line["component"], "formatter");
+    assert_eq!(line["msg"], "Formatter failed after file edit");
+    assert_eq!(line["exit_code"], 2);
+    assert_eq!(line["reason"], "formatter exited with code 2");
+    assert_eq!(line["path"], "broken.py");
+    assert!(!line.to_string().contains("private formatter output"));
+}

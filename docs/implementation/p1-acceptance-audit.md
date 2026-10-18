@@ -24,6 +24,101 @@ Dated sections below are history. These statements in them are superseded:
 - The `mcp/instructions` Context Source is now `core/mcp-instructions`; the legacy key is withdrawn.
 - "All 225 P1 contracts remain in scope". This was correct when written; the in-scope count is now 214, which is 227 canonical minus the 13 editor-integration requirements deferred by the still-open change `defer-editor-integration`.
 
+## P1 batch A sign-off, increments 1–5 (2026-10-18)
+
+The 38 requirements that [plan increments 1–5](p1-acceptance-plan.md#implementation-increments) moved to class (a) were demonstrated end to end in 41 scenarios with the real debug `cyber` binary, a real `cyber serve` and the SDK's embedded `cyber serve --stdio`, against a scripted local provider and local MCP, HTTP-hook and LSP fixtures (no live model, no internet). All 41 passed; the [plan's batch A section](p1-acceptance-plan.md#batch-a-acceptance-run-increments-15-2026-10-18) lists what each one observed. No row changed class, so the counts stay 85 (a), 5 (b), 45 (c), 77 (d) and 2 (e) of 214. Native Windows CI has not run on this tree, so no milestone is signed off natively.
+
+| Milestone | (a) after batch A | Moved by batch A increments | Left for sign-off |
+|---|--:|---|---|
+| M1.1 | 1 of 18 | none | Increments 6, 8, 15 |
+| M1.2 | 23 of 41 | 3 (5 rows), 5 (5 rows) | Background tasks (15 rows), `monitor` tool, TUI tasks view and side chat (increments 7–9) |
+| M1.3 | 34 of 53 | 1 (7 rows), 4 (9 rows) | Supported events, hook scopes (plugin scope), plugin system and plugin-tool deferral (increments 12–13), command-hook sandboxing on Windows (15), MCP OAuth keyring evidence (e) |
+| M1.4 | 26 of 28 | 2 (12 rows) | Browser verification (increment 14) |
+| M1.5 | 0 of 10 | none | Import writes and adapters (increments 10–11) |
+
+Two bugs found by the run were fixed, each with a regression test that fails without the fix:
+
+- *Eager execution during streaming* did not hold on OpenAI-compatible providers: the Chat Completions adapter completed every tool call only at stream end. It now completes a call when the next call or text begins, once its arguments are whole JSON (`cyber-llm` `openai_chat_completes_each_call_when_the_next_one_or_text_starts`; production App with a real streaming endpoint, `cyber-app` `openai_compatible_call_is_durable_while_its_stream_is_still_open`). The last call of a stream still completes at its end.
+- Command-hook warnings printed `exited with Some(1)`; they now say `exited with code N` or `ended without an exit code` (`cyber-tools` `nonblocking_exit_diagnostics_name_the_hook_and_plain_exit_code`; `post_tool_command_exit_one_warns_with_hook_id_and_continues` asserts the text).
+
+Follow-ups observed, not fixed: a project memory directory that is not mode `0700` fails every Turn with `ContextInitializationBlocked: core/memory` without saying why; hook notices are prefixed with the handler digest instead of the hook id; the TUI shows a background handback as raw JSON. The increment 5 note "`cyber --worktree` (TUI) … no pty test" is now covered by a manual pty run (kept-checkout message on exit), not by an automated test.
+
+## Worktree lifecycle, P1 increment 5 (2026-10-18)
+
+[Plan increment 5](p1-acceptance-plan.md#5-worktree-lifecycle-m12-5-requirements) moved five M1.2 worktrees requirements to class (a). The plan's per-milestone counts are now 85 (a), 5 (b), 45 (c), 77 (d) and 2 (e). Native Windows CI has not run on these changes yet.
+
+| Requirement | Status | Production-path evidence | Remaining |
+|---|---|---|---|
+| Worktree management commands | Done locally | Real binary: `cyber worktree remove spike` refuses a dirty checkout and keeps its files and branch; `--force` removes both; an unknown name fails with `No managed worktree named nothing` (`worktree_remove_refuses_dirty_without_force`). `cyber worktree prune --format json` removes only the clean checkout whose ownership record is a month old, and keeps a dirty old one and a recent one (`worktree_prune_removes_only_older_clean_worktrees`). App over HTTP: `DELETE /api/v1/worktrees/{name}` answers 409 for a dirty checkout, 404 for a missing one and 200 with the removed worktree (`worktree_lifecycle_publishes_created_removed_and_kept_events`) | — |
+| Concurrency safety | Done locally | Real binary against the shared service: while `cyber exec --worktree spike` holds its Turn at a scripted model, `cyber worktree remove spike --force` fails with `Worktree in use by ses_<id>` naming that Session; once released, the Session ends and its exit cleanup removes the clean checkout (`worktree_remove_while_session_active_fails_in_use`) | — |
+| Cleanup on exit | Done locally | Real binary: `cyber exec --worktree tidy` without changes removes the checkout, its record and branch on exit (`exec_worktree_without_changes_is_removed_on_exit`); a checkout made dirty by setup is kept and stderr prints `worktree kept at <path> (branch cyber/from-cli)` (`exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean`). App over HTTP: `POST /sessions/{id}/worktree/cleanup` keeps a dirty checkout with the reason and removes a clean one with its branch | `cyber --worktree` (TUI) calls the same route on exit; no pty test. `worktrees.cleanup: ask` keeps the checkout, as no client is left to confirm |
+| Worktree events | Done locally | App over HTTP, Location SSE stream: `worktree.created.1` for three `POST /worktrees` with their `session_id`, `worktree.kept.1` for the dirty exit cleanup, `worktree.removed.1` for the clean cleanup (with `session_id`) and for `DELETE` (without), each with `name`, `path` and `branch` (`worktree_lifecycle_publishes_created_removed_and_kept_events`) | — |
+| Enter and exit tools | Done locally | Runtime Flow with the real `BuiltinHost`: the model calls `enter_worktree {name: spike}`, a later `write probe.txt` lands in the spike checkout and not in the repository, `exit_worktree` returns the Session to the repository and keeps the changed checkout, and enter/exit of `tidy` without changes removes it with its branch. The first request offers only `enter_worktree`, the entered ones only `exit_worktree`; both leases were settled, so the user can then remove spike (`model_enter_worktree_resolves_later_paths_in_spike_and_exit_returns`). An isolated child and a Session started in a worktree are offered neither, and a direct `exit_worktree` call there is refused (`exit_worktree_is_not_offered_to_isolated_children`) | — |
+
+## M1.3 evidence, MCP policy, annotations, SDK hooks, VCS text, P1 increment 4 (2026-10-17)
+
+[Plan increment 4](p1-acceptance-plan.md#4-m13-evidence-mcp-policy-annotations-sdk-hooks-vcs-text-m13-9-requirements) moved nine M1.3 requirements to class (a). The plan's per-milestone counts are now 80 (a), 5 (b), 48 (c), 79 (d) and 2 (e). Native Windows CI has not run on these changes yet.
+
+| Requirement | Status | Production-path evidence | Remaining |
+|---|---|---|---|
+| Shell output injection | Done locally | App over `POST /sessions/:id/command`: a trusted project `context: fork` skill's `` !`cmd` `` runs once in the parent's admission, the child's transcript and provider request carry the substituted text and never the command, and an exact retry runs nothing (`forked_skill_shell_injection_expands_once_before_the_child`) | — |
+| Eager execution during streaming | Done locally | Runtime with a provider stream held open after a complete `read` call: `session.tool.called.1` is committed (also visible through a second store handle) while the stream is still open, and the result is in the next request (`complete_tool_call_is_durable_before_the_stream_finishes`). Batch A (2026-10-18) found the OpenAI Chat adapter completed calls only at stream end; fixed, with app `openai_compatible_call_is_durable_while_its_stream_is_still_open` | Optional early start of `concurrency_safe` calls is not implemented; the last call of an OpenAI Chat stream completes at its end |
+| Roots and sampling | Done locally | App with a remote Streamable HTTP server: with `mcp.sampling.enabled` the client advertises `sampling`, the server's `sampling/createMessage` during a real Turn is answered by `model_roles.small` and billed as `mcp_sampling:remote` (`remote_sampling_routes_to_small_model_through_app_host`); without it nothing is advertised and the request fails `-32601` with no model request (`remote_sampling_disabled_returns_method_not_found`) | — |
+| Local review command | Done locally | TUI against a production App over HTTP: `/review` posts the bundled command, the real event stream drives the delegation lookup and the findings overlay, and a background `explore` Job of the same Session that ends during the review is ignored (`review_against_app_server_renders_findings_and_ignores_unrelated_jobs`) | — |
+| Annotations drive modes and hooks | Done locally | Real stdio MCP server: with `sandbox.network: off`, an open-world tool raises `network` on `mcp:shared` before it runs while an `openWorldHint: false` tool runs, and PreToolUse envelopes carry `tool_annotations` (`open_world_tool_asks_network_when_sandbox_network_off`); in `auto` mode an allowed `destructiveHint` tool is classified and blocked while an allowed non-destructive tool runs unclassified (`destructive_tool_is_always_classified_in_auto_mode`, red without `forces_classifier`) | — |
+| Organization MCP controls | Done locally | Production App and `GET /mcp` with a managed policy document: a server matching a denied URL pattern is `failed`/`blocked by organization policy`, offers no tools and receives no request while an unmatched server connects (`denylisted_url_pattern_is_never_contacted`, red without the `authorize_server` check); a managed server replaces the user's same-named one and runs in two Locations without approval (`managed_policy_server_is_provided_to_every_location`). Both run in a child process of the test binary that sets `CYBER_MANAGED_POLICY_DIR` | — |
+| Hook callbacks | Done locally | SDK e2e against `cyber serve --stdio`: `client.hooks.on("PreToolUse", …, {matcher: "write"})` allows a `docs/` write without any permission request and the receipt has scope `client` (`hooks.test.ts`). App JSON-RPC session: the `src/` write still asks, two `client` receipts are recorded and the registration ends with the channel (`client_pre_tool_use_handler_approves_docs_edits_through_the_app`). WebSocket: invalid registrations refused with `-32602`, `hook/execute` shape, disconnect drops the registration (`client_hook_registration_drops_on_disconnect`) | — |
+| Commit and PR text generation | Done locally | Real binary with a scripted small model: nothing staged is refused without a request; the message strips the model's own `Co-authored-by` line by default and ends with exactly the configured `git.co_author` trailer (`commit_msg_has_no_co_author_by_default`); `pr-description` drafts title and body for `main..HEAD` (`pr_description_drafts_title_and_body_from_the_branch`). TUI against a production App: `/commit` and `/pr-description main` prefill `!git commit -m …` and `!gh pr create …` (`commit_and_pr_description_prefill_commands_from_the_app_server`) | — |
+| PR checkout and linked sessions | Done locally | Real binary, shared background server, fake `gh`: a `cyber exec` Session whose `bash` ran `gh pr create` is linked to #42 and a Session that ran `git push` is linked to #43 through `gh pr view`; `cyber pr 42` runs `gh pr checkout 42`, switches the branch and resumes the first, a PR URL resumes the second, an unlinked PR starts none, `--from-pr` lists the linked Session and a failed checkout resumes nothing (`pr_checkout_resumes_the_linked_session`) | Unix-only (the fake `gh` is a shell script); the TUI resume itself is the existing `--resume` path |
+
+## Agent and worktree evidence, agent catalogue, P1 increment 3 (2026-10-17)
+
+[Plan increment 3](p1-acceptance-plan.md#3-agent-and-worktree-evidence-agent-catalogue-m12-5-requirements) moved five M1.2 requirements to class (a); every agents-subagents row is now done locally. The plan's per-milestone counts are now 71 (a), 9 (b), 49 (c), 83 (d) and 2 (e). Native Windows CI has not run on these changes yet.
+
+| Requirement | Status | Production-path evidence | Remaining |
+|---|---|---|---|
+| Session worktrees | Done locally | `cyber exec --embedded --worktree from-cli` (real binary) creates branch `cyber/from-cli` at `<data>/worktrees/<project_id>/from-cli`, and the Session's stored directory is that checkout (`exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean`). A bare `--worktree` generates `<adjective>-<noun>-<4 hex>` on `cyber/<name>` with the Session in it (`exec_worktree_without_name_generates_adjective_noun_hex`) | TUI `cyber --worktree` shares the HTTP route; no separate pty test |
+| Worktree location and branch naming | Done locally | App `POST /api/v1/worktrees`: the default root, a relative `worktrees.root` `../wt` resolved against the repository root, `branch_prefix` `team/`, `base` set to an older commit (checkout and branch at that commit), and an invalid name refused with 400 before any checkout (`public_worktree_creation_honours_default_and_custom_root_prefix_and_base`) | — |
+| Manual invocation by mention | Done locally | `cyber exec --embedded '@explore where is retry logic implemented?'` against a local OpenAI-compatible provider, with no `agent` rule configured: one `explore` child of the run's Session, the child request carries the question without the mention, and the JSON result is the child's answer (`exec_agent_mention_spawns_explore_child_on_embedded_server`) | — |
+| Concurrency cap | Done locally | Runtime: with `agents.max_concurrent: 1` the second spawn publishes `session.tool.progress` `queued`, then `running` after the first settles (`queued_foreground_spawn_reports_queued_progress`). App over HTTP: two parallel `explore` calls stream `queued` then `running` on the Session SSE stream (`agent_catalogue_and_queued_progress_reach_http_clients`) | — |
+| Agent tool catalogue | Done locally | Runtime: the description lists visible `subagent`/`all` profiles sorted by name, omits a denied `general`, hidden and primary-only profiles, and picks up a newly configured agent on the next Turn (`agent_tool_description_lists_permitted_subagents_per_turn`). App over HTTP: the provider request's `agent` description ends with the `explore` and `reviewer` lines when `general` is denied (`agent_catalogue_and_queued_progress_reach_http_clients`) | — |
+
+## Memory and code-intelligence acceptance, P1 increment 2 (2026-10-17)
+
+[Plan increment 2](p1-acceptance-plan.md#2-memory-and-code-intelligence-acceptance-m14-12-requirements) moved twelve M1.4 requirements to class (a); every memory and code-intelligence row is now done locally. The plan's per-milestone counts are now 66 (a), 12 (b), 50 (c), 84 (d) and 2 (e). Native Windows CI has not run on these changes yet.
+
+| Requirement | Status | Production-path evidence | Remaining |
+|---|---|---|---|
+| Memory file format | Done locally | `cyber debug memory --global` and `cyber memory list` (real binary) list a note without `type` as `Invalid memory: invalid YAML frontmatter` and create no database (`debug_memory_lists_note_missing_type_as_invalid`) | — |
+| Automatic memory generation | Done locally | Runtime baseline asserts every generation and exclusion clause, and that read-only memory drops them (`generation_guidance_excludes_derivable_and_conversation_only_facts`) | Optional live-model eval, deferred |
+| Memory toggles | Done locally | TUI `/memory readonly`, `off`, `on` against a real App over HTTP: `PUT /api/v1/memory/settings` writes the global config (other keys kept), and the next turn's request offers `["list","read"]`, no memory tool with a `core/memory` removal, then all five operations with the guidance restored (`memory_readonly_off_on_commands_change_tool_and_context`). App: comments kept, invalid states refused, a project `memory.enabled: false` stays a ceiling reported as `overridden`, a non-object document is refused with 409 and untouched (`memory_settings_persist_globally_and_report_project_overrides`) | — |
+| Secret redaction | Done locally | Host dispatch refuses `OPENAI_API_KEY=sk-…` for write and update with `Memory rejected: content looks like a secret`, creates no storage, and keeps an existing note and index unchanged (`api_key_reference_memory_is_rejected_with_canonical_message`) | — |
+| Staleness notice | Done locally | Same runtime-baseline test asserts the full staleness and verification text, also when read-only | Optional live-model eval, deferred |
+| Memory command | Done locally | `cyber memory path` in a repository prints `<data>/memory/<prj_…>` (JSON and text) without creating it (`project_path_prints_repository_memory_directory`) | — |
+| Explicit remember requests | Done locally | Runtime Flow: a scripted forget request calls `memory delete`; the note and its index line are gone, another note stays, and the model sees `deleted: true` (`scripted_forget_request_deletes_note_and_index_line`) | Optional live-model eval, deferred |
+| Memory HTTP API | Done locally | App over TCP: project-scope PUT writes the note and the exact index line, publishes `memory.updated` with the repository `project_id`, leaves global memory untouched; DELETE removes both (`project_put_updates_note_and_index_and_publishes_memory_updated`). The fixture's `put`/`delete` are scope-aware | — |
+| LSP enablement | Done locally | With `lsp` omitted, a `rust-analyzer` executable on PATH opens and saves `src/main.rs` and returns its diagnostics; `.txt` starts nothing (`autodetected_builtin_rust_analyzer_activates_for_rs_files`). `cyber doctor` lists `lsp:gopls: warn not installed` and downloads nothing; with `auto_install: true` it says auto_install does not download servers (`doctor_lists_missing_gopls_as_not_installed_without_download`) | Unix-gated suite (Python fixture server) |
+| Read warms servers | Done locally | A read returns without waiting for a silent server (30 s diagnostics wait); the server then receives `didOpen` with the read text (`read_opens_document_in_background_without_waiting_for_diagnostics`) | Unix-gated suite |
+| LSP status and shutdown | Done locally | `GET /api/v1/lsp` reports the warmed server `connected` at the Location root; `POST /api/v1/lsp/close` sends `shutdown` then `exit` and the process ends (`lsp_status_reports_connected_root_and_close_exits_the_process`). The settled generation stays listed as `broken` until reload | Unix-gated test |
+| Formatter execution | Done locally | A formatter exiting 2 leaves the edit successful and logs one `warn` line with `formatter`, `exit_code: 2`, `formatter exited with code 2` and no formatter output (`formatter_failure_is_logged_with_id_and_exit_code`) | Unix-gated suite |
+
+## Hooks acceptance and event completion, P1 increment 1 (2026-10-17)
+
+[Plan increment 1](p1-acceptance-plan.md#1-hooks-acceptance-and-event-completion-m13-8-requirements) moved seven hooks requirements to class (a); *Supported events* stays Partial. The plan's per-milestone counts are now 54 (a), 23 (b), 51 (c), 84 (d) and 2 (e). Native Windows CI has not run on these changes yet.
+
+| Requirement | Status | Production-path evidence | Remaining |
+|---|---|---|---|
+| Matchers | Done locally | `mcp_runtime.rs::regex_matcher_runs_for_mcp_tool_and_not_for_bash`: a `/^mcp__shared__.*/` group runs for the real stdio MCP call and not for the `bash` call of the same Turn | Unix-gated suite |
+| Command handlers | Done locally | `tool_hook_dispatch.rs::exit_two_pre_tool_command_blocks_with_stderr_reason` (the bash call never runs; the model's next request carries the stderr reason), `post_tool_command_exit_one_warns_with_hook_id_and_continues` (notice `hook audit exited with …: audit log offline`, the Turn continues) | Windows-native command scopes as before |
+| HTTP handlers | Done locally | `http_fail_closed_timeout_blocks_call_with_hook_unavailable` (a held endpoint with `timeout: 1`; the write is blocked with `hook policy unavailable`, receipt `timeout`), `http_non_2xx_is_nonblocking_on_a_real_call` (a 500 carrying a deny body is a non-blocking error) | — |
+| MCP tool handlers | Done locally | `mcp_runtime.rs::post_tool_use_mcp_tool_records_payload_after_each_call`: the `record` tool gets the envelope, `tool_name`, `tool_input`, `tool_output`, `call_id` and `duration_ms` once per call | — |
+| Parallel execution within a group | Done locally | `exec_lifecycle_hooks.rs::exec_runs_a_command_defined_in_global_and_trusted_project_once` (`cyber exec --embedded`, approved checkout and handler digest) | — |
+| Trust for project hooks | Done locally | TUI `hook_notice_event_shows_untrusted_review_hint`: a real App over HTTP publishes `session.hook.notice` for a changed project `UserPromptSubmit` hook and the TUI renders `1 untrusted hook changed — review with /hooks` | — |
+| Decision schema | Done locally | `UserPromptSubmit` `continue: false` rides with the admitted row and ends the Drain after the Turn that consumes it, durably (`lifecycle_hooks.rs::user_prompt_submit_continue_false_stops_after_the_turn`); a delegated or forked prompt with no Turn to bound is refused (`user_prompt_submit_continue_false_refuses_prompts_without_a_turn`); an accepted rewrite commits a `hook_rewrite` system message with the call's settlement (`tool_hook_dispatch.rs::rewrite_is_visible_as_hook_notice_in_transcript`); both through `cyber exec` (`exec_applies_prompt_stop_and_records_input_rewrites_through_the_app_host`) | — |
+| Supported events | Partial | New producers: `Setup` for the first root Session of a Location and `ConfigChange` at a Safe Boundary after the Location configuration changed (app `application_emits_setup_and_config_change_hooks`, added to the Windows job), `WorktreeRemove` after an isolated child's clean checkout is removed (`isolated_subagents.rs::worktree_remove_hook_observes_removal`, HTTP hook, in the Windows job's isolated-child step) | `DirectoryAdded` needs the P0 *Additional working directories* contract (`--add-dir`, `POST /sessions/:id/directories`), which is not implemented; `FileChanged` needs a file watcher; `CwdChanged` has no working-directory change (a child rebind keeps its path); no `cyber --init`; `WorktreeCreate` does not run for isolated children; `WorktreeRemove` for `cyber worktree remove|prune` waits on increment 5 |
+
+Design notes: `Setup` runs at most once per creation and treats a Location whose Sessions were all deleted as new. `ConfigChange` compares digests per Session in memory, so the first Safe Boundary in a process only records the digest. All three new events are observational and never fail creation, the Turn or the removal report; each is dispatched after runtime or shutdown admission is released, because hook admission takes it again.
+
 ## MCP serve, increment 4 of 4: prompts and waiting (2026-10-15)
 
 [`add-mcp-session-server`](../../openspec/changes/add-mcp-session-server/tasks.md) (`mcp-server`) is **Partial P1**; no requirement is accepted. The table records local evidence per requirement.
@@ -506,14 +601,14 @@ Canonical source: [agents-subagents](../../openspec/specs/agents-subagents/spec.
 - [ ] Forked subagents
 - [ ] Resume subagents by name
 - [ ] Worktree isolation for subagents
-- [ ] Concurrency cap
+- [x] Concurrency cap — 2026-10-17 (increment 3): `queued_foreground_spawn_reports_queued_progress`, `agent_catalogue_and_queued_progress_reach_http_clients`.
 - [ ] Nesting depth
 - [ ] Subagent permission inheritance
 - [ ] Subagent result summarization
 - [ ] Cost attribution
-- [ ] Manual invocation by mention
+- [x] Manual invocation by mention — 2026-10-17 (increment 3): `exec_agent_mention_spawns_explore_child_on_embedded_server`.
 - [ ] Agent thread switching
-- [ ] Agent tool catalogue
+- [x] Agent tool catalogue — 2026-10-17 (increment 3): `agent_tool_description_lists_permitted_subagents_per_turn`, `agent_catalogue_and_queued_progress_reach_http_clients`.
 
 ### background-tasks (15)
 
@@ -561,23 +656,23 @@ Canonical source: [cli-commands](../../openspec/specs/cli-commands/spec.md).
 
 Canonical source: [client-sdk](../../openspec/specs/client-sdk/spec.md).
 
-- [ ] Hook callbacks
+- [x] Hook callbacks — 2026-10-17 (increment 4): SDK `pre_tool_use_client_handler_allows_docs_edits_and_records_client_scope`, app `client_pre_tool_use_handler_approves_docs_edits_through_the_app`, `http.rs::client_hook_registration_drops_on_disconnect`.
 
 ### code-intelligence (12)
 
 Canonical source: [code-intelligence](../../openspec/specs/code-intelligence/spec.md).
 
-- [ ] LSP enablement
+- [x] LSP enablement — 2026-10-17 (increment 2): `autodetected_builtin_rust_analyzer_activates_for_rs_files`, `doctor_lists_missing_gopls_as_not_installed_without_download`; `auto_install` installs nothing.
 - [ ] Built-in servers
 - [ ] Custom and overridden servers
 - [ ] Lazy spawning and root detection
 - [ ] Diagnostics after edits
 - [ ] lsp tool
-- [ ] Read warms servers
-- [ ] LSP status and shutdown
+- [x] Read warms servers — 2026-10-17 (increment 2): `read_opens_document_in_background_without_waiting_for_diagnostics`.
+- [x] LSP status and shutdown — 2026-10-17 (increment 2): `lsp_status_reports_connected_root_and_close_exits_the_process`.
 - [ ] Formatter enablement and detection
 - [ ] Custom formatters
-- [ ] Formatter execution
+- [x] Formatter execution — 2026-10-17 (increment 2): `formatter_failure_is_logged_with_id_and_exit_code`.
 - [ ] Formatter status
 
 ### compaction (3)
@@ -653,20 +748,20 @@ Canonical source: [hooks](../../openspec/specs/hooks/spec.md).
 
 - [x] Hook configuration
 - [ ] Hook scopes and merge order
-- [ ] Supported events
-- [ ] Matchers — unchecked 2026-10-17: the `/^mcp__github__.*/` scenario has only a unit test; no runtime test runs a regex matcher against an MCP call ([plan](p1-acceptance-plan.md)).
-- [ ] Command handlers
-- [ ] HTTP handlers — unchecked 2026-10-17: the fail-closed timeout (`hook <id> unavailable`) is tested only through synthetic `run_test`, without asserting the reason.
+- [ ] Supported events — 2026-10-17 increment 1: `Setup`, `ConfigChange` and `WorktreeRemove` now emitted; `DirectoryAdded`, `FileChanged` and `CwdChanged` still have no producer.
+- [x] Matchers — rechecked 2026-10-17 (increment 1): `mcp_runtime.rs::regex_matcher_runs_for_mcp_tool_and_not_for_bash`.
+- [x] Command handlers — 2026-10-17 (increment 1): `exit_two_pre_tool_command_blocks_with_stderr_reason`, `post_tool_command_exit_one_warns_with_hook_id_and_continues`.
+- [x] HTTP handlers — rechecked 2026-10-17 (increment 1): `http_fail_closed_timeout_blocks_call_with_hook_unavailable`, `http_non_2xx_is_nonblocking_on_a_real_call`.
 - [x] Prompt handlers
-- [ ] MCP tool handlers — unchecked 2026-10-17: no test covers the PostToolUse `mcp_tool` audit scenario; the cited elicitation test uses a command handler.
-- [ ] Decision schema
+- [x] MCP tool handlers — rechecked 2026-10-17 (increment 1): `mcp_runtime.rs::post_tool_use_mcp_tool_records_payload_after_each_call`.
+- [x] Decision schema — 2026-10-17 (increment 1): `UserPromptSubmit` `continue: false` stops after the Turn; rewrites are durable `hook_rewrite` records.
 - [x] Decision merging
 - [x] Interaction with permissions
 - [x] Stop hooks and loop prevention
 - [x] Timeouts and async hooks
-- [ ] Parallel execution within a group — unchecked 2026-10-17: deduplication of one command defined in global and project scope is untested.
+- [x] Parallel execution within a group — rechecked 2026-10-17 (increment 1): `exec_runs_a_command_defined_in_global_and_trusted_project_once`.
 - [ ] Sandboxing of command hooks
-- [ ] Trust for project hooks — unchecked 2026-10-17: no TUI test renders the untrusted-hook notice.
+- [x] Trust for project hooks — rechecked 2026-10-17 (increment 1): TUI `hook_notice_event_shows_untrusted_review_hint` against a real App.
 - [x] Hooks viewer and CLI
 - [x] Hook context injection on lifecycle events
 - [x] Hook observability
@@ -685,8 +780,8 @@ Canonical source: [mcp](../../openspec/specs/mcp/spec.md).
 - [ ] Tool search and deferred loading
 - [ ] OAuth
 - [ ] Elicitation (local and remote forms through the app host and `cyber exec`; native Windows open, [evidence](#mcp-elicitation-roots-and-list-changed-production-path-evidence-2026-10-13))
-- [ ] Roots and sampling (roots and sandbox-change replacement through the app host on Unix; remote sampling and native Windows open)
-- [ ] Organization MCP controls
+- [x] Roots and sampling — 2026-10-17 (increment 4): app `remote_sampling_routes_to_small_model_through_app_host`, `remote_sampling_disabled_returns_method_not_found`, `local_roots_reflect_location_and_writable_roots`.
+- [x] Organization MCP controls — 2026-10-17 (increment 4): app `denylisted_url_pattern_is_never_contacted`, `managed_policy_server_is_provided_to_every_location`; core `mcp_policy_matches_name_command_and_url_and_managed_servers_replace_user_definitions`.
 - [ ] Server options
 
 ### memory (13)
@@ -694,18 +789,18 @@ Canonical source: [mcp](../../openspec/specs/mcp/spec.md).
 Canonical source: [memory](../../openspec/specs/memory/spec.md).
 
 - [ ] Memory locations
-- [ ] Memory file format
+- [x] Memory file format — 2026-10-17 (increment 2): `debug_memory_lists_note_missing_type_as_invalid`.
 - [ ] Index loading
 - [ ] Memory tool
-- [ ] Automatic memory generation
-- [ ] Memory toggles
-- [ ] Secret redaction
+- [x] Automatic memory generation — 2026-10-17 (increment 2): `generation_guidance_excludes_derivable_and_conversation_only_facts`; live-model eval optional, deferred.
+- [x] Memory toggles — 2026-10-17 (increment 2): TUI `memory_readonly_off_on_commands_change_tool_and_context`, app `memory_settings_persist_globally_and_report_project_overrides`.
+- [x] Secret redaction — 2026-10-17 (increment 2): `api_key_reference_memory_is_rejected_with_canonical_message`.
 - [ ] Deduplication and updates
-- [ ] Staleness notice
-- [ ] Memory command
+- [x] Staleness notice — 2026-10-17 (increment 2): full guidance asserted in `generation_guidance_excludes_derivable_and_conversation_only_facts`.
+- [x] Memory command — 2026-10-17 (increment 2): `project_path_prints_repository_memory_directory`.
 - [ ] Memory changes during a Session
-- [ ] Explicit remember requests
-- [ ] Memory HTTP API
+- [x] Explicit remember requests — 2026-10-17 (increment 2): `scripted_forget_request_deletes_note_and_index_line`.
+- [x] Memory HTTP API — 2026-10-17 (increment 2): `project_put_updates_note_and_index_and_publishes_memory_updated`.
 
 ### observability-costs (10)
 
@@ -797,7 +892,7 @@ Canonical source: [skills-commands](../../openspec/specs/skills-commands/spec.md
 
 - [ ] Remote skill sources — done locally in skills increment 4 (`remote_skill_source_fetches_caches_and_serves_stale_offline` through `AppHost`); unchecked until a native Windows run and acceptance.
 - [ ] Skill-scoped tool approvals and model
-- [ ] Shell output injection
+- [x] Shell output injection — 2026-10-17 (increment 4): app `forked_skill_shell_injection_expands_once_before_the_child` closes the forked-skill clause.
 - [ ] Bundled skills
 - [ ] Path-triggered and forked skills
 
@@ -831,8 +926,8 @@ Canonical source: [system-context](../../openspec/specs/system-context/spec.md).
 Canonical source: [tool-registry](../../openspec/specs/tool-registry/spec.md).
 
 - [ ] Deferred tools and tool search
-- [ ] Eager execution during streaming
-- [ ] Annotations drive modes and hooks
+- [x] Eager execution during streaming — 2026-10-17 (increment 4): `runtime.rs::complete_tool_call_is_durable_before_the_stream_finishes`.
+- [x] Annotations drive modes and hooks — 2026-10-17 (increment 4): `mcp_runtime.rs::open_world_tool_asks_network_when_sandbox_network_off`, `destructive_tool_is_always_classified_in_auto_mode`.
 
 ### tui (7)
 
@@ -850,9 +945,9 @@ Canonical source: [tui](../../openspec/specs/tui/spec.md).
 
 Canonical source: [vcs-integration](../../openspec/specs/vcs-integration/spec.md).
 
-- [ ] Local review command
-- [ ] Commit and PR text generation
-- [ ] PR checkout and linked sessions
+- [x] Local review command — 2026-10-17 (increment 4): TUI `review_against_app_server_renders_findings_and_ignores_unrelated_jobs`.
+- [x] Commit and PR text generation — 2026-10-17 (increment 4): `git_commit_msg.rs::commit_msg_has_no_co_author_by_default`, `pr_description_drafts_title_and_body_from_the_branch`, TUI `commit_and_pr_description_prefill_commands_from_the_app_server`.
+- [x] PR checkout and linked sessions — 2026-10-17 (increment 4): `pr_command.rs::pr_checkout_resumes_the_linked_session` (Unix).
 
 ### web-client (1)
 
@@ -864,15 +959,15 @@ Canonical source: [web-client](../../openspec/specs/web-client/spec.md).
 
 Canonical source: [worktrees](../../openspec/specs/worktrees/spec.md).
 
-- [ ] Session worktrees
-- [ ] Worktree location and branch naming
+- [x] Session worktrees — 2026-10-17 (increment 3): `exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean`, `exec_worktree_without_name_generates_adjective_noun_hex`.
+- [x] Worktree location and branch naming — 2026-10-17 (increment 3): `public_worktree_creation_honours_default_and_custom_root_prefix_and_base`.
 - [ ] Untracked file inclusion
 - [ ] Setup commands
-- [ ] Enter and exit tools
-- [ ] Cleanup on exit
-- [ ] Worktree management commands
-- [ ] Concurrency safety
-- [ ] Worktree events
+- [x] Enter and exit tools — 2026-10-18 (increment 5): `model_enter_worktree_resolves_later_paths_in_spike_and_exit_returns`, `exit_worktree_is_not_offered_to_isolated_children`.
+- [x] Cleanup on exit — 2026-10-18 (increment 5): `exec_worktree_without_changes_is_removed_on_exit`, `worktree_lifecycle_publishes_created_removed_and_kept_events`.
+- [x] Worktree management commands — 2026-10-18 (increment 5): `worktree_remove_refuses_dirty_without_force`, `worktree_prune_removes_only_older_clean_worktrees`.
+- [x] Concurrency safety — 2026-10-18 (increment 5): `worktree_remove_while_session_active_fails_in_use`.
+- [x] Worktree events — 2026-10-18 (increment 5): `worktree_lifecycle_publishes_created_removed_and_kept_events`.
 
 Authenticated hook approval/revocation APIs now have exact current-digest and checkout-trust refusal coverage, malformed-config obsolete revocation and typed Location-preserving SDK methods. These tests accept the tested API boundaries; full TUI definition/trust controls and native API acceptance remain open.
 

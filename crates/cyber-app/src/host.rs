@@ -82,6 +82,10 @@ impl ToolHost for AppHost {
         self.builtin.session_budget(directory)
     }
 
+    fn config_digest(&self, directory: &str) -> Option<String> {
+        self.builtin.config_digest(directory)
+    }
+
     fn daily_budget(&self, directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
         self.builtin.daily_budget(directory)
     }

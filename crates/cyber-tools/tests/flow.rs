@@ -564,3 +564,81 @@ async fn the_os_sandbox_blocks_inline_writes_after_individual_approval() {
     );
     assert!(!target.exists());
 }
+
+/// Regression (`vcs-integration` → PR checkout and linked sessions): the `gh pr view`
+/// lookup after a `git push` that a `PreToolUse` hook allowed reaches only allowlisted
+/// or approved domains. It raises no network prompt of its own, and the hook's allow,
+/// scoped to that push, does not become a Session approval of the lookup's domain: a
+/// later command to that domain still asks.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_pr_lookup_after_a_push_neither_asks_for_nor_grants_network() {
+    let base = support::serve(|_, _| (200, vec![], b"hello".to_vec())).await;
+    let url = base.replace("127.0.0.1", "localhost");
+    let flow = Flow::new(
+        vec![
+            call(
+                "c1",
+                "bash",
+                json!({"command": "git push origin HEAD; true"}),
+            ),
+            text("pushed"),
+            call(
+                "c2",
+                "bash",
+                json!({"command": format!("curl -s --max-time 10 {url}/")}),
+            ),
+            text("fetched"),
+        ],
+        true,
+    );
+    let bin = flow.f.dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let gh = bin.join("gh");
+    std::fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> gh.log\ncurl -s --max-time 5 {url}/ >> gh.log\necho '{{\"number\":43,\"url\":\"https://github.com/acme/app/pull/43\"}}'\n"
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    flow.f.env.set(
+        "PATH",
+        &format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
+    flow.f.set_config(json!({"permissions": {"bash": "allow"}}));
+    let allow_push = r#"case "$(cat)" in *"git push"*) printf '%s' '{"decision":"allow"}' ;; esac"#;
+    flow.f.global_hooks(json!({"PreToolUse":[{"matcher":"bash","hooks":[{"type":"command","command":allow_push}]}]}));
+    let id = flow.session("default").await;
+    flow.prompt(&id, "push").await;
+    flow.settle(&id).await;
+    assert!(flow.runtime.pending_requests(Some(&id)).is_empty());
+    // The sandboxed lookup runs in, and may only write to, the Location.
+    let log = std::fs::read_to_string(flow.f.repo.join("gh.log")).unwrap_or_default();
+    assert!(log.contains("pr view --json number,url"), "{log}");
+    assert!(
+        !log.contains("hello"),
+        "the lookup reached an unapproved domain: {log}"
+    );
+
+    flow.prompt(&id, "fetch").await;
+    let request = flow.pending(&id).await;
+    let PendingKind::Permission(ask) = &request.kind else {
+        panic!("expected a permission request")
+    };
+    assert_eq!(
+        (ask.action.as_str(), ask.resources.clone()),
+        ("network", vec!["localhost".to_string()])
+    );
+    flow.runtime
+        .reply_permission(&request.id, PermissionReply::Reject { message: None })
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+}

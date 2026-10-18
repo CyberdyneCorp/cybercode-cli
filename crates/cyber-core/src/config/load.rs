@@ -82,6 +82,15 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         merge::merge_layer(&mut value, &json!({ "hooks": hooks }), &label, &mut sources);
         labels.push(label);
     }
+    // A managed server replaces any user or project definition of the same name whole,
+    // so no other layer can change its command, URL or options.
+    for (label, servers) in managed.mcp {
+        for name in servers.as_object().into_iter().flat_map(|map| map.keys()) {
+            replace_server(&mut value, &mut sources, name);
+        }
+        merge::merge_layer(&mut value, &json!({ "mcp": servers }), &label, &mut sources);
+        labels.push(label);
+    }
     // Keep a template only where its project layer still supplies the merged leaf.
     let templates = templates
         .into_iter()
@@ -97,6 +106,17 @@ pub fn load(req: &LoadRequest<'_>) -> Result<Resolved, ConfigError> {
         layers: labels,
         managed: managed.policy,
     })
+}
+
+/// Drop every leaf of `mcp.<name>` and its origins before a managed definition merges.
+fn replace_server(value: &mut Value, sources: &mut Sources, name: &str) {
+    if let Some(servers) = value.get_mut("mcp").and_then(Value::as_object_mut) {
+        servers.remove(name);
+    }
+    let escaped = name.replace('~', "~0").replace('/', "~1");
+    let pointer = format!("/mcp/{escaped}");
+    let prefix = format!("{pointer}/");
+    sources.retain(|key, _| key != &pointer && !key.starts_with(&prefix));
 }
 
 /// The defaults and global layers only, substituted and validated: what global-only keys

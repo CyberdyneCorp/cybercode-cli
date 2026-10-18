@@ -215,6 +215,8 @@ pub struct ListQuery {
     /// Include child Sessions (default false).
     pub children: Option<bool>,
     pub archived: Option<bool>,
+    /// Only Sessions linked to this pull request number.
+    pub pr: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -326,6 +328,7 @@ async fn list(
         search: q.search,
         limit: Some(q.limit.unwrap_or(50).clamp(1, 200)),
         cursor: q.cursor,
+        pr: q.pr,
         ..ListFilter::default()
     };
     let page = list_page(&state, &filter)?;
@@ -542,6 +545,7 @@ async fn command(
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     if let Some(message) = &b.id {
         let request = crate::runtime::CommandRequest {

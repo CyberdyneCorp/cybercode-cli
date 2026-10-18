@@ -268,6 +268,7 @@ impl Runtime {
                     delivery: super::model::Delivery::Queue,
                     source: "shell".into(),
                     hook_context: None,
+                    hook_stop: None,
                     resources: Vec::new(),
                 };
                 let promoted = Promoted { message_id };

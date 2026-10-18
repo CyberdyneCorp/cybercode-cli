@@ -368,6 +368,9 @@ pub struct Request {
     pub file_edit: bool,
     /// A critical or unresolved removal, which automatic modes cannot authorize.
     pub removal_risk: Option<super::RemovalRisk>,
+    /// The tool declares itself destructive (`destructiveHint`): `auto` mode always
+    /// sends it to the classifier, even when a rule or saved approval allows it.
+    pub destructive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -415,6 +418,12 @@ impl Policy {
             decision = intersect(decision, self.decide_in_mode(req, effect, *mode));
         }
         decision
+    }
+
+    /// `tool-registry` → Annotations drive modes and hooks: a destructive tool is always
+    /// evaluated by the classifier in `auto` mode, whatever the rules decide.
+    pub(crate) fn forces_classifier(&self, req: &Request) -> bool {
+        req.destructive && self.mode == Mode::Auto
     }
 
     /// Classification cannot replace a hard ceiling or another Session's manual approval.

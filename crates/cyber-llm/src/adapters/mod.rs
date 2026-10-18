@@ -349,6 +349,26 @@ impl ToolCalls {
         Some(to_call(p))
     }
 
+    /// Whether a call with `key` has started.
+    pub fn has(&self, key: &str) -> bool {
+        self.pending.iter().any(|p| p.key == key)
+    }
+
+    /// Complete, in start order, the open calls other than `except` whose arguments are
+    /// already one whole JSON value. A protocol that streams calls one after another can
+    /// not extend them once the next call or text begins, and a whole JSON value cannot
+    /// grow into another valid one, so this never cuts a call's input short.
+    pub fn finish_whole(&mut self, except: Option<&str>) -> Vec<ToolCall> {
+        let whole: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|p| !p.done && except != Some(p.key.as_str()))
+            .filter(|p| serde_json::from_str::<Value>(p.arguments.trim()).is_ok())
+            .map(|p| p.key.clone())
+            .collect();
+        whole.iter().filter_map(|k| self.finish(k, None)).collect()
+    }
+
     /// Complete every open call, in start order.
     pub fn finish_all(&mut self) -> Vec<ToolCall> {
         let open: Vec<String> = self

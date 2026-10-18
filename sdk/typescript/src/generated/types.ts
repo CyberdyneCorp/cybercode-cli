@@ -180,6 +180,12 @@ export type CommandStatus = {
   status: "finished";
 };
 
+/** A conventional commit message for the staged diff. */
+export type CommitMessage = {
+  /** Ends with a `Co-authored-by` trailer only when `git.co_author` is configured. */
+  message: string;
+};
+
 export type CompactBody = {
   instructions?: string | null;
 };
@@ -678,7 +684,7 @@ export type HookRevocation = {
 /** A committed observation, never proof that a recorded process is still live. */
 export type HookRunStatus = "running" | "completed" | "unknown";
 
-export type HookScope = "managed" | "global" | "project" | "local" | "plugin" | "invocation";
+export type HookScope = "managed" | "global" | "project" | "local" | "plugin" | "invocation" | "client";
 
 export type HookTrustBody = {
   digest: string;
@@ -825,6 +831,12 @@ export type Located_Array_of_string = {
 };
 
 /** A Location-scoped response. */
+export type Located_CommitMessage = {
+  location: LocationInfo;
+  data: CommitMessage;
+};
+
+/** A Location-scoped response. */
 export type Located_Content = {
   location: LocationInfo;
   data: Content2;
@@ -915,6 +927,12 @@ export type Located_MemoryEditReview = {
 };
 
 /** A Location-scoped response. */
+export type Located_MemorySettingsView = {
+  location: LocationInfo;
+  data: MemorySettingsView;
+};
+
+/** A Location-scoped response. */
 export type Located_Nullable_MemoryRecoveryRequestStatus = {
   location: LocationInfo;
   data?: MemoryRecoveryRequestStatus | null;
@@ -939,6 +957,18 @@ export type Located_Page_SessionRow = {
 };
 
 /** A Location-scoped response. */
+export type Located_PrDescription = {
+  location: LocationInfo;
+  data: PrDescription;
+};
+
+/** A Location-scoped response. */
+export type Located_RemovedWorktree = {
+  location: LocationInfo;
+  data: RemovedWorktree;
+};
+
+/** A Location-scoped response. */
 export type Located_Session = {
   location: LocationInfo;
   data: Session;
@@ -954,6 +984,12 @@ export type Located_SkillCatalog = {
 export type Located_Vcs = {
   location: LocationInfo;
   data: Vcs;
+};
+
+/** A Location-scoped response. */
+export type Located_WorktreeCleanup = {
+  location: LocationInfo;
+  data: WorktreeCleanup;
 };
 
 export type LocationInfo = {
@@ -1148,6 +1184,24 @@ export type MemoryRequestStatus = {
   completed?: MemoryChange | null;
 };
 
+/** The effective memory toggle of a Location (`memory` → Memory toggles). */
+export type MemorySettingsView = {
+  /** What Sessions in this Location get from their next Safe Boundary. */
+  state: MemoryState;
+  enabled: boolean;
+  generate: boolean;
+  /** The state just saved; absent on reads. */
+  requested?: MemoryState | null;
+  /**
+   * A project layer, override or `CYBER_DISABLE_MEMORY` keeps `state` different from
+   * `requested`.
+   */
+  overridden?: boolean;
+};
+
+/** The `/memory on|off|readonly` toggle over `memory.enabled` and `memory.generate`. */
+export type MemoryState = "on" | "off" | "readonly";
+
 export type MemoryType = "user" | "feedback" | "project" | "reference";
 
 /** A history entry with the tool calls it made. */
@@ -1269,6 +1323,18 @@ export type Position = {
   column: number;
 };
 
+/** A drafted pull request for `base..HEAD`. */
+export type PrDescription = {
+  base: string;
+  title: string;
+  body: string;
+};
+
+export type PrDescriptionRequest = {
+  /** The base branch or commit (default: `origin/HEAD`, else `main`, else `master`). */
+  base?: string | null;
+};
+
 export type ProjectInfo = {
   id: string;
   directory: string;
@@ -1351,6 +1417,10 @@ export type RefusedResume = {
 export type ReleaseBody = {
   /** `steer` (default) or `queue`. */
   delivery?: Delivery | null;
+};
+
+export type RemovedWorktree = {
+  worktree: WorktreeInfo;
 };
 
 export type ReopenSubtreeBody = {
@@ -1612,6 +1682,11 @@ export type Session = {
   directory: string;
   /** Exact managed checkout incarnation admitted at creation. */
   worktree_id?: string | null;
+  /**
+   * The unmanaged Location `exit_worktree` returns to, while the Session runs in
+   * a worktree it entered with `enter_worktree`.
+   */
+  worktree_origin?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
@@ -1667,6 +1742,11 @@ export type SessionInfo = {
   directory: string;
   /** Exact managed checkout incarnation admitted at creation. */
   worktree_id?: string | null;
+  /**
+   * The unmanaged Location `exit_worktree` returns to, while the Session runs in
+   * a worktree it entered with `enter_worktree`.
+   */
+  worktree_origin?: string | null;
   parent_id?: string | null;
   /** Durable child identity within its parent, independent of title and agent. */
   subagent_name?: string | null;
@@ -1739,6 +1819,11 @@ export type SessionUsage = {
   budgets_error?: string | null;
   /** True while stored history is still being indexed: `by_model` may be partial. */
   backfilling: boolean;
+};
+
+export type SetMemorySettings = {
+  /** `on` loads and writes memory, `readonly` only loads it, `off` neither. */
+  state: MemoryState;
 };
 
 export type SetupRecoveryRequest = {
@@ -2288,11 +2373,22 @@ export type WorkflowRunSummary = {
   interrupted?: boolean;
 };
 
+/** The outcome of a Session's exit cleanup (`worktrees` → Cleanup on exit). */
+export type WorktreeCleanup = {
+  worktree: WorktreeInfo;
+  /** False once the worktree and its branch are removed. */
+  kept: boolean;
+  /** Why a clean worktree was kept, or why cleanup failed. */
+  reason?: string | null;
+};
+
 export type WorktreeEntry = {
   worktree: WorktreeInfo;
   dirty: boolean;
   ahead: number;
   behind: number;
+  /** When the ownership record became ready; null when unknown. */
+  created_ms?: number | null;
   sessions: SessionRow[];
   status: "ready";
 } | {

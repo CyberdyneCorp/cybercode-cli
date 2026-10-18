@@ -45,6 +45,7 @@ async fn hook_context_commits_with_the_settlement_and_replays_once() {
         HookEffects {
             context: Some("[hook ctx] lint is clean".into()),
             stop: None,
+            rewrite: None,
         },
     );
     let id = h.session().await;
@@ -95,6 +96,7 @@ async fn hook_stop_ends_the_drain_after_the_turn_with_a_durable_reason() {
         HookEffects {
             context: Some("[hook ctx] noted".into()),
             stop: Some("[hook guard] policy stop".into()),
+            rewrite: None,
         },
     );
     let mut live = h.runtime.subscribe();

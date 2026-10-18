@@ -13,6 +13,30 @@ pub(crate) struct RegisteredOptions {
     pub read_only: bool,
     pub metadata: Value,
     pub output_token_limit: Option<usize>,
+    /// The tool's MCP annotations; `Null` for a tool that declares none (an
+    /// application-registered tool).
+    pub annotations: Value,
+}
+
+/// How a registered tool's annotations drive permission modes (`tool-registry` →
+/// Annotations drive modes and hooks). MCP hints take their protocol defaults when
+/// absent: a tool that is not read-only is destructive, and every tool is open-world.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ToolHints {
+    pub destructive: bool,
+    pub open_world: bool,
+}
+
+impl ToolHints {
+    pub(crate) fn of(annotations: &Value, read_only: bool) -> Self {
+        if !annotations.is_object() {
+            return Self::default();
+        }
+        Self {
+            destructive: !read_only && annotations["destructiveHint"] != false,
+            open_world: annotations["openWorldHint"] != false,
+        }
+    }
 }
 
 impl BuiltinHost {
@@ -59,6 +83,7 @@ impl BuiltinHost {
                 read_only,
                 metadata,
                 output_token_limit: None,
+                annotations: Value::Null,
             },
             cancel,
             execute,
@@ -77,11 +102,15 @@ impl BuiltinHost {
             read_only,
             metadata,
             output_token_limit,
+            annotations,
         } = options;
+        let hints = ToolHints::of(&annotations, read_only);
         Box::pin(async move {
             if inv.name != definition.spec.name || inv.registration != definition.registration {
                 return ToolOutcome::Failed(format!("Stale tool call: {}", inv.name));
             }
+            // Hook envelopes of this call carry its annotations.
+            let _annotations = self.call_annotations(&inv, annotations);
             if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
                 return ToolOutcome::Failed(error.to_string());
             }
@@ -109,9 +138,18 @@ impl BuiltinHost {
                 Ok(ctx) => ctx,
                 Err(error) => return ToolOutcome::Failed(error),
             };
-            let authorized = ctx
-                .authorize(request(&inv, read_only), vec!["*".into()], metadata.clone())
-                .await;
+            let server = metadata["server"].as_str().unwrap_or(&inv.name).to_owned();
+            let authorized = match ctx
+                .authorize(
+                    request(&inv, read_only, hints),
+                    vec!["*".into()],
+                    metadata.clone(),
+                )
+                .await
+            {
+                Ok(()) if hints.open_world => open_world_gate(&ctx, &server).await,
+                other => other,
+            };
             let retry = match &authorized {
                 Err(ToolError::Failed(error)) => {
                     ctx.denial.take_retry(&ToolOutcome::Failed(error.clone()))
@@ -124,6 +162,7 @@ impl BuiltinHost {
                     let retry = Retry {
                         schema: &definition.spec.input_schema,
                         read_only,
+                        hints,
                         decision,
                         metadata,
                     };
@@ -217,12 +256,21 @@ impl BuiltinHost {
             .await
         {
             Ok(ctx) => {
-                ctx.authorize(
-                    request(&retried, retry.read_only),
-                    vec!["*".into()],
-                    retry.metadata,
-                )
-                .await
+                let server = retry.metadata["server"]
+                    .as_str()
+                    .unwrap_or(&retried.name)
+                    .to_owned();
+                match ctx
+                    .authorize(
+                        request(&retried, retry.read_only, retry.hints),
+                        vec!["*".into()],
+                        retry.metadata,
+                    )
+                    .await
+                {
+                    Ok(()) if retry.hints.open_world => open_world_gate(&ctx, &server).await,
+                    other => other,
+                }
             }
             Err(error) => Err(ToolError::Failed(error)),
         };
@@ -275,16 +323,76 @@ impl BuiltinHost {
 struct Retry<'a> {
     schema: &'a Value,
     read_only: bool,
+    hints: ToolHints,
     decision: Option<HookAction>,
     metadata: Value,
 }
 
-fn request(inv: &Invocation, read_only: bool) -> Request {
+fn request(inv: &Invocation, read_only: bool, hints: ToolHints) -> Request {
     Request {
         action: inv.name.clone(),
         resources: vec!["*".into()],
         read_only,
+        destructive: hints.destructive,
         ..Default::default()
+    }
+}
+
+/// An open-world tool reaches beyond the workspace, so with the sandbox network off it
+/// needs a `network` permission (resource `mcp:<server>`) before it runs.
+async fn open_world_gate(ctx: &Ctx<'_>, server: &str) -> Result<(), crate::tools::ToolError> {
+    if !crate::sandboxing::network_off(ctx) {
+        return Ok(());
+    }
+    let resource = format!("mcp:{server}");
+    let req = Request {
+        action: "network".into(),
+        resources: vec![resource.clone()],
+        read_only: true,
+        ..Request::default()
+    };
+    let metadata = serde_json::json!({"server": server, "tool": ctx.inv.name, "open_world": true});
+    ctx.authorize(req, vec![resource], metadata).await
+}
+
+/// Annotations of a registered call in flight, removed when the call settles.
+pub(crate) struct CallAnnotations<'a> {
+    host: &'a BuiltinHost,
+    key: Option<(String, String)>,
+}
+
+impl Drop for CallAnnotations<'_> {
+    fn drop(&mut self) {
+        if let Some(key) = self.key.take() {
+            self.host
+                .tool_annotations
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&key);
+        }
+    }
+}
+
+impl BuiltinHost {
+    fn call_annotations(&self, inv: &Invocation, annotations: Value) -> CallAnnotations<'_> {
+        let key = annotations.is_object().then(|| {
+            let key = (inv.session_id.clone(), inv.call_id.clone());
+            self.tool_annotations
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(key.clone(), annotations);
+            key
+        });
+        CallAnnotations { host: self, key }
+    }
+
+    /// The annotations a hook envelope carries as `tool_annotations` for a call.
+    pub(crate) fn annotations_of(&self, inv: &Invocation) -> Option<Value> {
+        self.tool_annotations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(inv.session_id.clone(), inv.call_id.clone()))
+            .cloned()
     }
 }
 

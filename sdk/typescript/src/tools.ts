@@ -2,6 +2,7 @@ import type { Backoff } from "./connection.js";
 import { CyberClientError } from "./errors.js";
 import { AsyncQueue } from "./queue.js";
 import { RpcChannel, type RpcIo } from "./rpc.js";
+import type { HookDecision } from "./generated/types.js";
 import { sleep } from "./sleep.js";
 
 const TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
@@ -22,6 +23,34 @@ export interface AppTool<Input = any> {
   execute(input: Input, context: ToolContext): unknown;
 }
 
+/** The hook envelope a handler receives: the event's fields, as configured hooks get them. */
+export type HookInput = Record<string, unknown> & { event: string; session_id: string };
+
+/** A hook decision (the `hooks` decision schema); nothing returned means no decision. */
+export type ClientHookResult = HookDecision | void | undefined;
+
+/** An in-process hook handler; a throw is reported as the handler's failure and does not block. */
+export type ClientHookHandler = (input: HookInput) => ClientHookResult | Promise<ClientHookResult>;
+
+export interface ClientHookOptions {
+  /** The configured matcher syntax on the event's subject (e.g. a tool name): a glob, `*` or `/regex/`. */
+  matcher?: string;
+  /** Seconds the server waits for the handler, 1 through 600 (default 60). */
+  timeout?: number;
+}
+
+interface ClientHook {
+  event: string;
+  handler: ClientHookHandler;
+  options: ClientHookOptions;
+}
+
+interface HookExecuteParams {
+  registration_id?: string;
+  event?: string;
+  input?: HookInput;
+}
+
 interface ExecuteParams {
   registration_id?: string;
   name?: string;
@@ -39,12 +68,17 @@ export interface ChannelHandle {
 export type ChannelFactory = (attach: (channel: RpcChannel) => Promise<void>) => ChannelHandle;
 
 /**
- * Application tools registered over a JSON-RPC channel. The channel is opened on the first
- * registration and closed after the last unregistration; tools are re-registered after a reconnect.
+ * Application tools and hook handlers registered over a JSON-RPC channel. The channel is opened
+ * on the first registration and closed after the last unregistration; both are re-registered
+ * after a reconnect.
  */
 export class ToolRegistry {
   private readonly tools = new Map<string, AppTool>();
   private readonly registrations = new WeakMap<RpcChannel, Map<string, { tool: AppTool; id: string }>>();
+  private readonly hooks = new Set<ClientHook>();
+  private readonly hookRegistrations = new WeakMap<RpcChannel, Map<string, ClientHook>>();
+  /** This client's Sessions, which its hook handlers apply to (with their descendants). */
+  private readonly sessions = new Set<string>();
   private handle: ChannelHandle | undefined;
 
   constructor(
@@ -68,9 +102,66 @@ export class ToolRegistry {
     return () => this.unregister(tool);
   }
 
-  /** With no tools left, close the channel: that drops server-side state and lets the process exit. */
+  /**
+   * Make `sessionID` (and its descendants) one of this client's Sessions, so its hook handlers
+   * apply to it. Sessions the client creates or forks are attached automatically; attachments
+   * are restored after a reconnect.
+   */
+  async attachSession(sessionID: string): Promise<void> {
+    this.sessions.add(sessionID);
+    if (!this.handle) return;
+    const channel = await this.handle.current();
+    await channel.request("v1.hook.attach", { session_id: sessionID });
+  }
+
+  /**
+   * Register a hook handler for this client's Sessions (see `attachSession`); resolves with a
+   * function that removes it. The server runs it after every configured handler of `event`.
+   */
+  async on(event: string, handler: ClientHookHandler, options: ClientHookOptions = {}): Promise<() => Promise<void>> {
+    const hook: ClientHook = { event, handler, options };
+    this.handle ??= this.factory((channel) => this.attach(channel));
+    try {
+      const channel = await this.handle.current();
+      await this.bindHook(channel, hook);
+    } catch (err) {
+      this.closeIfIdle();
+      throw err;
+    }
+    this.hooks.add(hook);
+    return () => this.off(hook);
+  }
+
+  private async off(hook: ClientHook): Promise<void> {
+    if (!this.hooks.delete(hook)) return;
+    if (!this.handle || this.closeIfIdle()) return;
+    const channel = await this.handle.current();
+    const bound = this.hookRegistrations.get(channel);
+    for (const [id, registered] of bound ?? []) {
+      if (registered !== hook) continue;
+      bound!.delete(id);
+      await channel.request("v1.hook.unregister", { registration_id: id });
+    }
+  }
+
+  private async bindHook(channel: RpcChannel, hook: ClientHook): Promise<void> {
+    const params = { event: hook.event, matcher: hook.options.matcher, timeout: hook.options.timeout };
+    const result = (await channel.request("v1.hook.register", params)) as { registration_id?: string };
+    if (typeof result?.registration_id !== "string" || !result.registration_id.startsWith("hkr_")) {
+      throw new Error("server did not return a hook registration identity");
+    }
+    this.hookRegistrations.get(channel)!.set(result.registration_id, hook);
+  }
+
+  private async executeHook(channel: RpcChannel, params: HookExecuteParams): Promise<unknown> {
+    const hook = this.hookRegistrations.get(channel)?.get(params.registration_id ?? "");
+    if (!hook || !this.hooks.has(hook)) throw new Error(`Stale hook registration: ${params.registration_id}`);
+    return (await hook.handler(params.input ?? ({} as HookInput))) ?? {};
+  }
+
+  /** With nothing registered, close the channel: that drops server-side state and lets the process exit. */
   private closeIfIdle(): boolean {
-    if (this.tools.size > 0 || !this.handle) return false;
+    if (this.tools.size > 0 || this.hooks.size > 0 || !this.handle) return false;
     this.handle.close();
     this.handle = undefined;
     return true;
@@ -84,12 +175,20 @@ export class ToolRegistry {
     await channel.request("v1.tool.unregister", { name: tool.name });
   }
 
-  /** Serve `tool.execute` on a new connection and restore the registrations it lost. */
+  /** Serve `tool.execute` and `hook/execute` on a new connection and restore the registrations it lost. */
   private async attach(channel: RpcChannel): Promise<void> {
     this.registrations.set(channel, new Map());
+    this.hookRegistrations.set(channel, new Map());
     channel.handle("tool.execute", (params) => this.execute(channel, params as ExecuteParams));
+    channel.handle("hook/execute", (params) => this.executeHook(channel, params as HookExecuteParams));
     for (const tool of this.tools.values()) {
       await this.bind(channel, tool).catch(this.report);
+    }
+    for (const hook of this.hooks) {
+      await this.bindHook(channel, hook).catch(this.report);
+    }
+    for (const session_id of this.sessions) {
+      await channel.request("v1.hook.attach", { session_id }).catch(this.report);
     }
   }
 

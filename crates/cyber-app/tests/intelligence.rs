@@ -420,3 +420,128 @@ async fn lsp_lifecycle_authenticates_routes_locations_and_reloads_without_startu
     }
     f.close().await;
 }
+
+/// A minimal framed server that records its pid and the lifecycle requests it receives.
+#[cfg(unix)]
+const LIFECYCLE_SERVER: &str = r#"
+import json,os,sys
+log=open(sys.argv[1],'a')
+def record(text):
+    log.write(text+'\n'); log.flush()
+def send(value):
+    body=json.dumps(value).encode()
+    sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body)
+    sys.stdout.buffer.flush()
+record('pid %d'%os.getpid())
+while True:
+    length=None
+    while True:
+        line=sys.stdin.buffer.readline()
+        if not line: record('eof'); sys.exit(0)
+        if line==b'\r\n': break
+        key,value=line.decode().split(':',1)
+        if key.lower()=='content-length': length=int(value)
+    msg=json.loads(sys.stdin.buffer.read(length)); method=msg.get('method')
+    if method=='initialize':
+        send({'jsonrpc':'2.0','id':msg['id'],'result':{'capabilities':{'textDocumentSync':1}}})
+    elif method=='shutdown':
+        record('shutdown'); send({'jsonrpc':'2.0','id':msg['id'],'result':None})
+    elif method=='exit':
+        record('exit'); sys.exit(0)
+    elif method=='textDocument/didOpen':
+        record('open '+msg['params']['textDocument']['uri'])
+"#;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn lsp_status_reports_connected_root_and_close_exits_the_process() {
+    let f = Fixture::new().await;
+    let url = f.url.replace("/formatters", "/lsp");
+    let events = f.root.join("server-events");
+    f.settings(json!({
+        "lsp":{"fixture":{"command":["python3","-u","-c",LIFECYCLE_SERVER,events],"extensions":[".fixture-lsp"]}},
+        "sandbox":{"network":"off"}
+    }));
+    let file = f.root.join("main.fixture-lsp");
+    std::fs::write(&file, "snapshot").unwrap();
+    f.app.host.warm_lsp(&f.root, file, "snapshot".into());
+    let status = |client: reqwest::Client, url: String| async move {
+        client
+            .get(&url)
+            .basic_auth("cyber", Some("status-password"))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    };
+    let connected = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let body = status(f.client.clone(), url.clone()).await;
+            if body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == "fixture" && row["status"] == "connected")
+            {
+                break body;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the warmed server connects");
+    assert_eq!(
+        PathBuf::from(row(&connected, "fixture")["root"].as_str().unwrap()),
+        f.root
+    );
+    assert_eq!(
+        PathBuf::from(connected["location"]["directory"].as_str().unwrap()),
+        f.root
+    );
+    let pid: u32 = std::fs::read_to_string(&events)
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("pid "))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let alive = |pid: u32| {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(alive(pid));
+
+    let closed: Value = f
+        .client
+        .post(format!("{url}/close"))
+        .basic_auth("cyber", Some("status-password"))
+        .header("x-cyber-directory", f.root.to_str().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(closed["data"], json!({"closed":true,"reloaded":false}));
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while alive(pid) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("closing the Location ends the server process");
+    let log = std::fs::read_to_string(&events).unwrap();
+    let shutdown = log.find("shutdown").expect("graceful shutdown request");
+    let exit = log.find("\nexit").expect("exit notification");
+    assert!(shutdown < exit, "{log}");
+    // The settled generation stays observable until reload, and is no longer connected.
+    let after = status(f.client.clone(), url.clone()).await;
+    assert_eq!(row(&after, "fixture")["status"], "broken");
+    f.close().await;
+}

@@ -175,12 +175,7 @@ fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {
                     .servers
                     .get(&server.definition.id)
                     .is_some_and(|s| s.disabled);
-            let detail = match (server.installed, disabled) {
-                (false, true) => "disabled; not installed",
-                (false, false) => "not installed",
-                (true, true) => "installed; disabled",
-                (true, false) => "installed",
-            };
+            let detail = lsp_detail(server.installed, disabled, settings.auto_install);
             check(
                 format!("lsp:{}", server.definition.id),
                 if server.installed || disabled {
@@ -192,6 +187,17 @@ fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {
             )
         })
         .collect()
+}
+
+/// `lsp.auto_install` is accepted but never downloads: missing servers stay missing.
+fn lsp_detail(installed: bool, disabled: bool, auto_install: bool) -> &'static str {
+    match (installed, disabled) {
+        (false, true) => "disabled; not installed",
+        (false, false) if auto_install => "not installed; auto_install does not download servers",
+        (false, false) => "not installed",
+        (true, true) => "installed; disabled",
+        (true, false) => "installed",
+    }
 }
 
 async fn catalog_checks(ctx: &Context, config: &Value) -> Vec<Check> {

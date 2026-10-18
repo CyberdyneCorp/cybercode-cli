@@ -183,7 +183,8 @@ async fn pass_owned(
         };
         first = false;
         let end = inner.run_turn(handle, &resolved, cancel).await?;
-        // A SessionStart `continue: false` ends the Drain after the first Turn.
+        // A SessionStart or UserPromptSubmit `continue: false` ends the Drain after
+        // the Turn it bounds.
         if matches!(end, TurnEnd::Tools | TurnEnd::Done) && inner.hook_stop_reached(handle).await {
             return Ok(());
         }
@@ -356,6 +357,7 @@ async fn boundary(
             inner.commit_locked(&mut state, vec![event(MODE_SWITCHED, &payload)])?;
         }
     }
+    inner.config_change(handle).await;
     // The profile-derived model switch runs its observational hooks unlocked.
     inner.automatic_model_switch(handle).await?;
     let mut prepared = {
@@ -423,16 +425,26 @@ async fn promote(
         return Ok(false);
     }
     let mut events = Vec::new();
+    let mut stops = Vec::new();
     for message_id in ids {
-        // UserPromptSubmit context lands immediately before its prompt in the same commit.
+        // UserPromptSubmit context and stop request land immediately before their
+        // prompt in the same commit.
         if let Some(text) = state.hook_contexts.get(&message_id) {
             events.push(hook_context(text.clone()));
+        }
+        if let Some(text) = state.hook_stops.get(&message_id) {
+            events.push(hook_stop(text.clone()));
+            stops.push(text.clone());
         }
         events.push(event(PROMOTED, &Promoted { message_id }));
     }
     inner.commit_locked(&mut state, events)?;
+    let session_id = state.info.id.clone();
     let wants_title = state.info.default_title && state.info.parent_id.is_none();
     drop(state);
+    for reason in stops {
+        inner.publish_hook_stop(&session_id, &reason);
+    }
     if wants_title
         && !handle
             .title_requested
@@ -463,8 +475,9 @@ fn queue_head<'a>(mut rows: impl Iterator<Item = &'a super::model::InboxRow>) ->
 
 impl Inner {
     /// Take a settled call's tool-hook effects and append them after its settlement:
-    /// the context as `hook_context`, a `continue: false` as `hook_stop`. Returns the
-    /// stop reason, which the caller publishes once the events committed.
+    /// an input rewrite as `hook_rewrite`, the context as `hook_context`, a
+    /// `continue: false` as `hook_stop`. Returns the stop reason, which the caller
+    /// publishes once the events committed.
     pub(super) fn take_call_hook_effects(
         &self,
         session_id: &str,
@@ -472,6 +485,7 @@ impl Inner {
         events: &mut Vec<cyber_store::NewEvent>,
     ) -> Option<String> {
         let effects = self.tools.take_hook_effects(session_id, call_id);
+        events.extend(effects.rewrite.map(|text| system(text, "hook_rewrite")));
         events.extend(effects.context.map(hook_context));
         let reason = effects.stop?;
         events.push(hook_stop(reason.clone()));
@@ -1143,18 +1157,11 @@ impl Inner {
         // A hook's `continue: false` ends the Drain after this Turn's calls settle.
         let mut hook_stopped = false;
         for (index, group) in groups.iter().enumerate() {
-            if handle.state.lock().await.result.returned.is_some() {
+            if let Some((output, detail)) = Self::not_dispatchable(handle, &turn).await {
                 let events = groups[index..]
                     .iter()
                     .flatten()
-                    .map(|call| {
-                        settled(
-                            &call.id,
-                            CallStatus::Interrupted,
-                            "Subagent already returned its result",
-                            Some("not dispatched after return_result"),
-                        )
-                    })
+                    .map(|call| settled(&call.id, CallStatus::Interrupted, output, Some(detail)))
                     .collect();
                 self.commit(handle, events).await?;
                 return Ok(false);
@@ -1205,6 +1212,27 @@ impl Inner {
         }
         let halted = handle.halt.swap(false, std::sync::atomic::Ordering::SeqCst);
         Ok(cancel.is_cancelled() || halted || hook_stopped)
+    }
+
+    /// Why a Turn's remaining calls are not dispatched: the Subagent returned its
+    /// result, or `enter_worktree`/`exit_worktree` moved the Session, so `turn` (its
+    /// directory, worktree and tool set) no longer describes it. The model sees them
+    /// settled and can issue them again from the new Location.
+    async fn not_dispatchable(
+        handle: &Handle,
+        turn: &super::TurnContext,
+    ) -> Option<(&'static str, &'static str)> {
+        let state = handle.state.lock().await;
+        if state.result.returned.is_some() {
+            return Some((
+                "Subagent already returned its result",
+                "not dispatched after return_result",
+            ));
+        }
+        (state.info.directory != turn.directory).then_some((
+            "Not run: an earlier call moved the Session to another Location; issue it again if it is still needed",
+            "not dispatched after the Session moved",
+        ))
     }
 
     /// Settle one group's outcomes in a single commit. Each call's hook context and
@@ -1952,6 +1980,7 @@ pub(crate) fn turn_context_for_info(
         mode: info.mode.clone(),
         prefers_apply_patch,
         rules: info.rules.clone(),
+        worktree: super::host::TurnWorktree::of(info),
     }
 }
 

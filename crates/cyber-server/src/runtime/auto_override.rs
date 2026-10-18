@@ -530,6 +530,7 @@ impl Inner {
                         delivery: Delivery::Queue,
                         source: "auto_override".into(),
                         hook_context: None,
+                        hook_stop: None,
                         resources: Vec::new(),
                     },
                 ),

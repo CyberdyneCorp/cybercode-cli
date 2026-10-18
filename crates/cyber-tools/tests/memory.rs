@@ -16,6 +16,7 @@ fn definitions(f: &Fixture, mode: &str) -> Vec<cyber_server::runtime::ToolDef> {
         mode: mode.into(),
         prefers_apply_patch: false,
         rules: Value::Null,
+        worktree: Default::default(),
     })
 }
 
@@ -477,4 +478,50 @@ async fn project_fallback_requests_global_authorization_before_storage() {
     flow.settle(&session).await;
     assert_eq!(flow.output(&session, "remember").await, "Rejected by user");
     assert!(!flow.f.dir.path().join("memory").exists());
+}
+
+#[tokio::test]
+async fn api_key_reference_memory_is_rejected_with_canonical_message() {
+    let f = Fixture::new();
+    let key = "OPENAI_API_KEY=sk-proj-Q7vX2mN9pL4kR8tW1yZ3bC6dF0gH5jK2";
+    for operation in ["write", "update"] {
+        assert_eq!(
+            failed(
+                f.call(
+                    "default",
+                    "memory",
+                    json!({"operation":operation,"name":"coding-policy","content":note(key)}),
+                )
+                .await
+            ),
+            "Memory rejected: content looks like a secret"
+        );
+    }
+    assert!(!f.dir.path().join("memory").exists());
+    #[cfg(any(unix, windows))]
+    {
+        ok(f.call(
+            "default",
+            "memory",
+            json!({"operation":"write","content":note("Keys live in the vault")}),
+        )
+        .await);
+        assert_eq!(
+            failed(
+                f.call(
+                    "default",
+                    "memory",
+                    json!({"operation":"write","content":note(key)}),
+                )
+                .await
+            ),
+            "Memory rejected: content looks like a secret"
+        );
+        let scope = f.dir.path().join("memory/global");
+        let stored = std::fs::read_to_string(scope.join("coding-policy.md")).unwrap();
+        assert!(stored.contains("Keys live in the vault"));
+        assert!(!stored.contains("sk-proj"));
+        let index = std::fs::read_to_string(scope.join("MEMORY.md")).unwrap();
+        assert!(!index.contains("sk-proj"));
+    }
 }

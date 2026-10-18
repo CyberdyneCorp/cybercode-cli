@@ -300,6 +300,11 @@
 - **WHEN** 8 subagents are running and the model spawns a 9th
 - **THEN** the 9th starts only after one of the 8 settles
 
+#### Scenario: Waiting spawn reports queued progress
+- **WHEN** `agents.max_concurrent` is 1, one subagent is running and the model spawns another
+- **THEN** the live, non-durable `session.tool.progress` event with the call's `call_id` and `status: "queued"` reaches the Session and Location event streams before the child Session is created
+- **AND** `status: "running"` follows once the spawn holds a slot
+
 ### Requirement: Nesting depth
 (P1) The system SHALL refuse a spawn when the calling Session is already nested `agents.max_depth` (default 2) levels below a top-level Session, failing with `Subagent depth limit reached (2). Increase agents.max_depth to allow deeper nesting.`
 
@@ -466,6 +471,14 @@
 #### Scenario: Denied agent omitted
 - **WHEN** the caller's rules deny `agent` for resource `general`
 - **THEN** `general` does not appear in the `agent` tool description
+
+#### Scenario: Newly configured agent appears on the next Turn
+- **WHEN** an agent with mode `all` is added to the configuration between two Turns of a Session
+- **THEN** the second Turn's `agent` description lists it in name order, without a restart
+
+#### Scenario: Unresolvable configuration withholds the tool
+- **WHEN** the Location's agent configuration cannot be resolved for a Turn
+- **THEN** the `agent` tool is not offered on that Turn
 
 ## ADDED Requirements
 

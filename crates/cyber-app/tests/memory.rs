@@ -505,17 +505,96 @@ async fn native_busy_private_invalid_and_hard_link_review_preserve_evidence() {
 
 impl Fixture {
     fn put(&self, name: &str, content: &str) -> reqwest::RequestBuilder {
+        self.put_in("global", name, content)
+    }
+    fn put_in(&self, scope: &str, name: &str, content: &str) -> reqwest::RequestBuilder {
         self.client
-            .put(format!("{}/memory/global/{name}", self.url))
+            .put(format!("{}/memory/{scope}/{name}", self.url))
             .basic_auth("cyber", Some("memory-test"))
             .json(&json!({"content":content}))
     }
     #[cfg(any(unix, windows))]
     fn delete(&self, name: &str) -> reqwest::RequestBuilder {
+        self.delete_in("global", name)
+    }
+    #[cfg(any(unix, windows))]
+    fn delete_in(&self, scope: &str, name: &str) -> reqwest::RequestBuilder {
         self.client
-            .delete(format!("{}/memory/global/{name}", self.url))
+            .delete(format!("{}/memory/{scope}/{name}", self.url))
             .basic_auth("cyber", Some("memory-test"))
     }
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn project_put_updates_note_and_index_and_publishes_memory_updated() {
+    use cyber_server::runtime::LiveEvent;
+    let f = Fixture::new(true).await;
+    let project = cyber_core::project::identify(&f.directory).id;
+    assert!(project.starts_with("prj_"), "{project}");
+    let mut live = f.app.runtime.subscribe();
+    let content = "---\nname: prefers-small-prs\ndescription: Keep pull requests small\ntype: feedback\n---\n\nSplit work into reviewable pull requests.\n**Why:** large diffs hide regressions.\n**How to apply:** one concern per pull request.\n";
+    let response = f
+        .put_in("project", "prefers-small-prs", content)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved: Value = response.json().await.unwrap();
+    assert_eq!(saved["location"]["directory"], json!(f.directory));
+    assert_eq!(saved["data"]["project_id"], project.as_str());
+    assert_eq!(saved["data"]["receipt"]["name"], "prefers-small-prs");
+    assert_eq!(saved["data"]["receipt"]["deleted"], false);
+    let LiveEvent::MemoryUpdated { update, .. } = live.try_recv().unwrap() else {
+        panic!("expected memory.updated")
+    };
+    assert_eq!(update.project_id, project);
+    assert_eq!(serde_json::to_value(&update).unwrap(), saved["data"]);
+    let events = f.app.store.read_events(&update.id, -1, 10).unwrap().events;
+    assert_eq!(events.last().unwrap().kind, "memory.updated.1");
+
+    let store = f.store("project");
+    assert!(store.path().ends_with(&project));
+    let owner = store.claim().unwrap();
+    assert!(
+        owner
+            .read("prefers-small-prs")
+            .unwrap()
+            .body
+            .contains("one concern per pull request")
+    );
+    assert_eq!(
+        owner.index().unwrap().text,
+        "- [prefers-small-prs](prefers-small-prs.md) — Keep pull requests small\n"
+    );
+    drop(owner);
+    assert!(
+        !f.app.paths.data.join("memory/global").exists(),
+        "project write must not touch global memory"
+    );
+    let listed: Value = f
+        .get("/memory?scope=project")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["data"]["memories"][0]["name"], "prefers-small-prs");
+
+    let removed = f
+        .delete_in("project", "prefers-small-prs")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::OK);
+    assert!(matches!(
+        live.try_recv().unwrap(),
+        LiveEvent::MemoryUpdated { update, .. } if update.project_id == project && update.receipt.deleted
+    ));
+    assert_eq!(store.claim().unwrap().index().unwrap().text, "");
+    assert!(!store.path().join("prefers-small-prs.md").exists());
+    f.close().await;
 }
 
 #[tokio::test]
@@ -1635,5 +1714,92 @@ async fn conditional_edit_validation_missing_scope_foreign_reviews_and_settings_
         "Original fact"
     );
     assert!(!store.path().join(".memory-transaction").exists());
+    f.close().await;
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn memory_settings_persist_globally_and_report_project_overrides() {
+    let f = Fixture::new(true).await;
+    let settings = format!("{}/memory/settings", f.url);
+    let set = |state: Value| {
+        f.client
+            .put(&settings)
+            .basic_auth("cyber", Some("memory-test"))
+            .json(&json!({ "state": state }))
+    };
+    assert_eq!(
+        f.client
+            .put(&settings)
+            .json(&json!({"state":"off"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let current: Value = f
+        .get("/memory/settings")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        current["data"],
+        json!({"state":"on","enabled":true,"generate":true,"overridden":false})
+    );
+    let global = f.app.paths.config.join("cyber.jsonc");
+    std::fs::write(
+        &global,
+        "{\n  // personal settings\n  \"model\": \"test/main\",\n}\n",
+    )
+    .unwrap();
+    for (state, expected) in [
+        ("readonly", json!({"enabled":true,"generate":false})),
+        ("off", json!({"enabled":false,"generate":false})),
+        ("on", json!({"enabled":true,"generate":true})),
+    ] {
+        let response = set(json!(state)).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["data"]["state"], state);
+        assert_eq!(body["data"]["requested"], state);
+        assert_eq!(body["data"]["overridden"], false);
+        let text = std::fs::read_to_string(&global).unwrap();
+        assert!(text.contains("// personal settings"), "{text}");
+        let parsed = cyber_core::config::parse_jsonc("global", &text).unwrap();
+        assert_eq!(parsed["memory"], expected);
+        assert_eq!(parsed["model"], "test/main");
+    }
+    for invalid in [json!("sometimes"), json!(true)] {
+        assert_eq!(
+            set(invalid).send().await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    // A project layer is a ceiling the user toggle cannot widen.
+    std::fs::write(
+        f.directory.join("cyber.jsonc"),
+        json!({"memory":{"enabled":false}}).to_string(),
+    )
+    .unwrap();
+    let shadowed: Value = set(json!("on")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(shadowed["data"]["state"], "off");
+    assert_eq!(shadowed["data"]["requested"], "on");
+    assert_eq!(shadowed["data"]["overridden"], true);
+    let refused = f
+        .put_in("project", "policy", &text("policy", "fact"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    std::fs::remove_file(f.directory.join("cyber.jsonc")).unwrap();
+    // A global document that is not an object is never rewritten.
+    std::fs::write(&global, "[]").unwrap();
+    let conflict = set(json!("readonly")).send().await.unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(std::fs::read_to_string(&global).unwrap(), "[]");
     f.close().await;
 }

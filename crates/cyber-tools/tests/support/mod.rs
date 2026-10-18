@@ -243,6 +243,7 @@ impl Fixture {
             mode: mode.into(),
             prefers_apply_patch: prefers_patch,
             rules: Value::Null,
+            worktree: Default::default(),
         };
         self.host
             .definitions(&turn)

@@ -277,6 +277,7 @@
 #### Scenario: Input rewritten
 - **WHEN** a `PreToolUse` hook returns `{"updated_input": {"command": "npm test -- --ci"}}` for a bash call
 - **THEN** the bash tool SHALL run `npm test -- --ci` and the transcript SHALL show the rewrite
+- **AND** an accepted rewrite SHALL be committed with the call's settlement, immediately after it and before any hook context, as a system message with reason `hook_rewrite` naming the tool and the rewritten input (bounded to 2 KiB), so the model and a replayed transcript see the input that ran
 
 #### Scenario: Invalid rewritten input
 - **WHEN** `updated_input` fails the tool's input schema
@@ -294,10 +295,11 @@
 - **AND** returning context SHALL NOT make a `fail_closed` handler unavailable
 
 #### Scenario: Stop request ends the Drain after the current Turn
-- **WHEN** the merged decision of a tool event, `Stop` or `SessionStart` carries `continue: false`
-- **THEN** the Drain SHALL end after the current Turn: a tool event's remaining calls in that Turn still run and settle and no further request is made, a `Stop` SHALL admit no continuation even with `decision: block`, and `SessionStart` SHALL end it once the first Turn completes (durably, across a restart)
-- **AND** the `stop_reason` (or `continue: false`), tagged `[hook <id>]`, SHALL be recorded durably as a system message with reason `hook_stop` and shown as a transient notice from that hook
-- **AND** events that cannot apply context or a stop request yet (including `UserPromptSubmit` `continue: false`) SHALL leave a notice, and a `fail_closed` handler SHALL refuse rather than drop it
+- **WHEN** the merged decision of a tool event, `Stop`, `SessionStart` or `UserPromptSubmit` carries `continue: false`
+- **THEN** the Drain SHALL end after the current Turn: a tool event's remaining calls in that Turn still run and settle and no further request is made, a `Stop` SHALL admit no continuation even with `decision: block`, `SessionStart` SHALL end it once the first Turn completes, and `UserPromptSubmit` SHALL end it once the Turn that consumes the admitted prompt completes (both durably, across a restart)
+- **AND** the `stop_reason` (or `continue: false`), tagged `[hook <id>]`, SHALL be recorded durably as a system message with reason `hook_stop` and shown as a transient notice from that hook; for `UserPromptSubmit` the request rides with the admitted row (replaced when the row's parts are edited, dropped when it is removed or refused) and is recorded when the row is promoted
+- **AND** a delegated user prompt or a forked skill command runs no Turn of its own to bound, so its `UserPromptSubmit` `continue: false` SHALL refuse it before any record with `stopped by hook <reason>` rather than be dropped
+- **AND** events that cannot apply context or a stop request yet SHALL leave a notice, and a `fail_closed` handler SHALL refuse rather than drop it
 
 #### Scenario: Suppressed output
 - **WHEN** a handler's decision sets `suppress_output: true`
@@ -383,10 +385,18 @@
 - **AND** `WorktreeCreate` handlers and the worktree permission prompt SHALL run before runtime shutdown admission is held for the git effects
 - **AND** `Interrupt` SHALL NOT run for an owner-initiated child interrupt, `TaskCreated` SHALL be abandoned rather than awaited when its Job is cancelled or the runtime shuts down, and `TaskCompleted` SHALL follow `JobEnded`'s suppression rules, running immediately before it
 
+#### Scenario: Setup, ConfigChange and WorktreeRemove
+- **WHEN** a root Session is created in a Location where the store holds no Session yet, the Location configuration a Session resolves at a Safe Boundary differs from the one it saw at its previous Safe Boundary in this process, or a managed checkout and branch were removed by an isolated child's cleanup, `exit_worktree`, an entered Session's exit cleanup or a user's removal (`cyber worktree remove|prune`, `DELETE /api/v1/worktrees/{name}`)
+- **THEN** the runtime SHALL emit `Setup` (`trigger` `first_session`, also the matcher subject) once the creation committed and runtime admission was released, `ConfigChange` (`previous_digest`, `digest`; matcher subject `configuration`) at that Safe Boundary before the model switch and promotion, and the host SHALL emit `WorktreeRemove` (`id`, `name`, `path`, `branch`; the checkout name as matcher subject) after the removal and after shutdown admission for the git effects was released
+- **AND** all three SHALL be observational: decisions SHALL be ignored and handler failures, including an unavailable `fail_closed` handler, SHALL only be logged and never fail the creation, the Turn or the removal report
+- **AND** `Setup` SHALL run at most once per creation (a crash between the commit and the hook skips it) and a Location whose Sessions were all deleted counts as new; the first Safe Boundary of a Session in a process SHALL only record the configuration digest
+
 #### Scenario: Events deferred for lack of a producer
 - **WHEN** the P1 event set is compared with the runtime's producers
-- **THEN** `Setup`, `DirectoryAdded`, `Notification`, `FileChanged`, `CwdChanged` and `ConfigChange` SHALL remain unemitted until a first-run marker, directory addition, notification, file watcher, working-directory change or configuration reload producer exists
-- **AND** `WorktreeRemove`, whose producer exists, SHALL remain unemitted until it is wired to the same dispatch, and `Notification` SHALL be emitted only for the permission-prompt and question producers until idle, authentication and other notification producers exist
+- **THEN** `DirectoryAdded`, `FileChanged` and `CwdChanged` SHALL remain unemitted until a directory addition (`--add-dir`, `POST /sessions/:id/directories`), file watcher or working-directory change producer exists, and `Setup` SHALL have no `cyber --init` trigger until that flag exists
+- **AND** `WorktreeCreate` SHALL run for public worktree creation only until isolated child creation admits it before its git effects
+- **AND** `WorktreeRemove` SHALL run as a Session at its current Location, which hook admission requires: the parent of an isolated child, the Session that exited or was returned from an entered checkout, or, for a user's removal, a Session that entered the checkout (returned by `--force`) else an isolated child's parent; removing the checkout a top-level Session was started in leaves that Session no Location, so no `WorktreeRemove` SHALL run for it until a Session-less hook envelope exists
+- **AND** `Notification` SHALL be emitted only for the permission-prompt and question producers until idle, authentication and other notification producers exist
 
 #### Scenario: Tool-side events with an existing producer
 - **WHEN** an attended permission prompt or `question` tool question is about to be published, an MCP server sends a form elicitation to an attended call, or a worktree is created

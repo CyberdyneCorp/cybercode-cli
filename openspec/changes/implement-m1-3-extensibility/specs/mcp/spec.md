@@ -811,3 +811,28 @@ A 403 whose `Bearer` challenge has `error="insufficient_scope"`, at connect or o
 #### Scenario: Metadata mismatch fails closed
 - **WHEN** the protected resource names another resource, the metadata names another issuer, an endpoint is plain HTTP to a non-loopback host, or S256 is not offered
 - **THEN** discovery fails and no authorization request is made
+
+### Requirement: Organization MCP controls
+(P1) Org policy (`policy.mcp`) SHALL be able to allowlist or denylist servers by name, command or URL pattern, and to provide managed servers to every user. A blocked server SHALL report status `failed` with error `blocked by organization policy` and SHALL never be started.
+
+The policy lives in the OS-managed policy document (`org-policy` → Policy sources), never in a user, project or CLI layer. `policy.mcp.deny` and `policy.mcp.allow` are arrays of patterns, each with exactly one of `name`, `command` (the command and its arguments joined by spaces) or `url`, matched as wildcards (`*` matches any sequence). A `url` pattern is matched against the parsed server URL normalized to a lowercase scheme and host (no trailing dot), no default port and at least a `/` path: its `scheme://host[:port]` part matches the URL's origin case-insensitively (any port when it names none) and the rest matches the path and query, so spelling variants of one endpoint cannot slip past a pattern. A server matching any `deny` pattern is blocked; when `allow` is present, a server matching no `allow` pattern is blocked; several documents add their patterns up. The document's top-level `mcp` map provides managed servers: each replaces a user or project definition of the same name whole, starts without checkout approval and is exempt from the lists. A present but malformed document fails closed: every non-managed server is blocked. Authorization is checked before every launch and connection, so a blocked server is never spawned or contacted.
+
+#### Scenario: Denylisted server
+- **WHEN** policy denies URL pattern `https://*.untrusted.dev/*`
+- **THEN** a matching configured server is not contacted
+
+#### Scenario: Blocked server status
+- **WHEN** a configured server matches a `deny` pattern
+- **THEN** `GET /mcp` reports it `failed` with error `blocked by organization policy`, its tools are never offered, and a server the patterns do not match connects
+
+#### Scenario: Allowlist
+- **WHEN** `policy.mcp.allow` names only `git*` and a user configures `notes`
+- **THEN** `notes` is blocked
+
+#### Scenario: Managed server for every Location
+- **WHEN** the managed document defines server `corp` and a user also defines `corp`
+- **THEN** every Location runs the managed definition without approval
+
+#### Scenario: Malformed policy
+- **WHEN** a `policy.mcp` pattern sets two fields, or a managed entry has no `type`
+- **THEN** every configured non-managed server is blocked

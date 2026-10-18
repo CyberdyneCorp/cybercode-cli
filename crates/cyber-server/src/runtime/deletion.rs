@@ -72,7 +72,11 @@ impl Runtime {
     /// Fence the Session and its descendants: a deletion entry in the Drain table
     /// keeps any Drain, child continuation or child Job from starting (a prompt only
     /// coalesces into it). Refuses while any of them still runs.
-    fn fence_deletion(&self, session_id: &str, ids: &[String]) -> Result<(), RuntimeError> {
+    pub(super) fn fence_deletion(
+        &self,
+        session_id: &str,
+        ids: &[String],
+    ) -> Result<(), RuntimeError> {
         let mut drains = self
             .inner
             .drains
@@ -99,7 +103,7 @@ impl Runtime {
 
     /// Remove the deletion fences. A Session that still exists (the deletion
     /// failed) drains the input that coalesced into its fence.
-    fn lift_deletion_fence(&self, ids: &[String]) {
+    pub(super) fn lift_deletion_fence(&self, ids: &[String]) {
         let mut resumed = Vec::new();
         {
             let mut drains = self

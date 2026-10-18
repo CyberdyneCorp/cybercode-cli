@@ -1,5 +1,24 @@
 # P1 implementation status
 
+## P1 acceptance batch A: increments 1–5 sign-off and whole-tree validation (2026-10-18)
+
+Uncommitted. The 38 requirements that [acceptance-plan](p1-acceptance-plan.md) increments 1–5 moved to class (a) (M1.2: 10, M1.3: 16, M1.4: 12) were demonstrated in 41 end-to-end scenarios with the real debug `cyber` binary, a real `cyber serve` and the SDK's embedded `cyber serve --stdio`, against a scripted local provider and local MCP, HTTP-hook and LSP fixtures; TUI scenarios ran in a pty. No live model or internet was used. All 41 passed; the plan's [batch A section](p1-acceptance-plan.md#batch-a-acceptance-run-increments-15-2026-10-18) and the [audit](p1-acceptance-audit.md#p1-batch-a-sign-off-increments-15-2026-10-18) record each observation. The counts stay 85 (a), 5 (b), 45 (c), 77 (d), 2 (e) of 214.
+
+Bugs found and fixed, each with a regression test that fails without the fix:
+
+- The OpenAI Chat Completions adapter recorded tool calls only when the stream ended, so *Eager execution during streaming* did not hold on OpenAI-compatible providers. `cyber-llm` `adapters/openai_chat.rs` and `adapters/mod.rs` now complete a call when the next call or text begins, once its arguments are whole JSON. Tests: `cyber-llm` `adapters.rs::openai_chat_completes_each_call_when_the_next_one_or_text_starts`, `cyber-app` `server.rs::openai_compatible_call_is_durable_while_its_stream_is_still_open` (production App, real streaming endpoint). Both are portable and were added to the Windows job's filtered `cyber-llm --test adapters` and `cyber-app --test server` steps.
+- Command-hook warnings printed `hook audit exited with Some(1): …`. `cyber-tools` `hook_commands/results.rs` now says `exited with code N` or `ended without an exit code`. Tests: `hook_command_results.rs::nonblocking_exit_diagnostics_name_the_hook_and_plain_exit_code` (runs in the Windows hook result step), and `tool_hook_dispatch.rs::post_tool_command_exit_one_warns_with_hook_id_and_continues` (Unix) asserts the exact text.
+
+Validation (macOS, whole working tree): `cargo test --workspace --no-fail-fast` 3,285 passed, 0 failed, 6 ignored (231 result lines including doc tests); workspace all-target Clippy with warnings denied; `x86_64-pc-windows-gnu` all-target Clippy (stub CC/AR, type-check only) for `cyber-app`, `cyber-cli`, `cyber-core`, `cyber-llm`, `cyber-server`, `cyber-tools` and `cyber-tui`; `cargo fmt --check`; `generate_sdk.py --check`, the SDK typecheck and 95 SDK tests; `openspec validate --all --strict` (71 items); `spec_lint.py` 0 errors, 21 warnings (the baseline).
+
+Docs: the acceptance plan (batch A section), audit (sign-off section, increment 4 eager-execution row), M1.2/M1.3/M1.4 `tasks.md` (batch A entries; the stale `/hooks` CLI task is checked) and ROADMAP milestone lines (per-milestone acceptance counts; 212/225 corrected to 214/227) are updated.
+
+Partial or deferred:
+- Native Windows CI has not run on this tree; no milestone is signed off natively.
+- Observed, not fixed: a project memory directory that is not mode `0700` fails every Turn with `ContextInitializationBlocked: core/memory` without saying why; hook notices are prefixed with the handler digest instead of the hook id; the last call of an OpenAI Chat stream still completes at stream end (no earlier protocol signal); the TUI renders a background handback as raw JSON.
+- The TUI `--worktree` exit message was checked manually in a pty, not by an automated test.
+- M1.1 and M1.5 were not part of batch A (1 of 18 and 0 of 10 rows done locally), and every non-(a) row of M1.2–M1.4 remains open.
+
 ## TUI experience overhaul (`improve-tui-experience`): whole-tree validation and docs (2026-10-16)
 
 Uncommitted. Sections 1 to 8 of `openspec/changes/improve-tui-experience/tasks.md` are implemented except 8.8 (the Nyan progress indicator); section 9 (P2) is in the P2 status. The change is not archived.

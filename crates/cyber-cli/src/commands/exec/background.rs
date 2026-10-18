@@ -71,6 +71,22 @@ impl Owned {
         })
     }
 
+    /// A run that owns nothing yet, without asking a server.
+    #[cfg(test)]
+    pub fn empty(session: &str) -> Self {
+        Self {
+            session: session.into(),
+            baseline: HashSet::new(),
+            fork: None,
+            admitted: HashSet::new(),
+            last_seq: -1,
+            lagged: None,
+            stopped: HashSet::new(),
+            unnotified: HashMap::new(),
+            settlement: None,
+        }
+    }
+
     /// A `--command` receipt: the server derives a fork's delegation ID from it.
     pub fn command(&mut self, message: &str) -> Result<(), CliError> {
         let id = Runtime::skill_command_delegation_id(&self.session, message);

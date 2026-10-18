@@ -222,6 +222,9 @@ impl ChatDecoder {
                 let event = if reasoning {
                     LlmEvent::ReasoningDelta { text: text.into() }
                 } else {
+                    // Text after a call ends that call's input (`tool-registry` →
+                    // Eager execution during streaming).
+                    self.finish_whole(None, out);
                     LlmEvent::TextDelta { text: text.into() }
                 };
                 out.push(Ok(event));
@@ -248,6 +251,11 @@ impl ChatDecoder {
         let id = str_at(call, "/id");
         let name = str_at(call, "/function/name");
         if !id.is_empty() || !name.is_empty() {
+            // Calls stream one after another: a new one completes those before it, so
+            // each is recorded as soon as its input is whole, not at the end of the stream.
+            if !self.tools.has(&key) {
+                self.finish_whole(Some(&key), out);
+            }
             self.tools.start(&key, id, name);
         }
         let fragment = str_at(call, "/function/arguments");
@@ -257,6 +265,12 @@ impl ChatDecoder {
             .filter(|_| !fragment.is_empty())
         {
             out.push(Ok(event));
+        }
+    }
+
+    fn finish_whole(&mut self, except: Option<&str>, out: &mut Vec<Result<LlmEvent, LlmError>>) {
+        for call in self.tools.finish_whole(except) {
+            out.push(Ok(LlmEvent::ToolCallDone(call)));
         }
     }
 

@@ -17,6 +17,8 @@ mod budget;
 mod bus;
 mod child_ownership;
 mod child_usage;
+mod client_hooks;
+pub use client_hooks::{ClientHook, ClientHooks};
 mod compaction;
 pub use child_usage::ChildrenUsage;
 mod context;
@@ -44,6 +46,8 @@ mod host;
 pub mod instructions;
 mod jobs;
 mod names;
+mod pr_links;
+pub use pr_links::{PR_LINKED, PrLink};
 mod preparation;
 mod subtask;
 mod subtree_reopen;
@@ -101,6 +105,8 @@ mod view;
 pub use usage::{
     RunAgentUsage, RunUsageGroup, RunUsageReport, ScopeUsage, UsageAmount, UsageReport,
 };
+mod worktree_events;
+pub use worktree_events::{WorktreeChange, WorktreeExit, WorktreeNotice, relocates};
 mod worktree_output;
 pub use worktree_output::{SessionSetupSink, SetupChannel, SetupUpdate};
 mod workflow_control;
@@ -151,7 +157,7 @@ pub use host::{
     Invocation, LifecycleHook, LifecycleVerdict, LocationGuard, LocationLease, ModelResolver,
     NoSnapshots, NoTools, Reconciliation, ResolvedModel, RestoreError, RunWorktree,
     SessionEnvelope, SkillSuggestion, Snapshot, Snapshots, ToolDef, ToolHost, ToolOutcome,
-    ToolScope, TurnContext, WorkflowAgentOutput, WorkflowAgentRequest,
+    ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -166,6 +172,7 @@ pub use view::{INTERRUPTED, UNKNOWN};
 
 use bus::Bus;
 use events::*;
+use lifecycle::PromptEffects;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -500,6 +507,8 @@ pub struct ListFilter {
     pub search: Option<String>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
+    /// Only Sessions linked to this pull request number.
+    pub pr: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -555,6 +564,35 @@ pub(crate) struct Handle {
     pub drain_hooks_settled: Notify,
     /// Serializes recap generation, so concurrent requests make one model call.
     pub recap: Mutex<()>,
+    /// Digest of the Location configuration this Session last saw at a Safe
+    /// Boundary; a different one fires `ConfigChange`.
+    pub config_digest: StdMutex<Option<String>>,
+    /// The Location lease of the running Drain or idle operation; `enter_worktree`
+    /// and `exit_worktree` replace it with one on the new Location.
+    pub location_lease: StdMutex<Option<LocationLease>>,
+}
+
+impl Handle {
+    pub(crate) fn holds_lease(&self) -> bool {
+        self.location_lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+    }
+
+    pub(crate) fn replace_lease(&self, lease: LocationLease) -> Option<LocationLease> {
+        self.location_lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(lease)
+    }
+
+    pub(crate) fn take_lease(&self) -> Option<LocationLease> {
+        self.location_lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
 }
 
 struct DrainEntry {
@@ -823,12 +861,36 @@ impl Runtime {
             .publish(LiveEvent::McpToolsChanged { update });
     }
 
+    /// Publish a dispatched call's live status (`session.tool.progress`), never durable.
+    pub fn tool_progress(&self, session: &str, call_id: &str, status: &str) {
+        self.inner.bus.publish(LiveEvent::ToolProgress {
+            session_id: session.into(),
+            call_id: call_id.into(),
+            status: status.into(),
+        });
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<LiveEvent> {
         self.inner.bus.subscribe()
     }
 
     /// Create a Session, or return the existing one unchanged when `id` is taken.
+    /// The first root Session of a Location fires the observational `Setup` hook
+    /// once creation is committed and admission released (hook runners take it again).
     pub async fn create_session(&self, req: CreateSession) -> Result<SessionInfo, RuntimeError> {
+        let (info, first) = self.create_session_admitted(req).await?;
+        if first {
+            self.inner.setup(&info.id).await;
+        }
+        Ok(info)
+    }
+
+    /// Create under runtime admission; true when it is the first root Session of
+    /// its Location in this store.
+    async fn create_session_admitted(
+        &self,
+        req: CreateSession,
+    ) -> Result<(SessionInfo, bool), RuntimeError> {
         let _admission = self.inner.open().await?;
         let id = req
             .id
@@ -840,7 +902,7 @@ impl Runtime {
             )));
         }
         if let Ok(existing) = self.inner.handle(&id).await {
-            return Ok(existing.state.lock().await.info.clone());
+            return Ok((existing.state.lock().await.info.clone(), false));
         }
         if req.output_schema.is_some() && req.parent_id.is_none() {
             return Err(RuntimeError::Invalid(
@@ -904,6 +966,7 @@ impl Runtime {
             title: req.title.unwrap_or_else(default_title),
             directory: req.directory,
             worktree_id: req.worktree_id,
+            worktree_origin: None,
             parent_id: req.parent_id,
             subagent_name: req.subagent_name,
             workflow_run_id: req.workflow_run_id,
@@ -964,7 +1027,10 @@ impl Runtime {
             Some(copy) => (copy.entries, copy.calls, Some(copy.context)),
             None => (Vec::new(), Vec::new(), None),
         };
-        self.inner
+        let first =
+            info.parent_id.is_none() && !self.inner.location_has_sessions(&info.directory)?;
+        let info = self
+            .inner
             .create(
                 info,
                 history,
@@ -980,7 +1046,8 @@ impl Runtime {
                     output_schema: req.output_schema.map(|s| s.schema().clone()),
                 },
             )
-            .await
+            .await?;
+        Ok((info, first))
     }
 
     /// The `permission_mode` an agent would give a new Session at `directory`, before any
@@ -997,6 +1064,7 @@ impl Runtime {
             mode: "default".into(),
             prefers_apply_patch: false,
             rules: serde_json::Value::Null,
+            worktree: Default::default(),
         };
         self.inner
             .tools
@@ -1058,22 +1126,23 @@ impl Runtime {
         admission: &Admission,
         message_id: &str,
         digest: &str,
-    ) -> Result<(Option<String>, PromptAttachments), RuntimeError> {
+    ) -> Result<(PromptEffects, PromptAttachments), RuntimeError> {
         self.inner.ensure_admission_open(session_id)?;
         let handle = self.inner.handle(session_id).await?;
         {
             let state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if existing_receipt(&state, message_id, digest)?.is_some() {
-                return Ok((None, PromptAttachments::default()));
+                return Ok((PromptEffects::default(), PromptAttachments::default()));
             }
         }
         // A denied prompt reads no resources and runs no template commands.
-        let context = self
+        let effects = self
             .inner
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
-            .await?;
-        Ok((context, self.prompt_resources(&handle, admission).await?))
+            .await?
+            .for_prompt(is_forked(admission.skill_command.as_ref()))?;
+        Ok((effects, self.prompt_resources(&handle, admission).await?))
     }
 
     /// Expand a planned template (`skills-commands` → Shell output injection, File and
@@ -1091,11 +1160,7 @@ impl Runtime {
             Some(template) => Some(self.expand_template(handle, template, admission).await?),
             None => None,
         };
-        let fork = admission
-            .skill_command
-            .as_ref()
-            .is_some_and(|skill| skill.fork);
-        let resources = if fork {
+        let resources = if is_forked(admission.skill_command.as_ref()) {
             Vec::new()
         } else {
             self.mention_resources(handle, &admission.parts).await?
@@ -1152,12 +1217,18 @@ impl Runtime {
         let digest = admission.digest();
         // A denied prompt leaves no durable trace, including a staged revert.
         let prompt = check == PromptCheck::Run;
-        let (hook_context, attachments) = match check {
+        let (effects, attachments) = match check {
             PromptCheck::Run => {
                 self.prompt_hooks(session_id, &admission, &message_id, &digest)
                     .await?
             }
-            PromptCheck::Checked(context) => (context, PromptAttachments::default()),
+            PromptCheck::Checked(context) => (
+                PromptEffects {
+                    context,
+                    stop: None,
+                },
+                PromptAttachments::default(),
+            ),
         };
         let _admission = self.inner.open().await?;
         self.inner.ensure_admission_open(session_id)?;
@@ -1194,7 +1265,8 @@ impl Runtime {
                 delivery: admission.delivery,
                 source: admission.source,
                 digest,
-                hook_context,
+                hook_context: effects.context,
+                hook_stop: effects.stop,
                 resources: attachments.resources,
             };
             let mut events = Vec::new();
@@ -1230,12 +1302,12 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         // Edited parts are user input: UserPromptSubmit re-checks them and their
         // resource mentions are resolved again before commit.
-        let (hook_context, resources) = match &parts {
+        let (effects, resources) = match &parts {
             Some(parts) => {
                 self.edited_prompt_hooks(session_id, message_id, parts)
                     .await?
             }
-            None => (None, Vec::new()),
+            None => (PromptEffects::default(), Vec::new()),
         };
         self.update_input(
             session_id,
@@ -1243,7 +1315,7 @@ impl Runtime {
             InboxAction::Edited,
             parts,
             delivery,
-            (hook_context, resources),
+            (effects, resources),
         )
         .await
     }
@@ -1253,7 +1325,7 @@ impl Runtime {
         session_id: &str,
         message_id: &str,
         parts: &[Content],
-    ) -> Result<(Option<String>, Vec<String>), RuntimeError> {
+    ) -> Result<(PromptEffects, Vec<String>), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let (source, fork) = {
             let state = handle.state.lock().await;
@@ -1264,16 +1336,17 @@ impl Runtime {
             let fork = row.skill_command.as_ref().is_some_and(|skill| skill.fork);
             (row.source.clone(), fork)
         };
-        let context = self
+        let effects = self
             .inner
             .user_prompt_hooks(&handle, parts, &source)
-            .await?;
+            .await?
+            .for_prompt(fork)?;
         let resources = if fork {
             Vec::new()
         } else {
             self.mention_resources(&handle, parts).await?
         };
-        Ok((context, resources))
+        Ok((effects, resources))
     }
 
     /// Withdraw an unpromoted `queue` or `hold` row; it never reaches the model.
@@ -1288,7 +1361,7 @@ impl Runtime {
             InboxAction::Removed,
             None,
             None,
-            (None, Vec::new()),
+            (PromptEffects::default(), Vec::new()),
         )
         .await
     }
@@ -1319,7 +1392,7 @@ impl Runtime {
             InboxAction::Released,
             None,
             Some(delivery),
-            (None, Vec::new()),
+            (PromptEffects::default(), Vec::new()),
         )
         .await?;
         self.inner.start_drain(session_id, false);
@@ -1334,7 +1407,7 @@ impl Runtime {
             InboxAction::Refused,
             None,
             None,
-            (None, Vec::new()),
+            (PromptEffects::default(), Vec::new()),
         )
         .await
     }
@@ -1346,7 +1419,7 @@ impl Runtime {
         action: InboxAction,
         parts: Option<Vec<Content>>,
         delivery: Option<Delivery>,
-        (hook_context, resources): (Option<String>, Vec<String>),
+        (effects, resources): (PromptEffects, Vec<String>),
     ) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
@@ -1365,7 +1438,8 @@ impl Runtime {
             action,
             parts,
             delivery,
-            hook_context,
+            hook_context: effects.context,
+            hook_stop: effects.stop,
             resources,
         };
         self.inner
@@ -1789,6 +1863,11 @@ fn digest(
     format!("sha256:{:x}", Sha256::digest(body.to_string()))
 }
 
+/// A forked skill command hands its prompt to a child instead of a Turn here.
+fn is_forked(skill: Option<&SkillCommand>) -> bool {
+    skill.is_some_and(|skill| skill.fork)
+}
+
 /// Resource blocks and, for a planned template, its expanded parts, which replace the
 /// admitted parts so replay and an exact retry never run anything again.
 #[derive(Debug, Default)]
@@ -1863,6 +1942,9 @@ fn query_sessions(
            AND (?4 = 1 OR archived = 0)
            AND (?5 IS NULL OR instr(lower(title), lower(?5)) > 0)
            AND (updated_at < ?6 OR (updated_at = ?6 AND id < ?7) OR ?7 = '')
+           AND (?9 IS NULL OR EXISTS (SELECT 1 FROM event
+                WHERE event.aggregate_id = session.id AND event.type = 'session.pr.linked.1'
+                  AND json_extract(event.data, '$.number') = ?9))
          ORDER BY updated_at DESC, id DESC LIMIT ?8",
     )?;
     let rows = stmt
@@ -1875,7 +1957,8 @@ fn query_sessions(
                 f.search,
                 cursor_at,
                 cursor_id,
-                limit
+                limit,
+                f.pr.and_then(|pr| i64::try_from(pr).ok())
             ],
             |r| {
                 Ok(SessionRow {
@@ -1937,6 +2020,8 @@ impl Inner {
             drain_hooks: Default::default(),
             drain_hooks_settled: Notify::new(),
             recap: Mutex::new(()),
+            config_digest: StdMutex::default(),
+            location_lease: StdMutex::default(),
         });
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(Arc::clone(sessions.entry(id.into()).or_insert(handle)))

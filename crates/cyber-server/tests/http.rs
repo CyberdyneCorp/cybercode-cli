@@ -1248,6 +1248,7 @@ async fn clients_register_tools_that_the_model_can_call() {
         mode: "default".into(),
         prefers_apply_patch: false,
         rules: Value::Null,
+        worktree: Default::default(),
     };
     let offered = cyber_server::runtime::ToolHost::definitions(
         &Composite {
@@ -3909,4 +3910,181 @@ async fn workflow_run_lists_filter_by_status_owner_and_location_and_paginate() {
             "{query}: {body}"
         );
     }
+}
+
+/// `client-sdk` → Hook callbacks over the WebSocket transport: a registered handler is
+/// forwarded as `hook/execute` and its object returned, invalid registrations are
+/// refused, a handler applies only to the Sessions its client attached, and every
+/// registration drops when the client disconnects, failing an unanswered execution at
+/// once rather than at its timeout.
+#[tokio::test]
+async fn client_hook_registration_drops_on_disconnect() {
+    use cyber_server::runtime::ClientHooks;
+    use futures::{SinkExt, StreamExt};
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let store = Arc::new(support::open_store(&dir.path().join("cyber.db")));
+    let models = support::models(Vec::new(), 200_000, &[]);
+    let builtin = support::Tools::new();
+    let remote = Arc::new(http::remote_tools::RemoteTools::default());
+    let runtime = cyber_server::runtime::Runtime::new(cyber_server::runtime::RuntimeOptions {
+        store: Arc::clone(&store),
+        resolver: Arc::clone(&models) as Arc<dyn cyber_server::runtime::ModelResolver>,
+        tools: Arc::new(Composite {
+            builtin: Arc::clone(&builtin),
+            remote: Arc::clone(&remote),
+        }),
+        global_config_dir: dir.path().join("global"),
+        shell: "sh".into(),
+        claude_compat: false,
+        compaction: cyber_server::runtime::CompactionConfig::default(),
+        retry: cyber_llm::RetryPolicy::default(),
+        max_steps: None,
+        today: None,
+        interactive: true,
+        snapshots: Arc::new(cyber_server::runtime::NoSnapshots),
+    });
+    let state = AppState {
+        service: None,
+        runtime,
+        remote_tools: Arc::clone(&remote),
+        store,
+        services: Arc::new(FakeServices {
+            default: Some("test/main".into()),
+            tools: builtin,
+        }),
+        options: Arc::new(HttpOptions {
+            version: "t".into(),
+            password: None,
+            cors_origins: Vec::new(),
+            default_directory: repo,
+            features: Vec::new(),
+        }),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(http::serve_tcp(
+        http::router(state),
+        listener,
+        std::future::pending(),
+    ));
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/ws"))
+        .await
+        .unwrap();
+    let send = |v: Value| tokio_tungstenite::tungstenite::Message::Text(v.to_string().into());
+    let register = json!({"jsonrpc":"2.0","id":1,"method":"v1.hook.register",
+        "params":{"event":"PreToolUse","matcher":"edit","timeout":5}});
+    ws.send(send(register)).await.unwrap();
+    let reply: Value =
+        serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    let id = reply["result"]["registration_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(id.starts_with("hkr_"), "{reply}");
+    for params in [
+        json!({"event":"BeforeEverything"}),
+        json!({"event":"PreToolUse","timeout":0}),
+        json!({"event":"PreToolUse","matcher":"/[/"}),
+    ] {
+        let bad = json!({"jsonrpc":"2.0","id":2,"method":"v1.hook.register","params":params});
+        ws.send(send(bad)).await.unwrap();
+        let reply: Value =
+            serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(reply["error"]["code"], -32602, "{params}: {reply}");
+    }
+    assert!(
+        remote.client_hooks(&["ses_a".into()]).is_empty(),
+        "no Session is the client's yet"
+    );
+    let attach =
+        json!({"jsonrpc":"2.0","id":3,"method":"v1.hook.attach","params":{"session_id":"ses_a"}});
+    ws.send(send(attach)).await.unwrap();
+    let reply: Value =
+        serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert_eq!(reply["result"]["attached"], "ses_a", "{reply}");
+    assert!(remote.client_hooks(&["ses_other".into()]).is_empty());
+    // A descendant's lineage includes the attached Session.
+    let hooks = remote.client_hooks(&["ses_child".into(), "ses_a".into()]);
+    assert_eq!(hooks.len(), 1);
+    assert_eq!(
+        (
+            hooks[0].event.as_str(),
+            hooks[0].matcher.as_deref(),
+            hooks[0].timeout
+        ),
+        ("PreToolUse", Some("edit"), 5)
+    );
+    // The server forwards an event as `hook/execute` and returns the client's object.
+    let execution = {
+        let remote = Arc::clone(&remote);
+        let id = id.clone();
+        tokio::spawn(async move {
+            remote
+                .execute_client_hook(
+                    &id,
+                    json!({"event":"PreToolUse","tool_name":"edit"}),
+                    Duration::from_secs(5),
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+        })
+    };
+    let call: Value =
+        serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert_eq!(call["method"], "hook/execute");
+    assert_eq!(call["params"]["registration_id"], id.as_str());
+    assert_eq!(call["params"]["event"], "PreToolUse");
+    assert_eq!(call["params"]["input"]["tool_name"], "edit");
+    ws.send(send(
+        json!({"jsonrpc":"2.0","id":call["id"],"result":{"decision":"allow"}}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        execution.await.unwrap().unwrap(),
+        json!({"decision":"allow"})
+    );
+    // Regression: an execution in flight when the client disconnects fails as
+    // disconnected at once, not after its (here 60 s) timeout.
+    let in_flight = {
+        let remote = Arc::clone(&remote);
+        let id = id.clone();
+        tokio::spawn(async move {
+            remote
+                .execute_client_hook(
+                    &id,
+                    json!({"event":"PreToolUse","tool_name":"edit"}),
+                    Duration::from_secs(60),
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+        })
+    };
+    let call: Value =
+        serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert_eq!(call["method"], "hook/execute");
+    drop(ws);
+    let failed = tokio::time::timeout(Duration::from_secs(5), in_flight)
+        .await
+        .expect("the in-flight execution waited for its timeout")
+        .unwrap();
+    assert!(failed.unwrap_err().contains("disconnected"));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !remote.client_hooks(&["ses_a".into()]).is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the registration outlived its client");
+    let after = remote
+        .execute_client_hook(
+            &id,
+            json!({}),
+            Duration::from_secs(1),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    assert!(after.unwrap_err().contains("disconnected"));
 }

@@ -1,7 +1,7 @@
 //! Runtime-owned lifecycle hooks (`hooks` → Stop hooks and loop prevention, Hook
 //! context injection on lifecycle events): Stop before a Drain idles, observational
 //! StopFailure and JobEnded, UserPromptSubmit/SessionStart context admission, and
-//! `continue: false` for Stop and SessionStart.
+//! `continue: false` for Stop, SessionStart and UserPromptSubmit.
 
 use std::sync::atomic::Ordering;
 
@@ -34,6 +34,39 @@ pub(crate) fn lifecycle(
         subject,
         fields: fields.as_object().cloned().unwrap_or_default(),
         workflow_run_id: None,
+    }
+}
+
+/// What UserPromptSubmit left for an admitted prompt: its `[hook <id>]`-tagged
+/// context and stop request, both applied when the row is promoted.
+#[derive(Debug, Default)]
+pub(crate) struct PromptEffects {
+    pub(crate) context: Option<String>,
+    pub(crate) stop: Option<String>,
+}
+
+impl PromptEffects {
+    /// The context of a prompt that runs no Turn of its own here (a delegated or
+    /// forked prompt). A stop request has nothing to bound, so it refuses the prompt
+    /// rather than being dropped.
+    pub(crate) fn without_turn(self) -> Result<Option<String>, RuntimeError> {
+        match self.stop {
+            Some(reason) => Err(RuntimeError::Invalid(format!(
+                "stopped by hook {reason}; the delegated prompt was not started"
+            ))),
+            None => Ok(self.context),
+        }
+    }
+
+    /// A forked skill command hands its prompt to a child instead of a Turn here.
+    pub(crate) fn for_prompt(self, fork: bool) -> Result<Self, RuntimeError> {
+        if !fork {
+            return Ok(self);
+        }
+        Ok(Self {
+            context: self.without_turn()?,
+            stop: None,
+        })
     }
 }
 
@@ -104,6 +137,7 @@ impl Inner {
             delivery: Delivery::Queue,
             source: "hook".into(),
             hook_context: None,
+            hook_stop: None,
             resources: Vec::new(),
         };
         self.commit(handle, vec![event(ADMITTED, &admitted)])
@@ -140,13 +174,14 @@ impl Inner {
     }
 
     /// UserPromptSubmit before durable admission. A deny rejects the prompt with
-    /// the hook's reason; context rides with the admission until promotion.
+    /// the hook's reason; context and a `continue: false` ride with the admission
+    /// until promotion.
     pub(crate) async fn user_prompt_hooks(
         &self,
         handle: &Handle,
         parts: &[Content],
         source: &str,
-    ) -> Result<Option<String>, RuntimeError> {
+    ) -> Result<PromptEffects, RuntimeError> {
         let fields = json!({"prompt": text_of(parts), "source": source});
         let hook = self
             .lifecycle_hook(handle, "UserPromptSubmit", String::new(), fields)
@@ -161,7 +196,11 @@ impl Inner {
                 "blocked by hook {}",
                 verdict.decision.reason.as_deref().unwrap_or("policy")
             ))),
-            _ => Ok(verdict.decision.additional_context),
+            _ => Ok(PromptEffects {
+                context: verdict.decision.additional_context,
+                stop: (verdict.decision.continuation == Some(false))
+                    .then(|| stop_text(verdict.decision.stop_reason)),
+            }),
         }
     }
 
@@ -262,6 +301,54 @@ impl Inner {
             hook_id: hook_id.into(),
             message: message.into(),
         });
+    }
+
+    /// Whether any Session, archived ones included, already lives in `directory`.
+    pub(crate) fn location_has_sessions(&self, directory: &str) -> Result<bool, RuntimeError> {
+        let directory = directory.to_owned();
+        Ok(self.store.read(move |conn| {
+            Ok(conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session WHERE directory=?1)",
+                [&directory],
+                |row| row.get::<_, bool>(0),
+            )?)
+        })?)
+    }
+
+    /// Observational Setup for the first root Session of a Location. It runs once,
+    /// after creation commits: a crash in between skips it rather than repeating it.
+    pub(crate) async fn setup(&self, session_id: &str) {
+        let Ok(handle) = self.handle(session_id).await else {
+            return;
+        };
+        let fields = json!({"trigger": "first_session"});
+        let hook = self
+            .lifecycle_hook(&handle, "Setup", "first_session".into(), fields)
+            .await;
+        self.observe_lifecycle(hook).await;
+    }
+
+    /// Observational ConfigChange at a Safe Boundary when the Location configuration
+    /// differs from what this Session last saw. The first look only records it, so a
+    /// change made while no Drain ran is reported at the next one of this process.
+    pub(crate) async fn config_change(&self, handle: &Handle) {
+        let directory = handle.state.lock().await.info.directory.clone();
+        let Some(digest) = self.tools.config_digest(&directory) else {
+            return;
+        };
+        let previous = handle
+            .config_digest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(digest.clone());
+        let Some(previous) = previous.filter(|previous| *previous != digest) else {
+            return;
+        };
+        let fields = json!({"previous_digest": previous, "digest": digest});
+        let hook = self
+            .lifecycle_hook(handle, "ConfigChange", "configuration".into(), fields)
+            .await;
+        self.observe_lifecycle(hook).await;
     }
 
     /// Observational JobEnded after the Job's terminal record. Handler failures and

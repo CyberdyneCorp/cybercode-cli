@@ -56,14 +56,19 @@ impl Tool for Bash {
             let timeout = number(input, "timeout_ms")
                 .unwrap_or(DEFAULT_TIMEOUT_MS)
                 .clamp(1, MAX_TIMEOUT_MS);
-            execute(ctx, command, &workdir, timeout).await
+            let output = execute(ctx, command, &workdir, timeout).await?;
+            super::pr_links::observe(ctx, command, &workdir, &output).await;
+            Ok(output)
         })
     }
 }
 
-/// A user shell command (`!`): sandboxed, but never asks for permission.
+/// A user shell command (`!`): sandboxed, but never asks for permission. A PR it
+/// creates or pushes to links the Session, as for the `bash` tool.
 pub(crate) async fn run_user(ctx: &Ctx<'_>, command: &str) -> Result<String, ToolError> {
-    execute(ctx, command, &ctx.location, DEFAULT_TIMEOUT_MS).await
+    let output = execute(ctx, command, &ctx.location, DEFAULT_TIMEOUT_MS).await?;
+    super::pr_links::observe(ctx, command, &ctx.location, &output).await;
+    Ok(output)
 }
 
 /// A template's `` !`cmd` `` (`skills-commands` → Shell output injection): `bash`

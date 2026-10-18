@@ -264,6 +264,10 @@ The observer SHALL use existing credentials, bypass ambient proxies, reject redi
 - **WHEN** `gopls` is missing and `auto_install` is false
 - **THEN** no download occurs and `cyber doctor` lists `gopls: not installed`
 
+#### Scenario: Auto-install performs no download in P1
+- **WHEN** `lsp.auto_install` is true and a built-in server is missing
+- **THEN** no download SHALL occur, and `cyber doctor` SHALL list the server as not installed and state that `auto_install` does not download servers
+
 ### Requirement: Built-in servers
 (P1) The system SHALL ship definitions (id, extensions, root markers, launch command, install method) for at least: `rust-analyzer`, `typescript` (tsserver via typescript-language-server), `pyright`, `gopls`, `clangd`, `jdtls`, `lua-language-server`, `zls`, `bash-language-server`, `yaml-language-server`, `svelte`, `vue`, `solidity`, and `verible` (SystemVerilog).
 

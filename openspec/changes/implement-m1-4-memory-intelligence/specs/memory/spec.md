@@ -65,6 +65,16 @@
 - **WHEN** loaded configuration supplies nonboolean `memory.enabled` or `memory.generate`, or a nonobject `memory` value
 - **THEN** configuration loading SHALL fail with a memory validation error without echoing supplied values
 
+#### Scenario: Toggle persists and applies at the next Safe Boundary
+- **WHEN** the user runs `/memory off`, `/memory readonly` or `/memory on`
+- **THEN** the setting SHALL be written to the user's global configuration document, replacing only its `memory` member and keeping every other member and comment
+- **AND** each Session SHALL apply it at its next Safe Boundary, both in the offered memory tool and in the `core/memory` Context Source
+- **AND** an edit that cannot be verified, or a global document that is not an object, SHALL leave the file unchanged and report a conflict
+
+#### Scenario: Toggle cannot widen a ceiling
+- **WHEN** a project layer, a `--config` override or `CYBER_DISABLE_MEMORY` sets a narrower memory state than the one the user saved
+- **THEN** the narrower state SHALL stay in effect for that Location, and the toggle response SHALL report the effective state as overridden
+
 ### Requirement: Memory tool
 (P1) The system SHALL provide a `memory` tool with operations `list`, `read`, `write`, `update`, and `delete`, gated by the `memory` permission (default `allow` for the memory directories). `write` and `update` SHALL keep the `MEMORY.md` index in sync with one line per memory (`- [Title](file.md) — hook`).
 

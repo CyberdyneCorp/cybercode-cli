@@ -195,6 +195,28 @@ the exact channel and handler before execution, so stale calls cannot reach a re
 Client tools use ordinary permission and hook checks and default to ask; plan mode hides them.
 Configure an allow rule for the exposed tool name or answer the current permission request.
 
+## Hook callbacks
+
+```ts
+const off = await client.hooks.on(
+  "PreToolUse",
+  (input) => {
+    const path = (input.tool_input as { path?: string } | undefined)?.path ?? "";
+    return path.startsWith("docs/") ? { decision: "allow", reason: "docs edits are pre-approved" } : undefined;
+  },
+  { matcher: "edit", timeout: 10 },     // configured matcher syntax; 1-600 s (default 60)
+);
+await off();
+```
+
+The handler runs in your process for every Session of the server while the channel is open:
+the server sends `hook/execute` with the event envelope (the same JSON configured hooks get),
+treats the returned object as a hook decision (`hooks` decision schema; nothing returned means
+no decision) and merges it after every configured handler. Each execution is recorded with
+scope `client` (`client.session.hooks(id)`). A throw, an invalid answer or a timeout is a
+non-blocking error. Registrations share the tool channel: they are restored after a reconnect
+and dropped when it closes. A managed-only hooks policy skips client handlers.
+
 ## Browser-safe types
 
 `@cyber-code/sdk/schema` exports the generated types, the operation table and the error guards

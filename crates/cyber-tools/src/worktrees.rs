@@ -2,9 +2,11 @@
 
 mod child;
 mod inspection;
+mod lifecycle;
 mod recovery;
 pub(crate) use child::ChildWorktree;
 pub(crate) use inspection::{OwnedFile, run_helper};
+pub use lifecycle::SessionCleanup;
 
 use std::ffi::OsString;
 use std::io;
@@ -48,6 +50,8 @@ pub struct WorktreeSession {
 pub struct WorktreeListing {
     pub ownership: ListedWorktree,
     pub status: Option<WorktreeStatus>,
+    /// When the ready ownership record was written; `None` when unknown.
+    pub created_ms: Option<i64>,
 }
 
 struct SetupRecipe {
@@ -385,7 +389,15 @@ impl BuiltinHost {
             } else {
                 None
             };
-            result.push(WorktreeListing { ownership, status });
+            let created_ms = match &ownership {
+                ListedWorktree::Ready(managed) => record_time(&repository, &managed.name),
+                _ => None,
+            };
+            result.push(WorktreeListing {
+                ownership,
+                status,
+                created_ms,
+            });
         }
         Ok(result)
     }
@@ -422,8 +434,15 @@ impl BuiltinHost {
         creation_inv.mode = source.mode;
         creation_inv.rules = source.rules;
         creation_inv.agent = source.agent;
-        self.create_worktree_session_owned(&runtime, &creation_inv, cancel, request, false)
-            .await
+        // Boxed: creation, hooks and setup make a future too large to nest inline.
+        Box::pin(self.create_worktree_session_owned(
+            &runtime,
+            &creation_inv,
+            cancel,
+            request,
+            false,
+        ))
+        .await
     }
 
     /// An authenticated client explicitly requests isolation for a new Session.
@@ -467,8 +486,7 @@ impl BuiltinHost {
             attempt: 1,
             asker: Asker::detached(),
         };
-        self.create_worktree_session_owned(&runtime, &inv, cancel, request, true)
-            .await
+        Box::pin(self.create_worktree_session_owned(&runtime, &inv, cancel, request, true)).await
     }
 
     async fn create_worktree_session_owned(
@@ -507,6 +525,12 @@ impl BuiltinHost {
             .create_session(session_request)
             .await
             .map_err(io::Error::other)?;
+        runtime.publish_worktree(
+            cyber_server::runtime::WorktreeChange::Created,
+            Path::new(&inv.directory),
+            &managed,
+            Some(&session.id),
+        );
         let mut setup_inv = inv.clone();
         setup_inv.session_id = session.id.clone();
         setup_inv.directory = session.directory.clone();
@@ -1248,6 +1272,20 @@ async fn pump(
             bytes: &bytes[..count],
         })?;
     }
+}
+
+/// The modification time of a ready ownership record, which creation writes last.
+fn record_time(repository: &Repository, name: &str) -> Option<i64> {
+    let modified = std::fs::symlink_metadata(
+        repository
+            .common_dir
+            .join("cyber-worktrees")
+            .join(format!("{name}.json")),
+    )
+    .and_then(|metadata| metadata.modified())
+    .ok()?;
+    let elapsed = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(elapsed.as_millis()).ok()
 }
 
 fn tool_error(error: crate::tools::ToolError) -> io::Error {

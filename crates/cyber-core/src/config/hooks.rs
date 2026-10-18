@@ -78,6 +78,11 @@ pub enum HookKind {
     Http,
     Prompt,
     McpTool,
+    // A handler a connected SDK client registered (`client-sdk` → Hook callbacks); never
+    // read from configuration nor listed in the configuration schema.
+    #[serde(skip_deserializing)]
+    #[schemars(skip)]
+    Client,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -243,6 +248,11 @@ impl HookHandler {
             HookKind::Http => vec![("url", &self.url)],
             HookKind::Prompt => vec![("prompt", &self.prompt)],
             HookKind::McpTool => vec![("server", &self.server), ("tool", &self.tool)],
+            HookKind::Client => {
+                return Err(format!(
+                    "{path}.type: client handlers are registered by connected clients"
+                ));
+            }
         };
         for (field, value) in required {
             if value.as_ref().is_none_or(|value| value.trim().is_empty()) {

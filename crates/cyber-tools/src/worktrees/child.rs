@@ -36,6 +36,8 @@ pub(crate) struct ChildWorktree {
     repository: Repository,
     managed: Managed,
     cleanup: Cleanup,
+    /// False where nobody can answer a cleanup prompt: `ask` keeps the checkout.
+    confirm: bool,
 }
 
 impl BuiltinHost {
@@ -116,6 +118,12 @@ impl BuiltinHost {
             .create_session(request)
             .await
             .map_err(io::Error::other)?;
+        runtime.publish_worktree(
+            cyber_server::runtime::WorktreeChange::Created,
+            Path::new(&inv.directory),
+            &managed,
+            Some(&session.id),
+        );
         let mut setup_inv = inv.clone();
         setup_inv.session_id = session.id.clone();
         setup_inv.directory = session.directory;
@@ -155,6 +163,7 @@ impl BuiltinHost {
             } else {
                 recipe.settings.cleanup
             },
+            confirm: true,
         })
     }
 
@@ -359,6 +368,12 @@ impl BuiltinHost {
             .rebind_child_worktree(owner, &removed, &managed)
             .await
             .map_err(io::Error::other)?;
+        runtime.publish_worktree(
+            cyber_server::runtime::WorktreeChange::Created,
+            Path::new(&inv.directory),
+            &managed,
+            Some(&child.id),
+        );
         self.clear_session_reads(&child.id);
         let mut setup_inv = inv.clone();
         setup_inv.session_id = child.id.clone();
@@ -394,6 +409,7 @@ impl BuiltinHost {
             repository,
             managed,
             cleanup: recipe.settings.cleanup,
+            confirm: true,
         })
     }
 }
@@ -428,7 +444,28 @@ impl ChildWorktree {
             cleanup: Settings::from_config(&config)
                 .map_err(io::Error::other)?
                 .cleanup,
+            confirm: true,
         })
+    }
+
+    /// The exit cleanup of a top-level Session's checkout: `invocation` is the
+    /// Session at the Location whose configuration decides `worktrees.cleanup`.
+    pub(crate) fn top_level(
+        host: &BuiltinHost,
+        invocation: Invocation,
+        repository: Repository,
+        managed: Managed,
+        cleanup: Cleanup,
+    ) -> Self {
+        Self {
+            child_id: invocation.session_id.clone(),
+            host: host.weak.clone(),
+            invocation,
+            repository,
+            managed,
+            cleanup,
+            confirm: false,
+        }
     }
 
     pub(crate) async fn report(&self, cancel: CancellationToken) -> Value {
@@ -436,7 +473,10 @@ impl ChildWorktree {
         let outcome = match self.host.upgrade().and_then(|host| host.runtime()) {
             Some(runtime) => {
                 runtime
-                    .own_worktree_setup(cancel.clone(), self.report_owned(cancel, &mut result))
+                    .own_worktree_setup(
+                        cancel.clone(),
+                        self.report_owned(cancel.clone(), &mut result),
+                    )
                     .await
             }
             None => Err(io::Error::other(
@@ -446,6 +486,26 @@ impl ChildWorktree {
         if let Err(error) = outcome {
             result["cleanup_error"] = json!(error.to_string());
             result["kept"] = Value::Null;
+        }
+        let removed = result["kept"] == json!(false);
+        if let Some(runtime) = self.host.upgrade().and_then(|host| host.runtime()) {
+            let change = if removed {
+                cyber_server::runtime::WorktreeChange::Removed
+            } else {
+                cyber_server::runtime::WorktreeChange::Kept
+            };
+            runtime.publish_worktree(
+                change,
+                Path::new(&self.invocation.directory),
+                &self.managed,
+                Some(&self.child_id),
+            );
+        }
+        // WorktreeRemove runs once shutdown admission is released: hook admission
+        // takes it again, and a writer queued in between would block that nested read.
+        if removed && let Some(host) = self.host.upgrade() {
+            host.worktree_remove_hooks(&self.invocation, &self.managed, cancel)
+                .await;
         }
         result
     }
@@ -458,6 +518,9 @@ impl ChildWorktree {
     ) -> io::Result<bool> {
         if cleanup != Cleanup::Ask {
             return Ok(true);
+        }
+        if !self.confirm {
+            return Ok(false);
         }
         let runtime = host
             .runtime()
@@ -546,7 +609,11 @@ impl ChildWorktree {
         }
         drop(_lifecycle);
         if !self.confirm_cleanup(&host, cleanup, &ctx.cancel).await? {
-            result["cleanup_reason"] = json!("Cleanup was not approved");
+            result["cleanup_reason"] = json!(if self.confirm {
+                "Cleanup was not approved"
+            } else {
+                "worktrees.cleanup is ask and nobody can confirm; worktree kept"
+            });
             return Ok(());
         }
         let _lifecycle = tokio::select! {
@@ -589,6 +656,18 @@ impl ChildWorktree {
         result["changes"] = json!(changes);
         if changes.dirty || !changes.files.is_empty() || changes.ahead != 0 {
             result["cleanup_reason"] = json!("Checkout changed while cleanup was pending");
+            return Ok(());
+        }
+        // Another Session that entered the checkout, idle or not, would be stranded.
+        let runtime = host
+            .runtime()
+            .ok_or_else(|| io::Error::other("Runtime stopped"))?;
+        let entered = runtime
+            .entered_sessions(&self.managed)
+            .await
+            .map_err(io::Error::other)?;
+        if let Some(session) = entered.iter().find(|session| **session != self.child_id) {
+            result["cleanup_reason"] = json!(format!("worktree entered by {session}"));
             return Ok(());
         }
         authorize_owned_worktree(

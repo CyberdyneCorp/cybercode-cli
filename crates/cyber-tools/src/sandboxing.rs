@@ -186,6 +186,19 @@ async fn start_proxy(decide: Decide, _tmp: &Path) -> std::io::Result<Proxy> {
     Proxy::start(decide).await
 }
 
+/// Whether the effective sandbox has its network off (`sandbox.network: "off"` under an
+/// enforcing policy).
+pub(crate) fn network_off(ctx: &Ctx<'_>) -> bool {
+    let (config, sources) = (ctx.host.opts.config)(&ctx.location).unwrap_or_default();
+    let sandbox = SandboxConfig::resolve(
+        &config,
+        &sources,
+        ctx.host.opts.sandbox_policy.as_deref(),
+        &ctx.host.opts.home,
+    );
+    sandbox.policy != Policy::FullAccess && sandbox.network == NetworkMode::Off
+}
+
 /// Allowlisted and session-approved domains pass at once; others wait for the tool loop.
 fn decider(
     allowed: &[String],

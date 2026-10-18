@@ -527,6 +527,74 @@ async fn truncated_stream_is_a_transport_error() {
     assert_eq!(err.kind, ErrorKind::Transport);
 }
 
+/// `tool-registry` → Eager execution during streaming: an OpenAI Chat call completes as
+/// soon as the next call or text begins, not when the stream ends; a call whose input is
+/// not yet whole JSON stays open.
+#[tokio::test]
+async fn openai_chat_completes_each_call_when_the_next_one_or_text_starts() {
+    let server = MockServer::start().await;
+    let call = |index: u32, id: &str, arguments: &str| json!({"choices": [{"delta": {"tool_calls": [{"index": index, "id": id, "function": {"name": "clock", "arguments": arguments}}]}}]});
+    let more = |index: u32, arguments: &str| json!({"choices": [{"delta": {"tool_calls": [{"index": index, "function": {"arguments": arguments}}]}}]});
+    let body = sse(&[
+        ("", call(0, "call_a", "{\"tz\":")),
+        ("", more(0, "\"UTC\"}")),
+        ("", call(1, "call_b", "{\"tz\":\"C")),
+        ("", call(2, "call_c", "{}")),
+        ("", more(1, "ET\"}")),
+        ("", json!({"choices": [{"delta": {"content": "Done"}}]})),
+        (
+            "",
+            json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+        ),
+    ]) + "data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .respond_with(ok_stream(body))
+        .mount(&server)
+        .await;
+    let a = adapter(ApiKind::OpenaiCompatible, Endpoint::new(server.uri(), None));
+    let mut seen = Vec::new();
+    let out = collect(a.stream(request()).await.unwrap(), |e| seen.push(e.clone()))
+        .await
+        .unwrap();
+    let order: Vec<String> = seen
+        .iter()
+        .filter_map(|event| match event {
+            LlmEvent::ToolCallDone(call) => Some(format!("done {}", call.id)),
+            LlmEvent::ToolCallDelta { id, .. } => Some(format!("delta {id}")),
+            LlmEvent::TextDelta { text } => Some(format!("text {text}")),
+            LlmEvent::Finish { .. } => Some("finish".into()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "delta call_a",
+            "delta call_a",
+            // call_b starts: call_a is whole and ends there.
+            "done call_a",
+            "delta call_b",
+            // call_c starts while call_b is not whole JSON yet: call_b stays open.
+            "delta call_c",
+            "delta call_b",
+            // Text ends both remaining calls, in start order.
+            "done call_b",
+            "done call_c",
+            "text Done",
+            "finish",
+        ]
+    );
+    let inputs: Vec<_> = out.tool_calls.iter().map(|c| c.input.clone()).collect();
+    assert_eq!(
+        inputs,
+        [
+            Some(json!({"tz": "UTC"})),
+            Some(json!({"tz": "CET"})),
+            Some(json!({}))
+        ]
+    );
+}
+
 #[tokio::test]
 async fn malformed_tool_arguments_have_no_input() {
     let server = MockServer::start().await;

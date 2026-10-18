@@ -857,6 +857,242 @@ async fn http_policy_decision_denies_real_builtin_write_before_effects() {
     );
 }
 
+/// A local HTTP endpoint for one hook request: it answers with `response`, or holds
+/// the connection open without answering when `response` is None.
+fn http_hook_endpoint(response: Option<&'static str>) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/policy", listener.local_addr().unwrap());
+    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+    let served = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = [0; 8192];
+        assert!(socket.read(&mut bytes).await.unwrap() > 0);
+        let Some(response) = response else {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            return;
+        };
+        socket.write_all(response.as_bytes()).await.unwrap();
+    });
+    (url, served)
+}
+
+#[tokio::test]
+async fn exit_two_pre_tool_command_blocks_with_stderr_reason() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_bash",
+                "bash",
+                json!({"command":"printf ran > prod.txt"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"bash","hooks":[{"type":"command","id":"prod","command":"cat >/dev/null; printf 'rm on prod paths is forbidden' >&2; exit 2"}]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "run it").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("prod.txt").exists(), "the call never ran");
+    let output = f.output(&session, "call_bash").await;
+    assert!(output.contains("rm on prod paths is forbidden"), "{output}");
+    let state = f.runtime.state(&session).await.unwrap();
+    assert_ne!(state.calls["call_bash"].status, CallStatus::Ok);
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(
+        receipts[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Blocked)
+    );
+    // The model received the reason as the tool error and the Turn went on.
+    let second = serde_json::to_string(&f.main.requests()[1].messages).unwrap();
+    assert!(second.contains("rm on prod paths is forbidden"), "{second}");
+}
+
+#[tokio::test]
+async fn post_tool_command_exit_one_warns_with_hook_id_and_continues() {
+    let f = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.write("a.txt", "safe");
+    hooks(
+        &f,
+        json!({"PostToolUse":[{"matcher":"read","hooks":[{"type":"command","id":"audit","command":"cat >/dev/null; printf 'audit log offline' >&2; exit 1"}]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("default").await;
+    f.prompt(&session, "read").await;
+    f.settle(&session).await;
+    let state = f.runtime.state(&session).await.unwrap();
+    assert_eq!(state.calls["call_read"].status, CallStatus::Ok);
+    assert_eq!(f.main.requests().len(), 2, "the Turn continued");
+    let warned = hook_notices(&mut live)
+        .into_iter()
+        .any(|(_, message)| message.contains("hook audit exited with code 1: audit log offline"));
+    assert!(warned, "a warning names the hook and its stderr");
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(
+        receipts[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Error)
+    );
+}
+
+#[tokio::test]
+async fn http_fail_closed_timeout_blocks_call_with_hook_unavailable() {
+    let (url, served) = http_hook_endpoint(None);
+    let f = write_flow("a.txt");
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[{"type":"http","url":url,"id":"policy","timeout":1,"fail_closed":true}]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write").await;
+    f.settle_within(&session, std::time::Duration::from_secs(20))
+        .await;
+    served.abort();
+    assert!(
+        !f.f.repo.join("a.txt").exists(),
+        "the guarded write is blocked"
+    );
+    let output = f.output(&session, "call_write").await;
+    assert!(output.contains("hook policy unavailable"), "{output}");
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(
+        receipts[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Timeout)
+    );
+}
+
+#[tokio::test]
+async fn http_non_2xx_is_nonblocking_on_a_real_call() {
+    let body = r#"{"decision":"deny","reason":"ignored on error"}"#;
+    let response: &'static str = Box::leak(
+        format!(
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_boxed_str(),
+    );
+    let (url, served) = http_hook_endpoint(Some(response));
+    let f = write_flow("a.txt");
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"write","hooks":[{"type":"http","url":url,"id":"policy"}]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "write").await;
+    f.settle(&session).await;
+    served.await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("a.txt")).unwrap(),
+        "original",
+        "a non-2xx answer never blocks without fail_closed"
+    );
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    assert_eq!(
+        receipts[0].outcome,
+        Some(cyber_core::hooks::HookOutcome::Error)
+    );
+}
+
+#[tokio::test]
+async fn rewrite_is_visible_as_hook_notice_in_transcript() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_bash",
+                "bash",
+                json!({"command":"printf original > ran.txt"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"bash","hooks":[handler("ci", r#"{"updated_input":{"command":"printf rewritten > ran.txt"}}"#)]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("bypass").await;
+    f.prompt(&session, "run it").await;
+    f.settle(&session).await;
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("ran.txt")).unwrap(),
+        "rewritten"
+    );
+    let rewrites: Vec<String> =
+        f.f.store
+            .read_events(&session, -1, 200)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter(|e| e.kind == "session.system.added.1" && e.data["reason"] == "hook_rewrite")
+            .map(|e| e.data["text"].as_str().unwrap().to_owned())
+            .collect();
+    assert_eq!(rewrites.len(), 1, "one durable rewrite record");
+    let state = f.runtime.state(&session).await.unwrap();
+    assert_eq!(system_texts(&state), rewrites, "the transcript shows it");
+    assert!(rewrites[0].contains("bash"), "{}", rewrites[0]);
+    assert!(
+        rewrites[0].contains("printf rewritten > ran.txt"),
+        "{}",
+        rewrites[0]
+    );
+    // The model sees the rewrite with the result of the call it requested.
+    let second = serde_json::to_string(&f.main.requests()[1].messages).unwrap();
+    assert!(second.contains("printf rewritten"), "{second}");
+    assert!(hook_notices(&mut live).contains(&("ci".into(), "hook rewrote tool input".into())));
+}
+
+/// Regression: a rewrite that injects a credential shows the model and the transcript a
+/// redacted notice, while the call itself runs with the credential.
+#[tokio::test]
+async fn rewrite_notice_redacts_injected_credentials() {
+    let token = "ghp_abcdefghijklmnop0123456789";
+    let f = Flow::new(
+        vec![
+            call("call_bash", "bash", json!({"command":"printf x > ran.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    let rewritten = format!("printf {token} > ran.txt");
+    let answer = json!({"updated_input":{"command":rewritten}}).to_string();
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"bash","hooks":[handler("ci", &answer)]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "run it").await;
+    f.settle(&session).await;
+    assert_eq!(
+        std::fs::read_to_string(f.f.repo.join("ran.txt")).unwrap(),
+        token
+    );
+    let rewrites: Vec<String> =
+        f.f.store
+            .read_events(&session, -1, 200)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter(|e| e.kind == "session.system.added.1" && e.data["reason"] == "hook_rewrite")
+            .map(|e| e.data["text"].as_str().unwrap().to_owned())
+            .collect();
+    assert_eq!(rewrites.len(), 1);
+    assert!(!rewrites[0].contains(token), "{}", rewrites[0]);
+    assert!(rewrites[0].contains("[REDACTED]"), "{}", rewrites[0]);
+    let second = serde_json::to_string(&f.main.requests()[1].messages).unwrap();
+    assert!(!second.contains(token), "{second}");
+}
+
 #[tokio::test]
 async fn memory_pre_hook_denial_preserves_normal_receipt_and_has_no_storage_effects() {
     let content =

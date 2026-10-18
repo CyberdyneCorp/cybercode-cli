@@ -4,7 +4,7 @@ mod command_skills;
 mod files;
 mod path_skills;
 mod remote_sources;
-mod review;
+pub(crate) mod review;
 mod skill_catalog;
 mod template_expand;
 mod workflow_agents;
@@ -70,6 +70,9 @@ pub struct BuiltinHost {
     pub(crate) hook_notices: Mutex<HashSet<String>>,
     /// Tool-event hook effects awaiting their call's settlement, by (Session, call).
     pub(crate) hook_effects: crate::tool_hooks::PendingEffects,
+    /// MCP annotations of registered calls in flight, by (Session, call), for hook
+    /// envelopes.
+    pub(crate) tool_annotations: Mutex<HashMap<(String, String), Value>>,
     pub(crate) search_cooldowns: tools::websearch::Cooldowns,
     /// Domains approved for sandboxed network access, by Session.
     network: Mutex<HashMap<String, Arc<Mutex<HashSet<String>>>>>,
@@ -80,6 +83,8 @@ pub struct BuiltinHost {
     pub(crate) injection_timeout_ms: std::sync::atomic::AtomicU64,
     /// The remote skill cache; without it, `https://` skill entries are reported unavailable.
     pub(crate) remote_skills: OnceLock<crate::remote_skills::RemoteSkills>,
+    /// Hook handlers of connected clients (`client-sdk` → Hook callbacks).
+    pub(crate) client_hooks: OnceLock<Arc<dyn cyber_server::runtime::ClientHooks>>,
 }
 
 impl BuiltinHost {
@@ -153,6 +158,7 @@ impl BuiltinHost {
             hook_invocation_trust: OnceLock::new(),
             hook_notices: Mutex::default(),
             hook_effects: Default::default(),
+            tool_annotations: Mutex::default(),
             search_cooldowns: tools::websearch::Cooldowns::default(),
             network: Mutex::default(),
             subagents: crate::subagents::Slots::default(),
@@ -160,6 +166,7 @@ impl BuiltinHost {
                 template_expand::INJECTION_TIMEOUT.as_millis() as u64,
             ),
             remote_skills: OnceLock::new(),
+            client_hooks: OnceLock::new(),
         })
     }
 
@@ -260,6 +267,27 @@ impl BuiltinHost {
         tools
             .into_iter()
             .filter(|tool| profile_allows_tool(&profile, &tool.spec.name))
+            .collect()
+    }
+
+    /// Regenerate the `agent` description from the Turn's current profiles and rules.
+    fn with_agent_catalogue(
+        &self,
+        turn: &TurnContext,
+        rules: &[permissions::Rule],
+        tools: Vec<ToolDef>,
+    ) -> Vec<ToolDef> {
+        if !tools.iter().any(|tool| tool.spec.name == "agent") {
+            return tools;
+        }
+        let config = (self.opts.config)(Path::new(&turn.directory)).map(|(config, _)| config);
+        tools
+            .into_iter()
+            .filter_map(|tool| match (&config, tool.spec.name.as_str()) {
+                (_, name) if name != "agent" => Some(tool),
+                (Ok(config), _) => tools::agent::with_catalogue(tool, config, rules),
+                (Err(_), _) => None,
+            })
             .collect()
     }
 
@@ -763,6 +791,15 @@ impl ToolHost for BuiltinHost {
         cyber_core::budget::Budget::from_config(&config, "session")
     }
 
+    fn config_digest(&self, directory: &str) -> Option<String> {
+        use sha2::Digest;
+        // An unresolvable configuration has no digest; the next resolvable one is
+        // compared with the last good one.
+        let resolved = (self.opts.config)(Path::new(directory)).ok()?;
+        let bytes = serde_json::to_vec(&resolved).ok()?;
+        Some(format!("sha256:{:x}", sha2::Sha256::digest(bytes)))
+    }
+
     fn daily_budget(&self, directory: &str) -> Result<Option<cyber_core::budget::Budget>, String> {
         let (config, _) = (self.opts.config)(Path::new(directory))?;
         cyber_core::budget::Budget::from_config(&config, "daily")
@@ -874,6 +911,7 @@ impl ToolHost for BuiltinHost {
                     .then(|| tools::memory::definition(settings.generate && mode != Mode::Plan))
             })
             .filter(|d| offered(&d.spec.name, turn.prefers_apply_patch, mode, d.retry_safety))
+            .filter(|d| tools::worktree_offered(&d.spec.name, turn.worktree))
             .filter(|d| !fully_denied_scoped(&rules, tools::action_of(&d.spec.name), &d.spec.name))
             .filter(|d| {
                 d.spec.name != "websearch" || self.websearch_available(Path::new(&turn.directory))
@@ -892,7 +930,8 @@ impl ToolHost for BuiltinHost {
                 .into_iter()
                 .filter(|d| !fully_denied(&rules, &d.spec.name)),
         );
-        self.filter_agent_tools(turn, tools)
+        let tools = self.filter_agent_tools(turn, tools);
+        self.with_agent_catalogue(turn, &rules, tools)
     }
 
     fn reconcile(&self, directory: &str, call: &CallState) -> BoxFuture<'_, Reconciliation> {
@@ -1482,8 +1521,9 @@ impl Ctx<'_> {
             self.auto_gate(&req, &mut metadata, false).await?;
             return self.ask(req, always, metadata).await;
         }
-        let needs_approval = decision == Decision::Ask
-            && self.hook_decision != Some(cyber_core::hooks::HookAction::Allow);
+        let needs_approval = (decision == Decision::Ask
+            && self.hook_decision != Some(cyber_core::hooks::HookAction::Allow))
+            || self.policy.forces_classifier(&req);
         if self.auto_gate(&req, &mut metadata, needs_approval).await? || !needs_approval {
             return Ok(());
         }

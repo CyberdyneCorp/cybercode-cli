@@ -5,6 +5,12 @@
 //! `v1.event.subscribe` and `v1.session.events` start a subscription and stream
 //! `{"method": "event", "params": {"subscription": <id>, "event": <EventEnvelope>}}`
 //! notifications; `v1.rpc.unsubscribe` `{ subscription }` stops one.
+//! `v1.tool.register`/`v1.tool.unregister` and `v1.hook.register`/`v1.hook.unregister`
+//! bind application tools and hook handlers to this connection; the server calls them back
+//! with `tool.execute` and `hook/execute`, and drops them when the connection closes.
+//! Hook handlers apply only to this client's Sessions: those it creates or forks over this
+//! channel and those it attaches with `v1.hook.attach` `{ session_id }`, with their
+//! descendants.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -60,6 +66,7 @@ impl RpcSession {
             mode: "bypass".into(),
             prefers_apply_patch: false,
             rules: Value::Null,
+            worktree: Default::default(),
         };
         // Built-in names only: client tools may be re-registered by their owner.
         let remote: Vec<String> = tools
@@ -102,7 +109,7 @@ impl RpcSession {
 
     async fn dispatch(&self, req: Value) -> Option<Value> {
         if req.get("method").is_none() {
-            // A response to a server-initiated request (`tool.execute`).
+            // A response to a server-initiated request (`tool.execute`, `hook/execute`).
             self.tools.resolve(&req);
             return None;
         }
@@ -117,6 +124,15 @@ impl RpcSession {
                 .register(self.owner, self.out.clone(), &params, &self.reserved)
                 .map_err(|m| (jsonrpc::INVALID_PARAMS, m, Value::Null)),
             "v1.tool.unregister" => Ok(self.unregister(&params)),
+            "v1.hook.register" => self
+                .tools
+                .register_hook(self.owner, self.out.clone(), &params)
+                .map_err(|m| (jsonrpc::INVALID_PARAMS, m, Value::Null)),
+            "v1.hook.unregister" => Ok(self.tools.unregister_hook(self.owner, &params)),
+            "v1.hook.attach" => self
+                .tools
+                .attach_session(self.owner, &params)
+                .map_err(|m| (jsonrpc::INVALID_PARAMS, m, Value::Null)),
             _ => self.call(&method, &params).await,
         };
         let id = id?;
@@ -130,6 +146,14 @@ impl RpcSession {
         let req = request(method, params, "GET")?;
         let (status, body) = send(&self.client, req).await;
         if (200..300).contains(&status) {
+            // A Session this channel creates is this client's for its hook handlers.
+            if let ("v1.session.create" | "v1.session.fork", Some(id)) =
+                (method, body["data"]["id"].as_str())
+            {
+                let _ = self
+                    .tools
+                    .attach_session(self.owner, &json!({ "session_id": id }));
+            }
             Ok(body)
         } else {
             let tag = body["_tag"].as_str().unwrap_or("UnknownError").to_string();

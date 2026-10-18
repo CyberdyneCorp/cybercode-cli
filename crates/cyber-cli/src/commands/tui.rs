@@ -31,6 +31,13 @@ pub fn run(
     }
     let ctx = Context::new(&global)?;
     super::start_logging(&ctx, &global)?;
+    if let Some(pr) = &launch.from_pr {
+        let number = super::pr::parse(pr)?;
+        if crate::output::is_json(global.format) {
+            return super::pr::report_linked(&ctx, number);
+        }
+        start = cyber_tui::Start::PickPr(number);
+    }
     let prompt = prompt(launch)?;
     if !std::io::stdout().is_terminal() {
         return Err(
@@ -44,9 +51,13 @@ pub fn run(
             let found = super::sessions::resolve(&at, wanted).await?;
             start = Start::Resume(found["id"].as_str().unwrap_or_default().to_owned());
         }
+        let source = client.at(&ctx.location.display().to_string());
+        let mut owned = None;
         let directory = if let Some(name) = &launch.worktree {
-            let session = super::worktrees::start(&client.at(&ctx.location.display().to_string()), name, serde_json::json!({"model": global.model, "agent": launch.agent, "mode": global.mode}), false).await?;
-            start = Start::Resume(session["id"].as_str().ok_or_else(|| CliError::runtime("Worktree Session has no ID"))?.into());
+            let session = super::worktrees::start(&source, name, serde_json::json!({"model": global.model, "agent": launch.agent, "mode": global.mode}), false).await?;
+            let id: String = session["id"].as_str().ok_or_else(|| CliError::runtime("Worktree Session has no ID"))?.into();
+            owned = Some(id.clone());
+            start = Start::Resume(id);
             session["directory"].as_str().ok_or_else(|| CliError::runtime("Worktree Session has no Location"))?.to_owned()
         } else { ctx.location.display().to_string() };
         let opts = TuiOptions {
@@ -61,7 +72,16 @@ pub fn run(
             mode: global.mode.clone(),
             prompt,
         };
-        cyber_tui::run(opts).await.map_err(CliError::runtime)
+        let summary = cyber_tui::run(opts).await.map_err(CliError::runtime);
+        if let Some(id) = &owned {
+            super::worktrees::cleanup(&source, id).await;
+        }
+        if let Ok(summary) = &summary
+            && owned.as_ref() != Some(&summary.session_id)
+        {
+            super::worktrees::cleanup_entered(&source, &summary.session_id).await;
+        }
+        summary
     })?;
     println!(
         "{} · {} in / {} out · ${:.4}",
@@ -72,6 +92,13 @@ pub fn run(
 }
 
 fn start(launch: &LaunchArgs) -> Result<Start, CliError> {
+    if launch.from_pr.is_some()
+        && (launch.resume_last || launch.resume.is_some() || launch.worktree.is_some())
+    {
+        return Err(CliError::usage(
+            "--from-pr opens the picker and cannot be combined with --continue, --resume or --worktree",
+        ));
+    }
     if launch.worktree.is_some() && (launch.resume_last || launch.resume.is_some() || launch.fork) {
         return Err(CliError::usage(
             "--worktree starts a fresh Session and cannot be combined with --continue, --resume or --fork",

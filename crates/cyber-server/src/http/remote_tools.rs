@@ -2,7 +2,7 @@
 //! run in a connected client. The server calls them over the client's JSON-RPC channel
 //! and settles results through the standard tool boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::runtime::{Invocation, RetrySafety, ToolDef, ToolOutcome};
+use crate::runtime::{ClientHook, ClientHooks, Invocation, RetrySafety, ToolDef, ToolOutcome};
 
 struct Registration {
     def: ToolDef,
@@ -19,10 +19,26 @@ struct Registration {
     out: mpsc::Sender<Value>,
 }
 
+/// A client's hook handler (`client-sdk` → Hook callbacks).
+struct HookRegistration {
+    hook: ClientHook,
+    owner: u64,
+    out: mpsc::Sender<Value>,
+}
+
+/// Where a client's answer to one request goes.
+type Answer = oneshot::Sender<Result<String, String>>;
+
 #[derive(Default)]
 pub struct RemoteTools {
     tools: Mutex<HashMap<String, Registration>>,
-    pending: Mutex<HashMap<String, oneshot::Sender<Result<String, String>>>>,
+    /// Hook handlers in registration order; they end with their client's channel.
+    hooks: Mutex<Vec<HookRegistration>>,
+    /// The Sessions each client owns for its hook handlers (`v1.hook.attach`, or created
+    /// over its channel).
+    sessions: Mutex<HashMap<u64, HashSet<String>>>,
+    /// Requests awaiting a client's answer, with the client that must answer them.
+    pending: Mutex<HashMap<String, (u64, Answer)>>,
     next_owner: AtomicU64,
 }
 
@@ -85,12 +101,138 @@ impl RemoteTools {
         Ok(json!({ "registered": name, "registration_id": identity }))
     }
 
-    /// Drop every tool a disconnected client registered; its calls in flight fail.
+    /// Drop every tool, hook and Session a disconnected client registered; its calls and
+    /// hook executions in flight fail as disconnected at once.
     pub fn release(&self, owner: u64) {
         self.tools
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|_, r| r.owner != owner);
+        self.hooks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|r| r.owner != owner);
+        self.sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&owner);
+        // Dropping the senders resolves each waiting receiver with an error.
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, (waiting_on, _)| *waiting_on != owner);
+    }
+
+    /// `v1.hook.attach` `{ session_id }`: this client's hook handlers apply to the Session
+    /// and its descendants.
+    pub fn attach_session(&self, owner: u64, params: &Value) -> Result<Value, String> {
+        let session = params["session_id"].as_str().unwrap_or_default();
+        if session.is_empty() {
+            return Err("session_id: expected a Session ID".into());
+        }
+        self.sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(owner)
+            .or_default()
+            .insert(session.to_owned());
+        Ok(json!({ "attached": session }))
+    }
+
+    /// `v1.hook.register` `{ event, matcher?, timeout? }`: a hook handler served by this
+    /// client until it unregisters or disconnects.
+    pub fn register_hook(
+        &self,
+        owner: u64,
+        out: mpsc::Sender<Value>,
+        params: &Value,
+    ) -> Result<Value, String> {
+        let event = params["event"].as_str().unwrap_or_default();
+        let matcher = match &params["matcher"] {
+            Value::Null => None,
+            Value::String(matcher) => Some(matcher.clone()),
+            _ => return Err("matcher: expected a string".into()),
+        };
+        let timeout = match &params["timeout"] {
+            Value::Null => 60,
+            value => value
+                .as_u64()
+                .and_then(|timeout| u32::try_from(timeout).ok())
+                .ok_or("timeout: expected 1 through 600 seconds")?,
+        };
+        let id = cyber_core::ids::new_id("hkr");
+        // Validates the event, matcher and timeout exactly as dispatch will use them.
+        cyber_core::hooks::HookDefinition::client(event, &id, matcher.clone(), timeout)?;
+        let hook = ClientHook {
+            id: id.clone(),
+            event: event.into(),
+            matcher,
+            timeout,
+        };
+        self.hooks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(HookRegistration { hook, owner, out });
+        Ok(json!({ "registration_id": id, "event": event }))
+    }
+
+    /// `v1.hook.unregister` `{ registration_id }` for one of this client's handlers.
+    pub fn unregister_hook(&self, owner: u64, params: &Value) -> Value {
+        let id = params["registration_id"].as_str().unwrap_or_default();
+        let mut hooks = self.hooks.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = hooks.len();
+        hooks.retain(|r| !(r.owner == owner && r.hook.id == id));
+        json!({ "unregistered": hooks.len() != before })
+    }
+
+    async fn run_client_hook(
+        &self,
+        registration: &str,
+        envelope: Value,
+        timeout: std::time::Duration,
+        cancel: CancellationToken,
+    ) -> Result<Value, String> {
+        let request = cyber_core::ids::new_id("rpc");
+        let (tx, rx) = oneshot::channel();
+        let (out, event) = {
+            // Under the hooks lock, so a concurrent release cannot miss this request.
+            let hooks = self.hooks.lock().unwrap_or_else(PoisonError::into_inner);
+            let found = hooks
+                .iter()
+                .find(|r| r.hook.id == registration)
+                .ok_or("the client that registered this hook disconnected")?;
+            self.pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(request.clone(), (found.owner, tx));
+            (found.out.clone(), found.hook.event.clone())
+        };
+        let call = json!({
+            "jsonrpc": "2.0", "id": request, "method": "hook/execute",
+            "params": { "registration_id": registration, "event": event, "input": envelope },
+        });
+        let answer = async {
+            out.send(call)
+                .await
+                .map_err(|_| "the client that registered this hook disconnected".to_string())?;
+            match rx.await {
+                Ok(Ok(text)) if text.is_empty() => Ok(json!({})),
+                Ok(Ok(text)) => serde_json::from_str(&text)
+                    .map_err(|_| "client hook returned invalid JSON".to_string()),
+                Ok(Err(message)) => Err(format!("client hook failed: {message}")),
+                Err(_) => Err("the client that registered this hook disconnected".into()),
+            }
+        };
+        let result = tokio::select! {
+            _ = cancel.cancelled() => Err("client hook cancelled".into()),
+            _ = tokio::time::sleep(timeout) => Err("client hook timed out".into()),
+            result = answer => result,
+        };
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&request);
+        result
     }
 
     pub fn release_one(&self, owner: u64, name: &str) {
@@ -116,13 +258,13 @@ impl RemoteTools {
 
     /// Run a call in the registering client.
     pub async fn execute(&self, inv: Invocation, cancel: CancellationToken) -> ToolOutcome {
-        let Some(out) = self
+        let Some((owner, out)) = self
             .tools
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&inv.name)
             .filter(|r| r.def.registration == inv.registration)
-            .map(|r| r.out.clone())
+            .map(|r| (r.owner, r.out.clone()))
         else {
             return ToolOutcome::Failed(format!("Stale tool call: {}", inv.name));
         };
@@ -153,7 +295,7 @@ impl RemoteTools {
             self.pending
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .insert(request.clone(), tx);
+                .insert(request.clone(), (owner, tx));
             permit.send(call);
         }
         let outcome = tokio::select! {
@@ -176,7 +318,7 @@ impl RemoteTools {
         let Some(id) = frame["id"].as_str() else {
             return;
         };
-        let Some(tx) = self
+        let Some((_, tx)) = self
             .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -195,6 +337,36 @@ impl RemoteTools {
             (other, _) => Ok(other.to_string()),
         };
         let _ = tx.send(result);
+    }
+}
+
+impl ClientHooks for RemoteTools {
+    fn client_hooks(&self, sessions: &[String]) -> Vec<ClientHook> {
+        let owners: HashSet<u64> = self
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, owned)| sessions.iter().any(|id| owned.contains(id)))
+            .map(|(owner, _)| *owner)
+            .collect();
+        self.hooks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|r| owners.contains(&r.owner))
+            .map(|r| r.hook.clone())
+            .collect()
+    }
+
+    fn execute_client_hook<'a>(
+        &'a self,
+        registration: &'a str,
+        envelope: Value,
+        timeout: std::time::Duration,
+        cancel: CancellationToken,
+    ) -> futures::future::BoxFuture<'a, Result<Value, String>> {
+        Box::pin(self.run_client_hook(registration, envelope, timeout, cancel))
     }
 }
 

@@ -86,6 +86,8 @@ pub enum Start {
     Resume(String),
     /// `--resume` without a value: open the picker.
     Pick,
+    /// `--from-pr <number>`: the picker over the Sessions linked to that pull request.
+    PickPr(u64),
 }
 
 pub struct TuiOptions {

@@ -3,6 +3,7 @@
 //! Background service management, Listener defaults, Local password authentication).
 
 pub mod backup;
+pub mod git_text;
 mod host;
 mod registered_status;
 mod registration;
@@ -212,6 +213,8 @@ impl App {
             Arc::new(NoSnapshots)
         };
         let remote_tools = Arc::new(http::remote_tools::RemoteTools::default());
+        // Connected clients' hook handlers run after every configured one.
+        host.attach_client_hooks(Arc::clone(&remote_tools) as _)?;
         let tools = host::AppHost {
             builtin: Arc::clone(&host),
             remote: Arc::clone(&remote_tools),

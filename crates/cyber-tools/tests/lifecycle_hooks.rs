@@ -739,6 +739,7 @@ async fn turn(flow: &Flow, session: &str) -> cyber_server::runtime::TurnContext 
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     }
 }
 
@@ -832,6 +833,55 @@ async fn public_delegations_run_user_prompt_submit_before_any_record() {
         assert_eq!(prompt["prompt"], secret);
         assert_eq!(prompt["source"], "user");
     }
+}
+
+/// A delegated or forked prompt runs no Turn of its own to bound, so a
+/// UserPromptSubmit `continue: false` refuses it instead of being dropped.
+#[tokio::test]
+async fn user_prompt_submit_continue_false_refuses_prompts_without_a_turn() {
+    let flow = Flow::new(vec![text("never")], false);
+    hooks(
+        &flow,
+        json!({"UserPromptSubmit":[{"hooks":[command(r#"{"continue":false,"stop_reason":"frozen"}"#)]}]}),
+    );
+    let parent = flow.session("default").await;
+    let refused = flow
+        .runtime
+        .start_delegation(&parent, "op_frozen", subtask("inspect"))
+        .await
+        .expect_err("the delegation is refused");
+    assert!(
+        refused.to_string().contains("[hook guard] frozen"),
+        "{refused}"
+    );
+    assert!(
+        flow.runtime
+            .delegation(&parent, "op_frozen")
+            .unwrap()
+            .is_none()
+    );
+    flow.f.write(
+        ".cyber/skills/audit/SKILL.md",
+        "---\nname: audit\ndescription: Audit changes\ncontext: fork\n---\nPRIVATE AUDIT BODY\n",
+    );
+    let plan = flow
+        .f
+        .host
+        .command_plan(&turn(&flow, &parent).await, "audit", "")
+        .await
+        .unwrap()
+        .unwrap();
+    let forked = flow
+        .runtime
+        .admit_user(&parent, plan.admission(None, Delivery::Queue))
+        .await
+        .expect_err("the forked skill is refused");
+    assert!(
+        forked.to_string().contains("[hook guard] frozen"),
+        "{forked}"
+    );
+    assert!(flow.runtime.jobs(Some(&parent)).unwrap().is_empty());
+    assert!(flow.main.requests().is_empty());
 }
 
 #[tokio::test]
@@ -1212,6 +1262,51 @@ async fn session_start_continue_false_admits_context_then_stops_after_the_turn()
         system_texts(&state)
     );
     // A later prompt is not stopped by the consumed SessionStart request.
+    flow.prompt(&session, "again").await;
+    flow.settle(&session).await;
+    assert_eq!(flow.main.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn user_prompt_submit_continue_false_stops_after_the_turn() {
+    let flow = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("never"),
+        ],
+        false,
+    );
+    flow.f.write("a.txt", "safe");
+    // Only the prompt that names the ticket asks to stop.
+    let guard = json!({"type":"command","id":"guard","fail_closed":true,"command":
+        "if grep -q TICKET-7; then printf '%s' '{\"continue\":false,\"stop_reason\":\"ticket closed\",\"additional_context\":\"read only\"}'; fi"});
+    hooks(&flow, json!({"UserPromptSubmit":[{"hooks":[guard]}]}));
+    let mut live = flow.runtime.subscribe();
+    let session = flow.session("default").await;
+    flow.prompt(&session, "work on TICKET-7").await;
+    flow.settle(&session).await;
+    let requests = flow.main.requests();
+    assert_eq!(requests.len(), 1, "the Drain stops after the prompt's Turn");
+    assert!(format!("{:?}", requests[0].messages).contains("[hook guard] read only"));
+    let state = flow.runtime.state(&session).await.unwrap();
+    assert_eq!(
+        state.calls["call_read"].status,
+        cyber_server::runtime::CallStatus::Ok,
+        "the rest of the Turn ran"
+    );
+    assert_eq!(
+        system_texts(&state),
+        ["[hook guard] read only", "[hook guard] ticket closed"]
+    );
+    let events = drain_events(&mut live);
+    assert!(errors(&events).is_empty(), "{:?}", errors(&events));
+    assert!(
+        notices(&events).contains(&"ticket closed".to_string()),
+        "{:?}",
+        notices(&events)
+    );
+    assert!(!flow.runtime.is_running(&session));
+    // The consumed stop does not end the next prompt's Drain.
     flow.prompt(&session, "again").await;
     flow.settle(&session).await;
     assert_eq!(flow.main.requests().len(), 2);

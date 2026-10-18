@@ -7,6 +7,8 @@ mod mcp_http;
 mod mcp_stdio;
 #[path = "../../cyber-tools/tests/support/oauth_as.rs"]
 mod oauth_as;
+#[path = "support/scripted_model.rs"]
+mod scripted_model;
 
 use cyber_app::{App, AppOptions};
 use cyber_core::paths::{DatabaseLocation, Paths};
@@ -922,6 +924,7 @@ fn remote_turn(directory: &Path, session: &str) -> cyber_server::runtime::TurnCo
         mode: "default".into(),
         prefers_apply_patch: false,
         rules: serde_json::Value::Null,
+        worktree: Default::default(),
     }
 }
 
@@ -4922,5 +4925,353 @@ async fn a_failed_server_reconnects_through_the_public_route() {
     stop.send(()).unwrap();
     server.await.unwrap();
     status("connected").await;
+    app.runtime.shutdown().await;
+}
+
+/// A remote server whose `echo` call asks the client to sample, configured through the app
+/// with `mcp.sampling.enabled` and an allowing `mcp_sampling` rule; the small model role is
+/// a local scripted endpoint.
+async fn sampling_app(
+    enabled: bool,
+) -> (
+    mcp_http::McpHttp,
+    scripted_model::ScriptedModel,
+    tempfile::TempDir,
+    std::path::PathBuf,
+    App,
+    String,
+) {
+    let http = mcp_http::McpHttp::start(mcp_http::Behavior {
+        sample: Some(json!({
+            "messages":[{"role":"user","content":{"type":"text","text":"private server input"}}],
+            "maxTokens":42,
+        })),
+        ..mcp_http::Behavior::default()
+    })
+    .await;
+    let model = scripted_model::ScriptedModel::start(sampling_reply);
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    let mut config = model.config();
+    config["providers"]["test"]["models"]["small"] = json!({});
+    config["model_roles"] = json!({"small":"test/small"});
+    config["permissions"] = json!({"mcp_sampling":"allow"});
+    config["mcp"] =
+        json!({"sampling":{"enabled":enabled},"remote":{"type":"remote","url":http.url}});
+    // Providers are read when the app is built.
+    std::fs::create_dir_all(directory.join("config")).unwrap();
+    std::fs::write(directory.join("config/cyber.json"), config.to_string()).unwrap();
+    let app = application(&directory).await;
+    let session = app
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: directory.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    (http, model, root, directory, app, session)
+}
+
+/// `mcp` → Roots and sampling, over a remote Streamable HTTP server and the production
+/// app host: with sampling enabled the client advertises `sampling`, a server's
+/// `sampling/createMessage` is answered by `model_roles.small` and its cost is attributed
+/// to the server.
+#[tokio::test]
+async fn remote_sampling_routes_to_small_model_through_app_host() {
+    let (http, model, _root, directory, app, session) = sampling_app(true).await;
+    let turn = remote_turn(&directory, &session);
+    wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+    let initialize = http.posts("initialize");
+    assert_eq!(
+        initialize[0].body["params"]["capabilities"]["sampling"],
+        json!({})
+    );
+    app.runtime
+        .admit(
+            &session,
+            cyber_server::runtime::Admission::text(
+                "use the server",
+                cyber_server::runtime::Delivery::Queue,
+            ),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            app.runtime.wait_idle(&session).await;
+            let state = app.runtime.state(&session).await.unwrap();
+            if state
+                .inbox
+                .iter()
+                .all(|row| row.status != cyber_server::runtime::InputStatus::Pending)
+                && !app.runtime.is_running(&session)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the Turn did not settle");
+    let requests = model.requests();
+    let sampled: Vec<_> = requests
+        .iter()
+        .filter(|body| {
+            body["messages"]
+                .to_string()
+                .contains("private server input")
+        })
+        .collect();
+    assert_eq!(sampled.len(), 1, "{requests:?}");
+    assert_eq!(sampled[0]["model"], "small");
+    assert!(
+        sampled[0]
+            .get("tools")
+            .is_none_or(|tools| tools.as_array().is_none_or(Vec::is_empty))
+    );
+    // The tool result handed back to the main model carries the small model's answer.
+    let last = requests
+        .iter()
+        .rev()
+        .find(|body| body["model"] == "main")
+        .unwrap();
+    let transcript = last["messages"].to_string();
+    assert!(transcript.contains("sampled answer"), "{transcript}");
+    assert!(transcript.contains("small"), "{transcript}");
+    let events = app.store.read_events(&session, -1, 500).unwrap().events;
+    let usage: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event.kind == "usage.recorded.1"
+                && event.data["purpose"]
+                    .as_str()
+                    .is_some_and(|purpose| purpose.starts_with("mcp_sampling"))
+        })
+        .collect();
+    assert_eq!(usage.len(), 1, "{usage:?}");
+    assert_eq!(usage[0].data["purpose"], "mcp_sampling:remote");
+    assert_eq!(usage[0].data["call_id"], "call_sample");
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+/// The main model calls the remote `echo` once, then answers; the small model answers
+/// sampling requests.
+fn sampling_reply(body: &serde_json::Value) -> serde_json::Value {
+    if body["model"] == "small" {
+        return json!({"content":"sampled answer"});
+    }
+    let last = body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .cloned()
+        .unwrap_or_default();
+    if last["role"] == "user" && last["content"].to_string().contains("use the server") {
+        return json!({"tool_calls":[{"index":0,"id":"call_sample","type":"function",
+            "function":{"name":"mcp__remote__echo","arguments":"{\"text\":\"sample\"}"}}]});
+    }
+    json!({"content":"done"})
+}
+
+/// `mcp` → Roots and sampling ("Sampling disabled by default"), over a remote server and
+/// the production app host: without `mcp.sampling.enabled` the client does not advertise
+/// `sampling`, and a server's `sampling/createMessage` fails with method-not-found without
+/// reaching any model.
+#[tokio::test]
+async fn remote_sampling_disabled_returns_method_not_found() {
+    use cyber_server::runtime::ToolOutcome;
+    let (http, model, _root, directory, app, session) = sampling_app(false).await;
+    let turn = remote_turn(&directory, &session);
+    let echo = wait_definition(&app, &turn, "mcp__remote__echo", None).await;
+    let initialize = http.posts("initialize");
+    assert!(
+        initialize[0].body["params"]["capabilities"]
+            .get("sampling")
+            .is_none(),
+        "{}",
+        initialize[0].body
+    );
+    let output = match invoke_remote(&app, &turn, &echo, "sample").await {
+        ToolOutcome::Ok(output) => output,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let error: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(error["code"], -32601, "{error}");
+    assert!(model.requests().is_empty());
+    let events = app.store.read_events(&session, -1, 500).unwrap().events;
+    assert!(!events.iter().any(|event| event.kind == "usage.recorded.1"));
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+/// Run `name`, an ignored test of this binary, in a child process whose
+/// `CYBER_MANAGED_POLICY_DIR` is a fresh directory the child writes its policy into. The
+/// App reads the managed policy through the process environment, which a test cannot
+/// change for its own (multi-threaded) process.
+fn run_with_managed_policy(name: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            name,
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(cyber_core::config::MANAGED_POLICY_DIR_ENV, dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The managed policy directory a [`run_with_managed_policy`] child writes into; `None`
+/// when the ignored test runs directly.
+fn managed_policy_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os(cyber_core::config::MANAGED_POLICY_DIR_ENV).map(Into::into)
+}
+
+/// `GET /api/v1/mcp` for `directory` through the App's router.
+async fn mcp_status_at(app: &App, directory: &Path) -> serde_json::Value {
+    let (url, stop, server) = listener(app).await;
+    let status = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get(url.replace("/mcp/close", "/mcp"))
+        .basic_auth("cyber", Some("mcp-test-password"))
+        .header(
+            "x-cyber-directory",
+            urlencoding(&directory.display().to_string()),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    stop.send(()).unwrap();
+    server.await.unwrap();
+    status
+}
+
+fn urlencoding(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~/".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+/// `mcp` → Organization MCP controls ("Denylisted server"), through the production App
+/// and `GET /api/v1/mcp`: a configured server matching a denied URL pattern reports
+/// `failed` with `blocked by organization policy` and is never contacted, while a server
+/// the pattern does not match connects.
+#[tokio::test]
+async fn denylisted_url_pattern_is_never_contacted() {
+    run_with_managed_policy("denylisted_url_pattern_child");
+}
+
+#[tokio::test]
+#[ignore = "runs in a child process with a managed policy directory"]
+async fn denylisted_url_pattern_child() {
+    let Some(policy) = managed_policy_dir() else {
+        return;
+    };
+    let denied = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+    let allowed = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+    // `http://127.0.0.1:<port>/*` matches only the denied fixture's endpoint.
+    let pattern = format!("{}*", denied.url.trim_end_matches("mcp"));
+    std::fs::write(
+        policy.join("cyber-policy.json"),
+        json!({"policy":{"mcp":{"deny":[{"url":pattern}]}}}).to_string(),
+    )
+    .unwrap();
+    let config = json!({"mcp":{
+        "blocked":{"type":"remote","url":denied.url},
+        "allowed":{"type":"remote","url":allowed.url},
+    }});
+    let (_root, directory, app, _session) = configured_app(config).await;
+    wait_running(&app, &directory).await;
+    let status = mcp_status_at(&app, &directory).await;
+    let server = |name: &str| {
+        status["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|server| server["name"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} missing: {status}"))
+    };
+    let blocked = server("blocked");
+    assert_eq!(blocked["status"], "failed", "{blocked}");
+    assert_eq!(blocked["error"], "blocked by organization policy");
+    assert_eq!(server("allowed")["status"], "connected", "{status}");
+    let turn = remote_turn(&directory, &_session);
+    assert!(
+        !app.host
+            .definitions(&turn)
+            .iter()
+            .any(|definition| definition.spec.name.starts_with("mcp__blocked__"))
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(denied.requests().is_empty(), "{:?}", denied.requests());
+    assert!(!allowed.requests().is_empty());
+    app.host.close_mcp_location(&directory).await.unwrap();
+    app.runtime.shutdown().await;
+}
+
+/// `mcp` → Organization MCP controls: a server in the managed policy document is
+/// provided to every Location, replaces a user definition of the same name, and starts
+/// without checkout approval.
+#[tokio::test]
+async fn managed_policy_server_is_provided_to_every_location() {
+    run_with_managed_policy("managed_policy_server_child");
+}
+
+#[tokio::test]
+#[ignore = "runs in a child process with a managed policy directory"]
+async fn managed_policy_server_child() {
+    let Some(policy) = managed_policy_dir() else {
+        return;
+    };
+    let http = mcp_http::McpHttp::start(mcp_http::Behavior::default()).await;
+    std::fs::write(
+        policy.join("cyber-policy.json"),
+        json!({"mcp":{"corp":{"type":"remote","url":http.url}}}).to_string(),
+    )
+    .unwrap();
+    // The user's own `corp` points elsewhere; the managed definition wins.
+    let config =
+        json!({"mcp":{"corp":{"type":"remote","url":format!("{}/mcp", rejecting_provider())}}});
+    let (_root, first, app, _session) = configured_app(config).await;
+    let second = first.join("other-checkout");
+    std::fs::create_dir_all(second.join(".git")).unwrap();
+    // One Location at a time: the fixture serves a single live MCP session.
+    for (index, directory) in [&first, &second].into_iter().enumerate() {
+        if index > 0 {
+            open_session(&app, directory).await;
+        }
+        wait_running(&app, directory).await;
+        let status = mcp_status_at(&app, directory).await;
+        let corp = &status["data"][0];
+        assert_eq!(corp["name"], "corp", "{status}");
+        assert_eq!(corp["status"], "connected", "{status}");
+        assert_eq!(corp["tools"], json!(["mcp__corp__echo"]));
+        app.host.close_mcp_location(directory).await.unwrap();
+    }
+    assert_eq!(http.posts("initialize").len(), 2);
     app.runtime.shutdown().await;
 }

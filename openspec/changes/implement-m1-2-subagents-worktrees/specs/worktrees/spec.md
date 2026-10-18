@@ -7,6 +7,11 @@
 - **WHEN** the user runs `cyber worktree remove spike` and it has uncommitted changes
 - **THEN** the command fails unless `--force` is given
 
+#### Scenario: Prune removes only older clean worktrees
+- **WHEN** the user runs `cyber worktree prune` with ready worktrees of different ages and states
+- **THEN** only clean worktrees with no commits beyond their base whose ownership is older than 14 days (or `--older-than <days>`) are removed with their branches
+- **AND** a dirty, recent or in-use worktree is kept
+
 #### Scenario: Listing reports status and all owning Sessions
 - **WHEN** a client lists worktrees from either the primary or a managed linked checkout
 - **THEN** ready entries include dirty state and commits ahead/behind their immutable creation base
@@ -43,6 +48,22 @@
 #### Scenario: Unchanged worktree removed
 - **WHEN** a Session in a fresh worktree exits without changes
 - **THEN** the worktree directory and branch are removed
+
+#### Scenario: Top-level Session exit
+- **WHEN** `cyber exec --worktree` or `cyber --worktree` exits, or a client calls `POST /api/v1/sessions/{id}/worktree/cleanup` for an idle top-level Session started in a managed worktree
+- **THEN** the same cleanup as for an isolated child removes a clean worktree and its branch
+- **AND** a kept worktree is reported with its path, branch and reason
+- **AND** with `worktrees.cleanup: ask` and no client left to confirm, the worktree is kept
+
+#### Scenario: Session ends in an entered worktree
+- **WHEN** `cyber exec`, the TUI or a client's `POST /api/v1/sessions/{id}/worktree/cleanup` ends an idle top-level Session that entered a worktree with `enter_worktree` and did not exit it
+- **THEN** the Session is returned to the Location it entered from, as by `exit_worktree`, without a Turn
+- **AND** a clean worktree it created is removed with its branch, and a changed or existing one is kept and reported
+- **AND** when its worktree was already removed, the Session is still returned, so it can run again
+
+#### Scenario: Entered Sessions keep the checkout
+- **WHEN** the exit cleanup of an isolated child, a top-level Session started in a worktree, or a Session that created it with `enter_worktree` finds a clean checkout that another Session entered and has not exited, idle or not
+- **THEN** the checkout and its branch are kept with reason `worktree entered by <session>`
 
 #### Scenario: Required removal activity admission
 - **WHEN** a managed removal is admitted under the shared repository lock
@@ -267,6 +288,43 @@
 - **WHEN** two processes operate on different repositories
 - **THEN** a worktree lock in one repository does not prevent acquiring the other
 
+
+### Requirement: Enter and exit tools
+(P1) The system SHALL provide `enter_worktree { name?, path? }`, which creates or switches the current Session into a worktree and changes the Location, and `exit_worktree { keep?: boolean }`, which returns to the original Location. Both SHALL be gated by the `worktree` permission. `exit_worktree` SHALL be unavailable to Sessions that were started isolated.
+
+#### Scenario: Model enters a worktree
+- **WHEN** the model calls `enter_worktree` with name `spike`
+- **THEN** subsequent tool calls resolve paths in the `spike` worktree
+- **AND** calls the model issued in the same step after `enter_worktree` (or `exit_worktree`) are not run against the previous Location: they settle as interrupted, and the model issues them again from the new one
+
+#### Scenario: Entered Location stays fenced
+- **WHEN** a Session enters a worktree during a Turn
+- **THEN** the Turn's Location lease moves to the worktree, so removal of the worktree is refused until the Turn settles or the Session exits it
+- **AND** while the Session stays entered, even idle, `cyber worktree remove`, `DELETE /api/v1/worktrees/{name}` and `cyber worktree prune` refuse to remove that worktree without `--force`
+- **AND** `--force` first returns each idle entered Session to the Location it entered from, and still refuses while such a Session runs
+- **AND** the move is recorded durably, so replay and attached clients follow it
+
+#### Scenario: Exit removes an unchanged worktree
+- **WHEN** the model calls `exit_worktree` without `keep` after entering a worktree it created and made no changes in
+- **THEN** the Session returns to its original Location and the worktree and its branch are removed
+- **AND** a worktree with changes, `keep: true`, or an existing worktree the Session entered rather than created (reported as kept with reason `entered an existing worktree`) is kept
+
+#### Scenario: Tools follow the Session's checkout
+- **WHEN** tools are materialized for a Turn
+- **THEN** `enter_worktree` is offered only outside a managed checkout and `exit_worktree` only after entering one
+- **AND** an isolated child or a Session started in a worktree is offered neither, and a call to either is refused
+- **AND** an `enter_worktree` call from such a Session, from an entered one, or issued alongside another call in flight is refused before any worktree is discovered or created, and no permission prompt, `WorktreeCreate` hook or setup command runs
+
+### Requirement: Worktree events
+(P1) The system SHALL publish `worktree.created.1`, `worktree.removed.1` and `worktree.kept.1` with `{ name, path, branch, session_id? }`.
+
+#### Scenario: Kept worktree announced
+- **WHEN** a dirty worktree is kept on Session exit
+- **THEN** `worktree.kept.1` is published with its path and branch
+
+#### Scenario: Lifecycle events reach the requesting Location
+- **WHEN** a client creates a worktree Session, a Session exit removes or keeps its worktree, or a user removes a worktree
+- **THEN** the matching event streams live on the instance stream of the Location that asked, with the owning `session_id` when a Session is involved
 
 ## ADDED Requirements
 

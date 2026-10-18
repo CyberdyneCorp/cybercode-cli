@@ -121,6 +121,18 @@ export interface Operations {
     body: undefined;
     response: S.Located_FileSearch;
   };
+  "v1.git.commitMessage": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_CommitMessage;
+  };
+  "v1.git.prDescription": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.PrDescriptionRequest;
+    response: S.Located_PrDescription;
+  };
   "v1.health.get": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -276,6 +288,18 @@ export interface Operations {
     };
     body: undefined;
     response: S.Located_Nullable_MemoryRequestStatus;
+  };
+  "v1.memory.setSettings": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.SetMemorySettings;
+    response: S.Located_MemorySettingsView;
+  };
+  "v1.memory.settings": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_MemorySettingsView;
   };
   "v1.message.get": {
     path: { sessionID: string; messageID: string };
@@ -486,6 +510,7 @@ export interface Operations {
       search?: QueryValue;
       children?: QueryValue;
       archived?: QueryValue;
+      pr?: QueryValue;
     };
     body: undefined;
     response: S.Located_Page_SessionRow;
@@ -717,6 +742,12 @@ export interface Operations {
     body: undefined;
     response: S.WorkflowRun;
   };
+  "v1.worktree.cleanup": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_WorktreeCleanup;
+  };
   "v1.worktree.create": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -740,6 +771,14 @@ export interface Operations {
     query: Record<string, never>;
     body: S.SetupRecoveryRequest;
     response: S.CreatedWorktree;
+  };
+  "v1.worktree.remove": {
+    path: { name: string };
+    query: {
+      force?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_RemovedWorktree;
   };
 }
 
@@ -848,6 +887,30 @@ export const operations = {
     pathParams: [],
     query: ["query", "limit", "session_id"],
     body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.git.commitMessage": {
+    tag: "git",
+    name: "commitMessage",
+    method: "POST",
+    path: "/api/v1/git/commit-message",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.git.prDescription": {
+    tag: "git",
+    name: "prDescription",
+    method: "POST",
+    path: "/api/v1/git/pr-description",
+    pathParams: [],
+    query: [],
+    body: "optional",
     located: true,
     unwrap: false,
     stream: false,
@@ -1135,6 +1198,30 @@ export const operations = {
     path: "/api/v1/memory/requests",
     pathParams: [],
     query: ["scope", "key"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.setSettings": {
+    tag: "memory",
+    name: "setSettings",
+    method: "PUT",
+    path: "/api/v1/memory/settings",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.memory.settings": {
+    tag: "memory",
+    name: "settings",
+    method: "GET",
+    path: "/api/v1/memory/settings",
+    pathParams: [],
+    query: [],
     body: "none",
     located: true,
     unwrap: false,
@@ -1506,7 +1593,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions",
     pathParams: [],
-    query: ["limit", "cursor", "search", "children", "archived"],
+    query: ["limit", "cursor", "search", "children", "archived", "pr"],
     body: "none",
     located: true,
     unwrap: false,
@@ -1920,6 +2007,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.worktree.cleanup": {
+    tag: "worktree",
+    name: "cleanup",
+    method: "POST",
+    path: "/api/v1/sessions/{id}/worktree/cleanup",
+    pathParams: ["id"],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.worktree.create": {
     tag: "worktree",
     name: "create",
@@ -1968,6 +2067,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.worktree.remove": {
+    tag: "worktree",
+    name: "remove",
+    method: "DELETE",
+    path: "/api/v1/worktrees/{name}",
+    pathParams: ["name"],
+    query: ["force"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
 } as const satisfies Record<string, OperationSpec>;
 
 /** Typed methods grouped by OpenAPI tag, bound to a `Caller`. */
@@ -2009,6 +2120,14 @@ export function createGroups(caller: Caller) {
       /** Fuzzy path search over the project's non-ignored files (`GET /api/v1/files/search`) */
       search: (query?: Operations["v1.fs.search"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.search"]["response"]> =>
         caller.call("v1.fs.search", { query }, options),
+    },
+    git: {
+      /** Generate a conventional commit message for the staged diff (`POST /api/v1/git/commit-message`) */
+      commitMessage: (options?: RequestOptions): Promise<Operations["v1.git.commitMessage"]["response"]> =>
+        caller.call("v1.git.commitMessage", {}, options),
+      /** Draft a pull request title and body for base..HEAD (`POST /api/v1/git/pr-description`) */
+      prDescription: (body?: Operations["v1.git.prDescription"]["body"], options?: RequestOptions): Promise<Operations["v1.git.prDescription"]["response"]> =>
+        caller.call("v1.git.prDescription", { body }, options),
     },
     health: {
       /** Health and version (unauthenticated) (`GET /api/v1/health`) */
@@ -2095,6 +2214,12 @@ export function createGroups(caller: Caller) {
       /** Look up durable save/delete request evidence without execution (`GET /api/v1/memory/requests`) */
       requestStatus: (query?: Operations["v1.memory.requestStatus"]["query"], options?: RequestOptions): Promise<Operations["v1.memory.requestStatus"]["response"]> =>
         caller.call("v1.memory.requestStatus", { query }, options),
+      /** Persist /memory on, off or readonly for the next Safe Boundary (`PUT /api/v1/memory/settings`) */
+      setSettings: (body: Operations["v1.memory.setSettings"]["body"], options?: RequestOptions): Promise<Operations["v1.memory.setSettings"]["response"]> =>
+        caller.call("v1.memory.setSettings", { body }, options),
+      /** Read the Location's effective memory toggle (`GET /api/v1/memory/settings`) */
+      settings: (options?: RequestOptions): Promise<Operations["v1.memory.settings"]["response"]> =>
+        caller.call("v1.memory.settings", {}, options),
     },
     message: {
       /** Get a message (`GET /api/v1/sessions/{sessionID}/messages/{messageID}`) */
@@ -2316,6 +2441,9 @@ export function createGroups(caller: Caller) {
         caller.call("v1.workflow.stop", { path: { id } }, options),
     },
     worktree: {
+      /** Remove a Session's clean worktree on exit, or keep it and say why (`POST /api/v1/sessions/{id}/worktree/cleanup`) */
+      cleanup: (id: string, options?: RequestOptions): Promise<Operations["v1.worktree.cleanup"]["response"]> =>
+        caller.call("v1.worktree.cleanup", { path: { id } }, options),
       /** Create a managed worktree Session and run setup (`POST /api/v1/worktrees`) */
       create: (body: Operations["v1.worktree.create"]["body"], options?: RequestOptions): Promise<Operations["v1.worktree.create"]["response"]> =>
         caller.call("v1.worktree.create", { body }, options),
@@ -2328,6 +2456,9 @@ export function createGroups(caller: Caller) {
       /** Explicitly retry a settled child setup failure or continue undispatched steps (`POST /api/v1/sessions/{id}/children/{child}/setup`) */
       recoverChildSetup: (id: string, child: string, body: Operations["v1.worktree.recoverChildSetup"]["body"], options?: RequestOptions): Promise<Operations["v1.worktree.recoverChildSetup"]["response"]> =>
         caller.call("v1.worktree.recoverChildSetup", { path: { id, child }, body }, options),
+      /** Remove a managed worktree and its branch; dirty ones need force (`DELETE /api/v1/worktrees/{name}`) */
+      remove: (name: string, query?: Operations["v1.worktree.remove"]["query"], options?: RequestOptions): Promise<Operations["v1.worktree.remove"]["response"]> =>
+        caller.call("v1.worktree.remove", { path: { name }, query }, options),
     },
   };
 }

@@ -715,6 +715,132 @@ async fn read_event_prefix(socket: &mut tokio::net::TcpStream, needle: &[u8]) ->
     .unwrap()
 }
 
+fn git_output(directory: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(directory)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// POST `/api/v1/worktrees` from `repo` and return the created body.
+async fn create_worktree(
+    application: &App,
+    repo: &std::path::Path,
+    name: &str,
+) -> serde_json::Value {
+    use axum::{
+        body::Body,
+        http::{Method, Request},
+    };
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("http://cyber.internal/api/v1/worktrees")
+        .header("x-cyber-directory", repo.display().to_string())
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({"name": name, "session": {"model": "test/main"}}).to_string(),
+        ))
+        .unwrap();
+    let response = application.embedded().request(request).await;
+    let status = response.status();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(
+        body["data"]["worktree"]["path"],
+        body["data"]["session"]["directory"]
+    );
+    body
+}
+
+fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    left.canonicalize().unwrap() == right.canonicalize().unwrap()
+}
+
+#[tokio::test]
+async fn public_worktree_creation_honours_default_and_custom_root_prefix_and_base() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git_output(&repo, &["init", "--quiet"]);
+    git_output(&repo, &["config", "user.name", "Worktree"]);
+    git_output(&repo, &["config", "user.email", "test@example.invalid"]);
+    git_output(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("tracked"), "first").unwrap();
+    git_output(&repo, &["add", "tracked"]);
+    git_output(&repo, &["commit", "--quiet", "-m", "first"]);
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    std::fs::write(repo.join("tracked"), "second").unwrap();
+    git_output(&repo, &["commit", "--quiet", "-am", "second"]);
+    let head = git_output(&repo, &["rev-parse", "HEAD"]);
+    let application = app(&root).await;
+
+    // Defaults: `<data>/worktrees/<project_id>/<name>`, branch `cyber/<name>`, current HEAD.
+    let created = create_worktree(&application, &repo, "plain").await;
+    let path = std::path::PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
+    assert_eq!(path.file_name().unwrap(), "plain");
+    assert!(same_path(
+        path.parent().unwrap().parent().unwrap(),
+        &root.join("data").join("worktrees")
+    ));
+    assert_eq!(
+        git_output(&path, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "cyber/plain"
+    );
+    assert_eq!(git_output(&path, &["rev-parse", "HEAD"]), head);
+
+    // A relative root resolves against the repository root; prefix and base apply.
+    std::fs::write(
+        root.join("config").join("cyber.jsonc"),
+        serde_json::json!({"worktrees": {"root": "../wt", "branch_prefix": "team/", "base": first}})
+            .to_string(),
+    )
+    .unwrap();
+    let created = create_worktree(&application, &repo, "custom").await;
+    let path = std::path::PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
+    assert!(same_path(&path, &root.join("wt").join("custom")));
+    assert_eq!(
+        git_output(&path, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "team/custom"
+    );
+    assert_eq!(git_output(&path, &["rev-parse", "HEAD"]), first);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/heads/team/custom"]),
+        first
+    );
+
+    // Names outside `^[a-z0-9][a-z0-9._-]{0,62}$` are refused before any checkout.
+    use axum::{
+        body::Body,
+        http::{Method, Request},
+    };
+    let response = application
+        .embedded()
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri("http://cyber.internal/api/v1/worktrees")
+                .header("x-cyber-directory", repo.display().to_string())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"name": "Bad_Name", "session": {}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), 400);
+    assert!(!root.join("wt").join("Bad_Name").exists());
+    application.runtime.shutdown().await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn public_worktree_creation_streams_setup_and_retains_failed_session() {
@@ -2122,6 +2248,130 @@ fn read_json_request(stream: &mut std::net::TcpStream) -> Option<serde_json::Val
     }
 }
 
+/// `tool-registry` → Eager execution during streaming through the production App and
+/// its OpenAI-compatible adapter: the first of two streamed calls is durable as soon as
+/// the second one starts, while the provider stream is still open.
+#[tokio::test]
+async fn openai_compatible_call_is_durable_while_its_stream_is_still_open() {
+    use cyber_server::runtime::{Admission, CreateSession, Delivery};
+    use serde_json::json;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::write(root.join("a.txt"), "first file").unwrap();
+    std::fs::write(root.join("b.txt"), "second file").unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let release = Arc::new(AtomicBool::new(false));
+    let open = release.clone();
+    let provider = std::thread::spawn(move || {
+        let chunk = |delta: serde_json::Value, finish: Option<&str>| {
+            format!(
+                "data: {}\n\n",
+                json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+            )
+        };
+        let read = |index: u32, id: &str, path: &str| {
+            json!({"tool_calls":[{"index":index,"id":id,"type":"function",
+                "function":{"name":"read","arguments":json!({"path":path}).to_string()}}]})
+        };
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let Some(body) = read_json_request(&mut stream) else {
+                continue;
+            };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+            );
+            let answered = body["messages"].to_string().contains("\"role\":\"tool\"");
+            if !body["tools"].is_array() || answered {
+                let _ = write!(
+                    stream,
+                    "{}data: [DONE]\n\n",
+                    chunk(json!({"content":"done"}), Some("stop"))
+                );
+                if answered {
+                    return;
+                }
+                continue;
+            }
+            let _ = write!(
+                stream,
+                "{}{}",
+                chunk(read(0, "call_a", "a.txt"), None),
+                chunk(read(1, "call_b", "b.txt"), None)
+            );
+            let _ = stream.flush();
+            while !open.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let _ = write!(
+                stream,
+                "{}data: [DONE]\n\n",
+                chunk(json!({}), Some("tool_calls"))
+            );
+        }
+    });
+    let config = paths(&root).config;
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("cyber.json"),
+        json!({
+            "providers":{"test":{"api":{"type":"openai-compatible","url":url,"settings":{"auth":"none"}},
+                                 "models":{"main":{}}}},
+            "permissions":"allow",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let application = app(&root).await;
+    let id = application
+        .runtime
+        .create_session(CreateSession {
+            directory: root.display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    application
+        .runtime
+        .admit(&id, Admission::text("read both", Delivery::Queue))
+        .await
+        .unwrap();
+    let called = |store: &cyber_store::Store| -> Vec<String> {
+        store
+            .read_events(&id, -1, 500)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter(|e| e.kind == "session.tool.called.1")
+            .map(|e| e.data["call_id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let early = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let calls = called(&application.store);
+            if !calls.is_empty() {
+                break calls;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("no call became durable while the stream was open");
+    assert_eq!(early, ["call_a"], "only the completed call is recorded");
+    assert!(!release.load(Ordering::SeqCst));
+    release.store(true, Ordering::SeqCst);
+    application.runtime.wait_idle(&id).await;
+    assert_eq!(called(&application.store), ["call_a", "call_b"]);
+    application.runtime.shutdown().await;
+    provider.join().unwrap();
+}
+
 /// A blocking local HTTP endpoint: every JSON request body is recorded and
 /// answered with `respond(body)` as `(content type, body)`.
 struct LocalEndpoint {
@@ -2233,6 +2483,160 @@ fn git(repo: &std::path::Path, args: &[&str]) {
         .status()
         .unwrap();
     assert!(status.success(), "git {args:?}");
+}
+
+/// An OpenAI-compatible model: a user turn asking to "delegate twice" gets two
+/// parallel `agent` calls for `explore`; everything else a short text answer.
+fn delegating_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let tools = body["tools"]
+        .as_array()
+        .is_some_and(|tools| !tools.is_empty());
+    let last = body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .cloned()
+        .unwrap_or_default();
+    let delegate =
+        tools && last["role"] == "user" && last["content"].to_string().contains("delegate twice");
+    let call = |index: u32, id: &str| {
+        let arguments = json!({"prompt":"inspect","agent":"explore","description":"Inspect the repository quickly"});
+        json!({"index":index,"id":id,"type":"function","function":{"name":"agent","arguments":arguments.to_string()}})
+    };
+    let (delta, finish) = if delegate {
+        (
+            json!({"tool_calls":[call(0, "call_a"), call(1, "call_b")]}),
+            "tool_calls",
+        )
+    } else {
+        (json!({"content":"done"}), "stop")
+    };
+    let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+/// Through the production App over HTTP: the `agent` description sent to the
+/// provider lists the permitted subagents (`agents-subagents` → Agent tool
+/// catalogue), and a spawn waiting for an `agents.max_concurrent` slot streams
+/// `session.tool.progress` `queued` then `running` (→ Concurrency cap).
+#[tokio::test]
+async fn agent_catalogue_and_queued_progress_reach_http_clients() {
+    use futures::StreamExt;
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let provider = LocalEndpoint::start(delegating_model);
+    let paths = paths(&root);
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.json"),
+        json!({
+            "providers":{"test":{"api":{"type":"openai-compatible","url":format!("{}/v1",provider.url),"settings":{"auth":"none"}},
+                                 "models":{"main":{}}}},
+            "permissions":{"agent":{"explore":"allow","general":"deny"}},
+            "agents":{"max_concurrent":1},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let application = app(&root).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let post = |path: String, body: Value| {
+        client
+            .post(format!("{api}{path}"))
+            .header("x-cyber-directory", repo.display().to_string())
+            .basic_auth("cyber", Some("test-password-123456"))
+            .json(&body)
+            .send()
+    };
+    let created: Value = post("/sessions".into(), json!({"model":"test/main"}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    let events = client
+        .get(format!("{api}/sessions/{id}/events"))
+        .basic_auth("cyber", Some("test-password-123456"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), 200);
+    let mut events = events.bytes_stream();
+    let response = post(
+        format!("/sessions/{id}/prompt"),
+        json!({"parts":[{"type":"text","text":"delegate twice"}]}),
+    )
+    .await
+    .unwrap();
+    assert!(response.status().is_success());
+    let mut stream = String::new();
+    let mut progress = Vec::new();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while progress.len() < 2 {
+            let chunk = events.next().await.unwrap().unwrap();
+            stream.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(end) = stream.find("\n\n") {
+                let frame: String = stream.drain(..end + 2).collect();
+                if !frame.contains("event: session.tool.progress") {
+                    continue;
+                }
+                let data = frame
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data:"))
+                    .unwrap();
+                let envelope: Value = serde_json::from_str(data.trim()).unwrap();
+                progress.push(envelope["data"]["status"].as_str().unwrap().to_owned());
+                assert_eq!(envelope["data"]["session_id"], id.as_str());
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no queued progress: {progress:?}"));
+    assert_eq!(progress, ["queued", "running"]);
+    application.runtime.wait_idle(&id).await;
+
+    let parent = provider
+        .seen()
+        .into_iter()
+        .find(|body| {
+            body["tools"].is_array() && body["messages"].to_string().contains("delegate twice")
+        })
+        .unwrap();
+    let description = parent["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "agent")
+        .map(|tool| tool["function"]["description"].as_str().unwrap().to_owned())
+        .unwrap();
+    assert!(
+        description.ends_with(
+            "Available agents:\n\
+             - explore: Explore code and answer questions without changing files\n\
+             - reviewer: Review changes and report structured findings without modifying files"
+        ),
+        "{description}"
+    );
+    let _ = stop.send(());
+    server.await.unwrap().unwrap();
+    application.runtime.shutdown().await;
 }
 
 /// The production app host emits runtime-owned lifecycle hooks (`hooks` →
@@ -2442,6 +2846,102 @@ async fn application_emits_runtime_lifecycle_hooks_with_session_identity() {
     for event in children {
         assert_eq!(event["parent_session_id"], json!(session), "{event}");
     }
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}
+
+/// The production app host emits `Setup` for the first root Session of a Location
+/// and `ConfigChange` at the Safe Boundary after the Location configuration changed
+/// (`hooks` → Supported events), driven only through the HTTP API.
+#[tokio::test]
+async fn application_emits_setup_and_config_change_hooks() {
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let provider = LocalEndpoint::start(lifecycle_model);
+    let recorder = LocalEndpoint::start(|_| ("application/json", "{}".into()));
+    let hook = json!({"type":"http","url":format!("{}/hook",recorder.url),"id":"recorder"});
+    let hooks = json!({"Setup":[{"hooks":[hook.clone()]}],"ConfigChange":[{"hooks":[hook]}]});
+    let paths = paths(&root);
+    paths.ensure().unwrap();
+    let config_path = paths.config.join("cyber.json");
+    let mut config = json!({
+        "providers":{"test":{"api":{"type":"openai-compatible","url":format!("{}/v1",provider.url),"settings":{"auth":"none"}},
+                             "models":{"main":{}}}},
+        "hooks":hooks,
+    });
+    std::fs::write(&config_path, config.to_string()).unwrap();
+    let application = app(&root).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let call = |path: String, body: Value| {
+        let request = client
+            .post(format!("{api}{path}"))
+            .header("x-cyber-directory", repo.display().to_string())
+            .basic_auth("cyber", Some("test-password-123456"))
+            .json(&body);
+        async move {
+            let response = request.send().await.unwrap();
+            let status = response.status();
+            let text = response.text().await.unwrap();
+            assert!(status.is_success(), "{path}: {status} {text}");
+            serde_json::from_str::<Value>(&text).unwrap_or(Value::Null)
+        }
+    };
+    let create = || call("/sessions".into(), json!({"model":"test/main"}));
+    let first = create().await["data"]["id"].as_str().unwrap().to_owned();
+    let second = create().await["data"]["id"].as_str().unwrap().to_owned();
+    let prompt = |session: &str| {
+        call(
+            format!("/sessions/{session}/prompt"),
+            json!({"parts":[{"type":"text","text":"hello"}]}),
+        )
+    };
+    prompt(&first).await;
+    application.runtime.wait_idle(&first).await;
+    // A configuration edit between Turns reaches the next Safe Boundary.
+    config["compaction"] = json!({"keep":{"tokens":0}});
+    std::fs::write(&config_path, config.to_string()).unwrap();
+    prompt(&first).await;
+    application.runtime.wait_idle(&first).await;
+
+    let events = recorder.seen();
+    let of = |kind: &str| -> Vec<&Value> {
+        events
+            .iter()
+            .filter(|event| event["event"] == kind)
+            .collect()
+    };
+    let setup = of("Setup");
+    assert_eq!(
+        setup.len(),
+        1,
+        "only the first Session of the Location: {events:?}"
+    );
+    assert_eq!(setup[0]["session_id"], json!(first));
+    assert_eq!(setup[0]["trigger"], "first_session");
+    let location = std::path::Path::new(setup[0]["location"]["directory"].as_str().unwrap());
+    assert_eq!(location.canonicalize().unwrap(), repo);
+    assert!(
+        of("Setup")
+            .iter()
+            .all(|event| event["session_id"] != json!(second))
+    );
+    let changed = of("ConfigChange");
+    assert_eq!(changed.len(), 1, "{events:?}");
+    assert_eq!(changed[0]["session_id"], json!(first));
+    assert_ne!(changed[0]["digest"], changed[0]["previous_digest"]);
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
 }
@@ -3414,6 +3914,547 @@ async fn command_shell_injection_runs_sandboxed_and_honours_permissions() {
     fixture.close().await;
 }
 
+/// `skills-commands` → Shell output injection ("a forked skill SHALL expand before its text
+/// is handed to the child"), through the production app host and `POST
+/// /sessions/:id/command`: the injection runs once in the parent's admission, the child
+/// receives the substituted text, and neither the child nor a retry runs it again.
+#[tokio::test]
+async fn forked_skill_shell_injection_expands_once_before_the_child() {
+    use serde_json::json;
+    let fixture = TemplateApp::start(json!({"*":"allow","bash":{"*":"allow"}}), &[]).await;
+    let skill = fixture.repo.join(".cyber/skills/audit/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill,
+        "---\nname: audit\ndescription: Audit\ncontext: fork\n---\nForked: !`echo run >> fork-marker.txt && echo expanded-once`\n",
+    )
+    .unwrap();
+    fixture
+        .application
+        .host
+        .trust_template(&fixture.repo, "audit")
+        .unwrap();
+    let (code, receipt) = fixture.command("msg_fork", "audit").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{receipt}");
+    let runtime = &fixture.application.runtime;
+    let request =
+        cyber_server::runtime::Runtime::skill_command_delegation_id(&fixture.session, "msg_fork");
+    let delegation = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(delegation) = runtime.delegation(&fixture.session, &request).unwrap()
+                && delegation.job_id.is_some()
+            {
+                break delegation;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the forked skill was not delegated");
+    let job = delegation.job_id.unwrap();
+    let child = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let jobs = runtime.jobs(Some(&fixture.session)).unwrap();
+            if let Some(job) = jobs
+                .into_iter()
+                .find(|j| j.id == job && j.status != cyber_server::runtime::JobStatus::Running)
+            {
+                break job.child_id;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the forked child did not finish");
+    runtime.wait_idle(&child).await;
+    runtime.wait_idle(&fixture.session).await;
+    let child_state = runtime.state(&child).await.unwrap();
+    let child_text = format!("{:?}", child_state.entries);
+    assert!(child_text.contains("Forked: expanded-once"), "{child_text}");
+    assert!(!child_text.contains("!`"), "{child_text}");
+    assert!(fixture.provider_saw("Forked: expanded-once"));
+    assert!(!fixture.provider_saw("echo run >> fork-marker.txt"));
+    let marker = fixture.repo.join("fork-marker.txt");
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    // An exact retry returns the receipt and runs nothing again.
+    let (code, retried) = fixture.command("msg_fork", "audit").await;
+    assert_eq!(code, reqwest::StatusCode::ACCEPTED, "{retried}");
+    assert_eq!(retried["data"]["message_id"], receipt["data"]["message_id"]);
+    runtime.wait_idle(&fixture.session).await;
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    assert_eq!(runtime.jobs(Some(&fixture.session)).unwrap().len(), 1);
+    fixture.close().await;
+}
+
+/// Two `write` calls, `docs/guide.md` then `src/main.rs`, then a final answer.
+fn client_hook_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let text = body["messages"].to_string();
+    let call = |id: &str, path: &str| {
+        json!({"tool_calls":[{"index":0,"id":id,"type":"function","function":{"name":"write",
+            "arguments":json!({"path":path,"content":"edited\n"}).to_string()}}]})
+    };
+    let delta = if !text.contains("edit docs and src") {
+        json!({"content":"title"})
+    } else if !text.contains("call_docs") {
+        call("call_docs", "docs/guide.md")
+    } else if !text.contains("call_src") {
+        call("call_src", "src/main.rs")
+    } else {
+        json!({"content":"done"})
+    };
+    let finish = if delta.get("tool_calls").is_some() {
+        "tool_calls"
+    } else {
+        "stop"
+    };
+    let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+/// `client-sdk` → Hook callbacks ("Approve edits programmatically"), through the
+/// production App and its JSON-RPC session: a client's `PreToolUse` handler answering
+/// `hook/execute` with `allow` for edits under `docs/` skips the prompt, an edit
+/// elsewhere still asks, and each execution is recorded with scope `client`.
+#[tokio::test]
+async fn client_pre_tool_use_handler_approves_docs_edits_through_the_app() {
+    use serde_json::json;
+    let fixture = TemplateApp::start_with(
+        json!({"permissions":{"edit":"ask"}}),
+        &[],
+        &["main"],
+        client_hook_model,
+    )
+    .await;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let session = std::sync::Arc::new(cyber_server::http::rpc::RpcSession::new(
+        &fixture.application.state,
+        tx,
+    ));
+    session
+        .handle(r#"{"jsonrpc":"2.0","id":1,"method":"v1.hook.register","params":{"event":"PreToolUse","matcher":"write"}}"#)
+        .await;
+    let registered = rx.recv().await.unwrap();
+    let registration = registered["result"]["registration_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let attach = json!({"jsonrpc":"2.0","id":2,"method":"v1.hook.attach","params":{"session_id":fixture.session}});
+    session.handle(&attach.to_string()).await;
+    assert_eq!(
+        rx.recv().await.unwrap()["result"]["attached"],
+        fixture.session.as_str()
+    );
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let responder = {
+        let session = std::sync::Arc::downgrade(&session);
+        let seen = std::sync::Arc::clone(&seen);
+        tokio::spawn(async move {
+            while let Some(frame) = rx.recv().await {
+                if frame["method"] != "hook/execute" {
+                    continue;
+                }
+                let path = frame["params"]["input"]["tool_input"]["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let result = if path.starts_with("docs/") {
+                    json!({"decision":"allow","reason":"docs edits are pre-approved"})
+                } else {
+                    json!({})
+                };
+                let reply = json!({"jsonrpc":"2.0","id":frame["id"],"result":result});
+                seen.lock().unwrap().push(frame);
+                let Some(session) = session.upgrade() else {
+                    return;
+                };
+                session.handle(&reply.to_string()).await;
+            }
+        })
+    };
+    let (code, body) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!("/sessions/{}/prompt", fixture.session),
+        Some(json!({"parts":[{"type":"text","text":"edit docs and src"}]})),
+    )
+    .await;
+    assert!(code.is_success(), "{body}");
+    let request = loop {
+        let (_, requests) = api_call(
+            &fixture.api,
+            &fixture.repo,
+            reqwest::Method::GET,
+            &format!("/permissions/requests?session_id={}", fixture.session),
+            None,
+        )
+        .await;
+        if let Some(request) = requests["data"].as_array().and_then(|r| r.first()).cloned() {
+            break request;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    // Only the edit outside `docs/` asks; the docs edit already ran without a prompt.
+    assert!(request.to_string().contains("src/main.rs"), "{request}");
+    assert!(!request.to_string().contains("docs/guide.md"), "{request}");
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("docs/guide.md")).unwrap(),
+        "edited\n"
+    );
+    assert!(!fixture.repo.join("src/main.rs").exists());
+    let (code, _) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!(
+            "/sessions/{}/permissions/{}/reply",
+            fixture.session,
+            request["id"].as_str().unwrap()
+        ),
+        Some(json!({"reply":"reject"})),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::NO_CONTENT);
+    fixture
+        .application
+        .runtime
+        .wait_idle(&fixture.session)
+        .await;
+    assert!(!fixture.repo.join("src/main.rs").exists());
+    let (_, receipts) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::GET,
+        &format!("/sessions/{}/hook-executions", fixture.session),
+        None,
+    )
+    .await;
+    let client: Vec<_> = receipts["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|record| record["scope"] == "client")
+        .collect();
+    assert_eq!(client.len(), 2, "{receipts}");
+    for record in &client {
+        assert_eq!(record["event"], "PreToolUse");
+        assert_eq!(record["tool_name"], "write");
+        assert_eq!(record["status"], "completed");
+        assert_eq!(record["hook_id"], format!("client:{registration}"));
+    }
+    assert!(
+        client
+            .iter()
+            .any(|record| record["decision"]["decision"] == "allow"),
+        "{receipts}"
+    );
+    // The registration ends with its channel: later edits are not offered to it.
+    drop(session);
+    tokio::time::timeout(Duration::from_secs(5), responder)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(
+        cyber_server::runtime::ClientHooks::client_hooks(
+            &*fixture.application.state.remote_tools,
+            std::slice::from_ref(&fixture.session)
+        )
+        .is_empty()
+    );
+    fixture.close().await;
+}
+
+/// Regression (`client-sdk` → Hook callbacks): a client's handler applies only to its
+/// own Sessions. Client A's allow-everything `PreToolUse` handler neither receives the
+/// events of a Session created over HTTP and attached by client B, nor skips its prompt.
+#[tokio::test]
+async fn client_hook_handlers_do_not_reach_other_clients_sessions() {
+    use serde_json::json;
+    let fixture = TemplateApp::start_with(
+        json!({"permissions":{"edit":"ask"}}),
+        &[],
+        &["main"],
+        client_hook_model,
+    )
+    .await;
+    let (a_tx, mut a_rx) = tokio::sync::mpsc::channel(16);
+    let a = cyber_server::http::rpc::RpcSession::new(&fixture.application.state, a_tx);
+    a.handle(
+        r#"{"jsonrpc":"2.0","id":1,"method":"v1.hook.register","params":{"event":"PreToolUse"}}"#,
+    )
+    .await;
+    assert!(a_rx.recv().await.unwrap()["result"]["registration_id"].is_string());
+    let (b_tx, mut b_rx) = tokio::sync::mpsc::channel(16);
+    let b = cyber_server::http::rpc::RpcSession::new(&fixture.application.state, b_tx);
+    let attach = json!({"jsonrpc":"2.0","id":1,"method":"v1.hook.attach","params":{"session_id":fixture.session}});
+    b.handle(&attach.to_string()).await;
+    assert_eq!(
+        b_rx.recv().await.unwrap()["result"]["attached"],
+        fixture.session.as_str()
+    );
+    let (code, body) = api_call(
+        &fixture.api,
+        &fixture.repo,
+        reqwest::Method::POST,
+        &format!("/sessions/{}/prompt", fixture.session),
+        Some(json!({"parts":[{"type":"text","text":"edit docs and src"}]})),
+    )
+    .await;
+    assert!(code.is_success(), "{body}");
+    let request = loop {
+        let (_, requests) = api_call(
+            &fixture.api,
+            &fixture.repo,
+            reqwest::Method::GET,
+            &format!("/permissions/requests?session_id={}", fixture.session),
+            None,
+        )
+        .await;
+        if let Some(request) = requests["data"].as_array().and_then(|r| r.first()).cloned() {
+            break request;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(request.to_string().contains("docs/guide.md"), "{request}");
+    assert!(!fixture.repo.join("docs/guide.md").exists());
+    assert!(
+        a_rx.try_recv().is_err(),
+        "client A saw another client's Session"
+    );
+    fixture
+        .application
+        .runtime
+        .interrupt(&fixture.session)
+        .await
+        .unwrap();
+    fixture
+        .application
+        .runtime
+        .wait_idle(&fixture.session)
+        .await;
+    drop((a, b));
+    fixture.close().await;
+}
+
+/// `ENTER-SPIKE`: `enter_worktree` and a `write` in one step, then the `write` again;
+/// `LEAVE-SPIKE`: `exit_worktree`.
+fn worktree_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let text = body["messages"].to_string();
+    let call = |calls: &[(&str, &str, serde_json::Value)]| {
+        let calls: Vec<_> = calls
+            .iter()
+            .enumerate()
+            .map(|(index, (id, name, input))| {
+                json!({"index":index,"id":id,"type":"function",
+                    "function":{"name":name,"arguments":input.to_string()}})
+            })
+            .collect();
+        json!({ "tool_calls": calls })
+    };
+    let delta = if text.contains("LEAVE-SPIKE") && !text.contains("call_exit") {
+        call(&[("call_exit", "exit_worktree", json!({}))])
+    } else if text.contains("ENTER-SPIKE") && !text.contains("call_enter") {
+        call(&[
+            ("call_enter", "enter_worktree", json!({"name":"spike"})),
+            (
+                "call_early",
+                "write",
+                json!({"path":"a.txt","content":"early\n"}),
+            ),
+        ])
+    } else if text.contains("ENTER-SPIKE") && !text.contains("call_write") {
+        call(&[(
+            "call_write",
+            "write",
+            json!({"path":"a.txt","content":"spike\n"}),
+        )])
+    } else {
+        json!({"content":"done"})
+    };
+    let finish = if delta.get("tool_calls").is_some() {
+        "tool_calls"
+    } else {
+        "stop"
+    };
+    let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+fn offered_tools(request: &serde_json::Value) -> Vec<String> {
+    request["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// `worktrees` → Enter and exit tools through the production App and HTTP API: the
+/// first Turn is offered `enter_worktree` but not `exit_worktree`; a `write` in the same
+/// step as `enter_worktree` is not run against the old Location (regression), and the
+/// next `write` lands in the worktree; the Session's events relocate it; an idle entered
+/// Session fences `DELETE /worktrees/spike` (regression); `exit_worktree` returns it and
+/// removes the clean checkout it created.
+#[tokio::test]
+async fn enter_and_exit_worktree_through_the_app() {
+    use serde_json::json;
+    let fixture = TemplateApp::start_with(
+        json!({"permissions":{"*":"allow"}}),
+        &[],
+        &["main"],
+        worktree_model,
+    )
+    .await;
+    let repo = &fixture.repo;
+    std::fs::remove_dir_all(repo.join(".git")).unwrap();
+    git_output(repo, &["init", "--quiet"]);
+    git_output(repo, &["config", "user.name", "Worktree"]);
+    git_output(repo, &["config", "user.email", "test@example.invalid"]);
+    git_output(repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("tracked"), "base\n").unwrap();
+    git_output(repo, &["add", "tracked"]);
+    git_output(repo, &["commit", "--quiet", "-m", "base"]);
+    let prompt = |text: &'static str| {
+        let (api, repo, session) = (
+            fixture.api.clone(),
+            fixture.repo.clone(),
+            fixture.session.clone(),
+        );
+        async move {
+            let (code, body) = api_call(
+                &api,
+                &repo,
+                reqwest::Method::POST,
+                &format!("/sessions/{session}/prompt"),
+                Some(json!({"parts":[{"type":"text","text":text}]})),
+            )
+            .await;
+            assert!(code.is_success(), "{body}");
+        }
+    };
+    prompt("ENTER-SPIKE").await;
+    fixture
+        .application
+        .runtime
+        .wait_idle(&fixture.session)
+        .await;
+    let info = fixture
+        .application
+        .runtime
+        .state(&fixture.session)
+        .await
+        .unwrap()
+        .info;
+    let spike = std::path::PathBuf::from(&info.directory);
+    assert_eq!(spike.file_name().unwrap(), "spike", "{info:?}");
+    assert!(info.worktree_origin.is_some());
+    assert_eq!(
+        std::fs::read_to_string(spike.join("a.txt")).unwrap(),
+        "spike\n"
+    );
+    assert!(
+        !repo.join("a.txt").exists(),
+        "a write ran in the origin checkout"
+    );
+    let requests = fixture.provider.seen.lock().unwrap().clone();
+    let step = |needle: &str, absent: &str| {
+        requests
+            .iter()
+            .find(|request| {
+                let text = request["messages"].to_string();
+                text.contains(needle) && !text.contains(absent) && request.get("tools").is_some()
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("no request with {needle} without {absent}"))
+    };
+    let first = offered_tools(&step("ENTER-SPIKE", "call_enter"));
+    assert!(
+        first.iter().any(|tool| tool == "enter_worktree"),
+        "{first:?}"
+    );
+    assert!(
+        !first.iter().any(|tool| tool == "exit_worktree"),
+        "{first:?}"
+    );
+    let after = step("call_enter", "call_write");
+    let entered_tools = offered_tools(&after);
+    assert!(
+        entered_tools.iter().any(|tool| tool == "exit_worktree"),
+        "{entered_tools:?}"
+    );
+    assert!(
+        !entered_tools.iter().any(|tool| tool == "enter_worktree"),
+        "{entered_tools:?}"
+    );
+    // The write issued with `enter_worktree` was not run against the old Location.
+    let early = after["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["tool_call_id"] == "call_early")
+        .cloned()
+        .unwrap();
+    assert!(
+        early["content"].as_str().unwrap().contains("interrupted"),
+        "{early}"
+    );
+    // The idle entered Session fences removal of its checkout.
+    let (code, body) = api_call(
+        &fixture.api,
+        repo,
+        reqwest::Method::DELETE,
+        "/worktrees/spike",
+        None,
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::CONFLICT, "{body}");
+    assert!(body.to_string().contains("entered it"), "{body}");
+    assert!(spike.exists());
+
+    std::fs::remove_file(spike.join("a.txt")).unwrap();
+    prompt("LEAVE-SPIKE").await;
+    fixture
+        .application
+        .runtime
+        .wait_idle(&fixture.session)
+        .await;
+    let info = fixture
+        .application
+        .runtime
+        .state(&fixture.session)
+        .await
+        .unwrap()
+        .info;
+    assert!(same_path(std::path::Path::new(&info.directory), repo));
+    assert_eq!(info.worktree_origin, None);
+    assert!(!spike.exists(), "the clean checkout it created is removed");
+    let kinds: Vec<String> = fixture
+        .application
+        .state
+        .store
+        .read_events(&fixture.session, -1, 200)
+        .unwrap()
+        .events
+        .into_iter()
+        .map(|event| event.kind)
+        .filter(|kind| kind.starts_with("session.worktree."))
+        .collect();
+    assert_eq!(
+        kinds,
+        ["session.worktree.entered.1", "session.worktree.exited.1"]
+    );
+    fixture.close().await;
+}
+
 /// An `ask` rule prompts the attached client before the injected command runs.
 #[tokio::test]
 async fn command_shell_injection_asks_the_attached_client() {
@@ -4173,4 +5214,486 @@ async fn remote_skill_source_fetches_caches_and_serves_stale_offline() {
     let _ = stop.send(());
     let _ = server.await;
     application.runtime.shutdown().await;
+}
+
+/// `worktrees` → Worktree events, Cleanup on exit and Worktree management commands
+/// through a production App over HTTP: creation, exit cleanup and removal publish
+/// `worktree.created/removed/kept.1` with `{ name, path, branch, session_id? }` on
+/// the requesting Location's stream.
+#[tokio::test]
+async fn worktree_lifecycle_publishes_created_removed_and_kept_events() {
+    use futures::StreamExt;
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git_output(&repo, &["init", "--quiet"]);
+    git_output(&repo, &["config", "user.name", "Worktree"]);
+    git_output(&repo, &["config", "user.email", "test@example.invalid"]);
+    git_output(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("tracked"), "base").unwrap();
+    git_output(&repo, &["add", "tracked"]);
+    git_output(&repo, &["commit", "--quiet", "-m", "base"]);
+    let application = app(&root).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(application.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let send = |method: reqwest::Method, path: String, body: Option<Value>| {
+        let request = client
+            .request(method, format!("{api}{path}"))
+            .header("x-cyber-directory", repo.display().to_string())
+            .basic_auth("cyber", Some("test-password-123456"));
+        let request = match body {
+            Some(body) => request.json(&body),
+            None => request,
+        };
+        async move {
+            let response = request.send().await.unwrap();
+            let status = response.status().as_u16();
+            (status, response.json::<Value>().await.unwrap())
+        }
+    };
+    let events = client
+        .get(format!("{api}/event"))
+        .header("x-cyber-directory", repo.display().to_string())
+        .basic_auth("cyber", Some("test-password-123456"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), 200);
+    let mut events = events.bytes_stream();
+
+    let mut sessions = std::collections::HashMap::new();
+    let mut paths = std::collections::HashMap::new();
+    for name in ["dirty", "tidy", "manual"] {
+        let (status, created) = send(
+            reqwest::Method::POST,
+            "/worktrees".into(),
+            Some(json!({"name": name, "session": {"model": "test/main"}})),
+        )
+        .await;
+        assert_eq!(status, 201, "{created}");
+        sessions.insert(
+            name,
+            created["data"]["session"]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+        paths.insert(
+            name,
+            std::path::PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap()),
+        );
+    }
+    std::fs::write(paths["dirty"].join("untracked"), "work").unwrap();
+
+    // Exit cleanup keeps the dirty checkout and says where it is.
+    let (status, kept) = send(
+        reqwest::Method::POST,
+        format!("/sessions/{}/worktree/cleanup", sessions["dirty"]),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, 200, "{kept}");
+    assert_eq!(kept["data"]["kept"], true, "{kept}");
+    assert_eq!(kept["data"]["worktree"]["branch"], "cyber/dirty");
+    assert!(
+        kept["data"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("uncommitted changes"),
+        "{kept}"
+    );
+    assert!(paths["dirty"].join("untracked").exists());
+    // The clean one goes with its branch.
+    let (status, removed) = send(
+        reqwest::Method::POST,
+        format!("/sessions/{}/worktree/cleanup", sessions["tidy"]),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, 200, "{removed}");
+    assert_eq!(removed["data"]["kept"], false, "{removed}");
+    assert!(!paths["tidy"].exists());
+    assert_eq!(git_output(&repo, &["branch", "--list", "cyber/tidy"]), "");
+    // Removal: a dirty checkout needs force; a missing one is 404.
+    let (status, refused) = send(reqwest::Method::DELETE, "/worktrees/dirty".into(), None).await;
+    assert_eq!(status, 409, "{refused}");
+    assert!(paths["dirty"].exists());
+    let (status, _) = send(reqwest::Method::DELETE, "/worktrees/missing".into(), None).await;
+    assert_eq!(status, 404);
+    let (status, body) = send(reqwest::Method::DELETE, "/worktrees/manual".into(), None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["data"]["worktree"]["name"], "manual");
+    assert!(!paths["manual"].exists());
+
+    let mut stream = String::new();
+    let mut seen: Vec<(String, Value)> = Vec::new();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while seen.len() < 6 {
+            let chunk = events.next().await.unwrap().unwrap();
+            stream.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(end) = stream.find("\n\n") {
+                let frame: String = stream.drain(..end + 2).collect();
+                let Some(kind) = frame
+                    .lines()
+                    .find_map(|line| line.strip_prefix("event: worktree."))
+                else {
+                    continue;
+                };
+                let data = frame
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data:"))
+                    .unwrap();
+                let envelope: Value = serde_json::from_str(data.trim()).unwrap();
+                seen.push((kind.to_owned(), envelope["data"].clone()));
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("missing worktree events: {seen:?}"));
+    let find = |kind: &str, name: &str| {
+        seen.iter()
+            .find(|(seen, data)| seen == kind && data["name"] == name)
+            .unwrap_or_else(|| panic!("no {kind} for {name}: {seen:?}"))
+            .1
+            .clone()
+    };
+    for name in ["dirty", "tidy", "manual"] {
+        let created = find("created.1", name);
+        assert_eq!(created["session_id"], sessions[name].as_str());
+        assert_eq!(created["branch"], format!("cyber/{name}"));
+        assert_eq!(
+            std::path::Path::new(created["path"].as_str().unwrap()),
+            paths[name]
+        );
+    }
+    let kept = find("kept.1", "dirty");
+    assert_eq!(kept["session_id"], sessions["dirty"].as_str());
+    assert_eq!(kept["branch"], "cyber/dirty");
+    assert_eq!(
+        find("removed.1", "tidy")["session_id"],
+        sessions["tidy"].as_str()
+    );
+    assert!(find("removed.1", "manual").get("session_id").is_none());
+
+    let _ = stop.send(());
+    let _ = server.await;
+    application.runtime.shutdown().await;
+}
+
+/// `ENTER-SHARED`, `ENTER-SPARE` and `ENTER-OTHER` enter the worktree of that name with
+/// `enter_worktree`; `LEAVE` calls `exit_worktree`. Everything else is a plain answer.
+fn entering_model(body: &serde_json::Value) -> (&'static str, String) {
+    use serde_json::json;
+    let text = body["messages"].to_string();
+    let call = |id: &str, name: &str, input: serde_json::Value| {
+        json!({"tool_calls":[{"index":0,"id":id,"type":"function",
+            "function":{"name":name,"arguments":input.to_string()}}]})
+    };
+    let entered = ["SHARED", "SPARE", "OTHER"]
+        .into_iter()
+        .find(|name| text.contains(&format!("ENTER-{name}")));
+    let delta = match entered {
+        _ if text.contains("LEAVE") && !text.contains("call_exit") => {
+            call("call_exit", "exit_worktree", json!({}))
+        }
+        Some(name) if !text.contains("call_enter") => call(
+            "call_enter",
+            "enter_worktree",
+            json!({"name": name.to_ascii_lowercase()}),
+        ),
+        _ => json!({"content":"done"}),
+    };
+    let finish = if delta.get("tool_calls").is_some() {
+        "tool_calls"
+    } else {
+        "stop"
+    };
+    let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],"usage":{"prompt_tokens":100,"completion_tokens":10}});
+    (
+        "text/event-stream",
+        format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+impl TemplateApp {
+    /// An app over a committed repository whose model is [`entering_model`].
+    async fn entering(extra: serde_json::Value) -> Self {
+        let mut config = serde_json::json!({"permissions":{"*":"allow"}});
+        for (key, value) in extra.as_object().unwrap() {
+            config[key] = value.clone();
+        }
+        let fixture = Self::start_with(config, &[], &["main"], entering_model).await;
+        let repo = &fixture.repo;
+        std::fs::remove_dir_all(repo.join(".git")).unwrap();
+        git_output(repo, &["init", "--quiet"]);
+        git_output(repo, &["config", "user.name", "Worktree"]);
+        git_output(repo, &["config", "user.email", "test@example.invalid"]);
+        git_output(repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("tracked"), "base\n").unwrap();
+        git_output(repo, &["add", "tracked"]);
+        git_output(repo, &["commit", "--quiet", "-m", "base"]);
+        fixture
+    }
+
+    async fn call(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> (reqwest::StatusCode, serde_json::Value) {
+        api_call(&self.api, &self.repo, method, path, body).await
+    }
+
+    /// `POST /worktrees` for `name`: the started Session and the checkout path.
+    async fn start_worktree(&self, name: &str) -> (String, std::path::PathBuf) {
+        let (code, created) = self
+            .call(
+                reqwest::Method::POST,
+                "/worktrees",
+                Some(serde_json::json!({"name": name, "session": {"model": "test/main"}})),
+            )
+            .await;
+        assert_eq!(code, reqwest::StatusCode::CREATED, "{created}");
+        (
+            created["data"]["session"]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            std::path::PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap()),
+        )
+    }
+
+    /// Prompt `session` and wait until it is idle again.
+    async fn run(&self, session: &str, text: &str) {
+        let (code, body) = self
+            .call(
+                reqwest::Method::POST,
+                &format!("/sessions/{session}/prompt"),
+                Some(serde_json::json!({"parts":[{"type":"text","text":text}]})),
+            )
+            .await;
+        assert!(code.is_success(), "{body}");
+        self.application.runtime.wait_idle(session).await;
+    }
+
+    async fn info(&self, session: &str) -> cyber_server::runtime::SessionInfo {
+        self.application.runtime.state(session).await.unwrap().info
+    }
+}
+
+/// The hook events an http recorder saw.
+fn recorded_events(recorder: &LocalEndpoint) -> Vec<serde_json::Value> {
+    recorder.seen.lock().unwrap().clone()
+}
+
+/// Regression (`worktrees` → Cleanup on exit, Enter and exit tools): an idle Session
+/// that entered a worktree another Session was started in keeps it alive through that
+/// Session's exit cleanup, and once its checkout is removed from under it anyway, its
+/// own exit cleanup still returns it to the Location it entered from and it runs again.
+#[tokio::test]
+async fn entered_worktree_survives_the_owners_cleanup_and_recovers_after_removal() {
+    let fixture = TemplateApp::entering(serde_json::json!({})).await;
+    let (owner, shared) = fixture.start_worktree("shared").await;
+    let entering = fixture.session.clone();
+    fixture.run(&entering, "ENTER-SHARED").await;
+    let info = fixture.info(&entering).await;
+    assert!(
+        same_path(std::path::Path::new(&info.directory), &shared),
+        "{info:?}"
+    );
+
+    let (code, cleanup) = fixture
+        .call(
+            reqwest::Method::POST,
+            &format!("/sessions/{owner}/worktree/cleanup"),
+            Some(serde_json::json!({})),
+        )
+        .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{cleanup}");
+    assert_eq!(cleanup["data"]["kept"], true, "{cleanup}");
+    assert!(
+        cleanup["data"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("worktree entered by {entering}")),
+        "{cleanup}"
+    );
+    assert!(shared.exists(), "the checkout was removed under {entering}");
+
+    // Removed from under the Session regardless: its exit cleanup still returns it.
+    std::fs::remove_dir_all(&shared).unwrap();
+    git_output(&fixture.repo, &["worktree", "prune"]);
+    let (code, cleanup) = fixture
+        .call(
+            reqwest::Method::POST,
+            &format!("/sessions/{entering}/worktree/cleanup"),
+            Some(serde_json::json!({})),
+        )
+        .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{cleanup}");
+    let info = fixture.info(&entering).await;
+    assert!(
+        same_path(std::path::Path::new(&info.directory), &fixture.repo),
+        "{info:?}"
+    );
+    assert_eq!(info.worktree_origin, None);
+    assert_eq!(info.worktree_id, None);
+    fixture.run(&entering, "still there?").await;
+    let state = fixture.application.runtime.state(&entering).await.unwrap();
+    assert!(
+        serde_json::to_string(&state.entries)
+            .unwrap()
+            .contains("still there?"),
+        "the Session could not run after its checkout was removed"
+    );
+    fixture.close().await;
+}
+
+/// Regression (`hooks` → Supported events, `worktrees` → Worktree management commands):
+/// an idle Session that entered a worktree fences `DELETE /worktrees/{name}` without
+/// `force`; `force` returns that Session to the Location it entered from first, and the
+/// removal runs `WorktreeRemove` once, as that Session at its returned Location.
+#[tokio::test]
+async fn entered_worktree_user_removal_runs_worktree_remove_and_force_returns_sessions() {
+    let recorder = LocalEndpoint::start(|_| ("application/json", "{}".into()));
+    let hook =
+        serde_json::json!({"type":"http","url":format!("{}/hook",recorder.url),"id":"recorder"});
+    let fixture =
+        TemplateApp::entering(serde_json::json!({"hooks":{"WorktreeRemove":[{"hooks":[hook]}]}}))
+            .await;
+    let (_, spare) = fixture.start_worktree("spare").await;
+    let entering = fixture.session.clone();
+    fixture.run(&entering, "ENTER-SPARE").await;
+    assert!(fixture.info(&entering).await.worktree_origin.is_some());
+
+    let (code, body) = fixture
+        .call(reqwest::Method::DELETE, "/worktrees/spare", None)
+        .await;
+    assert_eq!(code, reqwest::StatusCode::CONFLICT, "{body}");
+    assert!(body.to_string().contains("entered it"), "{body}");
+    assert!(spare.exists());
+    assert!(recorded_events(&recorder).is_empty());
+
+    let (code, body) = fixture
+        .call(reqwest::Method::DELETE, "/worktrees/spare?force=true", None)
+        .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{body}");
+    assert!(!spare.exists());
+    let info = fixture.info(&entering).await;
+    assert!(
+        same_path(std::path::Path::new(&info.directory), &fixture.repo),
+        "{info:?}"
+    );
+    assert_eq!(info.worktree_origin, None);
+    let events = recorded_events(&recorder);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["event"], "WorktreeRemove", "{events:?}");
+    assert_eq!(events[0]["name"], "spare", "{events:?}");
+    assert_eq!(events[0]["session_id"], entering.as_str(), "{events:?}");
+    assert!(
+        same_path(
+            std::path::Path::new(events[0]["location"]["directory"].as_str().unwrap()),
+            &fixture.repo
+        ),
+        "{events:?}"
+    );
+    fixture.close().await;
+}
+
+/// Regression (`worktrees` → Enter and exit tools): `enter_worktree` from a Session that
+/// was started in a managed worktree is refused before anything is created: no checkout
+/// or branch appears and no `WorktreeCreate` hook runs.
+#[tokio::test]
+async fn entered_worktree_refused_for_a_started_session_before_any_creation() {
+    let recorder = LocalEndpoint::start(|_| ("application/json", "{}".into()));
+    let fixture = TemplateApp::entering(serde_json::json!({})).await;
+    let (isolated, _) = fixture.start_worktree("iso").await;
+    // Configured after startup, so only the refused call could run it.
+    let hook =
+        serde_json::json!({"type":"http","url":format!("{}/hook",recorder.url),"id":"recorder"});
+    let config_path = fixture
+        .repo
+        .parent()
+        .unwrap()
+        .join("config")
+        .join("cyber.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["hooks"] = serde_json::json!({"WorktreeCreate":[{"hooks":[hook]}]});
+    std::fs::write(&config_path, config.to_string()).unwrap();
+
+    // The Turn does not offer `enter_worktree`; a call that arrives anyway is refused.
+    use cyber_server::runtime::ToolHost;
+    let info = fixture.info(&isolated).await;
+    let outcome = fixture
+        .application
+        .host
+        .execute(
+            cyber_server::runtime::Invocation {
+                registration: None,
+                session_id: info.id.clone(),
+                directory: info.directory.clone(),
+                agent: info.agent.clone(),
+                mode: info.mode.clone(),
+                rules: info.rules.clone(),
+                message_id: "msg_enter".into(),
+                call_id: "call_enter".into(),
+                operation_key: "call_enter".into(),
+                name: "enter_worktree".into(),
+                input: serde_json::json!({"name": "other"}),
+                attempt: 1,
+                asker: cyber_server::runtime::Asker::detached(),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    assert!(
+        matches!(&outcome, cyber_server::runtime::ToolOutcome::Failed(error) if error.contains("already runs in a managed worktree")),
+        "{outcome:?}"
+    );
+    let listed = git_output(&fixture.repo, &["worktree", "list", "--porcelain"]);
+    assert!(!listed.contains("other"), "{listed}");
+    let branches = git_output(&fixture.repo, &["branch", "--list", "*other*"]);
+    assert!(branches.is_empty(), "{branches}");
+    assert!(recorded_events(&recorder).is_empty());
+    fixture.close().await;
+}
+
+/// Regression (`vcs-integration` → PR checkout and linked sessions): a PR created from
+/// the user's `!` shell, as `/pr-description` suggests, links the Session.
+#[tokio::test]
+async fn user_shell_pr_creation_links_the_session() {
+    let fixture = TemplateApp::entering(serde_json::json!({})).await;
+    let command = "gh() { echo https://github.com/acme/app/pull/42; }; gh pr create --fill";
+    let (code, body) = fixture
+        .call(
+            reqwest::Method::POST,
+            &format!("/sessions/{}/shell", fixture.session),
+            Some(serde_json::json!({"command": command})),
+        )
+        .await;
+    assert!(code.is_success(), "{body}");
+    let (code, listed) = fixture
+        .call(reqwest::Method::GET, "/sessions?pr=42", None)
+        .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{listed}");
+    let ids: Vec<_> = listed["data"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["id"].as_str())
+        .collect();
+    assert_eq!(ids, [fixture.session.as_str()], "{listed}");
+    fixture.close().await;
 }

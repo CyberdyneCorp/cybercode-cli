@@ -62,6 +62,11 @@ impl Run {
         }
     }
 
+    /// Whether `--max-tokens` or `--max-cost` limits this run.
+    pub fn has_budget(&self) -> bool {
+        self.max_tokens.is_some() || self.max_cost.is_some()
+    }
+
     pub fn over_budget(&self) -> bool {
         self.max_tokens.is_some_and(|m| self.combined_tokens() >= m)
             || self.max_cost.is_some_and(|m| self.combined_cost() >= m)

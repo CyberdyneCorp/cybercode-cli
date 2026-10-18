@@ -78,20 +78,31 @@ while True:
 "#;
 
 fn setup(mode: &'static str, wait: u64) -> (Fixture, Locations) {
+    let mut config = json!({"lsp":{"fixture":{"command":["python3","-u","-c",SERVER,mode],"extensions":[".txt",".ipynb"]}},"sandbox":{"network":"off"}});
+    for definition in cyber_core::intelligence::builtin_servers() {
+        config["lsp"][definition.id] = json!({"disabled":true});
+    }
+    setup_with(wait, config, None)
+}
+
+/// A host whose launcher resolves `config` from the global layer, with `bin` (if any)
+/// searched before the inherited PATH.
+fn setup_with(wait: u64, config: Value, bin: Option<&std::path::Path>) -> (Fixture, Locations) {
     let fixture = Fixture::new();
     fixture.set_config(json!({"lsp":{"diagnostics_wait_ms":wait}}));
     let mut environment = HashMap::from([(
         "CYBER_HOME".into(),
         fixture.dir.path().join("cyber").display().to_string(),
     )]);
-    environment.insert("PATH".into(), std::env::var("PATH").unwrap());
+    let inherited = std::env::var("PATH").unwrap();
+    let path = match bin {
+        Some(bin) => format!("{}:{inherited}", bin.display()),
+        None => inherited,
+    };
+    environment.insert("PATH".into(), path);
     let mut paths = Paths::resolve(&environment, fixture.dir.path());
     paths.tmp = fixture.dir.path().join("lsp-tmp");
     paths.ensure().unwrap();
-    let mut config = json!({"lsp":{"fixture":{"command":["python3","-u","-c",SERVER,mode],"extensions":[".txt",".ipynb"]}},"sandbox":{"network":"off"}});
-    for definition in cyber_core::intelligence::builtin_servers() {
-        config["lsp"][definition.id] = json!({"disabled":true});
-    }
     std::fs::write(paths.config.join("cyber.jsonc"), config.to_string()).unwrap();
     let home = fixture.dir.path().to_path_buf();
     let locations = Locations::new(Arc::new(move |root| {
@@ -974,4 +985,105 @@ async fn unapproved_navigation_obeys_default_ask_and_dont_ask_without_startup() 
     assert!(locations.status(&fixture.repo).unwrap().is_empty());
     assert!(!fixture.repo.join("rpc-events").exists());
     assert!(locations.close().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn autodetected_builtin_rust_analyzer_activates_for_rs_files() {
+    // A `rust-analyzer` executable on PATH and `lsp` omitted: no per-server entry at all.
+    let tools = tempfile::tempdir().unwrap();
+    let script = tools.path().join("server.py");
+    std::fs::write(&script, SERVER).unwrap();
+    let bin = tools.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let shim = bin.join("rust-analyzer");
+    std::fs::write(
+        &shim,
+        format!("#!/bin/sh\nexec python3 -u '{}' errors\n", script.display()),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (fixture, locations) = setup_with(2000, json!({"sandbox":{"network":"off"}}), Some(&bin));
+    fixture.write("Cargo.toml", "[package]\nname = \"fixture\"\n");
+
+    let output = ok(fixture
+        .call(
+            "accept-edits",
+            "write",
+            json!({"path":"src/main.rs","content":"fn main() {}\n"}),
+        )
+        .await);
+    assert_errors(&output, "src/main.rs");
+    let opens: Vec<Value> = sync_events(&fixture)
+        .into_iter()
+        .filter(|event| event["method"] == "textDocument/didOpen")
+        .collect();
+    assert_eq!(opens.len(), 1);
+    let document = &opens[0]["params"]["textDocument"];
+    assert!(document["uri"].as_str().unwrap().ends_with("/src/main.rs"));
+    assert_eq!(document["text"], "fn main() {}\n");
+
+    // A non-Rust file activates nothing: the built-in only claims `.rs`.
+    ok(fixture
+        .call(
+            "accept-edits",
+            "write",
+            json!({"path":"notes.txt","content":"plain"}),
+        )
+        .await);
+    assert!(
+        sync_events(&fixture)
+            .iter()
+            .all(|event| !event.to_string().contains("notes.txt"))
+    );
+    let settled = locations.close().await.unwrap();
+    assert_eq!(settled.len(), 1);
+    assert!(settled.iter().all(|s| s.acknowledged));
+}
+
+#[tokio::test]
+async fn read_opens_document_in_background_without_waiting_for_diagnostics() {
+    // The server never publishes diagnostics and the edit wait is long: a read must not
+    // wait for either the server start or any diagnostics.
+    let (fixture, locations) = setup("silent", 30_000);
+    fixture.write("notes.txt", "alpha\nbeta\n");
+    let started = std::time::Instant::now();
+    let output = ok(fixture
+        .call("default", "read", json!({"path":"notes.txt"}))
+        .await);
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "read waited {:?}",
+        started.elapsed()
+    );
+    assert!(output.contains("alpha"));
+    assert!(!output.contains("<diagnostics"));
+    let events = fixture.repo.join("sync-events");
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !std::fs::read_to_string(&events).is_ok_and(|text| text.contains("didOpen")) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("read warmed the server in the background");
+    let open = sync_events(&fixture)
+        .into_iter()
+        .find(|event| event["method"] == "textDocument/didOpen")
+        .unwrap();
+    assert!(
+        open["params"]["textDocument"]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("/notes.txt")
+    );
+    assert_eq!(open["params"]["textDocument"]["text"], "alpha\nbeta\n");
+    assert!(!fixture.repo.join("save-events").exists());
+    assert!(
+        locations
+            .close()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.acknowledged)
+    );
 }

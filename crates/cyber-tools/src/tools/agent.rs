@@ -36,6 +36,37 @@ impl Tool for Agent {
     }
 }
 
+/// The `agent` description for one Turn: the static text followed by every visible
+/// subagent-capable profile whose `agent` permission the caller's rules do not deny,
+/// sorted by name as `- <name>: <description>` (`agents-subagents` → Agent tool
+/// catalogue). Configuration that does not resolve withholds the tool.
+pub(crate) fn with_catalogue(
+    mut definition: ToolDef,
+    config: &Value,
+    rules: &[crate::permissions::Rule],
+) -> Option<ToolDef> {
+    let profiles = cyber_core::config::resolve_agents(config).ok()?;
+    let entries: Vec<String> = profiles
+        .values()
+        .filter(|profile| profile.subagent_capable())
+        .filter(|profile| {
+            crate::permissions::evaluate_scoped(rules, "agent", &profile.name, Some("agent")).0
+                != crate::permissions::Effect::Deny
+        })
+        .map(|profile| {
+            let description = profile.description.split_whitespace().collect::<Vec<_>>();
+            format!("- {}: {}", profile.name, description.join(" "))
+        })
+        .collect();
+    let catalogue = if entries.is_empty() {
+        "No subagents are available.".to_string()
+    } else {
+        format!("Available agents:\n{}", entries.join("\n"))
+    };
+    definition.spec.description = format!("{}\n\n{catalogue}", definition.spec.description);
+    Some(definition)
+}
+
 /// Who asked for a child Session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SpawnSource {
@@ -448,7 +479,9 @@ async fn spawn_child(
     };
     let permit = match permit {
         Some(permit) => permit,
-        None => Permit::Subagent(subagent_slot(ctx, &root.id, spawn.max_concurrent).await?),
+        None => {
+            Permit::Subagent(subagent_slot(ctx, &runtime, &root.id, spawn.max_concurrent).await?)
+        }
     };
     prepare_child_admission(ctx, &runtime, &mut spawn).await?;
     let authority = spawn
@@ -464,17 +497,26 @@ async fn spawn_child(
 }
 
 /// Wait for an `agents.max_concurrent` slot shared by the subagents of one root Session.
+/// A call that has to wait reports `queued` progress, then `running` once admitted.
 async fn subagent_slot(
     ctx: &Ctx<'_>,
+    runtime: &Runtime,
     root: &str,
     limit: usize,
 ) -> Result<tokio::sync::OwnedSemaphorePermit, ToolError> {
     let pool = ctx.host.subagents.pool(root, limit).map_err(failed)?;
-    tokio::select! {
+    if let Ok(permit) = pool.clone().try_acquire_owned() {
+        return Ok(permit);
+    }
+    let progress = |status| runtime.tool_progress(&ctx.inv.session_id, &ctx.inv.call_id, status);
+    progress("queued");
+    let permit = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => Err(ToolError::Aborted),
         permit = pool.acquire_owned() => permit.map_err(|e| failed(e.to_string())),
-    }
+    }?;
+    progress("running");
+    Ok(permit)
 }
 
 /// Authorize the delegation, then let SubagentStart refuse it before any child effect.

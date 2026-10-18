@@ -6,6 +6,7 @@ pub mod debug;
 pub mod doctor;
 pub mod eval;
 pub mod exec;
+pub mod git;
 pub mod hooks;
 pub mod import;
 pub mod intelligence;
@@ -15,6 +16,7 @@ pub mod mcp_serve;
 pub mod memory;
 pub mod models;
 pub mod permissions;
+pub mod pr;
 pub mod review;
 pub mod serve;
 pub mod sessions;
@@ -81,6 +83,8 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Api(args) => api::run(args, &ctx),
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Review(args) => review::run(*args, &ctx, &cli.global),
+        Command::Git { cmd } => git::run(cmd, &ctx, &cli.global),
+        Command::Pr(args) => pr::run(args, &ctx, &cli.global),
         Command::Doctor => doctor::run(&ctx, &cli.global),
         Command::Stats(args) => stats::run(args, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),

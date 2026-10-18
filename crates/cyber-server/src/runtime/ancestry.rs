@@ -11,6 +11,27 @@ pub struct AncestorAuthority {
 }
 
 impl Runtime {
+    /// `session_id` followed by its ancestors' IDs, immediate parent first; a missing
+    /// ancestor or a cycle ends the chain there.
+    pub async fn lineage(&self, session_id: &str) -> Result<Vec<String>, RuntimeError> {
+        let mut lineage = vec![session_id.to_owned()];
+        let mut parent = {
+            let handle = self.inner.handle(session_id).await?;
+            handle.state.lock().await.info.parent_id.clone()
+        };
+        while let Some(id) = parent.take() {
+            if lineage.contains(&id) {
+                break;
+            }
+            let Ok(handle) = self.inner.handle(&id).await else {
+                break;
+            };
+            parent = handle.state.lock().await.info.parent_id.clone();
+            lineage.push(id);
+        }
+        Ok(lineage)
+    }
+
     /// Return immediate parent first, refusing missing parents and ancestry cycles.
     pub async fn ancestors(&self, info: &SessionInfo) -> Result<Vec<SessionInfo>, RuntimeError> {
         Ok(self

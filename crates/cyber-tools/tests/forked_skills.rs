@@ -442,6 +442,7 @@ async fn queued_fork_waits_for_parent_completion_and_survives_parent_interrupt()
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f
@@ -514,6 +515,7 @@ async fn unavailable_fork_model_preserves_pending_input_without_creating_a_child
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f
@@ -574,6 +576,7 @@ async fn replay_after_forwarding_before_delegation_uses_captured_body_scope_and_
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f
@@ -670,6 +673,7 @@ async fn forked_steer_inherits_the_new_mode_at_the_safe_boundary() {
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f
@@ -791,6 +795,7 @@ async fn refused_user_fork_reports_one_durable_handback_without_launching() {
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f
@@ -872,6 +877,7 @@ async fn forwarded_admission_cut(flow: &Flow, status: &str) -> (String, String) 
         mode: info.mode,
         prefers_apply_patch: false,
         rules: info.rules,
+        worktree: Default::default(),
     };
     let plan = flow
         .f

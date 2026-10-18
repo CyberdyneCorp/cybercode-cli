@@ -2799,3 +2799,93 @@ async fn interrupt_cancels_public_child_preparation_before_late_setup_or_input()
         assert!(flow.runtime.claim_child_execution(&parent, &child).is_ok());
     }
 }
+
+/// Hook request bodies, each with whether its `path` existed on arrival.
+type Observed = Arc<std::sync::Mutex<Vec<(Value, bool)>>>;
+
+/// One local HTTP hook endpoint: each request body is recorded with whether its
+/// `path` existed when it arrived, and answered with an empty decision.
+fn observing_endpoint() -> (String, Observed) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/hook", listener.local_addr().unwrap());
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            let body = loop {
+                let Ok(n) = stream.read(&mut buffer) else {
+                    break None;
+                };
+                if n == 0 {
+                    break None;
+                }
+                bytes.extend_from_slice(&buffer[..n]);
+                let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                let length = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+                if bytes.len() >= end + 4 + length {
+                    break serde_json::from_slice::<Value>(&bytes[end + 4..end + 4 + length]).ok();
+                }
+            };
+            if let Some(body) = body {
+                let exists = body["path"]
+                    .as_str()
+                    .is_some_and(|path| std::path::Path::new(path).exists());
+                recorded.lock().unwrap().push((body, exists));
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            );
+        }
+    });
+    (url, seen)
+}
+
+#[tokio::test]
+async fn worktree_remove_hook_observes_removal() {
+    let flow = flow(vec![text("no changes")], false);
+    let (url, seen) = observing_endpoint();
+    flow.f.global_hooks(
+        json!({"WorktreeRemove":[{"hooks":[{"type":"http","url":url,"id":"observer"}]}]}),
+    );
+    let parent = flow.session("bypass").await;
+    let result = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"inspect only","name":"probe","isolation":"worktree","model":"test/main"}),
+    )
+    .await
+    .unwrap();
+    let worktree = &result["worktree"];
+    assert_eq!(worktree["kept"], false, "{result}");
+    let path = std::path::PathBuf::from(worktree["path"].as_str().unwrap());
+    assert!(!path.exists());
+    let seen = seen.lock().unwrap().clone();
+    let events: Vec<_> = seen
+        .iter()
+        .map(|(body, _)| body["event"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(events, ["WorktreeRemove"], "{seen:?}");
+    let (removed, existed) = &seen[0];
+    assert!(!existed, "the hook runs after the checkout is gone");
+    assert_eq!(removed["session_id"], parent.as_str());
+    assert_eq!(removed["id"], worktree["id"]);
+    assert!(
+        removed["branch"].as_str().unwrap().ends_with("/probe"),
+        "{removed}"
+    );
+    assert_eq!(removed["branch"], worktree["branch"]);
+    assert_eq!(
+        std::path::Path::new(removed["path"].as_str().unwrap()),
+        path.as_path()
+    );
+}

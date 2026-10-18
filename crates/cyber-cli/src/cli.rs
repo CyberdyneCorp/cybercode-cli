@@ -80,7 +80,7 @@ pub struct GlobalArgs {
 }
 
 /// TUI launch flags (`tui` → Launch flags).
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub struct LaunchArgs {
     /// Start a new Session in a managed worktree; omit NAME to generate one.
     #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "NAME")]
@@ -105,6 +105,9 @@ pub struct LaunchArgs {
     /// Sandbox policy for an embedded server: read-only, workspace-write or full-access.
     #[arg(long)]
     pub sandbox: Option<String>,
+    /// Open the Session picker over the Sessions linked to this pull request.
+    #[arg(long, value_name = "NUMBER|URL")]
+    pub from_pr: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -156,7 +159,7 @@ pub enum Command {
         #[command(subcommand)]
         cmd: WorkflowsCmd,
     },
-    /// Inspect managed Git worktrees of the current repository.
+    /// List, remove and prune managed Git worktrees of the current repository.
     Worktree {
         #[command(subcommand)]
         cmd: WorktreeCmd,
@@ -192,6 +195,13 @@ pub enum Command {
     Exec(Box<ExecArgs>),
     /// Review uncommitted changes, a range, a commit or a pull request.
     Review(Box<ReviewArgs>),
+    /// Check out a pull request and resume the Session linked to it.
+    Pr(crate::commands::pr::PrArgs),
+    /// Generate commit and pull request text with the small model.
+    Git {
+        #[command(subcommand)]
+        cmd: crate::commands::git::GitCmd,
+    },
     /// Run the server in the foreground.
     Serve(ServeArgs),
     /// Manage the background server.

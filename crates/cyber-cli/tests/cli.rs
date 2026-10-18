@@ -339,6 +339,32 @@ fn poll_until(what: &str, mut done: impl FnMut() -> bool) {
     panic!("{what} did not happen");
 }
 
+/// [`poll_until`] while `child` runs, handing it back once `done`. If it exits first, or
+/// the wait times out, fail with its output instead of hiding why it never got there.
+fn poll_while_running(
+    what: &str,
+    mut child: std::process::Child,
+    mut done: impl FnMut() -> bool,
+) -> std::process::Child {
+    for _ in 0..1200 {
+        if done() {
+            return child;
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    let output = child.wait_with_output().unwrap();
+    panic!(
+        "{what} did not happen ({}): {}{}",
+        output.status,
+        stdout(&output),
+        stderr(&output)
+    );
+}
+
 /// `workflows` → Run queue and Workflow CLI with the real binary: with
 /// `workflows.max_running_runs: 1`, a second run waits `queued`; `runs` and `show` report
 /// its queue position, and `run --wait` keeps waiting through the queue until it ends.
@@ -1148,6 +1174,46 @@ fn invalid_launch_combinations_fail_before_the_ui() {
     assert!(stderr(&o).contains("--fork needs"), "{}", stderr(&o));
 }
 
+/// `lsp` omitted and `gopls` absent from PATH and `<cache>/bin`: doctor lists it as not
+/// installed and nothing is downloaded, with or without `lsp.auto_install`.
+#[test]
+fn doctor_lists_missing_gopls_as_not_installed_without_download() {
+    let env = Env::new();
+    let bin = env.root.join("empty-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let cache_bin = env.root.join("cyber-home/cache/bin");
+    let row = |format: &str| {
+        let output = env
+            .command(&["doctor", "--format", format])
+            .env("PATH", &bin)
+            .output()
+            .unwrap();
+        stdout(&output)
+    };
+    let rows: Value = serde_json::from_str(&row("json")).unwrap();
+    let gopls = rows["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["check"] == "lsp:gopls")
+        .cloned()
+        .unwrap();
+    assert_eq!(gopls["status"], "warn");
+    assert_eq!(gopls["detail"], "not installed");
+    assert!(row("text").contains("lsp:gopls: warn not installed"));
+    let config = env.root.join("cyber-home/config/cyber.jsonc");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&config, r#"{"lsp":{"auto_install":true}}"#).unwrap();
+    assert!(
+        row("text")
+            .contains("lsp:gopls: warn not installed; auto_install does not download servers"),
+    );
+    let downloaded = std::fs::read_dir(&cache_bin)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(downloaded, 0, "doctor must never install servers");
+}
+
 #[test]
 fn doctor_reports_every_check_as_json() {
     let o = Env::new().cyber(&["doctor", "--format", "json"]);
@@ -1256,10 +1322,8 @@ fn service_stop_uses_registered_http_shutdown() {
     assert!(!registration.exists());
 }
 
-#[cfg(unix)]
-#[test]
-fn exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean() {
-    let env = Env::new();
+/// A Git repository with one committed file, `tracked` = `base`.
+fn git_repo(env: &Env) -> PathBuf {
     let repo = env.root.join("repo");
     std::fs::create_dir(&repo).unwrap();
     for args in [
@@ -1290,6 +1354,47 @@ fn exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean() {
                 .success()
         );
     }
+    repo
+}
+
+/// The Location the embedded server recorded for Session `id`.
+fn session_directory(env: &Env, id: &str) -> PathBuf {
+    let embedded = env.root.join("cyber-home").join("data").join("embedded");
+    std::fs::read_dir(&embedded)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "db"))
+        .find_map(|path| {
+            let db = rusqlite::Connection::open(path).unwrap();
+            db.query_row("SELECT directory FROM session WHERE id = ?1", [id], |row| {
+                row.get::<_, String>(0)
+            })
+            .ok()
+        })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("no Session {id} under {}", embedded.display()))
+}
+
+fn assert_branch(repo: &Path, branch: &str) {
+    let verified = Command::new("git")
+        .current_dir(repo)
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(verified.success(), "missing branch {branch}");
+}
+
+#[cfg(unix)]
+#[test]
+fn exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean() {
+    let env = Env::new();
+    let repo = git_repo(&env);
     let config = env.root.join("cyber-home/config/cyber.jsonc");
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(config, serde_json::json!({"worktrees": {"setup": ["printf setup-ready; sleep 0.15; printf setup > setup-result"]}}).to_string()).unwrap();
@@ -1320,7 +1425,21 @@ fn exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean() {
     )
     .unwrap();
     assert_eq!(record["ready"], true);
+    assert_eq!(record["branch"], "cyber/from-cli");
+    assert_branch(&repo, "cyber/from-cli");
     let target = Path::new(record["path"].as_str().unwrap());
+    // Default root: `<data>/worktrees/<project_id>/<name>`.
+    let project = target.parent().unwrap();
+    assert_eq!(
+        project.parent().unwrap(),
+        env.root.join("cyber-home").join("data").join("worktrees")
+    );
+    assert_eq!(target.file_name().unwrap(), "from-cli");
+    let session = result["session_id"].as_str().unwrap();
+    assert_eq!(
+        session_directory(&env, session).canonicalize().unwrap(),
+        target.canonicalize().unwrap()
+    );
     assert_eq!(
         std::fs::read_to_string(target.join("tracked")).unwrap(),
         "base"
@@ -1330,7 +1449,65 @@ fn exec_worktree_starts_in_owned_checkout_and_keeps_json_stdout_clean() {
         "setup"
     );
     assert!(!repo.join("setup-result").exists());
+    // The setup output makes the checkout dirty, so exit keeps it and says where.
+    assert!(
+        stderr(&output).contains(&format!(
+            "worktree kept at {} (branch cyber/from-cli)",
+            target.display()
+        )),
+        "{}",
+        stderr(&output)
+    );
     verify_worktree_list_command(&env, &repo, target);
+}
+
+#[test]
+fn exec_worktree_without_name_generates_adjective_noun_hex() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    keep_worktrees(&env);
+    let output = env.cyber(&[
+        "--cwd",
+        repo.to_str().unwrap(),
+        "exec",
+        "--embedded",
+        "--worktree",
+        "--model",
+        "missing/model",
+        "--format",
+        "json",
+        "prompt",
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let records: Vec<_> = std::fs::read_dir(repo.join(".git").join("cyber-worktrees"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    assert_eq!(records.len(), 1, "{records:?}");
+    let record: Value = serde_json::from_slice(&std::fs::read(&records[0]).unwrap()).unwrap();
+    let name = record["name"].as_str().unwrap();
+    let parts: Vec<_> = name.split('-').collect();
+    assert!(
+        parts.len() == 3
+            && parts[..2]
+                .iter()
+                .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase()))
+            && parts[2].len() == 4
+            && parts[2]
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+        "generated name {name:?} is not <adjective>-<noun>-<4 hex>"
+    );
+    assert_eq!(record["branch"], format!("cyber/{name}"));
+    assert_branch(&repo, &format!("cyber/{name}"));
+    let target = Path::new(record["path"].as_str().unwrap());
+    assert_eq!(target.file_name().unwrap(), name);
+    let session = json(&output)["session_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        session_directory(&env, &session).canonicalize().unwrap(),
+        target.canonicalize().unwrap()
+    );
 }
 
 #[cfg(unix)]
@@ -2600,4 +2777,241 @@ fn stats_render_the_usage_stats_route_for_days_projects_models_and_tools() {
 fn exits_ok(output: &Output) -> Output {
     exits(output, 0);
     output.clone()
+}
+
+/// Global `worktrees.cleanup: keep`, so exec leaves its clean checkouts in place.
+fn keep_worktrees(env: &Env) {
+    let config = env.root.join("cyber-home/config/cyber.jsonc");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        config,
+        serde_json::json!({"worktrees": {"cleanup": "keep"}}).to_string(),
+    )
+    .unwrap();
+}
+
+/// `cyber exec --worktree <name>` against an unavailable model: the Session starts in
+/// the checkout and ends without a provider call. Returns the checkout path.
+fn exec_in_worktree(env: &Env, repo: &Path, name: &str) -> PathBuf {
+    let output = env.cyber(&[
+        "--cwd",
+        repo.to_str().unwrap(),
+        "exec",
+        "--embedded",
+        "--worktree",
+        name,
+        "--model",
+        "missing/model",
+        "--format",
+        "json",
+        "prompt",
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    worktree_path(repo, name)
+}
+
+fn worktree_path(repo: &Path, name: &str) -> PathBuf {
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(
+            repo.join(".git/cyber-worktrees")
+                .join(format!("{name}.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    PathBuf::from(record["path"].as_str().unwrap())
+}
+
+fn branch_exists(repo: &Path, branch: &str) -> bool {
+    Command::new("git")
+        .current_dir(repo)
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn exec_worktree_without_changes_is_removed_on_exit() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let output = env.cyber(&[
+        "--cwd",
+        repo.to_str().unwrap(),
+        "exec",
+        "--embedded",
+        "--worktree",
+        "tidy",
+        "--model",
+        "missing/model",
+        "--format",
+        "json",
+        "prompt",
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(
+        json(&output)["session_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("ses_")
+    );
+    assert!(
+        !stderr(&output).contains("worktree kept"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!repo.join(".git/cyber-worktrees/tidy.json").exists());
+    assert!(!branch_exists(&repo, "cyber/tidy"));
+    let root = env.root.join("cyber-home/data/worktrees");
+    let leftover: Vec<_> = std::fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .flat_map(|project| std::fs::read_dir(project.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert!(leftover.is_empty(), "{leftover:?}");
+}
+
+#[test]
+fn worktree_remove_refuses_dirty_without_force() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    keep_worktrees(&env);
+    let spike = exec_in_worktree(&env, &repo, "spike");
+    std::fs::write(spike.join("notes.txt"), "work in progress").unwrap();
+    let cwd = repo.to_str().unwrap();
+    let refused = env.cyber(&["--cwd", cwd, "worktree", "remove", "spike"]);
+    let forced = if refused.status.success() {
+        None
+    } else {
+        assert!(spike.join("notes.txt").exists());
+        assert!(branch_exists(&repo, "cyber/spike"));
+        Some(env.cyber(&["--cwd", cwd, "worktree", "remove", "spike", "--force"]))
+    };
+    let missing = env.cyber(&["--cwd", cwd, "worktree", "remove", "nothing"]);
+    let stopped = env.cyber(&["service", "stop"]);
+    assert!(stopped.status.success(), "{}", stderr(&stopped));
+    assert!(!refused.status.success(), "{}", stdout(&refused));
+    assert!(
+        stderr(&refused).contains("uncommitted changes"),
+        "{}",
+        stderr(&refused)
+    );
+    let forced = forced.unwrap();
+    assert!(forced.status.success(), "{}", stderr(&forced));
+    assert!(
+        stdout(&forced).starts_with("removed spike"),
+        "{}",
+        stdout(&forced)
+    );
+    assert!(!spike.exists());
+    assert!(!branch_exists(&repo, "cyber/spike"));
+    assert!(!missing.status.success());
+    assert!(
+        stderr(&missing).contains("No managed worktree named nothing"),
+        "{}",
+        stderr(&missing)
+    );
+}
+
+#[test]
+fn worktree_prune_removes_only_older_clean_worktrees() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    keep_worktrees(&env);
+    let old_clean = exec_in_worktree(&env, &repo, "old-clean");
+    let old_dirty = exec_in_worktree(&env, &repo, "old-dirty");
+    let recent = exec_in_worktree(&env, &repo, "recent");
+    std::fs::write(old_dirty.join("draft.txt"), "draft").unwrap();
+    let month_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86_400);
+    for name in ["old-clean", "old-dirty"] {
+        std::fs::File::options()
+            .write(true)
+            .open(
+                repo.join(".git/cyber-worktrees")
+                    .join(format!("{name}.json")),
+            )
+            .unwrap()
+            .set_modified(month_ago)
+            .unwrap();
+    }
+    let cwd = repo.to_str().unwrap();
+    let pruned = env.cyber(&["--cwd", cwd, "worktree", "prune", "--format", "json"]);
+    let stopped = env.cyber(&["service", "stop"]);
+    assert!(stopped.status.success(), "{}", stderr(&stopped));
+    assert!(pruned.status.success(), "{}", stderr(&pruned));
+    assert_eq!(
+        json(&pruned),
+        serde_json::json!({"removed": ["old-clean"], "skipped": []})
+    );
+    assert!(!old_clean.exists());
+    assert!(!branch_exists(&repo, "cyber/old-clean"));
+    assert!(old_dirty.join("draft.txt").exists());
+    assert!(recent.exists());
+    assert!(branch_exists(&repo, "cyber/recent"));
+}
+
+/// The scripted model holds the Turn, so the exec Session is running in `spike`.
+fn held(_: &Value) -> Value {
+    serde_json::json!({"hold": true})
+}
+
+#[test]
+fn worktree_remove_while_session_active_fails_in_use() {
+    let model = scripted_model::ScriptedModel::start(held);
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let catalog = env.root.join("models.json");
+    std::fs::write(&catalog, "{}").unwrap();
+    let config = env.root.join("cyber-home/config/cyber.jsonc");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(config, model.config().to_string()).unwrap();
+    let service = StartedService(&env, catalog);
+    let cwd = repo.to_str().unwrap();
+    let exec = env
+        .command(&[
+            "--cwd",
+            cwd,
+            "exec",
+            "--worktree",
+            "spike",
+            "--format",
+            "json",
+            "hello",
+        ])
+        .env("CYBER_MODELS_PATH", &service.1)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The concurrent title request carries the prompt too, before the Turn holds the
+    // Location, so only the Turn's own request proves the Session uses the checkout.
+    let exec = poll_while_running("the Turn at the model", exec, || {
+        turn_requests(&model)
+            .iter()
+            .any(|body| body.contains("hello"))
+    });
+    let refused = service.cyber(&["--cwd", cwd, "worktree", "remove", "spike", "--force"]);
+    model.release();
+    let output = exec.wait_with_output().unwrap();
+    assert!(
+        !refused.status.success(),
+        "{} exec: {}",
+        stdout(&refused),
+        stderr(&output)
+    );
+    let message = stderr(&refused);
+    assert!(message.contains("Worktree in use by ses_"), "{message}");
+    let session = json(&output)["session_id"].as_str().unwrap().to_owned();
+    assert!(message.contains(&session), "{message} {session}");
+    // Released, the Session finished without changes and its exit cleanup removed it.
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!repo.join(".git/cyber-worktrees/spike.json").exists());
+    assert!(!branch_exists(&repo, "cyber/spike"));
 }

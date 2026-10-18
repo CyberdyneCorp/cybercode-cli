@@ -100,6 +100,7 @@ impl BackgroundHook {
                 .admit(host, runtime, pointer, event, live)
                 .await
             }
+            HookKind::Client => Err("client hooks never run in the background".into()),
         }
     }
 
@@ -135,6 +136,7 @@ impl BackgroundHook {
                 .run_admitted(host, runtime, admitted, pointer, event, live)
                 .await
             }
+            HookKind::Client => Err("client hooks never run in the background".into()),
         }
     }
 }

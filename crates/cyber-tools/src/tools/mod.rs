@@ -11,6 +11,7 @@ pub(crate) mod memory;
 mod notebook;
 pub(crate) mod patch;
 pub(crate) mod powershell;
+mod pr_links;
 pub(crate) mod process;
 mod search;
 mod session;
@@ -22,6 +23,7 @@ mod tool_search;
 mod web;
 pub(crate) mod websearch;
 mod workflow;
+mod worktree;
 
 use cyber_llm::ToolSpec;
 use cyber_server::runtime::{RetrySafety, ToolDef};
@@ -72,6 +74,8 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(mcp::ResourceTool::Read),
         Box::new(memory::Memory),
         Box::new(tool_search::ToolSearch),
+        Box::new(worktree::EnterWorktree),
+        Box::new(worktree::ExitWorktree),
     ];
     #[cfg(windows)]
     let tools = {
@@ -87,9 +91,22 @@ pub(crate) fn action_of(name: &str) -> &str {
     match name {
         "write" | "edit" | "apply_patch" | "notebook_edit" => "edit",
         "powershell" => "bash",
+        "enter_worktree" | "exit_worktree" => "worktree",
         "workflow" => crate::permissions::WORKFLOW_RUN,
         "mcp_list_resources" | "mcp_list_resource_templates" | "mcp_read_resource" => "read",
         other => other,
+    }
+}
+
+/// Whether a worktree tool fits the Session's checkout: `enter_worktree` outside a
+/// managed checkout, `exit_worktree` only after entering one, neither when the
+/// Session was started isolated.
+pub(crate) fn worktree_offered(name: &str, worktree: cyber_server::runtime::TurnWorktree) -> bool {
+    use cyber_server::runtime::TurnWorktree;
+    match name {
+        "enter_worktree" => worktree == TurnWorktree::Unmanaged,
+        "exit_worktree" => worktree == TurnWorktree::Entered,
+        _ => true,
     }
 }
 

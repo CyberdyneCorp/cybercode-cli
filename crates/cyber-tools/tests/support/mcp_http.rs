@@ -81,6 +81,8 @@ pub struct Behavior {
     /// Send that elicitation on the GET event stream (needs `stream`) instead of the call's
     /// POST stream.
     pub elicit_on_get: bool,
+    /// Like `elicit`, but the call stream sends `sampling/createMessage` with these params.
+    pub sample: Option<Value>,
     /// With `sse`, the `tools/call` event stream also sends
     /// `notifications/tools/list_changed` before the result.
     pub call_list_changed: bool,
@@ -501,7 +503,9 @@ fn respond(state: &Shared, method: &Method, body: &Value) -> Response {
             json!({"jsonrpc":"2.0","id":id,"result":{"tools":[],"pad":"x".repeat(1024 * 1024 + 16)}}),
             None,
         ),
-        Some("tools/call") if behavior.elicit.is_some() => elicit_call(state, id),
+        Some("tools/call") if behavior.elicit.is_some() || behavior.sample.is_some() => {
+            elicit_call(state, id)
+        }
         Some("tools/call") if behavior.sse => {
             sse_call(id, body, behavior.delay, behavior.call_list_changed)
         }
@@ -746,7 +750,8 @@ fn json_response(value: Value, session: Option<&str>) -> Response {
 /// The marker `cancel_elicitation` hands a waiting elicitation in place of a client reply.
 const WITHDRAWN: &str = "fixture-withdrawn";
 
-/// A `tools/call` event stream that elicits, waits for the reply and echoes it as the result.
+/// A `tools/call` event stream that elicits (or samples), waits for the reply and echoes it
+/// as the result.
 fn elicit_call(state: &Shared, id: &Value) -> Response {
     let elicitation = {
         let mut control = state.control.lock().unwrap();
@@ -759,8 +764,14 @@ fn elicit_call(state: &Shared, id: &Value) -> Response {
         .lock()
         .unwrap()
         .insert(elicitation.clone(), sender);
-    let request = json!({"jsonrpc":"2.0","id":elicitation,"method":"elicitation/create",
-        "params":state.behavior.elicit.clone().unwrap_or_default()});
+    let (method, params) = match &state.behavior.sample {
+        Some(params) => ("sampling/createMessage", params.clone()),
+        None => (
+            "elicitation/create",
+            state.behavior.elicit.clone().unwrap_or_default(),
+        ),
+    };
+    let request = json!({"jsonrpc":"2.0","id":elicitation,"method":method,"params":params});
     let first = if state.behavior.elicit_on_get {
         // Without an open GET stream nothing is sent and the call waits out its reply.
         if let Some(sender) = state.stream.lock().unwrap().as_ref() {

@@ -22,8 +22,9 @@ async fn terminal_states_return_without_starting_servers_or_creating_owners() {
     let output: Value = serde_json::from_str(&output).unwrap();
     assert_eq!(output["timed_out"], false);
     assert_eq!(output["servers"][0]["status"], "disabled");
-    assert_eq!(output["servers"][1]["status"], "failed");
-    assert_eq!(output["servers"][2]["status"], "failed");
+    // Configured, allowed servers that no Session opened are `idle`, never `failed`.
+    assert_eq!(output["servers"][1]["status"], "idle");
+    assert_eq!(output["servers"][2]["status"], "idle");
     assert!(
         cyber_server::runtime::mcp_connections(&f.store, &f.repo)
             .unwrap()

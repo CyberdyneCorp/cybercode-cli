@@ -111,6 +111,23 @@ impl Op {
 pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
     vec![
         op(
+            "post",
+            "/git/commit-message",
+            "v1.git.commitMessage",
+            "Generate a conventional commit message for the staged diff",
+        )
+        .located()
+        .ok::<Located<super::vcs::CommitMessage>>(g),
+        op(
+            "post",
+            "/git/pr-description",
+            "v1.git.prDescription",
+            "Draft a pull request title and body for base..HEAD",
+        )
+        .located()
+        .optional_body::<super::vcs::PrDescriptionRequest>(g)
+        .ok::<Located<super::vcs::PrDescription>>(g),
+        op(
             "get",
             "/memory/requests",
             "v1.memory.requestStatus",
@@ -119,6 +136,23 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .located()
         .query(&["scope", "key"])
         .ok::<Located<Option<crate::runtime::MemoryRequestStatus>>>(g),
+        op(
+            "get",
+            "/memory/settings",
+            "v1.memory.settings",
+            "Read the Location's effective memory toggle",
+        )
+        .located()
+        .ok::<Located<super::memory::MemorySettingsView>>(g),
+        op(
+            "put",
+            "/memory/settings",
+            "v1.memory.setSettings",
+            "Persist /memory on, off or readonly for the next Safe Boundary",
+        )
+        .located()
+        .body::<super::memory::SetMemorySettings>(g)
+        .ok::<Located<super::memory::MemorySettingsView>>(g),
         op(
             "get",
             "/memory/edit/{scope}/{name}",
@@ -355,7 +389,7 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "List root Sessions of a Location, newest first",
         )
         .located()
-        .query(&["limit", "cursor", "search", "children", "archived"])
+        .query(&["limit", "cursor", "search", "children", "archived", "pr"])
         .ok::<Located<Page<SessionRow>>>(g),
         op(
             "get",
@@ -383,6 +417,23 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .located()
         .ok::<Located<Vec<super::worktrees::WorktreeEntry>>>(g),
+        op(
+            "delete",
+            "/worktrees/{name}",
+            "v1.worktree.remove",
+            "Remove a managed worktree and its branch; dirty ones need force",
+        )
+        .located()
+        .query(&["force"])
+        .ok::<Located<super::worktrees::RemovedWorktree>>(g),
+        op(
+            "post",
+            "/sessions/{id}/worktree/cleanup",
+            "v1.worktree.cleanup",
+            "Remove a Session's clean worktree on exit, or keep it and say why",
+        )
+        .located()
+        .ok::<Located<super::worktrees::WorktreeCleanup>>(g),
         op(
             "get",
             "/sessions/{id}/children/{child}/setup",

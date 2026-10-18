@@ -27,7 +27,7 @@ mod service;
 mod sessions;
 mod system;
 mod usage;
-mod vcs;
+pub mod vcs;
 mod workflows;
 pub mod worktrees;
 pub use workflows::{ServicesRelaunch, WorkflowLocation};
@@ -51,8 +51,8 @@ pub use idempotency::request_fingerprint;
 pub use intelligence::{FormatterStatus, LspState, LspStatus, LspTransition};
 pub use mcp_serve::{McpServeClock, McpServeSessions};
 pub use memory::{
-    MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, RecoverMemory,
-    validate_edit_fingerprint,
+    MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, MemorySettingsView,
+    RecoverMemory, SetMemorySettings, validate_edit_fingerprint,
 };
 #[cfg(unix)]
 pub use serve::serve_unix;
@@ -216,6 +216,21 @@ pub trait Services: Send + Sync {
     ) -> BoxFuture<'_, Result<crate::runtime::MemoryChange, ApiError>> {
         Box::pin(async { Err(memory::unavailable()) })
     }
+    /// The Location's effective `/memory on|off|readonly` state.
+    fn memory_settings(
+        &self,
+        _directory: PathBuf,
+    ) -> BoxFuture<'_, Result<MemorySettingsView, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
+    /// Persist the user's memory toggle, then report the Location's effective state.
+    fn set_memory_settings(
+        &self,
+        _directory: PathBuf,
+        _state: cyber_core::memory::MemoryState,
+    ) -> BoxFuture<'_, Result<MemorySettingsView, ApiError>> {
+        Box::pin(async { Err(memory::unavailable()) })
+    }
     fn memory_list(
         &self,
         _directory: PathBuf,
@@ -270,6 +285,35 @@ pub trait Services: Send + Sync {
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "ServiceUnavailableError",
                 "Managed worktree listing is unavailable in this host",
+            ))
+        })
+    }
+    fn remove_worktree(
+        &self,
+        directory: PathBuf,
+        name: cyber_core::worktrees::Name,
+        force: bool,
+    ) -> BoxFuture<'_, Result<worktrees::WorktreeInfo, ApiError>> {
+        let _ = (directory, name, force);
+        Box::pin(async {
+            Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "Managed worktree removal is unavailable in this host",
+            ))
+        })
+    }
+    fn cleanup_session_worktree(
+        &self,
+        directory: PathBuf,
+        session_id: String,
+    ) -> BoxFuture<'_, Result<worktrees::WorktreeCleanup, ApiError>> {
+        let _ = (directory, session_id);
+        Box::pin(async {
+            Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailableError",
+                "Managed worktree cleanup is unavailable in this host",
             ))
         })
     }
@@ -445,6 +489,32 @@ pub trait Services: Send + Sync {
     }
     /// Expand a skill or custom command with its arguments into prompt text.
     fn expand_command(&self, location: &Path, name: &str, arguments: &str) -> Option<String>;
+    /// A conventional commit message for the Location's staged diff, by the small model
+    /// (`vcs-integration` → Commit and PR text generation).
+    fn commit_message<'a>(
+        &'a self,
+        _location: &'a Path,
+    ) -> BoxFuture<'a, Result<vcs::CommitMessage, ApiError>> {
+        Box::pin(async {
+            Err(ApiError::service_unavailable(
+                "git",
+                "Commit text generation is unavailable in this host",
+            ))
+        })
+    }
+    /// A pull request title and body for `base..HEAD`, by the small model.
+    fn pr_description<'a>(
+        &'a self,
+        _location: &'a Path,
+        _base: Option<String>,
+    ) -> BoxFuture<'a, Result<vcs::PrDescription, ApiError>> {
+        Box::pin(async {
+            Err(ApiError::service_unavailable(
+                "git",
+                "PR text generation is unavailable in this host",
+            ))
+        })
+    }
 }
 
 pub struct HttpOptions {

@@ -207,6 +207,29 @@ pub struct TurnContext {
     pub prefers_apply_patch: bool,
     /// The Session ruleset.
     pub rules: Value,
+    pub worktree: TurnWorktree,
+}
+
+/// Which worktree tools a Turn may offer (`worktrees` → Enter and exit tools).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TurnWorktree {
+    /// An unmanaged Location: `enter_worktree` only.
+    #[default]
+    Unmanaged,
+    /// Entered with `enter_worktree`: `exit_worktree` only.
+    Entered,
+    /// Started in a managed checkout, an isolated child included: neither.
+    Isolated,
+}
+
+impl TurnWorktree {
+    pub fn of(info: &super::SessionInfo) -> Self {
+        match (&info.worktree_origin, &info.worktree_id) {
+            (Some(_), _) => Self::Entered,
+            (None, Some(_)) => Self::Isolated,
+            (None, None) => Self::Unmanaged,
+        }
+    }
 }
 
 /// A path's permission decision for browsing (`server-api` → File browsing routes).
@@ -366,6 +389,9 @@ pub struct HookEffects {
     pub context: Option<String>,
     /// A `continue: false` request with its `[hook <id>]`-tagged stop reason.
     pub stop: Option<String>,
+    /// What a PreToolUse `updated_input` changed the call into, so the transcript
+    /// shows the input that actually ran (`hooks` → Decision schema).
+    pub rewrite: Option<String>,
 }
 
 impl HookEffects {
@@ -388,6 +414,18 @@ impl HookEffects {
                     .clone()
                     .unwrap_or_else(|| "continue: false".into()),
             );
+        }
+    }
+
+    /// Record one accepted input rewrite; a re-issued call's later rewrite follows
+    /// the earlier one.
+    pub fn record_rewrite(&mut self, text: String) {
+        match &mut self.rewrite {
+            Some(existing) => {
+                existing.push('\n');
+                existing.push_str(&text);
+            }
+            None => self.rewrite = Some(text),
         }
     }
 }
@@ -481,6 +519,12 @@ pub trait ToolHost: Send + Sync {
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+    /// A digest of the Location's resolved configuration, compared at each Safe
+    /// Boundary to fire `ConfigChange`; `None` (no configuration resolver) never fires.
+    fn config_digest(&self, _directory: &str) -> Option<String> {
+        None
+    }
+
     /// `compat.claude` of the Location's resolved config (`CLAUDE.md` loads in place);
     /// `None` uses the server-wide [`super::RuntimeOptions::claude_compat`].
     fn claude_compat(&self, _directory: &str) -> Option<bool> {

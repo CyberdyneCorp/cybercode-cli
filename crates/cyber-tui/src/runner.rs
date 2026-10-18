@@ -83,7 +83,12 @@ pub(crate) async fn start(
 async fn open(client: &Client, opts: &TuiOptions) -> Result<(Session, bool), String> {
     let existing = match &opts.start {
         Start::New => None,
-        Start::Last | Start::Pick => first_session(client).await?,
+        Start::Last | Start::Pick => first_session(client, "").await?,
+        Start::PickPr(pr) => Some(
+            first_session(client, &crate::perform::pr_filter(*pr))
+                .await?
+                .ok_or_else(|| format!("no Session is linked to pull request #{pr}"))?,
+        ),
         Start::Resume(wanted) => Some(find_session(client, wanted).await?),
     };
     let session = match existing {
@@ -118,12 +123,16 @@ async fn open(client: &Client, opts: &TuiOptions) -> Result<(Session, bool), Str
                 .map_err(|e| e.to_string())?["data"],
         );
     }
-    Ok((session, opts.start == Start::Pick))
+    Ok((
+        session,
+        matches!(opts.start, Start::Pick | Start::PickPr(_)),
+    ))
 }
 
-async fn first_session(client: &Client) -> Result<Option<String>, String> {
+/// The most recent Session matching `filter` (extra `&key=value` query terms).
+async fn first_session(client: &Client, filter: &str) -> Result<Option<String>, String> {
     let list = client
-        .get("/sessions?limit=1")
+        .get(&format!("/sessions?limit=1{filter}"))
         .await
         .map_err(|e| e.to_string())?;
     Ok(list["data"]["data"][0]["id"].as_str().map(str::to_string))
@@ -275,7 +284,10 @@ fn initial_actions(
         initial.push(request.action(false));
     }
     if open_picker {
-        initial.push(Action::LoadSessions);
+        initial.push(match opts.start {
+            Start::PickPr(pr) => Action::LoadPrSessions(pr),
+            _ => Action::LoadSessions,
+        });
     }
     if let Some(prompt) = &opts.prompt {
         initial.push(Action::Prompt {
@@ -599,6 +611,10 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         }
         Msg::Workflow(reply) => return app.workflow_reply(reply),
         Msg::Toast(text) => app.toast(text),
+        Msg::Compose(text) => {
+            app.composer.set_text(&text);
+            app.toast("Review the drafted command, then press Enter to run it");
+        }
         Msg::Done => {}
     }
     Vec::new()

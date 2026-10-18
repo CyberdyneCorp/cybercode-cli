@@ -106,6 +106,13 @@ pub fn validate(
     if let Some(Value::Object(profiles)) = map.get("profiles") {
         check_profiles(profiles, &mut issues);
     }
+    issues.extend(settings_issues(value));
+    issues
+}
+
+/// Errors of every typed settings section of the merged document.
+fn settings_issues(value: &Value) -> Vec<String> {
+    let mut issues = Vec::new();
     if let Err(error) = crate::worktrees::Settings::from_config(value) {
         issues.push(error);
     }
@@ -138,6 +145,9 @@ pub fn validate(
         issues.push(error);
     }
     if let Err(error) = super::WorkflowSettings::from_config(value) {
+        issues.push(error);
+    }
+    if let Err(error) = super::GitSettings::from_config(value) {
         issues.push(error);
     }
     issues

@@ -267,29 +267,9 @@ async fn pull_request(ctx: &Ctx<'_>, number: u32) -> Result<Target, CommandPlanE
             format!("`gh` is unavailable: {detail}"),
         )
     };
-    let search = trusted_path(ctx);
-    let program =
-        find_gh(ctx, &search).ok_or_else(|| gh_unavailable("not found on PATH".into()))?;
-    let credentials = GH_CREDENTIALS.map(String::from);
-    let mut prepared = crate::sandboxing::prepare_worktree_command(
-        ctx,
-        &program.display().to_string(),
-        &args,
-        &credentials,
-    )
-    .await
-    .map_err(|error| gh_unavailable(format!("{error:?}")))?;
-    // `gh` runs `git` through `PATH`, so it gets the same trusted search path.
-    let search = std::env::join_paths(search).map_err(|error| gh_unavailable(error.to_string()))?;
-    prepared
-        .env
-        .retain(|(key, _)| !key.eq_ignore_ascii_case("PATH"));
-    prepared
-        .env
-        .push(("PATH".into(), search.to_string_lossy().into_owned()));
-    let output = crate::worktrees::run_captured(ctx, prepared, &ctx.location, GH_CAPTURE)
+    let output = run_gh(ctx, &args, &ctx.location, GH_CAPTURE, NetworkAsks::Answer)
         .await
-        .map_err(|error| gh_unavailable(error.to_string()))?;
+        .map_err(gh_unavailable)?;
     let unresolved = |detail: &str| {
         target_error(
             ErrorCode::PrUnresolved,
@@ -305,6 +285,52 @@ async fn pull_request(ctx: &Ctx<'_>, number: u32) -> Result<Target, CommandPlanE
     let (base, head) =
         commit_ids(&output.stdout).ok_or_else(|| unresolved("unexpected `gh` output"))?;
     Ok(Target::Range { base, head })
+}
+
+/// Whether a `gh` run puts the sandbox proxy's network questions to the Session, or
+/// refuses every domain that is not allowlisted or already approved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NetworkAsks {
+    Answer,
+    Refuse,
+}
+
+/// Runs `gh args` in `directory` in the command sandbox, with at most `limit` bytes of
+/// output. `gh` is looked up on, and run with, the trusted `PATH`
+/// ([`trusted_path`]), so a repository cannot plant `gh` or the `git` it runs.
+pub(crate) async fn run_gh(
+    ctx: &Ctx<'_>,
+    args: &[String],
+    directory: &Path,
+    limit: usize,
+    asks: NetworkAsks,
+) -> Result<std::process::Output, String> {
+    let search = trusted_path(ctx);
+    let program = find_gh(ctx, &search).ok_or("not found on PATH")?;
+    let credentials = GH_CREDENTIALS.map(String::from);
+    let mut prepared = crate::sandboxing::prepare_worktree_command(
+        ctx,
+        &program.display().to_string(),
+        args,
+        &credentials,
+    )
+    .await
+    .map_err(|error| format!("{error:?}"))?;
+    // `gh` runs `git` through `PATH`, so it gets the same trusted search path.
+    let search = std::env::join_paths(search).map_err(|error| error.to_string())?;
+    prepared
+        .env
+        .retain(|(key, _)| !key.eq_ignore_ascii_case("PATH"));
+    prepared
+        .env
+        .push(("PATH".into(), search.to_string_lossy().into_owned()));
+    if asks == NetworkAsks::Refuse {
+        // With no receiver, the proxy refuses a domain that would otherwise be asked.
+        prepared.asks = None;
+    }
+    crate::worktrees::run_captured(ctx, prepared, directory, limit)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// `baseRefOid` and `headRefOid` as full lowercase hexadecimal object IDs.

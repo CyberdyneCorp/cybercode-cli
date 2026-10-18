@@ -1710,6 +1710,7 @@ mod elicitation {
             mode: "default".into(),
             prefers_apply_patch: false,
             rules: Value::Null,
+            worktree: Default::default(),
         };
         tokio::time::timeout(Duration::from_secs(10), async {
             while !flow
@@ -1991,6 +1992,7 @@ mod cancellation {
             mode: "default".into(),
             prefers_apply_patch: false,
             rules: Value::Null,
+            worktree: Default::default(),
         };
         let definition = flow
             .f

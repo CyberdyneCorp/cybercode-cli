@@ -40,6 +40,7 @@ async fn resuming_an_agent_that_never_got_a_child_spawns_one() {
             mode: "bypass".into(),
             prefers_apply_patch: false,
             rules: Value::Null,
+            worktree: Default::default(),
         },
         prompt: "the interrupted task".into(),
         agent: None,

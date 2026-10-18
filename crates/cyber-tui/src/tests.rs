@@ -2547,6 +2547,234 @@ fn unrelated_jobs_ending_during_a_review_are_not_the_review() {
     assert!(matches!(app.overlay, Overlay::Findings));
 }
 
+/// Set by the reviewer's first request; the unrelated explore child waits for it.
+static REVIEW_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Set once the explore Job's end reached the TUI; the reviewer waits for it.
+static EXPLORE_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Wait (bounded) until `flag` is set; the scripted model answers on its own thread.
+fn wait_flag(flag: &std::sync::atomic::AtomicBool) {
+    for _ in 0..3000 {
+        if flag.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// The parent starts a background `explore` child; the reviewer reads `a.rs`, then returns
+/// findings only after the explore Job's end reached the TUI, so that Job ends during the
+/// review.
+fn review_reply(body: &serde_json::Value) -> serde_json::Value {
+    let text = body.to_string();
+    let tool_result = text.contains("\"role\":\"tool\"");
+    if text.contains("Write a short title") {
+        return json!({"content":"Review title"});
+    }
+    if text.contains("review-target") {
+        REVIEW_STARTED.store(true, std::sync::atomic::Ordering::SeqCst);
+        if !tool_result {
+            return json!({"tool_calls":[{"index":0,"id":"call_review_read","type":"function",
+                "function":{"name":"read","arguments":"{\"path\":\"a.rs\"}"}}]});
+        }
+        wait_flag(&EXPLORE_SEEN);
+        let result = json!({"findings":[{"file":"a.rs","line":1,"severity":"high",
+            "summary":"REAL-APP-FINDING","failure_scenario":"changed line breaks callers"}],
+            "limitations":[]});
+        return json!({"tool_calls":[{"index":0,"id":"call_review_result","type":"function",
+            "function":{"name":"return_result","arguments":result.to_string()}}]});
+    }
+    if text.contains("EXPLORE-TASK") && !text.contains("SPAWN-EXPLORE") {
+        wait_flag(&REVIEW_STARTED);
+        return json!({"content":"explored"});
+    }
+    if text.contains("SPAWN-EXPLORE") && !tool_result {
+        let arguments = json!({"agent":"explore","prompt":"EXPLORE-TASK","background":true});
+        return json!({"tool_calls":[{"index":0,"id":"call_spawn","type":"function",
+            "function":{"name":"agent","arguments":arguments.to_string()}}]});
+    }
+    json!({"content":"noted"})
+}
+
+fn git_in(repo: &std::path::Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+/// `vcs-integration` → Local review command, through a production App over HTTP: the
+/// TUI's bundled `/review` posts the command, follows the real event stream, looks up
+/// the reviewer delegation and renders the reviewer Job's findings, while an unrelated
+/// background Job of the same Session that ends during the review is ignored.
+#[tokio::test]
+async fn review_against_app_server_renders_findings_and_ignores_unrelated_jobs() {
+    use crate::screens::Server;
+    use futures::StreamExt;
+    let server = Server::start_reply(
+        review_reply,
+        json!({"main":{}}),
+        json!({"permissions":{"agent":"allow","read":"allow"}}),
+        false,
+    )
+    .await;
+    let repo = server.root().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git_in(&repo, &["init", "-q"]);
+    git_in(&repo, &["config", "user.email", "t@example.com"]);
+    git_in(&repo, &["config", "user.name", "T"]);
+    std::fs::write(repo.join("a.rs"), "fn a() {}\n").unwrap();
+    git_in(&repo, &["add", "a.rs"]);
+    git_in(&repo, &["commit", "-q", "-m", "init"]);
+    std::fs::write(repo.join("a.rs"), "fn a(x: u8) {}\n").unwrap();
+    let client = server.client.at(&repo.display().to_string());
+    let created = client
+        .post("/sessions", json!({"model":"test/main","mode":"default"}))
+        .await
+        .unwrap();
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    let mut events = Box::pin(client.events(false).await.unwrap());
+    client
+        .post(
+            &format!("/sessions/{id}/prompt"),
+            json!({"parts":[{"type":"text","text":"SPAWN-EXPLORE"}]}),
+        )
+        .await
+        .unwrap();
+    // The explore Job runs in the background; the parent Turn ends.
+    let explore_job = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let jobs = client.get(&format!("/jobs?session_id={id}")).await.unwrap();
+            if let Some(job) = jobs["data"].as_array().and_then(|jobs| jobs.first()) {
+                break job["id"].as_str().unwrap().to_owned();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("explore Job");
+    while server.host.runtime.is_running(&id) {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let ui = Session {
+        id: id.clone(),
+        directory: repo.display().to_string(),
+        ..Session::default()
+    };
+    let mut app = App::new(ui, Vec::new(), "cyber");
+    typed(&mut app, "/review");
+    app.completion = None;
+    let mut actions = app.on_key(key(KeyCode::Enter));
+    assert!(
+        matches!(actions.as_slice(), [Action::Command { name, id: Some(_), .. }] if name == "review"),
+        "{actions:?}"
+    );
+    let mut explore_ended_during_review = false;
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            while let Some(action) = actions.pop() {
+                if matches!(
+                    action,
+                    Action::Command { .. } | Action::ReviewDelegation { .. }
+                ) {
+                    let msg = crate::perform::perform(&client, &app.session, action).await;
+                    actions.extend(crate::runner::apply(&mut app, msg, &mut Default::default()));
+                }
+            }
+            if matches!(app.overlay, Overlay::Findings) {
+                return;
+            }
+            let event = events.next().await.expect("event stream");
+            if event.kind == "job.ended.1" && event.data["id"] == explore_job.as_str() {
+                assert!(!matches!(app.overlay, Overlay::Findings));
+                explore_ended_during_review = true;
+            }
+            actions = app.on_event(&event.kind, &event.data);
+            if explore_ended_during_review {
+                EXPLORE_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    })
+    .await
+    .expect("the review findings were never shown");
+    assert!(explore_ended_during_review);
+    let shown = screen(&app);
+    assert!(shown.contains("REAL-APP-FINDING"), "{shown}");
+    assert!(shown.contains("a.rs:1"), "{shown}");
+    assert!(
+        app.toast
+            .as_ref()
+            .is_none_or(|(toast, ..)| !toast.contains("review failed")),
+        "{:?}",
+        app.toast
+    );
+    server.host.runtime.shutdown().await;
+}
+
+/// The small model drafts commit and PR text, adding a trailer it must not keep.
+fn git_text_reply(body: &serde_json::Value) -> serde_json::Value {
+    let text = body.to_string();
+    if text.contains("Draft a pull request") {
+        return json!({"content":"Greet users\n\nAdds `greet`.\nCo-authored-by: M <m@example.com>"});
+    }
+    if text.contains("Conventional Commits") {
+        return json!({"content":"feat: greet users\n\nCo-authored-by: M <m@example.com>"});
+    }
+    json!({"content":"ok"})
+}
+
+/// `vcs-integration` → Commit and PR text generation, through a production App over HTTP:
+/// `/commit` prefills a reviewable `git commit` with the small model's message and no
+/// co-author trailer; `/pr-description` prefills `gh pr create` for `base..HEAD`.
+#[tokio::test]
+async fn commit_and_pr_description_prefill_commands_from_the_app_server() {
+    use crate::screens::Server;
+    let server = Server::start_reply(git_text_reply, json!({"main":{}}), json!({}), false).await;
+    let repo = server.root().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git_in(&repo, &["init", "-q", "-b", "main"]);
+    git_in(&repo, &["config", "user.email", "t@example.com"]);
+    git_in(&repo, &["config", "user.name", "T"]);
+    std::fs::write(repo.join("a.rs"), "fn a() {}\n").unwrap();
+    git_in(&repo, &["add", "a.rs"]);
+    git_in(&repo, &["commit", "-q", "-m", "init"]);
+    git_in(&repo, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(repo.join("a.rs"), "fn greet() {}\n").unwrap();
+    git_in(&repo, &["commit", "-q", "-am", "feat: greet"]);
+    std::fs::write(repo.join("b.rs"), "fn b() {}\n").unwrap();
+    git_in(&repo, &["add", "b.rs"]);
+    let client = server.client.at(&repo.display().to_string());
+    let ui = Session {
+        id: "ses_git".into(),
+        directory: repo.display().to_string(),
+        ..Session::default()
+    };
+    let mut app = App::new(ui, Vec::new(), "cyber");
+    for (command, expected) in [
+        ("/commit", "!git commit -m 'feat: greet users'"),
+        (
+            "/pr-description main",
+            "!gh pr create --base 'main' --title 'Greet users' --body 'Adds `greet`.'",
+        ),
+    ] {
+        typed(&mut app, command);
+        app.completion = None;
+        let actions = app.on_key(key(KeyCode::Enter));
+        let [action @ Action::GitText(_)] = actions.as_slice() else {
+            panic!("{command}: {actions:?}")
+        };
+        let msg = crate::perform::perform(&client, &app.session, action.clone()).await;
+        crate::runner::apply(&mut app, msg, &mut Default::default());
+        assert_eq!(app.composer.text(), expected);
+        assert!(!app.composer.text().contains("Co-authored-by"));
+        app.composer.set_text("");
+    }
+    server.host.runtime.shutdown().await;
+}
+
 /// Regression: a reviewer fork that failed before its Job existed left the
 /// review pending forever.
 #[test]
@@ -2725,4 +2953,229 @@ fn hook_definitions_review_shows_managed_policy_skips() {
         crate::hook_definitions::Catalog::parse(&catalog),
     );
     assert!(screen(&app).contains("Skipped by managed-only policy (never runs)"));
+}
+
+/// A changed project hook reaches the TUI from a real App as the review hint.
+#[cfg(unix)]
+#[tokio::test]
+async fn hook_notice_event_shows_untrusted_review_hint() {
+    use cyber_core::paths::{DatabaseLocation, Paths};
+    use futures::StreamExt;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().canonicalize().unwrap();
+    let repo = directory.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let paths = Paths {
+        data: directory.join("data"),
+        config: directory.join("config"),
+        state: directory.join("state"),
+        cache: directory.join("cache"),
+        tmp: directory.join("tmp"),
+    };
+    paths.ensure().unwrap();
+    std::fs::write(
+        paths.config.join("cyber.json"),
+        json!({"providers":{"test":{"api":{"type":"openai-compatible","url":"http://127.0.0.1:9/v1","settings":{"auth":"none"}},"models":{"main":{}}}}})
+            .to_string(),
+    )
+    .unwrap();
+    let hook = json!({"type":"command","id":"lint","command":"cat >/dev/null"});
+    std::fs::write(
+        repo.join("cyber.jsonc"),
+        json!({"hooks":{"UserPromptSubmit":[{"hooks":[hook]}]}}).to_string(),
+    )
+    .unwrap();
+    // The checkout configuration is approved; the hook definition never was.
+    let home = directory.join("home");
+    let report = cyber_core::config::trust_report(&cyber_core::config::LoadRequest {
+        location: &repo,
+        paths: &paths,
+        home: &home,
+        env: &cyber_core::env::ProcessEnv,
+        profile: None,
+        overrides: &[],
+        flags: Default::default(),
+    })
+    .unwrap();
+    cyber_core::trust::TrustStore::new(paths.trust_file())
+        .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+        .unwrap();
+    let host = cyber_app::App::build(cyber_app::AppOptions {
+        paths: paths.clone(),
+        home,
+        database: DatabaseLocation::File(directory.join("events.db")),
+        default_directory: repo.clone(),
+        sandbox_policy: None,
+        snapshots: false,
+        interactive: true,
+        password: Some("tui-hook-password".into()),
+        mcp_credentials: None,
+        remote_skill_fetcher: None,
+        workflow_cores: None,
+    })
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = cyber_client::Client::http(
+        &format!("http://{}", listener.local_addr().unwrap()),
+        Some("tui-hook-password".into()),
+    )
+    .at(&repo.display().to_string());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(cyber_server::http::serve_tcp(
+        cyber_server::http::router(host.state.clone()),
+        listener,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    let mut events = Box::pin(client.events(false).await.unwrap());
+    let created = client
+        .post("/sessions", json!({"model":"test/main"}))
+        .await
+        .unwrap();
+    let id = created["data"]["id"].as_str().unwrap().to_owned();
+    client
+        .post(
+            &format!("/sessions/{id}/prompt"),
+            json!({"parts":[{"type":"text","text":"hello"}]}),
+        )
+        .await
+        .unwrap();
+    let notice = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let event = events.next().await.expect("event stream");
+            if event.kind == "session.hook.notice" {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("hook notice");
+    let mut ui_session = session(false);
+    ui_session.id = id;
+    ui_session.directory = repo.display().to_string();
+    let mut app = App::new(ui_session, Vec::new(), "cyber");
+    app.on_event(&notice.kind, &notice.data);
+    let toast = &app.toast.as_ref().unwrap().0;
+    assert!(
+        toast.contains("1 untrusted hook changed \u{2014} review with /hooks"),
+        "{toast}"
+    );
+    assert!(
+        screen(&app).contains("review with /hooks"),
+        "{}",
+        screen(&app)
+    );
+    let _ = stop.send(());
+    server.await.unwrap().unwrap();
+    host.runtime.shutdown().await;
+}
+
+/// `/memory readonly|off|on` from the TUI persist the toggle through a real App, and each
+/// Session's next turn offers the matching memory tool and memory context.
+#[tokio::test]
+async fn memory_readonly_off_on_commands_change_tool_and_context() {
+    use crate::screens::Server;
+    let server = Server::start().await;
+    let id = server.answered("first question").await;
+    let mut app = server.load(&id).await;
+
+    async fn toggle(server: &Server, app: &mut App, command: &str) -> String {
+        typed(app, command);
+        let actions = app.on_key(key(KeyCode::Enter));
+        let [action @ Action::SetMemory(_)] = actions.as_slice() else {
+            panic!("{actions:?}")
+        };
+        let msg = crate::perform::perform(&server.client, &app.session, action.clone()).await;
+        let follow = crate::runner::apply(app, msg, &mut Default::default());
+        assert!(follow.is_empty(), "{follow:?}");
+        app.toast.as_ref().unwrap().0.clone()
+    }
+    async fn turn(server: &Server, id: &str, marker: &str) -> serde_json::Value {
+        server.prompt(id, marker).await;
+        for _ in 0..2000 {
+            let request = server
+                .model
+                .requests()
+                .into_iter()
+                .rev()
+                .find(|body| body["messages"].to_string().contains(marker));
+            if let Some(request) = request
+                && !server.host.runtime.is_running(id)
+            {
+                return request;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("no model request for {marker}")
+    }
+    fn memory_operations(request: &serde_json::Value) -> Option<serde_json::Value> {
+        request["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|tool| {
+                (tool["function"]["name"] == "memory").then(|| {
+                    tool["function"]["parameters"]["properties"]["operation"]["enum"].clone()
+                })
+            })
+    }
+
+    let before = turn(&server, &id, "second question").await;
+    assert_eq!(
+        memory_operations(&before),
+        Some(json!(["list", "read", "write", "update", "delete"]))
+    );
+    assert!(before.to_string().contains("Save durable user preferences"));
+
+    assert_eq!(
+        toggle(&server, &mut app, "/memory readonly").await,
+        "Memory read-only from the next turn"
+    );
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(server.root().join("config/cyber.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(config["memory"], json!({"enabled":true,"generate":false}));
+    assert!(config["providers"]["test"].is_object(), "{config}");
+    let readonly = turn(&server, &id, "third question").await;
+    assert_eq!(memory_operations(&readonly), Some(json!(["list", "read"])));
+    let text = readonly["messages"].to_string();
+    assert!(text.contains("Memory is read-only"), "{text}");
+
+    assert_eq!(
+        toggle(&server, &mut app, "/memory off").await,
+        "Memory off from the next turn"
+    );
+    let off = turn(&server, &id, "fourth question").await;
+    assert_eq!(memory_operations(&off), None);
+    assert!(
+        off["messages"]
+            .to_string()
+            .contains("core/memory context no longer applies")
+    );
+
+    assert_eq!(
+        toggle(&server, &mut app, "/memory on").await,
+        "Memory on from the next turn"
+    );
+    let on = turn(&server, &id, "fifth question").await;
+    assert_eq!(
+        memory_operations(&on),
+        Some(json!(["list", "read", "write", "update", "delete"]))
+    );
+    let messages = on["messages"].to_string();
+    let restored = messages.rfind("Save durable user preferences").unwrap();
+    assert!(restored > messages.find("fourth question").unwrap());
+
+    typed(&mut app, "/memory sometimes");
+    assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("/memory on|off|readonly")
+    );
 }

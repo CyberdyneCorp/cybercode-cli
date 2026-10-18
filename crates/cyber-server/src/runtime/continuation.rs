@@ -44,10 +44,11 @@ impl Runtime {
         // Hook runners re-enter the lifecycle guard; holding it here would deadlock
         // behind a queued shutdown writer. Admission is rechecked once retaken.
         drop(lifecycle);
-        let hook_context = self
+        let effects = self
             .inner
             .user_prompt_hooks(&handle, &admission.parts, &admission.source)
-            .await?;
+            .await?
+            .for_prompt(super::is_forked(admission.skill_command.as_ref()))?;
         let attachments = self.prompt_resources(&handle, &admission).await?;
         let prepared = self.prepare_user_child(&handle, &state).await?;
         let _lifecycle = self.inner.open().await?;
@@ -96,7 +97,8 @@ impl Runtime {
                         delivery: admission.delivery,
                         source: admission.source,
                         digest,
-                        hook_context,
+                        hook_context: effects.context,
+                        hook_stop: effects.stop,
                         resources: attachments.resources,
                     },
                 ),
@@ -162,6 +164,7 @@ impl Runtime {
                     parts: None,
                     delivery: Some(delivery),
                     hook_context: None,
+                    hook_stop: None,
                     resources: Vec::new(),
                 },
             ));

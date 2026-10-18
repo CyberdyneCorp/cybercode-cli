@@ -22,7 +22,7 @@ import {
   type QuestionHandler,
 } from "./requests.js";
 import { eventStream } from "./stream.js";
-import type { AppTool } from "./tools.js";
+import type { AppTool, ClientHookHandler, ClientHookOptions } from "./tools.js";
 import { HttpTransport, type Transport } from "./transport.js";
 import {
   getWorkflowRun,
@@ -78,6 +78,20 @@ export class CyberClient implements Caller {
     register: (tool: AppTool): Promise<() => Promise<void>> => this.#transport.tools.register(tool),
   };
 
+  readonly hooks = {
+    /**
+     * Register an in-process hook handler for `event` (`PreToolUse`, `PostToolUse`, ...): the
+     * server forwards matching events of this client's Sessions (those it created or forked,
+     * those passed to `attach`, and their descendants) as `hook/execute`, merges the returned
+     * decision after every configured handler and records it with scope `client`. Resolves
+     * with a function that removes it; the registration also ends when the connection closes.
+     */
+    on: (event: string, handler: ClientHookHandler, options?: ClientHookOptions): Promise<() => Promise<void>> =>
+      this.#transport.tools.on(event, handler, options),
+    /** Apply this client's hook handlers to an existing Session (such as one another client created). */
+    attach: (sessionID: string): Promise<void> => this.#transport.tools.attachSession(sessionID),
+  };
+
   readonly permissions = {
     /** Reply to permission requests with `handler`'s decision; returns an unsubscribe function. */
     onRequest: (handler: PermissionHandler, options?: OnRequestOptions): (() => void) => onPermissionRequest(this, handler, options),
@@ -124,8 +138,14 @@ export class CyberClient implements Caller {
     return this.call(id, params as CallParams, options);
   }
 
-  call<K extends OperationId>(id: K, params: CallParams, options?: RequestOptions): Promise<Operations[K]["response"]> {
-    return this.#transport.call(id, params, options) as Promise<Operations[K]["response"]>;
+  async call<K extends OperationId>(id: K, params: CallParams, options?: RequestOptions): Promise<Operations[K]["response"]> {
+    const result = await this.#transport.call(id, params, options);
+    // A Session this client creates or forks is its own for its hook handlers.
+    if (id === "v1.session.create" || id === "v1.session.fork") {
+      const created = (result as { data?: { id?: unknown } } | undefined)?.data?.id;
+      if (typeof created === "string") await this.#transport.tools.attachSession(created);
+    }
+    return result as Operations[K]["response"];
   }
 
   stream(id: StreamOperationId, params: CallParams, options: StreamOptions = {}): AsyncIterableIterator<EventEnvelope> {

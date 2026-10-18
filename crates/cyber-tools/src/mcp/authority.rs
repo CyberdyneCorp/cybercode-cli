@@ -9,6 +9,9 @@ pub struct ServerSelection {
     pub digest: String,
     pub requires_sandbox: bool,
     pub requires_approval: bool,
+    /// Provided by the OS-managed policy (`mcp` → Organization MCP controls); exempt
+    /// from `policy.mcp` and from checkout approval.
+    pub managed: bool,
 }
 
 /// Inspect all contributing leaves; a global command with project-controlled arguments
@@ -22,6 +25,9 @@ pub fn authorize_server(
     let selected = inspect_server(resolved, location, name)?;
     if !selected.definition.enabled() {
         return Err("MCP server is disabled".into());
+    }
+    if !selected.managed && resolved.managed.blocks_mcp(name, &selected.definition) {
+        return Err(cyber_core::config::MCP_BLOCKED.into());
     }
     let checkout = &resolved.trust.checkout_root;
     if selected.requires_approval {
@@ -59,7 +65,7 @@ pub fn inspect_server(
         .servers
         .remove(name)
         .ok_or("MCP server is absent from loaded configuration")?;
-    let project = provenance(resolved, name)?;
+    let origin = provenance(resolved, name)?;
     let requires_sandbox = sandbox_selected(resolved, location)?;
     let digest = definition
         .digest(name)
@@ -68,15 +74,26 @@ pub fn inspect_server(
         definition,
         digest,
         requires_sandbox,
-        requires_approval: project,
+        requires_approval: origin.project,
+        managed: origin.managed,
     })
 }
 
-fn provenance(resolved: &Resolved, name: &str) -> Result<bool, String> {
+/// Where a server's leaves come from: any project leaf needs checkout approval; a
+/// managed definition is the managed layer's alone (the loader replaces it whole).
+struct Origin {
+    project: bool,
+    managed: bool,
+}
+
+fn provenance(resolved: &Resolved, name: &str) -> Result<Origin, String> {
     let pointer = format!("/mcp/{name}");
     check_origins(&resolved.value["mcp"][name], &pointer, resolved)?;
     let prefix = format!("{pointer}/");
-    let mut project = false;
+    let mut origin = Origin {
+        project: false,
+        managed: true,
+    };
     let mut found = false;
     for (key, source) in &resolved.sources {
         if key != &pointer && !key.starts_with(&prefix) {
@@ -86,19 +103,19 @@ fn provenance(resolved: &Resolved, name: &str) -> Result<bool, String> {
         if !resolved.layers.contains(source) {
             return Err("MCP server has unknown provenance".into());
         }
-        if source.starts_with("global:") {
-            continue;
-        }
-        if source.starts_with("project:") {
-            project = true;
-        } else if !source.starts_with("env:") && !source.starts_with("cli:") {
+        origin.managed &= source.starts_with("managed:");
+        origin.project |= source.starts_with("project:");
+        if !["global:", "project:", "managed:", "env:", "cli:"]
+            .iter()
+            .any(|prefix| source.starts_with(prefix))
+        {
             return Err("MCP server has unsupported provenance".into());
         }
     }
     if !found {
         return Err("MCP server provenance is absent".into());
     }
-    Ok(project)
+    Ok(origin)
 }
 
 fn sandbox_selected(resolved: &Resolved, location: &Path) -> Result<bool, String> {

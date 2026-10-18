@@ -100,7 +100,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         None,
         false,
     ),
-    ("memory", "review memory notes", None, false),
+    (
+        "memory",
+        "review memory notes; /memory on|off|readonly",
+        None,
+        false,
+    ),
     (
         "hooks",
         "review hook definitions and approvals",
@@ -112,6 +117,18 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
     ("agent", "child and parent threads", None, false),
     ("admissions", "pending delegations", None, false),
     ("review", "review the working tree changes", None, false),
+    (
+        "commit",
+        "draft a commit message for the staged changes",
+        None,
+        false,
+    ),
+    (
+        "pr-description",
+        "draft a pull request title and body",
+        None,
+        true,
+    ),
     ("subtask", "run a prompt as a background task", None, true),
     ("stop", "stop all background tasks", None, false),
     ("timestamps", "show or hide message times", None, false),

@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/memory", get(list))
         .route("/memory/requests", get(request_status))
+        .route("/memory/settings", get(settings).put(set_settings))
         .route("/memory/edit/{scope}/{name}", get(edit_review))
         .route("/memory/recovery/{scope}", get(recovery).post(recover))
         .route("/memory/recovery/requests", get(recovery_request))
@@ -52,6 +53,59 @@ async fn list(
         .unwrap_or_default();
     let directory = location(&parts, &state.options.default_directory)?;
     let data = state.services.memory_list(directory.clone(), scope).await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
+}
+
+/// The effective memory toggle of a Location (`memory` → Memory toggles).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MemorySettingsView {
+    /// What Sessions in this Location get from their next Safe Boundary.
+    pub state: cyber_core::memory::MemoryState,
+    pub enabled: bool,
+    pub generate: bool,
+    /// The state just saved; absent on reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested: Option<cyber_core::memory::MemoryState>,
+    /// A project layer, override or `CYBER_DISABLE_MEMORY` keeps `state` different from
+    /// `requested`.
+    #[serde(default)]
+    pub overridden: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetMemorySettings {
+    /// `on` loads and writes memory, `readonly` only loads it, `off` neither.
+    pub state: cyber_core::memory::MemoryState,
+}
+
+async fn settings(
+    State(state): State<AppState>,
+    parts: Parts,
+) -> Result<Json<Located<MemorySettingsView>>, ApiError> {
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state.services.memory_settings(directory.clone()).await?;
+    Ok(Json(Located {
+        location: LocationInfo::of(&directory),
+        data,
+    }))
+}
+
+async fn set_settings(
+    State(state): State<AppState>,
+    parts: Parts,
+    body: Result<Json<SetMemorySettings>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<Located<MemorySettingsView>>, ApiError> {
+    let Json(body) = body
+        .map_err(|_| ApiError::invalid("Expected {\"state\": \"on\" | \"off\" | \"readonly\"}"))?;
+    let directory = location(&parts, &state.options.default_directory)?;
+    let data = state
+        .services
+        .set_memory_settings(directory.clone(), body.state)
+        .await?;
     Ok(Json(Located {
         location: LocationInfo::of(&directory),
         data,

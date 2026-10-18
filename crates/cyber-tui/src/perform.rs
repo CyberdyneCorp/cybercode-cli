@@ -134,6 +134,8 @@ pub enum Msg {
     /// A Workflow monitor reply.
     Workflow(crate::workflows::Reply),
     Toast(String),
+    /// Text to put in the composer for the user to review and submit.
+    Compose(String),
     Done,
 }
 
@@ -670,7 +672,9 @@ pub async fn perform_owned(
     let scoped = client.at(&session.directory);
     let client = &scoped;
     match action {
-        Action::Memory(request) => Ok(crate::memory::perform(client, request).await),
+        Action::Memory(_) | Action::SetMemory(_) | Action::GitText(_) => {
+            location_action(client, action).await
+        }
         Action::ReconcileAdmission(_) | Action::Admission { .. } => {
             crate::admissions::perform_action(client, action).await
         }
@@ -703,6 +707,7 @@ pub async fn perform_owned(
             result: crate::children::load(client, session).await,
         }),
         Action::LoadSessions
+        | Action::LoadPrSessions(_)
         | Action::Rename { .. }
         | Action::RenameSession { .. }
         | Action::Archive(_)
@@ -902,6 +907,84 @@ async fn switch(client: &Client, session: &Session, action: Action) -> Result<Ms
     switched(result)
 }
 
+/// Location-scoped requests that change no Session: memory and drafted git text.
+async fn location_action(client: &Client, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::Memory(request) => Ok(crate::memory::perform(client, request).await),
+        Action::SetMemory(state) => set_memory(client, state).await,
+        Action::GitText(kind) => git_text(client, kind).await,
+        _ => Err("Unsupported Location action".into()),
+    }
+}
+
+/// Save the memory toggle and say what this Location gets from its next Safe Boundary.
+async fn set_memory(
+    client: &Client,
+    state: cyber_core::memory::MemoryState,
+) -> Result<Msg, String> {
+    let body = client
+        .request("PUT", "/memory/settings", Some(json!({ "state": state })))
+        .await
+        .map_err(err)?;
+    let label = |value: &Value| match value.as_str() {
+        Some("on") => "on",
+        Some("readonly") => "read-only",
+        _ => "off",
+    };
+    let data = &body["data"];
+    let effective = label(&data["state"]);
+    Ok(Msg::Toast(if data["overridden"] == true {
+        format!(
+            "Memory saved as {}, but configuration keeps it {effective} here",
+            label(&data["requested"])
+        )
+    } else {
+        format!("Memory {effective} from the next turn")
+    }))
+}
+
+/// Draft commit or PR text with the server's small model and prefill the shell command
+/// that uses it; nothing runs until the user submits it.
+async fn git_text(client: &Client, kind: crate::app::GitText) -> Result<Msg, String> {
+    use crate::app::GitText;
+    let command = match kind {
+        GitText::Commit => {
+            let body = client
+                .post("/git/commit-message", json!({}))
+                .await
+                .map_err(err)?;
+            let message = body["data"]["message"].as_str().unwrap_or_default();
+            format!("!git commit -m {}", shell_quote(message))
+        }
+        GitText::PullRequest { base } => {
+            let request = if base.is_empty() {
+                json!({})
+            } else {
+                json!({ "base": base })
+            };
+            let body = client
+                .post("/git/pr-description", request)
+                .await
+                .map_err(err)?;
+            let data = &body["data"];
+            let base = data["base"].as_str().unwrap_or_default();
+            let base = base.strip_prefix("origin/").unwrap_or(base);
+            format!(
+                "!gh pr create --base {} --title {} --body {}",
+                shell_quote(base),
+                shell_quote(data["title"].as_str().unwrap_or_default()),
+                shell_quote(data["body"].as_str().unwrap_or_default())
+            )
+        }
+    };
+    Ok(Msg::Compose(command))
+}
+
+/// One POSIX shell word: single-quoted, with embedded quotes closed and escaped.
+pub(crate) fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
 async fn post(client: &Client, path: &str, body: Value) -> Result<Msg, String> {
     client.post(path, body).await.map_err(err)?;
     Ok(Msg::Done)
@@ -944,13 +1027,27 @@ async fn manage(client: &Client, action: Action) -> Result<Msg, String> {
             .await
             .map_err(err)?,
         Action::ForkSession(id) => return fork_session(client, &id).await,
+        Action::LoadPrSessions(pr) => return sessions_matching(client, &pr_filter(pr)).await,
         _ => Value::Null,
     };
     sessions(client).await
 }
 
 pub async fn sessions(client: &Client) -> Result<Msg, String> {
-    let list = client.get("/sessions?limit=100").await.map_err(err)?;
+    sessions_matching(client, "").await
+}
+
+/// The `GET /sessions` terms of the Sessions (children included) linked to pull request `pr`.
+pub(crate) fn pr_filter(pr: u64) -> String {
+    format!("&pr={pr}&children=true")
+}
+
+/// Picker rows of the Location's Sessions matching `filter` (extra `&key=value` terms).
+async fn sessions_matching(client: &Client, filter: &str) -> Result<Msg, String> {
+    let list = client
+        .get(&format!("/sessions?limit=100{filter}"))
+        .await
+        .map_err(err)?;
     let items = list["data"]["data"]
         .as_array()
         .into_iter()
