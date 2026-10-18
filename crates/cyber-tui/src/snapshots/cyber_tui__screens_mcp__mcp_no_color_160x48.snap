@@ -1,0 +1,52 @@
+---
+source: crates/cyber-tui/src/screens_mcp.rs
+expression: screen
+---
+› How do I speed up fib?
+                                                                                                                  Theme baseline
+  Plan
+                                                                                                                  Context
+  This keeps the cache warm:                                                                                      100 tokens
+                                                                                                                  — spent
+  1. Memoization: results are cached
+                                                                                                                  ▼ MCP
+  • avoids recomputation                                                                                          ● context7 remote Connected · 2 tools
+                                                                                                                  ● deepwiki remote Connecting
+    rust                                                                                                          ● files stdio Failed
+    fn fib(n: u64) -> u64 { n }                                                                                     MCP startup failed; inspect local logs[31m
+                                                                                                                  ● linear remote Needs auth
+  ▣ Build · main · 11.3s                                                                                            cyber mcp auth linear
+                                                                                                                  ● old stdio Disabled
+                                                                                                                  ● corp remote Blocked
+                                                                                                                    blocked by organization policy
+                                                                                                                  +1 more · /status
+
+                                                                                                                  LSP
+                                                                                                                  LSPs will activate as files are read
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                                 ~/work/app
+┃ Build · main test · default
+ /Users/leo/work/app                                                                   100 · —  ctrl+p commands   ● Connected · Cyber Code 1.0.0

@@ -712,6 +712,7 @@ impl BuiltinHost {
                     Vec::new()
                 };
                 McpServerStatus {
+                    transport: definition.map(|server| server.transport().into()),
                     name,
                     configured: definition.is_some(),
                     status,
@@ -1644,11 +1645,13 @@ fn status_problem(
         );
     }
     let Some(entry) = entry else {
-        return failed(if connection.is_some() {
-            "MCP ownership has no retained runtime actor; recovery is required"
-        } else {
-            "MCP server has not started for this Location"
-        });
+        if connection.is_some() {
+            return failed("MCP ownership has no retained runtime actor; recovery is required");
+        }
+        return Some((
+            McpConnectionStatus::Idle,
+            "MCP server starts when a Session opens this Location".into(),
+        ));
     };
     if definition.digest(&entry.name).ok().as_ref() != Some(&entry.digest) {
         return failed("MCP definition changed; close and reopen the Location");

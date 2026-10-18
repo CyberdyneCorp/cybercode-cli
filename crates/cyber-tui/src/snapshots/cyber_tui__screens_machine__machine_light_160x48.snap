@@ -9,21 +9,21 @@ expression: screen
   This keeps the cache warm:                                                                                      100 tokens
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  LSP
-  • avoids recomputation                                                                                          LSPs will activate as files are read
-
-    rust                                                                                                          ▼ Machine                         macOS 15.0
-    fn fib(n: u64) -> u64 { n }                                                                                   CPU  ██▌             18%
+                                                                                                                  ▼ MCP
+  • avoids recomputation                                                                                          No MCP servers
+                                                                                                                  add one: cyber mcp add
+    rust
+    fn fib(n: u64) -> u64 { n }                                                                                   LSP
+                                                                                                                  LSPs will activate as files are read
+  ▣ Build · main · 11.3s
+                                                                                                                  ▼ Machine                         macOS 15.0
+                                                                                                                  CPU  ██▌             18%
                                                                                                                        12 cores · 82% idle
-  ▣ Build · main · 11.3s                                                                                          Mem  ██████████      71%
+                                                                                                                  Mem  ██████████      71%
                                                                                                                        11.4 / 16.0 GB · 4.6 free
                                                                                                                   Disk █████████████   93%
                                                                                                                        861 / 926 GB · 64.8 free
                                                                                                                   load 2.1 1.8 1.6
-
-
-
-
 
 
 
@@ -55,36 +55,18 @@ row 6: 2-4 fg=#5b6878 bg=#ffffff
 row 6: 5-16 fg=#1f2933 bg=#ffffff bold
 row 6: 17-111 fg=#1f2933 bg=#ffffff
 row 6: 112-159 fg=#1f2933 bg=#f6f6f7
-row 11: 0-1 fg=#1f2933 bg=#ffffff
-row 11: 2-3 fg=#1f2933 bg=#f2f2f3
-row 11: 4-6 fg=#8250df bg=#f2f2f3
-row 11: 7-9 fg=#00799e bg=#f2f2f3
-row 11: 10-10 fg=#5b6878 bg=#f2f2f3
-row 11: 11-11 fg=#1f2933 bg=#f2f2f3
-row 11: 12-12 fg=#5b6878 bg=#f2f2f3
-row 11: 13-16 fg=#8250df bg=#f2f2f3
-row 11: 17-17 fg=#5b6878 bg=#f2f2f3
-row 11: 18-18 fg=#8250df bg=#f2f2f3
-row 11: 19-20 fg=#5b6878 bg=#f2f2f3
-row 11: 21-25 fg=#8250df bg=#f2f2f3
-row 11: 26-26 fg=#5b6878 bg=#f2f2f3
-row 11: 27-29 fg=#8250df bg=#f2f2f3
-row 11: 30-30 fg=#5b6878 bg=#f2f2f3
-row 11: 31-110 fg=#1f2933 bg=#f2f2f3
-row 11: 111-111 fg=#1f2933 bg=#ffffff
-row 11: 112-113 fg=#1f2933 bg=#f6f6f7
-row 11: 114-118 fg=#5b6878 bg=#f6f6f7
-row 11: 119-132 fg=#1a7f37 bg=#d0d7de
-row 11: 133-159 fg=#1f2933 bg=#f6f6f7
-row 13: 0-8 fg=#00799e bg=#ffffff
-row 13: 9-23 fg=#5b6878 bg=#ffffff
-row 13: 24-111 fg=#1f2933 bg=#ffffff
-row 13: 112-113 fg=#1f2933 bg=#f6f6f7
-row 13: 114-118 fg=#5b6878 bg=#f6f6f7
-row 13: 119-132 fg=#9a6700 bg=#d0d7de
-row 13: 133-159 fg=#1f2933 bg=#f6f6f7
 row 15: 0-111 fg=#1f2933 bg=#ffffff
 row 15: 112-113 fg=#1f2933 bg=#f6f6f7
 row 15: 114-118 fg=#5b6878 bg=#f6f6f7
-row 15: 119-132 fg=#cf222e bg=#d0d7de
+row 15: 119-132 fg=#1a7f37 bg=#d0d7de
 row 15: 133-159 fg=#1f2933 bg=#f6f6f7
+row 17: 0-111 fg=#1f2933 bg=#ffffff
+row 17: 112-113 fg=#1f2933 bg=#f6f6f7
+row 17: 114-118 fg=#5b6878 bg=#f6f6f7
+row 17: 119-132 fg=#9a6700 bg=#d0d7de
+row 17: 133-159 fg=#1f2933 bg=#f6f6f7
+row 19: 0-111 fg=#1f2933 bg=#ffffff
+row 19: 112-113 fg=#1f2933 bg=#f6f6f7
+row 19: 114-118 fg=#5b6878 bg=#f6f6f7
+row 19: 119-132 fg=#cf222e bg=#d0d7de
+row 19: 133-159 fg=#1f2933 bg=#f6f6f7

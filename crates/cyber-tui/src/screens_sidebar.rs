@@ -450,10 +450,13 @@ mod end_to_end {
 
         let buf = buffer(&mut app, 160, 48, &Opts::default());
         let shown = text(&buf);
-        assert!(shown.contains("● context7 Failed"), "{shown}");
+        assert!(shown.contains("● context7 stdio Failed"), "{shown}");
         let first_words: String = error.chars().take(12).collect();
         assert!(shown.contains(&first_words), "{error} in {shown}");
-        assert!(shown.contains("● local Connected"), "{shown}");
+        assert!(
+            shown.contains("● local stdio Connected · 0 tools"),
+            "{shown}"
+        );
         assert!(
             shown.contains("LSPs will activate as files are read"),
             "{shown}"

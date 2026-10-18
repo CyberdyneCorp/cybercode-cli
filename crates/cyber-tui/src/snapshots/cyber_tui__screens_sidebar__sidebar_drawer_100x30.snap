@@ -10,13 +10,13 @@ expression: drawer
   This keeps the cache warm:                                          100 tokens
                                                                       — spent
   1. Memoization: results are cached
-                                                                      LSP
-  • avoids recomputation                                              LSPs will activate as files
-                                                                      are read
+                                                                      › ▼ MCP
+  • avoids recomputation                                              No MCP servers
+                                                                      add one: cyber mcp add
     rust
-    fn fib(n: u64) -> u64 { n }
-
-  ▣ Build · main · 11.3s
+    fn fib(n: u64) -> u64 { n }                                       LSP
+                                                                      LSPs will activate as files
+  ▣ Build · main · 11.3s                                              are read
 
 
 

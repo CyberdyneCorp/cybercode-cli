@@ -10,6 +10,7 @@ pub mod hooks;
 pub mod import;
 pub mod intelligence;
 pub mod mcp;
+pub mod mcp_config;
 pub mod mcp_serve;
 pub mod memory;
 pub mod models;

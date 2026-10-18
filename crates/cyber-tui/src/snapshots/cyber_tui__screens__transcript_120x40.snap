@@ -9,13 +9,13 @@ expression: "render(&mut app, width, height, &opts)"
   This keeps the cache warm:                                                          100 tokens
                                                                                       — spent
   1. Memoization: results are cached
-                                                                                      LSP
-  • avoids recomputation                                                              LSPs will activate as files are
-                                                                                      read
+                                                                                      ▼ MCP
+  • avoids recomputation                                                              No MCP servers
+                                                                                      add one: cyber mcp add
     rust
-    fn fib(n: u64) -> u64 { n }
-
-  ▣ Build · main · 11.3s
+    fn fib(n: u64) -> u64 { n }                                                       LSP
+                                                                                      LSPs will activate as files are
+  ▣ Build · main · 11.3s                                                              read
 
 
 
@@ -51,6 +51,10 @@ row 6: 2-4 fg=#6b7a8f bg=#0b0f14
 row 6: 5-16 fg=#d6e4f0 bg=#0b0f14 bold
 row 6: 17-83 fg=#d6e4f0 bg=#0b0f14
 row 6: 84-119 fg=#d6e4f0 bg=#13181d
+row 9: 0-83 fg=#d6e4f0 bg=#0b0f14
+row 9: 84-85 fg=#d6e4f0 bg=#13181d
+row 9: 86-107 fg=#666f77 bg=#13181d
+row 9: 108-119 fg=#d6e4f0 bg=#13181d
 row 11: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 11: 2-3 fg=#d6e4f0 bg=#171c21
 row 11: 4-6 fg=#c792ea bg=#171c21
@@ -68,4 +72,6 @@ row 11: 27-29 fg=#c792ea bg=#171c21
 row 11: 30-30 fg=#6b7a8f bg=#171c21
 row 11: 31-82 fg=#d6e4f0 bg=#171c21
 row 11: 83-83 fg=#d6e4f0 bg=#0b0f14
-row 11: 84-119 fg=#d6e4f0 bg=#13181d
+row 11: 84-85 fg=#d6e4f0 bg=#13181d
+row 11: 86-88 fg=#d6e4f0 bg=#13181d bold
+row 11: 89-119 fg=#d6e4f0 bg=#13181d

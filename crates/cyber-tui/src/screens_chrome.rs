@@ -114,7 +114,13 @@ async fn markers_for_completed_interrupted_and_failed_runs_come_from_durable_mes
         ..Opts::default()
     };
     let shown = render(&mut app, 120, 40, &opts);
-    assert!(shown.contains("▣ Build · main · 11.3s\n"), "{shown}");
+    // The plain marker ends the transcript column (the sidebar may share the row).
+    assert!(
+        shown
+            .lines()
+            .any(|l| l.contains("▣ Build · main · 11.3s") && !l.contains("11.3s ·")),
+        "{shown}"
+    );
     assert!(
         shown.contains("▣ Build · main · 11.3s · interrupted"),
         "{shown}"

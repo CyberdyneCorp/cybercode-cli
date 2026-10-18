@@ -48,6 +48,8 @@ mod screens_machine;
 #[cfg(test)]
 mod screens_markdown;
 #[cfg(test)]
+mod screens_mcp;
+#[cfg(test)]
 mod screens_parallel;
 #[cfg(test)]
 mod screens_progress;

@@ -6836,6 +6836,13 @@
           "configured": {
             "type": "boolean"
           },
+          "transport": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`remote` or `stdio`; absent for a server that is no longer configured."
+          },
           "status": {
             "$ref": "#/components/schemas/McpConnectionStatus"
           },
@@ -6875,6 +6882,7 @@
       "McpConnectionStatus": {
         "type": "string",
         "enum": [
+          "idle",
           "connecting",
           "connected",
           "disabled",

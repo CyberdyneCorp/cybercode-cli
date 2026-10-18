@@ -9,12 +9,12 @@ expression: shown
   This keeps the cache warm:                                                          100 tokens
                                                                                       — spent
   1. Memoization: results are cached
-                                                                                      LSP
-  • avoids reco┌ Permission: edit ──────────────────────────────────────────────────────────────────────┐as files are
-               │  src/fib.rs                                                                            │
+                                                                                      ▼ MCP
+  • avoids reco┌ Permission: edit ──────────────────────────────────────────────────────────────────────┐
+               │  src/fib.rs                                                                            │add
     rust       │                                                                                        │
     fn fib(n: u│  @@ -1 +1 @@                                                                           │
-               │  -fn fib() {}                                                                          │
+               │  -fn fib() {}                                                                          │as files are
   ▣ Build · mai│  +fn fib(n: u64) {}                                                                    │
                │                                                                                        │
                │❯ Allow once (y)                                                                        │
@@ -48,7 +48,8 @@ row 12: 16-17 fg=#d6e4f0 bg=#171c21
 row 12: 18-29 fg=#ff6b6b bg=#301d21
 row 12: 30-103 fg=#d6e4f0 bg=#171c21
 row 12: 104-104 fg=#00e5ff bg=#171c21
-row 12: 105-119 fg=#d6e4f0 bg=#13181d
+row 12: 105-117 fg=#6b7a8f bg=#13181d
+row 12: 118-119 fg=#d6e4f0 bg=#13181d
 row 13: 0-8 fg=#00e5ff bg=#0b0f14
 row 13: 9-14 fg=#6b7a8f bg=#0b0f14
 row 13: 15-15 fg=#00e5ff bg=#171c21

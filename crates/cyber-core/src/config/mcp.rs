@@ -187,6 +187,14 @@ impl McpToolFilter {
     }
 }
 impl McpServer {
+    /// `stdio` for a local command, `remote` for an HTTP (or later WebSocket) server.
+    pub fn transport(&self) -> &'static str {
+        match self {
+            Self::Local { .. } => "stdio",
+            Self::Remote { .. } => "remote",
+        }
+    }
+
     /// Bind approval to the server name and every effective field, including defaults.
     pub fn digest(&self, name: &str) -> Result<String, serde_json::Error> {
         use sha2::{Digest, Sha256};

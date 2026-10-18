@@ -485,12 +485,17 @@ async fn configured_status_is_read_only_redacted_and_preserves_unknown_ownership
             .unwrap()
     };
     assert_eq!(find("disabled")["status"], "disabled");
-    assert_eq!(find("waiting")["status"], "failed");
+    // A configured server no Session has opened yet is idle, never failed.
+    assert_eq!(find("waiting")["status"], "idle");
     assert!(find("waiting")["connection"].is_null());
+    assert_eq!(find("waiting")["transport"], "stdio");
+    assert_eq!(find("remote")["status"], "idle");
+    assert_eq!(find("remote")["transport"], "remote");
     assert_eq!(
         find("remote")["error"],
-        "MCP server has not started for this Location"
+        "MCP server starts when a Session opens this Location"
     );
+    assert!(find("removed")["transport"].is_null());
     assert_eq!(find("lost")["status"], "failed");
     assert_eq!(find("foreign")["status"], "failed");
     assert_eq!(find("foreign")["connection"]["phase"], "running");

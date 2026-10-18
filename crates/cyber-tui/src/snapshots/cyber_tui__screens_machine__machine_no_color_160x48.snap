@@ -9,21 +9,21 @@ expression: screen
   This keeps the cache warm:                                                                                      100 tokens
                                                                                                                   — spent
   1. Memoization: results are cached
-                                                                                                                  LSP
-  • avoids recomputation                                                                                          LSPs will activate as files are read
-
-    rust                                                                                                          ▼ Machine                         macOS 15.0
-    fn fib(n: u64) -> u64 { n }                                                                                   CPU  [##..........]  18%
+                                                                                                                  ▼ MCP
+  • avoids recomputation                                                                                          No MCP servers
+                                                                                                                  add one: cyber mcp add
+    rust
+    fn fib(n: u64) -> u64 { n }                                                                                   LSP
+                                                                                                                  LSPs will activate as files are read
+  ▣ Build · main · 11.3s
+                                                                                                                  ▼ Machine                         macOS 15.0
+                                                                                                                  CPU  [##..........]  18%
                                                                                                                        12 cores · 82% idle
-  ▣ Build · main · 11.3s                                                                                          Mem  [#########...]  71%
+                                                                                                                  Mem  [#########...]  71%
                                                                                                                        11.4 / 16.0 GB · 4.6 free
                                                                                                                   Disk [###########.]  93%
                                                                                                                        861 / 926 GB · 64.8 free
                                                                                                                   load 2.1 1.8 1.6
-
-
-
-
 
 
 

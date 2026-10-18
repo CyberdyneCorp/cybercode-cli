@@ -525,6 +525,32 @@ Remote servers are not processes, so `sandbox.apply_to` governs only their netwo
 MCP launch authorization now checks all contributing field origins and separate per-server approval of the effective definition, keyed by checkout. Workspace/hook approvals do not grant server approval, and a project override of global arguments remains project-controlled. Use `cyber mcp definitions --format json` to review loaded server definitions, their digests, field origins and approval state. Approve a currently loaded project server with `cyber mcp trust NAME --digest DIGEST`, after checkout configuration approval, and revoke an individual digest with `cyber mcp untrust --digest DIGEST`. Revocation works even when the current configuration is invalid. Environment/header values, OAuth settings and URL queries are redacted; approval binds the unredacted effective definition. These commands start no servers and create no Sessions. MCP confinement requires adding `mcp` to `sandbox.apply_to`; default scope excludes MCP, independently of project approval. Configured local servers start when their Location opens; tools remain subject to agent, Mode, permission and hook controls.
 
 
+## Adding and listing MCP servers
+
+Servers live under `mcp` in a config document. `cyber mcp add` writes the entry for you and keeps every comment and setting already in the file:
+
+```bash
+cyber mcp add context7 --url https://mcp.context7.com/mcp            # remote (Streamable HTTP), user scope
+cyber mcp add docs --url https://docs.example/mcp --header "Authorization=Bearer {env:DOCS_TOKEN}"
+cyber mcp add files --env ROOT=. -- npx -y @modelcontextprotocol/server-filesystem .   # local (stdio)
+cyber mcp add shared --scope project --url https://mcp.corp.example/mcp           # .cyber/cyber.jsonc
+cyber mcp list                                                         # live status, transport, tools
+cyber mcp remove docs                                                  # add --scope when defined twice
+```
+
+`--scope user` (the default) writes the global `cyber.jsonc`, `project` writes the repository's `.cyber/cyber.jsonc` and `local` writes `.cyber/cyber.local.jsonc` for this checkout only. A project or local server starts only after you approve it: `add` prints the `cyber mcp trust <name> --digest <digest>` command. Adding a name that the target document already defines is refused, and `remove` without `--scope` is refused when more than one document defines the name. The equivalent hand-written entries are:
+
+```jsonc
+{
+  "mcp": {
+    "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp" },
+    "files": { "type": "local", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] }
+  }
+}
+```
+
+Servers connect when a Session opens their Location. Until then `cyber mcp list` and `GET /api/v1/mcp` report them `idle` (never `failed`); each row also says its `transport` (`remote` or `stdio`). The TUI sidebar's **MCP** section lists every configured server with its status, transport and tool count (`● context7 remote Connected · 2 tools`), the error of a failed server, `cyber mcp auth <name>` for one that needs sign-in, and `Blocked` for one refused by organization policy. It shows six servers, then `+N more · /status`; with none configured it says `No MCP servers` and how to add one. Focus a failed or needs-auth server with `<leader>e` and press `r` to reconnect it.
+
 ## Local MCP startup waiting
 
 Configured local MCP servers start concurrently when a Location opens. The model can call `wait_for_mcp` with `{"servers":["shared"],"timeout":30}` to wait for named servers still connecting; timeout is in seconds, defaults to 60 and must be between 0 and 60. Zero reads current status immediately. The result includes each requested server's redacted status/error and a `timed_out` flag. Disabled/failed servers return without waiting; unknown names fail. Waiting does not start servers, invoke tools or approve discoveries, and cancellation leaves independent startup ownership intact.

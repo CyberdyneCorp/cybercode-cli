@@ -12,6 +12,9 @@ const CHANGED: &str = "mcp.status.changed.1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum McpConnectionStatus {
+    // `idle`: configured and allowed, but no Session has opened the Location yet.
+    // Reported by status queries only; never recorded as a connection phase.
+    Idle,
     Connecting,
     Connected,
     Disabled,
@@ -120,6 +123,8 @@ pub struct McpToolsChanged {
 pub struct McpServerStatus {
     pub name: String,
     pub configured: bool,
+    /// `remote` or `stdio`; absent for a server that is no longer configured.
+    pub transport: Option<String>,
     pub status: McpConnectionStatus,
     pub error: Option<String>,
     /// Published discovery names; invoking them still requires ordinary tool authorization.

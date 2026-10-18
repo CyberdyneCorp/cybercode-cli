@@ -10,8 +10,8 @@ expression: "render(&mut app, 160, 48, &Opts::default())"
     │ one                                                                                                         — spent
     │ two
                                                                                                                   ▼ MCP
-  Wrote it.                                                                                                       ● context7 Connected
-                                                                                                                  ● local Connected
+  Wrote it.                                                                                                       ● context7 stdio Connected · 0 tools
+                                                                                                                  ● local stdio Connected · 0 tools
   ▣ Build · main · 11.3s
                                                                                                                   LSP
                                                                                                                   LSPs will activate as files are read

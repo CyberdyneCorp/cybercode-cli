@@ -13,6 +13,17 @@ use crate::output;
 
 #[derive(Debug, Subcommand)]
 pub enum McpCmd {
+    /// List configured servers with their live status, transport and tool count.
+    List,
+    /// Add a server to the user, project or local config document, keeping its comments:
+    /// `--url <url>` for a remote server, or `-- <command> [args...]` for a local one.
+    Add(super::mcp_config::AddArgs),
+    /// Remove a server from the config document that defines it.
+    Remove {
+        name: String,
+        #[arg(long, value_enum)]
+        scope: Option<super::mcp_config::Scope>,
+    },
     /// Review loaded server definitions, origins and digests without connecting.
     Definitions,
     /// Display one loaded server and its resolved output options without connecting.
@@ -60,6 +71,14 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
     if let McpCmd::Logout { name } = cmd {
         return logout(ctx, global, &name);
     }
+    match cmd {
+        McpCmd::List => return super::mcp_config::list(ctx, global),
+        McpCmd::Add(args) => return super::mcp_config::add(args, ctx, global),
+        McpCmd::Remove { name, scope } => {
+            return super::mcp_config::remove(&name, scope, ctx, global);
+        }
+        _ => {}
+    }
     let resolved = ctx.config()?;
     match cmd {
         McpCmd::Definitions => definitions(&resolved, &store, ctx, global),
@@ -99,7 +118,12 @@ pub fn run(cmd: McpCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliErr
             )
         }
         McpCmd::Auth { name, port } => auth(&resolved, &store, ctx, global, &name, port),
-        McpCmd::Untrust { .. } | McpCmd::Logout { .. } | McpCmd::Serve(_) => {
+        McpCmd::Untrust { .. }
+        | McpCmd::Logout { .. }
+        | McpCmd::Serve(_)
+        | McpCmd::List
+        | McpCmd::Add(_)
+        | McpCmd::Remove { .. } => {
             unreachable!("handled before configuration loading")
         }
     }

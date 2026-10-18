@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use super::layout::{shorten_path, truncate_end};
 use super::wrap::wrap;
 use crate::app::App;
-use crate::sidebar::{Connection, FILE_ROWS, Row, Section};
+use crate::sidebar::{Connection, FILE_ROWS, MCP_ROWS, McpServer, Row, Section};
 use crate::theme::Tokens;
 
 /// Columns of padding on each side.
@@ -197,21 +197,22 @@ fn workflow_tail(app: &App, run: &crate::sidebar::WorkflowRow) -> Vec<Span<'stat
 }
 
 /// The dot color of an MCP status word.
-fn mcp_color(t: &Tokens, status: &str) -> Color {
-    match status {
+fn mcp_color(t: &Tokens, server: &McpServer) -> Color {
+    match server.status.as_str() {
         "connected" => t.success,
+        "failed" if server.blocked() => t.text_subtle,
         "failed" => t.error,
-        "disabled" => t.text_subtle,
+        "disabled" | "idle" => t.text_subtle,
         _ => t.warning,
     }
 }
 
 fn mcp(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     let t = &app.theme;
-    let servers = app.sidebar.servers();
-    if servers.is_empty() {
+    if app.sidebar.mcp.ready().is_none() {
         return;
     }
+    let servers = app.sidebar.servers();
     let collapsed = app.sidebar.collapsed.contains(&Section::Mcp);
     out.push(Line::default());
     let arrow = if collapsed { "▶" } else { "▼" };
@@ -223,29 +224,83 @@ fn mcp(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     if collapsed {
         return;
     }
-    for (i, server) in servers.iter().enumerate() {
-        let word = server.word();
-        let name_room = width.saturating_sub(word.len() + 3);
-        out.push(focusable(
-            app,
-            Some(Row::Mcp(i)),
-            vec![
-                Span::styled("● ", Style::default().fg(mcp_color(t, &server.status))),
-                Span::styled(
-                    truncate_end(&server.name, name_room),
-                    Style::default().fg(t.text),
-                ),
-                Span::styled(format!(" {word}"), Style::default().fg(t.text_muted)),
-            ],
+    if servers.is_empty() {
+        out.push(muted_line(app, "No MCP servers"));
+        out.extend(wrap(
+            Line::from(Span::styled(
+                "add one: cyber mcp add",
+                Style::default().fg(t.text_subtle),
+            )),
+            width,
         ));
-        if server.status == "failed"
-            && let Some(error) = &server.error
-        {
+        return;
+    }
+    for (i, server) in servers.iter().take(MCP_ROWS).enumerate() {
+        out.push(focusable(app, Some(Row::Mcp(i)), mcp_row(t, server, width)));
+        if let Some(note) = mcp_note(server) {
+            let color = if server.status == "failed" && !server.blocked() {
+                t.error
+            } else {
+                t.text_muted
+            };
             out.push(Line::from(Span::styled(
-                format!("  {}", truncate_end(error, width.saturating_sub(2))),
-                Style::default().fg(t.error),
+                format!("  {}", truncate_end(&note, width.saturating_sub(2))),
+                Style::default().fg(color),
             )));
         }
+    }
+    if servers.len() > MCP_ROWS {
+        out.push(muted_line(
+            app,
+            &format!("+{} more · /status", servers.len() - MCP_ROWS),
+        ));
+    }
+}
+
+/// `● name remote  Connected · 2 tools`, with the name truncated to fit.
+fn mcp_row(t: &Tokens, server: &McpServer, width: usize) -> Vec<Span<'static>> {
+    let word = server.word();
+    let tools = (server.status == "connected").then(|| match server.tools {
+        1 => " · 1 tool".to_owned(),
+        n => format!(" · {n} tools"),
+    });
+    let transport = server
+        .transport
+        .as_deref()
+        .map(|t| format!(" {t}"))
+        .unwrap_or_default();
+    let tail = word.len() + 1 + tools.as_ref().map_or(0, String::len);
+    let name_room = width
+        .saturating_sub(2 + tail + transport.chars().count())
+        .max(4);
+    let mut spans = vec![
+        Span::styled("● ", Style::default().fg(mcp_color(t, server))),
+        Span::styled(
+            truncate_end(&server.name, name_room),
+            Style::default().fg(t.text),
+        ),
+    ];
+    if 2 + server.name.chars().count().min(name_room) + transport.len() + tail <= width {
+        spans.push(Span::styled(transport, Style::default().fg(t.text_subtle)));
+    }
+    spans.push(Span::styled(
+        format!(" {word}"),
+        Style::default().fg(t.text_muted),
+    ));
+    if let Some(tools) = tools {
+        spans.push(Span::styled(tools, Style::default().fg(t.text_subtle)));
+    }
+    spans
+}
+
+/// The second line under a server that needs attention.
+fn mcp_note(server: &McpServer) -> Option<String> {
+    match server.status.as_str() {
+        "needs_auth" | "needs_client_registration" => {
+            Some(format!("cyber mcp auth {}", server.name))
+        }
+        "failed" => server.error.clone(),
+        _ => None,
     }
 }
 

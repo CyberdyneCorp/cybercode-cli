@@ -61,21 +61,37 @@ impl<T> Source<T> {
     }
 }
 
+/// MCP servers listed in the sidebar before `+N more`.
+pub const MCP_ROWS: usize = 6;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct McpServer {
     pub name: String,
-    /// `connecting`, `connected`, `disabled`, `failed`, `needs_auth`,
+    /// `idle`, `connecting`, `connected`, `disabled`, `failed`, `needs_auth`,
     /// `needs_client_registration`.
     pub status: String,
     pub error: Option<String>,
+    /// `remote` or `stdio`, when the server reports it.
+    pub transport: Option<String>,
+    /// Published tools, counted while connected.
+    pub tools: usize,
 }
 
 impl McpServer {
+    /// Refused by organization policy rather than broken.
+    pub fn blocked(&self) -> bool {
+        self.error
+            .as_deref()
+            .is_some_and(|error| error.contains("blocked by organization policy"))
+    }
+
     /// The status word shown beside the dot.
     pub fn word(&self) -> &'static str {
         match self.status.as_str() {
             "connected" => "Connected",
             "connecting" => "Connecting",
+            "idle" => "Idle",
+            "failed" if self.blocked() => "Blocked",
             "failed" => "Failed",
             "needs_auth" | "needs_client_registration" => "Needs auth",
             "disabled" => "Disabled",
@@ -416,10 +432,12 @@ impl Sidebar {
     /// Focusable rows, top to bottom, as the view draws them.
     pub fn rows(&self) -> Vec<Row> {
         let mut rows: Vec<Row> = (0..self.workflows.len()).map(Row::Workflow).collect();
-        if !self.servers().is_empty() {
+        // Shown whenever the MCP route answered, so an empty list says how to add one.
+        if self.mcp.ready().is_some() {
             rows.push(Row::Header(Section::Mcp));
             if !self.collapsed.contains(&Section::Mcp) {
-                rows.extend((0..self.servers().len()).map(Row::Mcp));
+                let shown = self.servers().len().min(MCP_ROWS);
+                rows.extend((0..shown).map(Row::Mcp));
             }
         }
         if self.machine_shown() {
@@ -543,6 +561,8 @@ pub fn parse_mcp(data: &Value) -> Vec<McpServer> {
             name: clean(s["name"].as_str().unwrap_or_default()),
             status: clean(s["status"].as_str().unwrap_or_default()),
             error: s["error"].as_str().map(clean).filter(|e| !e.is_empty()),
+            transport: s["transport"].as_str().map(clean).filter(|t| !t.is_empty()),
+            tools: s["tools"].as_array().map_or(0, Vec::len),
         })
         .collect()
 }
