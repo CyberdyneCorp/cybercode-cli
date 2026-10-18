@@ -6,7 +6,7 @@ expression: "render(&mut app, width, height, &opts)"
                                                                                       Theme baseline
     python
     def fib(n):                                                                       Context
-        # Build up solution iteratively                                               100 tokens
+        # Build up solution iteratively                                               100 tokens · window unknown
         dp = [0, 1]                                                                   — spent
         for i in range(2, n + 1):
             dp.append(dp[i - 1] + dp[i - 2])                                          ▼ MCP
@@ -49,8 +49,8 @@ row 4: 8-38 fg=#6b7a8f bg=#171c21 italic
 row 4: 39-82 fg=#d6e4f0 bg=#171c21
 row 4: 83-83 fg=#d6e4f0 bg=#0b0f14
 row 4: 84-85 fg=#d6e4f0 bg=#13181d
-row 4: 86-95 fg=#6b7a8f bg=#13181d
-row 4: 96-119 fg=#d6e4f0 bg=#13181d
+row 4: 86-112 fg=#6b7a8f bg=#13181d
+row 4: 113-119 fg=#d6e4f0 bg=#13181d
 row 6: 0-1 fg=#d6e4f0 bg=#0b0f14
 row 6: 2-3 fg=#d6e4f0 bg=#171c21
 row 6: 4-16 fg=#c792ea bg=#171c21

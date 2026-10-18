@@ -200,6 +200,37 @@ pub fn gigabytes(bytes: u64) -> String {
     }
 }
 
+/// `29.5 thousand`, `128 thousand`, `1.2 million`: token counts read aloud.
+fn spoken(n: u64) -> String {
+    let (value, unit) = match n {
+        0..1_000 => return n.to_string(),
+        1_000..1_000_000 => (n as f64 / 1_000.0, "thousand"),
+        _ => (n as f64 / 1_000_000.0, "million"),
+    };
+    let text = format!("{value:.1}");
+    format!("{} {unit}", text.strip_suffix(".0").unwrap_or(&text))
+}
+
+/// The Context meter as one sentence for screen readers, e.g. `Context 22 percent used,
+/// 29.5 thousand of 128 thousand tokens, auto-compact at 85 percent`.
+pub fn context_sentence(meter: &crate::model::ContextMeter) -> String {
+    let (Some(window), Some(percent)) = (meter.window, meter.percent()) else {
+        return format!(
+            "Context {} tokens, window unknown",
+            spoken(meter.used_tokens)
+        );
+    };
+    let compaction = match meter.compact_percent() {
+        Some(at) => format!("auto-compact at {at:.0} percent"),
+        None => "auto-compact off".to_owned(),
+    };
+    format!(
+        "Context {percent:.0} percent used, {} of {} tokens, {compaction}",
+        spoken(meter.used_tokens),
+        spoken(window)
+    )
+}
+
 /// One sentence for screen readers and the Status tab.
 pub fn machine_sentence(m: &Machine) -> String {
     let cpu = match m.cpu_busy() {

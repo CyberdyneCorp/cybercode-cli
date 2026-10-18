@@ -4216,7 +4216,9 @@
           }
         },
         "required": [
-          "used_tokens"
+          "used_tokens",
+          "measured",
+          "compacted"
         ]
       },
       "SetupStatus": {
@@ -4225,6 +4227,14 @@
             "type": "object",
             "properties": {
               "status": {
+          },
+          "measured": {
+            "type": "boolean",
+            "description": "`used_tokens` comes from a finished step; false before the first one and after a\ncompaction, when only the window is known."
+          },
+          "compacted": {
+            "type": "boolean",
+            "description": "No step has finished since the last compaction."
                 "type": "string",
                 "const": "completed"
               }

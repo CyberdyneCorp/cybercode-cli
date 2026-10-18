@@ -125,7 +125,7 @@ The welcome screen SHALL disappear as soon as the first message exists and SHALL
 ### Requirement: Session sidebar
 (P1) The system SHALL provide a right sidebar, toggled by `<leader>b` and `/sidebar`, with `tui.sidebar` set to `auto` (default), `show` or `hide`. In `auto` and `show` it SHALL be docked when the terminal is at least 120 columns wide; `hide` SHALL start hidden, and the toggle SHALL flip the docked state for the rest of the run. Its width SHALL be 30% of the terminal, clamped to 32..48 columns. From top to bottom it SHALL show:
 - the Session title, and the parent title for child Sessions
-- **Context**: used tokens, percent of the context window used (`warning` above 85%), and cost spent (`—` when unpriced, `≥ $x` when partly unpriced)
+- **Context**: a `Context` row with a one-row eighth-block bar of the context window used (the same glyphs and `border` track as the Machine bars; `success` below 70%, `warning` from 70%, `error` from the auto-compaction point, or from 90% when auto-compaction is off) and the percent, with a thin `│` marker cell at the auto-compaction point; under it `used / window tokens`, then `│ auto-compact at N%` (`auto-compact pending` in `error` at or above the point, `compacting…` in `warning` while compaction runs, `auto-compact off` without a point, and no marker then), then the cost spent (`—` when unpriced, `≥ $x` when partly unpriced). The numbers SHALL match the footer's `29.5K (22%)`. Before the first reply it SHALL show `0 / <window> tokens · <model>`; after a compaction, `compacted · measured after the next reply`; with an unknown window, `N tokens · window unknown` without a bar or percent. Under `NO_COLOR` the bar SHALL be `[####......]` text with `|` at the marker. Screen readers get the sentence `Context 22 percent used, 29.5 thousand of 128 thousand tokens, auto-compact at 85 percent` in the Status tab
 - **MCP**: shown whenever `GET /api/v1/mcp` answers, as a collapsible list (`▼`/`▶`) with one row per configured server: a status dot, the name, the transport (`remote`/`stdio`) in `text_subtle` and the status word (`Connected · N tools`, `Connecting`, `Idle`, `Failed`, `Needs auth`, `Disabled`, `Blocked` for a server blocked by organization policy); a failed server shows its sanitized error and a server needing auth shows `cyber mcp auth <name>`, each truncated to one row; at most six servers are listed, then `+N more · /status`; with no configured server it shows `No MCP servers` and `add one: cyber mcp add`
 - **LSP**: one row per language server with its status (`starting`, `connected`, `broken`), or `LSPs will activate as files are read` when none has started
 - **Modified files**: files changed in this Session with `+adds -dels` (from `GET .../diff` without `message_id`, the diff from the Session's first pre-Turn snapshot to its latest post-Turn snapshot), at most 10 rows and then `+N more`; omitted when nothing changed
@@ -136,6 +136,26 @@ MCP rows SHALL update from `mcp.status.changed.1` and `mcp.tools.changed.1`, Mod
 #### Scenario: Wide terminal shows the sidebar
 - **WHEN** the terminal is 160 columns wide and `tui.sidebar` is `auto`
 - **THEN** the sidebar is drawn at 48 columns with Context, MCP, LSP and the `cwd:branch` footer
+
+#### Scenario: Context early in a Session
+- **WHEN** the last reply's prompt was 28.2K tokens of a 128K window that auto-compacts at 85%
+- **THEN** the Context bar is green at 22% with the marker at 85%, followed by `28.2K / 128K tokens` and `│ auto-compact at 85%`, and the footer reads `28.2K (22%)`
+
+#### Scenario: Context getting full
+- **WHEN** the prompt reaches 78% of the window
+- **THEN** the bar is drawn in `warning`
+
+#### Scenario: Auto-compaction pending
+- **WHEN** the prompt reaches 91% of a window that auto-compacts at 85%
+- **THEN** the bar is drawn in `error` and the line reads `auto-compact pending`
+
+#### Scenario: Context before the first reply
+- **WHEN** a new Session on a 400K-window model has not replied yet
+- **THEN** the Context section shows an empty bar at 0% and `0 / 400K tokens · <model name>`, and the footer shows no context field
+
+#### Scenario: Unknown context window
+- **WHEN** the catalog does not know the model's window and the last reply used 29,470 prompt tokens
+- **THEN** the Context section reads `29,470 tokens · window unknown` with no bar and no percent
 
 #### Scenario: Failed MCP server
 - **WHEN** MCP server `context7` fails to start with `spawn ENOENT`

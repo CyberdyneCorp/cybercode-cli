@@ -16,6 +16,11 @@ pub struct ContextMeter {
     pub compact_at: Option<u64>,
     /// `used_tokens / window`; null when the window is unknown.
     pub utilization: Option<f64>,
+    /// `used_tokens` comes from a finished step; false before the first one and after a
+    /// compaction, when only the window is known.
+    pub measured: bool,
+    /// No step has finished since the last compaction.
+    pub compacted: bool,
 }
 
 impl ContextMeter {
@@ -36,29 +41,33 @@ impl ContextMeter {
                 None
             },
             utilization: known.map(|window| used_tokens as f64 / window as f64),
+            measured: true,
+            compacted: false,
         }
     }
 }
 
 impl super::Runtime {
-    /// The meter for a Session's last finished step; `None` before its first step and
-    /// after a compaction until the next one.
+    /// The meter for a Session: the last finished step's prompt tokens against the window
+    /// of the Session's current model, so a model switch re-resolves the window. Before the
+    /// first step and after a compaction it reports the window with `measured: false`.
     pub fn context_meter(&self, state: &super::SessionState) -> Option<ContextMeter> {
-        let last = state.last_step.as_ref()?;
-        let resolved = self
-            .inner
-            .resolve(&format!("{}/{}", last.provider, last.model))
-            .ok();
+        let last = state.last_step.as_ref();
+        let model_ref = if state.info.model.is_empty() {
+            last.map(|l| format!("{}/{}", l.provider, l.model))?
+        } else {
+            state.info.model.clone()
+        };
+        let resolved = self.inner.resolve(&model_ref).ok();
         let (window, max_output) = resolved.map_or((0, 0), |model| {
             let max_output = model.template.max_output_tokens.unwrap_or(0);
             (model.context_limit, u64::from(max_output))
         });
-        Some(ContextMeter::new(
-            last.usage.context_tokens(),
-            window,
-            max_output,
-            &self.inner.options.compaction,
-        ))
+        let used = last.map_or(0, |l| l.usage.context_tokens());
+        let mut meter = ContextMeter::new(used, window, max_output, &self.inner.options.compaction);
+        meter.measured = last.is_some();
+        meter.compacted = last.is_none() && state.compacted.is_some();
+        Some(meter)
     }
 }
 

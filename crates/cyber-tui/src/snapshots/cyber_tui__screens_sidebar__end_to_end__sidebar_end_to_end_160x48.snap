@@ -6,7 +6,7 @@ expression: "render(&mut app, 160, 48, &Opts::default())"
                                                                                                                   Theme baseline
   ⏺ write notes.md  completed
     │ Created notes.md                                                                                            Context
-    │ # Notes                                                                                                     100 tokens
+    │ # Notes                                                                                                     100 tokens · window unknown
     │ one                                                                                                         — spent
     │ two
                                                                                                                   ▼ MCP

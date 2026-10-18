@@ -1,0 +1,59 @@
+---
+source: crates/cyber-tui/src/screens_context.rs
+expression: screen
+---
+› How do I speed up fib?
+                                                                                                                  Theme baseline
+  Plan
+                                                                                                                  Context ████████████▌│    78%
+  This keeps the cache warm:                                                                                              99.8K / 128K tokens
+                                                                                                                          │ auto-compact at 85%
+  1. Memoization: results are cached                                                                                      $0.00 spent
+
+  • avoids recomputation                                                                                          ▼ MCP
+                                                                                                                  No MCP servers
+    rust                                                                                                          add one: cyber mcp add
+    fn fib(n: u64) -> u64 { n }
+                                                                                                                  LSP
+  ▣ Build · Demo Sonnet · 11.3s                                                                                   LSPs will activate as files are read
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                                 ~/work/app
+┃ Build · Demo Sonnet test · default
+ /Users/leo/work/app                                                       99.8K (78%) · $0.00  ctrl+p commands   ● Cyber Code 1.0.0
+row 3: 0-111 fg=#1f2933 bg=#ffffff
+row 3: 112-113 fg=#1f2933 bg=#f6f6f7
+row 3: 114-121 fg=#1f2933 bg=#f6f6f7 bold
+row 3: 122-134 fg=#9a6700 bg=#d0d7de
+row 3: 135-135 fg=#1f2933 bg=#d0d7de
+row 3: 136-137 fg=#9a6700 bg=#d0d7de
+row 3: 138-159 fg=#1f2933 bg=#f6f6f7

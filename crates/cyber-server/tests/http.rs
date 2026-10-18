@@ -3722,7 +3722,18 @@ async fn context_meter_reports_last_request_prompt_tokens_window_and_compaction_
     let api = Api::new(&h);
     let id = h.session().await;
     let (_, fresh) = api.get(&format!("/sessions/{id}")).await;
-    assert!(fresh["data"]["context"].is_null(), "unknown before a step");
+    // Before a step only the current model's window is known.
+    assert_eq!(
+        fresh["data"]["context"],
+        json!({
+            "used_tokens": 0,
+            "window": 200_000,
+            "compact_at": 199_000,
+            "utilization": 0.0,
+            "measured": false,
+            "compacted": false,
+        })
+    );
 
     let base = tcp(&h, "pw").await;
     let res = reqwest::Client::new()
@@ -3748,6 +3759,8 @@ async fn context_meter_reports_last_request_prompt_tokens_window_and_compaction_
         "window": 200_000,
         "compact_at": 199_000,
         "utilization": 100.0 / 200_000.0,
+        "measured": true,
+        "compacted": false,
     });
     assert_eq!(usage["data"]["context"], expected);
 

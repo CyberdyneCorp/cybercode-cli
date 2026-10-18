@@ -93,7 +93,7 @@ fn compact_side(app: &App) -> Vec<Span<'static>> {
     let t = &app.theme;
     let muted = Style::default().fg(t.text_muted);
     let mut spans = Vec::new();
-    if let Some(meter) = app.session.context {
+    if let Some(meter) = app.session.measured_context() {
         let text = match meter.percent() {
             Some(percent) => format!("{percent:.0}%"),
             None => compact(meter.used_tokens),
@@ -121,7 +121,7 @@ fn field_span(app: &App, field: &str) -> Option<Span<'static>> {
     let s = &app.session;
     let text = match field {
         "context" => {
-            let meter = s.context?;
+            let meter = s.measured_context()?;
             let warn = meter.percent().is_some_and(|p| p > CONTEXT_WARNING);
             let style = if warn {
                 Style::default().fg(t.warning)
@@ -186,6 +186,8 @@ mod tests {
             used_tokens: 29_470,
             window: Some(131_072),
             compact_at: None,
+            measured: true,
+            compacted: false,
         };
         assert_eq!(context(&meter), "29.5K (22%)");
         let unknown = ContextMeter {

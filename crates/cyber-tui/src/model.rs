@@ -33,6 +33,11 @@ pub struct ContextMeter {
     pub used_tokens: u64,
     pub window: Option<u64>,
     pub compact_at: Option<u64>,
+    /// `used_tokens` comes from a finished step; false before the first reply and after
+    /// a compaction, when only the window is known.
+    pub measured: bool,
+    /// No reply has finished since the last compaction.
+    pub compacted: bool,
 }
 
 impl ContextMeter {
@@ -41,7 +46,15 @@ impl ContextMeter {
             used_tokens: v["used_tokens"].as_u64()?,
             window: v["window"].as_u64().filter(|w| *w > 0),
             compact_at: v["compact_at"].as_u64(),
+            measured: v["measured"].as_bool().unwrap_or(true),
+            compacted: v["compacted"].as_bool().unwrap_or(false),
         })
+    }
+
+    /// The auto-compaction point as a percent of the window.
+    pub fn compact_percent(&self) -> Option<f64> {
+        let window = self.window?;
+        Some(self.compact_at? as f64 * 100.0 / window as f64)
     }
 
     /// Percent of the window used, when the window is known.
@@ -52,6 +65,12 @@ impl ContextMeter {
 }
 
 impl Session {
+    /// The meter once a reply has measured it: the footer and Status tab show nothing
+    /// before that, the sidebar shows the window alone.
+    pub fn measured_context(&self) -> Option<ContextMeter> {
+        self.context.filter(|meter| meter.measured)
+    }
+
     pub fn mode_label(&self) -> String {
         let effective = if self.effective_mode.is_empty() {
             &self.mode

@@ -40,6 +40,8 @@ mod screens_a11y;
 #[cfg(test)]
 mod screens_chrome;
 #[cfg(test)]
+mod screens_context;
+#[cfg(test)]
 mod screens_explorer;
 #[cfg(test)]
 mod screens_indicators;

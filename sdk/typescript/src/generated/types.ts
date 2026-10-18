@@ -237,6 +237,13 @@ export type ContextMeter = {
   compact_at?: number | null;
   /** `used_tokens / window`; null when the window is unknown. */
   utilization?: number | null;
+  /**
+   * `used_tokens` comes from a finished step; false before the first one and after a
+   * compaction, when only the window is known.
+   */
+  measured: boolean;
+  /** No step has finished since the last compaction. */
+  compacted: boolean;
 };
 
 export type CreateBody = {

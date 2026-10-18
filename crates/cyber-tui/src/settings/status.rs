@@ -233,7 +233,7 @@ impl Rows<'_> {
         out.push(self.text("Agent", crate::turns::title_case(&session.agent)));
         out.push(self.model_row(session));
         out.push(self.text("Mode", session.mode_label()));
-        if let Some(meter) = session.context {
+        if let Some(meter) = session.measured_context() {
             out.push(self.context_row(&meter));
             if let Some(line) = self.compaction_row(&meter) {
                 out.push(line);
@@ -268,7 +268,8 @@ impl Rows<'_> {
         let warn = percent > 85.0;
         let style = Style::default().fg(if warn { t.warning } else { t.text });
         if self.app.screen_reader {
-            return self.row("Context", vec![Span::styled(text, style)]);
+            let sentence = crate::sidebar::context_sentence(meter);
+            return self.row("Context", vec![Span::styled(sentence, style)]);
         }
         let filled = ((percent / 100.0) * METER as f64)
             .round()

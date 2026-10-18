@@ -6,7 +6,7 @@ expression: screen
                                                                                                                   Theme baseline
   Plan
                                                                                                                   Context
-  This keeps the cache warm:                                                                                      100 tokens
+  This keeps the cache warm:                                                                                      100 tokens · window unknown
                                                                                                                   — spent
   1. Memoization: results are cached
                                                                                                                   ▼ MCP

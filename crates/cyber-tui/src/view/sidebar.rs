@@ -16,8 +16,6 @@ use crate::theme::Tokens;
 
 /// Columns of padding on each side.
 const PAD: u16 = 2;
-/// Context use above this percent is shown in the warning color.
-const CONTEXT_WARNING: f64 = 85.0;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
@@ -88,7 +86,7 @@ pub fn top(app: &App, width: usize) -> Vec<Line<'static>> {
             &truncate_end(&format!("↳ {parent}"), width),
         ));
     }
-    context(app, &mut out);
+    context(app, width, &mut out);
     workflows(app, width, &mut out);
     mcp(app, width, &mut out);
     lsp(app, width, &mut out);
@@ -124,29 +122,137 @@ fn focusable(app: &App, row: Option<Row>, spans: Vec<Span<'static>>) -> Line<'st
     Line::from(marked)
 }
 
-fn context(app: &App, out: &mut Vec<Line<'static>>) {
-    let t = &app.theme;
+/// Cells of the Context bar at most; narrower sidebars shrink it.
+const CONTEXT_BAR: usize = 16;
+
+/// `Context  ███▍      ┃    22%`, then `29.5K / 128K tokens`, the auto-compaction line and
+/// the cost. Before the first reply only the window is known (`0 / 400K tokens · model`);
+/// with an unknown window there is no bar and no percent.
+fn context(app: &App, width: usize, out: &mut Vec<Line<'static>>) {
     out.push(Line::default());
-    out.push(header(app, None, "Context".into()));
-    if let Some(meter) = app.session.context {
-        out.push(muted_line(
-            app,
-            &format!("{} tokens", grouped(meter.used_tokens)),
-        ));
-        if let Some(percent) = meter.percent() {
-            let style = if percent > CONTEXT_WARNING {
-                Style::default().fg(t.warning)
-            } else {
-                Style::default().fg(t.text_muted)
-            };
-            out.push(Line::from(Span::styled(
-                format!("{percent:.0}% used"),
-                style,
-            )));
+    let indent = "Context ".len();
+    let detail_width = width.saturating_sub(indent);
+    match app.session.context {
+        Some(meter) if meter.window.is_some() => {
+            out.push(context_bar(app, &meter, width));
+            for detail in context_details(app, &meter) {
+                let (text, style) = detail;
+                out.push(Line::from(vec![
+                    Span::raw(" ".repeat(indent)),
+                    Span::styled(truncate_end(&text, detail_width), style),
+                ]));
+            }
         }
+        Some(meter) => {
+            out.push(header(app, None, "Context".into()));
+            let text = if meter.measured {
+                format!("{} tokens · window unknown", grouped(meter.used_tokens))
+            } else {
+                "window unknown".to_owned()
+            };
+            out.push(muted_line(app, &truncate_end(&text, width)));
+        }
+        None => out.push(header(app, None, "Context".into())),
     }
     let cost = super::footer::cost(&app.session);
-    out.push(muted_line(app, &format!("{cost} spent")));
+    let pad = if app.session.context.is_some_and(|m| m.window.is_some()) {
+        " ".repeat(indent)
+    } else {
+        String::new()
+    };
+    out.push(muted_line(app, &format!("{pad}{cost} spent")));
+}
+
+/// The bar color: `success`, `warning` from 70%, `error` from the auto-compaction point
+/// (90% when auto-compaction is off).
+pub fn context_color(t: &Tokens, percent: f64, compact: Option<f64>) -> Color {
+    if percent >= compact.unwrap_or(MACHINE_HIGH) {
+        t.error
+    } else if percent >= MACHINE_WARN {
+        t.warning
+    } else {
+        t.success
+    }
+}
+
+fn context_bar(app: &App, meter: &crate::model::ContextMeter, width: usize) -> Line<'static> {
+    let t = &app.theme;
+    let percent = meter.percent().unwrap_or(0.0);
+    let compact = meter.compact_percent();
+    let bar = CONTEXT_BAR.min(width.saturating_sub(13)).max(4);
+    let bold = Style::default().fg(t.text).add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled("Context ".to_owned(), bold)];
+    let marker = compact.map(|c| (((c / 100.0) * bar as f64).floor() as usize).min(bar - 1));
+    if t.monochrome {
+        let mut text: Vec<char> = crate::sidebar::bar_text(percent, bar.saturating_sub(2))
+            .chars()
+            .collect();
+        if let Some(m) = marker.map(|m| (m + 1).min(text.len().saturating_sub(2)).max(1)) {
+            text[m] = '|';
+        }
+        spans.push(Span::raw(text.into_iter().collect::<String>()));
+    } else {
+        let fill = context_color(t, percent, compact);
+        let cells: Vec<char> = crate::sidebar::bar_cells(percent, bar).chars().collect();
+        let filled = cells.iter().take_while(|c| **c == '█').count();
+        for (i, cell) in cells.into_iter().enumerate() {
+            if marker == Some(i) {
+                let bg = if i < filled { fill } else { t.border };
+                spans.push(Span::styled("│", Style::default().fg(t.text).bg(bg)));
+            } else {
+                spans.push(Span::styled(
+                    cell.to_string(),
+                    Style::default().fg(fill).bg(t.border),
+                ));
+            }
+        }
+    }
+    spans.push(Span::styled(
+        format!(" {percent:>3.0}%"),
+        Style::default().fg(t.text),
+    ));
+    Line::from(spans)
+}
+
+/// The lines under the bar: tokens against the window, then the auto-compaction state.
+fn context_details(app: &App, meter: &crate::model::ContextMeter) -> Vec<(String, Style)> {
+    let t = &app.theme;
+    let muted = Style::default().fg(t.text_muted);
+    let window = meter.window.map_or_else(String::new, window_label);
+    let tokens = if meter.compacted {
+        format!("compacted · measured after the next reply · {window} window")
+    } else if meter.measured {
+        format!(
+            "{} / {window} tokens",
+            super::footer::compact(meter.used_tokens)
+        )
+    } else {
+        format!(
+            "0 / {window} tokens · {}",
+            app.catalog.model_name(&app.session.model)
+        )
+    };
+    let mut out = vec![(tokens, muted)];
+    let compact = meter.compact_percent();
+    let compacting = app.compacting();
+    let state = match compact {
+        _ if compacting => ("compacting…".to_owned(), Style::default().fg(t.warning)),
+        Some(c) if meter.measured && meter.percent().is_some_and(|p| p >= c) => (
+            "auto-compact pending".to_owned(),
+            Style::default().fg(t.error),
+        ),
+        Some(c) => (format!("│ auto-compact at {c:.0}%"), muted),
+        None => ("auto-compact off".to_owned(), muted),
+    };
+    out.push(state);
+    out
+}
+
+/// `128K`, `400K`, `1M`: the window without a trailing `.0`.
+fn window_label(n: u64) -> String {
+    super::footer::compact(n)
+        .replace(".0K", "K")
+        .replace(".0M", "M")
 }
 
 /// Cells of a Workflows row's bar.

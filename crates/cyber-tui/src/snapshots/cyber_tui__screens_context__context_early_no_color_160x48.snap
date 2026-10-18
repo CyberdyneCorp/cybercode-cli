@@ -1,0 +1,52 @@
+---
+source: crates/cyber-tui/src/screens_context.rs
+expression: screen
+---
+› How do I speed up fib?
+                                                                                                                  Theme baseline
+  Plan
+                                                                                                                  Context [###..........|]  22%
+  This keeps the cache warm:                                                                                              28.2K / 128K tokens
+                                                                                                                          │ auto-compact at 85%
+  1. Memoization: results are cached                                                                                      $0.00 spent
+
+  • avoids recomputation                                                                                          ▼ MCP
+                                                                                                                  No MCP servers
+    rust                                                                                                          add one: cyber mcp add
+    fn fib(n: u64) -> u64 { n }
+                                                                                                                  LSP
+  ▣ Build · Demo Sonnet · 11.3s                                                                                   LSPs will activate as files are read
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃                                                                                                                 ~/work/app
+┃ Build · Demo Sonnet test · default
+ /Users/leo/work/app                                                       28.2K (22%) · $0.00  ctrl+p commands   ● Connected · Cyber Code 1.0.0

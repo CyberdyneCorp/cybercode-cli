@@ -209,6 +209,11 @@ impl App {
         !self.requests.is_empty()
     }
 
+    /// The Session is compacting (between its durable started and ended events).
+    pub fn compacting(&self) -> bool {
+        self.progress.compaction_since.is_some()
+    }
+
     /// What the Session is working on, if anything.
     pub fn activity(&self) -> Option<Activity<'_>> {
         let p = &self.progress;
