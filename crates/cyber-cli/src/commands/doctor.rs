@@ -314,7 +314,7 @@ fn tool(name: &'static str, args: &[&str], missing: Status) -> Check {
 async fn server(ctx: &Context) -> Check {
     match cyber_app::read_registration(&ctx.paths) {
         None => check("server", Status::Pass, "not running (starts on demand)"),
-        Some(reg) if cyber_app::health(&reg.url, cyber_app::version()).await => check(
+        Some(reg) if cyber_app::registered_health(&reg, cyber_app::version()).await => check(
             "server",
             Status::Pass,
             format!("healthy at {} (pid {})", reg.url, reg.pid),

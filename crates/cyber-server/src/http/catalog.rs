@@ -21,6 +21,10 @@ pub struct Health {
     /// The build identity of the server binary (`cyber_core::version::BuildInfo::build`);
     /// a client of another build restarts an idle server it started.
     pub build: String,
+    /// The server instance id recorded in `server.json`, so a client can tell that the
+    /// registered server, and not another one on a reused port, is answering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(rename = "apiVersion")]
     pub api_version: String,
     pub features: Vec<String>,
@@ -79,6 +83,7 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
         healthy: true,
         version: state.options.version.clone(),
         build: cyber_core::version::build_info().build.into(),
+        id: state.service.as_ref().map(|service| service.id.clone()),
         api_version: "v1".into(),
         features: state.options.features.clone(),
     })
@@ -138,6 +143,7 @@ async fn tools(
         mode: q.mode.unwrap_or_else(|| "default".into()),
         prefers_apply_patch: false,
         rules: serde_json::Value::Null,
+        worktree: Default::default(),
     };
     let data = state
         .services

@@ -122,6 +122,17 @@ impl ClientBuild {
 pub struct Probe {
     pub version: String,
     pub build: Option<String>,
+    /// The answering server's instance id; absent from builds that predate it.
+    pub id: Option<String>,
+}
+
+impl Probe {
+    /// Whether this answer comes from the server `reg` names. A registration left by a
+    /// killed server can point at a port another server (another user or install) took
+    /// over; its password would not work there, so that server is never reused or stopped.
+    pub fn serves(&self, reg: &Registration) -> bool {
+        self.id.as_deref().is_none_or(|id| id == reg.id)
+    }
 }
 
 pub fn registration_path(paths: &Paths) -> PathBuf {
@@ -151,6 +162,14 @@ pub async fn health(url: &str, version: &str) -> bool {
     probe(url).await.is_some_and(|p| p.version == version)
 }
 
+/// Whether the server `reg` names is the one answering at its URL, healthy and of
+/// `version`.
+pub async fn registered_health(reg: &Registration, version: &str) -> bool {
+    probe(&reg.url)
+        .await
+        .is_some_and(|p| p.version == version && p.serves(reg))
+}
+
 /// The version and build a healthy server at `url` reports within 2 seconds.
 pub async fn probe(url: &str) -> Option<Probe> {
     let client = reqwest::Client::builder()
@@ -169,6 +188,7 @@ pub async fn probe(url: &str) -> Option<Probe> {
     Some(Probe {
         version: body["version"].as_str()?.to_string(),
         build: body["build"].as_str().map(str::to_string),
+        id: body["id"].as_str().map(str::to_string),
     })
 }
 
@@ -186,6 +206,7 @@ pub async fn start_service(
     let mut notice = None;
     if let Some(reg) = read_registration(paths)
         && let Some(probe) = probe(&reg.url).await
+        && probe.serves(&reg)
     {
         if !me.is_stale(&reg, &probe.version, probe.build.as_deref()) {
             return Ok(ServerClientInfo {
@@ -233,7 +254,7 @@ pub async fn start_service(
         .map_err(|e| format!("cannot start the server: {e}"))?;
     if let Some(registration) = poll_ready(|| async {
         let registration = read_registration(paths)?;
-        health(&registration.url, version)
+        registered_health(&registration, version)
             .await
             .then_some(registration)
     })

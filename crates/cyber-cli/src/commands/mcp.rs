@@ -221,7 +221,8 @@ async fn reconnect_running(ctx: &Context, name: &str) -> Value {
     let Ok(password) = std::fs::read_to_string(ctx.paths.state.join("password")) else {
         return Value::Null;
     };
-    if password.trim().is_empty() || !cyber_app::health(&registered.url, cyber_app::version()).await
+    if password.trim().is_empty()
+        || !cyber_app::registered_health(&registered, cyber_app::version()).await
     {
         return Value::Null;
     }

@@ -1620,7 +1620,14 @@ async fn a_resume_without_a_share_keeps_the_runs_share() {
     // run, and resuming the interrupted runs relaunches it with that share.
     let (status, resumed) = resume_when_quiet(&server, &run, json!({"max_concurrent": 2})).await;
     assert!(status.is_success(), "{resumed}");
-    wait_for("s5 and s6 at the gate", || model.held() == ["s5", "s6"]).await;
+    // The scheduler grants s5 then s6, but the two requests run concurrently and may
+    // reach the provider in either order, so compare them as a set.
+    wait_for("s5 and s6 at the gate", || {
+        let mut held = model.held();
+        held.sort();
+        held == ["s5", "s6"]
+    })
+    .await;
     let server = server.restart().await;
     let report = server
         .ok(Method::POST, "/workflows/runs/resume_interrupted", None)

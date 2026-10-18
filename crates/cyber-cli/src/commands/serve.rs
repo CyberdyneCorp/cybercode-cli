@@ -151,9 +151,10 @@ pub fn service(cmd: ServiceCmd, ctx: &Context, global: &GlobalArgs) -> Result<()
         }
         ServiceCmd::Status => {
             let reg = cyber_app::read_registration(&ctx.paths);
-            let probe = reg
-                .as_ref()
-                .and_then(|r| rt.block_on(cyber_app::probe(&r.url)));
+            let probe = reg.as_ref().and_then(|r| {
+                rt.block_on(cyber_app::probe(&r.url))
+                    .filter(|p| p.serves(r))
+            });
             let healthy = probe.as_ref().is_some_and(|p| p.version == version);
             let stale = match (&reg, &probe) {
                 (Some(r), Some(p)) => cyber_app::ClientBuild::current(version).is_stale(

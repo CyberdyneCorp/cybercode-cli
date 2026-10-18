@@ -1648,6 +1648,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The server instance id recorded in `server.json`, so a client can tell that the\nregistered server, and not another one on a reused port, is answering."
           }
         },
         "required": [

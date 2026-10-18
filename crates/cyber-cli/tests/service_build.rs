@@ -203,3 +203,67 @@ fn an_older_server_of_another_install_or_without_activity_is_never_stopped() {
         assert_eq!(report["url"], old_url.as_str(), "{report}");
     }
 }
+
+/// A killed server's registration can name a port another Cyber server (another user or
+/// install, or a parallel test) took over. That server is current and healthy, but its
+/// password differs, so reusing it fails every call with `UnauthorizedError`. The client
+/// must notice that a different instance answers and start its own server.
+#[test]
+fn a_registration_whose_port_another_server_took_over_is_not_reused() {
+    let env = Env::new();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let foreign_url = format!("http://{}", listener.local_addr().unwrap());
+    let stopped = Arc::new(AtomicBool::new(false));
+    let flag = stopped.clone();
+    let router = axum::Router::new()
+        .route(
+            "/api/v1/health",
+            axum::routing::get(|| async {
+                axum::Json(json!({"healthy":true,"version":cyber_app::version(),
+                    "build":cyber_core::version::build_info().build,"id":"srv_foreign"}))
+            }),
+        )
+        .route(
+            "/api/v1/service/stop",
+            axum::routing::post(move || async move {
+                flag.store(true, Ordering::SeqCst);
+                axum::Json(json!({"id":"srv_foreign","stopping":true}))
+            }),
+        );
+    runtime.spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    std::fs::create_dir_all(env.state()).unwrap();
+    std::fs::write(
+        env.state().join("server.json"),
+        json!({"id":"srv_killed","version":cyber_app::version(),"url":foreign_url,
+            "socket":null,"pid":1,"build":cyber_core::version::build_info().build})
+        .to_string(),
+    )
+    .unwrap();
+    let (report, stderr) = started(&env.cyber(&["service", "start", "--format", "json"]));
+    assert_ne!(report["url"], foreign_url.as_str(), "{report} {stderr}");
+    assert!(
+        !stopped.load(Ordering::SeqCst),
+        "another server must never be stopped"
+    );
+    let registration: Value =
+        serde_json::from_slice(&std::fs::read(env.state().join("server.json")).unwrap()).unwrap();
+    assert_ne!(registration["id"], "srv_killed", "{registration}");
+    // The next authenticated call reaches the new server with this home's password.
+    let list = env.cyber(&["sessions", "list", "--format", "json"]);
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let stop = env.cyber(&["service", "stop", "--format", "json"]);
+    assert!(
+        stop.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stop.stderr)
+    );
+}

@@ -117,7 +117,7 @@ impl Link {
 /// A client for the registered server when it answers its health check; never starts one.
 async fn connect(paths: &Paths) -> Option<Client> {
     let registration = cyber_app::read_registration(paths)?;
-    if !cyber_app::health(&registration.url, cyber_app::version()).await {
+    if !cyber_app::registered_health(&registration, cyber_app::version()).await {
         return None;
     }
     let password = cyber_app::password(paths).ok()?;

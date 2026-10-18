@@ -546,6 +546,11 @@ export type Health = {
    * a client of another build restarts an idle server it started.
    */
   build: string;
+  /**
+   * The server instance id recorded in `server.json`, so a client can tell that the
+   * registered server, and not another one on a reused port, is answering.
+   */
+  id?: string | null;
   apiVersion: string;
   features: string[];
 };
