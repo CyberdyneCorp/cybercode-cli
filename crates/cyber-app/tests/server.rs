@@ -37,6 +37,28 @@ async fn app(root: &std::path::Path) -> App {
     .unwrap()
 }
 
+/// [`app`] with explicit `full-access` on Windows: creating a worktree runs its setup
+/// under the sandbox, which Windows cannot enforce, so the opt-out must be explicit there.
+async fn worktree_app(root: &std::path::Path) -> App {
+    let p = paths(root);
+    p.ensure().unwrap();
+    App::build(AppOptions {
+        paths: p,
+        home: root.join("home"),
+        database: DatabaseLocation::Memory,
+        default_directory: root.to_path_buf(),
+        sandbox_policy: cfg!(windows).then(|| "full-access".into()),
+        snapshots: false,
+        interactive: true,
+        password: Some("test-password-123456".into()),
+        mcp_credentials: None,
+        remote_skill_fetcher: None,
+        workflow_cores: None,
+    })
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn imported_static_commands_reach_live_catalogue_and_expansion_with_skill_precedence() {
     let tmp = tempfile::tempdir().unwrap();
@@ -781,7 +803,7 @@ async fn public_worktree_creation_honours_default_and_custom_root_prefix_and_bas
     std::fs::write(repo.join("tracked"), "second").unwrap();
     git_output(&repo, &["commit", "--quiet", "-am", "second"]);
     let head = git_output(&repo, &["rev-parse", "HEAD"]);
-    let application = app(&root).await;
+    let application = worktree_app(&root).await;
 
     // Defaults: `<data>/worktrees/<project_id>/<name>`, branch `cyber/<name>`, current HEAD.
     let created = create_worktree(&application, &repo, "plain").await;
@@ -5235,7 +5257,7 @@ async fn worktree_lifecycle_publishes_created_removed_and_kept_events() {
     std::fs::write(repo.join("tracked"), "base").unwrap();
     git_output(&repo, &["add", "tracked"]);
     git_output(&repo, &["commit", "--quiet", "-m", "base"]);
-    let application = app(&root).await;
+    let application = worktree_app(&root).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = format!("http://{}/api/v1", listener.local_addr().unwrap());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

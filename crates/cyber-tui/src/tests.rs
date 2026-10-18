@@ -2614,13 +2614,13 @@ fn git_in(repo: &std::path::Path, args: &[&str]) {
 async fn review_against_app_server_renders_findings_and_ignores_unrelated_jobs() {
     use crate::screens::Server;
     use futures::StreamExt;
-    let server = Server::start_reply(
-        review_reply,
-        json!({"main":{}}),
-        json!({"permissions":{"agent":"allow","read":"allow"}}),
-        false,
-    )
-    .await;
+    let mut extra = json!({"permissions":{"agent":"allow","read":"allow"}});
+    if cfg!(windows) {
+        // The review engine reads the checkout under the sandbox, which Windows cannot
+        // enforce, so the opt-out must be explicit there.
+        extra["sandbox"] = json!({"policy":"full-access"});
+    }
+    let server = Server::start_reply(review_reply, json!({"main":{}}), extra, false).await;
     let repo = server.root().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git_in(&repo, &["init", "-q"]);

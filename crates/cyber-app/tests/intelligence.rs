@@ -433,6 +433,10 @@ def send(value):
     sys.stdout.buffer.write(('Content-Length: %d\r\n\r\n'%len(body)).encode()+body)
     sys.stdout.buffer.flush()
 record('pid %d'%os.getpid())
+# Held until the process exits: the test checks liveness through it, because a
+# sandboxed server's own pid is from another PID namespace (bubblewrap on Linux).
+import fcntl
+life=open(sys.argv[1]+'.alive','w'); fcntl.flock(life,fcntl.LOCK_EX); record('locked')
 while True:
     length=None
     while True:
@@ -500,22 +504,17 @@ async fn lsp_status_reports_connected_root_and_close_exits_the_process() {
         PathBuf::from(connected["location"]["directory"].as_str().unwrap()),
         f.root
     );
-    let pid: u32 = std::fs::read_to_string(&events)
-        .unwrap()
-        .lines()
-        .find_map(|line| line.strip_prefix("pid "))
-        .unwrap()
-        .parse()
-        .unwrap();
-    let alive = |pid: u32| {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(std::process::Stdio::null())
-            .status()
+    let lock = events.with_extension("alive");
+    // The server holds an exclusive lock on this file for as long as it runs; its pid
+    // would be meaningless here when the sandbox gives it its own PID namespace.
+    let alive = || {
+        std::fs::read_to_string(&events)
             .unwrap()
-            .success()
+            .lines()
+            .any(|line| line == "locked")
+            && std::fs::File::open(&lock).unwrap().try_lock().is_err()
     };
-    assert!(alive(pid));
+    assert!(alive());
 
     let closed: Value = f
         .client
@@ -530,7 +529,7 @@ async fn lsp_status_reports_connected_root_and_close_exits_the_process() {
         .unwrap();
     assert_eq!(closed["data"], json!({"closed":true,"reloaded":false}));
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while alive(pid) {
+        while alive() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })

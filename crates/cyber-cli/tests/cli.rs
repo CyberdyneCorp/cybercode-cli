@@ -2781,13 +2781,19 @@ fn exits_ok(output: &Output) -> Output {
 
 /// Global `worktrees.cleanup: keep`, so exec leaves its clean checkouts in place.
 fn keep_worktrees(env: &Env) {
-    let config = env.root.join("cyber-home/config/cyber.jsonc");
-    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-    std::fs::write(
-        config,
-        serde_json::json!({"worktrees": {"cleanup": "keep"}}).to_string(),
-    )
-    .unwrap();
+    write_global_config(env, serde_json::json!({"worktrees": {"cleanup": "keep"}}));
+}
+
+/// Write the global config, with explicit `full-access` on Windows: worktree Sessions
+/// run tools, and Windows has no sandbox enforcement, so without the opt-out every run
+/// fails closed with `SandboxUnavailableError`.
+fn write_global_config(env: &Env, mut config: Value) {
+    if cfg!(windows) {
+        config["sandbox"] = serde_json::json!({"policy": "full-access"});
+    }
+    let path = env.root.join("cyber-home/config/cyber.jsonc");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, config.to_string()).unwrap();
 }
 
 /// `cyber exec --worktree <name>` against an unavailable model: the Session starts in
@@ -2841,6 +2847,7 @@ fn branch_exists(repo: &Path, branch: &str) -> bool {
 fn exec_worktree_without_changes_is_removed_on_exit() {
     let env = Env::new();
     let repo = git_repo(&env);
+    write_global_config(&env, serde_json::json!({}));
     let output = env.cyber(&[
         "--cwd",
         repo.to_str().unwrap(),
@@ -2969,9 +2976,7 @@ fn worktree_remove_while_session_active_fails_in_use() {
     let repo = git_repo(&env);
     let catalog = env.root.join("models.json");
     std::fs::write(&catalog, "{}").unwrap();
-    let config = env.root.join("cyber-home/config/cyber.jsonc");
-    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-    std::fs::write(config, model.config().to_string()).unwrap();
+    write_global_config(&env, model.config());
     let service = StartedService(&env, catalog);
     let cwd = repo.to_str().unwrap();
     let exec = env
